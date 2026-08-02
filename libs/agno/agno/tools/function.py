@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from functools import partial
+from functools import lru_cache, partial, wraps
 from importlib.metadata import version
 from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Type, TypeVar, get_type_hints
 
@@ -7,12 +7,17 @@ from docstring_parser import parse
 from packaging.version import Version
 from pydantic import BaseModel, Field, validate_call
 
-from agno.exceptions import AgentRunException
+from agno.exceptions import AgentRunException, RunCancelledException
 from agno.media import Audio, File, Image, Video
 from agno.run import RunContext
 from agno.utils.log import log_debug, log_exception, log_warning
 
 T = TypeVar("T")
+
+
+@lru_cache(maxsize=1)
+def _get_pydantic_version() -> Version:
+    return Version(version("pydantic"))
 
 
 def get_entrypoint_docstring(entrypoint: Callable) -> str:
@@ -563,11 +568,30 @@ class Function(BaseModel):
         """Wrap a callable with Pydantic's validate_call decorator, if relevant"""
         from inspect import isasyncgenfunction, iscoroutinefunction, signature
 
-        pydantic_version = Version(version("pydantic"))
+        pydantic_version = _get_pydantic_version()
 
-        # Don't wrap async generators validate_call
+        # Async generators need special handling: validate_call turns an `async def ... yield`
+        # into a plain function that returns an async_generator, which makes
+        # inspect.isasyncgenfunction return False. Downstream dispatch (models/base.py,
+        # FunctionCall.aexecute) uses that predicate to route the call, so we wrap the
+        # validated callable in an outer `async def ... yield` shim that preserves the
+        # async-generator identity while still coercing arguments through Pydantic.
         if isasyncgenfunction(func):
-            return func
+            if getattr(func, "_wrapped_for_validation", False):
+                return func
+            validated = validate_call(func, config=dict(arbitrary_types_allowed=True))  # type: ignore
+
+            @wraps(func)
+            async def async_gen_wrapper(*args, **kwargs):
+                inner = validated(*args, **kwargs)
+                try:
+                    async for item in inner:
+                        yield item
+                finally:
+                    await inner.aclose()
+
+            async_gen_wrapper._wrapped_for_validation = True  # type: ignore[attr-defined]
+            return async_gen_wrapper
 
         # Don't wrap coroutines with validate_call if pydantic version is less than 2.10.0
         if iscoroutinefunction(func) and pydantic_version < Version("2.10.0"):
@@ -714,7 +738,7 @@ class Function(BaseModel):
             return None
 
         try:
-            with cache_path.open("r") as f:
+            with cache_path.open("r", encoding="utf-8") as f:
                 cache_data = json.load(f)
 
             timestamp = cache_data.get("timestamp", 0)
@@ -737,7 +761,7 @@ class Function(BaseModel):
 
         try:
             serializable_result = result.model_dump() if isinstance(result, BaseModel) else result
-            with open(cache_file, "w") as f:
+            with open(cache_file, "w", encoding="utf-8") as f:
                 json.dump({"timestamp": time(), "result": serializable_result}, f)
         except Exception:
             log_exception("Error writing cache")
@@ -855,6 +879,8 @@ class FunctionCall(BaseModel):
                 log_debug(f"{e.__class__.__name__}: {e}")
                 self.error = str(e)
                 raise
+            except RunCancelledException:
+                raise
             except Exception as e:
                 log_warning(f"Error in pre-hook callback: {str(e)}")
                 log_exception(e)
@@ -883,6 +909,8 @@ class FunctionCall(BaseModel):
                 log_debug(f"{e.__class__.__name__}: {e}")
                 self.error = str(e)
                 raise
+            except RunCancelledException:
+                raise
             except Exception as e:
                 log_warning(f"Error in post-hook callback: {str(e)}")
                 log_exception(e)
@@ -906,6 +934,16 @@ class FunctionCall(BaseModel):
         # Check if the entrypoint has an fc argument
         if "fc" in sig.parameters:
             entrypoint_args["fc"] = self
+
+        # `_agno_`-prefixed variants are used by internal wrappers so framework
+        # objects can be injected without colliding with user-facing tool
+        # arguments that happen to be named "agent", "team" and "run_context".
+        if "_agno_agent" in sig.parameters:
+            entrypoint_args["_agno_agent"] = self.function._agent
+        if "_agno_team" in sig.parameters:
+            entrypoint_args["_agno_team"] = self.function._team
+        if "_agno_run_context" in sig.parameters:
+            entrypoint_args["_agno_run_context"] = self.function._run_context
 
         # Check if the entrypoint has media arguments
         if "images" in sig.parameters:
@@ -1051,7 +1089,10 @@ class FunctionCall(BaseModel):
                 execution_chain = self._build_nested_execution_chain(entrypoint_args=entrypoint_args)
                 result = execution_chain(self.function.name, self.function.entrypoint, self.arguments or {})
             else:
-                result = self.function.entrypoint(**entrypoint_args, **self.arguments)  # type: ignore
+                if self.arguments is None or self.arguments == {}:
+                    result = self.function.entrypoint(**entrypoint_args)
+                else:
+                    result = self.function.entrypoint(**entrypoint_args, **self.arguments)
 
             # Handle generator case
             if isgenerator(result):
@@ -1089,6 +1130,8 @@ class FunctionCall(BaseModel):
             self.error = str(e)
             exception_to_raise = e
             execution_result = FunctionExecutionResult(status="failure", error=str(e))
+        except RunCancelledException:
+            raise
         except Exception as e:
             log_warning(f"Could not run function {self.get_call_str()}: {str(e)}")
             log_exception(e)
@@ -1128,6 +1171,8 @@ class FunctionCall(BaseModel):
                 log_debug(f"{e.__class__.__name__}: {e}")
                 self.error = str(e)
                 raise
+            except RunCancelledException:
+                raise
             except Exception as e:
                 log_warning(f"Error in pre-hook callback: {str(e)}")
                 log_exception(e)
@@ -1156,6 +1201,8 @@ class FunctionCall(BaseModel):
             except AgentRunException as e:
                 log_debug(f"{e.__class__.__name__}: {e}")
                 self.error = str(e)
+                raise
+            except RunCancelledException:
                 raise
             except Exception as e:
                 log_warning(f"Error in post-hook callback: {str(e)}")
@@ -1187,9 +1234,9 @@ class FunctionCall(BaseModel):
                 arguments.update(self.arguments)
             return self.function.entrypoint(**arguments)  # type: ignore
 
-        # If no hooks, just return the entrypoint execution function
+        # If no hooks, just return the async entrypoint execution function
         if not self.function.tool_hooks:
-            return execute_entrypoint
+            return execute_entrypoint_async
 
         def create_hook_wrapper(inner_func, hook):
             """Create a nested wrapper for the hook."""
@@ -1309,6 +1356,8 @@ class FunctionCall(BaseModel):
             self.error = str(e)
             exception_to_raise = e
             execution_result = FunctionExecutionResult(status="failure", error=str(e))
+        except RunCancelledException:
+            raise
         except Exception as e:
             log_warning(f"Could not run function {self.get_call_str()}: {str(e)}")
             log_exception(e)
@@ -1331,6 +1380,8 @@ class ToolResult(BaseModel):
     """Result from a tool that can include media artifacts."""
 
     content: str
+    # Holds extra MCP tool data, stored as "meta" and "structured_content". Can be used for any other provider's extra data.
+    metadata: Optional[Dict[str, Any]] = None
     images: Optional[List[Image]] = None
     videos: Optional[List[Video]] = None
     audios: Optional[List[Audio]] = None

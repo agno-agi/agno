@@ -2,7 +2,7 @@
 Agentic Rag With Reranking
 =============================
 
-1. Run: `uv pip install openai agno cohere lancedb tantivy sqlalchemy` to install the dependencies.
+1. Run: `uv pip install openai agno cohere lancedb sqlalchemy` to install the dependencies.
 """
 
 from agno.agent import Agent

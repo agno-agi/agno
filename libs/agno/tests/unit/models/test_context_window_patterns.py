@@ -4,7 +4,6 @@ import pytest
 
 from agno.exceptions import ContextWindowExceededError, ModelProviderError
 
-
 # =============================================================================
 # Anthropic context window patterns
 # =============================================================================
@@ -132,9 +131,7 @@ class TestNonContextWindowErrors:
 
     def test_already_classified_context_window_error_unchanged(self):
         """An already-classified ContextWindowExceededError should be returned as-is."""
-        error = ContextWindowExceededError(
-            message="prompt is too long", status_code=400
-        )
+        error = ContextWindowExceededError(message="prompt is too long", status_code=400)
         classified = ModelProviderError.classify(error)
 
         assert classified is error

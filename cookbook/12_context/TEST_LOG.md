@@ -3,6 +3,30 @@
 All end-to-end runs used the demo venv (`.venvs/demo/bin/python`)
 against real OpenAI (`gpt-5.4` / `gpt-5.4-mini`).
 
+## 2026-05-14
+
+### 15a_wiki_notion.py
+
+**Status:** PASS
+
+**Description:** `WikiContextProvider(backend=NotionDatabaseBackend(...))`
+against a real Notion database ("Ashpreet Local Wiki"). Asks the agent to
+file an Acme Corp call summary as `acme-corp.md` via `update_wiki`, then
+reads it back via `query_wiki` and prints both the local mirror path and
+the Notion page URL.
+
+**Result:** Setup resolved the data source (`title_prop='Name'`) under the
+new Notion API (2025-09-03). Write sub-agent listed/searched the empty
+mirror, wrote `acme-corp.md` (247 chars), backend created the Notion page,
+re-synced (375 bytes including frontmatter), and the commit summary agent
+produced "Add acme-corp wiki page" (sha aeac80a2). Read sub-agent listed
+files, opened `acme-corp.md`, and answered with the SSO-by-Q3 deadline
+citing the page. Final block printed
+`https://www.notion.so/360733793ba281bcb823f696fc714e7f` — round-trip
+verified.
+
+---
+
 ## 2026-04-28
 
 ### 16_wiki_with_web.py

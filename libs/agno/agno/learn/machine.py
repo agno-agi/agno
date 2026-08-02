@@ -14,7 +14,7 @@ Plus maintenance via the Curator for keeping memories healthy.
 
 from dataclasses import dataclass, field
 from os import getenv
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, ClassVar, Dict, List, Optional, Union
 
 from agno.learn.config import (
     DecisionLogConfig,
@@ -39,6 +39,33 @@ try:
     from agno.models.base import Model
 except ImportError:
     pass
+
+
+def _filter_store_kwargs(callee: Callable, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    """Filter kwargs to what the callee accepts (signature-aware dispatch).
+
+    Third-party custom_stores satisfy a Protocol, and a store written as
+    ``def recall(self, user_id=None)`` with no ``**kwargs`` would raise
+    TypeError the moment new context kwargs (message, run_context, ...) arrive.
+    Built-in stores take ``**kwargs`` and see everything; narrow custom stores
+    keep working untouched. Same inspect.signature approach as
+    invoke_callable_factory.
+    """
+    import inspect
+
+    try:
+        parameters = inspect.signature(callee).parameters
+    except (TypeError, ValueError):
+        return kwargs
+    kinds = {p.kind for p in parameters.values()}
+    if inspect.Parameter.VAR_KEYWORD in kinds:
+        return kwargs
+    if inspect.Parameter.VAR_POSITIONAL in kinds:
+        # A *args-only callee cannot take these as keywords; pass everything
+        # through so the mismatch fails loudly instead of silently dropping data.
+        return kwargs
+    return {key: value for key, value in kwargs.items() if key in parameters}
+
 
 # Type aliases for cleaner signatures
 UserProfileInput = Union[bool, UserProfileConfig, LearningStore, None]
@@ -82,10 +109,13 @@ class LearningMachine:
     session_context: SessionContextInput = False
     entity_memory: EntityMemoryInput = False
     learned_knowledge: LearnedKnowledgeInput = False
-    decision_log: DecisionLogInput = False  # Phase 2
+    decision_log: DecisionLogInput = False
 
     # Namespace for entity_memory and learned_knowledge
     namespace: str = "global"
+
+    # Global default for max_updates_per_run (applied to all stores unless overridden)
+    max_updates_per_run: int = 10
 
     # Custom stores
     custom_stores: Optional[Dict[str, LearningStore]] = None
@@ -96,6 +126,16 @@ class LearningMachine:
     # Internal state (lazy initialization)
     _stores: Optional[Dict[str, LearningStore]] = field(default=None, init=False)
     _curator: Optional[Any] = field(default=None, init=False)
+    # Manual-door tracking: instructions() called by the developer marks the
+    # machine as hand-placed; if the framework then also injects it (learning=),
+    # the blocks would render twice - warn once.
+    _placed_by_hand: bool = field(default=False, init=False)
+    _double_render_warned: bool = field(default=False, init=False)
+    _missing_user_id_warned: bool = field(default=False, init=False)
+    _missing_model_warned: bool = field(default=False, init=False)
+    # Strong refs to fire-and-forget capture tasks (acapture_hook), so the event
+    # loop cannot garbage-collect them mid-flight.
+    _capture_tasks: set = field(default_factory=set, init=False)
 
     # =========================================================================
     # Initialization (Lazy)
@@ -103,9 +143,23 @@ class LearningMachine:
 
     @property
     def stores(self) -> Dict[str, LearningStore]:
-        """All registered stores, keyed by name. Lazily initialized."""
+        """All registered stores, keyed by name. Lazily initialized.
+
+        Stores take the machine's model at construction, but the model usually
+        arrives *after* them: ``learning=`` hands over the agent's model during
+        Agent init, which is later than any earlier read of this property — a
+        test, an inspection, or the manual door. Backfill on access so a store
+        built before the model was bound picks it up, instead of keeping
+        ``model=None`` for the life of the process and silently declining to
+        capture.
+        """
         if self._stores is None:
             self._initialize_stores()
+        if self.model is not None:
+            for store in self._stores.values():  # type: ignore[union-attr]
+                config = getattr(store, "config", None)
+                if config is not None and getattr(config, "model", "unused") is None:
+                    config.model = self.model
         return self._stores  # type: ignore
 
     def _initialize_stores(self) -> None:
@@ -147,7 +201,7 @@ class LearningMachine:
                 store_type="learned_knowledge",
             )
 
-        # Decision Log (Phase 2)
+        # Decision Log
         if self.decision_log:
             self._stores["decision_log"] = self._resolve_store(
                 input_value=self.decision_log,
@@ -175,8 +229,14 @@ class LearningMachine:
         Returns:
             Initialized store instance.
         """
-        # Already a store instance
+        # Already a store instance. The Protocol gained instructions() in 2.8.4;
+        # the duck-typed fallback keeps third-party stores written before that
+        # working (they simply contribute no guidance text).
         if isinstance(input_value, LearningStore):
+            return input_value
+        if not isinstance(input_value, bool) and all(
+            callable(getattr(input_value, method, None)) for method in ("recall", "process", "build_context")
+        ):
             return input_value
 
         # Create store based on type
@@ -204,11 +264,14 @@ class LearningMachine:
                 config.db = self.db
             if config.model is None:
                 config.model = self.model
+            if config.max_updates_per_run is None:
+                config.max_updates_per_run = self.max_updates_per_run
         else:
             config = UserProfileConfig(
                 db=self.db,
                 model=self.model,
                 mode=LearningMode.ALWAYS,
+                max_updates_per_run=self.max_updates_per_run,
             )
 
         return UserProfileStore(config=config, debug_mode=self.debug_mode)
@@ -222,11 +285,14 @@ class LearningMachine:
                 config.db = self.db
             if config.model is None:
                 config.model = self.model
+            if config.max_updates_per_run is None:
+                config.max_updates_per_run = self.max_updates_per_run
         else:
             config = UserMemoryConfig(
                 db=self.db,
                 model=self.model,
                 mode=LearningMode.ALWAYS,
+                max_updates_per_run=self.max_updates_per_run,
             )
 
         return UserMemoryStore(config=config, debug_mode=self.debug_mode)
@@ -240,11 +306,14 @@ class LearningMachine:
                 config.db = self.db
             if config.model is None:
                 config.model = self.model
+            if config.max_updates_per_run is None:
+                config.max_updates_per_run = self.max_updates_per_run
         else:
             config = SessionContextConfig(
                 db=self.db,
                 model=self.model,
                 enable_planning=False,
+                max_updates_per_run=self.max_updates_per_run,
             )
 
         return SessionContextStore(config=config, debug_mode=self.debug_mode)
@@ -258,12 +327,19 @@ class LearningMachine:
                 config.db = self.db
             if config.model is None:
                 config.model = self.model
+            if config.max_updates_per_run is None:
+                config.max_updates_per_run = self.max_updates_per_run
+            # A config still on the class default inherits the machine namespace;
+            # an explicit config namespace wins over it at every call site.
+            if config.namespace == "global" and self.namespace != "global":
+                config.namespace = self.namespace
         else:
             config = EntityMemoryConfig(
                 db=self.db,
                 model=self.model,
                 namespace=self.namespace,
-                mode=LearningMode.ALWAYS,
+                mode=LearningMode.AGENTIC,
+                max_updates_per_run=self.max_updates_per_run,
             )
 
         return EntityMemoryStore(config=config, debug_mode=self.debug_mode)
@@ -277,11 +353,16 @@ class LearningMachine:
                 config.model = self.model
             if config.knowledge is None and self.knowledge is not None:
                 config.knowledge = self.knowledge
+            if config.max_updates_per_run is None:
+                config.max_updates_per_run = self.max_updates_per_run
+            if config.namespace == "global" and self.namespace != "global":
+                config.namespace = self.namespace
         else:
             config = LearnedKnowledgeConfig(
                 model=self.model,
                 knowledge=self.knowledge,
                 mode=LearningMode.AGENTIC,
+                max_updates_per_run=self.max_updates_per_run,
             )
 
         return LearnedKnowledgeStore(config=config, debug_mode=self.debug_mode)
@@ -295,11 +376,14 @@ class LearningMachine:
                 config.db = self.db
             if config.model is None:
                 config.model = self.model
+            if config.max_updates_per_run is None:
+                config.max_updates_per_run = self.max_updates_per_run
         else:
             config = DecisionLogConfig(
                 db=self.db,
                 model=self.model,
                 mode=LearningMode.AGENTIC,  # Default to AGENTIC for explicit logging
+                max_updates_per_run=self.max_updates_per_run,
             )
 
         return DecisionLogStore(config=config, debug_mode=self.debug_mode)
@@ -399,7 +483,7 @@ class LearningMachine:
             message=message,
             entity_id=entity_id,
             entity_type=entity_type,
-            namespace=namespace or self.namespace,
+            namespace=namespace,
             agent_id=agent_id,
             team_id=team_id,
             **kwargs,
@@ -426,13 +510,172 @@ class LearningMachine:
             message=message,
             entity_id=entity_id,
             entity_type=entity_type,
-            namespace=namespace or self.namespace,
+            namespace=namespace,
             agent_id=agent_id,
             team_id=team_id,
             **kwargs,
         )
 
         return self._format_results(results=results)
+
+    def instructions(self) -> str:
+        """The guidance block: how and when to use the learning tools.
+
+        Mode-aware and aggregated across enabled stores, which is why this is
+        an instance method and not a static string - the text depends on which
+        stores are enabled and what mode each is in. Pairs with build_context()
+        (the data block): the automatic path concatenates the two at the
+        injection site, and the manual door places each by hand.
+
+        Calling this marks the machine as hand-placed; if the same machine is
+        ALSO passed to Agent(learning=...), the framework warns once about the
+        double render.
+        """
+        self._placed_by_hand = True
+        return self._instructions_text()
+
+    def _warn_if_user_id_missing(self, user_id: Optional[str]) -> None:
+        """Per-user stores silently drop their tools and capture without a
+        user_id (an unauthenticated /mcp run is the common way to get here).
+        Make the degradation visible, once per machine."""
+        if user_id or self._missing_user_id_warned:
+            return
+        per_user = [name for name in ("user_profile", "user_memory") if self.stores.get(name) is not None]
+        if per_user:
+            self._missing_user_id_warned = True
+            log_warning(
+                f"This run has no user_id, but per-user learning stores are configured "
+                f"({', '.join(per_user)}). Their tools and capture are disabled for this run. "
+                f"Pin Agent(user_id=...) or authenticate the request so a user id reaches the stores."
+            )
+
+    def _warn_if_model_missing(self) -> None:
+        """Capture is a model call, and the manual door injects nothing.
+
+        ``learning=`` hands the agent's model to the machine; a hand-placed
+        machine keeps whatever it was constructed with. Without one, the
+        capture tools return "No model provided" and entity memory keeps every
+        stated fact, both without saying so at the point of use.
+        """
+        if self._missing_model_warned:
+            return
+        # Ask the stores, not the machine: `self.model is not None` was the
+        # earlier guard here, and it short-circuited exactly the case this
+        # check exists to catch — a machine whose model arrived after its
+        # stores did. `stores` now backfills those, so a store still without
+        # one means the machine genuinely has none.
+        without = [name for name, store in self.stores.items() if getattr(store, "model", "unused") is None]
+        if not without:
+            return
+        self._missing_model_warned = True
+        log_warning(
+            f"LearningMachine has no model, so these stores cannot capture: {', '.join(sorted(without))}. "
+            f"Their tools return 'No model provided', and entity memory records every stated fact without "
+            f"retiring the ones it contradicts. Pass model= to LearningMachine (the manual door injects "
+            f"nothing), or attach the machine with learning= so the agent's model is used."
+        )
+
+    def _framework_instructions(self) -> str:
+        """The guidance block, fetched by the automatic injection path.
+
+        Detects the double-render case: the same machine placed by hand
+        (instructions() was called) AND attached via learning=.
+        """
+        if self._placed_by_hand and not self._double_render_warned:
+            self._double_render_warned = True
+            log_warning(
+                "This LearningMachine is attached via learning= AND its surfaces are placed by "
+                "hand (instructions()/build_context()); its context will render twice. Pick one "
+                "door: pass learning= for the automatic path, or place the surfaces yourself "
+                "without learning=."
+            )
+        return self._instructions_text()
+
+    def _instructions_text(self) -> str:
+        parts: List[str] = []
+        for name, store in self.stores.items():
+            instructions_fn = getattr(store, "instructions", None)
+            if not callable(instructions_fn):
+                continue
+            try:
+                text = instructions_fn()
+                if text:
+                    parts.append(text)
+            except Exception as e:
+                log_warning(f"Error getting instructions from {name}: {str(e)}")
+        return "\n\n".join(parts)
+
+    def capture_hook(self) -> Callable:
+        """A post_hooks-compatible callable that runs this machine's capture pass.
+
+        The manual door is agentic by nature: with no learning= there is no
+        automatic post-run extraction, and the tools are the capture mechanism.
+        For the developer who wants hand-placed prompts AND ALWAYS-mode
+        extraction, add this to Agent(post_hooks=[...]). An escape hatch, not a
+        third shape.
+
+        Extraction is backgrounded on the agent's background executor when one
+        is available (the same place learning= runs it), so it stays off the
+        response path; without an executor it runs inline. Works on both sync
+        and async runs (async post-hook execution calls sync hooks directly).
+        """
+        machine = self
+
+        def learning_capture(run_output=None, agent=None, session=None, user_id=None, run_context=None) -> None:
+            messages = list(getattr(run_output, "messages", None) or [])
+            if not messages:
+                return
+            kwargs = dict(
+                messages=messages,
+                user_id=user_id,
+                session_id=getattr(session, "session_id", None) if session is not None else None,
+                agent_id=getattr(agent, "id", None) if agent is not None else None,
+                team_id=getattr(agent, "team_id", None) if agent is not None else None,
+                run_context=run_context,
+                metadata=getattr(run_context, "metadata", None),
+                dependencies=getattr(run_context, "dependencies", None),
+                session_state=getattr(run_context, "session_state", None),
+            )
+            executor = getattr(agent, "background_executor", None) if agent is not None else None
+            if executor is not None:
+                executor.submit(machine.process, **kwargs)
+            else:
+                machine.process(**kwargs)
+
+        return learning_capture
+
+    def acapture_hook(self) -> Callable:
+        """Async version of capture_hook: schedules aprocess as a background task.
+
+        Only for async runs - a sync run() skips async hooks with a warning, so
+        pass capture_hook() there instead. The task is fire-and-forget off the
+        response path; failures are logged, never raised into the run.
+        """
+        machine = self
+
+        async def alearning_capture(run_output=None, agent=None, session=None, user_id=None, run_context=None) -> None:
+            import asyncio
+
+            messages = list(getattr(run_output, "messages", None) or [])
+            if not messages:
+                return
+            task = asyncio.create_task(
+                machine.aprocess(
+                    messages=messages,
+                    user_id=user_id,
+                    session_id=getattr(session, "session_id", None) if session is not None else None,
+                    agent_id=getattr(agent, "id", None) if agent is not None else None,
+                    team_id=getattr(agent, "team_id", None) if agent is not None else None,
+                    run_context=run_context,
+                    metadata=getattr(run_context, "metadata", None),
+                    dependencies=getattr(run_context, "dependencies", None),
+                    session_state=getattr(run_context, "session_state", None),
+                )
+            )
+            machine._capture_tasks.add(task)
+            task.add_done_callback(machine._capture_tasks.discard)
+
+        return alearning_capture
 
     def get_tools(
         self,
@@ -446,8 +689,9 @@ class LearningMachine:
         """Get learning tools to expose to the agent.
 
         Returns tools based on which stores are enabled:
-        - user_profile: update_user_memory
-        - entity_memory: search_entities, create_entity, update_entity, add_fact, etc.
+        - user_profile: update_profile
+        - user_memory: update_user_memory
+        - entity_memory: remember_about, link_entities, search_entities, forget
         - learned_knowledge: search_learnings, save_learning
 
         Args:
@@ -461,10 +705,12 @@ class LearningMachine:
             List of callable tools.
         """
         tools = []
+        self._warn_if_user_id_missing(user_id)
+        self._warn_if_model_missing()
         context = {
             "user_id": user_id,
             "session_id": session_id,
-            "namespace": namespace or self.namespace,
+            "namespace": namespace,
             "agent_id": agent_id,
             "team_id": team_id,
             **kwargs,
@@ -472,7 +718,7 @@ class LearningMachine:
 
         for name, store in self.stores.items():
             try:
-                store_tools = store.get_tools(**context)
+                store_tools = store.get_tools(**_filter_store_kwargs(store.get_tools, context))
                 if store_tools:
                     tools.extend(store_tools)
                     log_debug(f"Got {len(store_tools)} tools from {name}")
@@ -492,10 +738,12 @@ class LearningMachine:
     ) -> List[Callable]:
         """Async version of get_tools."""
         tools = []
+        self._warn_if_user_id_missing(user_id)
+        self._warn_if_model_missing()
         context = {
             "user_id": user_id,
             "session_id": session_id,
-            "namespace": namespace or self.namespace,
+            "namespace": namespace,
             "agent_id": agent_id,
             "team_id": team_id,
             **kwargs,
@@ -503,7 +751,7 @@ class LearningMachine:
 
         for name, store in self.stores.items():
             try:
-                store_tools = await store.aget_tools(**context)
+                store_tools = await store.aget_tools(**_filter_store_kwargs(store.aget_tools, context))
                 if store_tools:
                     tools.extend(store_tools)
                     log_debug(f"Got {len(store_tools)} tools from {name}")
@@ -539,7 +787,7 @@ class LearningMachine:
             "messages": messages,
             "user_id": user_id,
             "session_id": session_id,
-            "namespace": namespace or self.namespace,
+            "namespace": namespace,
             "agent_id": agent_id,
             "team_id": team_id,
             **kwargs,
@@ -547,7 +795,7 @@ class LearningMachine:
 
         for name, store in self.stores.items():
             try:
-                store.process(**context)
+                store.process(**_filter_store_kwargs(store.process, context))
                 if getattr(store, "was_updated", False):
                     log_debug(f"Store {name} was updated")
             except Exception as e:
@@ -568,7 +816,7 @@ class LearningMachine:
             "messages": messages,
             "user_id": user_id,
             "session_id": session_id,
-            "namespace": namespace or self.namespace,
+            "namespace": namespace,
             "agent_id": agent_id,
             "team_id": team_id,
             **kwargs,
@@ -576,7 +824,7 @@ class LearningMachine:
 
         for name, store in self.stores.items():
             try:
-                await store.aprocess(**context)
+                await store.aprocess(**_filter_store_kwargs(store.aprocess, context))
                 if getattr(store, "was_updated", False):
                     log_debug(f"Store {name} was updated")
             except Exception as e:
@@ -613,7 +861,7 @@ class LearningMachine:
             "query": message,  # For learned_knowledge
             "entity_id": entity_id,
             "entity_type": entity_type,
-            "namespace": namespace or self.namespace,
+            "namespace": namespace,
             "agent_id": agent_id,
             "team_id": team_id,
             **kwargs,
@@ -621,7 +869,7 @@ class LearningMachine:
 
         for name, store in self.stores.items():
             try:
-                result = store.recall(**context)
+                result = store.recall(**_filter_store_kwargs(store.recall, context))
                 results[name] = result
                 try:
                     log_debug(f"Recalled from {name}: {result}")
@@ -653,7 +901,7 @@ class LearningMachine:
             "query": message,
             "entity_id": entity_id,
             "entity_type": entity_type,
-            "namespace": namespace or self.namespace,
+            "namespace": namespace,
             "agent_id": agent_id,
             "team_id": team_id,
             **kwargs,
@@ -661,7 +909,7 @@ class LearningMachine:
 
         for name, store in self.stores.items():
             try:
-                result = await store.arecall(**context)
+                result = await store.arecall(**_filter_store_kwargs(store.arecall, context))
                 results[name] = result
                 try:
                     log_debug(f"Recalled from {name}: {result}")
@@ -724,48 +972,195 @@ class LearningMachine:
     # Serialization
     # =========================================================================
 
+    _STORE_CONFIG_CLASSES: ClassVar[Dict[str, Any]] = {
+        "user_profile": UserProfileConfig,
+        "user_memory": UserMemoryConfig,
+        "session_context": SessionContextConfig,
+        "entity_memory": EntityMemoryConfig,
+        "learned_knowledge": LearnedKnowledgeConfig,
+        "decision_log": DecisionLogConfig,
+    }
+
     def to_dict(self) -> Dict[str, Any]:
         """Serialize the LearningMachine configuration to a dictionary.
 
-        Preserves which stores are enabled and the namespace so that
-        from_dict() can reconstruct an equivalent instance. Does not
-        serialize db, model, or knowledge (those are injected at init).
+        Lossless for what a platform rebuild needs: per-store mode,
+        namespace, enable_* toggles, limits, prompt strings and
+        schema-by-import-path all round-trip. db, model and knowledge are
+        never serialized (they are injected at init), and callables cannot
+        be - a config carrying one round-trips as present-but-not-restorable
+        and from_dict logs once. A schema class defined in a __main__ script
+        serializes as a __main__ path and only resolves inside the same
+        process; define custom schemas in an importable module for a
+        cross-process rebuild. Store INSTANCES serialize their config;
+        custom_stores serialize as import-path refs (informational - the
+        instances cannot be rebuilt from a dict).
         """
         d: Dict[str, Any] = {}
-        if self.user_profile:
-            d["user_profile"] = True
-        if self.user_memory:
-            d["user_memory"] = True
-        if self.session_context:
-            d["session_context"] = True
-        if self.entity_memory:
-            d["entity_memory"] = True
-        if self.learned_knowledge:
-            d["learned_knowledge"] = True
-        if self.decision_log:
-            d["decision_log"] = True
+        for store_name in self._STORE_CONFIG_CLASSES:
+            value = getattr(self, store_name)
+            if not value:
+                continue
+            d[store_name] = self._serialize_store_input(value)
         if self.namespace != "global":
             d["namespace"] = self.namespace
+        if self.max_updates_per_run != 10:
+            d["max_updates_per_run"] = self.max_updates_per_run
+        if self.custom_stores:
+            d["custom_stores"] = {
+                name: f"{type(store).__module__}.{type(store).__qualname__}"
+                for name, store in self.custom_stores.items()
+            }
         if self.debug_mode:
             d["debug_mode"] = True
         return d
+
+    def _serialize_store_input(self, value: Any) -> Any:
+        """bool -> True; Config -> field dict; Store instance -> its config's dict."""
+        import dataclasses
+
+        if value is True:
+            return True
+        # A store instance carries its config (stores are dataclasses too, so
+        # check for the carried config before the dataclass test).
+        inner = getattr(value, "config", None)
+        if inner is not None and dataclasses.is_dataclass(inner):
+            config = inner
+            store_module = type(value).__module__ or ""
+            if not store_module.startswith("agno.learn.stores"):
+                log_warning(
+                    f"LearningMachine.to_dict: store {type(value).__name__} is serialized by its "
+                    f"config only; the subclass itself cannot be rebuilt from a dict."
+                )
+        elif dataclasses.is_dataclass(value) and not isinstance(value, type):
+            config = value
+        else:
+            return True
+
+        serialized: Dict[str, Any] = {}
+        for f in dataclasses.fields(config):
+            if f.name in ("db", "model", "knowledge"):
+                continue
+            field_value = getattr(config, f.name)
+            if field_value is None:
+                continue
+            if isinstance(field_value, LearningMode):
+                serialized["mode"] = field_value.value
+            elif isinstance(field_value, type):
+                serialized[f.name] = f"{field_value.__module__}.{field_value.__qualname__}"
+            elif callable(field_value):
+                serialized[f.name] = {"__callable__": getattr(field_value, "__name__", "callable")}
+            elif isinstance(field_value, (str, int, float, bool, list, dict)):
+                import json
+
+                try:
+                    json.dumps(field_value)
+                except (TypeError, ValueError):
+                    log_warning(
+                        f"LearningMachine.to_dict: dropping non-JSON-serializable config value {f.name!r}; "
+                        f"set it programmatically after rebuild."
+                    )
+                    continue
+                serialized[f.name] = field_value
+        return serialized
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "LearningMachine":
         """Reconstruct a LearningMachine from a serialized dictionary.
 
-        db and model must be injected separately (e.g. during agent/team init).
+        db and model must be injected separately (e.g. during agent/team
+        init). Accepts both the lossless per-store dicts and the old
+        boolean-only payloads. Unrestorable entries (callables, custom-store
+        refs) are logged once, never silently dropped to a different default.
         """
+        kwargs: Dict[str, Any] = {}
+        for store_name, config_cls in cls._STORE_CONFIG_CLASSES.items():
+            value = data.get(store_name, False)
+            if isinstance(value, dict):
+                kwargs[store_name] = cls._deserialize_store_config(store_name, config_cls, value)
+            else:
+                kwargs[store_name] = bool(value)
+
+        if data.get("custom_stores"):
+            log_warning(
+                f"LearningMachine.from_dict: custom stores {sorted(data['custom_stores'])} cannot be "
+                f"rebuilt from a serialized config; re-attach them programmatically."
+            )
+
         return cls(
-            user_profile=data.get("user_profile", False),
-            user_memory=data.get("user_memory", False),
-            session_context=data.get("session_context", False),
-            entity_memory=data.get("entity_memory", False),
-            learned_knowledge=data.get("learned_knowledge", False),
-            decision_log=data.get("decision_log", False),
             namespace=data.get("namespace", "global"),
+            max_updates_per_run=data.get("max_updates_per_run", 10),
             debug_mode=data.get("debug_mode", False),
+            **kwargs,
         )
+
+    @classmethod
+    def _deserialize_store_config(cls, store_name: str, config_cls: Any, payload: Dict[str, Any]) -> Any:
+        import dataclasses
+        import importlib
+
+        field_names = {f.name for f in dataclasses.fields(config_cls)}
+        kwargs: Dict[str, Any] = {}
+        for key, value in payload.items():
+            if key not in field_names:
+                continue
+            if key == "mode":
+                try:
+                    kwargs["mode"] = LearningMode(value)
+                except ValueError:
+                    # AGENTIC, not the class default: several stores default to
+                    # ALWAYS, and an unrecognized mode must never turn into a
+                    # surprise per-run extraction pass.
+                    log_warning(f"LearningMachine.from_dict: unknown mode {value!r} on {store_name}; using AGENTIC.")
+                    kwargs["mode"] = LearningMode.AGENTIC
+                continue
+            if key == "schema" and isinstance(value, str):
+                module_path, _, attr_path = value.rpartition(".")
+                try:
+                    target: Any = importlib.import_module(module_path)
+                    for part in attr_path.split("."):
+                        target = getattr(target, part)
+                    kwargs["schema"] = target
+                except Exception as e:
+                    if module_path == "__main__":
+                        log_warning(
+                            f"LearningMachine.from_dict: schema {value!r} on {store_name} was defined "
+                            f"in a __main__ script and cannot be imported from another process; "
+                            f"define custom schemas in an importable module. The store falls back "
+                            f"to its default schema."
+                        )
+                    else:
+                        log_warning(
+                            f"LearningMachine.from_dict: could not import schema {value!r} for {store_name}: {e}"
+                        )
+                continue
+            if isinstance(value, dict) and "__callable__" in value:
+                log_warning(
+                    f"LearningMachine.from_dict: {store_name}.{key} was a callable "
+                    f"({value['__callable__']}) and cannot be restored from a serialized config; "
+                    f"set it programmatically."
+                )
+                continue
+            kwargs[key] = value
+        try:
+            return config_cls(**kwargs)
+        except Exception as e:
+            # Keep every valid field: a payload carrying an invalid mode (e.g. a
+            # legacy 'always' for entity memory) must not also lose its
+            # namespace and knobs.
+            retry_kwargs = {k: v for k, v in kwargs.items() if k != "mode"}
+            if retry_kwargs != kwargs:
+                try:
+                    rebuilt = config_cls(**retry_kwargs)
+                    log_warning(
+                        f"LearningMachine.from_dict: dropped invalid mode on {store_name} ({e}); "
+                        f"other settings preserved."
+                    )
+                    return rebuilt
+                except Exception:
+                    pass
+            log_warning(f"LearningMachine.from_dict: could not rebuild {store_name} config ({e}); enabling defaults.")
+            return True
 
     # =========================================================================
     # Representation

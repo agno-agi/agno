@@ -186,42 +186,50 @@ def test_app_with_jwt(mock_db, monkeypatch):
     return app
 
 
-def test_router_delete_session_jwt_overrides_query_user_id(test_app_with_jwt, mock_db):
-    """JWT user_id must always override client-supplied ?user_id (IDOR protection)."""
+# NOTE: the JWT middleware's ``request.state.user_id`` no longer overrides a
+# client-supplied ``?user_id=`` on its own. Routers only force the JWT sub
+# when ``user_isolation`` is opted into (via ``AuthorizationConfig``). With
+# isolation off the query param wins — the tests below pin that contract so
+# a future regression toward "JWT always wins" is loud.
+
+
+def test_router_delete_session_query_user_id_wins_when_isolation_off(test_app_with_jwt, mock_db):
+    """Without ``user_isolation_enabled`` on request.state, the query param
+    is honoured even though the JWT middleware set request.state.user_id."""
     client = TestClient(test_app_with_jwt)
-    resp = client.delete("/sessions/sess-1?user_id=attacker")
+    resp = client.delete("/sessions/sess-1?user_id=alice")
     assert resp.status_code == 204
 
     call_kwargs = mock_db.delete_session.call_args.kwargs
-    assert call_kwargs["user_id"] == "jwt_alice"
+    assert call_kwargs["user_id"] == "alice"
     assert call_kwargs["session_id"] == "sess-1"
 
 
-def test_router_delete_sessions_jwt_overrides_query_user_id(test_app_with_jwt, mock_db):
-    """JWT user_id must override client-supplied ?user_id for bulk delete."""
+def test_router_delete_sessions_query_user_id_wins_when_isolation_off(test_app_with_jwt, mock_db):
+    """Bulk delete mirrors the single-delete contract."""
     client = TestClient(test_app_with_jwt)
     resp = client.request(
         "DELETE",
-        "/sessions?user_id=attacker",
+        "/sessions?user_id=alice",
         json={"session_ids": ["s-1"], "session_types": ["agent"]},
     )
     assert resp.status_code == 204
 
     call_kwargs = mock_db.delete_sessions.call_args.kwargs
-    assert call_kwargs["user_id"] == "jwt_alice"
+    assert call_kwargs["user_id"] == "alice"
 
 
-def test_router_rename_session_jwt_overrides_query_user_id(test_app_with_jwt, mock_db):
-    """JWT user_id must override client-supplied ?user_id for rename."""
+def test_router_rename_session_query_user_id_wins_when_isolation_off(test_app_with_jwt, mock_db):
+    """Rename mirrors the single-delete contract."""
     client = TestClient(test_app_with_jwt)
     resp = client.post(
-        "/sessions/sess-1/rename?user_id=attacker",
-        json={"session_name": "Hacked"},
+        "/sessions/sess-1/rename?user_id=alice",
+        json={"session_name": "Renamed"},
     )
     assert resp.status_code == 200
 
     call_kwargs = mock_db.rename_session.call_args.kwargs
-    assert call_kwargs["user_id"] == "jwt_alice"
+    assert call_kwargs["user_id"] == "alice"
     assert call_kwargs["session_id"] == "sess-1"
 
 

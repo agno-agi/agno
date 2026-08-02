@@ -23,6 +23,7 @@ from agno.run.agent import (
 )
 from agno.run.base import RunStatus
 from agno.session.agent import AgentSession
+from agno.utils.events import error_type_of
 from agno.utils.log import log_exception, log_warning
 
 
@@ -581,7 +582,7 @@ class BaseExternalAgent:
             history = self._get_history_from_session(session)
 
         try:
-            content = await self._arun_adapter(input, history=history, run_id=run_id, **kwargs)
+            content = await self._arun_adapter(input, history=history, run_id=run_id, session=session, **kwargs)
             run_output = self._build_run_output(
                 run_id=run_id,
                 session_id=session_id,
@@ -645,7 +646,9 @@ class BaseExternalAgent:
             # Map tool_call_id -> ToolExecution for merging started+completed
             tool_map: Dict[str, ToolExecution] = {}
 
-            async for event in self._arun_adapter_stream(input, history=history, run_id=run_id, **kwargs):
+            async for event in self._arun_adapter_stream(
+                input, history=history, run_id=run_id, session=session, **kwargs
+            ):
                 if isinstance(event, RunContentEvent):
                     accumulated_content += event.content or ""
                 elif isinstance(event, ToolCallStartedEvent) and event.tool:
@@ -695,6 +698,7 @@ class BaseExternalAgent:
                 agent_name=self.name or "",
                 session_id=session_id,
                 content=str(run_error),
+                error_type=error_type_of(run_error),
             )
         else:
             yield RunCompletedEvent(
@@ -746,7 +750,13 @@ class BaseExternalAgent:
     # ---------------------------------------------------------------------------
 
     async def _arun_adapter(self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any) -> Any:
-        """Non-streaming execution. Return the response content."""
+        """Non-streaming execution. Return the response content.
+
+        kwargs includes `session` (the loaded AgentSession, or None if no db).
+        Mutate `session.session_data` in place to persist adapter-specific
+        per-session state — the base class upserts the session after this
+        returns, so no separate DB write is needed.
+        """
         raise NotImplementedError(f"{self.__class__.__name__} must implement _arun_adapter")
 
     async def _arun_adapter_stream(

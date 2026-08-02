@@ -34,7 +34,12 @@ from agno.os.routers.memory.schemas import (
     UserMemorySchema,
     UserStatsSchema,
 )
-from agno.os.routers.metrics.schemas import DayAggregatedMetrics, MetricsResponse
+from agno.os.routers.metrics.schemas import (
+    DayAggregatedMetrics,
+    MetricsRefreshResponse,
+    MetricsRefreshStatusResponse,
+    MetricsResponse,
+)
 from agno.os.routers.teams.schema import TeamResponse
 from agno.os.routers.traces.schemas import (
     TraceDetail,
@@ -576,13 +581,15 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
         if images:
-            data["images"] = json.dumps([img.model_dump() for img in images])
+            data["images"] = json.dumps([img.to_dict() for img in images])
         if audio:
-            data["audio"] = json.dumps([a.model_dump() for a in audio])
+            data["audio"] = json.dumps([a.to_dict() for a in audio])
         if videos:
-            data["videos"] = json.dumps([v.model_dump() for v in videos])
+            data["videos"] = json.dumps([v.to_dict() for v in videos])
         if files:
-            data["files"] = json.dumps([f.model_dump() for f in files])
+            # Sent as "input_files" because the run endpoints already use the "files"
+            # field for multipart uploads (List[UploadFile]).
+            data["input_files"] = json.dumps([f.to_dict() for f in files])
 
         # Add kwargs to data, serializing dicts as JSON
         for key, value in kwargs.items():
@@ -636,13 +643,15 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
         if images:
-            data["images"] = json.dumps([img.model_dump() for img in images])
+            data["images"] = json.dumps([img.to_dict() for img in images])
         if audio:
-            data["audio"] = json.dumps([a.model_dump() for a in audio])
+            data["audio"] = json.dumps([a.to_dict() for a in audio])
         if videos:
-            data["videos"] = json.dumps([v.model_dump() for v in videos])
+            data["videos"] = json.dumps([v.to_dict() for v in videos])
         if files:
-            data["files"] = json.dumps([f.model_dump() for f in files])
+            # Sent as "input_files" because the run endpoints already use the "files"
+            # field for multipart uploads (List[UploadFile]).
+            data["input_files"] = json.dumps([f.to_dict() for f in files])
 
         for key, value in kwargs.items():
             if isinstance(value, dict):
@@ -848,13 +857,15 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
         if images:
-            data["images"] = json.dumps(images)
+            data["images"] = json.dumps([img.to_dict() for img in images])
         if audio:
-            data["audio"] = json.dumps(audio)
+            data["audio"] = json.dumps([a.to_dict() for a in audio])
         if videos:
-            data["videos"] = json.dumps(videos)
+            data["videos"] = json.dumps([v.to_dict() for v in videos])
         if files:
-            data["files"] = json.dumps(files)
+            # Sent as "input_files" because the run endpoints already use the "files"
+            # field for multipart uploads (List[UploadFile]).
+            data["input_files"] = json.dumps([f.to_dict() for f in files])
 
         # Add kwargs to data, serializing dicts as JSON
         for key, value in kwargs.items():
@@ -908,13 +919,15 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
         if images:
-            data["images"] = json.dumps(images)
+            data["images"] = json.dumps([img.to_dict() for img in images])
         if audio:
-            data["audio"] = json.dumps(audio)
+            data["audio"] = json.dumps([a.to_dict() for a in audio])
         if videos:
-            data["videos"] = json.dumps(videos)
+            data["videos"] = json.dumps([v.to_dict() for v in videos])
         if files:
-            data["files"] = json.dumps(files)
+            # Sent as "input_files" because the run endpoints already use the "files"
+            # field for multipart uploads (List[UploadFile]).
+            data["input_files"] = json.dumps([f.to_dict() for f in files])
 
         # Add kwargs to data, serializing dicts as JSON
         for key, value in kwargs.items():
@@ -1152,13 +1165,15 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
         if images:
-            data["images"] = json.dumps(images)
+            data["images"] = json.dumps([img.to_dict() for img in images])
         if audio:
-            data["audio"] = json.dumps(audio)
+            data["audio"] = json.dumps([a.to_dict() for a in audio])
         if videos:
-            data["videos"] = json.dumps(videos)
+            data["videos"] = json.dumps([v.to_dict() for v in videos])
         if files:
-            data["files"] = json.dumps(files)
+            # Sent as "input_files" because the run endpoints already use the "files"
+            # field for multipart uploads (List[UploadFile]).
+            data["input_files"] = json.dumps([f.to_dict() for f in files])
 
         # Add kwargs to data, serializing dicts as JSON
         for key, value in kwargs.items():
@@ -1212,13 +1227,15 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
         if images:
-            data["images"] = json.dumps(images)
+            data["images"] = json.dumps([img.to_dict() for img in images])
         if audio:
-            data["audio"] = json.dumps(audio)
+            data["audio"] = json.dumps([a.to_dict() for a in audio])
         if videos:
-            data["videos"] = json.dumps(videos)
+            data["videos"] = json.dumps([v.to_dict() for v in videos])
         if files:
-            data["files"] = json.dumps(files)
+            # Sent as "input_files" because the run endpoints already use the "files"
+            # field for multipart uploads (List[UploadFile]).
+            data["input_files"] = json.dumps([f.to_dict() for f in files])
 
         # Add kwargs to data, serializing dicts as JSON
         for key, value in kwargs.items():
@@ -1564,6 +1581,8 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
+        *,
+        user_id: Optional[str] = None,
     ) -> List[str]:
         """Get all unique memory topics.
 
@@ -1571,6 +1590,7 @@ class AgentOSClient:
             db_id: Optional database ID to use
             table: Optional table name to use
             headers: HTTP headers to include in the request (optional)
+            user_id: Optional user ID to filter topics for (keyword-only)
 
         Returns:
             List[str]: List of unique topic names
@@ -1578,7 +1598,7 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        params = {"db_id": db_id, "table": table}
+        params = {"user_id": user_id, "db_id": db_id, "table": table}
         params = {k: v for k, v in params.items() if v is not None}
 
         return await self._aget("/memory_topics", params=params, headers=headers)
@@ -1590,6 +1610,8 @@ class AgentOSClient:
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
+        *,
+        user_id: Optional[str] = None,
     ) -> PaginatedResponse[UserStatsSchema]:
         """Get user memory statistics.
 
@@ -1599,6 +1621,7 @@ class AgentOSClient:
             db_id: Optional database ID to use
             table: Optional table name to use
             headers: HTTP headers to include in the request (optional)
+            user_id: Optional user ID to filter statistics for (keyword-only)
 
         Returns:
             PaginatedResponse[UserStatsSchema]: Paginated user statistics
@@ -1606,7 +1629,7 @@ class AgentOSClient:
         Raises:
             HTTPStatusError: On HTTP errors
         """
-        params: Dict[str, Any] = {"limit": limit, "page": page, "db_id": db_id, "table": table}
+        params: Dict[str, Any] = {"user_id": user_id, "limit": limit, "page": page, "db_id": db_id, "table": table}
         params = {k: v for k, v in params.items() if v is not None}
 
         data = await self._aget("/user_memory_stats", params=params, headers=headers)
@@ -2949,12 +2972,54 @@ class AgentOSClient:
         self,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
+        background: bool = False,
         headers: Optional[Dict[str, str]] = None,
-    ) -> List[DayAggregatedMetrics]:
+    ) -> Union[List[DayAggregatedMetrics], MetricsRefreshResponse]:
         """Manually trigger recalculation of system metrics from raw data.
 
         This operation analyzes system activity logs and regenerates aggregated metrics.
         Useful for ensuring metrics are up-to-date or after system maintenance.
+        By default the refresh runs synchronously and returns the refreshed metrics.
+        With background=True the server returns 202 immediately and runs the refresh
+        in the background; poll get_metrics for results. Servers that predate
+        background support ignore the flag and refresh synchronously.
+
+        Args:
+            db_id: Optional database ID to use
+            table: Optional database table to use
+            background: Run the refresh in the background and return immediately
+            headers: HTTP headers to include in the request (optional)
+
+        Returns:
+            List[DayAggregatedMetrics]: The refreshed daily aggregated metrics (synchronous refresh)
+            MetricsRefreshResponse: Status of the refresh request (background refresh)
+
+        Raises:
+            HTTPStatusError: On HTTP errors
+        """
+        params: Dict[str, Any] = {"db_id": db_id, "table": table}
+        params = {k: v for k, v in params.items() if v is not None}
+        if background:
+            params["background"] = True
+
+        data = await self._apost("/metrics/refresh", params=params, headers=headers)
+        if isinstance(data, list):
+            return [DayAggregatedMetrics.model_validate(m) for m in data]
+        return MetricsRefreshResponse.model_validate(data)
+
+    async def get_metrics_refresh_status(
+        self,
+        db_id: Optional[str] = None,
+        table: Optional[str] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> MetricsRefreshStatusResponse:
+        """Get the status of the most recent metrics refresh for the target database.
+
+        Returns 'running' while a refresh is in progress, then 'completed' or 'failed'
+        with the finish timestamp. The state updates even when a refresh completes
+        without writing new data. Returns 'idle' if no refresh has been triggered
+        since the server process started. Intended for polling after starting a
+        background refresh via refresh_metrics(background=True).
 
         Args:
             db_id: Optional database ID to use
@@ -2962,7 +3027,7 @@ class AgentOSClient:
             headers: HTTP headers to include in the request (optional)
 
         Returns:
-            List[DayAggregatedMetrics]: List of refreshed daily aggregated metrics
+            MetricsRefreshStatusResponse: Status of the most recent refresh
 
         Raises:
             HTTPStatusError: On HTTP errors
@@ -2970,5 +3035,5 @@ class AgentOSClient:
         params: Dict[str, Any] = {"db_id": db_id, "table": table}
         params = {k: v for k, v in params.items() if v is not None}
 
-        data = await self._apost("/metrics/refresh", params=params, headers=headers)
-        return [DayAggregatedMetrics.model_validate(m) for m in data]
+        data = await self._aget("/metrics/refresh/status", params=params, headers=headers)
+        return MetricsRefreshStatusResponse.model_validate(data)

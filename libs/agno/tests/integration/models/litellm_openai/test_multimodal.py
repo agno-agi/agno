@@ -39,7 +39,7 @@ def test_audio_input_bytes():
 
     # Provide the agent with the audio file and get result as text
     agent = Agent(
-        model=LiteLLMOpenAI(id="gpt-4o-audio-preview"),
+        model=LiteLLMOpenAI(id="gpt-audio"),
         markdown=True,
         telemetry=False,
     )
@@ -51,7 +51,7 @@ def test_audio_input_bytes():
 def test_audio_input_url():
     """Test LiteLLMOpenAI with audio input from URL"""
     agent = Agent(
-        model=LiteLLMOpenAI(id="gpt-4o-audio-preview"),
+        model=LiteLLMOpenAI(id="gpt-audio"),
         markdown=True,
         telemetry=False,
     )
