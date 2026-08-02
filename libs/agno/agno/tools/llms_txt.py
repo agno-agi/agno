@@ -5,6 +5,7 @@ import httpx
 
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.llms_txt_reader import LLMsTxtReader
+from agno.knowledge.reader.utils.url_validation import is_host_allowed
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_info
 
@@ -76,7 +77,7 @@ class LLMsTxtTools(Toolkit):
         Returns:
             str: JSON with the overview and list of available documentation pages
         """
-        if not self.reader.is_host_allowed(url):
+        if not is_host_allowed(url, self.reader.allowed_hosts):
             return f"Host is not in allowed_hosts; refusing to fetch {url}"
         try:
             log_info(f"Reading llms.txt index from {url}")
@@ -100,7 +101,7 @@ class LLMsTxtTools(Toolkit):
         Returns:
             str: JSON with the overview and list of available documentation pages
         """
-        if not self.reader.is_host_allowed(url):
+        if not is_host_allowed(url, self.reader.allowed_hosts):
             return f"Host is not in allowed_hosts; refusing to fetch {url}"
         try:
             log_info(f"Reading llms.txt index from {url}")
@@ -126,7 +127,7 @@ class LLMsTxtTools(Toolkit):
         Returns:
             str: The text content of the page
         """
-        if not self.reader.is_host_allowed(url):
+        if not is_host_allowed(url, self.reader.allowed_hosts):
             return f"Host is not in allowed_hosts; refusing to fetch {url}"
         try:
             log_debug(f"Fetching URL: {url}")
@@ -148,7 +149,7 @@ class LLMsTxtTools(Toolkit):
         Returns:
             str: The text content of the page
         """
-        if not self.reader.is_host_allowed(url):
+        if not is_host_allowed(url, self.reader.allowed_hosts):
             return f"Host is not in allowed_hosts; refusing to fetch {url}"
         try:
             log_debug(f"Fetching URL: {url}")
@@ -174,7 +175,7 @@ class LLMsTxtTools(Toolkit):
         if self.knowledge is None:
             return "Knowledge base not provided"
 
-        if not self.reader.is_host_allowed(url):
+        if not is_host_allowed(url, self.reader.allowed_hosts):
             return f"Host is not in allowed_hosts; refusing to fetch {url}"
         try:
             log_info(f"Reading llms.txt from {url}")
@@ -196,7 +197,7 @@ class LLMsTxtTools(Toolkit):
         if self.knowledge is None:
             return "Knowledge base not provided"
 
-        if not self.reader.is_host_allowed(url):
+        if not is_host_allowed(url, self.reader.allowed_hosts):
             return f"Host is not in allowed_hosts; refusing to fetch {url}"
         try:
             log_info(f"Reading llms.txt from {url}")

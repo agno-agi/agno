@@ -16,24 +16,17 @@ try:
 except ImportError as e:
     raise ImportError("Slack dependencies not installed. Please install using `pip install 'agno[slack]'`") from e
 
+from agno.os.interfaces.slack.ids import (
+    ACTION_CHECK_STATUS,
+    ACTION_ROW_APPROVE,
+    ACTION_ROW_REJECT,
+    ACTION_SUBMIT,
+)
 from agno.os.interfaces.slack.security import verify_slack_signature
 from agno.team import RemoteTeam, Team
 from agno.tools.slack import SlackTools
 from agno.workflow import RemoteWorkflow, Workflow
 
-# Slack sends lifecycle events for bots with these subtypes. Without this
-# filter the router would try to process its own messages, causing infinite loops.
-_IGNORED_SUBTYPES = frozenset(
-    {
-        "bot_message",
-        "bot_add",
-        "bot_remove",
-        "bot_enable",
-        "bot_disable",
-        "message_changed",
-        "message_deleted",
-    }
-)
 
 class SlackEventResponse(BaseModel):
     status: str = Field(default="ok")
@@ -50,6 +43,7 @@ def attach_routes(
     workflow: Optional[Union[Workflow, RemoteWorkflow]] = None,
     reply_to_mentions_only: bool = True,
     token: Optional[str] = None,
+    user_token: Optional[str] = None,
     signing_secret: Optional[str] = None,
     streaming: bool = True,
     loading_messages: Optional[List[str]] = None,
@@ -60,6 +54,7 @@ def attach_routes(
     buffer_size: int = 100,
     max_file_size: int = 1_073_741_824,  # 1GB
     resolve_user_identity: bool = False,
+    respond_to_other_apps: bool = False,
 ) -> APIRouter:
     # Inner functions capture config via closure to keep each instance isolated
     entity = agent or team or workflow
@@ -77,7 +72,18 @@ def attach_routes(
     op_suffix = entity_name.lower().replace(" ", "_")
     entity_id = getattr(entity, "id", None) or entity_name
 
-    slack_tools = SlackTools(token=token, ssl=ssl, max_file_size=max_file_size)
+    slack_tools = SlackTools(token=token, user_token=user_token, ssl=ssl, max_file_size=max_file_size)
+
+    # Bot identity for filtering own messages (avoids echo loops)
+    own_bot_id: Optional[str] = None
+    own_bot_user_id: Optional[str] = None
+    try:
+        auth_result = slack_tools.client.auth_test()
+        own_bot_id = auth_result.get("bot_id")
+        own_bot_user_id = auth_result.get("user_id")
+    except Exception:
+        pass
+
     bot_name_resolver = BotNameResolver()
     if entity is None:
         raise ValueError("attach_routes requires agent, team, or workflow")
@@ -101,6 +107,9 @@ def attach_routes(
         bot_name_resolver=bot_name_resolver,
         reply_to_mentions_only=reply_to_mentions_only,
         resolve_user_identity=resolve_user_identity,
+        respond_to_other_apps=respond_to_other_apps,
+        own_bot_id=own_bot_id,
+        own_bot_user_id=own_bot_user_id,
         loading_text=loading_text,
         loading_messages=loading_messages,
         task_display_mode=task_display_mode,
@@ -149,24 +158,14 @@ def attach_routes(
         if "event" in data:
             event = data["event"]
             event_type = event.get("type")
-            # setSuggestedPrompts requires "Agents & AI Apps" mode (streaming UX only)
+
             if event_type == "assistant_thread_started" and streaming:
                 background_tasks.add_task(event_handler.handle_thread_started, event)
-            # Bot self-loop prevention: check bot_id at BOTH the top-level event
-            # AND inside message_changed's nested "message" object. Slack puts
-            # bot_id at different nesting levels depending on event shape — the
-            # nested check catches edited bot messages that would otherwise be
-            # reprocessed as new user events.
-            elif (
-                event.get("bot_id")
-                or (event.get("message") or {}).get("bot_id")
-                or event.get("subtype") in _IGNORED_SUBTYPES
-            ):
-                pass
-            elif streaming:
-                background_tasks.add_task(event_handler.handle_streaming, data)
-            else:
-                background_tasks.add_task(event_handler.handle_non_streaming, data)
+            elif event_handler.should_process(event):
+                if streaming:
+                    background_tasks.add_task(event_handler.handle_streaming, data)
+                else:
+                    background_tasks.add_task(event_handler.handle_non_streaming, data)
 
         return SlackEventResponse(status="ok")
 
@@ -216,11 +215,13 @@ def attach_routes(
             return SlackEventResponse(status="ok")
         action_id = actions[0].get("action_id", "")
 
-        if action_id == "row_approve":
+        if action_id == ACTION_ROW_APPROVE:
             background_tasks.add_task(hitl.handle_row_approve, payload)
-        elif action_id == "row_reject":
+        elif action_id == ACTION_ROW_REJECT:
             background_tasks.add_task(hitl.handle_row_reject, payload)
-        elif action_id == "submit_pause":
+        elif action_id == ACTION_CHECK_STATUS:
+            background_tasks.add_task(hitl.handle_check_status, payload)
+        elif action_id == ACTION_SUBMIT:
             background_tasks.add_task(hitl.handle_submit, payload)
         # Silently ignore unknown action_ids — a non-HITL Slack app sharing
         # the same endpoint might also post interactions here.

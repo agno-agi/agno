@@ -25,7 +25,7 @@ from agno.models.google import Gemini
 # Set GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION env vars
 agent = Agent(
     model=Gemini(
-        id="gemini-3-flash-preview",
+        id="gemini-3.5-flash",
         vertexai=True,
     ),
     markdown=True,

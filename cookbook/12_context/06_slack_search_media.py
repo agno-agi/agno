@@ -18,7 +18,9 @@ when you want faster/cheaper tool calls but stronger reasoning on top.
 Requires:
     GOOGLE_API_KEY
     SLACK_BOT_TOKEN  (xoxb-) — uses channel history, no search
-    SLACK_TOKEN      (xoxp-) — enables search_messages API
+
+Optional:
+    SLACK_USER_TOKEN (xoxp-) — enables search_messages API
 
 With a bot token, search_messages returns `not_allowed_token_type` and
 the agent falls back to get_channel_history. With a user token, both
@@ -37,12 +39,12 @@ from agno.context.slack import SlackContextProvider
 from agno.models.google import Gemini
 
 slack = SlackContextProvider(
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     enable_media_tools=True,
 )
 
 agent = Agent(
-    model=Gemini(id="gemini-3-flash-preview"),
+    model=Gemini(id="gemini-3.5-flash"),
     tools=slack.get_tools(),
     instructions=slack.instructions(),
     markdown=True,

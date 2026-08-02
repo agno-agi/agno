@@ -116,3 +116,23 @@ DEBUG *
 
 ---
 
+### cancel_run_persistence.py
+
+**Status:** PASS
+
+**Description:** Cancels a team run mid-stream and verifies partial content and messages are preserved in the database.
+
+**Result:** Completed successfully. Status=CANCELLED, content preserved, 3 messages persisted.
+
+---
+
+### team_cancel_while_member_runs.py
+
+**Status:** PASS
+
+**Description:** Cancels a team run while a member agent is actively streaming. Verifies that cancellation propagates from the team to the in-flight member, and both runs are persisted with status=cancelled and partial content preserved.
+
+**Result:** Completed successfully. Two runs persisted (member + team), both Status=CANCELLED with partial content preserved (178 + 171 chars).
+
+---
+

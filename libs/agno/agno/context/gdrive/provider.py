@@ -72,8 +72,9 @@ class GoogleDriveContextProvider(ContextProvider):
         instructions: str | None = None,
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
+        stream_sub_agent_events: bool = True,
     ) -> None:
-        super().__init__(id=id, name=name, mode=mode, model=model)
+        super().__init__(id=id, name=name, mode=mode, model=model, stream_sub_agent_events=stream_sub_agent_events)
 
         # Store params — toolkit handles actual auth
         self._sa_path = service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
@@ -150,6 +151,9 @@ class GoogleDriveContextProvider(ContextProvider):
                 drive_id=self._drive_id,
             )
         return self._tools
+
+    async def _aget_query_agent(self, run_context):
+        return self._ensure_agent()
 
     def _ensure_agent(self) -> Agent:
         if self._agent is None:

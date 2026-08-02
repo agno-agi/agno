@@ -788,8 +788,8 @@ def test_custom_app_with_mcp_tools_lifespan(test_agent: Agent):
     assert mcp_close_called is True
 
 
-def test_custom_app_with_enable_mcp_server():
-    """Test that enable_mcp_server=True works with a custom base_app.
+def test_custom_app_with_mcp_server():
+    """Test that mcp_server=True works with a custom base_app.
 
     Note: This test requires a compatible version of fastmcp that exports
     fastmcp.server.http.StarletteWithLifespan. If this import fails, it indicates
@@ -812,11 +812,11 @@ def test_custom_app_with_enable_mcp_server():
     # Setup a simple agent
     agent = Agent(name="test-agent", db=InMemoryDb())
 
-    # Setup AgentOS with enable_mcp_server=True and custom base_app
+    # Setup AgentOS with mcp_server=True and custom base_app
     agent_os = AgentOS(
         agents=[agent],
         base_app=custom_app,
-        enable_mcp_server=True,
+        mcp_server=True,
     )
     app = agent_os.get_app()
 

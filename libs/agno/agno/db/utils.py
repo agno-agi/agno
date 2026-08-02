@@ -35,6 +35,13 @@ DB_TABLE_NAME_KEYS: frozenset = frozenset(
         "schedules_table",
         "schedule_runs_table",
         "approvals_table",
+        "auth_tokens_table",
+        "service_accounts_table",
+        "mcp_oauth_clients_table",
+        "mcp_oauth_codes_table",
+        "mcp_oauth_refresh_tokens_table",
+        "mcp_oauth_transactions_table",
+        "mcp_oauth_keys_table",
     }
 )
 
@@ -180,6 +187,68 @@ def get_sort_value(record: Dict[str, Any], sort_by: str) -> Any:
     if value is None and sort_by == "updated_at":
         value = record.get("created_at")
     return value
+
+
+def learning_search_patterns(query: str) -> List[str]:
+    """Build the ILIKE patterns for a learnings text search.
+
+    Three properties, each load-bearing:
+
+    - The stored content mixes display names ("Sarah Chen") with slugs
+      ("sarah_chen"), so runs of spaces and underscores in the query become the
+      single-char LIKE wildcard ``_`` - one pattern crosses both forms.
+    - ``%`` and ``\\`` in the query are escaped (callers pass the pattern with
+      ``escape="\\\\"``), so a model-authored query containing ``%`` cannot
+      collapse search into match-everything-by-recency.
+    - SQLite stores JSON with ``ensure_ascii`` escapes (``café`` is stored as
+      ``caf\\u00e9``), so a non-ASCII query also gets its JSON-escaped variant;
+      on Postgres, where ``::text`` renders real characters, that extra pattern
+      simply never matches.
+
+    A query with no content beyond wildcards and whitespace yields no patterns.
+
+    Args:
+        query: The text to search for.
+
+    Returns:
+        Deduplicated '%...%' patterns to OR together with ILIKE (escape '\\').
+    """
+    import re
+
+    stripped = query.strip()
+    if not re.sub(r"[%_\s]+", "", stripped):
+        return []
+
+    variants = [stripped]
+    # SQLite stores JSON with ensure_ascii escapes, and LIKE folds ASCII only,
+    # so an escape sequence never case-matches: a stored "Ος" is unreachable
+    # from "ΟΣ", "ος" or "οσ". No set of pre-cased whole-string variants covers
+    # the mixed forms, so the escape carries a wildcard per character instead -
+    # \\uXXXX is six characters wide - and the caller's value-scoped Python
+    # check (which casefolds) rejects whatever that lets through. Loose
+    # prefilter, precise verification, which is what this pair is for.
+    #
+    # The wildcards are carried as a sentinel until after the separator
+    # collapse below, which would otherwise fold a run of them into one.
+    wildcard = "\x00"
+    json_form = json.dumps(stripped, ensure_ascii=True)[1:-1]
+    if json_form != stripped:
+        variants.append(re.sub(r"\\u[0-9a-fA-F]{4}", wildcard * 6, json_form))
+
+    patterns: List[str] = []
+    for variant in variants:
+        escaped = variant.replace("\\", "\\\\").replace("%", "\\%")
+        # Runs of separators collapse to the single-char wildcard, so one
+        # pattern crosses the display-name/slug boundary in both directions
+        # ("sarah chen", "sarah_chen", "sarah__chen"). The hyphen is one of
+        # them: without it "multi-tenant" could never reach a stored "multi
+        # tenant", and the client-side verifier - which does fold hyphens -
+        # was already accepting what this pattern refused to fetch.
+        crossed = re.sub(r"[\s_\-]+", "_", escaped).replace(wildcard, "_")
+        pattern = f"%{crossed}%"
+        if pattern not in patterns:
+            patterns.append(pattern)
+    return patterns
 
 
 class CustomJSONEncoder(json.JSONEncoder):
@@ -338,6 +407,14 @@ def db_from_dict(db_data: Dict[str, Any]) -> Optional[Union["BaseDb"]]:
         except Exception as e:
             log_error(f"Error reconstructing SqliteDb from dictionary: {str(e)}")
             return None
+    elif db_type == "clickhouse":
+        try:
+            from agno.db.clickhouse import ClickhouseDb
+
+            return ClickhouseDb.from_dict(db_data)
+        except Exception as e:
+            log_error(f"Error reconstructing ClickhouseDb from dictionary: {str(e)}")
+            return None
     else:
         log_warning(f"Unknown database type: {db_type}")
         return None
@@ -374,6 +451,7 @@ def _clone_db_with_table_overrides(
                 db_engine=source_db.db_engine,
                 db_schema=source_db.db_schema,
                 id=source_db.id,
+                create_schema=source_db.create_schema,
                 **overrides,
             )
     except Exception as e:
