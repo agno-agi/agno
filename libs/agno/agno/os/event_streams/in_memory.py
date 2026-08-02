@@ -60,6 +60,13 @@ class InMemoryEventStream(BaseEventStream):
         self._buffer.set_run_completed(run_id, status)
         await self._subscribers.complete(run_id)
 
+    async def reopen_run(self, run_id: str) -> bool:
+        # Single synchronous buffer call: atomic per event loop, so a racing
+        # worker's terminal write can never be overwritten with PENDING. No
+        # sentinel work needed in-memory - tails consult the buffer status,
+        # which this flip updates.
+        return bool(self._buffer.reopen_run(run_id))
+
     async def cleanup_run(self, run_id: str) -> None:
         self._buffer.cleanup_run(run_id)
 

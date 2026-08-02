@@ -925,23 +925,30 @@ async def acontinue_via_queue(
         # so this refusal can never race an acceptance
         return {"outcome": "stream_mismatch", "job": job, "tail_from": None}
     status = job.get("status")
-    # Tail floor BEFORE any acceptance. The pause is settled (no producer is
-    # writing), so the count is stable until OUR CAS makes the ticket
-    # claimable. For attach this may pre-date the in-flight continuation's
-    # first events: the attacher replays a few indices rather than missing
-    # them (clients dedupe by event_index, mirroring resume).
+    # Tail floor BEFORE any acceptance, from the INDEX COUNTER (get_last_index),
+    # never the event count: indices are strictly increasing but not gapless
+    # and survive buffer trims, so count-1 under-shoots and would replay
+    # pre-approval history into the continue response. The pause is settled
+    # (no producer is writing), so the counter is stable until OUR CAS makes
+    # the ticket claimable.
     tail_from: Optional[int] = None
     if ticket_streams:
         with contextlib.suppress(Exception):
             from agno.os.event_streams import get_event_stream
 
-            current_count = await get_event_stream().get_event_count(run_id)
-            tail_from = current_count - 1 if current_count > 0 else None
+            last_index = await get_event_stream().get_last_index(run_id)
+            tail_from = last_index if last_index >= 0 else None
     if status == "running":
         return {"outcome": "settling", "job": job, "tail_from": tail_from}
     if status == "queued":
-        if (job.get("payload") or {}).get("continue"):
-            return {"outcome": "attach", "job": job, "tail_from": tail_from}
+        existing_continue = (job.get("payload") or {}).get("continue")
+        if existing_continue:
+            # Attach uses the WINNER's persisted boundary (stamped into the
+            # payload by the accepted continue's CAS), not a recomputed one:
+            # by attach time the leg may have started publishing, and a fresh
+            # floor would skip its early events for the attacher.
+            persisted = existing_continue.get("tail_from", tail_from)
+            return {"outcome": "attach", "job": job, "tail_from": persisted}
         # A queued ticket without a continue block is a fresh submission that
         # has not executed - continuing it is a state error the detached
         # path reports properly (the run row cannot be PAUSED and the ticket
@@ -952,36 +959,40 @@ async def acontinue_via_queue(
         # timed out after the pause write): the detached path can still
         # continue the run; the caller logs the bypass
         return None
+    # Clear stale cancellation intent BEFORE the CAS (requeue-endpoint fix,
+    # mirrored - intent left over from the paused stretch would kill the new
+    # leg at its first checkpoint). Ordering is load-bearing: cleared AFTER
+    # the CAS, this could erase a LEGITIMATE cancel that targeted the
+    # already-claimed continuation. Cleared before, any cancel landing next
+    # hits a still-paused ticket, flips it paused -> cancelled, and our CAS
+    # loses with an honest conflict - the store transition is the arbiter.
+    try:
+        from agno.run.cancel import acleanup_run
+
+        await acleanup_run(run_id)
+    except Exception:
+        log_warning(f"Could not clear cancellation intent for continued run {run_id}")
+    if ticket_streams:
+        # Persist the tail boundary in the continue block so every attacher
+        # reads the accepted click's floor instead of recomputing one after
+        # the leg already started publishing
+        continue_payload = dict(continue_payload)
+        continue_payload["tail_from"] = tail_from
     result = await queue_worker.store.continue_job(run_id, continue_payload)
     result["tail_from"] = tail_from
-    if result.get("outcome") == "queued":
-        # Requeue-endpoint fix, mirrored: cancellation intent left over from
-        # the paused stretch would kill the new leg at its first checkpoint.
-        # (A cancel that MEANT it flipped the ticket to cancelled first - the
-        # CAS would have returned conflict.)
-        try:
-            from agno.run.cancel import acleanup_run
+    if result.get("outcome") == "queued" and ticket_streams:
+        # PAUSED is tail-terminal in the event stream (status AND a stream
+        # sentinel): without reopening, a tail attached between accept and
+        # the leg's first event replays the settled pause and closes empty.
+        # reopen_run is ATOMIC per implementation (buffer-sync in-memory,
+        # WATCH/MULTI CAS + sentinel-invalidating marker on Redis) and
+        # declines if a racing worker already wrote a newer status - PENDING
+        # never overwrites a terminal state. Fail-open - the continue is
+        # already accepted; a failed reopen only degrades the live view.
+        with contextlib.suppress(Exception):
+            from agno.os.event_streams import get_event_stream
 
-            await acleanup_run(run_id)
-        except Exception:
-            log_warning(f"Could not clear cancellation intent for continued run {run_id}")
-        if ((result.get("job") or {}).get("payload") or {}).get("stream"):
-            # PAUSED is tail-terminal in the event stream: without this flip a
-            # tail attached between accept and claim replays the settled pause
-            # and closes. CONDITIONAL: a fast worker may already have run the
-            # whole leg and written a terminal status between the CAS and
-            # here - PENDING must never overwrite it (tails would wait on a
-            # finished run). The get->set window that remains is microseconds
-            # against a full leg execution. Fail-open - the continue is
-            # already accepted; a failed flip only degrades the live view.
-            with contextlib.suppress(Exception):
-                from agno.os.event_streams import get_event_stream
-                from agno.run.base import RunStatus
-
-                event_stream = get_event_stream()
-                current = await event_stream.get_run_status(run_id)
-                if current in (None, RunStatus.paused):
-                    await event_stream.set_run_status(run_id, RunStatus.pending)
+            await get_event_stream().reopen_run(run_id)
     return result
 
 

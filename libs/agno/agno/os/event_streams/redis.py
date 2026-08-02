@@ -171,6 +171,24 @@ class RedisEventStream(BaseEventStream):
             await asyncio.sleep(interval)
             for run_id in list(self._active_runs):
                 try:
+                    # Cross-replica handoff check: the replica that parked a
+                    # run as PAUSED keeps refreshing it, but the continuation
+                    # may execute AND finish on another replica - the Redis
+                    # status is the shared truth. Once it is terminal (or the
+                    # keys are gone), stop refreshing so the TTL can reap the
+                    # keys instead of this process renewing them forever.
+                    # PAUSED and PENDING/RUNNING keep refreshing: parked and
+                    # reopened-awaiting-claim runs are exactly what the
+                    # refresher exists for.
+                    raw_status = _to_str(await self._redis.get(self._status_key(run_id)))
+                    if raw_status is None or raw_status in (
+                        RunStatus.completed.value,
+                        RunStatus.error.value,
+                        RunStatus.cancelled.value,
+                    ):
+                        self._active_runs.discard(run_id)
+                        self._last_ttl_refresh.pop(run_id, None)
+                        continue
                     pipe = self._redis.pipeline()
                     pipe.expire(self._stream_key(run_id), self._ttl)
                     pipe.expire(self._status_key(run_id), self._ttl)
@@ -216,6 +234,41 @@ class RedisEventStream(BaseEventStream):
         pipe.expire(self._stream_key(run_id), self._ttl)
         pipe.expire(self._counter_key(run_id), self._ttl)
         await pipe.execute()
+
+    async def reopen_run(self, run_id: str) -> bool:
+        """Atomically reopen a PAUSED run for a continuation leg.
+
+        WATCH/MULTI CAS on the status key: the flip to PENDING only lands if
+        the status is still PAUSED (or the keys expired), so a racing
+        worker's terminal write is never overwritten. The same transaction
+        appends a "reopen" marker to the stream - tails end on a sentinel
+        only when NOTHING follows it, so the marker invalidates the pause
+        sentinel and a tail attached before the leg's first event stays
+        open instead of closing empty. Markers carry no idx and are skipped
+        by replay and tail alike.
+        """
+        from redis.exceptions import WatchError
+
+        status_key = self._status_key(run_id)
+        stream_key = self._stream_key(run_id)
+        for _ in range(10):
+            try:
+                async with self._redis.pipeline(transaction=True) as pipe:
+                    await pipe.watch(status_key)
+                    current = _to_str(await pipe.get(status_key))
+                    if current is not None and current != RunStatus.paused.value:
+                        await pipe.unwatch()
+                        return False
+                    pipe.multi()
+                    pipe.set(status_key, RunStatus.pending.value, ex=self._ttl)
+                    pipe.xadd(stream_key, {"reopen": "1"}, maxlen=self._maxlen, approximate=True)
+                    pipe.expire(stream_key, self._ttl)
+                    pipe.expire(self._counter_key(run_id), self._ttl)
+                    await pipe.execute()
+                    return True
+            except WatchError:
+                continue  # status changed under us; re-evaluate it
+        return False
 
     async def cleanup_run(self, run_id: str) -> None:
         self._last_ttl_refresh.pop(run_id, None)

@@ -245,6 +245,77 @@ class TestAcceptSideEffects:
             es_mod._event_stream = original
 
     @pytest.mark.asyncio
+    async def test_intent_cleared_before_the_cas(self):
+        """Review-round-2 P1: cleared AFTER the CAS, the cleanup can erase a
+        LEGITIMATE cancel that targeted the already-claimed continuation.
+        The clear must precede the CAS - any cancel landing next hits a
+        still-paused ticket and wins or loses atomically at the store."""
+        from agno.run.cancel import acancel_run, ais_cancelled, aregister_run
+
+        store = InMemoryQueueStore()
+        await _pause(store)
+        await aregister_run("r1")
+        await acancel_run("r1")
+
+        order: list = []
+        original_continue = store.continue_job
+
+        async def recording_continue(job_id, continue_payload):
+            order.append(("cas", await ais_cancelled(job_id)))
+            return await original_continue(job_id, continue_payload)
+
+        store.continue_job = recording_continue  # type: ignore[method-assign]
+        result = await acontinue_via_queue(make_worker(store), "r1", {})
+        assert result["outcome"] == "queued"
+        assert order == [("cas", False)], "stale intent must already be cleared when the CAS runs"
+
+    @pytest.mark.asyncio
+    async def test_attach_uses_winners_persisted_tail_boundary(self):
+        """Review-round-2 P2: by attach time the accepted leg may already be
+        publishing; a recomputed floor would skip its early events for the
+        attacher. The winner's boundary is persisted in the ticket payload
+        at CAS time and every attacher reads THAT."""
+        import agno.os.event_streams as es_mod
+        from agno.os.event_streams import InMemoryEventStream, set_event_stream
+        from agno.os.managers import EventsBuffer, SSESubscriberManager
+        from agno.run.base import RunStatus
+
+        class _Evt:
+            def __init__(self, name: str) -> None:
+                self.event = name
+
+            def to_dict(self) -> dict:
+                return {"event": self.event}
+
+        original = es_mod._event_stream
+        stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+        set_event_stream(stream)
+        try:
+            store = InMemoryQueueStore()
+            await _pause(store, stream=True)
+            await stream.register_run("r1", RunStatus.pending)
+            for _ in range(3):
+                await stream.add_event("r1", _Evt("LegOne"))
+
+            worker = make_worker(store)
+            accepted = await acontinue_via_queue(worker, "r1", {"a": 1})
+            assert accepted["outcome"] == "queued"
+            winner_floor = accepted["tail_from"]
+            assert accepted["job"]["payload"]["continue"]["tail_from"] == winner_floor
+
+            # The claimed leg starts publishing before the double-click lands
+            await stream.add_event("r1", _Evt("LegTwoFirst"))
+            await stream.add_event("r1", _Evt("LegTwoSecond"))
+
+            attached = await acontinue_via_queue(worker, "r1", {"a": 2})
+            assert attached["outcome"] == "attach"
+            assert attached["tail_from"] == winner_floor, (
+                "the attacher must start from the accepted click's boundary, not skip the leg's early events"
+            )
+        finally:
+            es_mod._event_stream = original
+
+    @pytest.mark.asyncio
     async def test_non_stream_submission_does_not_touch_stream_status(self):
         import agno.os.event_streams as es_mod
         from agno.os.event_streams import InMemoryEventStream, set_event_stream
