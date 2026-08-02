@@ -36,7 +36,7 @@ class TestTelegramToolsInit:
         from agno.tools.telegram import TelegramTools
 
         tools = TelegramTools(chat_id="12345")
-        assert "telegram_send_message" in tools.functions
+        assert "send_message" in tools.functions
         assert "send_photo" not in tools.functions
 
     def test_token_from_env(self, monkeypatch):
@@ -87,7 +87,7 @@ class TestTelegramToolsInit:
         from agno.tools.telegram import TelegramTools
 
         tools = TelegramTools(chat_id="12345")
-        for name in ("send_photo", "telegram_send_document", "send_video", "send_audio", "send_animation", "send_sticker"):
+        for name in ("send_photo", "send_document", "send_video", "send_audio", "send_animation", "send_sticker"):
             assert name not in tools.functions
 
     def test_media_tools_enabled_explicitly(self, monkeypatch):
@@ -103,7 +103,7 @@ class TestTelegramToolsInit:
             enable_send_animation=True,
             enable_send_sticker=True,
         )
-        for name in ("send_photo", "telegram_send_document", "send_video", "send_audio", "send_animation", "send_sticker"):
+        for name in ("send_photo", "send_document", "send_video", "send_audio", "send_animation", "send_sticker"):
             assert name in tools.functions
 
     def test_edit_delete_disabled_by_default(self, monkeypatch):
@@ -112,7 +112,7 @@ class TestTelegramToolsInit:
 
         tools = TelegramTools(chat_id="12345")
         assert "edit_message" not in tools.functions
-        assert "telegram_delete_message" not in tools.functions
+        assert "delete_message" not in tools.functions
 
     def test_edit_delete_enabled(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
@@ -120,7 +120,7 @@ class TestTelegramToolsInit:
 
         tools = TelegramTools(chat_id="12345", enable_edit_message=True, enable_delete_message=True)
         assert "edit_message" in tools.functions
-        assert "telegram_delete_message" in tools.functions
+        assert "delete_message" in tools.functions
 
     def test_react_disabled_by_default(self, monkeypatch):
         monkeypatch.setenv("TELEGRAM_TOKEN", "fake-token")
@@ -142,15 +142,15 @@ class TestTelegramToolsInit:
 
         tools = TelegramTools(chat_id="12345", all=True)
         expected = (
-            "telegram_send_message",
+            "send_message",
             "send_photo",
-            "telegram_send_document",
+            "send_document",
             "send_video",
             "send_audio",
             "send_animation",
             "send_sticker",
             "edit_message",
-            "telegram_delete_message",
+            "delete_message",
             "react_with_emoji",
             "pin_message",
             "get_chat",
@@ -171,9 +171,9 @@ class TestTelegramToolsInit:
         from agno.tools.telegram import TelegramTools
 
         tools = TelegramTools(chat_id="12345", enable_send_photo=True, enable_send_document=True)
-        assert "telegram_send_message" in tools.functions
+        assert "send_message" in tools.functions
         assert "send_photo" in tools.functions
-        assert "telegram_send_document" in tools.functions
+        assert "send_document" in tools.functions
         assert "send_video" not in tools.functions
 
     def test_creates_telebot_instance(self, monkeypatch):
@@ -218,10 +218,10 @@ class TestSendMessage:
         tools = TelegramTools(chat_id="12345")
         mock_result = MagicMock()
         mock_result.message_id = 101
-        tools.bot.telegram_send_message = MagicMock(return_value=mock_result)
+        tools.bot.send_message = MagicMock(return_value=mock_result)
 
-        result = tools.telegram_send_message("Hello")
-        tools.bot.telegram_send_message.assert_called_once_with("12345", "Hello")
+        result = tools.send_message("Hello")
+        tools.bot.send_message.assert_called_once_with("12345", "Hello")
         parsed = json.loads(result)
         assert parsed["status"] == "success"
         assert parsed["message_id"] == 101
@@ -231,9 +231,9 @@ class TestSendMessage:
         from agno.tools.telegram import TelegramTools
 
         tools = TelegramTools(chat_id="12345")
-        tools.bot.telegram_send_message = MagicMock(side_effect=_FakeApiTelegramException("sendMessage", "Bad Request", 400))
+        tools.bot.send_message = MagicMock(side_effect=_FakeApiTelegramException("sendMessage", "Bad Request", 400))
 
-        result = tools.telegram_send_message("Hello")
+        result = tools.send_message("Hello")
         parsed = json.loads(result)
         assert parsed["status"] == "error"
         assert "Bad Request" in parsed["message"]
@@ -264,10 +264,10 @@ class TestSendDocument:
         tools = TelegramTools(chat_id="12345")
         mock_result = MagicMock()
         mock_result.message_id = 105
-        tools.bot.telegram_send_document = MagicMock(return_value=mock_result)
+        tools.bot.send_document = MagicMock(return_value=mock_result)
 
-        result = tools.telegram_send_document(b"doc-bytes", "report.pdf")
-        tools.bot.telegram_send_document.assert_called_once_with("12345", ("report.pdf", b"doc-bytes"), caption=None)
+        result = tools.send_document(b"doc-bytes", "report.pdf")
+        tools.bot.send_document.assert_called_once_with("12345", ("report.pdf", b"doc-bytes"), caption=None)
         parsed = json.loads(result)
         assert parsed["status"] == "success"
         assert parsed["message_id"] == 105
@@ -426,10 +426,10 @@ class TestDeleteMessage:
         from agno.tools.telegram import TelegramTools
 
         tools = TelegramTools(chat_id="12345", enable_delete_message=True)
-        tools.bot.telegram_delete_message = MagicMock(return_value=True)
+        tools.bot.delete_message = MagicMock(return_value=True)
 
-        result = tools.telegram_delete_message(message_id=42)
-        tools.bot.telegram_delete_message.assert_called_once_with("12345", 42)
+        result = tools.delete_message(message_id=42)
+        tools.bot.delete_message.assert_called_once_with("12345", 42)
         parsed = json.loads(result)
         assert parsed["status"] == "success"
         assert parsed["deleted"] is True
@@ -439,9 +439,9 @@ class TestDeleteMessage:
         from agno.tools.telegram import TelegramTools
 
         tools = TelegramTools(chat_id="12345", enable_delete_message=True)
-        tools.bot.telegram_delete_message = MagicMock(side_effect=_FakeApiTelegramException("deleteMessage", "Bad Request", 400))
+        tools.bot.delete_message = MagicMock(side_effect=_FakeApiTelegramException("deleteMessage", "Bad Request", 400))
 
-        result = tools.telegram_delete_message(message_id=42)
+        result = tools.delete_message(message_id=42)
         parsed = json.loads(result)
         assert parsed["status"] == "error"
         assert "Bad Request" in parsed["message"]

@@ -32,7 +32,7 @@ team = Team(
 )
 expected_tool_calls = [
     "delegate_task_to_member",
-    "web_search_news",
+    "search_news",
 ]
 
 

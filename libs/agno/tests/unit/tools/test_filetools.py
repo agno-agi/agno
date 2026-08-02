@@ -20,12 +20,12 @@ def test_save_and_read_file():
         assert result == "test.txt"
 
         # Read it back
-        read_content = file_tools.file_read(file_name="test.txt")
+        read_content = file_tools.read_file(file_name="test.txt")
         assert read_content == content
 
 
 def test_list_files_returns_relative_paths():
-    """Test that file_list returns relative paths, not absolute paths."""
+    """Test that list_files returns relative paths, not absolute paths."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         base_dir = Path(tmp_dir)
         file_tools = FileTools(base_dir=base_dir)
@@ -36,7 +36,7 @@ def test_list_files_returns_relative_paths():
         (base_dir / "file3.md").write_text("content3")
 
         # List files
-        result = file_tools.file_list()
+        result = file_tools.list_files()
         files = json.loads(result)
 
         # Verify we have 3 files
@@ -50,9 +50,9 @@ def test_list_files_returns_relative_paths():
 
 
 def test_list_files_schema_exposes_directory():
-    """Test that file_list exposes its optional directory argument."""
+    """Test that list_files exposes its optional directory argument."""
     file_tools = FileTools()
-    function = file_tools.functions["file_list"]
+    function = file_tools.functions["list_files"]
     function.process_entrypoint()
 
     properties = function.parameters["properties"]
@@ -69,12 +69,12 @@ def test_list_files_empty_directory_falls_back_to_base_dir():
 
         (base_dir / "file1.txt").write_text("content1")
 
-        assert json.loads(file_tools.file_list(directory="")) == ["file1.txt"]
-        assert file_tools.file_list(directory="") == file_tools.file_list()
+        assert json.loads(file_tools.list_files(directory="")) == ["file1.txt"]
+        assert file_tools.list_files(directory="") == file_tools.list_files()
 
 
 def test_search_files_returns_relative_paths():
-    """Test that file_search returns relative paths in JSON structure."""
+    """Test that search_files returns relative paths in JSON structure."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         base_dir = Path(tmp_dir)
         file_tools = FileTools(base_dir=base_dir)
@@ -87,7 +87,7 @@ def test_search_files_returns_relative_paths():
         (subdir / "file3.txt").write_text("content3")
 
         # Search for .txt files
-        result = file_tools.file_search(pattern="*.txt")
+        result = file_tools.search_files(pattern="*.txt")
         data = json.loads(result)
 
         # Verify JSON structure
@@ -106,7 +106,7 @@ def test_search_files_returns_relative_paths():
             assert file_path == "file1.txt"
 
         # Search with recursive pattern
-        result = file_tools.file_search(pattern="**/*.txt")
+        result = file_tools.search_files(pattern="**/*.txt")
         data = json.loads(result)
 
         assert data["matches_found"] == 2
@@ -131,7 +131,7 @@ def test_search_files_does_not_return_traversal_matches_outside_base():
         (outside_dir / "secret.txt").write_text("outside secret")
         file_tools = FileTools(base_dir=base_dir)
 
-        result = json.loads(file_tools.file_search(pattern="../outside/*.txt"))
+        result = json.loads(file_tools.search_files(pattern="../outside/*.txt"))
 
         assert result["matches_found"] == 0
         assert result["files"] == []
@@ -142,11 +142,11 @@ def test_save_and_delete_file():
         f = FileTools(base_dir=Path(tmpdirname), enable_delete_file=True)
         res = f.save_file(contents="contents", file_name="file.txt")
         assert res == "file.txt"
-        contents = f.file_read(file_name="file.txt")
+        contents = f.read_file(file_name="file.txt")
         assert contents == "contents"
         result = f.delete_file(file_name="file.txt")
         assert result == ""
-        contents = f.file_read(file_name="file.txt")
+        contents = f.read_file(file_name="file.txt")
         assert contents != "contents"
 
 
@@ -168,7 +168,7 @@ def test_replace_file_chunk():
         f.save_file(contents="line0\nline1\nline2\nline3\n", file_name="file1.txt")
         res = f.replace_file_chunk(file_name="file1.txt", start_line=1, end_line=2, chunk="some\nstuff")
         assert res == "file1.txt"
-        new_contents = f.file_read(file_name="file1.txt")
+        new_contents = f.read_file(file_name="file1.txt")
         assert new_contents == "line0\nsome\nstuff\nline3\n"
 
 
@@ -234,7 +234,7 @@ def test_search_content_skips_symlink_targets_outside_base():
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlinks require admin on Windows")
 def test_list_files_skips_symlink_targets_outside_base():
-    """Test that file_list skips symlink targets outside base_dir."""
+    """Test that list_files skips symlink targets outside base_dir."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         root = Path(tmp_dir)
         base_dir = root / "base"
@@ -249,7 +249,7 @@ def test_list_files_skips_symlink_targets_outside_base():
             pytest.skip("Symlink creation not permitted on this platform")
         file_tools = FileTools(base_dir=base_dir)
 
-        files = json.loads(file_tools.file_list())
+        files = json.loads(file_tools.list_files())
 
         assert "inside.txt" in files
         assert "linked-secret.txt" not in files
@@ -316,10 +316,10 @@ def test_default_exclude_patterns_hide_junk():
         venv_pkg.mkdir(parents=True)
         (venv_pkg / "x.py").write_text("print('x')")
 
-        search_result = json.loads(file_tools.file_search(pattern="**/*.py"))
+        search_result = json.loads(file_tools.search_files(pattern="**/*.py"))
         assert search_result["matches_found"] == 0
 
-        listed = json.loads(file_tools.file_list(directory="tmp"))
+        listed = json.loads(file_tools.list_files(directory="tmp"))
         assert ".venv" not in [Path(p).name for p in listed]
         assert "tmp/foo.txt" in listed
 
@@ -334,7 +334,7 @@ def test_empty_exclude_patterns_opts_out():
         venv_pkg.mkdir(parents=True)
         (venv_pkg / "x.py").write_text("print('x')")
 
-        search_result = json.loads(file_tools.file_search(pattern="**/*.py"))
+        search_result = json.loads(file_tools.search_files(pattern="**/*.py"))
         assert search_result["matches_found"] == 1
         assert any(".venv" in p for p in search_result["files"])
 
@@ -350,7 +350,7 @@ def test_custom_exclude_patterns():
         (base_dir / ".venv").mkdir()
         (base_dir / ".venv" / "b.txt").write_text("b")
 
-        result = json.loads(file_tools.file_search(pattern="**/*.txt"))
+        result = json.loads(file_tools.search_files(pattern="**/*.txt"))
         files = result["files"]
         assert not any("node_modules" in p for p in files)
         assert any(".venv" in p for p in files)
@@ -367,7 +367,7 @@ def test_exclude_patterns_match_nested_components():
         (nested / "config").write_text("[core]")
         (base_dir / "vendor" / "thing" / "readme.txt").write_text("hi")
 
-        result = json.loads(file_tools.file_search(pattern="**/*"))
+        result = json.loads(file_tools.search_files(pattern="**/*"))
         files = result["files"]
         assert not any(".git" in Path(p).parts for p in files)
         assert "vendor/thing/readme.txt" in files
@@ -384,7 +384,7 @@ def test_exclude_patterns_support_globs():
         (egg / "PKG-INFO").write_text("Name: foo")
         (base_dir / "keep.txt").write_text("keep")
 
-        result = json.loads(file_tools.file_search(pattern="**/*"))
+        result = json.loads(file_tools.search_files(pattern="**/*"))
         files = result["files"]
         assert not any("egg-info" in p for p in files)
         assert "keep.txt" in files
@@ -412,7 +412,7 @@ def test_default_excludes_env_family():
         (base_dir / "env.yaml").write_text("key: value")
         (base_dir / "keep.txt").write_text("visible")
 
-        listed = sorted(json.loads(file_tools.file_list()))
+        listed = sorted(json.loads(file_tools.list_files()))
         assert listed == ["env.yaml", "environment.py", "keep.txt"]
 
 

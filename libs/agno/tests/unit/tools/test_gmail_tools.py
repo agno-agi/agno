@@ -47,7 +47,7 @@ def gmail_tools_all(mock_credentials, mock_gmail_service):
             modify_thread_labels=True,
             trash_thread=True,
             send_draft=True,
-            gmail_list_labels=True,
+            list_labels=True,
             modify_message_labels=True,
             trash_message=True,
             download_attachment=True,
@@ -84,8 +84,8 @@ def test_init_with_custom_scopes():
     custom_scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
     tools = GmailTools(
         scopes=custom_scopes,
-        include_tools=["get_latest_emails", "create_draft_email", "gmail_send_email"],
-        exclude_tools=["create_draft_email", "gmail_send_email"],
+        include_tools=["get_latest_emails", "create_draft_email", "send_email"],
+        exclude_tools=["create_draft_email", "send_email"],
     )
     assert tools.scopes == custom_scopes
 
@@ -105,7 +105,7 @@ def test_init_with_invalid_scopes_include_tools():
     with pytest.raises(ValueError, match="required for email composition operations"):
         GmailTools(
             scopes=custom_scopes,
-            include_tools=["create_draft_email", "gmail_send_email"],
+            include_tools=["create_draft_email", "send_email"],
         )
 
     # Check that it doesn't raise an error if different tools are included
@@ -313,7 +313,7 @@ def test_send_email(gmail_tools, mock_gmail_service):
 
     mock_gmail_service.users().messages().send().execute.return_value = mock_send_response
 
-    result = gmail_tools.gmail_send_email(
+    result = gmail_tools.send_email(
         to="recipient@test.com", subject="Test Send", body="Email content", cc="cc@test.com"
     )
 
@@ -455,7 +455,7 @@ def test_multiple_recipients(gmail_tools, mock_gmail_service):
 
     mock_gmail_service.users().messages().send().execute.return_value = mock_send_response
 
-    result = gmail_tools.gmail_send_email(
+    result = gmail_tools.send_email(
         to="recipient1@test.com,recipient2@test.com", subject="Multiple Recipients", body="Test content"
     )
 
@@ -517,13 +517,13 @@ def test_invalid_email_parameters():
         mock_build.return_value = mock_service
         tools._service = mock_service
 
-        result = tools.gmail_send_email(to="invalid-email", subject="Test", body="Test body")
+        result = tools.send_email(to="invalid-email", subject="Test", body="Test body")
         assert "Invalid recipient email format" in result
 
-        result = tools.gmail_send_email(to="valid@email.com", subject="", body="Test body")
+        result = tools.send_email(to="valid@email.com", subject="", body="Test body")
         assert "Subject cannot be empty" in result
 
-        result = tools.gmail_send_email(to="valid@email.com", subject="Test", body=None)
+        result = tools.send_email(to="valid@email.com", subject="Test", body=None)
         assert "Email body cannot be None" in result
 
 
@@ -561,7 +561,7 @@ def test_send_email_with_single_attachment(gmail_tools, mock_gmail_service):
     with patch("pathlib.Path.exists", return_value=True):
         with patch("builtins.open", mock_open(read_data=b"fake file content")):
             with patch("mimetypes.guess_type", return_value=("application/pdf", None)):
-                result = gmail_tools.gmail_send_email(
+                result = gmail_tools.send_email(
                     to="recipient@test.com",
                     subject="With Attachment",
                     body="Email with attachment",
@@ -583,7 +583,7 @@ def test_send_email_with_multiple_attachments(gmail_tools, mock_gmail_service):
     with patch("pathlib.Path.exists", return_value=True):
         with patch("builtins.open", mock_open(read_data=b"fake file content")):
             with patch("mimetypes.guess_type", return_value=("application/pdf", None)):
-                result = gmail_tools.gmail_send_email(
+                result = gmail_tools.send_email(
                     to="recipient@test.com",
                     subject="Multiple Attachments",
                     body="Email with multiple attachments",
@@ -643,7 +643,7 @@ def test_send_email_reply_with_attachment(gmail_tools, mock_gmail_service):
 def test_send_email_attachment_file_not_found(gmail_tools, mock_gmail_service):
     """Test error handling when attachment file doesn't exist."""
     with patch("pathlib.Path.exists", return_value=False):
-        result = gmail_tools.gmail_send_email(
+        result = gmail_tools.send_email(
             to="recipient@test.com", subject="Test", body="Test body", attachments="nonexistent.pdf"
         )
         assert "Attachment file not found" in result
@@ -683,7 +683,7 @@ def test_send_email_mixed_attachment_existence(gmail_tools, mock_gmail_service):
             return self.path.endswith("exists.pdf")
 
     with patch("agno.tools.google.gmail.Path", MockPath):
-        result = gmail_tools.gmail_send_email(
+        result = gmail_tools.send_email(
             to="recipient@test.com", subject="Test", body="Test body", attachments=["exists.pdf", "missing.pdf"]
         )
         assert "Attachment file not found" in result
@@ -701,7 +701,7 @@ def test_attachment_mime_type_guessing(gmail_tools, mock_gmail_service):
     with patch("pathlib.Path.exists", return_value=True):
         with patch("builtins.open", mock_open(read_data=b"fake file content")):
             with patch("mimetypes.guess_type", return_value=(None, None)):
-                result = gmail_tools.gmail_send_email(
+                result = gmail_tools.send_email(
                     to="recipient@test.com",
                     subject="Unknown File Type",
                     body="Email with unknown file type",
@@ -724,7 +724,7 @@ def test_attachment_with_encoding(gmail_tools, mock_gmail_service):
     with patch("pathlib.Path.exists", return_value=True):
         with patch("builtins.open", mock_open(read_data=b"fake file content")):
             with patch("mimetypes.guess_type", return_value=("text/plain", "gzip")):
-                result = gmail_tools.gmail_send_email(
+                result = gmail_tools.send_email(
                     to="recipient@test.com",
                     subject="Encoded File",
                     body="Email with encoded file",
@@ -743,7 +743,7 @@ def test_empty_attachments_list(gmail_tools, mock_gmail_service):
     # Reset mock to clear any setup calls
     mock_gmail_service.reset_mock()
 
-    result = gmail_tools.gmail_send_email(
+    result = gmail_tools.send_email(
         to="recipient@test.com", subject="No Attachments", body="Email without attachments", attachments=[]
     )
 
@@ -763,7 +763,7 @@ def test_attachment_filename_extraction(gmail_tools, mock_gmail_service):
         with patch("builtins.open", mock_open(read_data=b"fake file content")):
             with patch("mimetypes.guess_type", return_value=("application/pdf", None)):
                 # Test with full path - should extract just the filename
-                result = gmail_tools.gmail_send_email(
+                result = gmail_tools.send_email(
                     to="recipient@test.com",
                     subject="Path Test",
                     body="Email with full path attachment",
@@ -1232,7 +1232,7 @@ def test_get_thread(gmail_tools, mock_gmail_service):
     }
     mock_gmail_service.users().threads().get().execute.return_value = thread_data
 
-    result = json.loads(gmail_tools.gmail_get_thread("thread1"))
+    result = json.loads(gmail_tools.get_thread("thread1"))
 
     assert result["threadId"] == "thread1"
     assert result["messageCount"] == 2
@@ -1245,7 +1245,7 @@ def test_get_thread_http_error(gmail_tools, mock_gmail_service):
         resp=Mock(status=404), content=b'{"error": {"message": "Not Found"}}'
     )
 
-    result = json.loads(gmail_tools.gmail_get_thread("bad_id"))
+    result = json.loads(gmail_tools.get_thread("bad_id"))
     assert "error" in result
 
 
@@ -1422,7 +1422,7 @@ def test_list_labels(gmail_tools_all, mock_gmail_service):
 
     mock_batch.execute.side_effect = batch_execute
 
-    result = json.loads(gmail_tools_all.gmail_list_labels())
+    result = json.loads(gmail_tools_all.list_labels())
 
     assert result["count"] == 2
     assert any(lbl["name"] == "Work" for lbl in result["labels"])
@@ -1433,7 +1433,7 @@ def test_list_labels_http_error(gmail_tools_all, mock_gmail_service):
         resp=Mock(status=500), content=b'{"error": {"message": "Server Error"}}'
     )
 
-    result = json.loads(gmail_tools_all.gmail_list_labels())
+    result = json.loads(gmail_tools_all.list_labels())
     assert "error" in result
 
 
@@ -1591,7 +1591,7 @@ def test_instructions_exclude_compose_when_disabled(mock_credentials):
             creds=mock_credentials,
             # Disable all compose tools
             create_draft_email=False,
-            gmail_send_email=False,
+            send_email=False,
             send_email_reply=False,
             send_draft=False,
             update_draft=False,
