@@ -831,9 +831,7 @@ class TestContinuationExecution:
         await store.enqueue_job(job)
         claimed = await store.claim_job("old-worker")
         assert await store.complete_job("r1", "old-worker", claimed["attempt"], "paused")
-        await store.continue_job(
-            "r1", {"step_requirements": [{"step_id": "st1", "step_name": "a", "confirmed": True}]}
-        )
+        await store.continue_job("r1", {"step_requirements": [{"step_id": "st1", "step_name": "a", "confirmed": True}]})
         worker = QueueWorker(
             store=store,
             resolve_component=lambda t, i: FakeWorkflow() if (t, i) == ("workflow", "wf-1") else None,
@@ -881,9 +879,9 @@ class TestStreamingContinuation:
             await store.enqueue_job(job)
             claimed = await store.claim_job("old-worker")
             assert await store.complete_job("sc1", "old-worker", claimed["attempt"], "paused")
-            assert (
-                await store.continue_job("sc1", {"step_requirements": [{"step_id": "st1", "confirmed": True}]})
-            )["outcome"] == "queued"
+            assert (await store.continue_job("sc1", {"step_requirements": [{"step_id": "st1", "confirmed": True}]}))[
+                "outcome"
+            ] == "queued"
 
             class FakeEvent:
                 def __init__(self, content):

@@ -2316,12 +2316,19 @@ class RedisDb(BaseDb):
         stale = now - lock_grace_seconds
 
         for raw_id in self.redis_client.zrangebyscore(self._q_key("queued"), "-inf", now, start=0, num=8):
-            job = self._q_try_claim(_q_to_str(raw_id), worker_id, now, expect_status="queued", deployment_id=deployment_id)
+            job = self._q_try_claim(
+                _q_to_str(raw_id), worker_id, now, expect_status="queued", deployment_id=deployment_id
+            )
             if job is not None:
                 return job
         for raw_id in self.redis_client.zrangebyscore(self._q_key("running"), "-inf", stale, start=0, num=8):
             job = self._q_try_claim(
-                _q_to_str(raw_id), worker_id, now, expect_status="running", stale_before=stale, deployment_id=deployment_id
+                _q_to_str(raw_id),
+                worker_id,
+                now,
+                expect_status="running",
+                stale_before=stale,
+                deployment_id=deployment_id,
             )
             if job is not None:
                 return job

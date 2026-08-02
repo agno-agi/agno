@@ -140,9 +140,7 @@ async def _pump_event_stream_to_ws_execute(websocket: WebSocket, run_id: str, fr
         async for ev_index, sse_data in event_stream.tail(run_id, last_event_index=from_index):
             payload = _stream_payload_to_dict(sse_data, ev_index, run_id)
             event_type = payload.get("event", "message")
-            await websocket.send_text(
-                f"event: {event_type}\ndata: {json.dumps(payload, default=json_serializer)}\n\n"
-            )
+            await websocket.send_text(f"event: {event_type}\ndata: {json.dumps(payload, default=json_serializer)}\n\n")
     except asyncio.CancelledError:
         raise
     except Exception as e:
@@ -1504,7 +1502,7 @@ def get_workflow_router(
                         user_id=user_id,
                         payload=queued_stream_payload,
                         max_attempts=queue_worker.config.max_attempts,
-                    deployment_id=queue_worker.config.deployment_id,
+                        deployment_id=queue_worker.config.deployment_id,
                         idempotency_key=normalize_idempotency_key(request.headers.get("idempotency-key")),
                     ).to_dict()
                     enqueue_result = await queue_worker.store.enqueue_job(

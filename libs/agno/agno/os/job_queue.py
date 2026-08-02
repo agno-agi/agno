@@ -358,9 +358,7 @@ class QueueWorker:
                 effective_max = get_background_max_concurrency()
             if effective_max > 0 and len(self._in_flight) >= effective_max:
                 break
-            job = await self.store.claim_job(
-                self.worker_id, self.config.lock_grace_seconds, self.config.deployment_id
-            )
+            job = await self.store.claim_job(self.worker_id, self.config.lock_grace_seconds, self.config.deployment_id)
             if job is None:
                 break
             task = asyncio.create_task(self._execute_claimed(job))
@@ -879,7 +877,9 @@ class QueueWorker:
                     await slot_cm.__aexit__(None, None, None)
 
 
-async def acontinue_via_queue(queue_worker: Any, run_id: str, continue_payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+async def acontinue_via_queue(
+    queue_worker: Any, run_id: str, continue_payload: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
     """Durable path for a continue of a PAUSED run: CAS the existing ticket
     paused -> queued (never a new row - id == run_id is load-bearing).
 
