@@ -143,6 +143,108 @@ class TestAcceptSideEffects:
             es_mod._event_stream = original
 
     @pytest.mark.asyncio
+    async def test_pending_flip_never_overwrites_a_terminal_status(self):
+        """Codex P1: a fast worker can claim and finish the whole leg between
+        the CAS and the flip - PENDING must not overwrite its terminal
+        status, or tails wait on a finished run. The flip is conditional on
+        the status still being PAUSED."""
+        import agno.os.event_streams as es_mod
+        from agno.os.event_streams import InMemoryEventStream, set_event_stream
+        from agno.os.managers import EventsBuffer, SSESubscriberManager
+        from agno.run.base import RunStatus
+
+        original = es_mod._event_stream
+        stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+        set_event_stream(stream)
+        try:
+            store = InMemoryQueueStore()
+            await _pause(store, stream=True)
+            await stream.register_run("r1", RunStatus.pending)
+            await stream.complete_run("r1", RunStatus.paused)
+
+            # Simulate the racing worker: the leg completes the instant the
+            # ticket becomes claimable (i.e. during continue_job)
+            original_continue = store.continue_job
+
+            async def continue_then_finish(job_id, continue_payload):
+                result = await original_continue(job_id, continue_payload)
+                await stream.complete_run(job_id, RunStatus.completed)
+                return result
+
+            store.continue_job = continue_then_finish  # type: ignore[method-assign]
+            result = await acontinue_via_queue(make_worker(store), "r1", {})
+            assert result["outcome"] == "queued"
+            assert await stream.get_run_status("r1") == RunStatus.completed, (
+                "the racing worker's terminal status must survive the flip"
+            )
+        finally:
+            es_mod._event_stream = original
+
+    @pytest.mark.asyncio
+    async def test_stream_mismatch_refused_before_the_cas(self):
+        """Codex P1: a stream-continue of a non-streaming submission must be
+        refused BEFORE the CAS - refusing after it tells the client the
+        continuation was rejected while a worker executes it anyway."""
+        store = InMemoryQueueStore()
+        await _pause(store, stream=False)
+        result = await acontinue_via_queue(make_worker(store), "r1", {"a": 1}, stream_requested=True)
+        assert result["outcome"] == "stream_mismatch"
+        ticket = await store.get_job("r1")
+        assert ticket["status"] == "paused", "the refusal must leave no accepted continuation behind"
+        assert "continue" not in (ticket.get("payload") or {})
+        # A matching non-stream continue still accepts afterwards
+        result = await acontinue_via_queue(make_worker(store), "r1", {"a": 1})
+        assert result["outcome"] == "queued"
+
+    @pytest.mark.asyncio
+    async def test_tail_floor_captured_before_acceptance(self):
+        """Codex P1: the tail floor must pre-date the CAS - read after it, a
+        fast worker's first continuation events inflate the count and the
+        tail silently skips the start of the continuation output."""
+        import agno.os.event_streams as es_mod
+        from agno.os.event_streams import InMemoryEventStream, set_event_stream
+        from agno.os.managers import EventsBuffer, SSESubscriberManager
+        from agno.run.base import RunStatus
+
+        original = es_mod._event_stream
+        stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+        set_event_stream(stream)
+        try:
+
+            class _Evt:
+                def __init__(self, name: str) -> None:
+                    self.event = name
+
+                def to_dict(self) -> dict:
+                    return {"event": self.event}
+
+            store = InMemoryQueueStore()
+            await _pause(store, stream=True)
+            await stream.register_run("r1", RunStatus.pending)
+            for _ in range(3):  # leg-1 events, settled at the pause
+                await stream.add_event("r1", _Evt("LegOne"))
+            pre_count = await stream.get_event_count("r1")
+
+            # Racing worker: continuation events land the instant the ticket
+            # becomes claimable
+            original_continue = store.continue_job
+
+            async def continue_then_publish(job_id, continue_payload):
+                result = await original_continue(job_id, continue_payload)
+                await stream.add_event(job_id, _Evt("LegTwoFirst"))
+                await stream.add_event(job_id, _Evt("LegTwoSecond"))
+                return result
+
+            store.continue_job = continue_then_publish  # type: ignore[method-assign]
+            result = await acontinue_via_queue(make_worker(store), "r1", {})
+            assert result["outcome"] == "queued"
+            assert result["tail_from"] == pre_count - 1, (
+                "the floor must be the pre-accept index, not one inflated by the racing leg"
+            )
+        finally:
+            es_mod._event_stream = original
+
+    @pytest.mark.asyncio
     async def test_non_stream_submission_does_not_touch_stream_status(self):
         import agno.os.event_streams as es_mod
         from agno.os.event_streams import InMemoryEventStream, set_event_stream

@@ -643,10 +643,24 @@ async def handle_workflow_continue_via_websocket(
             for candidate in (os.workflows or [])
         )
         if queue_worker is not None and workflow_is_queueable and payload_is_queueable(continue_payload):
-            # existing_run.is_paused was proven above
-            continue_outcome = await acontinue_via_queue(queue_worker, run_id, continue_payload)
+            # existing_run.is_paused was proven above. stream_requested: this
+            # socket IS a stream - a non-streaming submission's ticket must be
+            # refused before the CAS, not silently pumped from an empty stream
+            continue_outcome = await acontinue_via_queue(queue_worker, run_id, continue_payload, stream_requested=True)
             if continue_outcome is not None:
                 outcome = continue_outcome["outcome"]
+                if outcome == "stream_mismatch":
+                    await websocket.send_text(
+                        json.dumps(
+                            {
+                                "event": "error",
+                                "run_id": run_id,
+                                "error": "Run was submitted non-streaming; continue it over HTTP "
+                                "and poll for the result instead of a WebSocket",
+                            }
+                        )
+                    )
+                    return
                 if outcome == "settling":
                     await websocket.send_text(
                         json.dumps(
@@ -671,19 +685,16 @@ async def handle_workflow_continue_via_websocket(
                     )
                     return
                 # queued (accepted) or attach (double-click): pump the event
-                # stream to this socket. Tail from the CURRENT index - the
-                # execute socket gets post-approval events only, exactly like
-                # the detached continue producer; earlier history belongs to
-                # the subscription/replay surface. One pump per socket,
-                # cancelled on disconnect/re-subscribe by the dispatcher
-                # (same registry the subscription pump uses).
-                from_index: Optional[int] = None
-                with contextlib.suppress(Exception):
-                    current_count = await get_event_stream().get_event_count(run_id)
-                    from_index = current_count - 1 if current_count > 0 else None
+                # stream to this socket. Tail from the PRE-ACCEPT index
+                # (captured by the helper before the CAS) - the execute
+                # socket gets post-approval events only, exactly like the
+                # detached continue producer; earlier history belongs to the
+                # subscription/replay surface. One pump per socket, cancelled
+                # on disconnect/re-subscribe by the dispatcher (same registry
+                # the subscription pump uses).
                 await cancel_subscription_pump(websocket)
                 _ws_tail_pumps[websocket] = asyncio.create_task(
-                    _pump_event_stream_to_ws_execute(websocket, run_id, from_index)
+                    _pump_event_stream_to_ws_execute(websocket, run_id, continue_outcome.get("tail_from"))
                 )
                 return
             log_warning(
@@ -1867,9 +1878,18 @@ def get_workflow_router(
                 and payload_is_queueable(continue_payload)
             ):
                 # The endpoint already proved the run row is PAUSED above
-                continue_outcome = await acontinue_via_queue(queue_worker, run_id, continue_payload)
+                continue_outcome = await acontinue_via_queue(
+                    queue_worker, run_id, continue_payload, stream_requested=stream
+                )
                 if continue_outcome is not None:
                     outcome, ticket = continue_outcome["outcome"], continue_outcome.get("job")
+                    if outcome == "stream_mismatch":
+                        # Pre-CAS refusal: nothing was accepted behind this
+                        # 409 (submit-seam duplicate parity)
+                        raise HTTPException(
+                            status_code=409,
+                            detail=f"Run was submitted non-streaming; poll run {run_id} instead of attaching a stream",
+                        )
                     if outcome == "settling":
                         raise HTTPException(
                             status_code=409,
@@ -1885,26 +1905,13 @@ def get_workflow_router(
                     # queued (accepted) or attach (double-click): same
                     # response shape as the submit seam
                     if stream:
-                        if not ((ticket or {}).get("payload") or {}).get("stream"):
-                            # A non-streaming submission's continuation never
-                            # publishes to the event stream: a tail would idle
-                            # and close silently. Refuse honestly
-                            # (submit-seam duplicate parity).
-                            raise HTTPException(
-                                status_code=409,
-                                detail="Run was submitted non-streaming; "
-                                f"poll run {run_id} instead of attaching a stream",
-                            )
-                        # Tail from the CURRENT index: the continue response
+                        # Tail from the PRE-ACCEPT index (captured by the
+                        # helper before the CAS): the continue response
                         # carries post-approval events only, exactly like the
                         # detached continue streamer; earlier history belongs
                         # to /resume
-                        tail_from: Optional[int] = None
-                        with contextlib.suppress(Exception):
-                            current_count = await get_event_stream().get_event_count(run_id)
-                            tail_from = current_count - 1 if current_count > 0 else None
                         return StreamingResponse(
-                            queued_run_tail_streamer(run_id, from_index=tail_from),
+                            queued_run_tail_streamer(run_id, from_index=continue_outcome.get("tail_from")),
                             media_type="text/event-stream",
                         )
                     return JSONResponse(

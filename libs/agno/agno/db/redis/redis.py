@@ -2311,28 +2311,74 @@ class RedisDb(BaseDb):
         within the attempt budget). WATCH/MULTI CAS; a raced claim moves on.
         Deployment affinity filters BOTH branches (a reclaim executes too):
         NULL rides anywhere, stamped jobs only on matching workers;
-        deployment_id=None degenerates to claiming only unstamped jobs."""
+        deployment_id=None degenerates to claiming only unstamped jobs.
+
+        The scan PAGES past affinity mismatches: a fixed window would let a
+        head of foreign-deployment jobs starve matching jobs sitting behind
+        them indefinitely (foreign entries stay queued at the front). Each
+        page is pre-filtered with one pipelined MGET; the CAS inside
+        _q_try_claim remains the only authority."""
         now = int(time.time())
         stale = now - lock_grace_seconds
 
-        for raw_id in self.redis_client.zrangebyscore(self._q_key("queued"), "-inf", now, start=0, num=8):
-            job = self._q_try_claim(
-                _q_to_str(raw_id), worker_id, now, expect_status="queued", deployment_id=deployment_id
-            )
-            if job is not None:
-                return job
-        for raw_id in self.redis_client.zrangebyscore(self._q_key("running"), "-inf", stale, start=0, num=8):
-            job = self._q_try_claim(
-                _q_to_str(raw_id),
-                worker_id,
-                now,
-                expect_status="running",
-                stale_before=stale,
-                deployment_id=deployment_id,
-            )
-            if job is not None:
-                return job
-        return None
+        job = self._q_scan_claim(
+            self._q_key("queued"), now, worker_id, now, expect_status="queued", deployment_id=deployment_id
+        )
+        if job is not None:
+            return job
+        return self._q_scan_claim(
+            self._q_key("running"),
+            stale,
+            worker_id,
+            now,
+            expect_status="running",
+            stale_before=stale,
+            deployment_id=deployment_id,
+        )
+
+    def _q_scan_claim(
+        self,
+        zset_key: str,
+        max_score: int,
+        worker_id: str,
+        now: int,
+        expect_status: str,
+        stale_before: Optional[int] = None,
+        deployment_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Page through ready jobs oldest-first, cheaply pre-filter each page
+        by deployment affinity (MGET, advisory only), and CAS-claim the first
+        match. Ends when a page comes back empty - worst case one MGET per
+        page of foreign jobs, the same order of work as Postgres's index
+        scan over the same rows."""
+        page_size = 64
+        offset = 0
+        while True:
+            raw_ids = self.redis_client.zrangebyscore(zset_key, "-inf", max_score, start=offset, num=page_size)
+            if not raw_ids:
+                return None
+            job_ids = [_q_to_str(raw_id) for raw_id in raw_ids]
+            raw_jobs = self.redis_client.mget([self._q_job_key(job_id) for job_id in job_ids])
+            for job_id, raw in zip(job_ids, raw_jobs):
+                if raw is None:
+                    continue
+                try:
+                    candidate = json.loads(raw if isinstance(raw, str) else raw.decode())
+                except (ValueError, AttributeError):
+                    continue
+                if candidate.get("deployment_id") is not None and candidate.get("deployment_id") != deployment_id:
+                    continue
+                job = self._q_try_claim(
+                    job_id,
+                    worker_id,
+                    now,
+                    expect_status=expect_status,
+                    stale_before=stale_before,
+                    deployment_id=deployment_id,
+                )
+                if job is not None:
+                    return job
+            offset += page_size
 
     def _q_try_claim(
         self,

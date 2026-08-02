@@ -878,7 +878,7 @@ class QueueWorker:
 
 
 async def acontinue_via_queue(
-    queue_worker: Any, run_id: str, continue_payload: Dict[str, Any]
+    queue_worker: Any, run_id: str, continue_payload: Dict[str, Any], stream_requested: bool = False
 ) -> Optional[Dict[str, Any]]:
     """Durable path for a continue of a PAUSED run: CAS the existing ticket
     paused -> queued (never a new row - id == run_id is load-bearing).
@@ -891,7 +891,7 @@ async def acontinue_via_queue(
     fall back to the detached path: no ticket (the run never rode the queue,
     or retention cleaned a terminal ticket), a foreign job_type, or a
     terminal ticket under a paused run row. Otherwise returns
-    {"outcome": "queued" | "attach" | "settling" | "conflict", "job": row}:
+    {"outcome": ..., "job": row, "tail_from": index|None}:
     - queued: accepted; stale cancellation intent cleared (requeue-fix
       mirror), and for streaming submissions the stream status flips
       PAUSED -> PENDING so a fresh tail does not treat the settled pause as
@@ -904,18 +904,44 @@ async def acontinue_via_queue(
       drop this click's inputs: refuse with retry (the window is the gap
       between two adjacent writes).
     - conflict: the CAS lost to a raced terminal transition (e.g. a cancel).
+    - stream_mismatch: the caller wants an SSE/WS tail but the submission
+      was non-streaming - its continuation never publishes events, so a tail
+      would idle and close silently. Checked BEFORE the CAS: the refusal
+      must not leave an accepted continuation behind it.
+
+    ``tail_from`` (stream tickets only) is the tail floor captured BEFORE
+    the ticket became claimable: read after the CAS, a fast worker's first
+    continuation events would inflate the count and the tail would silently
+    skip the start of the continuation output.
     """
     job = None
     with contextlib.suppress(Exception):
         job = await queue_worker.store.get_job(run_id)
     if job is None or job.get("job_type", "run") != "run":
         return None
+    ticket_streams = bool((job.get("payload") or {}).get("stream"))
+    if stream_requested and not ticket_streams:
+        # Pre-CAS by construction: the submit-time stream flag is immutable,
+        # so this refusal can never race an acceptance
+        return {"outcome": "stream_mismatch", "job": job, "tail_from": None}
     status = job.get("status")
+    # Tail floor BEFORE any acceptance. The pause is settled (no producer is
+    # writing), so the count is stable until OUR CAS makes the ticket
+    # claimable. For attach this may pre-date the in-flight continuation's
+    # first events: the attacher replays a few indices rather than missing
+    # them (clients dedupe by event_index, mirroring resume).
+    tail_from: Optional[int] = None
+    if ticket_streams:
+        with contextlib.suppress(Exception):
+            from agno.os.event_streams import get_event_stream
+
+            current_count = await get_event_stream().get_event_count(run_id)
+            tail_from = current_count - 1 if current_count > 0 else None
     if status == "running":
-        return {"outcome": "settling", "job": job}
+        return {"outcome": "settling", "job": job, "tail_from": tail_from}
     if status == "queued":
         if (job.get("payload") or {}).get("continue"):
-            return {"outcome": "attach", "job": job}
+            return {"outcome": "attach", "job": job, "tail_from": tail_from}
         # A queued ticket without a continue block is a fresh submission that
         # has not executed - continuing it is a state error the detached
         # path reports properly (the run row cannot be PAUSED and the ticket
@@ -927,6 +953,7 @@ async def acontinue_via_queue(
         # continue the run; the caller logs the bypass
         return None
     result = await queue_worker.store.continue_job(run_id, continue_payload)
+    result["tail_from"] = tail_from
     if result.get("outcome") == "queued":
         # Requeue-endpoint fix, mirrored: cancellation intent left over from
         # the paused stretch would kill the new leg at its first checkpoint.
@@ -941,13 +968,20 @@ async def acontinue_via_queue(
         if ((result.get("job") or {}).get("payload") or {}).get("stream"):
             # PAUSED is tail-terminal in the event stream: without this flip a
             # tail attached between accept and claim replays the settled pause
-            # and closes. Fail-open - the continue is already accepted; a
-            # failed flip only degrades the live view, never the run.
+            # and closes. CONDITIONAL: a fast worker may already have run the
+            # whole leg and written a terminal status between the CAS and
+            # here - PENDING must never overwrite it (tails would wait on a
+            # finished run). The get->set window that remains is microseconds
+            # against a full leg execution. Fail-open - the continue is
+            # already accepted; a failed flip only degrades the live view.
             with contextlib.suppress(Exception):
                 from agno.os.event_streams import get_event_stream
                 from agno.run.base import RunStatus
 
-                await get_event_stream().set_run_status(run_id, RunStatus.pending)
+                event_stream = get_event_stream()
+                current = await event_stream.get_run_status(run_id)
+                if current in (None, RunStatus.paused):
+                    await event_stream.set_run_status(run_id, RunStatus.pending)
     return result
 
 

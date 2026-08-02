@@ -1358,9 +1358,19 @@ def get_team_router(
             ):
                 run_row = await team.aget_run_output(run_id, session_id=session_id, user_id=user_id)
                 if run_row is not None and getattr(run_row, "status", None) == RunStatus.paused:
-                    continue_outcome = await acontinue_via_queue(queue_worker, run_id, continue_payload)
+                    continue_outcome = await acontinue_via_queue(
+                        queue_worker, run_id, continue_payload, stream_requested=stream
+                    )
                     if continue_outcome is not None:
                         outcome, ticket = continue_outcome["outcome"], continue_outcome.get("job")
+                        if outcome == "stream_mismatch":
+                            # Pre-CAS refusal: nothing was accepted behind
+                            # this 409 (submit-seam duplicate parity)
+                            raise HTTPException(
+                                status_code=409,
+                                detail="Run was submitted non-streaming; "
+                                f"poll run {run_id} instead of attaching a stream",
+                            )
                         if outcome == "settling":
                             raise HTTPException(
                                 status_code=409,
@@ -1376,26 +1386,13 @@ def get_team_router(
                         # queued (accepted) or attach (double-click): same
                         # response shape as the submit seam
                         if stream:
-                            if not ((ticket or {}).get("payload") or {}).get("stream"):
-                                # A non-streaming submission's continuation
-                                # never publishes to the event stream: a tail
-                                # would idle and close silently. Refuse
-                                # honestly (submit-seam duplicate parity).
-                                raise HTTPException(
-                                    status_code=409,
-                                    detail="Run was submitted non-streaming; "
-                                    f"poll run {run_id} instead of attaching a stream",
-                                )
-                            # Tail from the CURRENT index: the continue
-                            # response carries post-approval events only,
-                            # exactly like the detached continue streamer;
-                            # earlier history belongs to /resume
-                            tail_from: Optional[int] = None
-                            with contextlib.suppress(Exception):
-                                current_count = await get_event_stream().get_event_count(run_id)
-                                tail_from = current_count - 1 if current_count > 0 else None
+                            # Tail from the PRE-ACCEPT index (captured by the
+                            # helper before the CAS): the continue response
+                            # carries post-approval events only, exactly like
+                            # the detached continue streamer; earlier history
+                            # belongs to /resume
                             return StreamingResponse(
-                                queued_run_tail_streamer(run_id, from_index=tail_from),
+                                queued_run_tail_streamer(run_id, from_index=continue_outcome.get("tail_from")),
                                 media_type="text/event-stream",
                             )
                         return JSONResponse(

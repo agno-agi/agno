@@ -253,6 +253,32 @@ class TestDeploymentAffinity:
         reclaimed = db.claim_job("w2", lock_grace_seconds=60, deployment_id="dep-a")
         assert reclaimed is not None and reclaimed["attempt"] == 2
 
+    def test_foreign_jobs_at_head_do_not_starve_matching_jobs(self, db):
+        """Codex P1: a fixed scan window let a head of foreign-deployment
+        jobs hide matching jobs sitting behind them - forever, since the
+        foreign entries stay queued at the front. The scan must page past
+        mismatches."""
+        base = int(time.time()) - 100
+        for i in range(20):  # more than any single scan page's worth of foreign work
+            job = make_job(f"foreign-{i}", deployment_id="dep-other")
+            job["created_at"] = base + i
+            job["available_at"] = base + i
+            assert db.enqueue_job(job)["accepted"]
+        mine = make_job("mine", deployment_id="dep-a")
+        mine["created_at"] = base + 50
+        mine["available_at"] = base + 50
+        assert db.enqueue_job(mine)["accepted"]
+
+        claimed = db.claim_job("w1", deployment_id="dep-a")
+        assert claimed is not None and claimed["id"] == "mine"
+        # And the unstamped-worker degeneration pages past stamps too
+        free = make_job("free")
+        free["created_at"] = base + 60
+        free["available_at"] = base + 60
+        assert db.enqueue_job(free)["accepted"]
+        claimed = db.claim_job("w2")
+        assert claimed is not None and claimed["id"] == "free"
+
     def test_continue_inherits_deployment_stamp(self, db):
         db.enqueue_job(make_job("r1", deployment_id="dep-a"))
         claimed = db.claim_job("w1", deployment_id="dep-a")
