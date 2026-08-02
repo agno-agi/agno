@@ -2350,7 +2350,12 @@ class RedisDb(BaseDb):
         by deployment affinity (MGET, advisory only), and CAS-claim the first
         match. Ends when a page comes back empty - worst case one MGET per
         page of foreign jobs, the same order of work as Postgres's index
-        scan over the same rows."""
+        scan over the same rows.
+
+        Offset pagination under concurrent claimers can skip entries whose
+        rank shifted mid-scan (a peer claimed something on an earlier page).
+        That only ends THIS burst early - every poll tick rescans from rank
+        0, so a skipped job is picked up next tick; no starvation."""
         page_size = 64
         offset = 0
         while True:
