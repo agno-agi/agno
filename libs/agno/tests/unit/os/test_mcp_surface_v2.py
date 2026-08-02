@@ -397,6 +397,15 @@ def test_resync_reuses_started_mcp_app_and_mount():
     assert len(mounts) == 1
 
 
+def test_home_route_works_with_mcp_enabled():
+    os = AgentOS(agents=[_agent()], mcp_server=True)
+    app = os.get_app()
+    client = TestClient(app)
+    response = client.get("/")
+    assert response.status_code == 200
+    assert response.json()["info"] == "/info"
+
+
 def test_info_route_works_with_mcp_enabled():
     os = AgentOS(agents=[_agent()], mcp_server=True)
     app = os.get_app()

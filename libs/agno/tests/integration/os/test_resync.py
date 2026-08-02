@@ -197,6 +197,7 @@ class TestResyncPreservesEndpoints:
         app = agent_os.get_app()
 
         core_endpoints = [
+            "/",
             "/info",
             "/health",
             "/config",
