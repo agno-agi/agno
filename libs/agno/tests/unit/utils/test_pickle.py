@@ -28,6 +28,13 @@ class _Exploit:
         return (self._callable, self._args)
 
 
+class _User:
+    """Module-level class so pickle can reference it by qualified name."""
+
+    def __init__(self, name: str):
+        self.name = name
+
+
 def _write_pickle(path: pathlib.Path, obj) -> pathlib.Path:
     with path.open("wb") as f:
         pickle.dump(obj, f)
@@ -59,15 +66,11 @@ def test_roundtrip_list():
 
 
 def test_roundtrip_custom_class():
-    class User:
-        def __init__(self, name: str):
-            self.name = name
-
     with tempfile.TemporaryDirectory() as tmp:
         f = pathlib.Path(tmp) / "u.pkl"
-        pickle_object_to_file(User("agno"), f)
+        pickle_object_to_file(_User("agno"), f)
         loaded = unpickle_object_from_file(f)
-        assert isinstance(loaded, User)
+        assert isinstance(loaded, _User)
         assert loaded.name == "agno"
 
 
