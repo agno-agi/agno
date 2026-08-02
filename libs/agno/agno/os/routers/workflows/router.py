@@ -129,26 +129,11 @@ async def _pump_event_stream_to_websocket(websocket: WebSocket, run_id: str, fro
             )
 
 
-async def _pump_event_stream_to_ws_execute(websocket: WebSocket, run_id: str, from_index: Optional[int]) -> None:
-    """Tail pump for EXECUTE-role sockets (the socket a run or continue was
-    submitted on). These sockets have always spoken SSE-wrapped frames
-    (``event: X\\ndata: {...}`` - WebSocketHandler.format_sse_event), unlike
-    the reconnect pump's flat JSON dicts - byte-parity means wrapping the
-    normalized payload back into that framing."""
-    event_stream = get_event_stream()
-    try:
-        async for ev_index, sse_data in event_stream.tail(run_id, last_event_index=from_index):
-            payload = _stream_payload_to_dict(sse_data, ev_index, run_id)
-            event_type = payload.get("event", "message")
-            await websocket.send_text(f"event: {event_type}\ndata: {json.dumps(payload, default=json_serializer)}\n\n")
-    except asyncio.CancelledError:
-        raise
-    except Exception as e:
-        log_debug(f"WS execute tail pump for run {run_id} ended: {e}")
-        with contextlib.suppress(Exception):
-            await websocket.send_text(
-                json.dumps({"event": "error", "run_id": run_id, "error": f"stream tail failed: {str(e)[:200]}"})
-            )
+# NOTE on execute-socket wire format: the non-durable execute path sends
+# SSE-wrapped frames (WebSocketHandler.format_sse_event) while the reconnect
+# pump sends flat JSON dicts. Durable tails standardize on the FLAT format -
+# the FE parser handles both (kaustubh, 2026-08-02), and one pump beats two
+# formats diverging.
 
 
 async def cancel_subscription_pump(websocket: WebSocket) -> None:
@@ -252,6 +237,85 @@ async def handle_workflow_via_websocket(
                 session_id = workflow.session_id
             else:
                 session_id = str(uuid4())
+
+        # Durable WS submission: the queue row is the acceptance, execution
+        # happens on whichever worker claims it, and this socket becomes a
+        # tail view of the event stream - the run survives this replica.
+        # Wire format: flat JSON dicts (the reconnect/subscribe format; the
+        # FE parser handles both, confirmed) with a leading "queued" ack
+        # frame so the client sees accepted/waiting instead of a silent
+        # socket while the job waits for a claim.
+        queue_worker = getattr(websocket.app.state, "queue_worker", None)
+        queued_ws_payload: Dict[str, Any] = {"input": user_message, "kwargs": {}, "stream": True}
+        ws_submit_queueable = (
+            queue_worker is not None
+            and not is_factory
+            and getattr(workflow, "db", None) is not None
+            and payload_is_queueable(queued_ws_payload)
+            and any(
+                getattr(candidate, "id", None) == workflow_id and not isinstance(candidate, WorkflowFactory)
+                for candidate in (os.workflows or [])
+            )
+        )
+        if ws_submit_queueable:
+            # Accept must honor input_schema exactly like the inline path
+            try:
+                validate_seam_input(workflow, user_message)
+            except HTTPException as e:
+                await websocket.send_text(json.dumps({"event": "error", "error": str(e.detail)}))
+                return
+            assert queue_worker is not None  # narrowed by ws_submit_queueable
+            queued_run_id = str(uuid4())
+            job = QueuedJob(
+                id=queued_run_id,
+                component_type="workflow",
+                component_id=getattr(workflow, "id", None) or workflow_id,
+                session_id=session_id,
+                user_id=user_id,
+                payload=queued_ws_payload,
+                max_attempts=queue_worker.config.max_attempts,
+                deployment_id=queue_worker.config.deployment_id,
+            ).to_dict()
+            enqueue_result = await queue_worker.store.enqueue_job(job, max_depth=queue_worker.config.max_queue_depth)
+            if not enqueue_result["accepted"]:
+                # No Idempotency-Key over WS, so "duplicate" cannot legitimately
+                # happen on a fresh uuid - either way nothing was enqueued and
+                # the client must know the submission was NOT accepted
+                reason = enqueue_result.get("reason") or "rejected"
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "event": "error",
+                            "error": "Job queue is full; retry later"
+                            if reason == "queue_full"
+                            else f"Submission was not accepted ({reason})",
+                        }
+                    )
+                )
+                return
+            with contextlib.suppress(Exception):
+                # Fail-open: the queue row is already committed - a Redis blip
+                # must not kill an accepted submission (tails degrade gracefully)
+                await get_event_stream().register_run(queued_run_id, RunStatus.pending)
+            await aprepare_queued_run(
+                workflow, "workflow", run_id=queued_run_id, session_id=session_id, user_id=user_id, input=user_message
+            )
+            await websocket.send_text(
+                json.dumps({"event": "queued", "run_id": queued_run_id, "session_id": session_id})
+            )
+            # Tail the whole stream from the start (this socket is the primary
+            # view). One pump per socket; the dispatcher cancels it on
+            # disconnect/re-subscribe via the shared registry.
+            await cancel_subscription_pump(websocket)
+            _ws_tail_pumps[websocket] = asyncio.create_task(
+                _pump_event_stream_to_websocket(websocket, queued_run_id, None)
+            )
+            return
+        if queue_worker is not None:
+            log_warning(
+                "WS workflow submission bypasses the durable queue (factory/off-registry/no-db "
+                "workflows are not queueable): bounded and observable, but NOT durable."
+            )
 
         # Execute workflow in background with streaming via WebSocket
         await workflow.arun(  # type: ignore
@@ -692,9 +756,16 @@ async def handle_workflow_continue_via_websocket(
                 # subscription/replay surface. One pump per socket, cancelled
                 # on disconnect/re-subscribe by the dispatcher (same registry
                 # the subscription pump uses).
+                # Also send the "queued" ack here: the continue socket has the
+                # same claim-delay window as a submission, and the FE ignores
+                # unknown frames until it wires this one up
+                with contextlib.suppress(Exception):
+                    await websocket.send_text(
+                        json.dumps({"event": "queued", "run_id": run_id, "session_id": session_id})
+                    )
                 await cancel_subscription_pump(websocket)
                 _ws_tail_pumps[websocket] = asyncio.create_task(
-                    _pump_event_stream_to_ws_execute(websocket, run_id, continue_outcome.get("tail_from"))
+                    _pump_event_stream_to_websocket(websocket, run_id, continue_outcome.get("tail_from"))
                 )
                 return
             log_warning(
