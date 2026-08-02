@@ -358,7 +358,9 @@ class QueueWorker:
                 effective_max = get_background_max_concurrency()
             if effective_max > 0 and len(self._in_flight) >= effective_max:
                 break
-            job = await self.store.claim_job(self.worker_id, self.config.lock_grace_seconds)
+            job = await self.store.claim_job(
+                self.worker_id, self.config.lock_grace_seconds, self.config.deployment_id
+            )
             if job is None:
                 break
             task = asyncio.create_task(self._execute_claimed(job))
@@ -377,7 +379,10 @@ class QueueWorker:
     async def _sweep_exhausted(self) -> None:
         """Fail exhausted stale jobs visibly. Run-row error is persisted FIRST,
         then the queue row — an interrupted sweep retries idempotently next
-        tick (cross-store atomicity is unavailable; ordering + idempotence)."""
+        tick (cross-store atomicity is unavailable; ordering + idempotence).
+        Deliberately NOT deployment-filtered (asymmetric with the claim
+        predicate): sweeping never executes the job, only records a failure
+        that already happened, and any replica may do that honestly."""
         swept = await self.store.sweep_exhausted_jobs(self.config.lock_grace_seconds)
         for job in swept:
             error = "Worker lost and attempt budget exhausted; run was not re-executed"

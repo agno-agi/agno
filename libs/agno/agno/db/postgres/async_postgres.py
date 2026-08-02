@@ -4159,12 +4159,17 @@ class AsyncPostgresDb(AsyncBaseDb):
                     return {"accepted": False, "reason": "duplicate", "job": dict(row._mapping)}
             raise
 
-    async def claim_job(self, worker_id: str, lock_grace_seconds: int = 60) -> Optional[Dict[str, Any]]:
+    async def claim_job(
+        self, worker_id: str, lock_grace_seconds: int = 60, deployment_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
         """Atomically claim the oldest executable job for this worker.
 
         Executable: queued, or running with a stale lock while the attempt
         budget is not exhausted (crash reclaim). Claiming increments attempt,
-        which doubles as the fencing generation.
+        which doubles as the fencing generation. Deployment affinity filters
+        BOTH branches (a reclaim executes too): NULL rides anywhere, stamped
+        jobs only on matching workers; deployment_id=None degenerates to
+        claiming only unstamped jobs.
         """
         try:
             table = await self._get_table(table_type="jobs")
@@ -4178,6 +4183,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                         select(table.c.id)
                         .where(
                             table.c.available_at <= now,
+                            or_(table.c.deployment_id.is_(None), table.c.deployment_id == deployment_id),
                             or_(
                                 table.c.status == "queued",
                                 and_(

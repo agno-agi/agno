@@ -38,6 +38,10 @@ class QueuedJob:
     # column exists so other AgentOS job types (e.g. knowledge ingestion) can
     # ride the same queue without a schema migration.
     job_type: str = "run"
+    # Claim affinity: workers claim only jobs whose deployment_id is None or
+    # equals their QueueConfig.deployment_id. Stamped at enqueue; a
+    # continuation CAS never touches it (the leg inherits the submit's home).
+    deployment_id: Optional[str] = None
     user_id: Optional[str] = None
     payload: Dict[str, Any] = field(default_factory=dict)  # serialized run params
     status: str = "queued"
@@ -73,6 +77,7 @@ class QueuedJob:
             "component_id": self.component_id,
             "session_id": self.session_id,
             "job_type": self.job_type,
+            "deployment_id": self.deployment_id,
             "user_id": self.user_id,
             "payload": self.payload,
             "status": self.status,
@@ -96,6 +101,7 @@ class QueuedJob:
             "component_id",
             "session_id",
             "job_type",
+            "deployment_id",
             "user_id",
             "payload",
             "status",

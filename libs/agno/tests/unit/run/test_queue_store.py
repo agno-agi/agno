@@ -365,6 +365,56 @@ class TestCancelPaused:
         assert await store.get_job("r1") is not None
 
 
+class TestDeploymentAffinity:
+    @pytest.mark.asyncio
+    async def test_unstamped_worker_claims_only_unstamped_jobs(self, store):
+        """deployment_id=None degenerates to claiming only NULL jobs: a
+        stamped job never lands on an unconfigured worker."""
+        await store.enqueue_job(make_job("stamped", deployment_id="dep-a"))
+        await store.enqueue_job(make_job("free"))
+        claimed = await store.claim_job("w1")  # no deployment_id
+        assert claimed["id"] == "free"
+        assert await store.claim_job("w1") is None  # stamped job stays
+
+    @pytest.mark.asyncio
+    async def test_matching_worker_claims_stamped_and_unstamped(self, store):
+        await store.enqueue_job(make_job("stamped", deployment_id="dep-a"))
+        claimed = await store.claim_job("w1", deployment_id="dep-a")
+        assert claimed["id"] == "stamped"
+
+        await store.enqueue_job(make_job("free"))
+        assert (await store.claim_job("w1", deployment_id="dep-a"))["id"] == "free"
+
+    @pytest.mark.asyncio
+    async def test_mismatched_worker_never_claims(self, store):
+        await store.enqueue_job(make_job("stamped", deployment_id="dep-a"))
+        assert await store.claim_job("w1", deployment_id="dep-b") is None
+
+    @pytest.mark.asyncio
+    async def test_reclaim_branch_respects_affinity(self, store):
+        """A reclaim EXECUTES, so the stale-running branch must filter too - a
+        foreign deployment's crashed job is not this worker's to re-run."""
+        await store.enqueue_job(make_job("stamped", max_attempts=2, deployment_id="dep-a"))
+        await store.claim_job("w1", deployment_id="dep-a")
+        store._jobs["stamped"]["locked_at"] -= 1000
+        assert await store.claim_job("w2", lock_grace_seconds=60, deployment_id="dep-b") is None
+        assert await store.claim_job("w2", lock_grace_seconds=60) is None
+        reclaimed = await store.claim_job("w2", lock_grace_seconds=60, deployment_id="dep-a")
+        assert reclaimed is not None and reclaimed["attempt"] == 2
+
+    @pytest.mark.asyncio
+    async def test_continue_inherits_deployment_stamp(self, store):
+        """The continuation CAS never touches deployment_id: the leg executes
+        on the submit's home deployment."""
+        await store.enqueue_job(make_job("r1", deployment_id="dep-a"))
+        claimed = await store.claim_job("w1", deployment_id="dep-a")
+        await store.complete_job("r1", "w1", claimed["attempt"], "paused")
+        result = await store.continue_job("r1", {"updated_tools": []})
+        assert result["outcome"] == "queued"
+        assert result["job"]["deployment_id"] == "dep-a"
+        assert await store.claim_job("w2") is None  # still deployment-bound
+
+
 class TestDedupNamespaceContract:
     @pytest.mark.asyncio
     async def test_dedup_is_user_scoped(self, store):

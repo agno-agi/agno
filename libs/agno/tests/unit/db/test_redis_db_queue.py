@@ -231,6 +231,38 @@ class TestContinueJob:
         assert db.complete_job("r1", "w2", 2, "completed")
 
 
+class TestDeploymentAffinity:
+    def test_unstamped_worker_claims_only_unstamped_jobs(self, db):
+        db.enqueue_job(make_job("stamped", deployment_id="dep-a"))
+        db.enqueue_job(make_job("free"))
+        claimed = db.claim_job("w1")
+        assert claimed["id"] == "free"
+        assert db.claim_job("w1") is None
+
+    def test_matching_worker_claims_stamped(self, db):
+        db.enqueue_job(make_job("stamped", deployment_id="dep-a"))
+        assert db.claim_job("w1", deployment_id="dep-b") is None
+        assert db.claim_job("w1", deployment_id="dep-a")["id"] == "stamped"
+
+    def test_reclaim_branch_respects_affinity(self, db):
+        db.enqueue_job(make_job("stamped", max_attempts=2, deployment_id="dep-a"))
+        db.claim_job("w1", deployment_id="dep-a")
+        make_stale(db, "stamped")
+        assert db.claim_job("w2", lock_grace_seconds=60, deployment_id="dep-b") is None
+        assert db.claim_job("w2", lock_grace_seconds=60) is None
+        reclaimed = db.claim_job("w2", lock_grace_seconds=60, deployment_id="dep-a")
+        assert reclaimed is not None and reclaimed["attempt"] == 2
+
+    def test_continue_inherits_deployment_stamp(self, db):
+        db.enqueue_job(make_job("r1", deployment_id="dep-a"))
+        claimed = db.claim_job("w1", deployment_id="dep-a")
+        db.complete_job("r1", "w1", claimed["attempt"], "paused")
+        result = db.continue_job("r1", {"updated_tools": []})
+        assert result["outcome"] == "queued"
+        assert result["job"]["deployment_id"] == "dep-a"
+        assert db.claim_job("w2") is None
+
+
 class TestCancelPaused:
     def test_cancel_reaches_paused_tickets(self, db):
         _pause_job(db)

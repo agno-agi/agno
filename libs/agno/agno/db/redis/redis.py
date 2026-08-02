@@ -2304,24 +2304,37 @@ class RedisDb(BaseDb):
                     continue  # another submitter raced this key; re-evaluate
         raise RuntimeError("enqueue_job: idempotency-key contention did not settle after 10 attempts")
 
-    def claim_job(self, worker_id: str, lock_grace_seconds: int = 60) -> Optional[Dict[str, Any]]:
+    def claim_job(
+        self, worker_id: str, lock_grace_seconds: int = 60, deployment_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
         """Atomically claim the oldest executable job (queued, or stale-running
-        within the attempt budget). WATCH/MULTI CAS; a raced claim moves on."""
+        within the attempt budget). WATCH/MULTI CAS; a raced claim moves on.
+        Deployment affinity filters BOTH branches (a reclaim executes too):
+        NULL rides anywhere, stamped jobs only on matching workers;
+        deployment_id=None degenerates to claiming only unstamped jobs."""
         now = int(time.time())
         stale = now - lock_grace_seconds
 
         for raw_id in self.redis_client.zrangebyscore(self._q_key("queued"), "-inf", now, start=0, num=8):
-            job = self._q_try_claim(_q_to_str(raw_id), worker_id, now, expect_status="queued")
+            job = self._q_try_claim(_q_to_str(raw_id), worker_id, now, expect_status="queued", deployment_id=deployment_id)
             if job is not None:
                 return job
         for raw_id in self.redis_client.zrangebyscore(self._q_key("running"), "-inf", stale, start=0, num=8):
-            job = self._q_try_claim(_q_to_str(raw_id), worker_id, now, expect_status="running", stale_before=stale)
+            job = self._q_try_claim(
+                _q_to_str(raw_id), worker_id, now, expect_status="running", stale_before=stale, deployment_id=deployment_id
+            )
             if job is not None:
                 return job
         return None
 
     def _q_try_claim(
-        self, job_id: str, worker_id: str, now: int, expect_status: str, stale_before: Optional[int] = None
+        self,
+        job_id: str,
+        worker_id: str,
+        now: int,
+        expect_status: str,
+        stale_before: Optional[int] = None,
+        deployment_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         from redis.exceptions import WatchError
 
@@ -2337,6 +2350,7 @@ class RedisDb(BaseDb):
                 claimable = (
                     job["status"] == expect_status
                     and job["available_at"] <= now
+                    and (job.get("deployment_id") is None or job.get("deployment_id") == deployment_id)
                     and (
                         expect_status == "queued"
                         or (
