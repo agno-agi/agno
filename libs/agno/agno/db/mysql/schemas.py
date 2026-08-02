@@ -25,7 +25,6 @@ SESSION_TABLE_SCHEMA = {
 }
 
 
-# See postgres schemas.py for design notes (FK cascade, member runs).
 def _get_run_table_schema(session_table_name: str = "agno_sessions") -> dict[str, Any]:
     """Runs table schema with ``session_id`` FK → sessions ON DELETE CASCADE."""
     return {
