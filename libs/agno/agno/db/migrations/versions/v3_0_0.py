@@ -1567,6 +1567,7 @@ def _revert_dynamodb(db: BaseDb, table_name: str) -> bool:
             continue
         runs_by_session.setdefault(sid, []).append((run_index, created_at, payload))
 
+    failed_sids: set = set()
     for sid, items_for_session in runs_by_session.items():
         items_for_session.sort(key=lambda t: (t[0], t[1]))
         legacy_runs = [t[2] for t in items_for_session]
@@ -1580,16 +1581,28 @@ def _revert_dynamodb(db: BaseDb, table_name: str) -> bool:
             )
         except Exception as e:
             log_error(f"Failed to revert runs onto session {sid}: {str(e)}")
+            failed_sids.add(sid)
 
-    # Best-effort: truncate the runs table
+    # Truncate the runs table, but preserve runs for any session whose blob
+    # rebuild failed -- deleting them would lose the only remaining copy.
+    preserved = 0
     for it in items:
         run_id = it.get("run_id", {}).get("S")
         if not run_id:
+            continue
+        if it.get("session_id", {}).get("S") in failed_sids:
+            preserved += 1
             continue
         try:
             client.delete_item(TableName=runs_table, Key={"run_id": {"S": run_id}})
         except Exception:
             pass
+
+    if failed_sids:
+        log_warning(
+            f"Preserved {preserved} run(s) in {runs_table} for {len(failed_sids)} session(s) whose "
+            "blob rebuild failed; re-run down() after resolving the error."
+        )
 
     return True
 
@@ -1684,6 +1697,7 @@ def _revert_surrealdb(db: BaseDb, table_name: str) -> bool:
         )
 
     sessions_table = table_name
+    failed_sids: set = set()
     for sid, items in runs_by_session.items():
         items.sort(key=lambda t: (t[0], t[1]))
         legacy_runs = [t[2] for t in items if t[2] is not None]
@@ -1694,9 +1708,34 @@ def _revert_surrealdb(db: BaseDb, table_name: str) -> bool:
             )
         except Exception as e:
             log_error(f"Failed to revert runs onto session {sid}: {str(e)}")
+            failed_sids.add(sid)
 
-    try:
-        db.client.delete(runs_table)  # type: ignore
-    except Exception:
-        pass
+    if not failed_sids:
+        # No failures: truncate the whole runs table.
+        try:
+            db.client.delete(runs_table)  # type: ignore
+        except Exception:
+            pass
+    else:
+        # Preserve runs for sessions whose blob rebuild failed -- deleting them
+        # would lose the only remaining copy. Delete the rest by record id.
+        preserved = 0
+        for r in rows_raw:
+            sid = r.get("session_id")
+            if isinstance(sid, RecordID):
+                sid = sid.id
+            if sid in failed_sids:
+                preserved += 1
+                continue
+            rid = r.get("id")
+            if rid is None:
+                continue
+            try:
+                db.client.delete(rid)  # type: ignore
+            except Exception:
+                pass
+        log_warning(
+            f"Preserved {preserved} run(s) in {runs_table} for {len(failed_sids)} session(s) whose "
+            "blob rebuild failed; re-run down() after resolving the error."
+        )
     return True

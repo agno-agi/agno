@@ -159,6 +159,11 @@ def deserialize_run(run_type: Optional[str], run_data: Dict[str, Any]) -> Any:
     from agno.run.team import TeamRunOutput
     from agno.run.workflow import WorkflowRunOutput
 
+    # Some JSON columns (MySQL/SingleStore drivers, SQLite TEXT) hand back the
+    # payload as a str rather than a dict; normalize before dispatching.
+    if isinstance(run_data, str):
+        run_data = json.loads(run_data)
+
     if run_type is None:
         run_type = get_run_type(run_data)
     if run_type == "agent":
