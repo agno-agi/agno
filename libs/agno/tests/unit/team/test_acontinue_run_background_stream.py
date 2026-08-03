@@ -303,6 +303,63 @@ class TestRePausedContinueFinalStatus:
         )
 
     @pytest.mark.asyncio
+    async def test_shutdown_never_stamps_cancelled_over_a_re_pause(self):
+        """A leg that already RE-PAUSED parked a valid, continuable HITL
+        state; shutdown while the producer drains trailing events must not
+        destroy it - the run row keeps PAUSED and the sentinel re-parks."""
+        import asyncio
+
+        import agno.team._run as run_mod
+        from agno.run import RunStatus
+        from agno.run.team import TeamRunOutputEvent
+        from agno.team._run import _acontinue_run_background_stream
+
+        team = MagicMock()
+        team.db = None
+        run_context = MagicMock()
+
+        session_run = MagicMock()
+        session_run.status = RunStatus.paused  # the leg already re-paused
+        team_session = MagicMock()
+        team_session.get_run.return_value = session_run
+
+        started = asyncio.Event()
+
+        async def hanging_stream(*args, **kwargs):
+            yield MagicMock(spec=TeamRunOutputEvent)
+            started.set()
+            await asyncio.sleep(3600)
+
+        mock_stream = make_mock_event_stream()
+        tasks_before = set(run_mod._background_tasks)
+        with (
+            patch("agno.team._run._acontinue_run_stream", side_effect=hanging_stream),
+            patch(
+                "agno.team._storage._aread_or_create_session",
+                new_callable=AsyncMock,
+                return_value=team_session,
+            ),
+            patch("agno.team._storage._update_metadata"),
+            patch("agno.team._session.asave_session", new_callable=AsyncMock),
+            patch("agno.os.event_streams.get_event_stream", return_value=mock_stream),
+            patch("agno.os.utils.format_sse_event_with_index", return_value="data: x\n\n"),
+        ):
+            gen = _acontinue_run_background_stream(team, run_context=run_context, session_id="s-1", run_id="r-1")
+            await gen.__anext__()
+            await asyncio.wait_for(started.wait(), timeout=2)
+
+            producer_task = next(iter(run_mod._background_tasks - tasks_before))
+            producer_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await producer_task
+            await gen.aclose()
+
+        assert session_run.status == RunStatus.paused, "shutdown must not stamp CANCELLED over a re-pause"
+        assert mock_stream.complete_run.call_args.args[1] == RunStatus.paused, (
+            "the sentinel must re-park the stream as PAUSED"
+        )
+
+    @pytest.mark.asyncio
     async def test_str_status_from_run_row_is_coerced(self):
         """DB round-trips can degrade the enum to a plain str; the terminal
         write must coerce it or complete_run treats it as non-terminal."""
