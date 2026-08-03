@@ -593,7 +593,7 @@ class OpenAIChat(Model):
         try:
             assistant_message.metrics.start_timer()
 
-            for chunk in self.get_client().chat.completions.create(
+            provider_stream = self.get_client().chat.completions.create(
                 model=self.id,
                 messages=self._format_all_messages(messages, compress_tool_results),  # type: ignore
                 stream=True,
@@ -601,8 +601,18 @@ class OpenAIChat(Model):
                 **self.get_request_params(
                     response_format=response_format, tools=tools, tool_choice=tool_choice, run_response=run_response
                 ),
-            ):
-                yield self._parse_provider_response_delta(chunk)
+            )
+
+            # Some OpenAI-compatible providers ignore stream=True and return a batch completion.
+            if provider_stream.response.headers.get("content-type", "").lower().startswith("application/json"):
+                try:
+                    provider_response = ChatCompletion.model_validate_json(provider_stream.response.read())
+                finally:
+                    provider_stream.close()
+                yield self._parse_provider_response(provider_response, response_format=response_format)
+            else:
+                for chunk in provider_stream:
+                    yield self._parse_provider_response_delta(chunk)
 
             assistant_message.metrics.stop_timer()
 
@@ -690,8 +700,16 @@ class OpenAIChat(Model):
                 ),
             )
 
-            async for chunk in async_stream:
-                yield self._parse_provider_response_delta(chunk)
+            # Some OpenAI-compatible providers ignore stream=True and return a batch completion.
+            if async_stream.response.headers.get("content-type", "").lower().startswith("application/json"):
+                try:
+                    provider_response = ChatCompletion.model_validate_json(await async_stream.response.aread())
+                finally:
+                    await async_stream.close()
+                yield self._parse_provider_response(provider_response, response_format=response_format)
+            else:
+                async for chunk in async_stream:
+                    yield self._parse_provider_response_delta(chunk)
 
             assistant_message.metrics.stop_timer()
 
