@@ -198,7 +198,9 @@ chonkie = [
 csv = ["aiofiles"]
 docx = ["python-docx"]
 excel = ["openpyxl", "xlrd"]
-markdown = ["unstructured<0.18.31", "markdown", "aiofiles"]
+# nltk!=3.10.1: its inisec import hook falsely blocks site-packages imports when
+# the venv lives inside the CWD, breaking the unstructured import chain.
+markdown = ["unstructured<0.18.31", "nltk!=3.10.1", "markdown", "aiofiles"]
 pdf = ["pypdf", "rapidocr_onnxruntime"]
 pptx = ["python-pptx"]
 text = ["aiofiles"]
