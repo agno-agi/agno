@@ -541,6 +541,9 @@ class LearningMachine:
         if user_id or self._missing_user_id_warned:
             return
         per_user = [name for name in ("user_profile", "user_memory") if self.stores.get(name) is not None]
+        entity_store = self.stores.get("entity_memory")
+        if entity_store is not None and getattr(getattr(entity_store, "config", None), "namespace", None) == "user":
+            per_user.append('entity_memory (namespace="user")')
         if per_user:
             self._missing_user_id_warned = True
             log_warning(

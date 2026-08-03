@@ -8,7 +8,7 @@ from fastapi import Depends, HTTPException, Path, Query, Request
 from fastapi.routing import APIRouter
 
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.learn.utils import IDENTITY_KEYED_LEARNING_TYPES, build_learning_id
+from agno.learn.utils import DEFAULT_LEARNING_NAMESPACE, IDENTITY_KEYED_LEARNING_TYPES, build_learning_id
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id
 from agno.os.routers.learnings.schema import LearningCreate, LearningResponse, LearningUpdate, LearningUserStats
@@ -210,6 +210,13 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
             )
         learning_id = deterministic_id or str(uuid4())
 
+        # The entity store filters reads by the namespace column, and the derived id
+        # already defaulted a missing namespace -- store the same default, or the row's
+        # key would say "global" while its column says NULL and no read ever finds it.
+        namespace = body.namespace
+        if body.learning_type == "entity_memory" and namespace is None:
+            namespace = DEFAULT_LEARNING_NAMESPACE
+
         try:
             if isinstance(db, AsyncBaseDb):
                 # Identity-keyed record already exists -> don't silently overwrite agent-curated
@@ -230,7 +237,7 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
                     agent_id=body.agent_id,
                     team_id=body.team_id,
                     session_id=body.session_id,
-                    namespace=body.namespace,
+                    namespace=namespace,
                     entity_id=body.entity_id,
                     entity_type=body.entity_type,
                     metadata=body.metadata,
@@ -254,7 +261,7 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
                     agent_id=body.agent_id,
                     team_id=body.team_id,
                     session_id=body.session_id,
-                    namespace=body.namespace,
+                    namespace=namespace,
                     entity_id=body.entity_id,
                     entity_type=body.entity_type,
                     metadata=body.metadata,

@@ -243,6 +243,47 @@ class TestCreateLearning:
         resp = client.post("/learnings", json={"content": {}})
         assert resp.status_code == 422
 
+    def test_create_entity_user_namespace_without_user_id_is_422(self, client, mock_db):
+        # The entity key embeds the user under namespace="user"; without a
+        # user_id no id can be derived and the row would be unreachable.
+        resp = client.post(
+            "/learnings",
+            json={
+                "learning_type": "entity_memory",
+                "content": {},
+                "entity_id": "acme",
+                "entity_type": "company",
+                "namespace": "user",
+            },
+        )
+        assert resp.status_code == 422
+        mock_db.upsert_learning.assert_not_called()
+
+    def test_create_entity_defaults_stored_namespace_to_global(self, client, mock_db):
+        # The derived key defaults a missing namespace to "global"; the stored
+        # column must agree or the store's namespace-filtered reads never find
+        # the row.
+        created = _make_learning(
+            learning_id="entity_global_company_acme",
+            learning_type="entity_memory",
+            entity_id="acme",
+            entity_type="company",
+        )
+        mock_db.get_learning_by_id = MagicMock(side_effect=[None, created])
+        resp = client.post(
+            "/learnings",
+            json={
+                "learning_type": "entity_memory",
+                "content": {},
+                "entity_id": "acme",
+                "entity_type": "company",
+            },
+        )
+        assert resp.status_code == 201
+        kwargs = mock_db.upsert_learning.call_args[1]
+        assert kwargs["id"] == "entity_global_company_acme"
+        assert kwargs["namespace"] == "global"
+
     def test_create_failure_when_get_returns_none(self, client, mock_db):
         # identity record absent (None on existence) and readback also None -> 500
         mock_db.get_learning_by_id = MagicMock(side_effect=[None, None])
