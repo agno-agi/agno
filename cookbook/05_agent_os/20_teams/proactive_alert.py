@@ -5,8 +5,8 @@ Send a Proactive Alert to a Teams User
 Once a user has chatted with the bot at least once, the interface stores a
 conversation reference in that user's latest session. Any code — a scheduled
 job, a webhook handler, another agent's tool — can then call
-`teams.send_alert(user_id, text)` to push a message into Teams without an
-inbound trigger.
+`teams.asend_alert(user_id, text)` (or the sync `teams.send_alert(...)`
+wrapper) to push a message into Teams without an inbound trigger.
 
 This example runs the bot server AND schedules a one-off alert 30 seconds
 after startup, so you can watch the flow end-to-end:
@@ -73,7 +73,7 @@ def _demo_alert_worker():
         print(f"[demo] scheduling proactive alert to {target_user_id} in 30s")
         await asyncio.sleep(30)
         while True:
-            sent = await teams.send_alert(
+            sent = await teams.asend_alert(
                 user_id=target_user_id,
                 text="**Demo alert** from the Teams cookbook — this arrived without you asking.",
             )
