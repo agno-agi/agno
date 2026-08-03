@@ -2304,24 +2304,95 @@ class RedisDb(BaseDb):
                     continue  # another submitter raced this key; re-evaluate
         raise RuntimeError("enqueue_job: idempotency-key contention did not settle after 10 attempts")
 
-    def claim_job(self, worker_id: str, lock_grace_seconds: int = 60) -> Optional[Dict[str, Any]]:
+    def claim_job(
+        self, worker_id: str, lock_grace_seconds: int = 60, deployment_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
         """Atomically claim the oldest executable job (queued, or stale-running
-        within the attempt budget). WATCH/MULTI CAS; a raced claim moves on."""
+        within the attempt budget). WATCH/MULTI CAS; a raced claim moves on.
+        Deployment affinity filters BOTH branches (a reclaim executes too):
+        NULL rides anywhere, stamped jobs only on matching workers;
+        deployment_id=None degenerates to claiming only unstamped jobs.
+
+        The scan PAGES past affinity mismatches: a fixed window would let a
+        head of foreign-deployment jobs starve matching jobs sitting behind
+        them indefinitely (foreign entries stay queued at the front). Each
+        page is pre-filtered with one pipelined MGET; the CAS inside
+        _q_try_claim remains the only authority."""
         now = int(time.time())
         stale = now - lock_grace_seconds
 
-        for raw_id in self.redis_client.zrangebyscore(self._q_key("queued"), "-inf", now, start=0, num=8):
-            job = self._q_try_claim(_q_to_str(raw_id), worker_id, now, expect_status="queued")
-            if job is not None:
-                return job
-        for raw_id in self.redis_client.zrangebyscore(self._q_key("running"), "-inf", stale, start=0, num=8):
-            job = self._q_try_claim(_q_to_str(raw_id), worker_id, now, expect_status="running", stale_before=stale)
-            if job is not None:
-                return job
-        return None
+        job = self._q_scan_claim(
+            self._q_key("queued"), now, worker_id, now, expect_status="queued", deployment_id=deployment_id
+        )
+        if job is not None:
+            return job
+        return self._q_scan_claim(
+            self._q_key("running"),
+            stale,
+            worker_id,
+            now,
+            expect_status="running",
+            stale_before=stale,
+            deployment_id=deployment_id,
+        )
+
+    def _q_scan_claim(
+        self,
+        zset_key: str,
+        max_score: int,
+        worker_id: str,
+        now: int,
+        expect_status: str,
+        stale_before: Optional[int] = None,
+        deployment_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Page through ready jobs oldest-first, cheaply pre-filter each page
+        by deployment affinity (MGET, advisory only), and CAS-claim the first
+        match. Ends when a page comes back empty - worst case one MGET per
+        page of foreign jobs, the same order of work as Postgres's index
+        scan over the same rows.
+
+        Offset pagination under concurrent claimers can skip entries whose
+        rank shifted mid-scan (a peer claimed something on an earlier page).
+        That only ends THIS burst early - every poll tick rescans from rank
+        0, so a skipped job is picked up next tick; no starvation."""
+        page_size = 64
+        offset = 0
+        while True:
+            raw_ids = self.redis_client.zrangebyscore(zset_key, "-inf", max_score, start=offset, num=page_size)
+            if not raw_ids:
+                return None
+            job_ids = [_q_to_str(raw_id) for raw_id in raw_ids]
+            raw_jobs = self.redis_client.mget([self._q_job_key(job_id) for job_id in job_ids])
+            for job_id, raw in zip(job_ids, raw_jobs):
+                if raw is None:
+                    continue
+                try:
+                    candidate = json.loads(raw if isinstance(raw, str) else raw.decode())
+                except (ValueError, AttributeError):
+                    continue
+                if candidate.get("deployment_id") is not None and candidate.get("deployment_id") != deployment_id:
+                    continue
+                job = self._q_try_claim(
+                    job_id,
+                    worker_id,
+                    now,
+                    expect_status=expect_status,
+                    stale_before=stale_before,
+                    deployment_id=deployment_id,
+                )
+                if job is not None:
+                    return job
+            offset += page_size
 
     def _q_try_claim(
-        self, job_id: str, worker_id: str, now: int, expect_status: str, stale_before: Optional[int] = None
+        self,
+        job_id: str,
+        worker_id: str,
+        now: int,
+        expect_status: str,
+        stale_before: Optional[int] = None,
+        deployment_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         from redis.exceptions import WatchError
 
@@ -2337,6 +2408,7 @@ class RedisDb(BaseDb):
                 claimable = (
                     job["status"] == expect_status
                     and job["available_at"] <= now
+                    and (job.get("deployment_id") is None or job.get("deployment_id") == deployment_id)
                     and (
                         expect_status == "queued"
                         or (
@@ -2448,6 +2520,10 @@ class RedisDb(BaseDb):
         return outcome.get("status") if updated is not None else None
 
     def cancel_job(self, job_id: str) -> bool:
+        # Paused tickets count as waiting: nothing is executing them, and
+        # without this a cancelled paused run stayed a paused ticket forever,
+        # resurrectable by a later continue. (Paused jobs are in no
+        # queued/running zset; the zrem below is a harmless no-op for them.)
         from redis.exceptions import WatchError
 
         job_key = self._q_job_key(job_id)
@@ -2460,7 +2536,7 @@ class RedisDb(BaseDb):
                     pipe.unwatch()
                     return False
                 job = json.loads(raw if isinstance(raw, str) else raw.decode())
-                if job["status"] != "queued":
+                if job["status"] not in ("queued", "paused"):
                     pipe.unwatch()
                     return False
                 job.update(status="cancelled", completed_at=now, updated_at=now)
@@ -2544,7 +2620,7 @@ class RedisDb(BaseDb):
                         return jobs
             offset += chunk
 
-    def requeue_job(self, job_id: str) -> bool:
+    def requeue_job(self, job_id: str, available_delay_seconds: int = 0) -> bool:
         """Operator requeue for a terminally failed/cancelled job: grants
         exactly one more execution by raising max_attempts to attempt + 1."""
         from redis.exceptions import WatchError
@@ -2565,7 +2641,7 @@ class RedisDb(BaseDb):
                 job.update(
                     status="queued",
                     max_attempts=job["attempt"] + 1,
-                    available_at=now,
+                    available_at=now + available_delay_seconds,
                     locked_by=None,
                     locked_at=None,
                     completed_at=None,
@@ -2578,6 +2654,67 @@ class RedisDb(BaseDb):
                 return True
         except WatchError:
             return False
+
+    def continue_job(
+        self, job_id: str, continue_payload: Dict[str, Any], available_delay_seconds: int = 0
+    ) -> Dict[str, Any]:
+        """Continuation CAS: flip the EXISTING paused ticket back to queued,
+        mirroring requeue_job's WATCH/MULTI transition. No new rows, ever -
+        id == run_id is load-bearing. Submit-time payload fields are kept;
+        payload["continue"] is REPLACED WHOLESALE with this continue's inputs
+        (never accumulated across pause cycles). Budget grant: max_attempts =
+        attempt + 1 - exactly one more execution, regardless of the configured
+        retry budget.
+
+        Returns {"outcome": "queued" | "attach" | "conflict", "job": row}:
+        queued = CAS won; attach = ticket already queued/running (double-click
+        idempotency - the caller attaches, this click's inputs are discarded);
+        conflict = terminal ticket or no ticket (job is the row or None).
+
+        A WatchError means the ticket changed under us (e.g. the raced
+        double-click's CAS won): re-evaluate rather than failing, so the
+        second click resolves to attach. Exceptions propagate (like
+        enqueue_job): this CAS is the durable acceptance of the continue.
+        """
+        from redis.exceptions import WatchError
+
+        job_key = self._q_job_key(job_id)
+        for _ in range(10):
+            now = int(time.time())
+            try:
+                with self.redis_client.pipeline() as pipe:
+                    pipe.watch(job_key)
+                    raw = pipe.get(job_key)
+                    if raw is None:
+                        pipe.unwatch()
+                        return {"outcome": "conflict", "job": None}
+                    job = json.loads(raw if isinstance(raw, str) else raw.decode())
+                    if job["status"] in ("completed", "failed", "cancelled"):
+                        pipe.unwatch()
+                        return {"outcome": "conflict", "job": job}
+                    if job["status"] in ("queued", "running"):
+                        pipe.unwatch()
+                        return {"outcome": "attach", "job": job}
+                    payload = dict(job.get("payload") or {})
+                    payload["continue"] = dict(continue_payload)
+                    job.update(
+                        status="queued",
+                        payload=payload,
+                        max_attempts=job["attempt"] + 1,
+                        available_at=now + available_delay_seconds,
+                        locked_by=None,
+                        locked_at=None,
+                        completed_at=None,
+                        updated_at=now,
+                    )
+                    pipe.multi()
+                    self._q_save_job_in_pipe(pipe, job)
+                    pipe.zadd(self._q_key("queued"), {job_id: now})
+                    pipe.execute()
+                    return {"outcome": "queued", "job": job}
+            except WatchError:
+                continue  # ticket changed under us; re-evaluate its new status
+        raise RuntimeError("continue_job: ticket contention did not settle after 10 attempts")
 
     def queue_stats(self) -> Dict[str, Any]:
         now = int(time.time())
@@ -2598,7 +2735,9 @@ class RedisDb(BaseDb):
         flip failed->queued between our read and the delete, and an
         unconditional delete would silently vanish the requeued (accepted!)
         run. WATCH + re-check inside the transaction = Postgres's atomic
-        DELETE ... WHERE status IN (terminal)."""
+        DELETE ... WHERE status IN (terminal). Paused tickets are deliberately
+        EXEMPT: they must outlive arbitrary human latency to stay continuable;
+        cancelling the run is the remedy for abandoned ones."""
         from redis.exceptions import WatchError
 
         cutoff = int(time.time()) - older_than_seconds

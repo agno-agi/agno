@@ -284,6 +284,9 @@ JOBS_TABLE_SCHEMA = {
     "id": {"type": String, "primary_key": True, "nullable": False},
     "component_type": {"type": String, "nullable": False},  # agent | team | workflow
     "job_type": {"type": String, "nullable": False},  # "run" today; future: other AgentOS job types
+    # Claim affinity: NULL = any worker; set = only workers whose
+    # QueueConfig.deployment_id matches (filtered in the claim predicate)
+    "deployment_id": {"type": String, "nullable": True},
     "component_id": {"type": String, "nullable": False, "index": True},
     "session_id": {"type": String, "nullable": False, "index": True},
     "user_id": {"type": String, "nullable": True},

@@ -68,6 +68,34 @@ class BaseEventStream(ABC):
         finish once it has yielded the remaining buffered events.
         """
 
+    async def reopen_run(self, run_id: str, include_error: bool = False) -> bool:
+        """Atomically reopen a PAUSED run for a continuation leg.
+
+        The pause wrote a terminal-for-the-stream state (status + sentinel);
+        a continuation appends to the SAME stream, so acceptance must (a)
+        flip the status back to a live value and (b) invalidate the pause
+        sentinel so new tails do not close before the leg's first event.
+        Returns True when the run was PAUSED and is now reopened; False when
+        the status had already moved on (e.g. a racing worker finished the
+        leg) - the caller must NOT overwrite that newer state.
+
+        ``include_error=True`` additionally reopens from ERROR. Reserved for
+        the queue WORKER re-driving a continuation it has CLAIMED (operator
+        requeue of a failed leg): continuation legs never reset the stream,
+        so the failed leg's ERROR sentinel would otherwise close tails
+        attached before the redrive's first event. Seam-side callers must
+        never pass it - only the claim holder may re-liven an errored view.
+
+        Implementations must make the check-and-flip atomic. This default is
+        a best-effort fallback for third-party streams only.
+        """
+        reopenable = (RunStatus.paused, RunStatus.error) if include_error else (RunStatus.paused,)
+        status = await self.get_run_status(run_id)
+        if status is not None and status not in reopenable:
+            return False
+        await self.set_run_status(run_id, RunStatus.pending)
+        return True
+
     @abstractmethod
     async def cleanup_run(self, run_id: str) -> None:
         """Drop all stored state for a run (called after the retention period)."""

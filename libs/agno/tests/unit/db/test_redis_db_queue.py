@@ -173,6 +173,139 @@ class TestOpsSurface:
         assert db.get_job("r2") is not None
 
 
+def _pause_job(db: RedisDb, job_id: str = "r1", worker: str = "w1") -> dict:
+    """Enqueue, claim, and park a job as paused (the HITL leg ended)."""
+    assert db.enqueue_job(make_job(job_id))["accepted"]
+    claimed = db.claim_job(worker)
+    assert db.complete_job(job_id, worker, claimed["attempt"], "paused")
+    return db.get_job(job_id)
+
+
+class TestContinueJob:
+    def test_continue_flips_paused_to_queued_same_row(self, db):
+        paused = _pause_job(db)
+        result = db.continue_job("r1", {"updated_tools": [{"tool_call_id": "t1"}]})
+        assert result["outcome"] == "queued"
+        job = result["job"]
+        assert job["id"] == "r1"  # the SAME ticket: no new rows, ever
+        assert job["status"] == "queued"
+        assert job["max_attempts"] == paused["attempt"] + 1
+        assert job["completed_at"] is None
+        assert job["payload"]["input"] == "hello"
+        assert job["payload"]["continue"] == {"updated_tools": [{"tool_call_id": "t1"}]}
+        # Back in the queued zset: claimable again
+        assert db.claim_job("w2")["id"] == "r1"
+
+    def test_continue_payload_replaced_not_accumulated(self, db):
+        _pause_job(db)
+        db.continue_job("r1", {"step_requirements": [{"step_name": "a"}]})
+        leg2 = db.claim_job("w1")
+        assert db.complete_job("r1", "w1", leg2["attempt"], "paused")
+        db.continue_job("r1", {"step_requirements": [{"step_name": "b"}]})
+        leg3 = db.claim_job("w1")
+        assert leg3["payload"]["continue"] == {"step_requirements": [{"step_name": "b"}]}
+        assert leg3["payload"]["input"] == "hello"
+
+    def test_double_click_attaches_first_inputs_win(self, db):
+        _pause_job(db)
+        assert db.continue_job("r1", {"updated_tools": [{"tool_call_id": "t1"}]})["outcome"] == "queued"
+        second = db.continue_job("r1", {"updated_tools": [{"tool_call_id": "OTHER"}]})
+        assert second["outcome"] == "attach"
+        assert db.get_job("r1")["payload"]["continue"]["updated_tools"][0]["tool_call_id"] == "t1"
+
+    def test_continue_terminal_or_missing_conflicts(self, db):
+        assert db.continue_job("ghost", {})["outcome"] == "conflict"
+        db.enqueue_job(make_job("r1"))
+        claimed = db.claim_job("w1")
+        db.complete_job("r1", "w1", claimed["attempt"], "completed")
+        result = db.continue_job("r1", {})
+        assert result["outcome"] == "conflict"
+        assert result["job"]["status"] == "completed"
+
+    def test_continuation_leg_fence_honors_new_generation(self, db):
+        _pause_job(db)
+        db.continue_job("r1", {"updated_tools": []})
+        leg = db.claim_job("w2")
+        assert leg["attempt"] == 2
+        assert not db.complete_job("r1", "w1", 1, "completed")  # old leg fenced out
+        assert db.complete_job("r1", "w2", 2, "completed")
+
+
+class TestDeploymentAffinity:
+    def test_unstamped_worker_claims_only_unstamped_jobs(self, db):
+        db.enqueue_job(make_job("stamped", deployment_id="dep-a"))
+        db.enqueue_job(make_job("free"))
+        claimed = db.claim_job("w1")
+        assert claimed["id"] == "free"
+        assert db.claim_job("w1") is None
+
+    def test_matching_worker_claims_stamped(self, db):
+        db.enqueue_job(make_job("stamped", deployment_id="dep-a"))
+        assert db.claim_job("w1", deployment_id="dep-b") is None
+        assert db.claim_job("w1", deployment_id="dep-a")["id"] == "stamped"
+
+    def test_reclaim_branch_respects_affinity(self, db):
+        db.enqueue_job(make_job("stamped", max_attempts=2, deployment_id="dep-a"))
+        db.claim_job("w1", deployment_id="dep-a")
+        make_stale(db, "stamped")
+        assert db.claim_job("w2", lock_grace_seconds=60, deployment_id="dep-b") is None
+        assert db.claim_job("w2", lock_grace_seconds=60) is None
+        reclaimed = db.claim_job("w2", lock_grace_seconds=60, deployment_id="dep-a")
+        assert reclaimed is not None and reclaimed["attempt"] == 2
+
+    def test_foreign_jobs_at_head_do_not_starve_matching_jobs(self, db):
+        """Codex P1: a fixed scan window let a head of foreign-deployment
+        jobs hide matching jobs sitting behind them - forever, since the
+        foreign entries stay queued at the front. The scan must page past
+        mismatches."""
+        base = int(time.time()) - 100
+        for i in range(20):  # more than any single scan page's worth of foreign work
+            job = make_job(f"foreign-{i}", deployment_id="dep-other")
+            job["created_at"] = base + i
+            job["available_at"] = base + i
+            assert db.enqueue_job(job)["accepted"]
+        mine = make_job("mine", deployment_id="dep-a")
+        mine["created_at"] = base + 50
+        mine["available_at"] = base + 50
+        assert db.enqueue_job(mine)["accepted"]
+
+        claimed = db.claim_job("w1", deployment_id="dep-a")
+        assert claimed is not None and claimed["id"] == "mine"
+        # And the unstamped-worker degeneration pages past stamps too
+        free = make_job("free")
+        free["created_at"] = base + 60
+        free["available_at"] = base + 60
+        assert db.enqueue_job(free)["accepted"]
+        claimed = db.claim_job("w2")
+        assert claimed is not None and claimed["id"] == "free"
+
+    def test_continue_inherits_deployment_stamp(self, db):
+        db.enqueue_job(make_job("r1", deployment_id="dep-a"))
+        claimed = db.claim_job("w1", deployment_id="dep-a")
+        db.complete_job("r1", "w1", claimed["attempt"], "paused")
+        result = db.continue_job("r1", {"updated_tools": []})
+        assert result["outcome"] == "queued"
+        assert result["job"]["deployment_id"] == "dep-a"
+        assert db.claim_job("w2") is None
+
+
+class TestCancelPaused:
+    def test_cancel_reaches_paused_tickets(self, db):
+        _pause_job(db)
+        assert db.cancel_job("r1") is True
+        assert db.get_job("r1")["status"] == "cancelled"
+        # A continue must NOT resurrect the cancelled run
+        assert db.continue_job("r1", {})["outcome"] == "conflict"
+
+    def test_paused_exempt_from_retention(self, db):
+        _pause_job(db)
+        job = json.loads(db.redis_client.get(db._q_job_key("r1")))
+        job["completed_at"] = (job["completed_at"] or int(time.time())) - 100000
+        db.redis_client.set(db._q_job_key("r1"), json.dumps(job))
+        assert db.cleanup_jobs(older_than_seconds=86400) == 0
+        assert db.get_job("r1") is not None
+
+
 class TestWorkerIntegration:
     @pytest.mark.asyncio
     async def test_redis_db_resolves_through_sync_adapter(self):

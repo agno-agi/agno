@@ -199,6 +199,117 @@ class TestPostgresQueueContract:
         assert await db.get_job("r1") is None
 
 
+async def _pause_job(db: AsyncPostgresDb, job_id: str = "r1", worker: str = "w1") -> dict:
+    """Enqueue, claim, and park a job as paused (the HITL leg ended)."""
+    assert (await db.enqueue_job(make_job(job_id)))["accepted"]
+    claimed = await db.claim_job(worker)
+    assert await db.complete_job(job_id, worker, claimed["attempt"], "paused")
+    return await db.get_job(job_id)
+
+
+class TestContinuationCAS:
+    @pytest.mark.asyncio
+    async def test_continue_claim_execute_fence_roundtrip(self, db):
+        """Full continuation leg on real Postgres: paused -> CAS -> claim ->
+        the old leg's fence is dead, the new leg's terminal write lands."""
+        paused = await _pause_job(db)
+        result = await db.continue_job("r1", {"updated_tools": [{"tool_call_id": "t1"}]})
+        assert result["outcome"] == "queued"
+        assert result["job"]["max_attempts"] == paused["attempt"] + 1
+
+        leg = await db.claim_job("w2")
+        assert leg is not None and leg["attempt"] == 2
+        assert leg["payload"]["continue"]["updated_tools"][0]["tool_call_id"] == "t1"
+        assert leg["payload"]["input"] == "hello"  # submit payload preserved
+
+        assert not await db.complete_job("r1", "w1", 1, "completed")  # old leg fenced
+        assert await db.complete_job("r1", "w2", 2, "completed")
+
+    @pytest.mark.asyncio
+    async def test_double_click_cas_under_concurrency(self, db):
+        """N concurrent continues, one row lock: exactly one CAS winner, the
+        rest attach - and the winner's inputs are what persists."""
+        await _pause_job(db)
+        results = await asyncio.gather(*[db.continue_job("r1", {"click": i}) for i in range(8)])
+        outcomes = [r["outcome"] for r in results]
+        assert outcomes.count("queued") == 1
+        assert outcomes.count("attach") == 7
+        winner_click = next(r["job"]["payload"]["continue"]["click"] for r in results if r["outcome"] == "queued")
+        stored = await db.get_job("r1")
+        assert stored["payload"]["continue"] == {"click": winner_click}
+
+    @pytest.mark.asyncio
+    async def test_payload_replaced_wholesale_on_repause(self, db):
+        await _pause_job(db)
+        await db.continue_job("r1", {"step_requirements": [{"step_name": "a"}]})
+        leg2 = await db.claim_job("w1")
+        assert await db.complete_job("r1", "w1", leg2["attempt"], "paused")
+        await db.continue_job("r1", {"step_requirements": [{"step_name": "b"}]})
+        leg3 = await db.claim_job("w1")
+        assert leg3["payload"]["continue"] == {"step_requirements": [{"step_name": "b"}]}
+
+    @pytest.mark.asyncio
+    async def test_crashed_continuation_leg_swept_then_requeued(self, db):
+        """Kill-worker-mid-continue: the leg's budget (attempt+1) grants no
+        silent retry, the sweep fails it visibly, requeue re-drives the SAME
+        merged payload."""
+        await _pause_job(db)
+        await db.continue_job("r1", {"updated_tools": [{"tool_call_id": "t1"}]})
+        await db.claim_job("w1")
+        await make_stale(db, "r1")
+
+        assert await db.claim_job("w2", lock_grace_seconds=60) is None  # budget spent
+        swept = await db.sweep_exhausted_jobs(lock_grace_seconds=60)
+        assert [j["id"] for j in swept] == ["r1"]
+        assert await db.fail_swept_job("r1", lock_grace_seconds=60)
+
+        assert await db.requeue_job("r1")
+        redriven = await db.claim_job("w2")
+        assert redriven["payload"]["continue"]["updated_tools"][0]["tool_call_id"] == "t1"
+
+    @pytest.mark.asyncio
+    async def test_cancel_paused_blocks_continue(self, db):
+        await _pause_job(db)
+        assert await db.cancel_job("r1") is True
+        result = await db.continue_job("r1", {})
+        assert result["outcome"] == "conflict"
+        assert result["job"]["status"] == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_paused_exempt_from_retention(self, db):
+        await _pause_job(db)
+        table = await db._get_table(table_type="jobs")
+        from sqlalchemy import update
+
+        async with db.async_session_factory() as sess:
+            async with sess.begin():
+                await sess.execute(
+                    update(table).where(table.c.id == "r1").values(completed_at=table.c.completed_at - 100000)
+                )
+        assert await db.cleanup_jobs(older_than_seconds=86400) == 0
+        assert (await db.get_job("r1"))["status"] == "paused"
+
+
+class TestDeploymentAffinityPG:
+    @pytest.mark.asyncio
+    async def test_claim_predicate_filters_both_branches(self, db):
+        """The SQL predicate on real Postgres: NULL rides anywhere, stamped
+        jobs only on matching workers, reclaim included."""
+        await db.enqueue_job(make_job("stamped", max_attempts=2, deployment_id="dep-a"))
+        await db.enqueue_job(make_job("free"))
+
+        assert (await db.claim_job("w1"))["id"] == "free"  # None-worker skips stamped
+        assert await db.claim_job("w1") is None
+
+        claimed = await db.claim_job("w2", deployment_id="dep-a")
+        assert claimed["id"] == "stamped"
+
+        await make_stale(db, "stamped")
+        assert await db.claim_job("w3", lock_grace_seconds=60, deployment_id="dep-b") is None
+        reclaimed = await db.claim_job("w3", lock_grace_seconds=60, deployment_id="dep-a")
+        assert reclaimed is not None and reclaimed["attempt"] == 2
+
+
 class TestAnonymousIdempotency:
     @pytest.mark.asyncio
     async def test_null_user_sequential_resubmit_dedupes(self, db):

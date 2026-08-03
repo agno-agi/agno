@@ -106,12 +106,22 @@ def get_queue_router(os: "AgentOS", settings: AgnoAPISettings = AgnoAPISettings(
         ),
     )
     async def requeue_job(request: Request, job_id: str):
+        from agno.os.job_queue import _ACCEPT_GRACE_SECONDS
+
         store = _get_store(request)
-        if not await store.requeue_job(job_id):
-            raise HTTPException(status_code=400, detail=f"Job {job_id} not found or not in a requeueable state")
         # A cancelled job's cancellation intent outlives the tombstone (nothing
         # executed, so nothing cleaned it up). Clear it, or the requeued
-        # attempt is instantly re-cancelled at its first checkpoint.
+        # attempt is instantly re-cancelled at its first checkpoint. The
+        # transition carries the accept grace (unclaimable for a beat) and the
+        # cleanup runs ONLY after a SUCCESSFUL requeue, inside that window:
+        # - a rejected requeue (running/unknown job) must not touch intent at
+        #   all - clearing first erased a cancel aimed at the running attempt;
+        # - of two concurrent requeues only the winner clears, so a loser
+        #   cannot erase a cancel targeting the winner's new attempt;
+        # - the grace makes claim-before-cleanup impossible, so the cleanup
+        #   can never erase a cancel aimed at the requeued attempt itself.
+        if not await store.requeue_job(job_id, available_delay_seconds=_ACCEPT_GRACE_SECONDS):
+            raise HTTPException(status_code=400, detail=f"Job {job_id} not found or not in a requeueable state")
         try:
             from agno.run.cancel import acleanup_run
 
