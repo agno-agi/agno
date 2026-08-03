@@ -122,8 +122,9 @@ via ``db.cleanup_legacy_runs_field()``.
 
 The migration is intentionally **non-destructive**. It creates the runs table and
 copies every legacy run into it, but **leaves the legacy `runs` column on the sessions
-table untouched** as a safety net. New writes will null that column as sessions are
-touched, and once you have verified things, you drop the column manually.
+table untouched** as a safety net. Writes never null that column either — it stays as
+a frozen backup so that upgrading before running the migration can't lose history.
+Once you have verified things, you drop the column manually (with `force=True`).
 
 ### Step 1: Run the v3.0.0 migration
 
@@ -189,14 +190,20 @@ asyncio.run(MigrationManager(db).down(target_version="2.5.6"))
 
 ## Breaking changes
 
-1. **Direct SQL against `agno_sessions.runs`** will eventually break — the column
-   stays put until you run `cleanup_legacy_runs_column()`, but new writes null it
-   out as sessions are touched, so it stops being a complete view of session
-   history once v3.0 is live. Query the runs table instead:
+1. **Direct SQL against `agno_sessions.runs`** stops being a complete view of session
+   history once v3.0 is live — new runs go to the `agno_runs` table, not the legacy
+   column. The legacy column is **never nulled by writes**; it stays as a frozen
+   backup (holding whatever it held at upgrade time) until you explicitly run
+   `cleanup_legacy_runs_column()`. Query the runs table instead:
 
    ```sql
    SELECT run_data FROM ai.agno_runs WHERE session_id = :sid ORDER BY run_index;
    ```
+
+   Because writes no longer null the legacy column, `cleanup_legacy_runs_column()`
+   (and `cleanup_legacy_runs_field()` on NoSQL/file adapters) will refuse to run
+   while any session still holds a legacy blob — after you've run and verified the
+   migration, pass `force=True` to reclaim the storage.
 
 2. **`Session.to_dict()` accepts `include_runs`.** Defaults to `True` (unchanged
    behavior). Adapters use `include_runs=False` internally to avoid serializing
@@ -262,7 +269,7 @@ sessions you didn't touch.
 | Scenario | What you get |
 |---|---|
 | Fresh v3.0 install | No legacy column, runs in `agno_runs`. Just works. |
-| v2.x → v3.0, no migration run yet | Reads merge runs table + legacy blob; first save per session moves runs over. |
-| v2.x → v3.0, migration run, column not cleaned up | All reads go through the runs table. Legacy column sits empty as a backup. |
+| v2.x → v3.0, no migration run yet | Reads merge runs table + legacy blob; new runs go to the table, the legacy blob is preserved so nothing is lost. |
+| v2.x → v3.0, migration run, column not cleaned up | Reads go through the runs table, merged with the preserved legacy blob (deduped by `run_id`). Legacy column kept as a backup. |
 | v2.x → v3.0, migration + `cleanup_legacy_runs_column()` | Final v3.0 state. Smallest sessions table. |
 | Half-finished migration / hand-imported runs | Reads merge by `run_id`. No history is silently lost. |

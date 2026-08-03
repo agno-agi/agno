@@ -1123,7 +1123,9 @@ class AsyncMongoDb(AsyncBaseDb):
 
             session_dict = session.to_dict(include_runs=False)
 
-            existing = await collection.find_one({"session_id": session_dict.get("session_id")}, {"user_id": 1})
+            existing = await collection.find_one(
+                {"session_id": session_dict.get("session_id")}, {"user_id": 1, "runs": 1}
+            )
             if existing:
                 existing_uid = existing.get("user_id")
                 if existing_uid is not None and existing_uid != session_dict.get("user_id"):
@@ -1177,6 +1179,13 @@ class AsyncMongoDb(AsyncBaseDb):
                 }
             else:
                 raise ValueError(f"Invalid session type: {session.session_type}")
+
+            # Preserve the legacy `runs` field as a frozen backup. find_one_and_replace
+            # replaces the whole document, so carry any existing legacy blob forward; runs
+            # now live in their own collection and only cleanup_legacy_runs_field() reclaims
+            # it. Dropping it here would lose history for sessions not yet migrated.
+            if existing and existing.get("runs") is not None:
+                record["runs"] = existing["runs"]
 
             try:
                 result = await collection.find_one_and_replace(
@@ -1239,6 +1248,18 @@ class AsyncMongoDb(AsyncBaseDb):
 
             sessions_by_id: Dict[str, Session] = {s.session_id: s for s in sessions if s is not None}
 
+            # Preserve the legacy `runs` field as a frozen backup. ReplaceOne replaces the
+            # whole document, so fetch any existing legacy blobs up front and carry them
+            # forward; only cleanup_legacy_runs_field() reclaims them. Dropping them here
+            # would lose history for sessions not yet migrated to the runs collection.
+            legacy_runs_by_id: Dict[str, Any] = {}
+            if sessions_by_id:
+                async for doc in collection.find(
+                    {"session_id": {"$in": list(sessions_by_id.keys())}}, {"session_id": 1, "runs": 1}
+                ):
+                    if doc.get("runs") is not None:
+                        legacy_runs_by_id[doc["session_id"]] = doc["runs"]
+
             for session in sessions:
                 if session is None:
                     continue
@@ -1289,6 +1310,10 @@ class AsyncMongoDb(AsyncBaseDb):
                     }
                 else:
                     continue
+
+                legacy_runs = legacy_runs_by_id.get(session.session_id)
+                if legacy_runs is not None:
+                    record["runs"] = legacy_runs
 
                 operations.append(
                     ReplaceOne(filter={"session_id": record["session_id"]}, replacement=record, upsert=True)

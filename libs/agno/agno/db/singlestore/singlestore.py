@@ -586,10 +586,6 @@ class SingleStoreDb(BaseDb):
             sess.execute(text(f"ALTER TABLE `{schema}`.`{self.session_table_name}` DROP COLUMN `runs`"))
             return True
 
-    def _legacy_runs_update(self, table: Table) -> Dict[str, Any]:
-        """Extra UPDATE clauses to clear the legacy runs column when it still exists."""
-        return {"runs": None} if "runs" in table.c else {}
-
     # -- Run methods --
     def _get_session_runs_data(self, sess, runs_table: Table, session_id: str) -> List[Dict[str, Any]]:
         stmt = (
@@ -1147,7 +1143,8 @@ class SingleStoreDb(BaseDb):
 
             update_values = {k: v for k, v in values.items() if k != "session_type"}
             update_values["updated_at"] = int(time.time())
-            update_values.update(self._legacy_runs_update(table))
+            # Legacy `runs` column intentionally preserved as a frozen backup; only
+            # cleanup_legacy_runs_column() reclaims it (see upsert_session docstring).
 
             with self.Session() as sess, sess.begin():
                 existing_row = sess.execute(
@@ -1233,8 +1230,6 @@ class SingleStoreDb(BaseDb):
                 ]
                 return session_dict
 
-            extra_clear_runs = self._legacy_runs_update(table)
-
             results: List[Union[Session, Dict[str, Any]]] = []
 
             with self.Session() as sess, sess.begin():
@@ -1270,7 +1265,6 @@ class SingleStoreDb(BaseDb):
                             summary=stmt.inserted.summary,
                             metadata=stmt.inserted.metadata,
                             updated_at=stmt.inserted.updated_at,
-                            **extra_clear_runs,
                         )
                         sess.execute(stmt, agent_data)
 
@@ -1321,7 +1315,6 @@ class SingleStoreDb(BaseDb):
                             summary=stmt.inserted.summary,
                             metadata=stmt.inserted.metadata,
                             updated_at=stmt.inserted.updated_at,
-                            **extra_clear_runs,
                         )
                         sess.execute(stmt, team_data)
 
@@ -1372,7 +1365,6 @@ class SingleStoreDb(BaseDb):
                             summary=stmt.inserted.summary,
                             metadata=stmt.inserted.metadata,
                             updated_at=stmt.inserted.updated_at,
-                            **extra_clear_runs,
                         )
                         sess.execute(stmt, workflow_data)
 
