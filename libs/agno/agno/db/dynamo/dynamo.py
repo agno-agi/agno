@@ -1041,11 +1041,10 @@ class DynamoDb(BaseDb):
             else:
                 serialized_session["updated_at"] = serialized_session["created_at"]
 
-            # Drop the legacy `runs` field from what we serialize back — runs now live in
-            # the runs table. The session item's legacy `runs` attribute (if any) is
-            # explicitly removed below so it's nulled for sessions that touch v3.
-            serialized_session.pop("runs", None)
-
+            # The legacy `runs` attribute is intentionally preserved: merge_with_existing_session
+            # above carries it forward from the existing item, and put_item writes it back as a
+            # frozen backup until cleanup_legacy_runs_field() removes it. Dropping it here would
+            # lose history for sessions not yet migrated to the runs table.
             item = serialize_to_dynamo_item(serialized_session)
             put_kwargs: Dict[str, Any] = {"TableName": table_name, "Item": item}
 

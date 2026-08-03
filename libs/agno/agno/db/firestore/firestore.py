@@ -593,13 +593,22 @@ class FirestoreDb(BaseDb):
             for doc in docs:
                 doc.reference.delete()
 
-                # Cascade-delete the session's runs
+                # Cascade-delete the session's runs, chunked to Firestore's
+                # 500-op-per-commit limit so sessions with many runs don't blow
+                # the batch (mirrors delete_sessions).
                 if runs_collection_ref is not None:
                     runs_query = runs_collection_ref.where(filter=FieldFilter("session_id", "==", session_id))
                     batch = self.db_client.batch()
+                    in_batch = 0
                     for run_doc in runs_query.stream():
                         batch.delete(run_doc.reference)
-                    batch.commit()
+                        in_batch += 1
+                        if in_batch >= FIRESTORE_BATCH_LIMIT:
+                            batch.commit()
+                            batch = self.db_client.batch()
+                            in_batch = 0
+                    if in_batch > 0:
+                        batch.commit()
 
                 log_debug(f"Successfully deleted session with session_id: {session_id}")
                 return True
@@ -1014,7 +1023,6 @@ class FirestoreDb(BaseDb):
             # Find existing document or create new one
             docs = collection_ref.where(filter=FieldFilter("session_id", "==", record["session_id"])).stream()
             doc_ref = next((doc.reference for doc in docs), None)
-            had_legacy_runs = False
 
             if doc_ref is not None:
                 existing_doc = doc_ref.get()
@@ -1024,16 +1032,13 @@ class FirestoreDb(BaseDb):
                         "user_id"
                     ):
                         return None
-                    if "runs" in existing_data:
-                        had_legacy_runs = True
             else:
                 # Create new document
                 doc_ref = collection_ref.document()
 
-            # Clear the legacy `runs` field if it was present (runs now live in their own collection)
-            if had_legacy_runs:
-                record["runs"] = DELETE_FIELD
-
+            # The legacy `runs` field is intentionally left untouched: set(merge=True)
+            # preserves it as a frozen backup until cleanup_legacy_runs_field() removes it.
+            # Deleting it here would lose history for sessions not yet migrated.
             doc_ref.set(record, merge=True)
 
             # Runs are persisted separately via upsert_run by the caller (agent loop).
