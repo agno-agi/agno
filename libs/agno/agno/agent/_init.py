@@ -286,7 +286,7 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
         set_culture_manager(agent)
     if agent.enable_session_summaries or agent.session_summary_manager is not None:
         set_session_summary_manager(agent)
-    if agent.compress_tool_results or agent.compression_manager is not None:
+    if agent.compress_tool_results or agent.compress_messages or agent.compression_manager is not None:
         set_compression_manager(agent)
     if agent.learning is not None and agent.learning is not False:
         set_learning_machine(agent)

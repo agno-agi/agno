@@ -552,6 +552,9 @@ def _run(
                     ),
                 )
 
+                # Propagate is_compacted flags from working copies to session originals
+                _propagate_compacted_flags(run_messages.messages, agent_session)
+
                 # Check for cancellation after model call
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -1010,6 +1013,9 @@ def _run_stream(
                         if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                             raise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event  # type: ignore
+
+                # Propagate is_compacted flags from working copies to session originals
+                _propagate_compacted_flags(run_messages.messages, agent_session)
 
                 # Check for cancellation after model processing
                 raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -1693,6 +1699,9 @@ async def _arun(
                         run_context=run_context,
                     ),
                 )
+
+                # Propagate is_compacted flags from working copies to session originals
+                _propagate_compacted_flags(run_messages.messages, agent_session)
 
                 # Check for cancellation after model call
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2418,6 +2427,9 @@ async def _arun_stream(
                         if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event
+
+                # Propagate is_compacted flags from working copies to session originals
+                _propagate_compacted_flags(run_messages.messages, agent_session)
 
                 # Check for cancellation after model processing
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -3661,6 +3673,9 @@ def _continue_run(
                     ),
                 )
 
+                # Propagate is_compacted flags from working copies to session originals
+                _propagate_compacted_flags(run_messages.messages, session)
+
                 # Check for cancellation after model processing
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -3891,6 +3906,9 @@ def _continue_run_stream(
                     if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                         raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
+
+                # Propagate is_compacted flags from working copies to session originals
+                _propagate_compacted_flags(run_messages.messages, session)
 
                 # Parse response with parser model if provided
                 for event in parse_response_with_parser_model_stream(
@@ -5753,7 +5771,29 @@ def _scrub_and_propagate_session_state(
     return storage_copy
 
 
-def _save_compacted_runs(agent: Agent, session: AgentSession, current_run_id: str) -> None:
+def _propagate_compacted_flags(messages: List[Message], session: Optional[AgentSession]) -> None:
+    """Copy is_compacted=True from working copies back to session originals.
+
+    During compression, is_compacted is set on deepcopied messages in run_messages.
+    The originals in session.runs are not updated. This function propagates the flag
+    back by matching on message.id (UUID).
+    """
+    if session is None or not session.runs:
+        return
+
+    # Build lookup of compacted message IDs from working copies
+    compacted_ids = {m.id for m in messages if m.is_compacted and m.id}
+    if not compacted_ids:
+        return
+
+    # Propagate to originals in session.runs
+    for run in session.runs:
+        for msg in run.messages or []:
+            if msg.id in compacted_ids:
+                msg.is_compacted = True
+
+
+def _save_compacted_runs(agent: Agent, session: AgentSession, current_run_id: Optional[str]) -> None:
     """Batch save prior runs that have compacted messages."""
     if not hasattr(agent.db, "upsert_runs") or agent.db is None:
         return
@@ -5769,7 +5809,7 @@ def _save_compacted_runs(agent: Agent, session: AgentSession, current_run_id: st
         agent.db.upsert_runs(affected_runs)
 
 
-async def _asave_compacted_runs(agent: Agent, session: AgentSession, current_run_id: str) -> None:
+async def _asave_compacted_runs(agent: Agent, session: AgentSession, current_run_id: Optional[str]) -> None:
     """Async batch save prior runs that have compacted messages."""
     if agent.db is None:
         return

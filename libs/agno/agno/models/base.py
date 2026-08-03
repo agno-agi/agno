@@ -703,14 +703,16 @@ class Model(ABC):
 
         while True:
             # Compress messages (tool compression + context compaction)
+            compaction_result = None
             if compression_manager is not None:
-                model_messages = compression_manager.compress(
+                compaction_result = compression_manager.compress(
                     messages=messages,
                     session=session,
                     tools=tools,
                     response_format=response_format,
                     run_metrics=run_response.metrics if run_response is not None else None,
                 )
+                model_messages = compaction_result.view
             else:
                 model_messages = messages
 
@@ -728,6 +730,10 @@ class Model(ABC):
                 run_response=run_response,
                 compress_tool_results=_compress_tool_results,
             )
+
+            # Commit compaction AFTER model success
+            if compaction_result is not None:
+                compaction_result.commit(session, compression_manager.stats if compression_manager else None)
 
             # Accumulate metrics for non-stream responses
             if run_response is not None and model_response.response_usage is not None:
@@ -929,14 +935,16 @@ class Model(ABC):
 
         while True:
             # Compress messages (tool compression + context compaction)
+            compaction_result = None
             if compression_manager is not None:
-                model_messages = await compression_manager.acompress(
+                compaction_result = await compression_manager.acompress(
                     messages=messages,
                     session=session,
                     tools=tools,
                     response_format=response_format,
                     run_metrics=run_response.metrics if run_response is not None else None,
                 )
+                model_messages = compaction_result.view
             else:
                 model_messages = messages
 
@@ -954,6 +962,10 @@ class Model(ABC):
                 run_response=run_response,
                 compress_tool_results=_compress_tool_results,
             )
+
+            # Commit compaction AFTER model success
+            if compaction_result is not None:
+                compaction_result.commit(session, compression_manager.stats if compression_manager else None)
 
             # Accumulate metrics for non-stream responses
             if run_response is not None and model_response.response_usage is not None:
@@ -1422,15 +1434,17 @@ class Model(ABC):
 
         while True:
             # Compress messages (tool compression + context compaction)
+            compaction_result = None
             if compression_manager is not None:
                 yield ModelResponse(event=ModelResponseEvent.compression_started.value)
-                model_messages = compression_manager.compress(
+                compaction_result = compression_manager.compress(
                     messages=messages,
                     session=session,
                     tools=tools,
                     response_format=response_format,
                     run_metrics=run_response.metrics if run_response is not None else None,
                 )
+                model_messages = compaction_result.view
                 yield ModelResponse(
                     event=ModelResponseEvent.compression_completed.value,
                     compression_stats=compression_manager.stats.copy(),
@@ -1446,6 +1460,7 @@ class Model(ABC):
             # Emit LLM request started event
             yield ModelResponse(event=ModelResponseEvent.model_request_started.value)
 
+            stream_success = False
             if stream_model_response:
                 # Initialize message metrics and start timer before model call
                 stream_data.response_metrics = MessageMetrics()
@@ -1467,6 +1482,7 @@ class Model(ABC):
                         if self.cache_response and isinstance(response, ModelResponse):
                             streaming_responses.append(response)
                         yield response
+                    stream_success = True
                 finally:
                     # Accumulate metrics for this streamed iteration (also on cancel)
                     if run_response is not None and assistant_message.metrics is not None:
@@ -1489,6 +1505,7 @@ class Model(ABC):
                     run_response=run_response,
                     compress_tool_results=_compress_tool_results,
                 )
+                stream_success = True
                 # Accumulate metrics for non-streamed response within stream
                 if run_response is not None and model_response.response_usage is not None:
                     from agno.metrics import accumulate_model_metrics
@@ -1497,6 +1514,10 @@ class Model(ABC):
                 if self.cache_response:
                     streaming_responses.append(model_response)
                 yield model_response
+
+            # Commit compaction AFTER model success (not on cancel/error)
+            if stream_success and compaction_result is not None:
+                compaction_result.commit(session, compression_manager.stats if compression_manager else None)
 
             # Add assistant message to messages
             messages.append(assistant_message)
@@ -1703,15 +1724,17 @@ class Model(ABC):
 
         while True:
             # Compress messages (tool compression + context compaction)
+            compaction_result = None
             if compression_manager is not None:
                 yield ModelResponse(event=ModelResponseEvent.compression_started.value)
-                model_messages = await compression_manager.acompress(
+                compaction_result = await compression_manager.acompress(
                     messages=messages,
                     session=session,
                     tools=tools,
                     response_format=response_format,
                     run_metrics=run_response.metrics if run_response is not None else None,
                 )
+                model_messages = compaction_result.view
                 yield ModelResponse(
                     event=ModelResponseEvent.compression_completed.value,
                     compression_stats=compression_manager.stats.copy(),
@@ -1727,6 +1750,7 @@ class Model(ABC):
             # Emit LLM request started event
             yield ModelResponse(event=ModelResponseEvent.model_request_started.value)
 
+            stream_success = False
             if stream_model_response:
                 # Initialize message metrics and start timer before model call
                 stream_data.response_metrics = MessageMetrics()
@@ -1748,6 +1772,7 @@ class Model(ABC):
                         if self.cache_response and isinstance(model_response_delta, ModelResponse):
                             streaming_responses.append(model_response_delta)
                         yield model_response_delta
+                    stream_success = True
                 finally:
                     # Accumulate metrics for this streamed iteration (also on cancel)
                     if run_response is not None and assistant_message.metrics is not None:
@@ -1770,6 +1795,7 @@ class Model(ABC):
                     run_response=run_response,
                     compress_tool_results=_compress_tool_results,
                 )
+                stream_success = True
                 # Accumulate metrics for non-streamed response within stream
                 if run_response is not None and model_response.response_usage is not None:
                     from agno.metrics import accumulate_model_metrics
@@ -1778,6 +1804,10 @@ class Model(ABC):
                 if self.cache_response:
                     streaming_responses.append(model_response)
                 yield model_response
+
+            # Commit compaction AFTER model success (not on cancel/error)
+            if stream_success and compaction_result is not None:
+                compaction_result.commit(session, compression_manager.stats if compression_manager else None)
 
             # Add assistant message to messages
             messages.append(assistant_message)

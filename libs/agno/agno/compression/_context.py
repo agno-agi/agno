@@ -1,17 +1,45 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List, Optional, Tuple
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 from agno.compression.prompts import CONTEXT_COMPACTION_SUMMARY_PREFIX, DEFAULT_CONTEXT_COMPACTION_PROMPT
 from agno.metrics import RunMetrics
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.session.agent import AgentSession
-from agno.utils.log import log_error
+from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.message import safe_truncation_index
 
 if TYPE_CHECKING:
     from agno.compression.manager import CompressionManager
+
+
+@dataclass
+class CompactionResult:
+    """Result of context compaction. Side-effect-free until commit() is called."""
+
+    view: List[Message]
+    to_compact: List[Message]
+    summary: Optional[str] = None
+
+    def commit(self, session: Optional[AgentSession], stats: Optional[Dict[str, Any]] = None) -> None:
+        """Mark messages as compacted and store summary. Call only after model success."""
+        if not self.to_compact or not self.summary:
+            log_debug("CompactionResult.commit(): nothing to commit")
+            return
+
+        log_info(f"[COMPACTION] COMMIT: marking {len(self.to_compact)} messages as compacted")
+        for msg in self.to_compact:
+            msg.is_compacted = True
+            log_debug(f"[COMPACTION]   marked: {msg.role} | {str(msg.content)[:50]}...")
+
+        _store_summary(session, self.summary, len(self.to_compact))
+        log_info(f"[COMPACTION] STORED SUMMARY ({len(self.summary)} chars): {self.summary[:100]}...")
+
+        if stats is not None:
+            _track_stat(stats, "compactions", 1)
+            _track_stat(stats, "messages_compacted", len(self.to_compact))
 
 
 def compress_messages(
@@ -20,8 +48,15 @@ def compress_messages(
     active: List[Message],
     session: Optional[AgentSession],
     run_metrics: Optional[RunMetrics],
-) -> List[Message]:
-    """Compact context. Returns filtered view for model."""
+) -> CompactionResult:
+    """Compact context. Returns CompactionResult — call commit() after model success."""
+    log_info(f"[COMPACTION] compress_messages: {len(messages)} total, {len(active)} active")
+
+    # Model required for compaction
+    if manager.model is None:
+        log_debug("[COMPACTION] no model configured, skipping compaction")
+        return CompactionResult(view=active, to_compact=[])
+
     user_budget = manager._get_user_budget(len(active))
     keep_recent_messages = manager.keep_recent_messages
     instructions = manager.compress_messages_instructions
@@ -29,41 +64,58 @@ def compress_messages(
     # Separate system messages (never compact)
     system_msgs = [m for m in active if m.role == "system"]
     non_system = [m for m in active if m.role != "system"]
+    log_debug(f"[COMPACTION]   system_msgs={len(system_msgs)}, non_system={len(non_system)}")
 
     # Partition
     to_compact, preserved_user, keep_verbatim = _partition_messages(
         non_system, manager.model, user_budget, keep_recent_messages
     )
+    log_info(
+        f"[COMPACTION] PARTITION: to_compact={len(to_compact)}, preserved_user={len(preserved_user)}, keep_verbatim={len(keep_verbatim)}"
+    )
+
+    # Log what we're compacting
+    for i, msg in enumerate(to_compact):
+        log_debug(f"[COMPACTION]   to_compact[{i}]: {msg.role} | {str(msg.content)[:60]}...")
+    for i, msg in enumerate(keep_verbatim):
+        log_debug(f"[COMPACTION]   keep_verbatim[{i}]: {msg.role} | {str(msg.content)[:60]}...")
 
     if not to_compact:
+        # No compaction needed — inject stored summary if exists
         stored = _get_stored_summary(session)
         if stored:
-            return [_build_summary_message(stored)] + active
-        return active
+            log_debug(f"[COMPACTION] no compaction needed, injecting stored summary ({len(stored)} chars)")
+            view = system_msgs + [_build_summary_message(stored)] + [m for m in active if m.role != "system"]
+            return CompactionResult(view=view, to_compact=[])
+        log_debug("[COMPACTION] no compaction needed, no stored summary")
+        return CompactionResult(view=active, to_compact=[])
 
     # Generate summary
     prev_summary = _get_stored_summary(session)
+    if prev_summary:
+        log_debug(f"[COMPACTION] Previous summary exists ({len(prev_summary)} chars)")
+
+    log_info(f"[COMPACTION] Generating summary from {len(to_compact)} messages...")
     summary = _generate_summary(manager.model, to_compact, prev_summary, instructions, run_metrics)
 
     if not summary:
-        return active
+        log_error("[COMPACTION] Summary generation FAILED, returning original messages")
+        return CompactionResult(view=active, to_compact=[])
 
-    # Tag compacted messages
-    compacted_ids = {id(m) for m in to_compact}
-    for msg in messages:
-        if id(msg) in compacted_ids:
-            msg.is_compacted = True
+    log_info(f"[COMPACTION] GENERATED SUMMARY ({len(summary)} chars): {summary[:150]}...")
 
-    # Store summary
-    _store_summary(session, summary, len(to_compact))
-
-    # Build view
+    # Build view (summary injected)
     view = system_msgs + [_build_summary_message(summary)] + preserved_user + keep_verbatim
 
-    _track_stat(manager.stats, "compactions", 1)
-    _track_stat(manager.stats, "messages_compacted", len(to_compact))
+    log_info(
+        f"[COMPACTION] VIEW for model: {len(view)} messages (system={len(system_msgs)}, summary=1, preserved={len(preserved_user)}, verbatim={len(keep_verbatim)})"
+    )
+    for i, msg in enumerate(view):
+        content_preview = str(msg.content)[:80].replace("\n", " ") if msg.content else "(empty)"
+        log_debug(f"[COMPACTION]   view[{i}]: {msg.role} | {content_preview}...")
 
-    return view
+    # Return result — caller calls commit() after model success
+    return CompactionResult(view=view, to_compact=to_compact, summary=summary)
 
 
 async def acompress_messages(
@@ -72,8 +124,14 @@ async def acompress_messages(
     active: List[Message],
     session: Optional[AgentSession],
     run_metrics: Optional[RunMetrics],
-) -> List[Message]:
-    """Async version of compress_messages."""
+) -> CompactionResult:
+    """Async version of compress_messages. Returns CompactionResult — call commit() after model success."""
+
+    # Model required for compaction
+    if manager.model is None:
+        log_debug("[COMPACTION] no model configured, skipping compaction")
+        return CompactionResult(view=active, to_compact=[])
+
     user_budget = manager._get_user_budget(len(active))
     keep_recent_messages = manager.keep_recent_messages
     instructions = manager.compress_messages_instructions
@@ -86,30 +144,25 @@ async def acompress_messages(
     )
 
     if not to_compact:
+        # No compaction needed — inject stored summary if exists
         stored = _get_stored_summary(session)
         if stored:
-            return [_build_summary_message(stored)] + active
-        return active
+            view = system_msgs + [_build_summary_message(stored)] + [m for m in active if m.role != "system"]
+            return CompactionResult(view=view, to_compact=[])
+        return CompactionResult(view=active, to_compact=[])
 
     prev_summary = _get_stored_summary(session)
     summary = await _agenerate_summary(manager.model, to_compact, prev_summary, instructions, run_metrics)
 
     if not summary:
-        return active
+        # Summary generation failed — return original
+        return CompactionResult(view=active, to_compact=[])
 
-    compacted_ids = {id(m) for m in to_compact}
-    for msg in messages:
-        if id(msg) in compacted_ids:
-            msg.is_compacted = True
-
-    _store_summary(session, summary, len(to_compact))
-
+    # Build view (summary injected)
     view = system_msgs + [_build_summary_message(summary)] + preserved_user + keep_verbatim
 
-    _track_stat(manager.stats, "compactions", 1)
-    _track_stat(manager.stats, "messages_compacted", len(to_compact))
-
-    return view
+    # Return result — caller calls commit() after model success
+    return CompactionResult(view=view, to_compact=to_compact, summary=summary)
 
 
 def _partition_messages(

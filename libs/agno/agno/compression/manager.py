@@ -3,13 +3,19 @@ from typing import Any, Dict, List, Optional, Type, Union
 
 from pydantic import BaseModel
 
-from agno.compression._context import _build_summary_message, _get_stored_summary, acompress_messages, compress_messages
+from agno.compression._context import (
+    CompactionResult,
+    _build_summary_message,
+    _get_stored_summary,
+    acompress_messages,
+    compress_messages,
+)
 from agno.compression._tool import acompress_tool_messages, compress_tool_messages
 from agno.metrics import RunMetrics
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.session.agent import AgentSession
-from agno.utils.log import log_info
+from agno.utils.log import log_debug, log_info
 
 
 @dataclass
@@ -61,13 +67,18 @@ class CompressionManager:
         tools: Optional[List] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         run_metrics: Optional[RunMetrics] = None,
-    ) -> List[Message]:
-        """Compress messages for model. Returns messages ready to send."""
+    ) -> CompactionResult:
+        """Compress messages for model. Returns CompactionResult — call commit() after model success."""
+        log_info(f"[COMPRESS] CompressionManager.compress: {len(messages)} messages")
+        log_debug(
+            f"[COMPRESS]   compress_messages={self.compress_messages}, compress_tool_results={self.compress_tool_results}"
+        )
 
-        # 1. Tool compression
+        # 1. Tool compression (mutates in place, no commit needed)
         if self.compress_tool_results and self.model is not None:
             tool_messages_to_compress = self._should_compress_tool_messages(messages, tools, response_format)
             if tool_messages_to_compress:
+                log_info(f"[COMPRESS] TOOL COMPRESSION: {len(tool_messages_to_compress)} tool messages")
                 compress_tool_messages(self, tool_messages_to_compress, run_metrics)
 
         # 2. Message compression
@@ -79,10 +90,13 @@ class CompressionManager:
             active = [m for m in messages if not m.is_compacted]
             stored = _get_stored_summary(session)
             if stored:
-                return [_build_summary_message(stored)] + active
-            return active
+                system_msgs = [m for m in active if m.role == "system"]
+                non_system = [m for m in active if m.role != "system"]
+                view = system_msgs + [_build_summary_message(stored)] + non_system
+                return CompactionResult(view=view, to_compact=[])
+            return CompactionResult(view=active, to_compact=[])
 
-        return messages
+        return CompactionResult(view=messages, to_compact=[])
 
     async def acompress(
         self,
@@ -91,10 +105,10 @@ class CompressionManager:
         tools: Optional[List] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         run_metrics: Optional[RunMetrics] = None,
-    ) -> List[Message]:
-        """Async version of compress."""
+    ) -> CompactionResult:
+        """Async version of compress. Returns CompactionResult — call commit() after model success."""
 
-        # 1. Tool compression
+        # 1. Tool compression (mutates in place, no commit needed)
         if self.compress_tool_results and self.model is not None:
             tool_messages_to_compress = await self._ashould_compress_tool_messages(messages, tools, response_format)
             if tool_messages_to_compress:
@@ -109,10 +123,13 @@ class CompressionManager:
             active = [m for m in messages if not m.is_compacted]
             stored = _get_stored_summary(session)
             if stored:
-                return [_build_summary_message(stored)] + active
-            return active
+                system_msgs = [m for m in active if m.role == "system"]
+                non_system = [m for m in active if m.role != "system"]
+                view = system_msgs + [_build_summary_message(stored)] + non_system
+                return CompactionResult(view=view, to_compact=[])
+            return CompactionResult(view=active, to_compact=[])
 
-        return messages
+        return CompactionResult(view=messages, to_compact=[])
 
     def _should_compress_tool_messages(
         self,
@@ -170,9 +187,12 @@ class CompressionManager:
     ) -> List[Message]:
         """Returns active messages to compress, or empty list if not needed."""
         active = [m for m in messages if not m.is_compacted]
+        log_debug(
+            f"_should_compress_messages: {len(messages)} total, {len(active)} active, limit={self.compress_messages_limit}"
+        )
 
         # Check token limit
-        if self.compress_messages_token_limit is not None:
+        if self.compress_messages_token_limit is not None and self.model is not None:
             if self.model.count_tokens(active) >= self.compress_messages_token_limit:
                 log_info(f"Message compression: token limit {self.compress_messages_token_limit} hit")
                 return active
@@ -180,8 +200,10 @@ class CompressionManager:
         # Check count limit
         if self.compress_messages_limit is not None:
             if len(active) >= self.compress_messages_limit:
-                log_info(f"Message compression: message limit {self.compress_messages_limit} hit")
+                log_info(f"Message compression: message limit {len(active)} >= {self.compress_messages_limit}")
                 return active
+            else:
+                log_debug(f"_should_compress_messages: {len(active)} < {self.compress_messages_limit}, no compression")
 
         return []
 
@@ -193,7 +215,7 @@ class CompressionManager:
         active = [m for m in messages if not m.is_compacted]
 
         # Check token limit
-        if self.compress_messages_token_limit is not None:
+        if self.compress_messages_token_limit is not None and self.model is not None:
             if await self.model.acount_tokens(active) >= self.compress_messages_token_limit:
                 log_info(f"Message compression: token limit {self.compress_messages_token_limit} hit")
                 return active
