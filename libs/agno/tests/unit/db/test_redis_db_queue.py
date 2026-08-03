@@ -344,6 +344,45 @@ class TestEnqueueAtomicity:
         assert result["job"]["id"] == "r1"
 
 
+class TestIdempotencyKeyEncoding:
+    def test_user_key_tuple_boundary_cannot_alias(self, db):
+        """(user='a', key='b:c') and (user='a:b', key='c') joined with ':'
+        collide on the same Redis key: the second submitter attached to the
+        first tenant's job. The length-prefixed encoding keeps them apart."""
+        db.enqueue_job(make_job("r1", user_id="a", idempotency_key="b:c"))
+        result = db.enqueue_job(make_job("r2", user_id="a:b", idempotency_key="c"))
+        assert result["accepted"], "distinct (user, key) tuples must not dedupe against each other"
+        assert db.get_job("r2") is not None
+
+    def test_literal_dash_user_cannot_alias_anonymous(self, db):
+        """A literal user id '-' used to encode identically to an anonymous
+        submit (user=None -> '-')."""
+        db.enqueue_job(make_job("r1", user_id=None, idempotency_key="k1"))
+        result = db.enqueue_job(make_job("r2", user_id="-", idempotency_key="k1"))
+        assert result["accepted"], "user '-' must not attach to the anonymous tenant's job"
+
+        # Same-tenant dedup still works on both sides
+        assert db.enqueue_job(make_job("r3", user_id=None, idempotency_key="k1"))["reason"] == "duplicate"
+        assert db.enqueue_job(make_job("r4", user_id="-", idempotency_key="k1"))["reason"] == "duplicate"
+
+    def test_duplicate_with_mismatched_user_enqueues_fresh(self, db):
+        """Defense-in-depth for legacy/aliased keys: even when the dedup key
+        resolves to a job, a user_id mismatch must never attach (the caller
+        would receive another tenant's run identifiers and event stream)."""
+        db.enqueue_job(make_job("r1", user_id="tenant-a", idempotency_key="k1"))
+        # Simulate a legacy aliased key: point tenant-b's encoded key at
+        # tenant-a's job document
+        db.redis_client.set(db._q_idem_key("tenant-b", "k1"), "r1")
+
+        result = db.enqueue_job(make_job("r2", user_id="tenant-b", idempotency_key="k1"))
+        assert result["accepted"], "mismatched-user duplicate must enqueue fresh, never attach"
+        assert result["job"]["id"] == "r2"
+        # The aliased key is taken over by the fresh job
+        assert db.redis_client.get(db._q_idem_key("tenant-b", "k1")) == "r2"
+        # tenant-a's dedup is untouched
+        assert db.enqueue_job(make_job("r5", user_id="tenant-a", idempotency_key="k1"))["job"]["id"] == "r1"
+
+
 class TestHeartbeatAtomicity:
     def test_heartbeat_keeps_running_membership(self, db):
         """The old flow zrem'd inside the MULTI and re-added after - a crash
@@ -361,7 +400,7 @@ class TestHeartbeatAtomicity:
 class TestIdempotencyLifetime:
     def test_dedup_key_has_no_ttl_and_dies_with_cleanup(self, db):
         db.enqueue_job(make_job("il1", idempotency_key="ilk"))
-        assert db.redis_client.ttl(db._q_key("idem:-:ilk")) == -1, "dedup key must live as long as the job record"
+        assert db.redis_client.ttl(db._q_idem_key(None, "ilk")) == -1, "dedup key must live as long as the job record"
         job = db.claim_job("w1")
         db.complete_job("il1", "w1", job["attempt"], "completed")
         # age the job artificially and purge
@@ -369,7 +408,7 @@ class TestIdempotencyLifetime:
         doc["completed_at"] = 0
         db.redis_client.set(db._q_job_key("il1"), json.dumps(doc))
         assert db.cleanup_jobs(older_than_seconds=1) == 1
-        assert db.redis_client.get(db._q_key("idem:-:ilk")) is None, "dedup key must die with the job record"
+        assert db.redis_client.get(db._q_idem_key(None, "ilk")) is None, "dedup key must die with the job record"
         # key is reusable afterwards
         assert db.enqueue_job(make_job("il2", idempotency_key="ilk"))["accepted"] is True
 

@@ -57,6 +57,8 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
+    acomplete_continue_stream,
+    amark_continue_stream_running,
     find_factory_by_id,
     format_sse_event,
     get_request_kwargs,
@@ -1037,10 +1039,7 @@ async def workflow_continue_response_streamer(
         # copy, and a later /resume or WS reconnect would replay just the
         # pre-pause prefix. Re-register (idempotent, cross-replica continue),
         # mark RUNNING, publish per event, and complete with the final status.
-        _continue_stream = get_event_stream()
-        with contextlib.suppress(Exception):
-            await _continue_stream.register_run(run_id, RunStatus.pending)
-            await _continue_stream.set_run_status(run_id, RunStatus.running)
+        await amark_continue_stream_running(run_id)
 
         try:
             async for run_response_chunk in run_response:
@@ -1048,22 +1047,17 @@ async def workflow_continue_response_streamer(
                     await workflow._apublish_stream_event(run_response_chunk, run_id)
                 yield format_sse_event(run_response_chunk)  # type: ignore
         finally:
-            _final_session = None
-            with contextlib.suppress(Exception):
-                _final_session = await workflow.aget_session(session_id=session_id)
-            _final_status = RunStatus.completed
-            if _final_session and _final_session.runs:
-                _final_status = _final_session.runs[-1].status or RunStatus.completed
-            with contextlib.suppress(Exception):
-                await asyncio.shield(_continue_stream.complete_run(run_id, _final_status))
+            # Final status from THIS run's row (never session.runs[-1]: an
+            # interleaved run on the same session would be a different run)
+            await acomplete_continue_stream(workflow, run_id, session_id)
 
         # If the workflow re-paused, yield WorkflowPausedEvent as the new clean
         # snapshot event. Also yield the legacy "WorkflowRunOutput" event for
         # backwards compatibility with older clients.
         _session = await workflow.aget_session(session_id=session_id)
-        if _session and _session.runs:
-            _last_run = _session.runs[-1]
-            if getattr(_last_run, "is_paused", False):
+        if _session is not None:
+            _last_run = _session.get_run(run_id)
+            if _last_run is not None and getattr(_last_run, "is_paused", False):
                 from agno.run.workflow import WorkflowPausedEvent
 
                 paused_event = WorkflowPausedEvent(
@@ -2021,6 +2015,18 @@ def get_workflow_router(
                     step_requirements=parsed_requirements,
                     stream=False,
                     background_tasks=background_tasks,
+                )
+                # Status-only stream sync (deliberate scope): a non-stream
+                # continue has no events to publish, but a formerly-queued/
+                # streamed run's stream view must stop saying PAUSED once the
+                # continue settles - only_if_tracked leaves never-streamed
+                # runs alone.
+                await acomplete_continue_stream(
+                    workflow,
+                    run_id,
+                    session_id,
+                    only_if_tracked=True,
+                    final_status=getattr(run_response, "status", None),
                 )
                 return run_response.to_dict()
             except InputCheckError as e:
