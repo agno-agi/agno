@@ -20,8 +20,8 @@ class TestBuildLearningId:
             build_learning_id("entity_memory", entity_id="acme", entity_type="company") == "entity_global_company_acme"
         )
         assert (
-            build_learning_id("entity_memory", entity_id="acme", entity_type="company", namespace="user")
-            == "entity_user_company_acme"
+            build_learning_id("entity_memory", entity_id="acme", entity_type="company", namespace="user", user_id="u1")
+            == "entity_user_u1_company_acme"
         )
 
     def test_missing_identity_fields_returns_none(self):
@@ -29,6 +29,30 @@ class TestBuildLearningId:
         assert build_learning_id("user_memory") is None
         assert build_learning_id("session_context") is None
         assert build_learning_id("entity_memory", entity_id="acme") is None  # needs entity_type too
+        # The "user" namespace keys per user, so it needs a user_id the same way user_profile does.
+        assert build_learning_id("entity_memory", entity_id="acme", entity_type="company", namespace="user") is None
+
+    def test_entity_memory_user_namespace_is_keyed_per_user(self):
+        """Under namespace="user" two users must not share one row for the same entity.
+
+        Reads filter by user_id, so a user-less key let one user's write overwrite another's
+        facts while the later writer could never read their own data back.
+        """
+        alice = build_learning_id(
+            "entity_memory", entity_id="acme", entity_type="company", namespace="user", user_id="alice"
+        )
+        bob = build_learning_id(
+            "entity_memory", entity_id="acme", entity_type="company", namespace="user", user_id="bob"
+        )
+        assert alice != bob
+
+        # Other namespaces stay shared, and user_id must not leak into their key.
+        for namespace in (None, "global", "team"):
+            assert build_learning_id(
+                "entity_memory", entity_id="acme", entity_type="company", namespace=namespace, user_id="alice"
+            ) == build_learning_id(
+                "entity_memory", entity_id="acme", entity_type="company", namespace=namespace, user_id="bob"
+            )
 
     def test_non_identity_types_return_none(self):
         assert build_learning_id("decision_log", user_id="u1") is None
@@ -66,4 +90,7 @@ class TestStoresDelegateToHelper:
         store = EntityMemoryStore.__new__(EntityMemoryStore)
         assert store._build_entity_db_id("acme", "company", "global") == build_learning_id(
             "entity_memory", entity_id="acme", entity_type="company", namespace="global"
+        )
+        assert store._build_entity_db_id("acme", "company", "user", "u1") == build_learning_id(
+            "entity_memory", entity_id="acme", entity_type="company", namespace="user", user_id="u1"
         )

@@ -52,7 +52,14 @@ def build_learning_id(
         return f"session_context_{session_id}" if session_id else None
     if learning_type == "entity_memory":
         if entity_id and entity_type:
-            return f"entity_{namespace or DEFAULT_LEARNING_NAMESPACE}_{entity_type}_{entity_id}"
+            effective_namespace = namespace or DEFAULT_LEARNING_NAMESPACE
+            if effective_namespace == "user":
+                # The "user" namespace is private per user, and reads filter by user_id.
+                # Leaving the user out of the key gives every user the same row for the same
+                # entity: one user's write overwrites another's facts, and the later writer
+                # can never read their own data back. Key it like the other per-user stores.
+                return f"entity_user_{user_id}_{entity_type}_{entity_id}" if user_id else None
+            return f"entity_{effective_namespace}_{entity_type}_{entity_id}"
         return None
     return None
 

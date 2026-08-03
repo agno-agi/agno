@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from os import getenv
 from textwrap import dedent
-from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tuple, Union, cast
+from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tuple, Union
 from weakref import WeakKeyDictionary
 
 from agno.learn.config import EntityMemoryConfig, LearningMode
@@ -1602,7 +1602,9 @@ class EntityMemoryStore(LearningStore):
             # A minimal entity created by link_entities acquires its real type;
             # the row key embeds the type, so the old row must be replaced.
             if entity_obj.entity_type == _UNKNOWN_ENTITY_TYPE and normalized_type != _UNKNOWN_ENTITY_TYPE:
-                stale_row_key = self._build_entity_db_id(entity_obj.entity_id, entity_obj.entity_type, namespace)
+                stale_row_key = self._build_entity_db_id(
+                    entity_obj.entity_id, entity_obj.entity_type, namespace, user_id
+                )
                 entity_obj.entity_type = normalized_type
 
             # Remember the name variant this write arrived under, bounded so the
@@ -3390,6 +3392,7 @@ class EntityMemoryStore(LearningStore):
         entity_id: str,
         entity_type: str,
         namespace: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> bool:
         """Hard-delete an entity from the store (data API - not exposed as a tool)."""
         db = self._sync_db()
@@ -3397,8 +3400,15 @@ class EntityMemoryStore(LearningStore):
             return False
 
         effective_namespace = namespace or self.config.namespace
+        if effective_namespace == "user" and not user_id:
+            log_warning("EntityMemoryStore.delete: namespace='user' requires user_id")
+            return False
+
+        row_key = self._build_entity_db_id(entity_id, entity_type, effective_namespace, user_id)
+        if row_key is None:
+            return False
         try:
-            return bool(db.delete_learning(id=self._build_entity_db_id(entity_id, entity_type, effective_namespace)))
+            return bool(db.delete_learning(id=row_key))
         except Exception as e:
             log_debug(f"EntityMemoryStore.delete failed: {e}")
             return False
@@ -3408,22 +3418,24 @@ class EntityMemoryStore(LearningStore):
         entity_id: str,
         entity_type: str,
         namespace: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> bool:
         """Async version of delete."""
         if not self.db:
             return False
 
         effective_namespace = namespace or self.config.namespace
+        if effective_namespace == "user" and not user_id:
+            log_warning("EntityMemoryStore.adelete: namespace='user' requires user_id")
+            return False
+
+        row_key = self._build_entity_db_id(entity_id, entity_type, effective_namespace, user_id)
+        if row_key is None:
+            return False
         try:
             if isinstance(self.db, AsyncBaseDb):
-                return bool(
-                    await self.db.delete_learning(
-                        id=self._build_entity_db_id(entity_id, entity_type, effective_namespace)
-                    )
-                )
-            return bool(
-                self.db.delete_learning(id=self._build_entity_db_id(entity_id, entity_type, effective_namespace))
-            )
+                return bool(await self.db.delete_learning(id=row_key))
+            return bool(self.db.delete_learning(id=row_key))
         except Exception as e:
             log_debug(f"EntityMemoryStore.adelete failed: {e}")
             return False
@@ -3452,8 +3464,12 @@ class EntityMemoryStore(LearningStore):
             if not content:
                 return False
 
+            row_key = self._build_entity_db_id(entity.entity_id, entity.entity_type, effective_namespace, user_id)
+            if row_key is None:
+                return False
+
             db.upsert_learning(
-                id=self._build_entity_db_id(entity.entity_id, entity.entity_type, effective_namespace),
+                id=row_key,
                 learning_type=self.learning_type,
                 entity_id=entity.entity_id,
                 entity_type=entity.entity_type,
@@ -3489,9 +3505,13 @@ class EntityMemoryStore(LearningStore):
             if not content:
                 return False
 
+            row_key = self._build_entity_db_id(entity.entity_id, entity.entity_type, effective_namespace, user_id)
+            if row_key is None:
+                return False
+
             if isinstance(self.db, AsyncBaseDb):
                 await self.db.upsert_learning(
-                    id=self._build_entity_db_id(entity.entity_id, entity.entity_type, effective_namespace),
+                    id=row_key,
                     learning_type=self.learning_type,
                     entity_id=entity.entity_id,
                     entity_type=entity.entity_type,
@@ -3503,7 +3523,7 @@ class EntityMemoryStore(LearningStore):
                 )
             else:
                 self.db.upsert_learning(
-                    id=self._build_entity_db_id(entity.entity_id, entity.entity_type, effective_namespace),
+                    id=row_key,
                     learning_type=self.learning_type,
                     entity_id=entity.entity_id,
                     entity_type=entity.entity_type,
@@ -3529,11 +3549,20 @@ class EntityMemoryStore(LearningStore):
         entity_id: str,
         entity_type: str,
         namespace: str,
-    ) -> str:
-        """Build unique DB ID for entity."""
-        return cast(
-            str,
-            build_learning_id("entity_memory", entity_id=entity_id, entity_type=entity_type, namespace=namespace),
+        user_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """Build unique DB ID for entity.
+
+        Returns None under the "user" namespace when no user_id is available: that key is
+        per-user, and a user-less one would collide across users. Callers already refuse
+        "user"-namespace operations without a user_id, so this is the belt to that braces.
+        """
+        return build_learning_id(
+            "entity_memory",
+            entity_id=entity_id,
+            entity_type=entity_type,
+            namespace=namespace,
+            user_id=user_id,
         )
 
     def _format_entity_basic(self, entity: Any) -> str:

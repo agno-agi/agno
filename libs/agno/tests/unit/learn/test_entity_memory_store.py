@@ -258,6 +258,32 @@ class TestRememberAbout:
         entity = store.get(entity_id="secret_project", entity_type="project", user_id="alice")
         assert entity is not None and entity.archived_at is None
 
+    def test_user_namespace_isolates_the_same_entity_across_users(self, tmp_path) -> None:
+        """Two users recording the same entity name must not share one physical row.
+
+        The row key used to omit the user, so both users' "Acme" collided: the second
+        write landed inside the first user's row (the on-conflict clause never rewrites
+        user_id), destroying their facts and leaking them to the other user, while the
+        second writer's user-filtered read came back empty.
+
+        Uses SqliteDb rather than the fake db above because the leak lives in the
+        interaction between the user-less key and the user-filtered read.
+        """
+        from agno.db.sqlite import SqliteDb
+
+        sqlite_db = SqliteDb(db_file=str(tmp_path / "entities.db"))
+        store = EntityMemoryStore(config=EntityMemoryConfig(db=sqlite_db, namespace="user"))  # type: ignore[arg-type]
+
+        store.remember_about(entity="Acme", entity_type="company", facts=["alice fact"], user_id="alice")
+        store.remember_about(entity="Acme", entity_type="company", facts=["bob fact"], user_id="bob")
+
+        for user, own_fact, other_fact in (("alice", "alice fact", "bob fact"), ("bob", "bob fact", "alice fact")):
+            entity = store.get(entity_id="acme", entity_type="company", user_id=user, namespace="user")
+            assert entity is not None, f"{user} cannot read back their own entity"
+            contents = [fact.get("content") for fact in entity.facts]
+            assert own_fact in contents
+            assert other_fact not in contents, f"{user} can see the other user's private fact"
+
     def test_blank_entity_name_is_rejected(self, store: EntityMemoryStore, db: RecordingLearningDb) -> None:
         assert "Entity name is required" in store.remember_about(entity="   ", entity_type="person")
         assert db.rows == {}
