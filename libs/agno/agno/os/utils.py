@@ -273,6 +273,76 @@ def format_sse_event_with_index(
         return f"event: message\ndata: {clean_json}\n\n"
 
 
+async def amark_continue_stream_running(run_id: str) -> None:
+    """Sync the event stream at the START of a continue: re-register the run
+    (idempotent - a cross-replica continue lands on a replica whose stream has
+    never seen it) and mark it RUNNING so /resume and reconnects stop treating
+    it as PAUSED while the post-approval leg executes. Fail-open: coordination
+    writes must never kill the continue."""
+    import contextlib
+
+    from agno.os.event_streams import get_event_stream
+    from agno.run.base import RunStatus
+
+    with contextlib.suppress(Exception):
+        event_stream = get_event_stream()
+        await event_stream.register_run(run_id, RunStatus.pending)
+        await event_stream.set_run_status(run_id, RunStatus.running)
+
+
+async def acomplete_continue_stream(
+    component: Any,
+    run_id: str,
+    session_id: Optional[str],
+    only_if_tracked: bool = False,
+    final_status: Any = None,
+) -> None:
+    """Sync the event stream at the END of a continue with the run row's true
+    final status. Without this, a continue of a formerly-queued/streamed run
+    leaves the stream PAUSED forever - /resume replays the stale paused
+    snapshot after the run completed. A re-paused continue re-parks the
+    stream as PAUSED (resumable), never a COMPLETED sentinel.
+
+    The status is resolved from ``session.get_run(run_id)`` - NEVER
+    ``session.runs[-1]``: under interleaving, another run appended to the same
+    session makes the last row a different run.
+
+    only_if_tracked: for the non-stream continue paths - sync only when the
+    event stream already knows the run. A run that never rode the queue or a
+    stream needs no stream view, and completing an unknown run would
+    fabricate one.
+
+    final_status: caller-provided status (e.g. the returned run output's) to
+    skip the session read; falls back to the run-row read when unusable.
+    """
+    import asyncio
+    import contextlib
+
+    from agno.os.event_streams import get_event_stream
+    from agno.run.base import RunStatus
+
+    event_stream = get_event_stream()
+    if only_if_tracked:
+        tracked = None
+        with contextlib.suppress(Exception):
+            tracked = await event_stream.get_run_status(run_id)
+        if tracked is None:
+            return
+    if final_status is None:
+        with contextlib.suppress(Exception):
+            session = await component.aget_session(session_id=session_id)
+            if session is not None:
+                final_status = getattr(session.get_run(run_id), "status", None)
+    if isinstance(final_status, str) and not isinstance(final_status, RunStatus):
+        # DB round-trips can degrade the enum to a plain str
+        with contextlib.suppress(ValueError):
+            final_status = RunStatus(final_status)
+    if not isinstance(final_status, RunStatus):
+        final_status = RunStatus.completed
+    with contextlib.suppress(Exception):
+        await asyncio.shield(event_stream.complete_run(run_id, final_status))
+
+
 def replayed_payload_to_sse(payload: Any, event_index: int, run_id: str) -> str:
     """Convert an event-stream replay payload to an SSE string.
 
