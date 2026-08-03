@@ -10,11 +10,13 @@ from agno.utils.log import log_debug, logger
 
 class LiveTennisTools(Toolkit):
     """
-    LiveTennisTools is a toolkit for live and historical tennis data from the
-    Live Tennis API (https://livetennisapi.com): live scores, match details,
-    player search and upcoming fixtures across the ATP and WTA tours.
+    LiveTennisTools is a toolkit for live tennis data from the Live Tennis API
+    (https://livetennisapi.com): live scores, match details, player search and
+    upcoming fixtures across the ATP and WTA tours. Historical results are a
+    separate paid product on that API and are not exposed here.
 
     Get a free API key (1,000 requests/day) at https://livetennisapi.com/subscribe/free.
+    Every endpoint this toolkit calls is on that free tier.
 
     Args:
         api_key (Optional[str]): Live Tennis API key. Falls back to the
