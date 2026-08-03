@@ -398,6 +398,22 @@ class TestWriteValidation:
         assert resp.status_code == 200
 
 
+class TestExtraFieldsRejected:
+    """Both request bodies declare their fields; an unknown one is a client error, not
+    something to drop silently (public-api rule: set extra explicitly on request bodies)."""
+
+    def test_create_rejects_an_unknown_field(self, client, mock_db):
+        resp = client.post("/skills", json={**_create_body(), "bogus_field": 1})
+        assert resp.status_code == 422
+        mock_db.create_skill.assert_not_called()
+
+    def test_update_rejects_an_unknown_field(self, client, mock_db):
+        mock_db.get_skill = MagicMock(return_value=_make_skill_row(version=1))
+        resp = client.patch("/skills/demo-skill", json={"version": 1, "bogus_field": 1})
+        assert resp.status_code == 422
+        mock_db.update_skill.assert_not_called()
+
+
 class TestCustomSkillsTableSelection:
     """`table=` is advertised on every skills route, so a configured skills table must be
     selectable through it -- the same way sessions, memory and learnings tables are."""

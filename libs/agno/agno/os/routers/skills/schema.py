@@ -33,6 +33,8 @@ class SkillResponse(SkillSummaryResponse):
 class SkillCreate(BaseModel):
     """Request body for creating a skill. id and version are server-managed."""
 
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(..., description="Unique skill name")
     description: str = Field(..., description="What the skill does")
     instructions: str = Field(..., description="The skill's instructions (the SKILL.md body)")
