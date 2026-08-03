@@ -25,7 +25,6 @@ def _make_config(**overrides) -> TeamsConfig:
         "app_id": "app-id",
         "app_password": "secret",
         "tenant_id": "botframework.com",
-        "app_type": "MultiTenant",
     }
     base.update(overrides)
     return TeamsConfig(**base)
@@ -41,7 +40,6 @@ def test_config_init_from_env_vars():
             "MICROSOFT_APP_ID": "env-app",
             "MICROSOFT_APP_PASSWORD": "env-pwd",
             "MICROSOFT_APP_TENANT_ID": "tenant-123",
-            "MICROSOFT_APP_TYPE": "SingleTenant",
         },
         clear=True,
     ):
@@ -49,7 +47,6 @@ def test_config_init_from_env_vars():
     assert cfg.app_id == "env-app"
     assert cfg.app_password == "env-pwd"
     assert cfg.tenant_id == "tenant-123"
-    assert cfg.app_type == "SingleTenant"
 
 
 def test_config_init_arg_overrides_env():
@@ -74,7 +71,6 @@ def test_config_defaults_to_botframework_tenant():
     with patch.dict("os.environ", {"MICROSOFT_APP_ID": "a", "MICROSOFT_APP_PASSWORD": "b"}, clear=True):
         cfg = TeamsConfig.init()
     assert cfg.tenant_id == "botframework.com"
-    assert cfg.app_type == "MultiTenant"
 
 
 def test_token_url_uses_tenant():
@@ -564,7 +560,7 @@ async def test_post_activity_returns_none_when_response_has_no_json():
     assert result is None
 
 
-# === TeamsConfig defaults + tenant/app_type env overrides ===
+# === TeamsConfig tenant env override ===
 
 
 def test_config_init_uses_arg_tenant_over_env():
@@ -581,18 +577,6 @@ def test_config_init_uses_arg_tenant_over_env():
     ):
         cfg = TeamsConfig.init(tenant_id="arg-tenant")
     assert cfg.tenant_id == "arg-tenant"
-
-
-def test_config_init_uses_arg_app_type_over_env():
-    from unittest.mock import patch as _patch
-
-    with _patch.dict(
-        "os.environ",
-        {"MICROSOFT_APP_ID": "app", "MICROSOFT_APP_PASSWORD": "pw", "MICROSOFT_APP_TYPE": "SingleTenant"},
-        clear=True,
-    ):
-        cfg = TeamsConfig.init(app_type="MultiTenant")
-    assert cfg.app_type == "MultiTenant"
 
 
 # === _get_jwks cache TTL ===

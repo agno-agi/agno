@@ -88,7 +88,6 @@ def attach_routes(
     app_id: Optional[str] = None,
     app_password: Optional[str] = None,
     tenant_id: Optional[str] = None,
-    app_type: Optional[str] = None,
     request_timeout: int = 30,
 ) -> APIRouter:
     """Attach ``/status`` and ``/messages`` routes for a Teams-bound entity.
@@ -114,7 +113,6 @@ def attach_routes(
         app_id=app_id,
         app_password=app_password,
         tenant_id=tenant_id,
-        app_type=app_type,
         request_timeout=request_timeout,
     )
 
