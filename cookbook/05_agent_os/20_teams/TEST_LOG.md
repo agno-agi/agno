@@ -29,12 +29,12 @@ the tenant admin's "Manage apps" approval flow.
 **Test mode:** CONSTRUCTION_SMOKE + LIVE
 
 **Description:** Constructs the same interface plus a daemon-thread scheduler
-that fires `teams.send_alert(user_id, text)` 30 seconds after startup,
+that fires `teams.asend_alert(user_id, text)` 30 seconds after startup,
 retrying every 15 seconds until a conversation reference is available.
 
 **Result:** After a first inbound message from the target user, the scheduled
 proactive alert was delivered to the Web Chat window. The same
-`send_alert(...)` call also delivered when invoked from a separate Python
+`asend_alert(...)` call also delivered when invoked from a separate Python
 process sharing the SQLite database.
 
 ---

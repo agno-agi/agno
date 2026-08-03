@@ -24,10 +24,10 @@ class MicrosoftTeams(BaseInterface):
       - ``GET  /status``   — readiness probe
       - ``POST /messages`` — Bot Framework webhook for inbound activities
 
-    Also provides ``send_alert(user_id, text)`` for pushing proactive
-    messages to any user who has previously chatted with the bot
-    (their conversation reference is stored in ``session.session_data``
-    after the first inbound message).
+    Also provides ``send_alert(user_id, text)`` (and its async variant
+    ``asend_alert``) for pushing proactive messages to any user who has
+    previously chatted with the bot (their conversation reference is
+    stored in ``session.session_data`` after the first inbound message).
     """
 
     type = "teams"
@@ -94,7 +94,7 @@ class MicrosoftTeams(BaseInterface):
     # Proactive alerts
     # ------------------------------------------------------------------
 
-    async def send_alert(self, user_id: str, text: str) -> bool:
+    async def asend_alert(self, user_id: str, text: str) -> bool:
         """Send a proactive message to a user who previously chatted with the bot.
 
         Requires:
@@ -114,7 +114,7 @@ class MicrosoftTeams(BaseInterface):
         entity, entity_type = self._resolve_entity()
         db = getattr(entity, "db", None)
         if not isinstance(db, (BaseDb, AsyncBaseDb)):
-            log_warning("MicrosoftTeams.send_alert: entity has no DB configured; cannot resolve user's conversation")
+            log_warning("MicrosoftTeams.asend_alert: entity has no DB configured; cannot resolve user's conversation")
             return False
 
         entity_id = getattr(entity, "id", None) or getattr(entity, "name", None) or entity_type
@@ -133,7 +133,7 @@ class MicrosoftTeams(BaseInterface):
             else:
                 sessions = db.get_sessions(**session_filter)  # type: ignore[assignment]
         except Exception as e:
-            log_warning(f"MicrosoftTeams.send_alert: session lookup failed: {e}")
+            log_warning(f"MicrosoftTeams.asend_alert: session lookup failed: {e}")
             return False
 
         if not sessions:
@@ -159,10 +159,10 @@ class MicrosoftTeams(BaseInterface):
         )
         return True
 
-    def send_alert_sync(self, user_id: str, text: str) -> bool:
-        """Blocking variant of :meth:`send_alert`. Prefer the async version
+    def send_alert(self, user_id: str, text: str) -> bool:
+        """Blocking variant of :meth:`asend_alert`. Prefer the async version
         inside coroutines; this exists for scripts and simple schedulers."""
-        return asyncio.run(self.send_alert(user_id, text))
+        return asyncio.run(self.asend_alert(user_id, text))
 
     # ------------------------------------------------------------------
     # Internals
