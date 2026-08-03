@@ -66,7 +66,10 @@ def _apply_coordination(redis: Union[str, RedisCoordination]) -> None:
     if isinstance(get_cancellation_manager(), InMemoryRunCancellationManager):
         set_cancellation_manager(
             RedisRunCancellationManager(
-                redis_client=sync_client, async_redis_client=async_client, key_prefix=cancellation_prefix
+                redis_client=sync_client,
+                async_redis_client=async_client,
+                key_prefix=cancellation_prefix,
+                enable_token_cleanup=coordination.enable_cancellation_token_cleanup,
             )
         )
         cancellation_wired = True

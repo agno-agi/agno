@@ -46,6 +46,14 @@ class RedisCoordination:
     # per-deployment value when multiple AgentOS deployments share one Redis -
     # with the default, they would read each other's runs by run_id.
     key_prefix: Optional[str] = None
+    # Token-scoped cancellation cleanup (stale-intent clearing on durable
+    # continue/requeue). OFF by default: replicas from releases that predate
+    # sidecar tokens rewrite only the legacy intent key on cancel, and a
+    # token-scoped cleanup could then erase their newer cancel. Enable ONLY
+    # once every replica sharing this Redis is token-aware; until then stale
+    # intent is skipped (it expires via its TTL, or cancels a continuation
+    # leg visibly - operator requeue remedies).
+    enable_cancellation_token_cleanup: bool = False
 
     def __post_init__(self) -> None:
         if self.url is None and (self.sync_client is None or self.async_client is None):
