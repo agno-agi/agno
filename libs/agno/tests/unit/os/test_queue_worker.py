@@ -1164,3 +1164,128 @@ class TestStreamingContinuation:
             assert isinstance(continue_calls[0]["step_requirements"][0], StepRequirement)
         finally:
             es_mod._event_stream = original
+
+
+class TestClosingLedger:
+    def test_accept_grace_is_in_the_future(self):
+        import time
+
+        from agno.os.job_queue import ACCEPT_GRACE_SECONDS, accept_grace_available_at
+
+        assert accept_grace_available_at() >= int(time.time()) + ACCEPT_GRACE_SECONDS - 1
+
+    @pytest.mark.asyncio
+    async def test_graced_job_not_claimable_until_available(self):
+        import time
+
+        from agno.job_queue.store import InMemoryQueueStore
+
+        store = InMemoryQueueStore()
+        await store.enqueue_job(
+            {
+                "id": "g1",
+                "component_type": "agent",
+                "component_id": "a1",
+                "session_id": "s1",
+                "job_type": "run",
+                "payload": {"input": "x", "kwargs": {}},
+                "status": "queued",
+                "attempt": 0,
+                "max_attempts": 1,
+                "available_at": int(time.time()) + 5,
+                "created_at": 0,
+            }
+        )
+        assert await store.claim_job("w1") is None, "graced job must be unclaimable inside the window"
+
+    @pytest.mark.asyncio
+    async def test_worker_managed_lifecycle(self):
+        """F2: claimed jobs are marked worker-managed for exactly the span of
+        execution, so detached shutdown handlers stand down."""
+        from agno.job_queue.config import QueueConfig
+        from agno.job_queue.store import InMemoryQueueStore
+        from agno.os.job_queue import QueueWorker
+        from agno.run.concurrency import is_worker_managed
+
+        observed = {}
+
+        class A:
+            id = "a1"
+            db = None
+
+            async def arun(self, **kwargs):
+                observed["managed_during"] = is_worker_managed(kwargs["run_id"])
+                from types import SimpleNamespace
+
+                from agno.run.base import RunStatus
+
+                return SimpleNamespace(run_id=kwargs["run_id"], status=RunStatus.completed)
+
+        store = InMemoryQueueStore()
+        await store.enqueue_job(
+            {
+                "id": "wm1",
+                "component_type": "agent",
+                "component_id": "a1",
+                "session_id": "s1",
+                "job_type": "run",
+                "payload": {"input": "x", "kwargs": {}},
+                "status": "queued",
+                "attempt": 0,
+                "max_attempts": 1,
+                "available_at": 0,
+                "created_at": 0,
+            }
+        )
+        worker = QueueWorker(store=store, resolve_component=lambda t, i: A(), config=QueueConfig(durable=True))
+        claimed = await store.claim_job(worker.worker_id)
+        await worker._execute_claimed(claimed)
+        assert observed["managed_during"] is True
+        assert is_worker_managed("wm1") is False, "must unmark after execution"
+
+    @pytest.mark.asyncio
+    async def test_running_transition_after_slot(self):
+        """F3: pollers must see RUNNING during durable execution, fenced."""
+        from agno.job_queue.config import QueueConfig
+        from agno.job_queue.store import InMemoryQueueStore
+        from agno.os.job_queue import QueueWorker
+
+        writes = []
+
+        class Db:
+            async def update_run_in_session(self, session_id, run_id, fields, expected_attempt=None, **kw):
+                writes.append(dict(fields))
+                return True
+
+        class A:
+            id = "a1"
+            db = Db()
+
+            async def arun(self, **kwargs):
+                from types import SimpleNamespace
+
+                from agno.run.base import RunStatus
+
+                return SimpleNamespace(run_id=kwargs["run_id"], status=RunStatus.completed)
+
+        store = InMemoryQueueStore()
+        await store.enqueue_job(
+            {
+                "id": "rt1",
+                "component_type": "agent",
+                "component_id": "a1",
+                "session_id": "s1",
+                "job_type": "run",
+                "payload": {"input": "x", "kwargs": {}},
+                "status": "queued",
+                "attempt": 0,
+                "max_attempts": 1,
+                "available_at": 0,
+                "created_at": 0,
+            }
+        )
+        worker = QueueWorker(store=store, resolve_component=lambda t, i: A(), config=QueueConfig(durable=True))
+        claimed = await store.claim_job(worker.worker_id)
+        await worker._execute_claimed(claimed)
+        statuses = [str(w.get("status", "")).lower() for w in writes]
+        assert "running" in statuses, f"expected a fenced RUNNING write, got {writes}"

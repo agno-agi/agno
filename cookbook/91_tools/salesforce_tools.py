@@ -31,15 +31,15 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.tools.salesforce import SalesforceTools
 
-# Read-only agent (default — query, search, and metadata only)
+# Read-only agent (default — query, salesforce_search, and metadata only)
 read_only_agent = Agent(
     name="Salesforce Explorer",
     model=OpenAIChat(id="gpt-4o"),
     tools=[SalesforceTools()],
-    description="You are a Salesforce data specialist that can explore objects, query records, and search across the org.",
+    description="You are a Salesforce data specialist that can explore objects, query records, and salesforce_search across the org.",
     instructions=[
         "Use describe_object to understand available fields before building queries.",
-        "Use SOQL for precise structured queries, SOSL for full-text search across objects.",
+        "Use SOQL for precise structured queries, SOSL for full-text salesforce_search across objects.",
         "When listing objects, focus on queryable standard objects unless asked about custom ones.",
     ],
     markdown=True,

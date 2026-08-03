@@ -78,7 +78,7 @@ def test_init_all_flag_registers_every_tool():
     with patch("agno.tools.scrapegraph.ScrapeGraphAI"):
         tools = ScrapeGraphTools(all=True)
         names = {t.__name__ for t in tools.tools}
-        assert names == {"smartscraper", "markdownify", "searchscraper", "crawl", "scrape"}
+        assert names == {"smartscraper", "markdownify", "searchscraper", "scrapegraph_crawl", "scrapegraph_scrape"}
 
 
 def test_init_selective_flags():
@@ -86,7 +86,7 @@ def test_init_selective_flags():
     with patch("agno.tools.scrapegraph.ScrapeGraphAI"):
         tools = ScrapeGraphTools(enable_smartscraper=False, enable_scrape=True)
         names = [t.__name__ for t in tools.tools]
-        assert names == ["scrape"]
+        assert names == ["scrapegraph_scrape"]
 
 
 def test_smartscraper(scrapegraph_tools, mock_scrapegraph):
@@ -119,19 +119,19 @@ def test_markdownify(scrapegraph_tools, mock_scrapegraph):
     """Test markdownify method returns plain markdown text."""
     data = Mock()
     data.results = {"markdown": {"data": "# Title\n\nContent"}}
-    mock_scrapegraph.scrape.return_value = _api_result(data)
+    mock_scrapegraph.scrapegraph_scrape.return_value = _api_result(data)
 
     result = scrapegraph_tools.markdownify("https://example.com")
 
     assert result == "# Title\n\nContent"
-    args, kwargs = mock_scrapegraph.scrape.call_args
+    args, kwargs = mock_scrapegraph.scrapegraph_scrape.call_args
     assert args[0] == "https://example.com"
     assert kwargs["formats"][0].type == "markdown"
 
 
 def test_markdownify_error(scrapegraph_tools, mock_scrapegraph):
     """Test markdownify returns an error string when the API fails."""
-    mock_scrapegraph.scrape.return_value = _api_result(data=None, status="error", error="rate limited")
+    mock_scrapegraph.scrapegraph_scrape.return_value = _api_result(data=None, status="error", error="rate limited")
 
     result = scrapegraph_tools.markdownify("https://example.com")
 
@@ -140,33 +140,33 @@ def test_markdownify_error(scrapegraph_tools, mock_scrapegraph):
 
 
 def test_scrape(scrapegraph_tools, mock_scrapegraph):
-    """Test scrape method returns raw HTML."""
+    """Test scrapegraph_scrape method returns raw HTML."""
     data = Mock()
     data.model_dump_json.return_value = json.dumps({"results": {"html": {"data": "<html>x</html>"}}})
-    mock_scrapegraph.scrape.return_value = _api_result(data)
+    mock_scrapegraph.scrapegraph_scrape.return_value = _api_result(data)
 
-    result = scrapegraph_tools.scrape("https://example.com")
+    result = scrapegraph_tools.scrapegraph_scrape("https://example.com")
 
     assert "<html>x</html>" in result
-    args, kwargs = mock_scrapegraph.scrape.call_args
+    args, kwargs = mock_scrapegraph.scrapegraph_scrape.call_args
     assert args[0] == "https://example.com"
     assert kwargs["formats"][0].type == "html"
     assert kwargs["fetch_config"] is None
 
 
 def test_scrape_with_render_heavy_js(mock_scrapegraph):
-    """Test scrape with JavaScript rendering enabled."""
+    """Test scrapegraph_scrape with JavaScript rendering enabled."""
     with patch.dict("os.environ", {"SGAI_API_KEY": TEST_API_KEY}):
         tools = ScrapeGraphTools(enable_scrape=True, render_heavy_js=True)
         tools.client = mock_scrapegraph
 
         data = Mock()
         data.model_dump_json.return_value = "{}"
-        mock_scrapegraph.scrape.return_value = _api_result(data)
+        mock_scrapegraph.scrapegraph_scrape.return_value = _api_result(data)
 
-        tools.scrape("https://spa-site.com")
+        tools.scrapegraph_scrape("https://spa-site.com")
 
-        _, kwargs = mock_scrapegraph.scrape.call_args
+        _, kwargs = mock_scrapegraph.scrapegraph_scrape.call_args
         assert kwargs["fetch_config"].mode == "js"
 
 
@@ -185,20 +185,20 @@ def test_toolkit_level_headers_applied_to_every_call(mock_scrapegraph):
         _, extract_kwargs = mock_scrapegraph.extract.call_args
         assert extract_kwargs["fetch_config"].headers == {"User-Agent": "custom-ua"}
 
-        # scrape
+        # scrapegraph_scrape
         scrape_data = Mock()
         scrape_data.model_dump_json.return_value = "{}"
-        mock_scrapegraph.scrape.return_value = _api_result(scrape_data)
-        tools.scrape("https://x.com")
-        _, scrape_kwargs = mock_scrapegraph.scrape.call_args
+        mock_scrapegraph.scrapegraph_scrape.return_value = _api_result(scrape_data)
+        tools.scrapegraph_scrape("https://x.com")
+        _, scrape_kwargs = mock_scrapegraph.scrapegraph_scrape.call_args
         assert scrape_kwargs["fetch_config"].headers == {"User-Agent": "custom-ua"}
 
 
 def test_scrape_error(scrapegraph_tools, mock_scrapegraph):
-    """Test scrape returns an error string when the API fails."""
-    mock_scrapegraph.scrape.return_value = _api_result(data=None, status="error", error="bad url")
+    """Test scrapegraph_scrape returns an error string when the API fails."""
+    mock_scrapegraph.scrapegraph_scrape.return_value = _api_result(data=None, status="error", error="bad url")
 
-    result = scrapegraph_tools.scrape("https://example.com")
+    result = scrapegraph_tools.scrapegraph_scrape("https://example.com")
 
     assert result.startswith("Error")
     assert "bad url" in result
@@ -230,24 +230,24 @@ def test_searchscraper_error(scrapegraph_tools, mock_scrapegraph):
 
 
 def test_crawl_completes_without_polling(scrapegraph_tools, mock_scrapegraph):
-    """Test crawl returns immediately when the job is already completed."""
+    """Test scrapegraph_crawl returns immediately when the job is already completed."""
     finished = Mock()
     finished.id = "c1"
     finished.status = "completed"
     finished.model_dump_json.return_value = json.dumps({"pages": [{"url": "https://x.com"}]})
-    mock_scrapegraph.crawl = Mock()
-    mock_scrapegraph.crawl.start.return_value = _api_result(finished)
+    mock_scrapegraph.scrapegraph_crawl = Mock()
+    mock_scrapegraph.scrapegraph_crawl.start.return_value = _api_result(finished)
 
     with patch("agno.tools.scrapegraph.time.sleep") as no_sleep:
-        result = scrapegraph_tools.crawl("https://x.com", prompt="extract", schema={"type": "object"})
+        result = scrapegraph_tools.scrapegraph_crawl("https://x.com", prompt="extract", schema={"type": "object"})
 
-    assert not mock_scrapegraph.crawl.get.called
+    assert not mock_scrapegraph.scrapegraph_crawl.get.called
     assert not no_sleep.called
     assert json.loads(result)["pages"][0]["url"] == "https://x.com"
 
 
 def test_crawl_polls_until_complete(mock_scrapegraph):
-    """Test crawl polls until the job completes."""
+    """Test scrapegraph_crawl polls until the job completes."""
     with patch.dict("os.environ", {"SGAI_API_KEY": TEST_API_KEY}):
         tools = ScrapeGraphTools(enable_crawl=True, crawl_poll_interval=2)
         tools.client = mock_scrapegraph
@@ -260,14 +260,14 @@ def test_crawl_polls_until_complete(mock_scrapegraph):
         done.status = "completed"
         done.model_dump_json.return_value = json.dumps({"status": "completed"})
 
-        mock_scrapegraph.crawl = Mock()
-        mock_scrapegraph.crawl.start.return_value = _api_result(running)
-        mock_scrapegraph.crawl.get.side_effect = [_api_result(running), _api_result(done)]
+        mock_scrapegraph.scrapegraph_crawl = Mock()
+        mock_scrapegraph.scrapegraph_crawl.start.return_value = _api_result(running)
+        mock_scrapegraph.scrapegraph_crawl.get.side_effect = [_api_result(running), _api_result(done)]
 
         with patch("agno.tools.scrapegraph.time.sleep") as slept:
-            result = tools.crawl("https://x.com", prompt="p", schema={"type": "object"})
+            result = tools.scrapegraph_crawl("https://x.com", prompt="p", schema={"type": "object"})
 
-        assert mock_scrapegraph.crawl.get.call_count == 2
+        assert mock_scrapegraph.scrapegraph_crawl.get.call_count == 2
         assert slept.call_count == 2
         for call in slept.call_args_list:
             assert call.args[0] == 2
@@ -275,7 +275,7 @@ def test_crawl_polls_until_complete(mock_scrapegraph):
 
 
 def test_crawl_times_out(mock_scrapegraph):
-    """Test crawl returns a timeout error when the deadline is exceeded."""
+    """Test scrapegraph_crawl returns a timeout error when the deadline is exceeded."""
     with patch.dict("os.environ", {"SGAI_API_KEY": TEST_API_KEY}):
         tools = ScrapeGraphTools(enable_crawl=True, crawl_max_wait=60)
         tools.client = mock_scrapegraph
@@ -283,9 +283,9 @@ def test_crawl_times_out(mock_scrapegraph):
         running = Mock()
         running.id = "c3"
         running.status = "running"
-        mock_scrapegraph.crawl = Mock()
-        mock_scrapegraph.crawl.start.return_value = _api_result(running)
-        mock_scrapegraph.crawl.get.return_value = _api_result(running)
+        mock_scrapegraph.scrapegraph_crawl = Mock()
+        mock_scrapegraph.scrapegraph_crawl.start.return_value = _api_result(running)
+        mock_scrapegraph.scrapegraph_crawl.get.return_value = _api_result(running)
 
         # Fake monotonic so the deadline is exceeded after the first poll.
         times = iter([0.0, 1000.0])
@@ -293,7 +293,7 @@ def test_crawl_times_out(mock_scrapegraph):
             patch("agno.tools.scrapegraph.time.monotonic", side_effect=lambda: next(times)),
             patch("agno.tools.scrapegraph.time.sleep"),
         ):
-            result = tools.crawl("https://x.com", prompt="p", schema={"type": "object"})
+            result = tools.scrapegraph_crawl("https://x.com", prompt="p", schema={"type": "object"})
 
         assert result.startswith("Error")
         assert "timed out" in result
@@ -301,11 +301,11 @@ def test_crawl_times_out(mock_scrapegraph):
 
 
 def test_crawl_start_error(scrapegraph_tools, mock_scrapegraph):
-    """Test crawl returns an error string when the start request fails."""
-    mock_scrapegraph.crawl = Mock()
-    mock_scrapegraph.crawl.start.return_value = _api_result(data=None, status="error", error="bad schema")
+    """Test scrapegraph_crawl returns an error string when the start request fails."""
+    mock_scrapegraph.scrapegraph_crawl = Mock()
+    mock_scrapegraph.scrapegraph_crawl.start.return_value = _api_result(data=None, status="error", error="bad schema")
 
-    result = scrapegraph_tools.crawl("https://x.com", prompt="p", schema={"type": "object"})
+    result = scrapegraph_tools.scrapegraph_crawl("https://x.com", prompt="p", schema={"type": "object"})
 
     assert result.startswith("Error")
     assert "bad schema" in result

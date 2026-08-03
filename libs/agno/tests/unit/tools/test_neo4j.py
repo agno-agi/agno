@@ -15,7 +15,7 @@ def test_list_labels():
         mock_run.return_value = [{"label": "Person"}, {"label": "Movie"}]
 
         tools = Neo4jTools("uri", "user", "password")
-        labels = tools.list_labels()
+        labels = tools.neo4j_list_labels()
         assert labels == ["Person", "Movie"]
         mock_run.assert_called_with("CALL db.labels()")
 
@@ -35,7 +35,7 @@ def test_list_labels_runtime_error():
         mock_session.run.side_effect = Exception("Query failed")
 
         tools = Neo4jTools("uri", "user", "password")
-        labels = tools.list_labels()
+        labels = tools.neo4j_list_labels()
         assert labels == []
 
 
@@ -165,7 +165,7 @@ def test_initialization_selective_tools():
 
         # Check that only selected tools are registered
         tool_names = [tool.__name__ for tool in tools.tools]
-        assert "list_labels" in tool_names
+        assert "neo4j_list_labels" in tool_names
         assert "run_cypher_query" in tool_names
         assert "list_relationship_types" not in tool_names
         assert "get_schema" not in tool_names

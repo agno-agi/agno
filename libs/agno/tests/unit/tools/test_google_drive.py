@@ -37,14 +37,14 @@ def drive_tools(mock_creds, mock_service):
 
 
 def test_search_files_success(drive_tools):
-    result = json.loads(drive_tools.search_files(query="name contains 'test'"))
+    result = json.loads(drive_tools.gdrive_search_files(query="name contains 'test'"))
     assert result["count"] == 1
     assert result["files"][0]["name"] == "TestFile"
     assert "trashed=false" in result["query"]
 
 
 def test_search_files_trashed_auto(drive_tools):
-    result = json.loads(drive_tools.search_files(query="name contains 'x'"))
+    result = json.loads(drive_tools.gdrive_search_files(query="name contains 'x'"))
     assert result["query"] == "(name contains 'x') and trashed=false"
 
 
@@ -53,29 +53,29 @@ def test_search_files_include_trashed(mock_creds, mock_service):
     with patch("googleapiclient.discovery.build"):
         tools = GoogleDriveTools(creds=mock_creds, include_trashed=True)
         tools._service = mock_service
-        result = json.loads(tools.search_files(query="name contains 'x'"))
+        result = json.loads(tools.gdrive_search_files(query="name contains 'x'"))
         assert result["query"] == "name contains 'x'"
 
 
 def test_search_files_no_query(drive_tools):
-    result = json.loads(drive_tools.search_files())
+    result = json.loads(drive_tools.gdrive_search_files())
     assert result["query"] == "trashed=false"
 
 
 def test_search_files_error(drive_tools):
     drive_tools.service.files.return_value.list.side_effect = Exception("API error")
-    result = json.loads(drive_tools.search_files())
+    result = json.loads(drive_tools.gdrive_search_files())
     assert "error" in result
 
 
 def test_list_files_delegates(drive_tools):
-    result = json.loads(drive_tools.list_files())
+    result = json.loads(drive_tools.gdrive_list_files())
     assert "files" in result
     assert "query" in result
 
 
 def test_list_files_success(drive_tools):
-    result = json.loads(drive_tools.list_files())
+    result = json.loads(drive_tools.gdrive_list_files())
     assert result["files"][0]["name"] == "TestFile"
 
 
@@ -95,7 +95,7 @@ def test_read_file_google_doc(drive_tools):
             return mock_downloader
 
         mock_dl.side_effect = capture_buffer
-        result = json.loads(drive_tools.read_file("doc1"))
+        result = json.loads(drive_tools.gdrive_read_file("doc1"))
 
     assert result["exportMimeType"] is not None
     assert result["exportMimeType"] == "text/plain"
@@ -121,7 +121,7 @@ def test_read_file_google_sheet(drive_tools):
             return mock_downloader
 
         mock_dl.side_effect = capture_buffer
-        result = json.loads(drive_tools.read_file("sheet1"))
+        result = json.loads(drive_tools.gdrive_read_file("sheet1"))
 
     assert result["exportMimeType"] is not None
     assert result["exportMimeType"] == "text/csv"
@@ -144,7 +144,7 @@ def test_read_file_regular(drive_tools):
             return mock_downloader
 
         mock_dl.side_effect = capture_buffer
-        result = json.loads(drive_tools.read_file("f1"))
+        result = json.loads(drive_tools.gdrive_read_file("f1"))
 
     assert result["exportMimeType"] is None
     assert result["content"] == "plain text content"
@@ -159,7 +159,7 @@ def test_read_file_max_read_size_rejected(drive_tools):
         "mimeType": "text/plain",
         "size": "50000",
     }
-    result = json.loads(drive_tools.read_file("big1"))
+    result = json.loads(drive_tools.gdrive_read_file("big1"))
     assert "error" in result
     assert "exceeds max_read_size" in result["error"]
 
@@ -180,7 +180,7 @@ def test_read_file_max_read_size_allowed(drive_tools):
             return mock_downloader
 
         mock_dl.side_effect = capture_buffer
-        result = json.loads(drive_tools.read_file("small1"))
+        result = json.loads(drive_tools.gdrive_read_file("small1"))
     assert result["content"] == "hello"
 
 
@@ -191,7 +191,7 @@ def test_read_file_unsupported_workspace(drive_tools):
         "mimeType": "application/vnd.google-apps.drawing",
         "modifiedTime": "2025-01-01T00:00:00Z",
     }
-    result = json.loads(drive_tools.read_file("d1"))
+    result = json.loads(drive_tools.gdrive_read_file("d1"))
     assert "error" in result
     assert "Cannot read" in result["error"]
 
@@ -214,7 +214,7 @@ def test_read_file_large_export_passes_through(drive_tools):
             return mock_downloader
 
         mock_dl.side_effect = capture_buffer
-        result = json.loads(drive_tools.read_file("big1"))
+        result = json.loads(drive_tools.gdrive_read_file("big1"))
 
     assert "content" in result
     assert result["contentLength"] == len(big_content)
@@ -228,7 +228,7 @@ def test_upload_file_success(tmp_path, drive_tools):
         "name": "test_upload.txt",
         "mimeType": "text/plain",
     }
-    result = json.loads(drive_tools.upload_file(file_path))
+    result = json.loads(drive_tools.gdrive_upload_file(file_path))
     assert result["name"] == "test_upload.txt"
     assert result["id"] == "123"
 
@@ -237,12 +237,12 @@ def test_upload_file_error(tmp_path, drive_tools):
     file_path = tmp_path / "test_upload.txt"
     file_path.write_text("hello world")
     drive_tools.service.files.return_value.create.side_effect = Exception("Upload error")
-    result = json.loads(drive_tools.upload_file(file_path))
+    result = json.loads(drive_tools.gdrive_upload_file(file_path))
     assert "error" in result
 
 
 def test_upload_file_missing(drive_tools):
-    result = json.loads(drive_tools.upload_file("/nonexistent/path.txt"))
+    result = json.loads(drive_tools.gdrive_upload_file("/nonexistent/path.txt"))
     assert "error" in result
     assert "does not exist" in result["error"]
 
@@ -260,7 +260,7 @@ def test_download_file_success(tmp_path, drive_tools):
         (MagicMock(progress=lambda: 1.0), True),
     ]
     with patch("agno.tools.google.drive.MediaIoBaseDownload", return_value=mock_downloader):
-        result = json.loads(drive_tools.download_file("abc123"))
+        result = json.loads(drive_tools.gdrive_download_file("abc123"))
     assert result["status"] == "downloaded"
     assert result["fileId"] == "abc123"
     assert "file.txt" in result["path"]
@@ -278,7 +278,7 @@ def test_download_file_sanitizes_path_components(tmp_path, drive_tools, drive_na
     mock_downloader = MagicMock()
     mock_downloader.next_chunk.side_effect = [(MagicMock(progress=lambda: 1.0), True)]
     with patch("agno.tools.google.drive.MediaIoBaseDownload", return_value=mock_downloader):
-        result = json.loads(drive_tools.download_file("abc123"))
+        result = json.loads(drive_tools.gdrive_download_file("abc123"))
     assert result["status"] == "downloaded"
     assert "escape.txt" in result["path"]
     assert Path(result["path"]).resolve().parent == tmp_path.resolve()
@@ -293,20 +293,20 @@ def test_download_file_error(tmp_path, drive_tools):
     }
     drive_tools.service.files.return_value.get_media.side_effect = Exception("Download error")
     with patch("agno.tools.google.drive.MediaIoBaseDownload", return_value=MagicMock()):
-        result = json.loads(drive_tools.download_file("abc123"))
+        result = json.loads(drive_tools.gdrive_download_file("abc123"))
     assert "error" in result
 
 
 def test_init_scope_inference_readonly(mock_creds):
     with patch("googleapiclient.discovery.build"):
-        tools = GoogleDriveTools(creds=mock_creds, upload_file=False)
+        tools = GoogleDriveTools(creds=mock_creds, gdrive_upload_file=False)
     assert "https://www.googleapis.com/auth/drive.readonly" in tools.scopes
     assert "https://www.googleapis.com/auth/drive.file" not in tools.scopes
 
 
 def test_init_scope_inference_write(mock_creds):
     with patch("googleapiclient.discovery.build"):
-        tools = GoogleDriveTools(creds=mock_creds, upload_file=True)
+        tools = GoogleDriveTools(creds=mock_creds, gdrive_upload_file=True)
     assert "https://www.googleapis.com/auth/drive.readonly" in tools.scopes
     assert "https://www.googleapis.com/auth/drive.file" in tools.scopes
 
@@ -344,7 +344,9 @@ def test_init_read_scope_mismatch(mock_creds):
         patch("googleapiclient.discovery.build"),
         pytest.raises(ValueError, match="read scope"),
     ):
-        GoogleDriveTools(creds=mock_creds, scopes=["https://www.googleapis.com/auth/gmail.readonly"], read_file=True)
+        GoogleDriveTools(
+            creds=mock_creds, scopes=["https://www.googleapis.com/auth/gmail.readonly"], gdrive_read_file=True
+        )
 
 
 def test_init_write_scope_mismatch(mock_creds):
@@ -355,10 +357,10 @@ def test_init_write_scope_mismatch(mock_creds):
         GoogleDriveTools(
             creds=mock_creds,
             scopes=["https://www.googleapis.com/auth/drive.readonly"],
-            upload_file=True,
-            list_files=False,
-            search_files=False,
-            read_file=False,
+            gdrive_upload_file=True,
+            gdrive_list_files=False,
+            gdrive_search_files=False,
+            gdrive_read_file=False,
         )
 
 
@@ -373,7 +375,7 @@ def test_auth_failure_returns_json():
         tools._creds = None
         tools._service = None
         with patch.object(tools, "_resolve_creds", side_effect=RuntimeError("token expired")):
-            result = json.loads(tools.search_files())
+            result = json.loads(tools.gdrive_search_files())
     assert "error" in result
     assert "authentication failed" in result["error"].lower()
 
@@ -392,7 +394,7 @@ def _make_http_error(status=404, reason="Not Found"):
 
 def test_search_files_http_error(drive_tools):
     drive_tools.service.files.return_value.list.side_effect = _make_http_error(403, "Forbidden")
-    result = json.loads(drive_tools.search_files())
+    result = json.loads(drive_tools.gdrive_search_files())
     assert "error" in result
     assert "Google Drive API error" in result["error"]
 
@@ -407,7 +409,7 @@ def test_read_file_http_error_export_limit(drive_tools):
     resp.status = 403
     resp.reason = "exportSizeLimitExceeded"
     drive_tools.service.files.return_value.export_media.side_effect = HttpError(resp, b"exportSizeLimitExceeded")
-    result = json.loads(drive_tools.read_file("doc1"))
+    result = json.loads(drive_tools.gdrive_read_file("doc1"))
     assert "error" in result
     assert "Google Drive API error" in result["error"]
 
@@ -416,7 +418,7 @@ def test_upload_file_http_error(tmp_path, drive_tools):
     file_path = tmp_path / "test.txt"
     file_path.write_text("data")
     drive_tools.service.files.return_value.create.side_effect = _make_http_error(500, "Server Error")
-    result = json.loads(drive_tools.upload_file(file_path))
+    result = json.loads(drive_tools.gdrive_upload_file(file_path))
     assert "Google Drive API error" in result["error"]
 
 
@@ -428,24 +430,24 @@ def test_download_file_http_error(tmp_path, drive_tools):
         "mimeType": "text/plain",
     }
     drive_tools.service.files.return_value.get_media.side_effect = _make_http_error(404)
-    result = json.loads(drive_tools.download_file("bad"))
+    result = json.loads(drive_tools.gdrive_download_file("bad"))
     assert "Google Drive API error" in result["error"]
 
 
 # ---------------------------------------------------------------------------
-# search_files edge cases
+# gdrive_search_files edge cases
 # ---------------------------------------------------------------------------
 
 
 def test_search_files_max_results_zero(drive_tools):
-    result = json.loads(drive_tools.search_files(max_results=0))
+    result = json.loads(drive_tools.gdrive_search_files(max_results=0))
     assert "error" in result
     assert "max_results" in result["error"]
 
 
 def test_search_files_empty_results(drive_tools):
     drive_tools.service.files.return_value.list.return_value.execute.return_value = {"files": []}
-    result = json.loads(drive_tools.search_files())
+    result = json.loads(drive_tools.gdrive_search_files())
     assert result["count"] == 0
     assert result["files"] == []
 
@@ -455,7 +457,7 @@ def test_search_files_next_page_token(drive_tools):
         "files": [{"id": "1"}],
         "nextPageToken": "token123",
     }
-    result = json.loads(drive_tools.search_files())
+    result = json.loads(drive_tools.gdrive_search_files())
     assert result["nextPageToken"] == "token123"
 
 
@@ -463,13 +465,13 @@ def test_search_files_page_token_passed(drive_tools):
     drive_tools.service.files.return_value.list.return_value.execute.return_value = {
         "files": [{"id": "2"}],
     }
-    drive_tools.search_files(query="name='x'", page_token="abc123")
+    drive_tools.gdrive_search_files(query="name='x'", page_token="abc123")
     call_kwargs = drive_tools.service.files.return_value.list.call_args
     assert call_kwargs[1]["pageToken"] == "abc123"
 
 
 # ---------------------------------------------------------------------------
-# read_file: Slides export + no truncation
+# gdrive_read_file: Slides export + no truncation
 # ---------------------------------------------------------------------------
 
 
@@ -489,7 +491,7 @@ def test_read_file_google_slides(drive_tools):
             return mock_downloader
 
         mock_dl.side_effect = capture_buffer
-        result = json.loads(drive_tools.read_file("slide1"))
+        result = json.loads(drive_tools.gdrive_read_file("slide1"))
 
     assert result["exportMimeType"] is not None
     assert result["exportMimeType"] == "text/plain"
@@ -497,7 +499,7 @@ def test_read_file_google_slides(drive_tools):
 
 
 # ---------------------------------------------------------------------------
-# upload_file: directory path rejection
+# gdrive_upload_file: directory path rejection
 # ---------------------------------------------------------------------------
 
 
@@ -510,7 +512,7 @@ def test_upload_file_mime_auto_detected(tmp_path, drive_tools):
         "mimeType": "text/csv",
     }
     with patch("agno.tools.google.drive.MediaFileUpload") as mock_upload:
-        drive_tools.upload_file(file_path)
+        drive_tools.gdrive_upload_file(file_path)
         assert mock_upload.call_args[1]["mimetype"] == "text/csv"
 
 
@@ -522,18 +524,18 @@ def test_upload_file_unknown_extension_fallback(tmp_path, drive_tools):
         "name": "data.xyz123",
     }
     with patch("agno.tools.google.drive.MediaFileUpload") as mock_upload:
-        drive_tools.upload_file(file_path)
+        drive_tools.gdrive_upload_file(file_path)
         assert mock_upload.call_args[1]["mimetype"] == "application/octet-stream"
 
 
 def test_upload_file_directory_rejected(tmp_path, drive_tools):
-    result = json.loads(drive_tools.upload_file(tmp_path))
+    result = json.loads(drive_tools.gdrive_upload_file(tmp_path))
     assert "error" in result
     assert "does not exist or is not a file" in result["error"]
 
 
 # ---------------------------------------------------------------------------
-# download_file: nested directory creation
+# gdrive_download_file: nested directory creation
 # ---------------------------------------------------------------------------
 
 
@@ -547,7 +549,7 @@ def test_download_file_uses_download_dir(tmp_path, drive_tools):
     mock_downloader = MagicMock()
     mock_downloader.next_chunk.return_value = (MagicMock(), True)
     with patch("agno.tools.google.drive.MediaIoBaseDownload", return_value=mock_downloader):
-        result = json.loads(drive_tools.download_file("abc123"))
+        result = json.loads(drive_tools.gdrive_download_file("abc123"))
     assert result["status"] == "downloaded"
     assert result["path"] == str(tmp_path / "report.pdf")
 
@@ -559,14 +561,14 @@ def test_download_file_uses_download_dir(tmp_path, drive_tools):
 
 @pytest.mark.asyncio
 async def test_async_search_files(drive_tools):
-    result = json.loads(await drive_tools.asearch_files(query="name='test'"))
+    result = json.loads(await drive_tools.agdrive_search_files(query="name='test'"))
     assert "files" in result
     assert "trashed=false" in result["query"]
 
 
 @pytest.mark.asyncio
 async def test_async_list_files(drive_tools):
-    result = json.loads(await drive_tools.alist_files())
+    result = json.loads(await drive_tools.agdrive_list_files())
     assert "files" in result
 
 
@@ -586,7 +588,7 @@ async def test_async_read_file(drive_tools):
             return mock_downloader
 
         mock_dl.side_effect = capture_buffer
-        result = json.loads(await drive_tools.aread_file("f1"))
+        result = json.loads(await drive_tools.agdrive_read_file("f1"))
     assert result["content"] == "async content"
 
 
@@ -598,7 +600,7 @@ async def test_async_upload_file(tmp_path, drive_tools):
         "id": "u1",
         "name": "upload.txt",
     }
-    result = json.loads(await drive_tools.aupload_file(file_path))
+    result = json.loads(await drive_tools.agdrive_upload_file(file_path))
     assert result["id"] == "u1"
 
 
@@ -613,7 +615,7 @@ async def test_async_download_file(tmp_path, drive_tools):
     mock_downloader = MagicMock()
     mock_downloader.next_chunk.return_value = (MagicMock(), True)
     with patch("agno.tools.google.drive.MediaIoBaseDownload", return_value=mock_downloader):
-        result = json.loads(await drive_tools.adownload_file("abc"))
+        result = json.loads(await drive_tools.agdrive_download_file("abc"))
     assert result["status"] == "downloaded"
     assert "file.txt" in result["path"]
 
@@ -660,8 +662,8 @@ def all_drives_tools(mock_creds, mock_service):
 
 
 def test_all_drives_search_files_passes_all_drives_flags(all_drives_tools):
-    """GoogleDriveTools.search_files passes corpora=allDrives and related flags when configured."""
-    all_drives_tools.search_files(query="name contains 'test'")
+    """GoogleDriveTools.gdrive_search_files passes corpora=allDrives and related flags when configured."""
+    all_drives_tools.gdrive_search_files(query="name contains 'test'")
 
     call_kwargs = all_drives_tools.service.files.return_value.list.call_args[1]
     assert call_kwargs["corpora"] == "allDrives"
@@ -670,13 +672,13 @@ def test_all_drives_search_files_passes_all_drives_flags(all_drives_tools):
 
 
 def test_all_drives_search_files_returns_incomplete_search(all_drives_tools):
-    """GoogleDriveTools.search_files returns incompleteSearch for allDrives queries."""
+    """GoogleDriveTools.gdrive_search_files returns incompleteSearch for allDrives queries."""
     all_drives_tools.service.files.return_value.list.return_value.execute.return_value = {
         "files": [],
         "incompleteSearch": True,
     }
 
-    result = json.loads(all_drives_tools.search_files(query="name contains 'test'"))
+    result = json.loads(all_drives_tools.gdrive_search_files(query="name contains 'test'"))
 
     call_kwargs = all_drives_tools.service.files.return_value.list.call_args[1]
     assert "incompleteSearch" in call_kwargs["fields"]
@@ -684,30 +686,30 @@ def test_all_drives_search_files_returns_incomplete_search(all_drives_tools):
 
 
 def test_all_drives_incomplete_search_defaults_false(all_drives_tools):
-    """GoogleDriveTools.search_files defaults incompleteSearch to False when field is absent."""
+    """GoogleDriveTools.gdrive_search_files defaults incompleteSearch to False when field is absent."""
     all_drives_tools.service.files.return_value.list.return_value.execute.return_value = {
         "files": [],
     }
-    result = json.loads(all_drives_tools.search_files(query="x"))
+    result = json.loads(all_drives_tools.gdrive_search_files(query="x"))
     assert result["incompleteSearch"] is False
 
 
 def test_all_drives_error_excludes_incomplete_search(all_drives_tools):
-    """GoogleDriveTools.search_files error response excludes incompleteSearch field."""
+    """GoogleDriveTools.gdrive_search_files error response excludes incompleteSearch field."""
     all_drives_tools.service.files.return_value.list.side_effect = Exception("API error")
-    result = json.loads(all_drives_tools.search_files(query="x"))
+    result = json.loads(all_drives_tools.gdrive_search_files(query="x"))
     assert "error" in result
     assert "incompleteSearch" not in result
 
 
 def test_all_drives_log_debug_on_incomplete_search(all_drives_tools):
-    """GoogleDriveTools.search_files emits log_debug when incompleteSearch is True."""
+    """GoogleDriveTools.gdrive_search_files emits log_debug when incompleteSearch is True."""
     all_drives_tools.service.files.return_value.list.return_value.execute.return_value = {
         "files": [],
         "incompleteSearch": True,
     }
     with patch("agno.tools.google.drive.log_debug") as mock_debug:
-        all_drives_tools.search_files(query="x")
+        all_drives_tools.gdrive_search_files(query="x")
     mock_debug.assert_called_once()
     assert "incomplete" in mock_debug.call_args[0][0].lower()
 
@@ -720,17 +722,17 @@ def test_all_drives_log_debug_on_incomplete_search(all_drives_tools):
     ],
 )
 def test_all_drives_no_log_debug_when_incomplete_search_false(all_drives_tools, api_response):
-    """GoogleDriveTools.search_files does not log when incompleteSearch is False or absent."""
+    """GoogleDriveTools.gdrive_search_files does not log when incompleteSearch is False or absent."""
     all_drives_tools.service.files.return_value.list.return_value.execute.return_value = api_response
     with patch("agno.tools.google.drive.log_debug") as mock_debug:
-        result = json.loads(all_drives_tools.search_files(query="x"))
+        result = json.loads(all_drives_tools.gdrive_search_files(query="x"))
     assert result["incompleteSearch"] is False
     mock_debug.assert_not_called()
 
 
 def test_all_drives_search_files_still_filters_trashed(all_drives_tools):
-    """GoogleDriveTools.search_files still adds trashed=false by default."""
-    result = json.loads(all_drives_tools.search_files(query="name contains 'x'"))
+    """GoogleDriveTools.gdrive_search_files still adds trashed=false by default."""
+    result = json.loads(all_drives_tools.gdrive_search_files(query="name contains 'x'"))
     assert "trashed=false" in result["query"]
 
 
@@ -744,7 +746,7 @@ def test_all_drives_get_file_metadata_passes_supports_all_drives(all_drives_tool
 
 
 def test_all_drives_read_file_passes_supports_all_drives(all_drives_tools):
-    """GoogleDriveTools.read_file passes supportsAllDrives on get_media when configured."""
+    """GoogleDriveTools.gdrive_read_file passes supportsAllDrives on get_media when configured."""
     all_drives_tools.service.files.return_value.get.return_value.execute.return_value = {
         "id": "f1",
         "name": "readme.txt",
@@ -761,7 +763,7 @@ def test_all_drives_read_file_passes_supports_all_drives(all_drives_tools):
             return mock_downloader
 
         mock_dl.side_effect = capture_buffer
-        all_drives_tools.read_file("f1")
+        all_drives_tools.gdrive_read_file("f1")
 
     call_kwargs = all_drives_tools.service.files.return_value.get_media.call_args[1]
     assert call_kwargs["supportsAllDrives"] is True

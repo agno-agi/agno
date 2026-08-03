@@ -131,12 +131,12 @@ class TestTrafilaturaToolsInitialization:
 
     def test_initialization_exclude_tools(self, mock_trafilatura_modules):
         """Test initialization with exclude_tools parameter."""
-        tools = TrafilaturaTools(exclude_tools=["crawl_website", "html_to_text"])
+        tools = TrafilaturaTools(exclude_tools=["trafilatura_crawl_website", "html_to_text"])
         function_names = [func.name for func in tools.functions.values()]
         assert "extract_text" in function_names
         assert "extract_metadata_only" in function_names
         assert "extract_batch" in function_names
-        assert "crawl_website" not in function_names
+        assert "trafilatura_crawl_website" not in function_names
         assert "html_to_text" not in function_names
 
     @patch("agno.tools.trafilatura.SPIDER_AVAILABLE", False)
@@ -144,8 +144,8 @@ class TestTrafilaturaToolsInitialization:
         """Test initialization when spider module is not available."""
         tools = TrafilaturaTools()
         function_names = [func.name for func in tools.functions.values()]
-        # crawl_website should not be in functions when spider is not available
-        assert "crawl_website" not in function_names
+        # trafilatura_crawl_website should not be in functions when spider is not available
+        assert "trafilatura_crawl_website" not in function_names
 
 
 class TestExtractTextMethod:
@@ -265,7 +265,7 @@ class TestExtractMetadataOnlyMethod:
 
 
 class TestCrawlWebsiteMethod:
-    """Test class for crawl_website method."""
+    """Test class for trafilatura_crawl_website method."""
 
     @patch("agno.tools.trafilatura.SPIDER_AVAILABLE", True)
     def test_crawl_website_success(self, trafilatura_tools, mock_trafilatura_modules):
@@ -276,7 +276,7 @@ class TestCrawlWebsiteMethod:
         mock_trafilatura_modules["focused_crawler"].return_value = (mock_to_visit, mock_known_links)
 
         # Execute
-        result = trafilatura_tools.crawl_website("https://example.com")
+        result = trafilatura_tools.trafilatura_crawl_website("https://example.com")
 
         # Assert
         result_data = json.loads(result)
@@ -289,16 +289,16 @@ class TestCrawlWebsiteMethod:
 
     @patch("agno.tools.trafilatura.SPIDER_AVAILABLE", False)
     def test_crawl_website_spider_unavailable(self, trafilatura_tools, mock_trafilatura_modules):
-        """Test crawl_website when spider is not available."""
+        """Test trafilatura_crawl_website when spider is not available."""
         # Execute
-        result = trafilatura_tools.crawl_website("https://example.com")
+        result = trafilatura_tools.trafilatura_crawl_website("https://example.com")
 
         # Assert
         assert "Error: Web crawling functionality not available" in result
 
     @patch("agno.tools.trafilatura.SPIDER_AVAILABLE", True)
     def test_crawl_website_with_content_extraction(self, trafilatura_tools, mock_trafilatura_modules):
-        """Test crawl_website with content extraction enabled."""
+        """Test trafilatura_crawl_website with content extraction enabled."""
         # Setup mocks
         mock_known_links = ["https://example.com/page1"]
         mock_trafilatura_modules["focused_crawler"].return_value = ([], mock_known_links)
@@ -306,7 +306,7 @@ class TestCrawlWebsiteMethod:
         mock_trafilatura_modules["extract"].return_value = "Extracted content"
 
         # Execute
-        result = trafilatura_tools.crawl_website("https://example.com", extract_content=True)
+        result = trafilatura_tools.trafilatura_crawl_website("https://example.com", extract_content=True)
 
         # Assert
         result_data = json.loads(result)
@@ -443,7 +443,7 @@ class TestToolkitIntegration:
         assert "extract_metadata_only" in function_names
         assert "html_to_text" in function_names
         assert "extract_batch" in function_names
-        # crawl_website should be included if spider is available
+        # trafilatura_crawl_website should be included if spider is available
 
     def test_toolkit_registration_custom(self, custom_trafilatura_tools):
         """Test that tools are registered correctly with custom configuration."""

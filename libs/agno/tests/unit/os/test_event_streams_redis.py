@@ -1,6 +1,7 @@
 """Unit tests for the Redis Streams event stream (via fakeredis)."""
 
 import asyncio
+import contextlib
 
 import pytest
 
@@ -562,3 +563,26 @@ class TestCancellationFailOpen:
         mgr = RedisRunCancellationManager(redis_client=BoomClient(), async_redis_client=ABoomClient())
         assert mgr.is_cancelled("r1") is False
         assert await mgr.ais_cancelled("r1") is False
+
+
+class TestDeadProducerGate:
+    @pytest.mark.asyncio
+    async def test_pending_run_with_decayed_ttl_keeps_tail_alive(self):
+        """F4: a long-queued (PENDING) run has no producer by design - TTL
+        decay must not be read as producer death."""
+        s = RedisEventStream(fakeredis.FakeAsyncRedis(), ttl_seconds=30, block_ms=50)
+        try:
+            await s.register_run("dp1", RunStatus.pending)
+            # Decay the status key TTL into the dead-producer window (below
+            # ttl//3 = 10) but well above actual expiry, so only the heuristic
+            # - not real key death - could end the tail
+            await s._redis.expire(s._status_key("dp1"), 5)
+            agen = s.tail("dp1")
+            task = asyncio.create_task(agen.__anext__())
+            done, _ = await asyncio.wait([task], timeout=1.5)
+            assert not done, "PENDING tail must keep waiting, not die on TTL decay"
+            task.cancel()
+            with contextlib.suppress(BaseException):
+                await task
+        finally:
+            await s.aclose()

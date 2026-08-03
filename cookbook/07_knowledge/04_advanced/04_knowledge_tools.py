@@ -4,9 +4,9 @@ Knowledge Tools: Think, Search, Analyze
 KnowledgeTools provides a richer set of tools for knowledge interaction
 beyond basic search:
 
-- think: Agent reasons about the query before searching
+- knowledge_think: Agent reasons about the query before searching
 - search: Standard knowledge base search
-- analyze: Deep analysis of search results
+- knowledge_analyze: Deep analysis of search results
 
 This gives agents more sophisticated reasoning over knowledge.
 """
@@ -64,7 +64,7 @@ if __name__ == "__main__":
         await knowledge.ainsert(url="https://docs.agno.com/llms-full.txt")
 
         print("\n" + "=" * 60)
-        print("KnowledgeTools: think + search + analyze")
+        print("KnowledgeTools: knowledge_think + search + knowledge_analyze")
         print("=" * 60 + "\n")
 
         agent.print_response(

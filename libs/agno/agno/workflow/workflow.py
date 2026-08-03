@@ -4177,6 +4177,10 @@ class Workflow:
             except asyncio.CancelledError:
                 # Task-level shutdown, not run-cancellation: best-effort persist
                 # so pollers are not left with a stuck PENDING/RUNNING run
+                from agno.run.concurrency import is_worker_managed
+
+                if is_worker_managed(getattr(workflow_run_response, "run_id", None) or ""):
+                    raise  # worker-claimed: the QueueWorker owns this terminal
                 with contextlib.suppress(Exception):
                     workflow_run_response.status = RunStatus.cancelled
                     await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
@@ -4403,6 +4407,10 @@ class Workflow:
                 # Task-level shutdown, not run-cancellation: best-effort persist
                 # so pollers are not left with a run stuck at PENDING/RUNNING
                 # (parity with the non-stream producer)
+                from agno.run.concurrency import is_worker_managed
+
+                if is_worker_managed(getattr(workflow_run_response, "run_id", None) or ""):
+                    raise  # worker-claimed: the QueueWorker owns this terminal
                 with contextlib.suppress(Exception):
                     workflow_run_response.status = RunStatus.cancelled
                     await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
@@ -4634,6 +4642,10 @@ class Workflow:
                 # Task-level shutdown, not run-cancellation: best-effort persist
                 # so pollers are not left with a run stuck at PENDING/RUNNING
                 # (parity with the non-stream producer)
+                from agno.run.concurrency import is_worker_managed
+
+                if is_worker_managed(getattr(workflow_run_response, "run_id", None) or ""):
+                    raise  # worker-claimed: the QueueWorker owns this terminal
                 with contextlib.suppress(Exception):
                     workflow_run_response.status = RunStatus.cancelled
                     await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
@@ -9423,6 +9435,10 @@ class Workflow:
                 # finally's sentinel say CANCELLED - without it, complete_run's
                 # non-terminal coercion turned an interrupted continue into a
                 # FALSE COMPLETED.
+                from agno.run.concurrency import is_worker_managed
+
+                if is_worker_managed(getattr(workflow_run_response, "run_id", None) or ""):
+                    raise  # worker-claimed: the QueueWorker owns this terminal
                 with contextlib.suppress(Exception):
                     if workflow_run_response.status != RunStatus.paused:
                         # A leg that already RE-PAUSED parked a valid,

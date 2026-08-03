@@ -27,7 +27,7 @@ def test_transcribe_audio_closes_file_after_success(audio_file):
 
     The handle passed to the OpenAI client is captured during the call and
     checked afterwards: it must report ``closed is True`` once
-    ``transcribe_audio`` returns, proving the descriptor is not leaked.
+    ``openai_transcribe_audio`` returns, proving the descriptor is not leaked.
     """
     captured = {}
 
@@ -42,7 +42,7 @@ def test_transcribe_audio_closes_file_after_success(audio_file):
     tools = _build_tools()
     with patch("agno.tools.openai.OpenAIClient") as mock_client:
         mock_client.return_value.audio.transcriptions.create.side_effect = fake_create
-        result = tools.transcribe_audio(audio_file)
+        result = tools.openai_transcribe_audio(audio_file)
 
     assert result == "hello world"
     assert captured["file"].closed is True
@@ -63,7 +63,7 @@ def test_transcribe_audio_closes_file_when_api_raises(audio_file):
     tools = _build_tools()
     with patch("agno.tools.openai.OpenAIClient") as mock_client:
         mock_client.return_value.audio.transcriptions.create.side_effect = boom
-        result = tools.transcribe_audio(audio_file)
+        result = tools.openai_transcribe_audio(audio_file)
 
     assert "Failed to transcribe audio" in result
     assert captured["file"].closed is True
@@ -89,7 +89,7 @@ def test_transcribe_audio_does_not_leak_descriptors_in_a_loop(audio_file):
         mock_client.return_value.audio.transcriptions.create.return_value = "ok"
         with patch("builtins.open", side_effect=tracking_open):
             for _ in range(5):
-                tools.transcribe_audio(audio_file)
+                tools.openai_transcribe_audio(audio_file)
 
     assert len(opened) == 5
     assert all(handle.closed for handle in opened)

@@ -51,8 +51,8 @@ media_agent = Agent(
     ],
     instructions=[
         "Help users understand the photos, audio, video, and documents they send.",
-        "Use create_image when a user asks you to generate an image.",
-        "Use text_to_speech when a user asks you to read text aloud.",
+        "Use dalle_create_image when a user asks you to generate an image.",
+        "Use elevenlabs_text_to_speech when a user asks you to read text aloud.",
         "Use generate_sound_effect when a user asks for a sound effect.",
         "After using a media tool, briefly describe what you created.",
     ],

@@ -2010,6 +2010,10 @@ async def _arun_background(
             # best-effort persist so pollers are not left with a run stuck at
             # PENDING/RUNNING forever. The durable queue's drain handles this
             # properly; this is the non-durable path's honest fallback.
+            from agno.run.concurrency import is_worker_managed
+
+            if is_worker_managed(getattr(run_response, "run_id", None) or ""):
+                raise  # worker-claimed: the QueueWorker owns this terminal
             with contextlib.suppress(Exception):
                 run_response.status = RunStatus.cancelled
                 await apersist_run_transition(agent, "agent", session_id, run_response, user_id=user_id)
@@ -2150,6 +2154,10 @@ async def _arun_background_stream(
             # Task-level shutdown (event loop stopping), not run-cancellation:
             # best-effort persist so pollers are not left with a run stuck at
             # PENDING/RUNNING forever (parity with the non-stream producer)
+            from agno.run.concurrency import is_worker_managed
+
+            if is_worker_managed(getattr(run_response, "run_id", None) or ""):
+                raise  # worker-claimed: the QueueWorker owns this terminal
             with contextlib.suppress(Exception):
                 run_response.status = RunStatus.cancelled
                 await apersist_run_transition(agent, "agent", session_id, run_response, user_id=user_id)
@@ -4515,6 +4523,10 @@ async def _acontinue_run_background_stream(
             # CANCELLED - without it, complete_run's non-terminal coercion
             # turned an interrupted continue into a FALSE COMPLETED.
             producer_terminal = RunStatus.cancelled
+            from agno.run.concurrency import is_worker_managed
+
+            if is_worker_managed(_run_id or ""):
+                raise  # worker-claimed: the QueueWorker owns this terminal
             with contextlib.suppress(Exception):
                 interrupted_run = run_response
                 if interrupted_run is None:

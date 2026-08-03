@@ -162,6 +162,22 @@ def normalize_idempotency_key(raw: Any) -> Any:
     return raw
 
 
+ACCEPT_GRACE_SECONDS = 1
+
+
+def accept_grace_available_at() -> int:
+    """available_at for freshly accepted jobs: now + a short grace, inside the
+    same CAS/insert, so no worker can claim before the accepting request's
+    run-row prepare commits. Closes the fresh-session TOCTOU (a fast worker
+    creating and completing the session before aprepare's read-check-save,
+    whose stale save then clobbered COMPLETED back to PENDING). Same
+    mechanism as the continue/requeue grace; sits inside the default poll
+    interval, so added latency is nil."""
+    import time as _time
+
+    return int(_time.time()) + ACCEPT_GRACE_SECONDS
+
+
 def payload_is_queueable(payload: Any) -> bool:
     """True when the job payload survives a JSON round-trip as-is.
 
@@ -873,6 +889,9 @@ class QueueWorker:
 
         job_id, attempt = job["id"], job["attempt"]
         job_type = job.get("job_type", "run")
+        from agno.run.concurrency import mark_worker_managed, unmark_worker_managed
+
+        mark_worker_managed(job_id)
         component_for_stamp = self.resolve_component(job.get("component_type"), job.get("component_id"))
         if component_for_stamp is not None:
             # Establish this attempt's generation on the run row BEFORE
@@ -928,6 +947,23 @@ class QueueWorker:
             slot_cm = background_run_slot(run_id=job_id)
             await slot_cm.__aenter__()
             slot_acquired = True
+            # F3: the run is now EXECUTING - pollers must see RUNNING, not the
+            # accept-time PENDING (arun's own persistence only lands at
+            # cleanup). Fenced with this attempt's generation; best-effort.
+            if component is not None:
+                from agno.run.base import RunStatus as _RS
+                from agno.run.status_persist import apersist_run_status as _aps
+
+                with contextlib.suppress(Exception):
+                    await _aps(
+                        component,
+                        job.get("component_type", ""),
+                        session_id=job["session_id"],
+                        run_id=job_id,
+                        fields={"status": _RS.running.value},
+                        user_id=job.get("user_id"),
+                        expected_attempt=attempt,
+                    )
             if is_stream:
                 execution = self._execute_streaming(component, job)
             elif payload.get("continue"):
@@ -1045,6 +1081,7 @@ class QueueWorker:
             else:
                 await self.store.retry_or_fail_job(job_id, self.worker_id, attempt, str(e), self._retry_delay(attempt))
         finally:
+            unmark_worker_managed(job_id)
             if slot_acquired:
                 with contextlib.suppress(Exception):
                     await slot_cm.__aexit__(None, None, None)

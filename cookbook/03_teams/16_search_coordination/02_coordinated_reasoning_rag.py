@@ -49,7 +49,7 @@ information_gatherer = Agent(
 reasoning_analyst = Agent(
     name="Reasoning Analyst",
     model=OpenAIResponses(id="gpt-5.2"),
-    role="Apply logical reasoning to analyze gathered information",
+    role="Apply logical reasoning to reasoning_analyze gathered information",
     tools=[ReasoningTools(add_instructions=True)],
     instructions=[
         "Analyze information using structured reasoning approaches.",
@@ -106,7 +106,7 @@ coordinated_reasoning_team = Team(
     instructions=[
         "Work together to provide comprehensive, well-reasoned responses.",
         "Information Gatherer: First search and gather all relevant information.",
-        "Reasoning Analyst: Then apply structured reasoning to analyze the information.",
+        "Reasoning Analyst: Then apply structured reasoning to reasoning_analyze the information.",
         "Evidence Evaluator: Evaluate the evidence quality and identify any gaps.",
         "Response Coordinator: Finally synthesize everything into a clear, reasoned response.",
         "All agents should use reasoning tools to structure their contributions.",

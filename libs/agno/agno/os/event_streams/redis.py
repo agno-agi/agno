@@ -428,11 +428,17 @@ class RedisEventStream(BaseEventStream):
                 # status key TTL (every ttl/3 via its refresher). A remaining
                 # TTL below one refresh window means at least two windows were
                 # missed - the producer is gone; do not wait for full expiry.
-                with contextlib.suppress(Exception):
-                    ttl_remaining = int(await self._redis.ttl(self._status_key(run_id)))
-                    if 0 <= ttl_remaining < self._ttl // _TTL_REFRESH_FRACTION:
-                        log_warning(f"Run {run_id}: status key TTL not refreshed (producer presumed dead); ending tail")
-                        return
+                # RUNNING-only: a PENDING run has no producer yet by design
+                # (accept-side registration deliberately does not refresh), so
+                # a long queue wait must not be read as a dead producer.
+                if status == RunStatus.running:
+                    with contextlib.suppress(Exception):
+                        ttl_remaining = int(await self._redis.ttl(self._status_key(run_id)))
+                        if 0 <= ttl_remaining < self._ttl // _TTL_REFRESH_FRACTION:
+                            log_warning(
+                                f"Run {run_id}: status key TTL not refreshed (producer presumed dead); ending tail"
+                            )
+                            return
                 continue
             for _stream, batch in response:
                 for batch_position, (entry_id, fields) in enumerate(batch):

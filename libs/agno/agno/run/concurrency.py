@@ -138,3 +138,26 @@ async def background_run_slot(
         yield
     finally:
         semaphore.release()
+
+
+# ---------------------------------------------------------------------------
+# Worker-managed runs: claimed durable jobs whose lifecycle (timeout, shutdown
+# drain, sweep) is owned by the QueueWorker. The detached-path CancelledError
+# handlers consult this to SKIP their shutdown persist - a wait_for timeout
+# cancellation is indistinguishable from loop shutdown at the handler, and
+# their CANCELLED write would collide with the worker's fenced ERROR (the
+# terminal-row guard then rejects it, leaving ticket/run permanently split).
+# ---------------------------------------------------------------------------
+_worker_managed_runs: set = set()
+
+
+def mark_worker_managed(run_id: str) -> None:
+    _worker_managed_runs.add(run_id)
+
+
+def unmark_worker_managed(run_id: str) -> None:
+    _worker_managed_runs.discard(run_id)
+
+
+def is_worker_managed(run_id: str) -> bool:
+    return run_id in _worker_managed_runs
