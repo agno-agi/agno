@@ -106,28 +106,33 @@ def get_queue_router(os: "AgentOS", settings: AgnoAPISettings = AgnoAPISettings(
         ),
     )
     async def requeue_job(request: Request, job_id: str):
-        from agno.os.job_queue import _ACCEPT_GRACE_SECONDS
+        import contextlib
 
         store = _get_store(request)
         # A cancelled job's cancellation intent outlives the tombstone (nothing
         # executed, so nothing cleaned it up). Clear it, or the requeued
         # attempt is instantly re-cancelled at its first checkpoint. The
-        # transition carries the accept grace (unclaimable for a beat) and the
-        # cleanup runs ONLY after a SUCCESSFUL requeue, inside that window:
-        # - a rejected requeue (running/unknown job) must not touch intent at
-        #   all - clearing first erased a cancel aimed at the running attempt;
-        # - of two concurrent requeues only the winner clears, so a loser
-        #   cannot erase a cancel targeting the winner's new attempt;
-        # - the grace makes claim-before-cleanup impossible, so the cleanup
-        #   can never erase a cancel aimed at the requeued attempt itself.
-        if not await store.requeue_job(job_id, available_delay_seconds=_ACCEPT_GRACE_SECONDS):
-            raise HTTPException(status_code=400, detail=f"Job {job_id} not found or not in a requeueable state")
-        try:
-            from agno.run.cancel import acleanup_run
+        # cleanup is TOKEN-SCOPED (see acontinue_via_queue): the intent's
+        # token is read BEFORE the transition, and the post-success cleanup
+        # deletes intent ONLY if that exact token is still stored - so a
+        # rejected requeue touches nothing (no successful transition), a
+        # concurrent losing requeue clears nothing, and however delayed this
+        # request gets, it can never erase a NEWER cancel aimed at the
+        # requeued attempt (that cancel minted a different token).
+        cancel_token = None
+        with contextlib.suppress(Exception):
+            from agno.run.cancel import aget_cancellation_token
 
-            await acleanup_run(job_id)
-        except Exception:
-            log_warning(f"Could not clear cancellation intent for requeued job {job_id}")
+            cancel_token = await aget_cancellation_token(job_id)
+        if not await store.requeue_job(job_id):
+            raise HTTPException(status_code=400, detail=f"Job {job_id} not found or not in a requeueable state")
+        if cancel_token is not None:
+            try:
+                from agno.run.cancel import acleanup_run_if_token
+
+                await acleanup_run_if_token(job_id, cancel_token)
+            except Exception:
+                log_warning(f"Could not clear stale cancellation intent for requeued job {job_id}")
         return await store.get_job(job_id)
 
     @router.get(

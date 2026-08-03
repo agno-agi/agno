@@ -7728,6 +7728,30 @@ async def _acontinue_run_background_stream(
                 except Exception:
                     log_warning(f"Failed to push SSE data to queue for continue-run {_run_id}")
 
+        except asyncio.CancelledError:
+            # Task-level shutdown (event loop stopping), not run-cancellation:
+            # best-effort persist so pollers are not left with a run stuck at
+            # PENDING/RUNNING forever (parity with the primary stream
+            # producer). producer_terminal makes the finally's sentinel say
+            # CANCELLED - without it, complete_run's non-terminal coercion
+            # turned an interrupted continue into a FALSE COMPLETED.
+            producer_terminal = RunStatus.cancelled
+            with contextlib.suppress(Exception):
+                interrupted_run = run_response
+                if interrupted_run is None:
+                    lookup_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
+                    interrupted_run = cast(Optional[TeamRunOutput], lookup_session.get_run(_run_id))
+                if interrupted_run is not None:
+                    if interrupted_run.status == RunStatus.paused:
+                        # The leg already RE-PAUSED and parked a valid,
+                        # continuable HITL state - shutdown while draining
+                        # trailing events must not destroy it. Re-park the
+                        # stream sentinel instead of stamping CANCELLED.
+                        producer_terminal = RunStatus.paused
+                    else:
+                        interrupted_run.status = RunStatus.cancelled
+                        await apersist_run_transition(team, "team", session_id, interrupted_run, user_id=user_id)
+            raise
         except RunCancelledException:
             # Cancelled while waiting for a slot — execution never started, so
             # persist CANCELLED and deregister the run here. HITL continues may
@@ -7787,9 +7811,22 @@ async def _acontinue_run_background_stream(
                 # producer_terminal wins: with run_response=None the old fallback
                 # marked a cancelled/errored run COMPLETED, so /resume lied
                 # about a run that never executed
-                final_status = (
-                    producer_terminal or (run_response.status if run_response else None) or RunStatus.completed
-                )
+                final_status = producer_terminal or (run_response.status if run_response else None)
+                if final_status is None:
+                    # HTTP continues arrive with run_response=None: the run row
+                    # is the only truth for the final status. Falling through
+                    # to COMPLETED here marked a RE-PAUSED continue (a chained
+                    # HITL pause) with a completed sentinel - key refreshing
+                    # stopped and the next continue restarted indices.
+                    with contextlib.suppress(Exception):
+                        lookup_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
+                        final_status = getattr(lookup_session.get_run(_run_id), "status", None)
+                if isinstance(final_status, str) and not isinstance(final_status, RunStatus):
+                    # DB round-trips can degrade the enum to a plain str
+                    with contextlib.suppress(ValueError):
+                        final_status = RunStatus(final_status)
+                if not isinstance(final_status, RunStatus):
+                    final_status = RunStatus.completed
                 await asyncio.shield(event_stream.complete_run(_run_id, final_status))
             except (Exception, asyncio.CancelledError):
                 log_warning(f"Failed to mark continue-run {_run_id} as completed in event stream")

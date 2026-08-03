@@ -129,6 +129,23 @@ class InMemoryQueueStore:
             job.update(status="failed", error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now)
             return "failed"
 
+    async def settle_paused_job(self, job_id: str, status: str, error: Optional[str] = None) -> bool:
+        """Terminalize a PAUSED ticket whose continue ran INLINE, outside the
+        queue: the run reached a terminal state but no worker owns the ticket,
+        and paused tickets are retention-exempt - without this /queue said
+        paused forever and the rows accumulated unboundedly. CAS on
+        status='paused': a queued/claimed continuation owns the ticket and is
+        never clobbered (its own terminal write settles it)."""
+        if status not in ("completed", "cancelled", "failed"):
+            return False
+        async with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job["status"] != "paused":
+                return False
+            now = int(time.time())
+            job.update(status=status, error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now)
+            return True
+
     async def cancel_job(self, job_id: str) -> bool:
         # Paused counts as "still waiting": nothing is executing a paused
         # ticket, so the tombstone contract ("this job will not execute")
@@ -184,7 +201,7 @@ class InMemoryQueueStore:
             jobs.sort(key=lambda j: j["created_at"], reverse=True)
             return jobs[:limit]
 
-    async def requeue_job(self, job_id: str, available_delay_seconds: int = 0) -> bool:
+    async def requeue_job(self, job_id: str) -> bool:
         """Operator requeue for a terminally failed/cancelled job: grants
         exactly one more execution by raising max_attempts to attempt + 1."""
         async with self._lock:
@@ -195,7 +212,7 @@ class InMemoryQueueStore:
             job.update(
                 status="queued",
                 max_attempts=job["attempt"] + 1,
-                available_at=now + available_delay_seconds,
+                available_at=now,
                 locked_by=None,
                 locked_at=None,
                 completed_at=None,
@@ -203,9 +220,7 @@ class InMemoryQueueStore:
             )
             return True
 
-    async def continue_job(
-        self, job_id: str, continue_payload: Dict[str, Any], available_delay_seconds: int = 0
-    ) -> Dict[str, Any]:
+    async def continue_job(self, job_id: str, continue_payload: Dict[str, Any]) -> Dict[str, Any]:
         """Continuation CAS: flip the EXISTING paused ticket back to queued,
         mirroring requeue_job's transition. No new rows, ever - id == run_id
         is load-bearing. The ticket's submit-time payload fields are kept and
@@ -235,7 +250,7 @@ class InMemoryQueueStore:
                 status="queued",
                 payload=payload,
                 max_attempts=job["attempt"] + 1,
-                available_at=now + available_delay_seconds,
+                available_at=now,
                 locked_by=None,
                 locked_at=None,
                 completed_at=None,

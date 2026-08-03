@@ -37,6 +37,24 @@ class FakeAgent:
         return SimpleNamespace(status=self.status, content="done")
 
 
+@pytest.fixture(autouse=True)
+def _stub_run_row_persist(monkeypatch: pytest.MonkeyPatch):
+    """Give _persist_run_error a benign session store by default: FakeAgent
+    has no real session machinery, and a failing persist now (correctly)
+    blocks ticket terminalization. Tests that exercise the persist itself
+    override these with their own monkeypatches."""
+    from agno.session import AgentSession
+
+    async def fake_read(component, session_id=None, user_id=None):
+        return AgentSession(session_id=session_id or "s1", runs=[])
+
+    async def fake_save(component, session=None):
+        pass
+
+    monkeypatch.setattr("agno.agent._storage.aread_or_create_session", fake_read)
+    monkeypatch.setattr("agno.agent._session.asave_session", fake_save)
+
+
 def make_config(**overrides: Any) -> QueueConfig:
     defaults = dict(durable=True, poll_interval=0.02, lock_grace_seconds=60, timeout_seconds=None)
     defaults.update(overrides)
@@ -143,17 +161,10 @@ class TestExecution:
         finally:
             await worker.stop()
 
-    @pytest.mark.asyncio
-    async def test_unknown_component_fails_job(self):
-        store = InMemoryQueueStore()
-        worker = make_worker(store, None, make_config())
-        await store.enqueue_job(make_job())
-        await worker.start()
-        try:
-            job = await wait_for_status(store, "r1", "failed")
-            assert "not found" in job["error"].lower()
-        finally:
-            await worker.stop()
+    # NOTE: the old test_unknown_component_fails_job asserted that a missing
+    # component fails the ticket - that orphaned the PENDING run row forever.
+    # The new contract (claim left stale, sweep retries) is covered by
+    # TestCrashRecovery.test_claim_time_component_missing_leaves_claim_stale.
 
 
 class TestCrashRecovery:
@@ -225,6 +236,118 @@ class TestCrashRecovery:
             await wait_for_status(store, "r1", "failed")
             assert run_row.status == RunStatus.error
             assert saved, "run-row error must be persisted"
+        finally:
+            await worker.stop()
+
+    @pytest.mark.asyncio
+    async def test_sweep_leaves_ticket_when_run_row_persist_fails(self, monkeypatch: pytest.MonkeyPatch):
+        """A failed run-row persist must NOT terminalize the ticket: the job
+        stays swept-eligible and the next sweep tick retries until the write
+        lands - never a failed ticket over a run row stuck RUNNING."""
+        from agno.run.agent import RunOutput
+        from agno.session import AgentSession
+
+        store, agent = InMemoryQueueStore(), FakeAgent()
+        run_row = RunOutput(run_id="r1", session_id="s1", status=RunStatus.running)
+        session = AgentSession(session_id="s1", runs=[run_row])
+        db_down = True
+        read_attempts: list = []
+
+        async def fake_read(component, session_id=None, user_id=None):
+            read_attempts.append(1)
+            if db_down:
+                raise RuntimeError("session store down")
+            return session
+
+        async def fake_save(component, session=None):
+            pass
+
+        monkeypatch.setattr("agno.agent._storage.aread_or_create_session", fake_read)
+        monkeypatch.setattr("agno.agent._session.asave_session", fake_save)
+
+        await store.enqueue_job(make_job(max_attempts=1))
+        await store.claim_job("dead-worker")
+        store._jobs["r1"]["locked_at"] -= 1000
+
+        worker = make_worker(store, agent, make_config())
+        await worker.start()
+        try:
+            # Let several sweep ticks fail the persist: the ticket must stay
+            # running (swept-eligible), and the sweep must keep retrying
+            deadline = asyncio.get_event_loop().time() + 3.0
+            while len(read_attempts) < 2 and asyncio.get_event_loop().time() < deadline:
+                await asyncio.sleep(0.02)
+            assert len(read_attempts) >= 2, "sweep must retry the persist on later ticks"
+            job = await store.get_job("r1")
+            assert job["status"] == "running", "ticket must not terminalize while the run row is stuck"
+
+            db_down = False
+            job = await wait_for_status(store, "r1", "failed")
+            assert run_row.status == RunStatus.error, "the retried persist must land before the terminal write"
+            assert "worker lost" in job["error"].lower()
+        finally:
+            await worker.stop()
+
+    @pytest.mark.asyncio
+    async def test_sweep_leaves_ticket_when_component_missing(self, monkeypatch: pytest.MonkeyPatch):
+        """A deploy removed the component: the run row is unreachable, so the
+        sweep must leave the ticket for a future tick (a replica that has the
+        component back finishes the job honestly)."""
+        from agno.run.agent import RunOutput
+        from agno.session import AgentSession
+
+        store, agent = InMemoryQueueStore(), FakeAgent()
+        run_row = RunOutput(run_id="r1", session_id="s1", status=RunStatus.running)
+        session = AgentSession(session_id="s1", runs=[run_row])
+
+        async def fake_read(component, session_id=None, user_id=None):
+            return session
+
+        async def fake_save(component, session=None):
+            pass
+
+        monkeypatch.setattr("agno.agent._storage.aread_or_create_session", fake_read)
+        monkeypatch.setattr("agno.agent._session.asave_session", fake_save)
+
+        await store.enqueue_job(make_job(max_attempts=1))
+        await store.claim_job("dead-worker")
+        store._jobs["r1"]["locked_at"] -= 1000
+
+        components: dict = {"agent-1": None}  # deploy removed it
+        worker = QueueWorker(
+            store=store,
+            resolve_component=lambda ctype, cid: components.get(cid),
+            config=make_config(),
+            worker_id="live-worker",
+        )
+        await worker.start()
+        try:
+            await asyncio.sleep(0.2)  # several sweep ticks
+            job = await store.get_job("r1")
+            assert job["status"] == "running", "component-missing must not terminalize the ticket"
+            assert run_row.status == RunStatus.running
+
+            components["agent-1"] = agent  # redeploy restores it
+            job = await wait_for_status(store, "r1", "failed")
+            assert run_row.status == RunStatus.error
+        finally:
+            await worker.stop()
+
+    @pytest.mark.asyncio
+    async def test_claim_time_component_missing_leaves_claim_stale(self):
+        """Claiming a job whose component is gone must not fail the ticket
+        (the PENDING run row would be orphaned): the claim goes stale and the
+        sweep owns the retry loop."""
+        store = InMemoryQueueStore()
+        worker = make_worker(store, None, make_config())
+        await store.enqueue_job(make_job())
+        await worker.start()
+        try:
+            await wait_for_status(store, "r1", "running")
+            await asyncio.sleep(0.2)
+            job = await store.get_job("r1")
+            assert job["status"] == "running", "missing component must leave the claim, not fail the ticket"
+            assert job["locked_by"] == "live-worker"
         finally:
             await worker.stop()
 
@@ -847,6 +970,116 @@ class TestContinuationExecution:
             assert "user_id" not in call
             assert isinstance(call["step_requirements"][0], StepRequirement)
             assert call["step_requirements"][0].step_id == "st1"
+        finally:
+            await worker.stop()
+
+
+class RecoverableFakeWorkflow:
+    """Workflow double with a real paused-state gate: acontinue_run raises
+    the not-paused ValueError exactly like Workflow.acontinue_run, and the
+    run row lives on the instance so the worker's restore can flip it."""
+
+    id = "wf-1"
+
+    def __init__(self):
+        self.run = SimpleNamespace(run_id="r1", status=RunStatus.paused, content=None)
+        self.continue_calls: list = []
+        self.saves: list = []
+
+    async def aget_run_output(self, run_id: str, session_id: str, user_id: Any = None) -> SimpleNamespace:
+        return self.run
+
+    async def aget_session(self, session_id: Any = None) -> SimpleNamespace:
+        return SimpleNamespace(
+            get_run=lambda rid: self.run if rid == self.run.run_id else None,
+            upsert_run=lambda run: None,
+        )
+
+    def _has_async_db(self) -> bool:
+        return True
+
+    async def asave_session(self, session: Any = None) -> None:
+        self.saves.append(session)
+
+    async def acontinue_run(self, **kwargs: Any) -> SimpleNamespace:
+        self.continue_calls.append(kwargs)
+        if self.run.status != RunStatus.paused:
+            raise ValueError(f"Cannot continue a run that is not paused. Current status: {self.run.status}")
+        self.run.status = RunStatus.completed
+        return SimpleNamespace(status=RunStatus.completed, content="recovered")
+
+
+class TestContinuationRedrive:
+    @pytest.mark.asyncio
+    async def test_crashed_leg_sweep_requeue_redrive_completes(self):
+        """SIGKILL mid-continuation -> sweep stamps the run row ERROR ->
+        operator requeue -> the re-driven leg must COMPLETE. Without the
+        worker's ERROR -> PAUSED restore, workflow.acontinue_run raised the
+        not-paused ValueError, classified permanent, and every requeue
+        instantly failed - the re-drive story was a dead letter."""
+        workflow = RecoverableFakeWorkflow()
+        store = InMemoryQueueStore()
+        job = make_job("r1")
+        job["component_type"] = "workflow"
+        job["component_id"] = "wf-1"
+        await store.enqueue_job(job)
+        claimed = await store.claim_job("old-worker")
+        assert await store.complete_job("r1", "old-worker", claimed["attempt"], "paused")
+        assert (await store.continue_job("r1", {"step_requirements": []}))["outcome"] == "queued"
+
+        # The continuation leg is claimed, then its worker dies (SIGKILL)
+        crashed = await store.claim_job("dead-worker")
+        assert crashed is not None and crashed["attempt"] == 2
+        store._jobs["r1"]["locked_at"] -= 1000
+
+        worker = QueueWorker(
+            store=store,
+            resolve_component=lambda t, i: workflow if (t, i) == ("workflow", "wf-1") else None,
+            config=make_config(),
+            worker_id="live-worker",
+        )
+        await worker.start()
+        try:
+            # Sweep fails the exhausted leg visibly and stamps the run row
+            job_row = await wait_for_status(store, "r1", "failed")
+            assert "worker lost" in job_row["error"].lower()
+            assert workflow.run.status == RunStatus.error
+
+            # Operator re-drive: requeue grants one more execution
+            assert await store.requeue_job("r1")
+            job_row = await wait_for_status(store, "r1", "completed")
+            assert workflow.run.status == RunStatus.completed
+            assert len(workflow.continue_calls) == 1, "the re-driven leg must reach acontinue_run exactly once"
+        finally:
+            await worker.stop()
+
+    @pytest.mark.asyncio
+    async def test_cancelled_run_row_is_not_restored(self):
+        """Cancel wins by design: a CANCELLED run row stays terminal, so a
+        requeued continue of it keeps failing visibly instead of resurrecting
+        the run."""
+        workflow = RecoverableFakeWorkflow()
+        workflow.run.status = RunStatus.cancelled
+        store = InMemoryQueueStore()
+        job = make_job("r1")
+        job["component_type"] = "workflow"
+        job["component_id"] = "wf-1"
+        await store.enqueue_job(job)
+        claimed = await store.claim_job("old-worker")
+        assert await store.complete_job("r1", "old-worker", claimed["attempt"], "paused")
+        await store.continue_job("r1", {"step_requirements": []})
+
+        worker = QueueWorker(
+            store=store,
+            resolve_component=lambda t, i: workflow if (t, i) == ("workflow", "wf-1") else None,
+            config=make_config(),
+            worker_id="live-worker",
+        )
+        await worker.start()
+        try:
+            job_row = await wait_for_status(store, "r1", "failed")
+            assert "permanent" in (job_row["error"] or "")
+            assert workflow.run.status == RunStatus.cancelled, "a cancelled run row must never be resurrected"
         finally:
             await worker.stop()
 

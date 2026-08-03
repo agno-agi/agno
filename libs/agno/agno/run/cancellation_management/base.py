@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Dict, Set
+from typing import Dict, Optional, Set
 
 
 class BaseRunCancellationManager(ABC):
@@ -64,6 +64,35 @@ class BaseRunCancellationManager(ABC):
     async def acleanup_run(self, run_id: str) -> None:
         """Remove a run from tracking (called when run completes) (async version)."""
         pass
+
+    # -- Token-scoped cleanup (generation-scoped, for accept-side cleanup) --
+    # A cancel mints an opaque token; cleanup-if-token deletes intent ONLY if
+    # the stored token still equals the one the caller observed - so a
+    # cleanup delayed arbitrarily (stalled coroutine, crashed-then-resumed
+    # process) can never erase a NEWER cancellation. Equality, not ordering:
+    # no clocks, no counters. Defaults are the SAFE direction for custom
+    # managers that do not implement tokens: no token -> callers skip the
+    # conditional cleanup -> stale intent may cancel a continuation leg
+    # visibly (operator requeue remedies), but a legitimate cancel is never
+    # erased.
+
+    def get_cancellation_token(self, run_id: str) -> Optional[str]:
+        """Return the current cancellation intent's opaque token, or None if
+        the run has no cancellation intent (or tokens are unsupported)."""
+        return None
+
+    async def aget_cancellation_token(self, run_id: str) -> Optional[str]:
+        """Async variant of get_cancellation_token."""
+        return None
+
+    def cleanup_run_if_token(self, run_id: str, token: str) -> bool:
+        """Atomically remove cancellation intent ONLY if its token still
+        equals ``token``. Returns True if intent was removed."""
+        return False
+
+    async def acleanup_run_if_token(self, run_id: str, token: str) -> bool:
+        """Async variant of cleanup_run_if_token."""
+        return False
 
     @abstractmethod
     def raise_if_cancelled(self, run_id: str) -> None:

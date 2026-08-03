@@ -247,6 +247,65 @@ class TestQuietRunRefresher:
             await s.aclose()
 
 
+class TestPausedRefresherEviction:
+    @pytest.mark.asyncio
+    async def test_refresher_evicts_paused_run_finished_elsewhere(self):
+        """complete_run(paused) enrolls the PAUSING replica in the refresher.
+        When the continue lands on ANOTHER replica and finishes the run, this
+        replica must notice the terminal status on its tick and evict - or
+        the keys are refreshed forever and _active_runs grows without bound."""
+        s = RedisEventStream(fakeredis.FakeAsyncRedis(), ttl_seconds=2, block_ms=100)
+        try:
+            await s.register_run("r1")
+            await s.set_run_status("r1", RunStatus.running)
+            await s.complete_run("r1", RunStatus.paused)
+            assert "r1" in s._active_runs, "pausing replica keeps paused keys alive"
+
+            # The continue executes ELSEWHERE: that replica writes the terminal
+            # status straight into Redis (this process's stream object is not
+            # involved)
+            await s._redis.set(s._status_key("r1"), RunStatus.completed.value)
+
+            await asyncio.sleep(1.3)  # one refresher tick
+            assert "r1" not in s._active_runs, "refresher must evict a run that finished elsewhere"
+        finally:
+            await s.aclose()
+
+    @pytest.mark.asyncio
+    async def test_refresher_evicts_run_with_expired_keys(self):
+        """A status key that vanished (TTL expiry / cleanup elsewhere) leaves
+        nothing to keep alive: evict rather than refresh dead keys forever."""
+        s = RedisEventStream(fakeredis.FakeAsyncRedis(), ttl_seconds=2, block_ms=100)
+        try:
+            await s.register_run("r1")
+            await s.set_run_status("r1", RunStatus.running)
+            await s.complete_run("r1", RunStatus.paused)
+            await s._redis.delete(s._status_key("r1"), s._stream_key("r1"), s._counter_key("r1"))
+
+            await asyncio.sleep(1.3)
+            assert "r1" not in s._active_runs
+        finally:
+            await s.aclose()
+
+    @pytest.mark.asyncio
+    async def test_refresher_keeps_paused_run_alive(self):
+        """The eviction check must not break the paused contract: a run still
+        PAUSED keeps its keys refreshed until the approval arrives."""
+        s = RedisEventStream(fakeredis.FakeAsyncRedis(), ttl_seconds=2, block_ms=100)
+        try:
+            await s.register_run("r1")
+            await s.set_run_status("r1", RunStatus.running)
+            await s.add_event("r1", make_event("r1", "a"))
+            await s.complete_run("r1", RunStatus.paused)
+
+            await asyncio.sleep(1.3)
+            assert "r1" in s._active_runs
+            assert await s._redis.ttl(s._status_key("r1")) > 0
+            assert await s._redis.ttl(s._counter_key("r1")) > 0
+        finally:
+            await s.aclose()
+
+
 class TestEventCountParity:
     @pytest.mark.asyncio
     async def test_completed_run_count_excludes_sentinel(self, stream):

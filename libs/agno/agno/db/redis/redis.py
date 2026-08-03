@@ -2243,6 +2243,17 @@ class RedisDb(BaseDb):
     def _q_job_key(self, job_id: str) -> str:
         return self._q_key(f"job:{job_id}")
 
+    def _q_idem_key(self, user_id: Optional[str], idempotency_key: str) -> str:
+        """Collision-free dedup key for the (user, idempotency-key) tuple.
+
+        The user segment is length-prefixed so the tuple boundary is
+        unambiguous: (user="a", key="b:c") encodes to "u1:a:b:c" while
+        (user="a:b", key="c") encodes to "u3:a:b:c" - a plain ':' join
+        aliases both. Anonymous submits encode as "u0::{key}", which no
+        literal user id (including "-") can produce."""
+        user = user_id or ""
+        return self._q_key(f"idem:u{len(user)}:{user}:{idempotency_key}")
+
     def _q_load_job(self, job_id: str) -> Optional[Dict[str, Any]]:
         raw = self.redis_client.get(self._q_job_key(job_id))
         if raw is None:
@@ -2268,7 +2279,7 @@ class RedisDb(BaseDb):
         idem = job.get("idempotency_key") or None
         # user_id scopes the dedup namespace (cross-tenant key reuse must not
         # attach to another tenant's run) - mirrors the Postgres index
-        idem_key = self._q_key(f"idem:{job.get('user_id') or '-'}:{idem}") if idem is not None else None
+        idem_key = self._q_idem_key(job.get("user_id"), idem) if idem is not None else None
 
         for _ in range(10):
             with self.redis_client.pipeline() as pipe:
@@ -2279,11 +2290,15 @@ class RedisDb(BaseDb):
                         if existing_id is not None:
                             existing_id = existing_id if isinstance(existing_id, str) else existing_id.decode()
                             existing = self._q_load_job(existing_id)
-                            if existing is not None:
+                            if existing is not None and existing.get("user_id") == job.get("user_id"):
                                 pipe.unwatch()
                                 return {"accepted": False, "reason": "duplicate", "job": existing}
-                            # Orphaned key (dual-write crash before this fix):
-                            # fall through and take it over inside the MULTI
+                            # Orphaned key (dual-write crash before this fix)
+                            # OR a legacy/aliased key pointing at another
+                            # tenant's job (defense-in-depth: a duplicate
+                            # attach hands the caller that job's identifiers
+                            # and live event stream) - never attach; fall
+                            # through and take the key over inside the MULTI
 
                     if max_depth and max_depth > 0:
                         queued = int(self.redis_client.zcard(self._q_key("queued")))
@@ -2519,6 +2534,36 @@ class RedisDb(BaseDb):
         updated = self._q_fenced_update(job_id, worker_id, attempt, _retry)
         return outcome.get("status") if updated is not None else None
 
+    def settle_paused_job(self, job_id: str, status: str, error: Optional[str] = None) -> bool:
+        """Terminalize a PAUSED ticket whose continue ran INLINE, outside the
+        queue (see InMemoryQueueStore.settle_paused_job). WATCH/MULTI CAS on
+        status='paused'; a queued/claimed continuation owns the ticket and is
+        never clobbered. (Paused jobs are in no queued/running zset.)"""
+        from redis.exceptions import WatchError
+
+        if status not in ("completed", "cancelled", "failed"):
+            return False
+        job_key = self._q_job_key(job_id)
+        now = int(time.time())
+        try:
+            with self.redis_client.pipeline() as pipe:
+                pipe.watch(job_key)
+                raw = pipe.get(job_key)
+                if raw is None:
+                    pipe.unwatch()
+                    return False
+                job = json.loads(raw if isinstance(raw, str) else raw.decode())
+                if job["status"] != "paused":
+                    pipe.unwatch()
+                    return False
+                job.update(status=status, error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now)
+                pipe.multi()
+                self._q_save_job_in_pipe(pipe, job)
+                pipe.execute()
+                return True
+        except WatchError:
+            return False
+
     def cancel_job(self, job_id: str) -> bool:
         # Paused tickets count as waiting: nothing is executing them, and
         # without this a cancelled paused run stayed a paused ticket forever,
@@ -2620,7 +2665,7 @@ class RedisDb(BaseDb):
                         return jobs
             offset += chunk
 
-    def requeue_job(self, job_id: str, available_delay_seconds: int = 0) -> bool:
+    def requeue_job(self, job_id: str) -> bool:
         """Operator requeue for a terminally failed/cancelled job: grants
         exactly one more execution by raising max_attempts to attempt + 1."""
         from redis.exceptions import WatchError
@@ -2641,7 +2686,7 @@ class RedisDb(BaseDb):
                 job.update(
                     status="queued",
                     max_attempts=job["attempt"] + 1,
-                    available_at=now + available_delay_seconds,
+                    available_at=now,
                     locked_by=None,
                     locked_at=None,
                     completed_at=None,
@@ -2655,9 +2700,7 @@ class RedisDb(BaseDb):
         except WatchError:
             return False
 
-    def continue_job(
-        self, job_id: str, continue_payload: Dict[str, Any], available_delay_seconds: int = 0
-    ) -> Dict[str, Any]:
+    def continue_job(self, job_id: str, continue_payload: Dict[str, Any]) -> Dict[str, Any]:
         """Continuation CAS: flip the EXISTING paused ticket back to queued,
         mirroring requeue_job's WATCH/MULTI transition. No new rows, ever -
         id == run_id is load-bearing. Submit-time payload fields are kept;
@@ -2701,7 +2744,7 @@ class RedisDb(BaseDb):
                         status="queued",
                         payload=payload,
                         max_attempts=job["attempt"] + 1,
-                        available_at=now + available_delay_seconds,
+                        available_at=now,
                         locked_by=None,
                         locked_at=None,
                         completed_at=None,
@@ -2765,7 +2808,7 @@ class RedisDb(BaseDb):
                     # Dedup key dies with the job record (Postgres parity: the
                     # partial-unique index lives exactly as long as the row)
                     if job.get("idempotency_key"):
-                        pipe.delete(self._q_key(f"idem:{job.get('user_id') or '-'}:{job['idempotency_key']}"))
+                        pipe.delete(self._q_idem_key(job.get("user_id"), job["idempotency_key"]))
                     pipe.zrem(self._q_key("all"), job_id)
                     pipe.zrem(self._q_key("queued"), job_id)
                     pipe.zrem(self._q_key("running"), job_id)

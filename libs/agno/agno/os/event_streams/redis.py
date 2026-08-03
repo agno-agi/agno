@@ -167,6 +167,7 @@ class RedisEventStream(BaseEventStream):
         keys expire per TTL, which is the intended cleanup.
         """
         interval = max(1.0, self._ttl / _TTL_REFRESH_FRACTION)
+        terminal_values = {RunStatus.completed.value, RunStatus.error.value, RunStatus.cancelled.value}
         while self._active_runs:
             await asyncio.sleep(interval)
             for run_id in list(self._active_runs):
@@ -181,11 +182,7 @@ class RedisEventStream(BaseEventStream):
                     # reopened-awaiting-claim runs are exactly what the
                     # refresher exists for.
                     raw_status = _to_str(await self._redis.get(self._status_key(run_id)))
-                    if raw_status is None or raw_status in (
-                        RunStatus.completed.value,
-                        RunStatus.error.value,
-                        RunStatus.cancelled.value,
-                    ):
+                    if raw_status is None or raw_status in terminal_values:
                         self._active_runs.discard(run_id)
                         self._last_ttl_refresh.pop(run_id, None)
                         continue
@@ -195,6 +192,8 @@ class RedisEventStream(BaseEventStream):
                     pipe.expire(self._counter_key(run_id), self._ttl)
                     await pipe.execute()
                 except Exception:
+                    # Fail-open on Redis faults: keep the run enrolled and let
+                    # the next tick retry - a blip must not drop a live run
                     pass
 
     async def aclose(self) -> None:

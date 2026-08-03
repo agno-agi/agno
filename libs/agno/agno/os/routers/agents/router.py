@@ -37,6 +37,7 @@ from agno.os.event_streams import get_event_stream
 from agno.os.job_queue import (
     acontinue_via_queue,
     aprepare_queued_agent_run,
+    asettle_paused_ticket,
     normalize_idempotency_key,
     payload_is_queueable,
     validate_seam_input,
@@ -59,6 +60,8 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
+    acomplete_continue_stream,
+    amark_continue_stream_running,
     classify_upload_file,
     find_factory_by_id,
     format_sse_event,
@@ -229,6 +232,7 @@ async def agent_continue_response_streamer(
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
     auth_token: Optional[str] = None,
+    queue_worker: Optional[Any] = None,
     **kwargs: Any,
 ) -> AsyncGenerator:
     """Default SSE generator for continue_run. Agent runs inline — client disconnect cancels agent."""
@@ -257,8 +261,32 @@ async def agent_continue_response_streamer(
             background_tasks=background_tasks,
             **kwargs,
         )
-        async for run_response_chunk in continue_response:
-            yield format_sse_event(run_response_chunk)  # type: ignore
+
+        # Post-approval events must reach the event stream too (workflow
+        # continue-streamer parity): this response is otherwise their only
+        # copy - after an inline continue of a formerly-queued/streamed run,
+        # /resume would replay just the pre-pause prefix and the stream
+        # status would stay PAUSED forever. Skipped for remote agents (the
+        # remote OS owns that run's stream) and for fork/regenerate (they
+        # mint a NEW run_id; publishing under the original would corrupt it).
+        _sync_stream = not isinstance(agent, RemoteAgent) and not fork and not regenerate
+        if _sync_stream:
+            await amark_continue_stream_running(run_id)
+        try:
+            async for run_response_chunk in continue_response:
+                if _sync_stream and not isinstance(run_response_chunk, RunOutput):
+                    with contextlib.suppress(Exception):
+                        await get_event_stream().add_event(run_id, run_response_chunk)
+                yield format_sse_event(run_response_chunk)  # type: ignore
+        finally:
+            if _sync_stream:
+                _final = await acomplete_continue_stream(agent, run_id, session_id)
+                # Inline continue of a DURABLE paused run: terminalize the
+                # queue ticket too (paused tickets are retention-exempt and
+                # would otherwise say paused forever). CAS no-op for runs
+                # that never rode the queue or whose continuation is owned
+                # by a worker.
+                await asettle_paused_ticket(queue_worker, run_id, _final)
     except (InputCheckError, OutputCheckError) as e:
         error_response = RunErrorEvent(
             content=str(e),
@@ -957,11 +985,20 @@ def get_agent_router(
                     status_code=202,
                     content={"run_id": queued_run_id, "session_id": queued_session_id, "status": "PENDING"},
                 )
-            elif queue_worker is not None and not payload_is_queueable(queued_payload):
+            elif queue_worker is not None and (
+                not payload_is_queueable(queued_payload)
+                or base64_images
+                or base64_audios
+                or base64_videos
+                or input_files
+            ):
+                # Media-only bypasses were silent: the payload is JSON-clean
+                # but uploads cannot ride the queue yet, and the run silently
+                # lost durability. Same warning either way.
                 log_warning(
-                    "Background run bypasses the durable queue: the submission carries values plain "
-                    "JSON cannot store (e.g. output_schema classes or media objects). Executing on the "
-                    "accepting replica instead - bounded and observable, but NOT durable."
+                    "Background run bypasses the durable queue: the submission carries media "
+                    "uploads or values plain JSON cannot store (e.g. output_schema classes). "
+                    "Executing on the accepting replica instead - bounded and observable, but NOT durable."
                 )
 
             run_response = cast(
@@ -1438,6 +1475,7 @@ def get_agent_router(
                     user_id=user_id,
                     background_tasks=background_tasks,
                     auth_token=auth_token,
+                    queue_worker=getattr(request.app.state, "queue_worker", None),
                     **kwargs,
                 ),
                 media_type="text/event-stream",
@@ -1468,6 +1506,28 @@ def get_agent_router(
                         **kwargs,
                     ),
                 )
+                # Status-only stream sync (deliberate scope): a non-stream
+                # continue has no events to publish, but a formerly-queued/
+                # streamed run's stream view must stop saying PAUSED once the
+                # continue settles - only_if_tracked leaves never-streamed
+                # runs alone. Skipped for remote agents and fork/regenerate
+                # (they mint a NEW run_id).
+                if not isinstance(agent, RemoteAgent) and not fork and not regenerate:
+                    await acomplete_continue_stream(
+                        agent,
+                        run_id,
+                        session_id,
+                        only_if_tracked=True,
+                        final_status=getattr(run_response_obj, "status", None),
+                    )
+                    # Inline continue of a DURABLE paused run: terminalize
+                    # the queue ticket too (paused is retention-exempt; the
+                    # CAS no-ops for never-queued or worker-owned runs)
+                    await asettle_paused_ticket(
+                        getattr(request.app.state, "queue_worker", None),
+                        run_id,
+                        getattr(run_response_obj, "status", None),
+                    )
                 return run_response_obj.to_dict()
 
             except RunNotFoundError as e:
