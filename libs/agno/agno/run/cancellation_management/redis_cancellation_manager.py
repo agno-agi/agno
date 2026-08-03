@@ -130,12 +130,18 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
 
         Returns True if the key already existed (run was registered).
         """
+        from uuid import uuid4
+
         pipe = client.pipeline()
         pipe.exists(key)
+        # "1:<token>": the "1" prefix keeps is_cancelled cheap; the token makes
+        # cleanup-if-token equality-scoped (a delayed cleanup never erases a
+        # NEWER cancel, which minted a different token)
+        value = f"1:{uuid4().hex}"
         if self.ttl_seconds and self.ttl_seconds > 0:
-            pipe.set(key, "1", ex=self.ttl_seconds)
+            pipe.set(key, value, ex=self.ttl_seconds)
         else:
-            pipe.set(key, "1")
+            pipe.set(key, value)
         results = pipe.execute()
         return bool(results[0])
 
@@ -144,12 +150,15 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
 
         Returns True if the key already existed (run was registered).
         """
+        from uuid import uuid4
+
         pipe = client.pipeline()
         pipe.exists(key)
+        value = f"1:{uuid4().hex}"  # see _cancel_via_pipeline on the value shape
         if self.ttl_seconds and self.ttl_seconds > 0:
-            pipe.set(key, "1", ex=self.ttl_seconds)
+            pipe.set(key, value, ex=self.ttl_seconds)
         else:
-            pipe.set(key, "1")
+            pipe.set(key, value)
         results = await pipe.execute()
         return bool(results[0])
 
@@ -211,10 +220,10 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
             return False
         if value is None:
             return False
-        # Redis returns bytes, handle both bytes and str
+        # Cancelled values are "1" (legacy) or "1:<token>": prefix check
         if isinstance(value, bytes):
-            return value == b"1"
-        return value == "1"
+            return value.startswith(b"1")
+        return value.startswith("1")
 
     async def ais_cancelled(self, run_id: str) -> bool:
         """Check if a run is cancelled (async version). Fail-open: see
@@ -227,10 +236,10 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
             return False
         if value is None:
             return False
-        # Redis returns bytes, handle both bytes and str
+        # Cancelled values are "1" (legacy) or "1:<token>": prefix check
         if isinstance(value, bytes):
-            return value == b"1"
-        return value == "1"
+            return value.startswith(b"1")
+        return value.startswith("1")
 
     def cleanup_run(self, run_id: str) -> None:
         """Remove a run from tracking (called when run completes)."""
@@ -243,6 +252,88 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
         client = self._ensure_async_client()
         key = self._get_key(run_id)
         await client.delete(key)
+
+    def _value_to_token(self, value) -> "Optional[str]":
+        if value is None:
+            return None
+        raw = value.decode() if isinstance(value, bytes) else str(value)
+        return raw if raw.startswith("1") else None
+
+    def get_cancellation_token(self, run_id: str):
+        """Current cancellation intent's token (the stored value), or None.
+        Fail-open like is_cancelled: a Redis fault reads as no-intent, which
+        makes the caller SKIP the conditional cleanup - the safe direction."""
+        try:
+            client = self._ensure_sync_client()
+            return self._value_to_token(client.get(self._get_key(run_id)))
+        except Exception as e:
+            log_warning(f"Cancellation token read unavailable (Redis fault, failing open): {e}")
+            return None
+
+    async def aget_cancellation_token(self, run_id: str):
+        """Async variant of get_cancellation_token."""
+        try:
+            client = self._ensure_async_client()
+            return self._value_to_token(await client.get(self._get_key(run_id)))
+        except Exception as e:
+            log_warning(f"Cancellation token read unavailable (Redis fault, failing open): {e}")
+            return None
+
+    def cleanup_run_if_token(self, run_id: str, token: str) -> bool:
+        """Token-scoped cleanup: WATCH/MULTI compare-and-delete - the intent
+        is removed ONLY if the stored value still equals the observed token,
+        so a delayed cleanup can never erase a NEWER cancel. Any fault
+        (including RedisCluster's non-transactional pipelines) declines
+        rather than deleting - the safe direction."""
+        from redis.exceptions import WatchError
+
+        key = self._get_key(run_id)
+        try:
+            client = self._ensure_sync_client()
+            for _ in range(5):
+                try:
+                    with client.pipeline() as pipe:
+                        pipe.watch(key)
+                        current = self._value_to_token(pipe.get(key))
+                        if current != token:
+                            pipe.unwatch()
+                            return False
+                        pipe.multi()
+                        pipe.delete(key)
+                        pipe.execute()
+                        return True
+                except WatchError:
+                    continue
+            return False
+        except Exception as e:
+            log_warning(f"Token-scoped cancellation cleanup unavailable (failing safe, intent kept): {e}")
+            return False
+
+    async def acleanup_run_if_token(self, run_id: str, token: str) -> bool:
+        """Async variant of cleanup_run_if_token."""
+        from redis.exceptions import WatchError
+
+        key = self._get_key(run_id)
+        try:
+            client = self._ensure_async_client()
+            for _ in range(5):
+                try:
+                    async with client.pipeline(transaction=True) as pipe:
+                        await pipe.watch(key)
+                        current = self._value_to_token(await pipe.get(key))
+                        if current != token:
+                            await pipe.unwatch()
+                            return False
+                        pipe.multi()
+                        pipe.delete(key)
+                        await pipe.execute()
+                        return True
+                except WatchError:
+                    continue
+            return False
+        except Exception as e:
+            log_warning(f"Token-scoped cancellation cleanup unavailable (failing safe, intent kept): {e}")
+            return False
 
     def raise_if_cancelled(self, run_id: str) -> None:
         """Check if a run should be cancelled and raise exception if so."""
@@ -282,9 +373,9 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
             value = client.get(key)
             if value is not None:
                 if isinstance(value, bytes):
-                    is_cancelled = value == b"1"
+                    is_cancelled = value.startswith(b"1")
                 else:
-                    is_cancelled = value == "1"
+                    is_cancelled = value.startswith("1")
                 result[run_id] = is_cancelled
 
         return result
@@ -315,9 +406,9 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
             value = await client.get(key)
             if value is not None:
                 if isinstance(value, bytes):
-                    is_cancelled = value == b"1"
+                    is_cancelled = value.startswith(b"1")
                 else:
-                    is_cancelled = value == "1"
+                    is_cancelled = value.startswith("1")
                 result[run_id] = is_cancelled
 
         return result
