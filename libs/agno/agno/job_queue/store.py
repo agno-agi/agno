@@ -129,6 +129,23 @@ class InMemoryQueueStore:
             job.update(status="failed", error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now)
             return "failed"
 
+    async def settle_paused_job(self, job_id: str, status: str, error: Optional[str] = None) -> bool:
+        """Terminalize a PAUSED ticket whose continue ran INLINE, outside the
+        queue: the run reached a terminal state but no worker owns the ticket,
+        and paused tickets are retention-exempt - without this /queue said
+        paused forever and the rows accumulated unboundedly. CAS on
+        status='paused': a queued/claimed continuation owns the ticket and is
+        never clobbered (its own terminal write settles it)."""
+        if status not in ("completed", "cancelled", "failed"):
+            return False
+        async with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job["status"] != "paused":
+                return False
+            now = int(time.time())
+            job.update(status=status, error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now)
+            return True
+
     async def cancel_job(self, job_id: str) -> bool:
         # Paused counts as "still waiting": nothing is executing a paused
         # ticket, so the tombstone contract ("this job will not execute")

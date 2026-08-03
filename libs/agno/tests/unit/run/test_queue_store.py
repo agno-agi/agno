@@ -362,6 +362,43 @@ class TestAcceptGrace:
         assert (await store.claim_job("w2"))["id"] == "r1"
 
 
+class TestSettlePausedJob:
+    @pytest.mark.asyncio
+    async def test_settle_terminalizes_paused_ticket(self, store):
+        """Inline continue completed outside the queue: the paused ticket
+        must reach a terminal status or /queue says paused forever."""
+        await _pause_job(store)
+        assert await store.settle_paused_job("r1", "completed") is True
+        job = await store.get_job("r1")
+        assert job["status"] == "completed"
+        assert job["completed_at"] is not None
+
+    @pytest.mark.asyncio
+    async def test_settle_failed_carries_reason(self, store):
+        await _pause_job(store)
+        assert await store.settle_paused_job("r1", "failed", "inline continue errored") is True
+        job = await store.get_job("r1")
+        assert job["status"] == "failed"
+        assert "errored" in job["error"]
+
+    @pytest.mark.asyncio
+    async def test_settle_never_clobbers_a_queued_continuation(self, store):
+        """CAS on paused: once a continue rode the queue, the worker owns the
+        ticket and the inline settle must lose."""
+        await _pause_job(store)
+        assert (await store.continue_job("r1", {"updated_tools": []}))["outcome"] == "queued"
+        assert await store.settle_paused_job("r1", "completed") is False
+        assert (await store.get_job("r1"))["status"] == "queued"
+
+    @pytest.mark.asyncio
+    async def test_settle_rejects_non_terminal_status_and_unknown_job(self, store):
+        await _pause_job(store)
+        assert await store.settle_paused_job("r1", "paused") is False
+        assert await store.settle_paused_job("r1", "queued") is False
+        assert await store.settle_paused_job("missing", "completed") is False
+        assert (await store.get_job("r1"))["status"] == "paused"
+
+
 class TestCancelPaused:
     @pytest.mark.asyncio
     async def test_cancel_reaches_paused_tickets(self, store):

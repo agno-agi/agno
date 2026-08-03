@@ -37,6 +37,7 @@ from agno.os.event_streams import get_event_stream
 from agno.os.job_queue import (
     acontinue_via_queue,
     aprepare_queued_agent_run,
+    asettle_paused_ticket,
     normalize_idempotency_key,
     payload_is_queueable,
     validate_seam_input,
@@ -231,6 +232,7 @@ async def agent_continue_response_streamer(
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
     auth_token: Optional[str] = None,
+    queue_worker: Optional[Any] = None,
     **kwargs: Any,
 ) -> AsyncGenerator:
     """Default SSE generator for continue_run. Agent runs inline — client disconnect cancels agent."""
@@ -278,7 +280,13 @@ async def agent_continue_response_streamer(
                 yield format_sse_event(run_response_chunk)  # type: ignore
         finally:
             if _sync_stream:
-                await acomplete_continue_stream(agent, run_id, session_id)
+                _final = await acomplete_continue_stream(agent, run_id, session_id)
+                # Inline continue of a DURABLE paused run: terminalize the
+                # queue ticket too (paused tickets are retention-exempt and
+                # would otherwise say paused forever). CAS no-op for runs
+                # that never rode the queue or whose continuation is owned
+                # by a worker.
+                await asettle_paused_ticket(queue_worker, run_id, _final)
     except (InputCheckError, OutputCheckError) as e:
         error_response = RunErrorEvent(
             content=str(e),
@@ -1467,6 +1475,7 @@ def get_agent_router(
                     user_id=user_id,
                     background_tasks=background_tasks,
                     auth_token=auth_token,
+                    queue_worker=getattr(request.app.state, "queue_worker", None),
                     **kwargs,
                 ),
                 media_type="text/event-stream",
@@ -1510,6 +1519,14 @@ def get_agent_router(
                         session_id,
                         only_if_tracked=True,
                         final_status=getattr(run_response_obj, "status", None),
+                    )
+                    # Inline continue of a DURABLE paused run: terminalize
+                    # the queue ticket too (paused is retention-exempt; the
+                    # CAS no-ops for never-queued or worker-owned runs)
+                    await asettle_paused_ticket(
+                        getattr(request.app.state, "queue_worker", None),
+                        run_id,
+                        getattr(run_response_obj, "status", None),
                     )
                 return run_response_obj.to_dict()
 

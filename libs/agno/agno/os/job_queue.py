@@ -194,6 +194,7 @@ def resolve_queue_store(config: QueueConfig, default_db: Any) -> Any:
             "retry_or_fail_job",
             "cancel_job",
             "continue_job",
+            "settle_paused_job",
             "sweep_exhausted_jobs",
             "fail_swept_job",
             "get_job",
@@ -1032,6 +1033,36 @@ class QueueWorker:
             if slot_acquired:
                 with contextlib.suppress(Exception):
                     await slot_cm.__aexit__(None, None, None)
+
+
+async def asettle_paused_ticket(queue_worker: Any, run_id: str, final_status: Any) -> None:
+    """Settle a durable PAUSED ticket after an INLINE continue finished.
+
+    The inline (background=false, default) continue paths never touch the
+    job store, and paused tickets are retention-exempt: without this,
+    /queue reported paused forever for completed runs and the rows
+    accumulated unboundedly. Maps the run's final status onto the ticket
+    (completed/cancelled/failed); a re-paused or unknown status leaves the
+    ticket paused (still continuable). The store call is a CAS on
+    status='paused', so a queued/claimed continuation that owns the ticket
+    is never clobbered - and runs that never rode the queue simply have no
+    row to settle. Best-effort: a store blip leaves the ticket paused, the
+    documented pre-fix state."""
+    if queue_worker is None:
+        return
+    from agno.run.base import RunStatus
+
+    value = final_status.value if isinstance(final_status, RunStatus) else final_status
+    ticket_status = {
+        RunStatus.completed.value: "completed",
+        RunStatus.cancelled.value: "cancelled",
+        RunStatus.error.value: "failed",
+    }.get(value)
+    if ticket_status is None:
+        return
+    error = "run errored during an inline continue" if ticket_status == "failed" else None
+    with contextlib.suppress(Exception):
+        await queue_worker.store.settle_paused_job(run_id, ticket_status, error)
 
 
 async def acontinue_via_queue(

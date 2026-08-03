@@ -32,6 +32,7 @@ from agno.os.event_streams import get_event_stream
 from agno.os.job_queue import (
     acontinue_via_queue,
     aprepare_queued_run,
+    asettle_paused_ticket,
     normalize_idempotency_key,
     payload_is_queueable,
     validate_seam_input,
@@ -699,9 +700,11 @@ async def handle_workflow_continue_via_websocket(
 
         # Durable continue: CAS the run's EXISTING paused ticket back to
         # queued so the continuation leg survives crashes and executes on
-        # whichever worker claims it; this socket becomes a tail view with
-        # the execute-role wire format (SSE-wrapped frames), so the client
-        # sees exactly what the detached path would have sent.
+        # whichever worker claims it; this socket becomes a tail view
+        # speaking the flat-JSON tail format (the same
+        # _pump_event_stream_to_websocket frames the reconnect/subscription
+        # surface sends - the FE parser handles both, per the 2026-08-02
+        # resolution that removed the SSE-wrapped execute pump).
         queue_worker = getattr(websocket.app.state, "queue_worker", None)
         continue_payload = {"step_requirements": step_requirements_data}
         workflow_is_queueable = any(
@@ -1019,6 +1022,7 @@ async def workflow_continue_response_streamer(
     user_id: Optional[str] = None,
     step_requirements: Optional[List[Any]] = None,
     background_tasks: Optional[BackgroundTasks] = None,
+    queue_worker: Optional[Any] = None,
     **kwargs: Any,
 ) -> AsyncGenerator:
     try:
@@ -1049,7 +1053,12 @@ async def workflow_continue_response_streamer(
         finally:
             # Final status from THIS run's row (never session.runs[-1]: an
             # interleaved run on the same session would be a different run)
-            await acomplete_continue_stream(workflow, run_id, session_id)
+            _final = await acomplete_continue_stream(workflow, run_id, session_id)
+            # Inline continue of a DURABLE paused run: terminalize the queue
+            # ticket too (paused tickets are retention-exempt and would
+            # otherwise say paused forever). CAS no-op for runs that never
+            # rode the queue or whose continuation is owned by a worker.
+            await asettle_paused_ticket(queue_worker, run_id, _final)
 
         # If the workflow re-paused, yield WorkflowPausedEvent as the new clean
         # snapshot event. Also yield the legacy "WorkflowRunOutput" event for
@@ -2002,6 +2011,7 @@ def get_workflow_router(
                     user_id=effective_user_id,
                     step_requirements=parsed_requirements,
                     background_tasks=background_tasks,
+                    queue_worker=getattr(request.app.state, "queue_worker", None),
                 ),
                 media_type="text/event-stream",
             )
@@ -2027,6 +2037,14 @@ def get_workflow_router(
                     session_id,
                     only_if_tracked=True,
                     final_status=getattr(run_response, "status", None),
+                )
+                # Inline continue of a DURABLE paused run: terminalize the
+                # queue ticket too (paused is retention-exempt; the CAS
+                # no-ops for never-queued or worker-owned runs)
+                await asettle_paused_ticket(
+                    getattr(request.app.state, "queue_worker", None),
+                    run_id,
+                    getattr(run_response, "status", None),
                 )
                 return run_response.to_dict()
             except InputCheckError as e:

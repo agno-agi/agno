@@ -296,7 +296,7 @@ async def acomplete_continue_stream(
     session_id: Optional[str],
     only_if_tracked: bool = False,
     final_status: Any = None,
-) -> None:
+) -> Optional[Any]:
     """Sync the event stream at the END of a continue with the run row's true
     final status. Without this, a continue of a formerly-queued/streamed run
     leaves the stream PAUSED forever - /resume replays the stale paused
@@ -327,7 +327,7 @@ async def acomplete_continue_stream(
         with contextlib.suppress(Exception):
             tracked = await event_stream.get_run_status(run_id)
         if tracked is None:
-            return
+            return None
     if final_status is None:
         with contextlib.suppress(Exception):
             session = await component.aget_session(session_id=session_id)
@@ -341,6 +341,9 @@ async def acomplete_continue_stream(
         final_status = RunStatus.completed
     with contextlib.suppress(Exception):
         await asyncio.shield(event_stream.complete_run(run_id, final_status))
+    # Returned so callers (the durable continue seams) can settle the queue
+    # ticket with the same resolved status instead of re-reading the row
+    return final_status
 
 
 def replayed_payload_to_sse(payload: Any, event_index: int, run_id: str) -> str:

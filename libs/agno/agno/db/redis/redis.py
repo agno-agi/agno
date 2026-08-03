@@ -2534,6 +2534,36 @@ class RedisDb(BaseDb):
         updated = self._q_fenced_update(job_id, worker_id, attempt, _retry)
         return outcome.get("status") if updated is not None else None
 
+    def settle_paused_job(self, job_id: str, status: str, error: Optional[str] = None) -> bool:
+        """Terminalize a PAUSED ticket whose continue ran INLINE, outside the
+        queue (see InMemoryQueueStore.settle_paused_job). WATCH/MULTI CAS on
+        status='paused'; a queued/claimed continuation owns the ticket and is
+        never clobbered. (Paused jobs are in no queued/running zset.)"""
+        from redis.exceptions import WatchError
+
+        if status not in ("completed", "cancelled", "failed"):
+            return False
+        job_key = self._q_job_key(job_id)
+        now = int(time.time())
+        try:
+            with self.redis_client.pipeline() as pipe:
+                pipe.watch(job_key)
+                raw = pipe.get(job_key)
+                if raw is None:
+                    pipe.unwatch()
+                    return False
+                job = json.loads(raw if isinstance(raw, str) else raw.decode())
+                if job["status"] != "paused":
+                    pipe.unwatch()
+                    return False
+                job.update(status=status, error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now)
+                pipe.multi()
+                self._q_save_job_in_pipe(pipe, job)
+                pipe.execute()
+                return True
+        except WatchError:
+            return False
+
     def cancel_job(self, job_id: str) -> bool:
         # Paused tickets count as waiting: nothing is executing them, and
         # without this a cancelled paused run stayed a paused ticket forever,

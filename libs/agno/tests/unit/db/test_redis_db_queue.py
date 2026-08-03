@@ -181,6 +181,33 @@ def _pause_job(db: RedisDb, job_id: str = "r1", worker: str = "w1") -> dict:
     return db.get_job(job_id)
 
 
+class TestSettlePausedJob:
+    def test_settle_terminalizes_paused_ticket(self, db):
+        db.enqueue_job(make_job("r1"))
+        claimed = db.claim_job("w1")
+        assert db.complete_job("r1", "w1", claimed["attempt"], "paused")
+        assert db.settle_paused_job("r1", "completed") is True
+        job = db.get_job("r1")
+        assert job["status"] == "completed"
+        assert job["completed_at"] is not None
+
+    def test_settle_never_clobbers_a_queued_continuation(self, db):
+        db.enqueue_job(make_job("r1"))
+        claimed = db.claim_job("w1")
+        assert db.complete_job("r1", "w1", claimed["attempt"], "paused")
+        assert db.continue_job("r1", {"updated_tools": []})["outcome"] == "queued"
+        assert db.settle_paused_job("r1", "completed") is False
+        assert db.get_job("r1")["status"] == "queued"
+
+    def test_settle_rejects_non_terminal_status_and_unknown_job(self, db):
+        db.enqueue_job(make_job("r1"))
+        claimed = db.claim_job("w1")
+        assert db.complete_job("r1", "w1", claimed["attempt"], "paused")
+        assert db.settle_paused_job("r1", "paused") is False
+        assert db.settle_paused_job("missing", "completed") is False
+        assert db.get_job("r1")["status"] == "paused"
+
+
 class TestContinueJob:
     def test_continue_flips_paused_to_queued_same_row(self, db):
         paused = _pause_job(db)

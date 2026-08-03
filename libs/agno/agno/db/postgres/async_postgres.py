@@ -4329,6 +4329,37 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_debug(f"Error retrying/failing run job: {e}")
             return None
 
+    async def settle_paused_job(self, job_id: str, status: str, error: Optional[str] = None) -> bool:
+        """Terminalize a PAUSED ticket whose continue ran INLINE, outside the
+        queue (see InMemoryQueueStore.settle_paused_job). Single conditional
+        UPDATE on status='paused'; a queued/claimed continuation owns the
+        ticket and is never clobbered."""
+        if status not in ("completed", "cancelled", "failed"):
+            return False
+        try:
+            table = await self._get_table(table_type="jobs")
+            if table is None:
+                return False
+            now = int(time.time())
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    result = await sess.execute(
+                        update(table)
+                        .where(table.c.id == job_id, table.c.status == "paused")
+                        .values(
+                            status=status,
+                            error=error,
+                            locked_by=None,
+                            locked_at=None,
+                            completed_at=now,
+                            updated_at=now,
+                        )
+                    )
+                    return (result.rowcount or 0) > 0  # type: ignore[attr-defined]
+        except Exception as e:
+            log_debug(f"Error settling paused job: {e}")
+            return False
+
     async def cancel_job(self, job_id: str) -> bool:
         """Tombstone cancellation: only jobs still waiting can be cancelled
         here (contract: 'this job will not execute'). Claimed jobs fall
