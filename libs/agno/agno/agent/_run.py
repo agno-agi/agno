@@ -4521,8 +4521,15 @@ async def _acontinue_run_background_stream(
                     lookup_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
                     interrupted_run = cast(Optional[RunOutput], lookup_session.get_run(_run_id))
                 if interrupted_run is not None:
-                    interrupted_run.status = RunStatus.cancelled
-                    await apersist_run_transition(agent, "agent", session_id, interrupted_run, user_id=user_id)
+                    if interrupted_run.status == RunStatus.paused:
+                        # The leg already RE-PAUSED and parked a valid,
+                        # continuable HITL state - shutdown while draining
+                        # trailing events must not destroy it. Re-park the
+                        # stream sentinel instead of stamping CANCELLED.
+                        producer_terminal = RunStatus.paused
+                    else:
+                        interrupted_run.status = RunStatus.cancelled
+                        await apersist_run_transition(agent, "agent", session_id, interrupted_run, user_id=user_id)
             raise
         except RunCancelledException:
             # Cancelled while waiting for a slot — execution never started, so

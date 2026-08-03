@@ -171,6 +171,28 @@ class TestTeamInlineContinueSync:
         assert await stream.get_run_status("r1") == RunStatus.paused
 
 
+class TestTeamForkGate:
+    @pytest.mark.asyncio
+    async def test_fork_continue_does_not_touch_original_stream(self, stream):
+        """Twin of the agent gate: fork/regenerate mint a NEW run_id inside
+        acontinue_run - publishing under the original run_id would corrupt
+        the paused original's stream. They arrive via **kwargs on the team
+        streamer (no typed params)."""
+        from agno.os.routers.teams.router import team_continue_response_streamer
+        from agno.run.team import RunContentEvent
+
+        await _park_paused(stream, "r1", n_events=1)
+        before = await stream.replay("r1")
+        final_run = type("R", (), {"run_id": "r1", "status": RunStatus.completed})()
+        team: Any = FakeTeam([RunContentEvent(run_id="r1-fork", content="forked")], final_run)
+
+        async for _c in team_continue_response_streamer(team, run_id="r1", requirements=[], session_id="s1", fork=True):
+            pass
+
+        assert await stream.get_run_status("r1") == RunStatus.paused
+        assert await stream.replay("r1") == before
+
+
 class FakeWorkflow:
     def __init__(self, chunks: List[Any], session_runs: List[Any]):
         self.chunks = chunks

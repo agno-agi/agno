@@ -9424,12 +9424,17 @@ class Workflow:
                 # non-terminal coercion turned an interrupted continue into a
                 # FALSE COMPLETED.
                 with contextlib.suppress(Exception):
-                    workflow_run_response.status = RunStatus.cancelled
-                    session.upsert_run(run=workflow_run_response)
-                    if self._has_async_db():
-                        await self.asave_session(session=session)
-                    else:
-                        self.save_session(session=session)
+                    if workflow_run_response.status != RunStatus.paused:
+                        # A leg that already RE-PAUSED parked a valid,
+                        # continuable HITL state - shutdown while draining
+                        # trailing events must not destroy it (the finally
+                        # re-parks the stream sentinel as PAUSED)
+                        workflow_run_response.status = RunStatus.cancelled
+                        session.upsert_run(run=workflow_run_response)
+                        if self._has_async_db():
+                            await self.asave_session(session=session)
+                        else:
+                            self.save_session(session=session)
                 raise
             except RunCancelledException:
                 # Cancelled while waiting for a slot — execution never started, so

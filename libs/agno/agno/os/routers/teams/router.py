@@ -486,8 +486,11 @@ async def team_continue_response_streamer(
         # copy - after an inline continue of a formerly-queued/streamed run,
         # /resume would replay just the pre-pause prefix and the stream
         # status would stay PAUSED forever. Skipped for remote teams (the
-        # remote OS owns that run's stream).
-        _sync_stream = not isinstance(team, RemoteTeam)
+        # remote OS owns that run's stream) and for fork/regenerate (they
+        # mint a NEW run_id; publishing under the original would corrupt
+        # it). fork/regenerate ride **kwargs here - the streamer has no
+        # typed params for them (agent-streamer parity gate).
+        _sync_stream = not isinstance(team, RemoteTeam) and not kwargs.get("fork") and not kwargs.get("regenerate")
         if _sync_stream:
             await amark_continue_stream_running(run_id)
         try:
