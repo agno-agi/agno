@@ -593,13 +593,22 @@ class FirestoreDb(BaseDb):
             for doc in docs:
                 doc.reference.delete()
 
-                # Cascade-delete the session's runs
+                # Cascade-delete the session's runs, chunked to Firestore's
+                # 500-op-per-commit limit so sessions with many runs don't blow
+                # the batch (mirrors delete_sessions).
                 if runs_collection_ref is not None:
                     runs_query = runs_collection_ref.where(filter=FieldFilter("session_id", "==", session_id))
                     batch = self.db_client.batch()
+                    in_batch = 0
                     for run_doc in runs_query.stream():
                         batch.delete(run_doc.reference)
-                    batch.commit()
+                        in_batch += 1
+                        if in_batch >= FIRESTORE_BATCH_LIMIT:
+                            batch.commit()
+                            batch = self.db_client.batch()
+                            in_batch = 0
+                    if in_batch > 0:
+                        batch.commit()
 
                 log_debug(f"Successfully deleted session with session_id: {session_id}")
                 return True

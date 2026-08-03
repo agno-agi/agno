@@ -593,7 +593,7 @@ class SingleStoreDb(BaseDb):
             .where(runs_table.c.session_id == session_id)
             .order_by(runs_table.c.run_index.asc(), runs_table.c.created_at.asc())
         )
-        return [row[0] for row in sess.execute(stmt).fetchall()]
+        return [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in sess.execute(stmt).fetchall()]
 
     def _get_sessions_runs_data(
         self, sess, runs_table: Table, session_ids: List[str]
@@ -607,6 +607,8 @@ class SingleStoreDb(BaseDb):
         )
         runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
         for session_id, run_data in sess.execute(stmt).fetchall():
+            if isinstance(run_data, str):
+                run_data = json.loads(run_data)
             runs_by_session.setdefault(session_id, []).append(run_data)
         return runs_by_session
 
