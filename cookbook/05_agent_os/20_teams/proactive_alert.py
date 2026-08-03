@@ -20,6 +20,7 @@ Run: .venvs/demo/bin/python cookbook/05_agent_os/20_teams/proactive_alert.py
 
 import asyncio
 import os
+import threading
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
@@ -57,9 +58,6 @@ agent_os = AgentOS(
     interfaces=[teams],
 )
 app = agent_os.get_app()
-
-
-import threading  # noqa: E402
 
 
 def _demo_alert_worker():
