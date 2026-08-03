@@ -76,12 +76,17 @@ def get_session(
     agent: Agent,
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
+    runs_limit: Optional[int] = None,
 ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
     """Load an AgentSession from database or cache.
 
     Args:
         agent: The Agent instance.
         session_id: The session_id to load from storage.
+        runs_limit: If set, load only the most recent ``runs_limit`` context-relevant
+            runs (a bounded read for history). Only applied for a standalone agent
+            (an AgentSession); the bounded session is neither served from nor written
+            to the cache, since it holds a partial run list.
 
     Returns:
         AgentSession: The AgentSession loaded from the database/cache or None if not found.
@@ -93,8 +98,13 @@ def get_session(
 
     session_id_to_load: str = session_id or agent.session_id  # type: ignore[assignment]
 
-    # If there is a cached session, return it
-    if agent.cache_session and hasattr(agent, "_cached_session") and agent._cached_session is not None:
+    # If there is a cached session, return it (never for a bounded/partial read).
+    if (
+        runs_limit is None
+        and agent.cache_session
+        and hasattr(agent, "_cached_session")
+        and agent._cached_session is not None
+    ):
         if agent._cached_session.session_id == session_id_to_load and (
             user_id is None or agent._cached_session.user_id == user_id
         ):
@@ -112,7 +122,11 @@ def get_session(
             loaded_session = cast(
                 AgentSession,
                 _storage.read_session(
-                    agent, session_id=session_id_to_load, session_type=SessionType.AGENT, user_id=user_id
+                    agent,
+                    session_id=session_id_to_load,
+                    session_type=SessionType.AGENT,
+                    user_id=user_id,
+                    runs_limit=runs_limit,
                 ),  # type: ignore[arg-type]
             )
 
@@ -134,8 +148,8 @@ def get_session(
                 ),  # type: ignore[arg-type]
             )
 
-        # Cache the session if relevant
-        if loaded_session is not None and agent.cache_session:
+        # Cache the session if relevant (never cache a bounded/partial read).
+        if loaded_session is not None and agent.cache_session and runs_limit is None:
             agent._cached_session = loaded_session  # type: ignore
 
         return loaded_session
@@ -695,7 +709,14 @@ def get_session_messages(
         log_warning("Session ID is not set, cannot get messages for session")
         return []
 
-    session = get_session(agent, session_id=session_id)
+    # For a standalone agent with default status filtering, push "most recent N runs"
+    # down to the DB instead of loading the whole history and slicing in memory. The
+    # bounded query reproduces get_messages' pre-slice filters (top-level, non-skip
+    # statuses), so the result is identical. Custom skip_statuses / team reuse fall
+    # back to a full load.
+    runs_limit = last_n_runs if (last_n_runs is not None and skip_statuses is None and agent.team_id is None) else None
+
+    session = get_session(agent, session_id=session_id, runs_limit=runs_limit)
     if session is None:
         raise Exception("Session not found")
 

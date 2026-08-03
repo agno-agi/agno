@@ -61,6 +61,8 @@ except ImportError:
 
 
 class AsyncSqliteDb(AsyncBaseDb):
+    supports_runs_limit: bool = True
+
     def __init__(
         self,
         db_file: Optional[str] = None,
@@ -618,8 +620,27 @@ class AsyncSqliteDb(AsyncBaseDb):
             return True
 
     # -- Run methods --
-    async def _get_session_runs_data(self, sess, runs_table: Table, session_id: str) -> List[Dict[str, Any]]:
-        """Get the raw run_data dicts for the given session, in insertion order."""
+    async def _get_session_runs_data(
+        self, sess, runs_table: Table, session_id: str, limit: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Get the raw run_data dicts for the given session, in insertion order.
+
+        When ``limit`` is set, only the most recent ``limit`` runs are fetched
+        (indexed ``ORDER BY run_index DESC LIMIT``) and returned in ascending
+        (chronological) order — so the caller sees the same shape as a full read,
+        just the tail.
+        """
+        if limit is not None:
+            stmt = (
+                select(runs_table.c.run_data)
+                .where(runs_table.c.session_id == session_id)
+                .order_by(runs_table.c.run_index.desc(), runs_table.c.created_at.desc())
+                .limit(limit)
+            )
+            result = await sess.execute(stmt)
+            rows = [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in result.fetchall()]
+            rows.reverse()
+            return rows
         stmt = (
             select(runs_table.c.run_data)
             .where(runs_table.c.session_id == session_id)
@@ -953,6 +974,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Read a session from the database.
@@ -962,6 +984,11 @@ class AsyncSqliteDb(AsyncBaseDb):
             session_type (SessionType): Type of session to get.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            runs_limit (Optional[int]): If set, attach only the most recent ``runs_limit``
+                runs instead of the full history. For a fully-migrated session this is an
+                indexed ``ORDER BY run_index DESC LIMIT`` query; for a session that still
+                carries a legacy ``runs`` blob it falls back to a full load + merge, then
+                slices, so no history is ever lost.
 
         Returns:
             Optional[Union[Session, Dict[str, Any]]]:
@@ -991,13 +1018,29 @@ class AsyncSqliteDb(AsyncBaseDb):
 
                 session_raw = deserialize_session_json_fields(dict(row._mapping))
 
-                # Attach the runs stored in the runs table. If the session has no rows in the
-                # runs table, fall back to the legacy `runs` column content, if any.
-                if session_raw is not None and runs_table is not None:
-                    runs_data = await self._get_session_runs_data(
-                        sess=sess, runs_table=runs_table, session_id=session_id
-                    )
-                    session_raw["runs"] = merge_runs_table_with_legacy_blob(runs_data, session_raw.get("runs"))
+                # Attach the runs stored in the runs table, merged with any runs still
+                # sitting in the legacy `runs` column (so partially-migrated sessions
+                # don't silently lose history).
+                if session_raw is not None:
+                    legacy_runs = session_raw.get("runs")
+                    if runs_table is not None and runs_limit is not None and not legacy_runs:
+                        # Fully migrated: push "most recent N" down to the DB (indexed).
+                        session_raw["runs"] = await self._get_session_runs_data(
+                            sess=sess, runs_table=runs_table, session_id=session_id, limit=runs_limit
+                        )
+                    elif runs_table is not None:
+                        # Full load + merge. Also the un-migrated fallback: the legacy blob
+                        # holds the whole history in one column, so "last N" can't be pushed
+                        # to SQL — load all, merge, then slice to honor runs_limit.
+                        runs_data = await self._get_session_runs_data(
+                            sess=sess, runs_table=runs_table, session_id=session_id
+                        )
+                        merged = merge_runs_table_with_legacy_blob(runs_data, legacy_runs)
+                        session_raw["runs"] = merged[-runs_limit:] if runs_limit is not None else merged
+                    elif runs_limit is not None:
+                        # No runs table yet (fully un-migrated): slice the legacy blob.
+                        merged = merge_runs_table_with_legacy_blob([], legacy_runs)
+                        session_raw["runs"] = merged[-runs_limit:]
 
                 if not session_raw or not deserialize:
                     return session_raw

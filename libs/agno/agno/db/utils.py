@@ -267,6 +267,33 @@ def build_single_run_row(
     }
 
 
+# Run statuses excluded from context/history reads. Mirrors the default
+# ``skip_statuses`` in ``AgentSession.get_messages`` / ``TeamSession.get_messages``
+# so a DB-side "most recent N runs" fetch returns the same runs the in-memory
+# history builder would (it filters these out *before* slicing the last N).
+HISTORY_SKIP_STATUSES: List[str] = ["PAUSED", "CANCELLED", "ERROR", "REGENERATED"]
+
+
+def filter_context_runs(runs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Keep only top-level, context-relevant runs from a list of run dicts.
+
+    Drops member sub-runs (``parent_run_id`` set) and terminal-skip statuses,
+    mirroring the pre-slice filtering in ``get_messages``. Used on the
+    un-migrated / legacy-blob read path so slicing to "most recent N" yields the
+    same window as the fully-migrated (SQL-filtered) path.
+    """
+    kept: List[Dict[str, Any]] = []
+    for run in runs:
+        if not isinstance(run, dict):
+            continue
+        if run.get("parent_run_id") is not None:
+            continue
+        if run.get("status") in HISTORY_SKIP_STATUSES:
+            continue
+        kept.append(run)
+    return kept
+
+
 def merge_runs_table_with_legacy_blob(
     table_runs: List[Dict[str, Any]],
     legacy_runs: Optional[List[Any]],

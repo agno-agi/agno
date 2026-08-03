@@ -36,6 +36,11 @@ class BaseDb(ABC):
     # We assume the database to be up to date with the 2.0.0 release
     default_schema_version = "2.0.0"
 
+    # Whether this adapter can push a "most recent N runs" limit for a session
+    # down to the database (get_session(runs_limit=...)). Adapters that can't
+    # leave this False; callers then load the full run history (safe, unbounded).
+    supports_runs_limit: bool = False
+
     def __init__(
         self,
         session_table: Optional[str] = None,
@@ -1579,6 +1584,9 @@ class BaseDb(ABC):
 
 class AsyncBaseDb(ABC):
     """Base abstract class for all our async database implementations."""
+
+    # See BaseDb.supports_runs_limit.
+    supports_runs_limit: bool = False
 
     def __init__(
         self,

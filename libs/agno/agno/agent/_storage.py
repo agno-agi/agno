@@ -128,12 +128,21 @@ async def aget_last_run_output(agent: Agent, session_id: Optional[str] = None) -
 
 
 def read_session(
-    agent: Agent, session_id: str, session_type: SessionType = SessionType.AGENT, user_id: Optional[str] = None
+    agent: Agent,
+    session_id: str,
+    session_type: SessionType = SessionType.AGENT,
+    user_id: Optional[str] = None,
+    runs_limit: Optional[int] = None,
 ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
     """Get a Session from the database."""
     try:
         if not agent.db:
             raise ValueError("Db not initialized")
+        # Only pass runs_limit to adapters that support it (SQL); others load full history.
+        if runs_limit is not None and getattr(agent.db, "supports_runs_limit", False):
+            return agent.db.get_session(  # type: ignore
+                session_id=session_id, session_type=session_type, user_id=user_id, runs_limit=runs_limit
+            )
         return agent.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
     except Exception as e:
         import traceback
@@ -516,9 +525,7 @@ async def aread_or_create_session(
 
                 if _init.has_async_db(agent):
                     await asave_session(agent, session=agent_session)
-                    await aupsert_run(
-                        agent, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0
-                    )
+                    await aupsert_run(agent, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
                 else:
                     save_session(agent, session=agent_session)
                     upsert_run(agent, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
