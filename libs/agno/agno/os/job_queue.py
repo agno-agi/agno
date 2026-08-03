@@ -504,6 +504,13 @@ class QueueWorker:
                 # differs - acontinue_run re-enters the paused run under the
                 # SAME run_id, so the publisher/terminal machinery below is
                 # reused verbatim
+                cont = payload.get("continue") or {}
+                if cont.get("stream_events") is not None:
+                    # The CONTINUE request's choice wins over the submit
+                    # payload's: the client driving this leg said what it
+                    # wants to watch
+                    stream_events = cont["stream_events"]
+                await self._arestore_paused_run_row(component, job)
                 cont_kwargs = self._continuation_kwargs(job)
                 cont_kwargs.update(stream=True, stream_events=stream_events)
                 if not is_workflow:
@@ -713,6 +720,64 @@ class QueueWorker:
         # continuation leg no ValueError is curable by re-running
         return is_continuation and isinstance(exc, ValueError)
 
+    async def _arestore_paused_run_row(self, component: Any, job: Dict[str, Any]) -> None:
+        """Make a crashed continuation leg re-drivable (workflow only).
+
+        A crashed/swept leg stamps the run row ERROR, and workflow
+        acontinue_run hard-requires PAUSED - so without this, every operator
+        requeue of a failed continuation leg raised the not-paused ValueError,
+        classified permanent, and instantly failed again: the re-drive story
+        was a dead letter. Before re-entering, restore ERROR -> PAUSED with a
+        fenced patch (this attempt's stamped generation owns the row; the
+        paused step state fields were never touched by the error stamp and
+        are still there to resume from).
+
+        ERROR only, by design: a CANCELLED run row stays terminal - cancel
+        wins, and a requeued continue of a cancelled run keeps failing
+        visibly. Agents/teams need no restore (their acontinue_run accepts
+        ERROR-state resumes). Best-effort: if the restore cannot land,
+        acontinue_run fails honestly and the ticket returns to the DLQ."""
+        if job.get("component_type") != "workflow":
+            return
+        from agno.run.base import RunStatus
+
+        try:
+            run_output = await component.aget_run_output(job["id"], job["session_id"], user_id=job.get("user_id"))
+            raw_status = getattr(run_output, "status", None)
+            status_value = raw_status.value if isinstance(raw_status, RunStatus) else raw_status
+            if status_value != RunStatus.error.value:
+                return
+            from agno.run.status_persist import apersist_run_status, fallback_allowed
+
+            result = await apersist_run_status(
+                component,
+                "workflow",
+                session_id=job["session_id"],
+                run_id=job["id"],
+                fields={"status": RunStatus.paused.value},
+                user_id=job.get("user_id"),
+                expected_attempt=job.get("attempt"),
+            )
+            if not fallback_allowed(result, job.get("attempt")):
+                log_info(f"Job queue: restored run row {job['id']} ERROR -> PAUSED for continuation re-drive")
+                return
+            # No atomic primitive: read-only session load + patch (same shape
+            # as _persist_run_error's workflow fallback)
+            workflow_session = await component.aget_session(session_id=job["session_id"])
+            if workflow_session is None:
+                return
+            workflow_run = workflow_session.get_run(job["id"])
+            if workflow_run is not None and getattr(workflow_run, "status", None) == RunStatus.error:
+                workflow_run.status = RunStatus.paused
+                workflow_session.upsert_run(run=workflow_run)
+                if component._has_async_db():
+                    await component.asave_session(session=workflow_session)
+                else:
+                    component.save_session(session=workflow_session)
+                log_info(f"Job queue: restored run row {job['id']} ERROR -> PAUSED for continuation re-drive")
+        except Exception as e:
+            log_warning(f"Job queue: could not restore paused run row for continuation {job.get('id')}: {e}")
+
     @staticmethod
     def _continuation_kwargs(job: Dict[str, Any]) -> Dict[str, Any]:
         """Rebuild acontinue_run kwargs from the ticket's merged
@@ -853,6 +918,7 @@ class QueueWorker:
                 # Continuation leg: re-enter the paused run under the SAME
                 # run_id; stamp/slot/heartbeat/retry/terminal machinery is
                 # shared with fresh executions
+                await self._arestore_paused_run_row(component, job)
                 execution = component.acontinue_run(stream=False, **self._continuation_kwargs(job))
             else:
                 call_kwargs = self._payload_call_kwargs(payload)
