@@ -478,3 +478,31 @@ class TestAcceptSideEffects:
             assert await stream.get_run_status("r1") is None, "non-stream runs have no stream view to touch"
         finally:
             es_mod._event_stream = original
+
+
+class TestContinueStreamEventsPrecedence:
+    @pytest.mark.asyncio
+    async def test_kwargs_stream_events_hoisted_into_continue_block(self):
+        """The CONTINUE request's stream_events must reach the worker: the
+        HTTP doors sweep it into continue_payload['kwargs'], where
+        _continuation_kwargs strips it as reserved - the seam hoists it to
+        the top of the continue block, which wins over the submit payload."""
+        store = InMemoryQueueStore()
+        await _pause(store)
+        result = await acontinue_via_queue(
+            make_worker(store), "r1", {"updated_tools": [], "kwargs": {"stream_events": False}}
+        )
+        assert result["outcome"] == "queued"
+        stored = (await store.get_job("r1"))["payload"]["continue"]
+        assert stored["stream_events"] is False, "the continue request's choice must be persisted for the worker"
+
+    @pytest.mark.asyncio
+    async def test_explicit_top_level_value_is_not_clobbered(self):
+        store = InMemoryQueueStore()
+        await _pause(store)
+        result = await acontinue_via_queue(
+            make_worker(store), "r1", {"stream_events": True, "kwargs": {"stream_events": False}}
+        )
+        assert result["outcome"] == "queued"
+        stored = (await store.get_job("r1"))["payload"]["continue"]
+        assert stored["stream_events"] is True

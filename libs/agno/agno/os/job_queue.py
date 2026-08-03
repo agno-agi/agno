@@ -1139,11 +1139,21 @@ async def acontinue_via_queue(
         # timed out after the pause write): the detached path can still
         # continue the run; the caller logs the bypass
         return None
+    continue_payload = dict(continue_payload)
+    if "stream_events" not in continue_payload:
+        # Hoist the CONTINUE request's stream_events choice to where the
+        # worker reads it (cont["stream_events"] wins over the submit
+        # payload's). The agents/teams doors sweep undeclared form fields
+        # into continue_payload["kwargs"], where _continuation_kwargs
+        # strips it as reserved - without the hoist the client's choice
+        # for this leg was silently dropped.
+        _cont_kwargs = continue_payload.get("kwargs") or {}
+        if "stream_events" in _cont_kwargs:
+            continue_payload["stream_events"] = _cont_kwargs["stream_events"]
     if ticket_streams:
         # Persist the tail boundary in the continue block so every attacher
         # reads the accepted click's floor instead of recomputing one after
         # the leg already started publishing
-        continue_payload = dict(continue_payload)
         continue_payload["tail_from"] = tail_from
     # Stale-intent cleanup is TOKEN-SCOPED (generation-scoped), not ordered:
     # read the intent's opaque token BEFORE the CAS, and after winning ask
