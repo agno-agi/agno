@@ -52,6 +52,7 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
         async_redis_client: Optional[Union[AsyncRedis, AsyncRedisCluster]] = None,
         key_prefix: str = "agno:run:cancellation:",
         ttl_seconds: Optional[int] = DEFAULT_TTL_SECONDS,
+        enable_token_cleanup: bool = False,
     ):
         if not _redis_available:
             raise ImportError(_redis_import_error)
@@ -61,6 +62,16 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
         self.async_redis_client = async_redis_client
         self.key_prefix = key_prefix
         self.ttl_seconds = ttl_seconds
+        # Token-scoped cleanup is OPT-IN: old replicas rewrite only the
+        # legacy intent key on cancel, leaving a new replica's stale sidecar
+        # token behind - a token-scoped cleanup would then match the stale
+        # token and erase the OLD replica's newer cancel. There is no way to
+        # detect that sequence from the keys, so the conditional cleanup
+        # stays disabled (token reads return None; callers skip cleanup and
+        # stale intent expires via TTL / cancels the leg visibly) until
+        # EVERY replica sharing this Redis writes sidecar tokens. Flip this
+        # on after the fleet is fully upgraded.
+        self.enable_token_cleanup = enable_token_cleanup
 
         if redis_client is None and async_redis_client is None:
             raise ValueError("At least one of redis_client or async_redis_client must be provided")
@@ -73,8 +84,14 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
         """Sidecar key holding the current cancel's opaque token. Separate
         from the intent key so the intent WIRE VALUE stays exactly "1" -
         old replicas in a rolling upgrade compare equality and must keep
-        seeing new replicas' cancels."""
-        return f"{key}:token"
+        seeing new replicas' cancels.
+
+        Hash-tagged ("{intent-key}:token"): Redis Cluster hashes only the
+        braced part, so both keys share a slot and the multi-key MGET/DEL
+        and the WATCH transaction stay legal on cluster. The brace prefix
+        also keeps sidecars out of the key_prefix* scan in get_active_runs
+        (they are bookkeeping, not runs)."""
+        return f"{{{key}}}:token"
 
     def _get_members_key(self, team_run_id: str) -> str:
         """Get the Redis key for a team run's member set."""
@@ -273,6 +290,8 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
         None also covers intent written by OLD replicas (no sidecar key):
         callers then SKIP the conditional cleanup - the safe direction.
         Fail-open like is_cancelled."""
+        if not self.enable_token_cleanup:
+            return None  # see __init__: disabled until the fleet is token-aware
         try:
             client = self._ensure_sync_client()
             key = self._get_key(run_id)
@@ -286,6 +305,8 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
 
     async def aget_cancellation_token(self, run_id: str):
         """Async variant of get_cancellation_token."""
+        if not self.enable_token_cleanup:
+            return None  # see __init__: disabled until the fleet is token-aware
         try:
             client = self._ensure_async_client()
             key = self._get_key(run_id)
@@ -305,6 +326,8 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
         declines rather than deleting - the safe direction."""
         from redis.exceptions import WatchError
 
+        if not self.enable_token_cleanup:
+            return False  # see __init__: disabled until the fleet is token-aware
         key = self._get_key(run_id)
         token_key = self._get_token_key(key)
         try:
@@ -334,6 +357,8 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
         """Async variant of cleanup_run_if_token."""
         from redis.exceptions import WatchError
 
+        if not self.enable_token_cleanup:
+            return False  # see __init__: disabled until the fleet is token-aware
         key = self._get_key(run_id)
         token_key = self._get_token_key(key)
         try:
