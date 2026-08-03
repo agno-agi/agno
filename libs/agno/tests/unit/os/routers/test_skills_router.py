@@ -358,6 +358,73 @@ class TestDeleteSkill:
         assert resp.status_code == 501
 
 
+class TestWriteValidation:
+    """Invalid metadata must be rejected at write, not discovered at load.
+
+    A row that fails validation makes the loader raise on every load and refresh, so a
+    single bad row disables skills for every agent -- including the valid rows alongside
+    it. Mirrors how the schedules router validates the cron expression before the insert.
+    """
+
+    @pytest.mark.parametrize(
+        "bad_name",
+        ["Bad/Name", "UPPERCASE", "has spaces", "trailing-"],
+    )
+    def test_create_rejects_an_invalid_skill_name(self, client, mock_db, bad_name):
+        resp = client.post("/skills", json=_create_body(name=bad_name))
+        assert resp.status_code == 422
+        mock_db.create_skill.assert_not_called()
+
+    def test_create_rejects_invalid_metadata_value(self, client, mock_db):
+        resp = client.post("/skills", json=_create_body(metadata="not-a-dict"))
+        assert resp.status_code == 422
+        mock_db.create_skill.assert_not_called()
+
+    def test_create_still_accepts_a_valid_skill(self, client, mock_db):
+        resp = client.post("/skills", json=_create_body())
+        assert resp.status_code == 201
+        mock_db.create_skill.assert_called_once()
+
+    def test_update_rejects_an_invalid_description(self, client, mock_db):
+        mock_db.get_skill = MagicMock(return_value=_make_skill_row(version=1))
+        resp = client.patch("/skills/demo-skill", json={"version": 1, "description": ""})
+        assert resp.status_code == 422
+        mock_db.update_skill.assert_not_called()
+
+    def test_update_still_accepts_a_valid_change(self, client, mock_db):
+        mock_db.get_skill = MagicMock(return_value=_make_skill_row(version=1))
+        mock_db.update_skill = MagicMock(return_value=_make_skill_row(version=2, description="new"))
+        resp = client.patch("/skills/demo-skill", json={"version": 1, "description": "new"})
+        assert resp.status_code == 200
+
+
+class TestCustomSkillsTableSelection:
+    """`table=` is advertised on every skills route, so a configured skills table must be
+    selectable through it -- the same way sessions, memory and learnings tables are."""
+
+    def test_configured_skills_table_can_be_selected(self, tmp_path, settings):
+        from agno.db.sqlite import SqliteDb
+
+        db = SqliteDb(db_file=str(tmp_path / "custom.db"), skills_table="my_skills")
+        db.create_skill({"name": "demo-skill", "description": "d", "instructions": "i"})
+
+        app = FastAPI()
+        app.include_router(get_skills_router(dbs={"default": [db]}, settings=settings))
+        client = TestClient(app)
+
+        resp = client.get("/skills?db_id=default&table=my_skills")
+        assert resp.status_code == 200
+        assert [r["name"] for r in resp.json()["data"]] == ["demo-skill"]
+
+    def test_unknown_table_still_404s(self, tmp_path, settings):
+        from agno.db.sqlite import SqliteDb
+
+        db = SqliteDb(db_file=str(tmp_path / "custom2.db"), skills_table="my_skills")
+        app = FastAPI()
+        app.include_router(get_skills_router(dbs={"default": [db]}, settings=settings))
+        assert TestClient(app).get("/skills?db_id=default&table=not_a_table").status_code == 404
+
+
 class TestUserScoping:
     """For a scoped (non-admin) JWT caller with user_isolation enabled, the router enforces
     ownership-based scoping via get_scoped_user_id.

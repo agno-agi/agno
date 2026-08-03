@@ -23,6 +23,7 @@ from agno.os.settings import AgnoAPISettings
 from agno.os.utils import get_db
 from agno.remote.base import RemoteDb
 from agno.skills.errors import SkillError, SkillValidationError
+from agno.skills.validator import validate_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +130,8 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         if isinstance(db, RemoteDb):
             raise HTTPException(status_code=501, detail="Skills endpoints not supported on remote DBs")
 
+        _validate_skill_metadata(body.model_dump())
+
         try:
             if isinstance(db, AsyncBaseDb):
                 created = await db.create_skill(body.model_dump())
@@ -202,6 +205,8 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
                     status_code=422,
                     detail=f"{field} cannot be null; omit the field to leave it unchanged",
                 )
+        _validate_skill_metadata({**existing, **updates})
+
         try:
             # scoped_user_id is an ownership predicate on WHICH row may be written, not a
             # value: checking the fetched row above and then writing unscoped would be a
@@ -284,6 +289,28 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
             raise HTTPException(status_code=404, detail="Skill not found")
 
     return router
+
+
+def _validate_skill_metadata(skill_data: dict) -> None:
+    """Reject metadata the loader would refuse, at write time rather than at load.
+
+    The loader validates every row it reads and raises on the first bad one, so a skill
+    stored with an invalid name disables loading for every skill alongside it. Validating
+    here keeps that row out of the table, the way the schedules router validates a cron
+    expression before the insert.
+    """
+    fields = {
+        "name": skill_data.get("name"),
+        "description": skill_data.get("description"),
+        "license": skill_data.get("license"),
+        "compatibility": skill_data.get("compatibility"),
+        "allowed-tools": skill_data.get("allowed_tools"),
+        "metadata": skill_data.get("metadata"),
+    }
+    # Unset optionals are omitted, not passed as None: the validator checks presence.
+    errors = validate_metadata({key: value for key, value in fields.items() if value is not None})
+    if errors:
+        raise HTTPException(status_code=422, detail="; ".join(errors))
 
 
 async def _fetch_skill(db: Union[BaseDb, AsyncBaseDb, RemoteDb], name: str, user_id: Optional[str] = None) -> dict:
