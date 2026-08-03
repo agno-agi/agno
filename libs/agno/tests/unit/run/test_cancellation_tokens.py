@@ -48,6 +48,45 @@ class TestInMemoryTokens:
         assert await m.acleanup_run_if_token("r1", stale_token) is False
         assert await m.ais_cancelled("r1"), "the newer cancel must survive the delayed cleanup"
 
+    @pytest.mark.asyncio
+    async def test_async_compare_and_delete_holds_the_threading_lock(self):
+        """The asyncio lock only orders coroutines on one loop: a sync
+        cancel_run on ANOTHER THREAD serializes via the threading lock, so
+        the async compare-and-delete must run under it - otherwise a token
+        written between compare and delete is erased."""
+        import threading
+
+        m = InMemoryRunCancellationManager()
+        await m.acancel_run("r1")
+        token = await m.aget_cancellation_token("r1")
+
+        real_lock = m._lock
+        held_during_delete = []
+
+        class RecordingLock:
+            def __enter__(self):
+                real_lock.acquire()
+                return self
+
+            def __exit__(self, *exc):
+                held_during_delete.append(True)
+                real_lock.release()
+
+        m._lock = RecordingLock()  # type: ignore[assignment]
+        assert await m.acleanup_run_if_token("r1", token) is True
+        assert held_during_delete, "compare-and-delete must run inside the shared threading lock"
+        m._lock = real_lock
+
+        # Threaded stress: a newer cancel from another thread must always
+        # survive a concurrent stale-token cleanup
+        await m.acancel_run("r2")
+        stale = await m.aget_cancellation_token("r2")
+        thread = threading.Thread(target=m.cancel_run, args=("r2",))
+        thread.start()
+        thread.join()
+        assert await m.acleanup_run_if_token("r2", stale) is False
+        assert await m.ais_cancelled("r2"), "the thread's newer cancel must survive"
+
     def test_sync_variants_mirror_async(self):
         m = InMemoryRunCancellationManager()
         m.cancel_run("r1")
@@ -114,13 +153,32 @@ class TestRedisTokens:
         assert not m.is_cancelled("r1")
 
     @pytest.mark.asyncio
-    async def test_legacy_bare_1_value_still_reads_cancelled(self):
-        """Values written by older builds ('1' with no token) must keep
-        reading as cancelled, and their token is the raw value - so even
-        legacy intent participates in conditional cleanup."""
+    async def test_wire_value_stays_exactly_1_for_old_replicas(self):
+        """Rolling-upgrade contract: OLD replicas compare the intent value to
+        exactly "1". A new replica's cancel must therefore write "1" verbatim
+        (token in a sidecar key), or mixed-version workers ignore it."""
         m = _redis_manager()
-        m.redis_client.set("test:cancel:r1", "1")
+        await m.acancel_run("r1")
+        raw = m.redis_client.get("test:cancel:r1")
+        assert raw == "1", "the intent wire value must remain exactly '1' for old replicas"
+        assert m.redis_client.get("test:cancel:r1:token"), "token lives in the sidecar key"
+        # And an OLD replica reading with strict equality sees the cancel
         assert await m.ais_cancelled("r1")
-        token = await m.aget_cancellation_token("r1")
-        assert token == "1"
-        assert await m.acleanup_run_if_token("r1", token) is True
+
+    @pytest.mark.asyncio
+    async def test_old_replica_cancel_without_token_is_uncleanable_but_visible(self):
+        """Intent written by an OLD replica has no sidecar token: the token
+        read returns None, callers skip conditional cleanup (safe direction),
+        and the cancel stays visible."""
+        m = _redis_manager()
+        m.redis_client.set("test:cancel:r1", "1")  # old-replica cancel
+        assert await m.ais_cancelled("r1")
+        assert await m.aget_cancellation_token("r1") is None
+
+    @pytest.mark.asyncio
+    async def test_unconditional_cleanup_drops_the_sidecar_too(self):
+        m = _redis_manager()
+        await m.acancel_run("r1")
+        await m.acleanup_run("r1")
+        assert m.redis_client.get("test:cancel:r1") is None
+        assert m.redis_client.get("test:cancel:r1:token") is None
