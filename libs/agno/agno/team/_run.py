@@ -7728,6 +7728,23 @@ async def _acontinue_run_background_stream(
                 except Exception:
                     log_warning(f"Failed to push SSE data to queue for continue-run {_run_id}")
 
+        except asyncio.CancelledError:
+            # Task-level shutdown (event loop stopping), not run-cancellation:
+            # best-effort persist so pollers are not left with a run stuck at
+            # PENDING/RUNNING forever (parity with the primary stream
+            # producer). producer_terminal makes the finally's sentinel say
+            # CANCELLED - without it, complete_run's non-terminal coercion
+            # turned an interrupted continue into a FALSE COMPLETED.
+            producer_terminal = RunStatus.cancelled
+            with contextlib.suppress(Exception):
+                interrupted_run = run_response
+                if interrupted_run is None:
+                    lookup_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
+                    interrupted_run = cast(Optional[TeamRunOutput], lookup_session.get_run(_run_id))
+                if interrupted_run is not None:
+                    interrupted_run.status = RunStatus.cancelled
+                    await apersist_run_transition(team, "team", session_id, interrupted_run, user_id=user_id)
+            raise
         except RunCancelledException:
             # Cancelled while waiting for a slot — execution never started, so
             # persist CANCELLED and deregister the run here. HITL continues may

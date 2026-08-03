@@ -3399,7 +3399,6 @@ class Workflow:
         workflow_run_response: WorkflowRunOutput,
         run_context: RunContext,
         stream_events: bool = False,
-        websocket_handler: Optional["WebSocketHandler"] = None,
         background_tasks: Optional[Any] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
@@ -4366,7 +4365,6 @@ class Workflow:
                         workflow_run_response=workflow_run_response,
                         stream_events=stream_events,
                         run_context=run_context,
-                        websocket_handler=websocket_handler,
                         add_dependencies_to_context=resolved["add_dependencies_to_context"],
                         add_session_state_to_context=resolved["add_session_state_to_context"],
                         **kwargs,
@@ -8017,7 +8015,6 @@ class Workflow:
                 run_context=run_context,
                 start_step_index=start_index,
                 stream_events=stream_events or False,
-                websocket_handler=websocket_handler,
                 **kwargs,
             )
         else:
@@ -8567,7 +8564,6 @@ class Workflow:
         run_context: RunContext,
         start_step_index: int,
         stream_events: bool = False,
-        websocket_handler: Optional["WebSocketHandler"] = None,
         background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> AsyncIterator[WorkflowRunOutputEvent]:
@@ -9341,10 +9337,10 @@ class Workflow:
     ) -> WorkflowRunOutput:
         """Continue a paused workflow in background with WebSocket streaming.
 
-        Mirrors _arun_background_stream_ws but for continue execution. Events are
-        broadcast via websocket_handler through _handle_event calls in
-        _acontinue_execute_stream, which also handles event buffering and
-        websocket manager broadcasting for reconnection support.
+        Mirrors _arun_background_stream_ws but for continue execution. The
+        execute-stream generator is transport-free: this producer publishes
+        every event via _apublish_stream_event (event-stream buffering for
+        reconnection + WebSocket delivery via the handler).
         """
 
         async def _execute_continue_background():
@@ -9386,7 +9382,6 @@ class Workflow:
                     run_context=run_context,
                     start_step_index=start_step_index,
                     stream_events=stream_events,
-                    websocket_handler=websocket_handler,
                     **kwargs,
                 ):
                     if isinstance(_event, WorkflowRunOutput):
@@ -9420,6 +9415,22 @@ class Workflow:
                         paused_event, _continue_run_id, websocket_handler=websocket_handler
                     )
 
+            except asyncio.CancelledError:
+                # Task-level shutdown (event loop stopping), not
+                # run-cancellation: best-effort persist so pollers are not
+                # left with a run stuck at RUNNING (parity with the primary WS
+                # producer). Setting the status before re-raising makes the
+                # finally's sentinel say CANCELLED - without it, complete_run's
+                # non-terminal coercion turned an interrupted continue into a
+                # FALSE COMPLETED.
+                with contextlib.suppress(Exception):
+                    workflow_run_response.status = RunStatus.cancelled
+                    session.upsert_run(run=workflow_run_response)
+                    if self._has_async_db():
+                        await self.asave_session(session=session)
+                    else:
+                        self.save_session(session=session)
+                raise
             except RunCancelledException:
                 # Cancelled while waiting for a slot — execution never started, so
                 # persist CANCELLED and deregister the run here.

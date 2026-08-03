@@ -768,9 +768,7 @@ class QueueWorker:
             if will_fail:
                 persisted = False
                 with contextlib.suppress(Exception, asyncio.CancelledError):
-                    persisted = await asyncio.shield(
-                        self._persist_run_error(job, "interrupted by worker shutdown")
-                    )
+                    persisted = await asyncio.shield(self._persist_run_error(job, "interrupted by worker shutdown"))
                 if not persisted:
                     log_error(
                         f"Job queue: could not persist run-row error for drained job {job_id}; "

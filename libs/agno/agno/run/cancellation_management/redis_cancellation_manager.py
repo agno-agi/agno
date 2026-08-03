@@ -233,16 +233,26 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
         return value == "1"
 
     def cleanup_run(self, run_id: str) -> None:
-        """Remove a run from tracking (called when run completes)."""
-        client = self._ensure_sync_client()
-        key = self._get_key(run_id)
-        client.delete(key)
+        """Remove a run from tracking (called when run completes).
+
+        FAIL-OPEN like is_cancelled: cleanup runs inside terminal paths
+        (producers' finally blocks, continue/requeue seams) where a Redis
+        blip must not fail the surrounding operation. Worst case a stale key
+        lives until its TTL."""
+        try:
+            client = self._ensure_sync_client()
+            client.delete(self._get_key(run_id))
+        except Exception as e:
+            log_warning(f"Cancellation cleanup unavailable (Redis fault, failing open): {e}")
 
     async def acleanup_run(self, run_id: str) -> None:
-        """Remove a run from tracking (called when run completes) (async version)."""
-        client = self._ensure_async_client()
-        key = self._get_key(run_id)
-        await client.delete(key)
+        """Remove a run from tracking (async version). Fail-open: see
+        cleanup_run."""
+        try:
+            client = self._ensure_async_client()
+            await client.delete(self._get_key(run_id))
+        except Exception as e:
+            log_warning(f"Cancellation cleanup unavailable (Redis fault, failing open): {e}")
 
     def raise_if_cancelled(self, run_id: str) -> None:
         """Check if a run should be cancelled and raise exception if so."""
