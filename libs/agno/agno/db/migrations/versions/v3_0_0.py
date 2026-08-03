@@ -55,6 +55,8 @@ def up(db: BaseDb, table_type: str, table_name: str) -> bool:
             return _migrate_firestore(db, table_name)
         elif db_type == "RedisDb":
             return _migrate_redis(db, table_name)
+        elif db_type == "ValkeyDb":
+            return _migrate_valkey(db, table_name)
         elif db_type == "JsonDb":
             return _migrate_jsondb(db, table_name)
         elif db_type == "GcsJsonDb":
@@ -125,6 +127,8 @@ def down(db: BaseDb, table_type: str, table_name: str) -> bool:
             return _revert_firestore(db, table_name)
         elif db_type == "RedisDb":
             return _revert_redis(db, table_name)
+        elif db_type == "ValkeyDb":
+            return _revert_valkey(db, table_name)
         elif db_type == "JsonDb":
             return _revert_jsondb(db, table_name)
         elif db_type == "GcsJsonDb":
@@ -1259,6 +1263,93 @@ def _revert_redis(db: BaseDb, table_name: str) -> bool:
     for sid in list(runs_by_session.keys()):
         try:
             db.redis_client.delete(db._runs_by_session_index_key(sid))  # type: ignore
+        except Exception:
+            pass
+
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Valkey
+# ---------------------------------------------------------------------------
+
+
+def _migrate_valkey(db: BaseDb, table_name: str) -> bool:
+    """Copy runs from the legacy `runs` field on session records into per-run keys.
+
+    Non-destructive: the legacy `runs` field is left in place on the session
+    record. Call ``db.cleanup_legacy_runs_field()`` once you have verified the
+    migration to free the storage.
+    """
+    from glide_sync import ExpirySet, ExpiryType
+
+    from agno.db.valkey.utils import generate_valkey_key, serialize_data  # type: ignore
+
+    sessions = db._get_all_records("sessions")  # type: ignore
+    migrated_runs = 0
+    for session in sessions:
+        legacy_runs = session.get("runs")
+        if not legacy_runs:
+            continue
+        rows = _build_run_rows(legacy_runs, session.get("session_id"), session.get("user_id"), run_data_as_string=False)
+        if not rows:
+            continue
+        # Write each run key directly + populate the sorted-set index.
+        index_key = db._runs_by_session_index_key(session["session_id"])  # type: ignore
+        pipeline = db._create_pipeline()  # type: ignore
+        expiry = ExpirySet(ExpiryType.SEC, db.expire) if db.expire is not None else None  # type: ignore
+        for row in rows:
+            key = generate_valkey_key(prefix=db.db_prefix, table_type="runs", key_id=row["run_id"])  # type: ignore
+            pipeline.set(key, serialize_data(row), expiry=expiry)
+            pipeline.zadd(index_key, {row["run_id"]: float(row.get("run_index") or 0)})
+        if db.expire is not None:  # type: ignore
+            pipeline.expire(index_key, db.expire)  # type: ignore
+        db._exec_pipeline(pipeline)  # type: ignore
+        migrated_runs += len(rows)
+
+    log_info(f"-- Copied {migrated_runs} runs into per-run Valkey keys")
+    log_info(
+        "-- The legacy 'runs' field on each session record was preserved as a backup. "
+        "Once you have verified the migration, drop it via db.cleanup_legacy_runs_field()."
+    )
+    return True
+
+
+def _revert_valkey(db: BaseDb, table_name: str) -> bool:
+    """Revert: rebuild the legacy `runs` field on session records, then delete run keys."""
+    from agno.db.valkey.utils import generate_valkey_key  # type: ignore
+
+    # Collect runs per session
+    runs_keys = db._get_all_records("runs")  # type: ignore
+    runs_by_session: Dict[str, List[Any]] = {}
+    for r in runs_keys:
+        sid = r.get("session_id")
+        if sid is None:
+            continue
+        runs_by_session.setdefault(sid, []).append(
+            (r.get("run_index") or 0, r.get("created_at") or 0, r.get("run_data"))
+        )
+
+    sessions = db._get_all_records("sessions")  # type: ignore
+    for session in sessions:
+        sid = session.get("session_id")
+        items = runs_by_session.get(sid, [])
+        items.sort(key=lambda t: (t[0], t[1]))
+        session["runs"] = [t[2] for t in items]
+        db._store_record(table_type="sessions", record_id=sid, data=session)  # type: ignore
+
+    # Delete per-run keys + per-session indexes
+    for r in runs_keys:
+        rid = r.get("run_id")
+        if not rid:
+            continue
+        try:
+            db.valkey_client.delete([generate_valkey_key(prefix=db.db_prefix, table_type="runs", key_id=rid)])  # type: ignore
+        except Exception:
+            pass
+    for sid in list(runs_by_session.keys()):
+        try:
+            db.valkey_client.delete([db._runs_by_session_index_key(sid)])  # type: ignore
         except Exception:
             pass
 
