@@ -166,8 +166,8 @@ class TestAcceptSideEffects:
             # ticket becomes claimable (i.e. during continue_job)
             original_continue = store.continue_job
 
-            async def continue_then_finish(job_id, continue_payload):
-                result = await original_continue(job_id, continue_payload)
+            async def continue_then_finish(job_id, continue_payload, available_delay_seconds=0):
+                result = await original_continue(job_id, continue_payload, available_delay_seconds)
                 await stream.complete_run(job_id, RunStatus.completed)
                 return result
 
@@ -229,8 +229,8 @@ class TestAcceptSideEffects:
             # becomes claimable
             original_continue = store.continue_job
 
-            async def continue_then_publish(job_id, continue_payload):
-                result = await original_continue(job_id, continue_payload)
+            async def continue_then_publish(job_id, continue_payload, available_delay_seconds=0):
+                result = await original_continue(job_id, continue_payload, available_delay_seconds)
                 await stream.add_event(job_id, _Evt("LegTwoFirst"))
                 await stream.add_event(job_id, _Evt("LegTwoSecond"))
                 return result
@@ -245,11 +245,11 @@ class TestAcceptSideEffects:
             es_mod._event_stream = original
 
     @pytest.mark.asyncio
-    async def test_intent_cleared_before_the_cas(self):
-        """Review-round-2 P1: cleared AFTER the CAS, the cleanup can erase a
-        LEGITIMATE cancel that targeted the already-claimed continuation.
-        The clear must precede the CAS - any cancel landing next hits a
-        still-paused ticket and wins or loses atomically at the store."""
+    async def test_winner_clears_intent_after_cas_inside_the_grace(self):
+        """Review-round-3 P1: a PRE-CAS clear can be arbitrarily delayed (a
+        stale reader erasing a cancel aimed at another continue's running
+        leg). The contract is now: only the CAS WINNER clears, AFTER the CAS,
+        and the accept grace keeps the ticket unclaimable until it has."""
         from agno.run.cancel import acancel_run, ais_cancelled, aregister_run
 
         store = InMemoryQueueStore()
@@ -260,14 +260,39 @@ class TestAcceptSideEffects:
         order: list = []
         original_continue = store.continue_job
 
-        async def recording_continue(job_id, continue_payload):
-            order.append(("cas", await ais_cancelled(job_id)))
-            return await original_continue(job_id, continue_payload)
+        async def recording_continue(job_id, continue_payload, available_delay_seconds=0):
+            order.append(("cas", await ais_cancelled(job_id), available_delay_seconds))
+            return await original_continue(job_id, continue_payload, available_delay_seconds)
 
         store.continue_job = recording_continue  # type: ignore[method-assign]
+        import time as _time
+
+        t0 = int(_time.time())
         result = await acontinue_via_queue(make_worker(store), "r1", {})
         assert result["outcome"] == "queued"
-        assert order == [("cas", False)], "stale intent must already be cleared when the CAS runs"
+        assert order == [("cas", True, 1)], "intent must still exist at CAS time, and the CAS must carry the grace"
+        assert not await ais_cancelled("r1"), "the winner must have cleared the stale intent after the CAS"
+        ticket = await store.get_job("r1")
+        assert ticket["available_at"] >= t0 + 1, "ticket must carry the accept grace"
+
+    @pytest.mark.asyncio
+    async def test_attach_loser_never_clears_intent(self):
+        """The CAS loser (double-click / stale reader) must not touch
+        cancellation state: an intent registered against the winner's leg
+        survives the loser's attach."""
+        from agno.run.cancel import acancel_run, ais_cancelled, aregister_run
+
+        store = InMemoryQueueStore()
+        await _pause(store)
+        worker = make_worker(store)
+        assert (await acontinue_via_queue(worker, "r1", {"a": 1}))["outcome"] == "queued"
+        # A cancel now targets the accepted continuation
+        await aregister_run("r1")
+        await acancel_run("r1")
+
+        result = await acontinue_via_queue(worker, "r1", {"a": 2})
+        assert result["outcome"] == "attach"
+        assert await ais_cancelled("r1"), "the losing continue must not erase the cancel aimed at the winner's leg"
 
     @pytest.mark.asyncio
     async def test_attach_uses_winners_persisted_tail_boundary(self):
@@ -315,14 +340,24 @@ class TestAcceptSideEffects:
         finally:
             es_mod._event_stream = original
 
-    @pytest.mark.asyncio
-    async def test_requeue_endpoint_clears_intent_before_the_transition(self):
-        """Serendipity sibling of the round-2 intent-order finding: the
-        operator requeue endpoint had the same shape - transition first,
-        cleanup second - with the same erase-a-legitimate-cancel window."""
+    def _requeue_endpoint(self, store):
         from types import SimpleNamespace
 
         from agno.os.routers.job_queue.router import get_queue_router
+
+        router = get_queue_router(os=SimpleNamespace(), settings=SimpleNamespace(os_security_key=None))  # type: ignore[arg-type]
+        endpoint = next(r.endpoint for r in router.routes if getattr(r, "path", "") == "/queue/jobs/{job_id}/requeue")
+        request = SimpleNamespace(
+            app=SimpleNamespace(state=SimpleNamespace(queue_worker=make_worker(store))),
+            state=SimpleNamespace(),
+        )
+        return endpoint, request
+
+    @pytest.mark.asyncio
+    async def test_requeue_clears_intent_only_after_a_successful_transition(self):
+        """Review-round-3 P1: the winner clears AFTER requeue_job succeeds,
+        inside the accept grace - so nothing can claim before the cleanup,
+        and only the transition winner ever touches intent."""
         from agno.run.cancel import acancel_run, ais_cancelled, aregister_run
 
         store = InMemoryQueueStore()
@@ -332,24 +367,56 @@ class TestAcceptSideEffects:
         await aregister_run("r1")
         await acancel_run("r1")
 
-        order: list = []
-        original_requeue = store.requeue_job
+        import time as _time
 
-        async def recording_requeue(job_id):
-            order.append(("requeue", await ais_cancelled(job_id)))
-            return await original_requeue(job_id)
-
-        store.requeue_job = recording_requeue  # type: ignore[method-assign]
-
-        router = get_queue_router(os=SimpleNamespace(), settings=SimpleNamespace(os_security_key=None))  # type: ignore[arg-type]
-        endpoint = next(r.endpoint for r in router.routes if getattr(r, "path", "") == "/queue/jobs/{job_id}/requeue")
-        request = SimpleNamespace(
-            app=SimpleNamespace(state=SimpleNamespace(queue_worker=make_worker(store))),
-            state=SimpleNamespace(),
-        )
+        endpoint, request = self._requeue_endpoint(store)
+        t0 = int(_time.time())
         result = await endpoint(request, "r1")
         assert result["status"] == "queued"
-        assert order == [("requeue", False)], "stale intent must already be cleared when the requeue transition runs"
+        assert not await ais_cancelled("r1"), "stale intent cleared after the successful requeue"
+        assert result["available_at"] >= t0 + 1, "requeued ticket must carry the accept grace"
+
+    @pytest.mark.asyncio
+    async def test_rejected_requeue_never_touches_intent(self):
+        """Review-round-3 P1 regression: requeueing a RUNNING (non-requeueable)
+        job must not erase the cancellation intent aimed at that attempt."""
+        from fastapi import HTTPException
+
+        from agno.run.cancel import acancel_run, ais_cancelled, aregister_run
+
+        store = InMemoryQueueStore()
+        await store.enqueue_job(make_job("r1"))
+        await store.claim_job("w1")  # running
+        await aregister_run("r1")
+        await acancel_run("r1")  # legitimate cancel of the running attempt
+
+        endpoint, request = self._requeue_endpoint(store)
+        with pytest.raises(HTTPException) as exc:
+            await endpoint(request, "r1")
+        assert exc.value.status_code == 400
+        assert await ais_cancelled("r1"), "a rejected requeue must leave the running attempt's cancel intact"
+
+    @pytest.mark.asyncio
+    async def test_post_cas_attach_uses_winners_persisted_boundary(self):
+        """Review-round-3 P2: two callers both read paused; the loser's CAS
+        returns attach AFTER its own floor was recomputed - possibly past the
+        winner-leg's first events. The loser must adopt the boundary the
+        winner persisted into the ticket, not its own."""
+        store = InMemoryQueueStore()
+        await _pause(store, stream=True)
+
+        original_continue = store.continue_job
+
+        async def losing_continue(job_id, continue_payload, available_delay_seconds=0):
+            # Simulate the race: the winner's CAS landed first (boundary 3
+            # persisted); this caller's CAS finds queued and attaches
+            await original_continue(job_id, {"a": "winner", "tail_from": 3}, available_delay_seconds)
+            return await original_continue(job_id, continue_payload, available_delay_seconds)
+
+        store.continue_job = losing_continue  # type: ignore[method-assign]
+        result = await acontinue_via_queue(make_worker(store), "r1", {"a": "loser"})
+        assert result["outcome"] == "attach"
+        assert result["tail_from"] == 3, "the loser must adopt the winner's persisted boundary"
 
     @pytest.mark.asyncio
     async def test_non_stream_submission_does_not_touch_stream_status(self):

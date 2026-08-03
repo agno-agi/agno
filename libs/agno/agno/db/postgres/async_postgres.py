@@ -4453,7 +4453,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_debug(f"Error listing run jobs: {e}")
             return []
 
-    async def requeue_job(self, job_id: str) -> bool:
+    async def requeue_job(self, job_id: str, available_delay_seconds: int = 0) -> bool:
         """Operator requeue for a terminally failed/cancelled job: grants
         exactly one more execution by raising max_attempts to attempt + 1."""
         try:
@@ -4469,7 +4469,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                         .values(
                             status="queued",
                             max_attempts=table.c.attempt + 1,
-                            available_at=now,
+                            available_at=now + available_delay_seconds,
                             locked_by=None,
                             locked_at=None,
                             completed_at=None,
@@ -4481,7 +4481,9 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_debug(f"Error requeueing run job: {e}")
             return False
 
-    async def continue_job(self, job_id: str, continue_payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def continue_job(
+        self, job_id: str, continue_payload: Dict[str, Any], available_delay_seconds: int = 0
+    ) -> Dict[str, Any]:
         """Continuation CAS: flip the EXISTING paused ticket back to queued,
         mirroring requeue_job's transition (row-locked read + conditional
         update in one transaction). No new rows, ever - id == run_id is
@@ -4519,7 +4521,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     "status": "queued",
                     "payload": payload,
                     "max_attempts": job["attempt"] + 1,
-                    "available_at": now,
+                    "available_at": now + available_delay_seconds,
                     "locked_by": None,
                     "locked_at": None,
                     "completed_at": None,

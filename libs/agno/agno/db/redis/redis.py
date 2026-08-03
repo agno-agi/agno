@@ -2620,7 +2620,7 @@ class RedisDb(BaseDb):
                         return jobs
             offset += chunk
 
-    def requeue_job(self, job_id: str) -> bool:
+    def requeue_job(self, job_id: str, available_delay_seconds: int = 0) -> bool:
         """Operator requeue for a terminally failed/cancelled job: grants
         exactly one more execution by raising max_attempts to attempt + 1."""
         from redis.exceptions import WatchError
@@ -2641,7 +2641,7 @@ class RedisDb(BaseDb):
                 job.update(
                     status="queued",
                     max_attempts=job["attempt"] + 1,
-                    available_at=now,
+                    available_at=now + available_delay_seconds,
                     locked_by=None,
                     locked_at=None,
                     completed_at=None,
@@ -2655,7 +2655,9 @@ class RedisDb(BaseDb):
         except WatchError:
             return False
 
-    def continue_job(self, job_id: str, continue_payload: Dict[str, Any]) -> Dict[str, Any]:
+    def continue_job(
+        self, job_id: str, continue_payload: Dict[str, Any], available_delay_seconds: int = 0
+    ) -> Dict[str, Any]:
         """Continuation CAS: flip the EXISTING paused ticket back to queued,
         mirroring requeue_job's WATCH/MULTI transition. No new rows, ever -
         id == run_id is load-bearing. Submit-time payload fields are kept;
@@ -2699,7 +2701,7 @@ class RedisDb(BaseDb):
                         status="queued",
                         payload=payload,
                         max_attempts=job["attempt"] + 1,
-                        available_at=now,
+                        available_at=now + available_delay_seconds,
                         locked_by=None,
                         locked_at=None,
                         completed_at=None,

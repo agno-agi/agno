@@ -109,6 +109,14 @@ def _apply_coordination(redis: Union[str, RedisCoordination]) -> None:
 # Default timeout (in seconds) when stopping the worker
 _DEFAULT_STOP_TIMEOUT = 30
 
+# Accept grace for continue/requeue transitions: the ticket becomes queued
+# atomically but stays unclaimable for this long, so the accepting request's
+# post-CAS cancellation-intent cleanup always lands before any claim can.
+# One second dwarfs the cleanup (a single coordination write) by orders of
+# magnitude and stays within the worker's default poll interval, so it adds
+# no visible latency to the continuation.
+_ACCEPT_GRACE_SECONDS = 1
+
 
 class _SyncStoreAdapter:
     """Awaitable facade over a sync queue store (e.g. the sync PostgresDb).
@@ -968,27 +976,42 @@ async def acontinue_via_queue(
         # timed out after the pause write): the detached path can still
         # continue the run; the caller logs the bypass
         return None
-    # Clear stale cancellation intent BEFORE the CAS (requeue-endpoint fix,
-    # mirrored - intent left over from the paused stretch would kill the new
-    # leg at its first checkpoint). Ordering is load-bearing: cleared AFTER
-    # the CAS, this could erase a LEGITIMATE cancel that targeted the
-    # already-claimed continuation. Cleared before, any cancel landing next
-    # hits a still-paused ticket, flips it paused -> cancelled, and our CAS
-    # loses with an honest conflict - the store transition is the arbiter.
-    try:
-        from agno.run.cancel import acleanup_run
-
-        await acleanup_run(run_id)
-    except Exception:
-        log_warning(f"Could not clear cancellation intent for continued run {run_id}")
     if ticket_streams:
         # Persist the tail boundary in the continue block so every attacher
         # reads the accepted click's floor instead of recomputing one after
         # the leg already started publishing
         continue_payload = dict(continue_payload)
         continue_payload["tail_from"] = tail_from
-    result = await queue_worker.store.continue_job(run_id, continue_payload)
-    result["tail_from"] = tail_from
+    # The CAS carries an ACCEPT GRACE (available_at = now + grace): the ticket
+    # becomes queued atomically but is unclaimable for the grace window, and
+    # ONLY the CAS WINNER clears stale cancellation intent - inside that
+    # window, so a claim can never precede the cleanup. This closes both
+    # cancellation races: a pre-CAS clear could be arbitrarily delayed (a
+    # stale reader erasing a cancel aimed at another continue's running leg),
+    # and an ungated post-CAS clear could race a fast claim. Losers clear
+    # nothing; cancels landing during the grace hit a QUEUED ticket and
+    # tombstone it at the store - intent is only ever load-bearing for a
+    # CLAIMED leg, which cannot exist until the grace expires.
+    result = await queue_worker.store.continue_job(
+        run_id, continue_payload, available_delay_seconds=_ACCEPT_GRACE_SECONDS
+    )
+    if result.get("outcome") == "queued":
+        try:
+            from agno.run.cancel import acleanup_run
+
+            await acleanup_run(run_id)
+        except Exception:
+            # Worst case the stale intent kills the leg at its first
+            # checkpoint (visible CANCELLED); operator requeue is the remedy
+            log_warning(f"Could not clear cancellation intent for continued run {run_id}")
+    if result.get("outcome") == "attach":
+        # CAS-race loser: both callers read paused, the other one won. Its
+        # boundary is the accepted one - ours may already include the
+        # winner-leg's first events and would skip them for this attacher.
+        persisted = ((result.get("job") or {}).get("payload") or {}).get("continue") or {}
+        result["tail_from"] = persisted.get("tail_from", tail_from)
+    else:
+        result["tail_from"] = tail_from
     if result.get("outcome") == "queued" and ticket_streams:
         # PAUSED is tail-terminal in the event stream (status AND a stream
         # sentinel): without reopening, a tail attached between accept and

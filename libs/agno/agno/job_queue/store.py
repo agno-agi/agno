@@ -184,7 +184,7 @@ class InMemoryQueueStore:
             jobs.sort(key=lambda j: j["created_at"], reverse=True)
             return jobs[:limit]
 
-    async def requeue_job(self, job_id: str) -> bool:
+    async def requeue_job(self, job_id: str, available_delay_seconds: int = 0) -> bool:
         """Operator requeue for a terminally failed/cancelled job: grants
         exactly one more execution by raising max_attempts to attempt + 1."""
         async with self._lock:
@@ -195,7 +195,7 @@ class InMemoryQueueStore:
             job.update(
                 status="queued",
                 max_attempts=job["attempt"] + 1,
-                available_at=now,
+                available_at=now + available_delay_seconds,
                 locked_by=None,
                 locked_at=None,
                 completed_at=None,
@@ -203,7 +203,9 @@ class InMemoryQueueStore:
             )
             return True
 
-    async def continue_job(self, job_id: str, continue_payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def continue_job(
+        self, job_id: str, continue_payload: Dict[str, Any], available_delay_seconds: int = 0
+    ) -> Dict[str, Any]:
         """Continuation CAS: flip the EXISTING paused ticket back to queued,
         mirroring requeue_job's transition. No new rows, ever - id == run_id
         is load-bearing. The ticket's submit-time payload fields are kept and
@@ -233,7 +235,7 @@ class InMemoryQueueStore:
                 status="queued",
                 payload=payload,
                 max_attempts=job["attempt"] + 1,
-                available_at=now,
+                available_at=now + available_delay_seconds,
                 locked_by=None,
                 locked_at=None,
                 completed_at=None,

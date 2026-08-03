@@ -338,6 +338,30 @@ class TestContinueJob:
         assert redriven["payload"]["continue"]["updated_tools"][0]["tool_call_id"] == "t1"
 
 
+class TestAcceptGrace:
+    @pytest.mark.asyncio
+    async def test_continue_grace_blocks_claims_until_it_expires(self, store):
+        """available_delay_seconds is the atomic non-claimable reservation:
+        the ticket flips queued in the CAS but no worker can claim it inside
+        the window - the accepting request's intent cleanup always wins."""
+        await _pause_job(store)
+        result = await store.continue_job("r1", {"a": 1}, available_delay_seconds=30)
+        assert result["outcome"] == "queued"
+        assert await store.claim_job("w2") is None, "unclaimable inside the accept grace"
+        store._jobs["r1"]["available_at"] -= 60  # grace expires
+        assert (await store.claim_job("w2"))["id"] == "r1"
+
+    @pytest.mark.asyncio
+    async def test_requeue_grace_blocks_claims_until_it_expires(self, store):
+        await store.enqueue_job(make_job("r1"))
+        claimed = await store.claim_job("w1")
+        await store.retry_or_fail_job("r1", "w1", claimed["attempt"], "boom")
+        assert await store.requeue_job("r1", available_delay_seconds=30)
+        assert await store.claim_job("w2") is None
+        store._jobs["r1"]["available_at"] -= 60
+        assert (await store.claim_job("w2"))["id"] == "r1"
+
+
 class TestCancelPaused:
     @pytest.mark.asyncio
     async def test_cancel_reaches_paused_tickets(self, store):
