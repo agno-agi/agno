@@ -1081,9 +1081,11 @@ async def acontinue_via_queue(
     or retention cleaned a terminal ticket), a foreign job_type, or a
     terminal ticket under a paused run row. Otherwise returns
     {"outcome": ..., "job": row, "tail_from": index|None}:
-    - queued: accepted; stale cancellation intent cleared (requeue-fix
-      mirror), and for streaming submissions the stream status flips
-      PAUSED -> PENDING so a fresh tail does not treat the settled pause as
+    - queued: accepted. Cancellation intent is deliberately NOT touched
+      (no automatic cleanup exists anywhere - stale intent cancels the leg
+      visibly and the operator override lives on the requeue endpoint). For
+      streaming submissions the stream status flips PAUSED -> PENDING via
+      the atomic reopen so a fresh tail does not treat the settled pause as
       terminal (the worker stamps RUNNING at claim).
     - attach: a continue was already accepted and is queued (double-click) -
       attach to it; this click's inputs are discarded.

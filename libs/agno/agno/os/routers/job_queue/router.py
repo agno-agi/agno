@@ -19,7 +19,6 @@ from agno.os.schema import (
     UnauthenticatedResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.utils.log import log_warning
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
@@ -112,20 +111,49 @@ def get_queue_router(os: "AgentOS", settings: AgnoAPISettings = AgnoAPISettings(
         store = _get_store(request)
         # Cancellation intent is never cleared AUTOMATICALLY: every silent
         # scheme reviewed had a window where a delayed cleanup could erase a
-        # newer, legitimate cancel. Instead the OPERATOR opts in: requeueing
-        # a previously cancelled job whose intent is still live (it outlives
-        # the tombstone - nothing executed, so nothing cleaned it up; TTL
-        # bounds it at ~24h) needs clear_cancellation=true, an explicit,
-        # human-initiated override of a recorded cancel. Without it the
-        # re-driven attempt is re-cancelled at its first checkpoint,
-        # visibly - annoying but never wrong.
+        # newer, legitimate cancel. Instead the OPERATOR opts in with
+        # clear_cancellation=true - an explicit, human-initiated override of
+        # a recorded cancel (intent outlives a cancelled-while-queued
+        # tombstone: nothing executed, so nothing cleaned it up; TTL bounds
+        # it at ~24h). Without the flag the re-driven attempt is re-cancelled
+        # at its first checkpoint, visibly - annoying but never wrong.
+        #
+        # The override is STATE-GATED and coupled to the transition:
+        # 1) Gate: only a currently-requeueable (failed/cancelled) job may
+        #    have intent cleared. Intent can only target a LIVE attempt, and
+        #    live attempts exist only on running/queued/paused tickets - so
+        #    rejecting those up front, WITHOUT touching intent, makes the
+        #    dangerous class (erasing a running attempt's cancel and then
+        #    400ing) unreachable.
+        # 2) Clear BEFORE the requeue CAS: cleared after it, the clear could
+        #    be delayed past a worker's claim and a fresh cancel of the
+        #    re-driven attempt - the erase-a-newer-cancel window again.
+        #    Cleared first, the ticket only becomes claimable once the
+        #    override already happened.
+        # 3) Clear failure ABORTS (503, nothing requeued): the operator asked
+        #    for clear+requeue and must get both or neither - a silent
+        #    requeue-without-clear would insta-cancel the re-driven attempt
+        #    while reporting the override succeeded.
+        # Residual (documented, accepted): between the gate read and the
+        # clear, a CONCURRENT requeue + claim + fresh cancel could interleave
+        # and be erased - cross-store atomicity between the job store and the
+        # cancellation manager does not exist (same constraint as the sweep).
+        # That needs two operators acting on one job simultaneously on an
+        # admin-only surface; attempt-scoped intent (roadmap) closes it.
         if clear_cancellation:
+            job = await store.get_job(job_id)
+            if job is None or job.get("status") not in ("failed", "cancelled"):
+                raise HTTPException(status_code=400, detail=f"Job {job_id} not found or not in a requeueable state")
             try:
                 from agno.run.cancel import acleanup_run
 
                 await acleanup_run(job_id)
             except Exception:
-                log_warning(f"Could not clear cancellation intent for requeued job {job_id}")
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Could not clear cancellation intent for job {job_id}; "
+                    "the job was NOT requeued - retry the request",
+                )
         if not await store.requeue_job(job_id):
             raise HTTPException(status_code=400, detail=f"Job {job_id} not found or not in a requeueable state")
         return await store.get_job(job_id)

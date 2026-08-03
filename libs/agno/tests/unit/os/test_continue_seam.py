@@ -445,7 +445,11 @@ class TestAcceptSideEffects:
     @pytest.mark.asyncio
     async def test_rejected_requeue_never_touches_intent(self):
         """Review-round-3 P1 regression: requeueing a RUNNING (non-requeueable)
-        job must not erase the cancellation intent aimed at that attempt."""
+        job must not erase the cancellation intent aimed at that attempt -
+        WITH OR WITHOUT the explicit override flag. The flagged variant is
+        the round-7 P1: the clear ran before the requeueable check, so a
+        rejected explicit requeue erased a live attempt's cancel and then
+        400ed. The state gate must reject BEFORE touching intent."""
         from fastapi import HTTPException
 
         from agno.run.cancel import acancel_run, ais_cancelled, aregister_run
@@ -461,6 +465,40 @@ class TestAcceptSideEffects:
             await endpoint(request, "r1")
         assert exc.value.status_code == 400
         assert await ais_cancelled("r1"), "a rejected requeue must leave the running attempt's cancel intact"
+
+        # The dangerous variant: the override flag on a non-requeueable job
+        with pytest.raises(HTTPException) as exc:
+            await endpoint(request, "r1", clear_cancellation=True)
+        assert exc.value.status_code == 400
+        assert await ais_cancelled("r1"), "a rejected EXPLICIT requeue must not erase the running attempt's cancel"
+        assert (await store.get_job("r1"))["status"] == "running", "the job must be untouched"
+
+    @pytest.mark.asyncio
+    async def test_clear_failure_aborts_without_requeueing(self):
+        """Round-7 review: the operator asked for clear+requeue and must get
+        both or neither. A failed clear that still requeues would insta-cancel
+        the re-driven attempt while reporting the override succeeded - so a
+        clear failure aborts with 503 and the job stays terminal."""
+        from unittest.mock import patch
+
+        from fastapi import HTTPException
+
+        from agno.run.cancel import acancel_run, ais_cancelled, aregister_run
+
+        store = InMemoryQueueStore()
+        await store.enqueue_job(make_job("r1"))
+        claimed = await store.claim_job("w1")
+        await store.retry_or_fail_job("r1", "w1", claimed["attempt"], "boom")  # -> failed
+        await aregister_run("r1")
+        await acancel_run("r1")
+
+        endpoint, request = self._requeue_endpoint(store)
+        with patch("agno.run.cancel.acleanup_run", side_effect=RuntimeError("redis down")):
+            with pytest.raises(HTTPException) as exc:
+                await endpoint(request, "r1", clear_cancellation=True)
+        assert exc.value.status_code == 503
+        assert (await store.get_job("r1"))["status"] == "failed", "nothing may be requeued on a failed clear"
+        assert await ais_cancelled("r1"), "intent must survive the failed clear attempt"
 
     @pytest.mark.asyncio
     async def test_post_cas_attach_uses_winners_persisted_boundary(self):
