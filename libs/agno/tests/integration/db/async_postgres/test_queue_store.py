@@ -268,6 +268,26 @@ class TestContinuationCAS:
         assert redriven["payload"]["continue"]["updated_tools"][0]["tool_call_id"] == "t1"
 
     @pytest.mark.asyncio
+    async def test_settle_paused_terminalizes_inline_continue(self, db):
+        """Inline continue finished outside the queue: the paused ticket
+        settles to terminal, and a queued continuation is never clobbered."""
+        await _pause_job(db)
+        assert await db.settle_paused_job("r1", "completed") is True
+        job = await db.get_job("r1")
+        assert job["status"] == "completed"
+        assert job["completed_at"] is not None
+        # Once settled, settle is not repeatable and continue conflicts
+        assert await db.settle_paused_job("r1", "completed") is False
+        assert (await db.continue_job("r1", {}))["outcome"] == "conflict"
+
+    @pytest.mark.asyncio
+    async def test_settle_loses_to_a_queued_continuation(self, db):
+        await _pause_job(db)
+        assert (await db.continue_job("r1", {"updated_tools": []}))["outcome"] == "queued"
+        assert await db.settle_paused_job("r1", "completed") is False
+        assert (await db.get_job("r1"))["status"] == "queued"
+
+    @pytest.mark.asyncio
     async def test_cancel_paused_blocks_continue(self, db):
         await _pause_job(db)
         assert await db.cancel_job("r1") is True
