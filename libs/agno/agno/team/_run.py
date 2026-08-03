@@ -7787,9 +7787,22 @@ async def _acontinue_run_background_stream(
                 # producer_terminal wins: with run_response=None the old fallback
                 # marked a cancelled/errored run COMPLETED, so /resume lied
                 # about a run that never executed
-                final_status = (
-                    producer_terminal or (run_response.status if run_response else None) or RunStatus.completed
-                )
+                final_status = producer_terminal or (run_response.status if run_response else None)
+                if final_status is None:
+                    # HTTP continues arrive with run_response=None: the run row
+                    # is the only truth for the final status. Falling through
+                    # to COMPLETED here marked a RE-PAUSED continue (a chained
+                    # HITL pause) with a completed sentinel - key refreshing
+                    # stopped and the next continue restarted indices.
+                    with contextlib.suppress(Exception):
+                        lookup_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
+                        final_status = getattr(lookup_session.get_run(_run_id), "status", None)
+                if isinstance(final_status, str) and not isinstance(final_status, RunStatus):
+                    # DB round-trips can degrade the enum to a plain str
+                    with contextlib.suppress(ValueError):
+                        final_status = RunStatus(final_status)
+                if not isinstance(final_status, RunStatus):
+                    final_status = RunStatus.completed
                 await asyncio.shield(event_stream.complete_run(_run_id, final_status))
             except (Exception, asyncio.CancelledError):
                 log_warning(f"Failed to mark continue-run {_run_id} as completed in event stream")
