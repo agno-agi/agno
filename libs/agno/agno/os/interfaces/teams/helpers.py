@@ -26,8 +26,13 @@ class TeamsConfig:
     app_id: str
     app_password: str
     tenant_id: str = "botframework.com"
-    app_type: str = "MultiTenant"
     request_timeout: int = 30
+    # Note: `app_type` (MultiTenant / SingleTenant / UserAssignedMSI) is deliberately
+    # not modelled here. The token flow is client-credentials, so MultiTenant and
+    # SingleTenant behave identically (the tenant guid alone drives the token URL),
+    # and MSI needs a different auth path (IDENTITY_ENDPOINT). Deferred to v2 with
+    # real MSI support — plan is to add a small `token_provider` hook so operators
+    # can plug in Managed Identity without changing the interface signature.
 
     # Cached bot access token (populated by _get_bot_token)
     _cached_token: Optional[str] = field(default=None, repr=False)
@@ -39,7 +44,6 @@ class TeamsConfig:
         app_id: Optional[str] = None,
         app_password: Optional[str] = None,
         tenant_id: Optional[str] = None,
-        app_type: Optional[str] = None,
         request_timeout: int = 30,
     ) -> "TeamsConfig":
         """Build a config using constructor args first, then env vars.
@@ -47,7 +51,6 @@ class TeamsConfig:
         Env-var fallbacks:
           - ``MICROSOFT_APP_ID`` / ``MICROSOFT_APP_PASSWORD`` — required
           - ``MICROSOFT_APP_TENANT_ID`` — defaults to ``botframework.com``
-          - ``MICROSOFT_APP_TYPE`` — defaults to ``MultiTenant``
 
         Raises ``ValueError`` if ``app_id`` or ``app_password`` cannot be
         resolved from either source.
@@ -55,7 +58,6 @@ class TeamsConfig:
         aid = app_id or os.getenv("MICROSOFT_APP_ID")
         secret = app_password or os.getenv("MICROSOFT_APP_PASSWORD")
         tid = tenant_id or os.getenv("MICROSOFT_APP_TENANT_ID") or "botframework.com"
-        atype = app_type or os.getenv("MICROSOFT_APP_TYPE") or "MultiTenant"
 
         if not aid:
             raise ValueError("MICROSOFT_APP_ID is not set. Set the environment variable or pass app_id.")
@@ -66,7 +68,6 @@ class TeamsConfig:
             app_id=aid,
             app_password=secret,
             tenant_id=tid,
-            app_type=atype,
             request_timeout=request_timeout,
         )
 
