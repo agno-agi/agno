@@ -1,6 +1,7 @@
+import json
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -521,7 +522,7 @@ class MySQLDb(BaseDb):
             .where(runs_table.c.session_id == session_id)
             .order_by(runs_table.c.run_index.asc(), runs_table.c.created_at.asc())
         )
-        return [row[0] for row in sess.execute(stmt).fetchall()]
+        return [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in sess.execute(stmt).fetchall()]
 
     def _get_sessions_runs_data(
         self, sess, runs_table: Table, session_ids: List[str]
@@ -536,6 +537,8 @@ class MySQLDb(BaseDb):
         )
         runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
         for session_id, run_data in sess.execute(stmt).fetchall():
+            if isinstance(run_data, str):
+                run_data = json.loads(run_data)
             runs_by_session.setdefault(session_id, []).append(run_data)
         return runs_by_session
 
@@ -947,10 +950,6 @@ class MySQLDb(BaseDb):
             log_error(f"Exception getting sessions: {str(e)}")
             raise e
 
-    def _legacy_runs_update(self, table: Table) -> Dict[str, Any]:
-        """Extra UPDATE clauses to clear the legacy runs column when it still exists."""
-        return {"runs": None} if "runs" in table.c else {}
-
     def rename_session(
         self,
         session_id: str,
@@ -1081,7 +1080,8 @@ class MySQLDb(BaseDb):
 
             update_values = {k: v for k, v in values.items() if k != "session_type"}
             update_values["updated_at"] = int(time.time())
-            update_values.update(self._legacy_runs_update(table))
+            # Legacy `runs` column intentionally preserved as a frozen backup; only
+            # cleanup_legacy_runs_column() reclaims it (see upsert_session docstring).
 
             with self.Session() as sess, sess.begin():
                 existing_row = sess.execute(
@@ -1173,8 +1173,6 @@ class MySQLDb(BaseDb):
                 ]
                 return session_dict
 
-            extra_clear_runs = self._legacy_runs_update(table)
-
             results: List[Union[Session, Dict[str, Any]]] = []
 
             # Process each session type in bulk
@@ -1211,7 +1209,6 @@ class MySQLDb(BaseDb):
                             summary=stmt.inserted.summary,
                             metadata=stmt.inserted.metadata,
                             updated_at=stmt.inserted.updated_at,
-                            **extra_clear_runs,
                         )
                         sess.execute(stmt, agent_data)
 
@@ -1262,7 +1259,6 @@ class MySQLDb(BaseDb):
                             summary=stmt.inserted.summary,
                             metadata=stmt.inserted.metadata,
                             updated_at=stmt.inserted.updated_at,
-                            **extra_clear_runs,
                         )
                         sess.execute(stmt, team_data)
 
@@ -1313,7 +1309,6 @@ class MySQLDb(BaseDb):
                             summary=stmt.inserted.summary,
                             metadata=stmt.inserted.metadata,
                             updated_at=stmt.inserted.updated_at,
-                            **extra_clear_runs,
                         )
                         sess.execute(stmt, workflow_data)
 
@@ -3049,6 +3044,7 @@ class MySQLDb(BaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        group_by: Literal["session", "agent", "team", "workflow", "endpoint"] = "session",
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 
@@ -3061,12 +3057,19 @@ class MySQLDb(BaseDb):
             end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
+            group_by: Only the default "session" grouping is supported by this backend.
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
                 Each dict contains: session_id, user_id, agent_id, team_id, total_traces,
                 workflow_id, first_trace_at, last_trace_at.
         """
+        if group_by != "session":
+            raise NotImplementedError(
+                f"get_trace_stats with group_by={group_by!r} is not supported by {self.__class__.__name__}. "
+                "Only the default 'session' grouping is available."
+            )
+
         try:
             table = self._get_table(table_type="traces")
             if table is None:

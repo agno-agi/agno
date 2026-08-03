@@ -55,6 +55,7 @@ surface.
 | [22_studio](./22_studio/) | Compose, version, inspect, and approve AgentOS components with the Registry, StudioTools, and components API. |
 | [23_skills](./23_skills/) | Serve local skills through an Agent and execute checked-in skill scripts through the AgentOS run API. |
 | [24_showcase](./24_showcase/) | Run the secure, traced capstone with RAG, web and finance research, a Team, and a real evaluation. |
+| [25_agentos_tools](./25_agentos_tools/) | Answer platform ops questions (usage, latency, tool statistics) with an agent using AgentOSTools. |
 
 ## Canonical ports
 
@@ -100,6 +101,7 @@ surface.
 | `22_studio` | `OPENAI_API_KEY`; `ANTHROPIC_API_KEY` for Claude-backed runs | Local synchronous SQLite for Registry and components CRUD |
 | `23_skills` | `OPENAI_API_KEY` | Local sample-skill files with executable Python scripts |
 | `24_showcase` | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OS_SECURITY_KEY` | `./cookbook/scripts/run_pgvector.sh`, internet access, and tracing |
+| `25_agentos_tools` | `OPENAI_API_KEY` | Local SQLite with tracing enabled |
 
 Run cookbook files with `.venvs/demo/bin/python`. Development checks use
 `.venv`.

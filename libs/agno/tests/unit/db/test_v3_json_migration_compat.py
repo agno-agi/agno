@@ -164,3 +164,41 @@ def test_get_run_get_runs_apis():
 
     db.delete_session("sx")
     assert len(db._read_runs_file()) == 0
+
+
+def test_upgrade_without_migration_preserves_runs_on_write():
+    """Regression: upgrading to v3 and continuing a pre-v3 session before running
+    the migration must not silently drop the legacy runs blob.
+
+    Bug shape: session.to_dict(include_runs=False) omits `runs`; a bare
+    ``sessions[i] = session_dict`` replace erases anything the legacy blob
+    was holding. Read then merges an empty legacy blob with an empty runs
+    table -> history gone. Only cleanup_legacy_runs_field() should drop it,
+    explicitly.
+    """
+    db = _new_db()
+    legacy = [_make_run(f"r{i}", "s_upgrade", f"c{i}").to_dict() for i in range(3)]
+    _insert_legacy_session(db, "s_upgrade", legacy)
+
+    # Sanity: pre-v3 read sees the runs via the merge helper.
+    before = db.get_session(session_id="s_upgrade", session_type=SessionType.AGENT)
+    assert before is not None
+    assert [r.run_id for r in (before.runs or [])] == ["r0", "r1", "r2"]
+
+    # Simulate a v3 code path continuing this session: reload + save the
+    # session row (as _cleanup_and_store would). Under v3, save_session does
+    # not write runs -- new runs go to the runs table via save_run.
+    reloaded = db.get_session(session_id="s_upgrade", session_type=SessionType.AGENT)
+    assert reloaded is not None
+    reloaded.metadata = {"touched_by_v3": True}
+    db.upsert_session(reloaded)
+
+    # After the v3 write, the legacy blob must still be intact -- the read
+    # returns the same three pre-v3 runs.
+    after = db.get_session(session_id="s_upgrade", session_type=SessionType.AGENT)
+    assert after is not None
+    assert [r.run_id for r in (after.runs or [])] == ["r0", "r1", "r2"], (
+        "legacy runs blob was wiped by upsert_session — pre-v3 history lost"
+    )
+    # And the metadata write actually landed.
+    assert after.metadata == {"touched_by_v3": True}

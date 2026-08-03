@@ -1,7 +1,7 @@
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union, cast
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -593,13 +593,22 @@ class FirestoreDb(BaseDb):
             for doc in docs:
                 doc.reference.delete()
 
-                # Cascade-delete the session's runs
+                # Cascade-delete the session's runs, chunked to Firestore's
+                # 500-op-per-commit limit so sessions with many runs don't blow
+                # the batch (mirrors delete_sessions).
                 if runs_collection_ref is not None:
                     runs_query = runs_collection_ref.where(filter=FieldFilter("session_id", "==", session_id))
                     batch = self.db_client.batch()
+                    in_batch = 0
                     for run_doc in runs_query.stream():
                         batch.delete(run_doc.reference)
-                    batch.commit()
+                        in_batch += 1
+                        if in_batch >= FIRESTORE_BATCH_LIMIT:
+                            batch.commit()
+                            batch = self.db_client.batch()
+                            in_batch = 0
+                    if in_batch > 0:
+                        batch.commit()
 
                 log_debug(f"Successfully deleted session with session_id: {session_id}")
                 return True
@@ -1014,7 +1023,6 @@ class FirestoreDb(BaseDb):
             # Find existing document or create new one
             docs = collection_ref.where(filter=FieldFilter("session_id", "==", record["session_id"])).stream()
             doc_ref = next((doc.reference for doc in docs), None)
-            had_legacy_runs = False
 
             if doc_ref is not None:
                 existing_doc = doc_ref.get()
@@ -1024,16 +1032,13 @@ class FirestoreDb(BaseDb):
                         "user_id"
                     ):
                         return None
-                    if "runs" in existing_data:
-                        had_legacy_runs = True
             else:
                 # Create new document
                 doc_ref = collection_ref.document()
 
-            # Clear the legacy `runs` field if it was present (runs now live in their own collection)
-            if had_legacy_runs:
-                record["runs"] = DELETE_FIELD
-
+            # The legacy `runs` field is intentionally left untouched: set(merge=True)
+            # preserves it as a frozen backup until cleanup_legacy_runs_field() removes it.
+            # Deleting it here would lose history for sessions not yet migrated.
             doc_ref.set(record, merge=True)
 
             # Runs are persisted separately via upsert_run by the caller (agent loop).
@@ -2578,6 +2583,7 @@ class FirestoreDb(BaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        group_by: Literal["session", "agent", "team", "workflow", "endpoint"] = "session",
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 
@@ -2590,12 +2596,19 @@ class FirestoreDb(BaseDb):
             end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
+            group_by: Only the default "session" grouping is supported by this backend.
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
                 Each dict contains: session_id, user_id, agent_id, team_id, workflow_id, total_traces,
                 first_trace_at, last_trace_at.
         """
+        if group_by != "session":
+            raise NotImplementedError(
+                f"get_trace_stats with group_by={group_by!r} is not supported by {self.__class__.__name__}. "
+                "Only the default 'session' grouping is available."
+            )
+
         try:
             collection_ref = self._get_collection(table_type="traces")
             if collection_ref is None:

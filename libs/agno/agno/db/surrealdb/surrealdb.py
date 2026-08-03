@@ -1,6 +1,6 @@
 from datetime import date, datetime, timedelta, timezone
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
 
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
@@ -803,19 +803,30 @@ class SurrealDb(BaseDb):
         table = self._get_table("sessions")
 
         existing = self.client.query(
-            f"SELECT user_id FROM {table} WHERE id = $record",
+            f"SELECT user_id, runs FROM {table} WHERE id = $record",
             {"record": RecordID(table, session.session_id)},
         )
+        legacy_runs: Any = None
         if isinstance(existing, list) and len(existing) > 0:
-            existing_uid = existing[0].get("user_id") if isinstance(existing[0], dict) else None
+            existing_row = existing[0] if isinstance(existing[0], dict) else {}
+            existing_uid = existing_row.get("user_id")
             if existing_uid is not None and existing_uid != session.user_id:
                 return None
+            # Carry legacy `runs` blob forward: UPSERT CONTENT replaces the whole
+            # record, and serialize_session(include_runs=False) omits `runs`, so
+            # bare upsert would silently erase pre-v3 history that only lives in
+            # the legacy blob (upgrade-without-migration data loss).
+            legacy_runs = existing_row.get("runs")
+
+        content = serialize_session(session, self.table_names, include_runs=False)
+        if legacy_runs is not None:
+            content["runs"] = legacy_runs
 
         session_raw = self._query_one(
             "UPSERT ONLY $record CONTENT $content",
             {
                 "record": RecordID(table, session.session_id),
-                "content": serialize_session(session, self.table_names, include_runs=False),
+                "content": content,
             },
             dict,
         )
@@ -853,12 +864,27 @@ class SurrealDb(BaseDb):
         table = self._get_table("sessions")
         sessions_raw: List[Dict[str, Any]] = []
         for session in sessions:
-            # UPSERT does only work for one record at a time
+            # UPSERT does only work for one record at a time. Read the existing
+            # `runs` blob first so we can carry it forward -- otherwise UPSERT
+            # CONTENT would wipe any pre-v3 history on the row (see the
+            # single-record upsert_session above for the full rationale).
+            existing = self.client.query(
+                f"SELECT runs FROM {table} WHERE id = $record",
+                {"record": RecordID(table, session.session_id)},
+            )
+            legacy_runs: Any = None
+            if isinstance(existing, list) and len(existing) > 0 and isinstance(existing[0], dict):
+                legacy_runs = existing[0].get("runs")
+
+            content = serialize_session(session, self.table_names, include_runs=False)
+            if legacy_runs is not None:
+                content["runs"] = legacy_runs
+
             session_raw = self._query_one(
                 "UPSERT ONLY $record CONTENT $content",
                 {
                     "record": RecordID(table, session.session_id),
-                    "content": serialize_session(session, self.table_names, include_runs=False),
+                    "content": content,
                 },
                 dict,
             )
@@ -2050,6 +2076,7 @@ class SurrealDb(BaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        group_by: Literal["session", "agent", "team", "workflow", "endpoint"] = "session",
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 
@@ -2062,12 +2089,19 @@ class SurrealDb(BaseDb):
             end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
+            group_by: Only the default "session" grouping is supported by this backend.
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
                 Each dict contains: session_id, user_id, agent_id, team_id, workflow_id, total_traces,
                 first_trace_at, last_trace_at.
         """
+        if group_by != "session":
+            raise NotImplementedError(
+                f"get_trace_stats with group_by={group_by!r} is not supported by {self.__class__.__name__}. "
+                "Only the default 'session' grouping is available."
+            )
+
         try:
             table = self._get_table("traces", create_table_if_not_found=False)
 

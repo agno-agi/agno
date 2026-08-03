@@ -1,7 +1,7 @@
 import time
 from datetime import date, datetime, timedelta, timezone
 from importlib import metadata
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
 from uuid import uuid4
 
 try:
@@ -936,7 +936,7 @@ class MongoDb(BaseDb):
 
             session_dict = session.to_dict(include_runs=False)
 
-            existing = collection.find_one({"session_id": session_dict.get("session_id")}, {"user_id": 1})
+            existing = collection.find_one({"session_id": session_dict.get("session_id")}, {"user_id": 1, "runs": 1})
             if existing:
                 existing_uid = existing.get("user_id")
                 if existing_uid is not None and existing_uid != session_dict.get("user_id"):
@@ -990,6 +990,13 @@ class MongoDb(BaseDb):
                 }
             else:
                 raise ValueError(f"Invalid session type: {session.session_type}")
+
+            # Preserve the legacy `runs` field as a frozen backup. find_one_and_replace
+            # replaces the whole document, so carry any existing legacy blob forward; runs
+            # now live in their own collection and only cleanup_legacy_runs_field() reclaims
+            # it. Dropping it here would lose history for sessions not yet migrated.
+            if existing and existing.get("runs") is not None:
+                record["runs"] = existing["runs"]
 
             try:
                 result = collection.find_one_and_replace(
@@ -1053,6 +1060,18 @@ class MongoDb(BaseDb):
 
             sessions_by_id: Dict[str, Session] = {s.session_id: s for s in sessions if s is not None}
 
+            # Preserve the legacy `runs` field as a frozen backup. ReplaceOne replaces the
+            # whole document, so fetch any existing legacy blobs up front and carry them
+            # forward; only cleanup_legacy_runs_field() reclaims them. Dropping them here
+            # would lose history for sessions not yet migrated to the runs collection.
+            legacy_runs_by_id: Dict[str, Any] = {}
+            if sessions_by_id:
+                for doc in collection.find(
+                    {"session_id": {"$in": list(sessions_by_id.keys())}}, {"session_id": 1, "runs": 1}
+                ):
+                    if doc.get("runs") is not None:
+                        legacy_runs_by_id[doc["session_id"]] = doc["runs"]
+
             for session in sessions:
                 if session is None:
                     continue
@@ -1103,6 +1122,10 @@ class MongoDb(BaseDb):
                     }
                 else:
                     continue
+
+                legacy_runs = legacy_runs_by_id.get(session.session_id)
+                if legacy_runs is not None:
+                    record["runs"] = legacy_runs
 
                 operations.append(
                     ReplaceOne(filter={"session_id": record["session_id"]}, replacement=record, upsert=True)
@@ -2773,6 +2796,7 @@ class MongoDb(BaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        group_by: Literal["session", "agent", "team", "workflow", "endpoint"] = "session",
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 
@@ -2785,12 +2809,18 @@ class MongoDb(BaseDb):
             end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
+            group_by: Only the default "session" grouping is supported by this backend.
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
                 Each dict contains: session_id, user_id, agent_id, team_id, total_traces,
                 workflow_id, first_trace_at, last_trace_at.
         """
+        if group_by != "session":
+            raise NotImplementedError(
+                f"get_trace_stats with group_by={group_by!r} is not supported by {self.__class__.__name__}. "
+                "Only the default 'session' grouping is available."
+            )
         try:
             collection = self._get_collection(table_type="traces")
             if collection is None:

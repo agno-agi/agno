@@ -185,7 +185,9 @@ def test_cleanup_refuses_when_legacy_runs_still_present():
     assert raw is not None and "runs" not in raw
 
 
-def test_cleanup_succeeds_after_migration():
+def test_cleanup_after_migration_requires_force():
+    """Option A: writes never unset the legacy field, so after migration the blob stays
+    as a frozen backup. Non-force cleanup refuses; force=True reclaims it."""
     db = _new_db()
     legacy = [_make_run("r1", "s8", "x").to_dict()]
     _insert_legacy_session(db, "s8", legacy)
@@ -194,11 +196,18 @@ def test_cleanup_succeeds_after_migration():
 
     v3_up(db, table_type="sessions", table_name="agno_sessions")
 
-    # Touch the session — the next write will null/unset the legacy field
+    # Touching the session no longer unsets the legacy field (frozen backup).
     session = db.get_session("s8", SessionType.AGENT)
     db.upsert_session(session)
+    raw = db._database["agno_sessions"].find_one({"session_id": "s8"})
+    assert raw is not None and raw.get("runs") is not None
 
-    assert db.cleanup_legacy_runs_field() in (True, False)
+    # Non-force cleanup refuses while a legacy blob is still present.
+    with pytest.raises(RuntimeError, match="Refusing to unset"):
+        db.cleanup_legacy_runs_field()
+
+    # force=True reclaims it after the migration copied everything into agno_runs.
+    assert db.cleanup_legacy_runs_field(force=True) is True
     raw = db._database["agno_sessions"].find_one({"session_id": "s8"})
     assert raw is not None and "runs" not in raw
 
