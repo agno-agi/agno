@@ -164,35 +164,35 @@ def get_session_metrics_internal(team: "Team", session: TeamSession) -> SessionM
 def _read_session(
     team: "Team", session_id: str, session_type: SessionType = SessionType.TEAM, user_id: Optional[str] = None
 ) -> Optional[Union[TeamSession, WorkflowSession]]:
-    """Get a Session from the database."""
-    try:
-        if not team.db:
-            raise ValueError("Db not initialized")
-        session = team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
-        return session  # type: ignore
-    except Exception as e:
-        log_warning(f"Error getting session from db: {str(e)}")
-        return None
+    """Get a Session from the database.
+
+    Read errors propagate. Do NOT coerce failures to None here: an empty result
+    is indistinguishable from "row does not exist", and the caller will happily
+    create a fresh session with the same id and overwrite the real row on the
+    next write. This is how a transient Postgres failover wiped six weeks of
+    conversation history in a real incident. Let the exception surface and
+    fail the run loudly -- a failed run is recoverable, a wiped session is not.
+    """
+    if not team.db:
+        raise ValueError("Db not initialized")
+    session = team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
+    return session  # type: ignore
 
 
 async def _aread_session(
     team: "Team", session_id: str, session_type: SessionType = SessionType.TEAM, user_id: Optional[str] = None
 ) -> Optional[Union[TeamSession, WorkflowSession]]:
-    """Get a Session from the database."""
+    """Async twin of :func:`_read_session`. Same rationale: do NOT swallow errors."""
     from agno.team._init import _has_async_db
 
-    try:
-        if not team.db:
-            raise ValueError("Db not initialized")
-        if _has_async_db(team):
-            team.db = cast(AsyncBaseDb, team.db)
-            session = await team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
-        else:
-            session = team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore[assignment]
-        return session  # type: ignore
-    except Exception as e:
-        log_warning(f"Error getting session from db: {str(e)}")
-        return None
+    if not team.db:
+        raise ValueError("Db not initialized")
+    if _has_async_db(team):
+        team.db = cast(AsyncBaseDb, team.db)
+        session = await team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
+    else:
+        session = team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore[assignment]
+    return session  # type: ignore
 
 
 def _upsert_session(team: "Team", session: TeamSession) -> Optional[TeamSession]:
