@@ -428,3 +428,65 @@ def test_runs_index_key_is_not_read_as_a_run_record():
 
     records = db._get_all_records("runs")
     assert [r["run_id"] for r in records] == ["r0"]
+
+
+def test_upgrade_without_migration_preserves_runs_on_write():
+    """Regression: upgrading to v3 and continuing a pre-v3 session before running
+    the migration must not silently drop the legacy runs blob.
+
+    Bug shape: session.to_dict(include_runs=False) omits `runs`; the Valkey
+    _store_record does a full SET (whole-record replace), so a bare write
+    would erase anything the legacy blob was holding. Read then merges an
+    empty legacy blob with an empty runs store -> history gone. Only
+    cleanup_legacy_runs_field() should drop it, explicitly.
+    """
+    db = _new_db()
+    legacy = [_make_run(f"r{i}", "s_upgrade", f"c{i}").to_dict() for i in range(3)]
+    _insert_legacy_session(db, "s_upgrade", legacy)
+
+    # Sanity: pre-v3 read sees the runs via the merge helper.
+    before = db.get_session(session_id="s_upgrade", session_type=SessionType.AGENT)
+    assert before is not None
+    assert [r.run_id for r in (before.runs or [])] == ["r0", "r1", "r2"]
+
+    # Simulate a v3 code path continuing this session: reload + save the
+    # session row (as _cleanup_and_store would). Under v3, save_session does
+    # not write runs -- new runs go to the runs store via save_run.
+    reloaded = db.get_session(session_id="s_upgrade", session_type=SessionType.AGENT)
+    assert reloaded is not None
+    reloaded.metadata = {"touched_by_v3": True}
+    db.upsert_session(reloaded)
+
+    # After the v3 write, the legacy blob must still be intact -- the read
+    # returns the same three pre-v3 runs.
+    after = db.get_session(session_id="s_upgrade", session_type=SessionType.AGENT)
+    assert after is not None
+    assert [r.run_id for r in (after.runs or [])] == ["r0", "r1", "r2"], (
+        "legacy runs blob was wiped by upsert_session -- pre-v3 history lost"
+    )
+    # And the metadata write actually landed.
+    assert after.metadata == {"touched_by_v3": True}
+
+
+def test_cleanup_after_migration_requires_force():
+    """Preserve-blob-on-write means the legacy field stays as a frozen backup
+    even after a v3 write. Non-force cleanup refuses; force=True reclaims it."""
+    db = _new_db()
+    legacy = [_make_run("r1", "s_cleanup", "x").to_dict()]
+    _insert_legacy_session(db, "s_cleanup", legacy)
+
+    # A v3 write must not unset the legacy field.
+    session = db.get_session("s_cleanup", SessionType.AGENT)
+    db.upsert_session(session)
+
+    raw = db._get_record("sessions", "s_cleanup")
+    assert raw is not None and raw.get("runs") is not None
+
+    # Non-force cleanup refuses while a legacy blob is still present.
+    with pytest.raises(RuntimeError, match="Refusing to unset"):
+        db.cleanup_legacy_runs_field()
+
+    # force=True reclaims it.
+    assert db.cleanup_legacy_runs_field(force=True) is True
+    raw = db._get_record("sessions", "s_cleanup")
+    assert raw is not None and "runs" not in raw

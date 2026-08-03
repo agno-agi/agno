@@ -1058,6 +1058,14 @@ class ValkeyDb(BaseDb):
             else:
                 raise ValueError(f"Invalid session type: {session.session_type}")
 
+            # Preserve the legacy `runs` field as a frozen backup. _store_record does
+            # a full SET (whole-record replace), and session.to_dict(include_runs=False)
+            # omits `runs`, so a bare write would silently erase any pre-v3 history
+            # that lives only in the legacy blob (upgrade-without-migration data loss).
+            # Only cleanup_legacy_runs_field() should drop it, explicitly.
+            if existing and existing.get("runs") is not None:
+                data["runs"] = existing["runs"]
+
             success = self._store_record(
                 table_type="sessions",
                 record_id=session.session_id,
@@ -1197,6 +1205,14 @@ class ValkeyDb(BaseDb):
                         "summary": None,
                     }
                     index_fields = ["user_id", "workflow_id", "session_type"]
+
+                # Preserve the legacy `runs` field as a frozen backup. The pipeline
+                # SET replaces the whole record, and session.to_dict(include_runs=False)
+                # omits `runs`, so a bare write would erase any pre-v3 history that
+                # lives only in the legacy blob. Only cleanup_legacy_runs_field()
+                # should drop it, explicitly.
+                if existing and existing.get("runs") is not None:
+                    data["runs"] = existing["runs"]
 
                 key = generate_valkey_key(prefix=self.db_prefix, table_type="sessions", key_id=session.session_id)
                 expiry = ExpirySet(ExpiryType.SEC, self.expire) if self.expire is not None else None
