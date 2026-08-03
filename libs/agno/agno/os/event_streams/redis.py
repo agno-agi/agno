@@ -167,16 +167,31 @@ class RedisEventStream(BaseEventStream):
         keys expire per TTL, which is the intended cleanup.
         """
         interval = max(1.0, self._ttl / _TTL_REFRESH_FRACTION)
+        terminal_values = {RunStatus.completed.value, RunStatus.error.value, RunStatus.cancelled.value}
         while self._active_runs:
             await asyncio.sleep(interval)
             for run_id in list(self._active_runs):
                 try:
+                    # Re-check before refreshing: a run enrolled here (e.g. a
+                    # PAUSED run this replica parked) may have been continued
+                    # and finished on ANOTHER replica - its terminal status is
+                    # the eviction signal, or this set grows without bound and
+                    # finished runs' keys are refreshed forever. A missing key
+                    # means the TTL already expired or the run was cleaned up:
+                    # nothing left to keep alive.
+                    status = _to_str(await self._redis.get(self._status_key(run_id)))
+                    if status is None or status in terminal_values:
+                        self._active_runs.discard(run_id)
+                        self._last_ttl_refresh.pop(run_id, None)
+                        continue
                     pipe = self._redis.pipeline()
                     pipe.expire(self._stream_key(run_id), self._ttl)
                     pipe.expire(self._status_key(run_id), self._ttl)
                     pipe.expire(self._counter_key(run_id), self._ttl)
                     await pipe.execute()
                 except Exception:
+                    # Fail-open on Redis faults: keep the run enrolled and let
+                    # the next tick retry - a blip must not drop a live run
                     pass
 
     async def aclose(self) -> None:
