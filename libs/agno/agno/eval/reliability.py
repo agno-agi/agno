@@ -1,10 +1,10 @@
-import json
 from dataclasses import asdict, dataclass, field
 from os import getenv
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Union
 from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.models.response import ToolExecution
 from agno.run.team import TeamRunOutput
 
 if TYPE_CHECKING:
@@ -48,7 +48,24 @@ class ReliabilityResult:
         console.print(results_table)
 
     def assert_passed(self):
-        assert self.eval_status == "PASSED"
+        # The result rides in the assert message: when CI goes red under execution
+        # matching (new in 2.8.0), the annotated entries say in one read whether the
+        # eval was wrong or the agent was.
+        assert self.eval_status == "PASSED", f"ReliabilityEval failed: {self}"
+
+
+def _collect_member_evidence(response: Any, executions: List[ToolExecution], messages: list) -> None:
+    """Collect tools and messages from a response and every nested member response.
+
+    Only TeamRunOutput carries member_responses; a member RunOutput is a leaf. Inner
+    team leaders' own executions (e.g. delegate_task_to_member) surface at every depth,
+    matching what a depth-0 leader already reports today.
+    """
+    executions += list(response.tools or [])
+    if response.messages is not None:
+        messages += response.messages
+    for member_response in getattr(response, "member_responses", None) or []:
+        _collect_member_evidence(member_response, executions, messages)
 
 
 @dataclass
@@ -93,21 +110,40 @@ class ReliabilityEval:
     telemetry: bool = True
 
     def _evaluate(self) -> ReliabilityResult:
-        """Core evaluation logic for checking tool calls and arguments."""
+        """Core evaluation logic: tool evidence comes from executions, not requests.
+
+        New in 2.8.0: an expectation is satisfied only by a clean execution -- an entry
+        in `tools` whose `tool_call_error` is not true (`None` counts as clean; runs
+        rehydrated from storage carry `None` for success). Request-side matching
+        counted calls that were refused, errored, or given junk arguments, which made
+        the eval satisfiable without the tool ever doing work. Evals that passed that
+        way now fail, and their `missing_tool_calls` entries say why.
+        """
+        executions: List[ToolExecution] = []
         messages: list = []
         if self.agent_response is not None:
-            messages = self.agent_response.messages or []
+            executions = list(self.agent_response.tools or [])
+            messages = list(self.agent_response.messages or [])
         elif self.team_response is not None:
-            messages = list(self.team_response.messages or [])
-            for member_response in self.team_response.member_responses:
-                if member_response.messages is not None:
-                    messages += member_response.messages
+            # Union the members' executions at every nesting depth: delegated tool
+            # calls live on member responses, members can themselves be teams, and a
+            # flat read would report a grandchild's clean execution as missing.
+            _collect_member_evidence(self.team_response, executions, messages)
 
-        # Collect all tool calls across all messages (without mutating originals)
-        actual_tool_calls: List[Dict[str, Any]] = []
-        for message in messages:  # type: ignore
-            if message.tool_calls:
-                actual_tool_calls.extend(message.tool_calls)
+        # Message-side REQUESTS are kept only to annotate failures: a call refused by
+        # tool_call_limit never produces an execution, so the request is the only
+        # evidence it was attempted at all. Prior-turn messages injected by
+        # add_history_to_context carry tool_calls this run never made, so they are
+        # excluded -- yesterday's tools must not fail today's strict eval.
+        requested_names: Set[str] = set()
+        for message in messages:
+            if getattr(message, "from_history", False):
+                continue
+            for tool_call in message.tool_calls or []:
+                func = tool_call.get("function")
+                tool_name = func.get("name") if isinstance(func, dict) else None
+                if tool_name:
+                    requested_names.add(tool_name)
 
         failed_tool_calls: List[str] = []
         passed_tool_calls: List[str] = []
@@ -116,83 +152,93 @@ class ReliabilityEval:
         failed_argument_checks: List[str] = []
         passed_argument_checks: List[str] = []
 
-        if not actual_tool_calls:
-            missing_tool_calls = list(self.expected_tool_calls) if self.expected_tool_calls else []
-            if self.expected_tool_call_arguments:
-                for arg_tool_name in self.expected_tool_call_arguments:
-                    if arg_tool_name not in missing_tool_calls:
-                        failed_argument_checks.append(arg_tool_name)
-        else:
-            actual_tool_names: set = set()
-            for tool_call in actual_tool_calls:
-                func = tool_call.get("function")
-                tool_name = func.get("name") if isinstance(func, dict) else None
-                if not tool_name:
-                    continue
-                actual_tool_names.add(tool_name)
+        clean_executions = [t for t in executions if t.tool_name and not t.tool_call_error and not t.is_paused]
+        clean_names = {t.tool_name for t in clean_executions}
+        attempted_names = {t.tool_name for t in executions if t.tool_name} | requested_names
 
-                if self.expected_tool_calls is not None and tool_name not in self.expected_tool_calls:
-                    if self.allow_additional_tool_calls:
-                        additional_tool_calls.append(tool_name)
-                    else:
-                        failed_tool_calls.append(tool_name)
+        # Classify every execution, one entry per call (the per-call shape is part of
+        # the contract: this payload is logged to the db).
+        for tool in executions:
+            tool_name = tool.tool_name
+            if not tool_name:
+                continue
+            if self.expected_tool_calls is not None and tool_name not in self.expected_tool_calls:
+                if self.allow_additional_tool_calls:
+                    additional_tool_calls.append(tool_name)
                 else:
-                    passed_tool_calls.append(tool_name)
+                    # Strict mode polices the attempt, not its success: an unexpected
+                    # call that errored or was refused still fails the eval.
+                    failed_tool_calls.append(tool_name)
+            elif not tool.tool_call_error and not tool.is_paused:
+                passed_tool_calls.append(tool_name)
+            # An errored execution of an EXPECTED tool is neither passed nor failed by
+            # itself: it cannot satisfy the expectation, and the failure surfaces as
+            # the annotated missing entry below when no clean execution exists -- so a
+            # retry that eventually succeeds still passes.
 
-            # Check for missing expected tool calls
-            if self.expected_tool_calls:
-                for expected_tool in self.expected_tool_calls:
-                    if expected_tool not in actual_tool_names:
+        # Request-only names: a call refused by tool_call_limit never produces an
+        # execution, so the message-side request is its only trace. An unexpected
+        # refused request is still the agent attempting an unexpected tool -- strict
+        # mode fails it, lenient mode keeps it visible as an additional call. A
+        # refused EXPECTED tool instead surfaces as the annotated missing entry.
+        if self.expected_tool_calls is not None:
+            executed_names = {t.tool_name for t in executions if t.tool_name}
+            for requested in sorted(requested_names - executed_names):
+                if requested in self.expected_tool_calls:
+                    continue
+                if self.allow_additional_tool_calls:
+                    additional_tool_calls.append(requested)
+                else:
+                    failed_tool_calls.append(requested)
+
+        # Missing: expected names with no clean execution. When the tool was requested
+        # or attempted but every execution was refused/errored, the entry says so --
+        # a red CI gate must be readable as "the eval was wrong, not the agent".
+        missing_names: Set[str] = set()
+        if self.expected_tool_calls:
+            for expected_tool in self.expected_tool_calls:
+                if expected_tool not in clean_names:
+                    missing_names.add(expected_tool)
+                    if expected_tool in attempted_names:
+                        missing_tool_calls.append(
+                            f"{expected_tool} (requested but refused/errored — execution matching, new in 2.8.0)"
+                        )
+                    else:
                         missing_tool_calls.append(expected_tool)
 
-            # Check tool call arguments (partial match)
-            if self.expected_tool_call_arguments:
-                for arg_tool_name, expected_args_raw in self.expected_tool_call_arguments.items():
-                    # Skip argument checks for tools already tracked as missing
-                    if arg_tool_name in missing_tool_calls:
-                        continue
+        # Argument checks read ToolExecution.tool_args -- already parsed, None -> {} --
+        # and are satisfied only by clean executions: message-side requests can carry
+        # arguments for calls that never did work.
+        if self.expected_tool_call_arguments:
+            for arg_tool_name, expected_args_raw in self.expected_tool_call_arguments.items():
+                # Skip argument checks for tools already tracked as missing
+                if arg_tool_name in missing_names:
+                    continue
 
-                    # Normalize: single dict becomes a one-element list
-                    arg_specs = expected_args_raw if isinstance(expected_args_raw, list) else [expected_args_raw]
+                # Normalize: single dict becomes a one-element list
+                arg_specs = expected_args_raw if isinstance(expected_args_raw, list) else [expected_args_raw]
 
-                    matching_calls = [
-                        tc
-                        for tc in actual_tool_calls
-                        if isinstance(tc.get("function"), dict) and tc["function"].get("name") == arg_tool_name
-                    ]
-                    if not matching_calls:
-                        failed_argument_checks.append(arg_tool_name)
-                        continue
+                parsed_args_list: List[Dict[str, Any]] = [
+                    dict(t.tool_args or {}) for t in clean_executions if t.tool_name == arg_tool_name
+                ]
+                if not parsed_args_list:
+                    failed_argument_checks.append(arg_tool_name)
+                    continue
 
-                    # Parse actual arguments from all matching calls
-                    parsed_args_list: List[Dict[str, Any]] = []
-                    for tc in matching_calls:
-                        func = tc.get("function")
-                        actual_args_raw = func.get("arguments", "{}") if isinstance(func, dict) else "{}"
-                        try:
-                            actual_args = (
-                                json.loads(actual_args_raw) if isinstance(actual_args_raw, str) else actual_args_raw
-                            )
-                        except (json.JSONDecodeError, TypeError):
-                            actual_args = {}
-                        if not isinstance(actual_args, dict):
-                            actual_args = {}
-                        parsed_args_list.append(actual_args)
+                # Each spec must match at least one call
+                all_specs_matched = True
+                for spec in arg_specs:
+                    if not any(
+                        all(key in actual and actual[key] == value for key, value in spec.items())
+                        for actual in parsed_args_list
+                    ):
+                        all_specs_matched = False
+                        break
 
-                    # Each spec must match at least one call
-                    all_specs_matched = True
-                    for spec in arg_specs:
-                        if not any(
-                            all(key in actual and actual[key] == value for key, value in spec.items())
-                            for actual in parsed_args_list
-                        ):
-                            all_specs_matched = False
-                            break
-
-                    if all_specs_matched:
-                        passed_argument_checks.append(arg_tool_name)
-                    else:
-                        failed_argument_checks.append(arg_tool_name)
+                if all_specs_matched:
+                    passed_argument_checks.append(arg_tool_name)
+                else:
+                    failed_argument_checks.append(arg_tool_name)
 
         eval_passed = len(failed_tool_calls) == 0 and len(missing_tool_calls) == 0 and len(failed_argument_checks) == 0
 

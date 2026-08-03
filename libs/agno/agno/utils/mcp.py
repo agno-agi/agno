@@ -1,12 +1,14 @@
+import asyncio
 import json
 from functools import partial
 from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 from uuid import uuid4
 
-from agno.utils.log import log_debug, log_exception
+from agno.utils.log import log_debug, log_error, log_exception
 
 try:
     from mcp import ClientSession
+    from mcp.shared.exceptions import McpError
     from mcp.types import CallToolResult, EmbeddedResource, ImageContent, TextContent
     from mcp.types import Tool as MCPTool
 except (ImportError, ModuleNotFoundError):
@@ -252,6 +254,12 @@ def get_entrypoint_for_tool(
                 return await _call_with_session(active_session)
 
             return await _call_with_session(session)
+        except asyncio.CancelledError:
+            raise
+        except McpError as e:
+            msg = f"MCP tool '{tool_name}' failed: {e}. The MCP server may be unreachable or the request timed out."
+            log_error(msg)
+            return ToolResult(content=msg)
         except Exception as e:
             log_exception(f"Failed to call MCP tool '{tool_name}': {e}")
             return ToolResult(content=f"Error: {e}")

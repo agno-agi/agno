@@ -17,6 +17,20 @@ def slack_error_code(exc: BaseException) -> Optional[str]:
     return None
 
 
+async def resolve_session_id(entity: Any, entity_id: str, channel_id: str, thread_ts: str) -> str:
+    # Sessions created before channel-scoped keys used "{entity_id}:{thread_ts}".
+    # Probe for existing legacy session so an upgrade doesn't orphan history.
+    legacy_id = f"{entity_id}:{thread_ts}"
+    try:
+        session = await entity.aget_session(session_id=legacy_id)
+        if session is not None:
+            return legacy_id
+    except Exception:
+        pass
+    # New format includes channel_id to prevent cross-channel collisions
+    return f"{entity_id}:{channel_id}:{thread_ts}"
+
+
 def task_id(agent_name: Optional[str], base_id: str) -> str:
     # Prefix card IDs per agent so concurrent tool calls from different
     # team members don't collide in the Slack stream
@@ -69,7 +83,10 @@ def extract_event_context(event: dict) -> Dict[str, Any]:
     return {
         "message_text": event.get("text", ""),
         "channel_id": event.get("channel", ""),
-        "user": event.get("user", ""),
+        # Human sender ID (U.../W...) — empty for webhook/legacy bot messages
+        "user": event.get("user") or "",
+        # Bot sender ID (B...) — present on all bot-authored messages
+        "bot_id": event.get("bot_id") or "",
         # Prefer existing thread; fall back to message ts for new conversations
         "thread_id": event.get("thread_ts") or event.get("ts", ""),
         # User-scoped token for assistant.search.context workspace search
@@ -119,6 +136,16 @@ async def resolve_slack_user(async_client: Any, slack_user_id: str) -> Tuple[str
     except Exception as e:
         log_warning(f"Failed to resolve Slack user {slack_user_id}: {str(e)}")
         return (slack_user_id, None)
+
+
+async def resolve_slack_bot(async_client: Any, bot_id: str) -> Tuple[str, Optional[str]]:
+    try:
+        resp = await async_client.bots_info(bot=bot_id)
+        bot = resp.get("bot", {}) if resp else {}
+        return (bot_id, bot.get("name") or None)
+    except Exception as e:
+        log_warning(f"Failed to resolve Slack bot {bot_id}: {str(e)}")
+        return (bot_id, None)
 
 
 class BotNameResolver:
