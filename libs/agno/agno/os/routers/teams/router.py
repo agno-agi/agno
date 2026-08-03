@@ -33,6 +33,7 @@ from agno.os.event_streams import get_event_stream
 from agno.os.job_queue import (
     acontinue_via_queue,
     aprepare_queued_run,
+    araise_if_ticket_owns_continue,
     asettle_paused_ticket,
     normalize_idempotency_key,
     payload_is_queueable,
@@ -1448,6 +1449,20 @@ def get_team_router(
                         "this run): executing on the accepting replica instead - bounded and "
                         "observable, but NOT durable."
                     )
+
+        if not fork and not regenerate:
+            # Inline-door admission gate: a paused/queued/running durable
+            # ticket OWNS this run's continuation - every non-queue door
+            # (inline sync, inline SSE, detached-resumable fallback) must
+            # refuse, or the cross-door double-execution race reopens.
+            # fork/regenerate are exempt: they mint a NEW run and never
+            # touch the ticket. 409/503 raise from the helper.
+            await araise_if_ticket_owns_continue(
+                getattr(request.app.state, "queue_worker", None),
+                run_id,
+                component_type="team",
+                component_id=getattr(team, "id", None) or team_id,
+            )
 
         if stream and background:
             # background=True, stream=True: resumable SSE streaming

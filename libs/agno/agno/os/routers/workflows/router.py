@@ -32,6 +32,7 @@ from agno.os.event_streams import get_event_stream
 from agno.os.job_queue import (
     acontinue_via_queue,
     aprepare_queued_run,
+    araise_if_ticket_owns_continue,
     asettle_paused_ticket,
     normalize_idempotency_key,
     payload_is_queueable,
@@ -784,6 +785,21 @@ async def handle_workflow_continue_via_websocket(
                 "run): executing on the accepting replica instead - bounded and observable, "
                 "but NOT durable."
             )
+
+        # Inline-door admission gate: a paused/queued/running durable ticket
+        # OWNS this run's continuation - the detached WS door must refuse or
+        # the cross-door double-execution race reopens (as an error frame,
+        # this being a socket)
+        try:
+            await araise_if_ticket_owns_continue(
+                getattr(websocket.app.state, "queue_worker", None),
+                run_id,
+                component_type="workflow",
+                component_id=getattr(workflow, "id", None) or workflow_id,
+            )
+        except HTTPException as gate_exc:
+            await websocket.send_text(json.dumps({"event": "error", "run_id": run_id, "error": str(gate_exc.detail)}))
+            return
 
         # Continue workflow in background with WebSocket streaming.
         # Events are broadcast via WebSocketHandler through _handle_event calls,
@@ -2006,12 +2022,27 @@ def get_workflow_router(
             # No durable path (no worker, factory/remote workflow, or no
             # paused ticket): workflows have no detached background-continue
             # machinery, so serve the regular response below - loudly, since
-            # the caller asked for background semantics they will not get
-            log_warning(
-                "Workflow background continue has no durable ticket to re-queue (or the workflow "
-                "is not queueable): serving the regular continue response instead - the "
-                "continuation does NOT survive this replica."
+            # the caller asked for background semantics that do not exist
+            # here: workflows have no detached background-continue machinery,
+            # so honoring the request is impossible. Refuse honestly instead
+            # of silently serving a replica-bound foreground response (the
+            # background param is NEW in this PR - no back-compat cost).
+            raise HTTPException(
+                status_code=409,
+                detail="background=true continuation is only available for durably-submitted "
+                "workflow runs (a paused queue ticket); this run has none. Retry without "
+                "background, or submit the workflow with background=true and a durable queue.",
             )
+
+        # Inline-door admission gate: a paused/queued/running durable ticket
+        # OWNS this run's continuation; non-queue doors must refuse or the
+        # cross-door double-execution race reopens. 409/503 raise here.
+        await araise_if_ticket_owns_continue(
+            getattr(request.app.state, "queue_worker", None),
+            run_id,
+            component_type="workflow",
+            component_id=getattr(workflow, "id", None) or workflow_id,
+        )
 
         if stream:
             return StreamingResponse(

@@ -115,6 +115,89 @@ class TestOutcomeMapping:
         assert await acontinue_via_queue(make_worker(store), "r1", {}) is None
 
 
+class TestInlineDoorGate:
+    """araise_if_ticket_owns_continue: the single-door contract. A durable
+    ticket in paused/queued/running owns its run's continuation - non-queue
+    doors refuse (409), and a failed lookup fails CLOSED (503). Rejecting
+    paused too is what kills the cross-door TOCTOU: gating only on
+    queued/running would let an inline read of 'paused' race a durable CAS
+    and double-execute an approved tool."""
+
+    @pytest.mark.asyncio
+    async def test_no_worker_or_no_ticket_allows_inline(self):
+        from agno.os.job_queue import araise_if_ticket_owns_continue
+
+        await araise_if_ticket_owns_continue(None, "r1")  # no queue at all
+        store = InMemoryQueueStore()
+        await araise_if_ticket_owns_continue(make_worker(store), "r1")  # no ticket
+
+    @pytest.mark.asyncio
+    async def test_paused_ticket_rejects_inline(self):
+        from fastapi import HTTPException
+
+        from agno.os.job_queue import araise_if_ticket_owns_continue
+
+        store = InMemoryQueueStore()
+        await _pause(store)
+        with pytest.raises(HTTPException) as exc:
+            await araise_if_ticket_owns_continue(make_worker(store), "r1")
+        assert exc.value.status_code == 409
+        assert "background=true" in exc.value.detail
+
+    @pytest.mark.asyncio
+    async def test_queued_and_running_tickets_reject_inline(self):
+        from fastapi import HTTPException
+
+        from agno.os.job_queue import araise_if_ticket_owns_continue
+
+        store = InMemoryQueueStore()
+        await _pause(store)
+        worker = make_worker(store)
+        assert (await acontinue_via_queue(worker, "r1", {"a": 1}))["outcome"] == "queued"
+        with pytest.raises(HTTPException) as exc:
+            await araise_if_ticket_owns_continue(worker, "r1")
+        assert exc.value.status_code == 409
+
+        await store.claim_job("w2")  # continuation leg claimed -> running
+        with pytest.raises(HTTPException) as exc:
+            await araise_if_ticket_owns_continue(worker, "r1")
+        assert exc.value.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_terminal_ticket_and_foreign_component_allow_inline(self):
+        from agno.os.job_queue import araise_if_ticket_owns_continue
+
+        store = InMemoryQueueStore()
+        await store.enqueue_job(make_job("r1"))
+        claimed = await store.claim_job("w1")
+        await store.complete_job("r1", "w1", claimed["attempt"], "completed")
+        worker = make_worker(store)
+        await araise_if_ticket_owns_continue(worker, "r1")  # terminal: queue is done
+
+        await _pause(store, "r2")
+        # A DIFFERENT component's ticket does not own this caller's continue:
+        # the caller's own run lookup 404s honestly downstream
+        await araise_if_ticket_owns_continue(worker, "r2", component_type="team", component_id="wf-1")
+
+    @pytest.mark.asyncio
+    async def test_lookup_failure_fails_closed(self):
+        from fastapi import HTTPException
+
+        from agno.os.job_queue import araise_if_ticket_owns_continue
+
+        store = InMemoryQueueStore()
+        await _pause(store)
+        worker = make_worker(store)
+
+        async def broken_get_job(job_id):
+            raise RuntimeError("store down")
+
+        store.get_job = broken_get_job  # type: ignore[method-assign]
+        with pytest.raises(HTTPException) as exc:
+            await araise_if_ticket_owns_continue(worker, "r1")
+        assert exc.value.status_code == 503, "cannot verify ownership -> must not execute"
+
+
 class TestComponentIdentity:
     @pytest.mark.asyncio
     async def test_cross_component_continue_declines_the_durable_path(self):

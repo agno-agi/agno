@@ -1061,6 +1061,65 @@ async def asettle_paused_ticket(queue_worker: Any, run_id: str, final_status: An
         await queue_worker.store.settle_paused_job(run_id, ticket_status, error)
 
 
+async def araise_if_ticket_owns_continue(
+    queue_worker: Any, run_id: str, component_type: Optional[str] = None, component_id: Optional[str] = None
+) -> None:
+    """Inline-door admission gate: a durable ticket in paused/queued/running
+    OWNS its run's continuation, and no non-queue door may execute one.
+
+    This is what makes the cross-door double-execution race structurally
+    impossible: without it, an inline continue validated against the run row
+    while a durable continue validated against the ticket, and both checks
+    could pass before either persisted (a HITL-approved tool running twice).
+    Rejecting paused too - not just queued/running - is load-bearing: gating
+    only on queued/running would leave the same TOCTOU one door over (inline
+    reads paused, durable CAS lands, both execute).
+
+    The contract this enforces: a run that rode the queue is continued
+    THROUGH the queue, always (background=true). Only ticketless runs - and
+    fork/regenerate, which mint a NEW run - execute inline. Terminal tickets
+    (completed/failed/cancelled) allow inline: the queue is done with that
+    run, matching the durable seam's swept-leg philosophy. A ticket for a
+    DIFFERENT component allows inline too - the caller's own run lookup
+    reports not-found honestly (cross-component case).
+
+    Raises 409 (use the durable door / continuation in progress) or 503
+    (ticket lookup failed - FAIL CLOSED: executing while unable to verify
+    ownership is exactly the race this gate exists to prevent). No queue
+    worker configured means no tickets can exist: allow.
+    """
+    if queue_worker is None:
+        return
+    from fastapi import HTTPException
+
+    try:
+        job = await queue_worker.store.get_job(run_id)
+    except Exception:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Could not verify continuation ownership for run {run_id}; retry the request",
+        )
+    if job is None or job.get("job_type", "run") != "run":
+        return
+    if component_type is not None and job.get("component_type") != component_type:
+        return
+    if component_id is not None and job.get("component_id") != component_id:
+        return
+    status = job.get("status")
+    if status == "paused":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Run {run_id} was submitted through the durable queue; continue it with "
+            "background=true (the queue owns its continuations)",
+        )
+    if status in ("queued", "running"):
+        raise HTTPException(
+            status_code=409,
+            detail=f"A continuation of run {run_id} is already queued or executing; "
+            "poll the run or attach via a background=true continue",
+        )
+
+
 async def acontinue_via_queue(
     queue_worker: Any,
     run_id: str,
