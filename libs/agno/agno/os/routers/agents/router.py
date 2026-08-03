@@ -1388,7 +1388,12 @@ def get_agent_router(
                 run_row = await agent.aget_run_output(run_id, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
                 if run_row is not None and getattr(run_row, "status", None) == RunStatus.paused:
                     continue_outcome = await acontinue_via_queue(
-                        queue_worker, run_id, continue_payload, stream_requested=stream
+                        queue_worker,
+                        run_id,
+                        continue_payload,
+                        stream_requested=stream,
+                        component_type="agent",
+                        component_id=getattr(agent, "id", None) or agent_id,
                     )
                     if continue_outcome is not None:
                         outcome, ticket = continue_outcome["outcome"], continue_outcome.get("job")

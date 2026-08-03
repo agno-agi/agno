@@ -1,12 +1,14 @@
 """Unit tests for the shared durable-continue seam helper.
 
 acontinue_via_queue is the one path all four seams (HTTP agents/teams/
-workflows + WS continue-workflow) go through: outcome mapping, cancellation-
-intent clearing, and the PAUSED -> PENDING stream-status flip live here, so
-the seams cannot diverge on them.
+workflows + WS continue-workflow) go through: outcome mapping, component-
+identity verification, and the PAUSED -> PENDING stream reopen live here, so
+the seams cannot diverge on them. Cancellation intent is deliberately NEVER
+cleared by the seam (see TestAcceptSideEffects).
 """
 
 import pytest
+import pytest_asyncio
 
 from agno.db.schemas.jobs import QueuedJob
 from agno.job_queue.config import QueueConfig
@@ -25,6 +27,18 @@ def make_job(job_id: str = "r1", stream: bool = False) -> dict:
         session_id="s1",
         payload=payload,
     ).to_dict()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _clean_cancellation_intent():
+    """The seam contract deliberately leaves cancellation intent in place
+    (nothing auto-cleans anymore), and the process-global manager outlives
+    each test - without this, intent for the shared 'r1' run id leaks into
+    other suites and cancels their runs."""
+    yield
+    from agno.run.cancel import acleanup_run
+
+    await acleanup_run("r1")
 
 
 def make_worker(store: InMemoryQueueStore) -> QueueWorker:
@@ -101,11 +115,38 @@ class TestOutcomeMapping:
         assert await acontinue_via_queue(make_worker(store), "r1", {}) is None
 
 
+class TestComponentIdentity:
+    @pytest.mark.asyncio
+    async def test_cross_component_continue_declines_the_durable_path(self):
+        """harshsinha03 review: an agent's paused ticket continued through
+        the TEAMS endpoint reached the CAS - the ticket got a team-shaped
+        requirements block and the worker resolved the pending approval as
+        rejected while the caller got a 202. The helper must verify the
+        ticket belongs to the component the caller is continuing through;
+        mismatches fall to the detached path, whose own run lookup reports
+        not-found honestly."""
+        store = InMemoryQueueStore()
+        await _pause(store)  # ticket: component_type=workflow, component_id=wf-1
+        worker = make_worker(store)
+
+        wrong_type = await acontinue_via_queue(worker, "r1", {"a": 1}, component_type="team", component_id="wf-1")
+        assert wrong_type is None
+        wrong_id = await acontinue_via_queue(worker, "r1", {"a": 1}, component_type="workflow", component_id="other")
+        assert wrong_id is None
+        assert (await store.get_job("r1"))["status"] == "paused", "no CAS may fire on a mismatched ticket"
+
+        matching = await acontinue_via_queue(worker, "r1", {"a": 1}, component_type="workflow", component_id="wf-1")
+        assert matching is not None and matching["outcome"] == "queued"
+
+
 class TestAcceptSideEffects:
     @pytest.mark.asyncio
-    async def test_stale_cancellation_intent_cleared_on_accept(self):
-        """The requeue-endpoint fix, mirrored: intent registered during the
-        paused stretch must not kill the new leg at its first checkpoint."""
+    async def test_accept_never_touches_cancellation_intent(self):
+        """The seam does NOT clear cancellation intent - every automatic
+        deletion scheme had a delayed-cleanup window that could erase a
+        newer legitimate cancel. Stale intent survives the accept: the leg
+        will cancel visibly at its first checkpoint, and the operator
+        remedy is requeue with clear_cancellation=true."""
         from agno.run.cancel import acancel_run, ais_cancelled, aregister_run
 
         store = InMemoryQueueStore()
@@ -115,7 +156,7 @@ class TestAcceptSideEffects:
         assert await ais_cancelled("r1")
         result = await acontinue_via_queue(make_worker(store), "r1", {})
         assert result["outcome"] == "queued"
-        assert not await ais_cancelled("r1"), "stale intent must be cleared on accept"
+        assert await ais_cancelled("r1"), "the seam must never delete cancellation intent"
 
     @pytest.mark.asyncio
     async def test_stream_status_flipped_to_pending_on_accept(self):
@@ -245,37 +286,11 @@ class TestAcceptSideEffects:
             es_mod._event_stream = original
 
     @pytest.mark.asyncio
-    async def test_winner_clears_stale_intent_token_scoped(self):
-        """The cleanup is token-scoped: the winner reads the intent's token
-        pre-CAS and conditionally deletes it post-CAS. Stale intent from the
-        paused stretch is cleared; the CAS itself still sees it."""
-        from agno.run.cancel import acancel_run, ais_cancelled, aregister_run
-
-        store = InMemoryQueueStore()
-        await _pause(store)
-        await aregister_run("r1")
-        await acancel_run("r1")
-
-        order: list = []
-        original_continue = store.continue_job
-
-        async def recording_continue(job_id, continue_payload):
-            order.append(("cas", await ais_cancelled(job_id)))
-            return await original_continue(job_id, continue_payload)
-
-        store.continue_job = recording_continue  # type: ignore[method-assign]
-        result = await acontinue_via_queue(make_worker(store), "r1", {})
-        assert result["outcome"] == "queued"
-        assert order == [("cas", True)], "intent must still exist at CAS time (cleanup is post-CAS)"
-        assert not await ais_cancelled("r1"), "the winner must have cleared the stale intent after the CAS"
-
-    @pytest.mark.asyncio
     async def test_delayed_cleanup_cannot_erase_a_newer_cancel(self):
-        """Review-round-4 P1, the exact race: the accepting request's cleanup
-        is arbitrarily delayed; meanwhile the leg is claimed and a LEGITIMATE
-        cancel lands. The delayed cleanup holds the OLD intent's token and
-        must decline - the newer cancel provably survives, no timing
-        assumption involved."""
+        """Review-round-4 P1, the exact race - now closed STRUCTURALLY: the
+        seam performs no cleanup at all, so however delayed the accepting
+        request is, a legitimate cancel landing after the claim always
+        survives."""
         from agno.run.cancel import acancel_run, ais_cancelled, aregister_run
 
         store = InMemoryQueueStore()
@@ -302,8 +317,8 @@ class TestAcceptSideEffects:
 
     @pytest.mark.asyncio
     async def test_no_pre_cas_intent_means_no_cleanup_at_all(self):
-        """token=None (no intent before the CAS) skips cleanup entirely: any
-        intent that appears later is legitimate by definition."""
+        """A cancel arriving right after acceptance is legitimate by
+        definition and must survive untouched (the seam never cleans)."""
         from agno.run.cancel import acancel_run, ais_cancelled, aregister_run
 
         store = InMemoryQueueStore()
@@ -401,10 +416,11 @@ class TestAcceptSideEffects:
         return endpoint, request
 
     @pytest.mark.asyncio
-    async def test_requeue_clears_stale_intent_token_scoped_after_success(self):
-        """Review-round-3 P1: the winner clears AFTER requeue_job succeeds,
-        inside the accept grace - so nothing can claim before the cleanup,
-        and only the transition winner ever touches intent."""
+    async def test_requeue_preserves_intent_unless_operator_clears(self):
+        """Intent clearing is an EXPLICIT operator action, never automatic:
+        a plain requeue leaves recorded intent alone (the re-driven attempt
+        re-cancels visibly); clear_cancellation=true is the deliberate
+        human override for requeueing a previously cancelled job."""
         from agno.run.cancel import acancel_run, ais_cancelled, aregister_run
 
         store = InMemoryQueueStore()
@@ -417,7 +433,14 @@ class TestAcceptSideEffects:
         endpoint, request = self._requeue_endpoint(store)
         result = await endpoint(request, "r1")
         assert result["status"] == "queued"
-        assert not await ais_cancelled("r1"), "stale intent cleared after the successful requeue"
+        assert await ais_cancelled("r1"), "a plain requeue must not touch recorded intent"
+
+        # Re-drive once more, this time with the explicit override
+        reclaimed = await store.claim_job("w1")
+        await store.retry_or_fail_job("r1", "w1", reclaimed["attempt"], "boom again")
+        result = await endpoint(request, "r1", clear_cancellation=True)
+        assert result["status"] == "queued"
+        assert not await ais_cancelled("r1"), "clear_cancellation=true is the operator's explicit clear"
 
     @pytest.mark.asyncio
     async def test_rejected_requeue_never_touches_intent(self):

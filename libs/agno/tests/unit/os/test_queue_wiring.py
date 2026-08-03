@@ -167,6 +167,27 @@ class TestSyncStoreAdapter:
             resolve_queue_store(QueueConfig(durable=True), NotAQueueStore())
 
 
+class TestPermanentFailureScoping:
+    def test_bare_valueerror_is_permanent_only_for_workflow_continuations(self):
+        """kausmeows review: ValueError is ordinary tool/model-code failure
+        for agents and teams - only the workflow continue path uses a bare
+        ValueError as its cannot-continue signal. Over-classifying would
+        DLQ retryable agent/team legs on sight."""
+        from agno.os.job_queue import QueueWorker
+
+        assert QueueWorker._is_permanent_failure(ValueError("not paused"), "workflow") is True
+        assert QueueWorker._is_permanent_failure(ValueError("tool blew up"), "agent") is False
+        assert QueueWorker._is_permanent_failure(ValueError("tool blew up"), "team") is False
+        assert QueueWorker._is_permanent_failure(ValueError("tool blew up"), None) is False
+
+    def test_typed_continuation_errors_always_permanent(self):
+        from agno.exceptions import RunNotContinuableError, RunNotFoundError
+        from agno.os.job_queue import QueueWorker
+
+        assert QueueWorker._is_permanent_failure(RunNotContinuableError("x"), "agent") is True
+        assert QueueWorker._is_permanent_failure(RunNotFoundError("x"), None) is True
+
+
 class TestRedisClusterRejected:
     def test_cluster_client_rejected_at_resolve(self):
         """RedisCluster pipelines are non-transactional; the CAS-based store

@@ -66,10 +66,7 @@ def _apply_coordination(redis: Union[str, RedisCoordination]) -> None:
     if isinstance(get_cancellation_manager(), InMemoryRunCancellationManager):
         set_cancellation_manager(
             RedisRunCancellationManager(
-                redis_client=sync_client,
-                async_redis_client=async_client,
-                key_prefix=cancellation_prefix,
-                enable_token_cleanup=coordination.enable_cancellation_token_cleanup,
+                redis_client=sync_client, async_redis_client=async_client, key_prefix=cancellation_prefix
             )
         )
         cancellation_wired = True
@@ -703,18 +700,22 @@ class QueueWorker:
         return random.randint(base, max(base, ceiling))
 
     @staticmethod
-    def _is_permanent_failure(exc: BaseException, is_continuation: bool = False) -> bool:
+    def _is_permanent_failure(exc: BaseException, continuation_component: Optional[str] = None) -> bool:
         """Failures that retrying cannot cure: fail fast to the dead-letter
         surface instead of burning the attempt budget. For continuation legs,
         a non-continuable run state (RunNotContinuableError, or the
-        workflow's not-paused ValueError) is equally incurable."""
+        workflow's not-paused ValueError) is equally incurable.
+        ``continuation_component`` is the component_type when the job is a
+        continuation leg, else None."""
         from agno.exceptions import InputCheckError, OutputCheckError, RunNotContinuableError, RunNotFoundError
 
         if isinstance(exc, (InputCheckError, OutputCheckError, TypeError, RunNotContinuableError, RunNotFoundError)):
             return True
-        # Workflows signal "cannot continue" with a bare ValueError; on a
-        # continuation leg no ValueError is curable by re-running
-        return is_continuation and isinstance(exc, ValueError)
+        # ONLY workflows signal "cannot continue" with a bare ValueError
+        # (agents/teams raise the typed RunNotContinuableError above). For
+        # agent/team continuation legs a ValueError is ordinary tool/model
+        # code failing - retryable within budget, never DLQ-on-sight.
+        return continuation_component == "workflow" and isinstance(exc, ValueError)
 
     async def _arestore_paused_run_row(self, component: Any, job: Dict[str, Any]) -> None:
         """Make a crashed continuation leg re-drivable (workflow only).
@@ -1001,7 +1002,7 @@ class QueueWorker:
                 await self._terminate_stream_view(job)
             await self.store.retry_or_fail_job(job_id, self.worker_id, attempt, error, self._retry_delay(attempt))
         except Exception as e:
-            permanent = self._is_permanent_failure(e, bool(payload.get("continue")))
+            permanent = self._is_permanent_failure(e, job.get("component_type") if payload.get("continue") else None)
             if permanent or attempt >= job.get("max_attempts", 1):
                 # Terminal outcome either way: the run-row persist gates the
                 # terminal ticket write below. On failure, leave the job stale
@@ -1061,7 +1062,12 @@ async def asettle_paused_ticket(queue_worker: Any, run_id: str, final_status: An
 
 
 async def acontinue_via_queue(
-    queue_worker: Any, run_id: str, continue_payload: Dict[str, Any], stream_requested: bool = False
+    queue_worker: Any,
+    run_id: str,
+    continue_payload: Dict[str, Any],
+    stream_requested: bool = False,
+    component_type: Optional[str] = None,
+    component_id: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """Durable path for a continue of a PAUSED run: CAS the existing ticket
     paused -> queued (never a new row - id == run_id is load-bearing).
@@ -1101,6 +1107,25 @@ async def acontinue_via_queue(
     with contextlib.suppress(Exception):
         job = await queue_worker.store.get_job(run_id)
     if job is None or job.get("job_type", "run") != "run":
+        return None
+    # Component identity: the ticket must belong to the component the caller
+    # is continuing THROUGH. Without this, a paused agent run continued via
+    # /teams/{id}/runs/{run_id}/continue reaches the CAS - the ticket gets a
+    # team-shaped requirements block, the worker continues the agent with no
+    # updated_tools, and the pending approval resolves as rejected while the
+    # caller got a 202. Mismatch falls to the detached path, whose own run
+    # lookup reports not-found honestly.
+    if component_type is not None and job.get("component_type") != component_type:
+        log_warning(
+            f"Continue for run {run_id} via {component_type}/{component_id} does not match its "
+            f"ticket ({job.get('component_type')}/{job.get('component_id')}); durable path declined"
+        )
+        return None
+    if component_id is not None and job.get("component_id") != component_id:
+        log_warning(
+            f"Continue for run {run_id} via {component_type}/{component_id} does not match its "
+            f"ticket ({job.get('component_type')}/{job.get('component_id')}); durable path declined"
+        )
         return None
     ticket_streams = bool((job.get("payload") or {}).get("stream"))
     if stream_requested and not ticket_streams:
@@ -1158,30 +1183,18 @@ async def acontinue_via_queue(
         # reads the accepted click's floor instead of recomputing one after
         # the leg already started publishing
         continue_payload["tail_from"] = tail_from
-    # Stale-intent cleanup is TOKEN-SCOPED (generation-scoped), not ordered:
-    # read the intent's opaque token BEFORE the CAS, and after winning ask
-    # the manager to delete intent ONLY IF its token is unchanged. However
-    # delayed this request gets (stalled coroutine, GC pause, resumed
-    # process), it can only ever remove the exact stale intent it observed -
-    # any newer, legitimate cancel minted a different token and provably
-    # survives. No timing assumption, no grace window, losers clear nothing.
-    # token=None (no pre-CAS intent, or a tokenless custom manager) skips
-    # cleanup entirely: intent arriving after this point is legitimate by
-    # definition. All fail-open: worst case stale intent cancels the leg at
-    # its first checkpoint (visible CANCELLED); operator requeue remedies.
-    cancel_token = None
-    with contextlib.suppress(Exception):
-        from agno.run.cancel import aget_cancellation_token
-
-        cancel_token = await aget_cancellation_token(run_id)
+    # The seam deliberately does NOT clear cancellation intent. Every
+    # automatic deletion scheme reviewed (ordering, timing grace, value
+    # tokens, sidecar tokens) had a window where a delayed cleanup could
+    # erase a NEWER, legitimate cancel - unsolvable while intent is
+    # unscoped shared state with mixed-version writers. The contract is:
+    # stale intent (a cancel recorded against an earlier leg that never
+    # consumed it) cancels the continuation leg at its first checkpoint,
+    # VISIBLY, and expires with its TTL; the operator remedy is
+    # requeue with clear_cancellation=true - an explicit human override,
+    # not silent automation. Attempt-scoped intent (roadmap, with the
+    # queue/steering ownership convergence) dissolves this entirely.
     result = await queue_worker.store.continue_job(run_id, continue_payload)
-    if result.get("outcome") == "queued" and cancel_token is not None:
-        try:
-            from agno.run.cancel import acleanup_run_if_token
-
-            await acleanup_run_if_token(run_id, cancel_token)
-        except Exception:
-            log_warning(f"Could not clear stale cancellation intent for continued run {run_id}")
     if result.get("outcome") == "attach":
         # CAS-race loser: both callers read paused, the other one won. Its
         # boundary is the accepted one - ours may already include the

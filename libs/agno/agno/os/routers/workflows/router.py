@@ -134,9 +134,8 @@ async def _pump_event_stream_to_websocket(websocket: WebSocket, run_id: str, fro
 
 # NOTE on execute-socket wire format: the non-durable execute path sends
 # SSE-wrapped frames (WebSocketHandler.format_sse_event) while the reconnect
-# pump sends flat JSON dicts. Durable tails standardize on the FLAT format -
-# the FE parser handles both (kaustubh, 2026-08-02), and one pump beats two
-# formats diverging.
+# pump sends flat JSON dicts. Durable tails standardize on the FLAT format:
+# the FE parser accepts both, and one pump beats two formats diverging.
 
 
 async def cancel_subscription_pump(websocket: WebSocket) -> None:
@@ -715,7 +714,14 @@ async def handle_workflow_continue_via_websocket(
             # existing_run.is_paused was proven above. stream_requested: this
             # socket IS a stream - a non-streaming submission's ticket must be
             # refused before the CAS, not silently pumped from an empty stream
-            continue_outcome = await acontinue_via_queue(queue_worker, run_id, continue_payload, stream_requested=True)
+            continue_outcome = await acontinue_via_queue(
+                queue_worker,
+                run_id,
+                continue_payload,
+                stream_requested=True,
+                component_type="workflow",
+                component_id=getattr(workflow, "id", None) or workflow_id,
+            )
             if continue_outcome is not None:
                 outcome = continue_outcome["outcome"]
                 if outcome == "stream_mismatch":
@@ -1953,7 +1959,12 @@ def get_workflow_router(
             ):
                 # The endpoint already proved the run row is PAUSED above
                 continue_outcome = await acontinue_via_queue(
-                    queue_worker, run_id, continue_payload, stream_requested=stream
+                    queue_worker,
+                    run_id,
+                    continue_payload,
+                    stream_requested=stream,
+                    component_type="workflow",
+                    component_id=getattr(workflow, "id", None) or workflow_id,
                 )
                 if continue_outcome is not None:
                     outcome, ticket = continue_outcome["outcome"], continue_outcome.get("job")

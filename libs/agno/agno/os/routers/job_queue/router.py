@@ -102,37 +102,32 @@ def get_queue_router(os: "AgentOS", settings: AgnoAPISettings = AgnoAPISettings(
         description=(
             "Requeue a terminally failed or cancelled job for one more execution "
             "(raises its attempt budget by one). The operator remedy for crashed runs "
-            "under the no-silent-re-execution default."
+            "under the no-silent-re-execution default. Requeueing a CANCELLED job "
+            "whose cancellation intent is still live requires clear_cancellation=true "
+            "- an explicit override of the recorded cancel; without it the re-driven "
+            "attempt is re-cancelled at its first checkpoint."
         ),
     )
-    async def requeue_job(request: Request, job_id: str):
-        import contextlib
-
+    async def requeue_job(request: Request, job_id: str, clear_cancellation: bool = False):
         store = _get_store(request)
-        # A cancelled job's cancellation intent outlives the tombstone (nothing
-        # executed, so nothing cleaned it up). Clear it, or the requeued
-        # attempt is instantly re-cancelled at its first checkpoint. The
-        # cleanup is TOKEN-SCOPED (see acontinue_via_queue): the intent's
-        # token is read BEFORE the transition, and the post-success cleanup
-        # deletes intent ONLY if that exact token is still stored - so a
-        # rejected requeue touches nothing (no successful transition), a
-        # concurrent losing requeue clears nothing, and however delayed this
-        # request gets, it can never erase a NEWER cancel aimed at the
-        # requeued attempt (that cancel minted a different token).
-        cancel_token = None
-        with contextlib.suppress(Exception):
-            from agno.run.cancel import aget_cancellation_token
+        # Cancellation intent is never cleared AUTOMATICALLY: every silent
+        # scheme reviewed had a window where a delayed cleanup could erase a
+        # newer, legitimate cancel. Instead the OPERATOR opts in: requeueing
+        # a previously cancelled job whose intent is still live (it outlives
+        # the tombstone - nothing executed, so nothing cleaned it up; TTL
+        # bounds it at ~24h) needs clear_cancellation=true, an explicit,
+        # human-initiated override of a recorded cancel. Without it the
+        # re-driven attempt is re-cancelled at its first checkpoint,
+        # visibly - annoying but never wrong.
+        if clear_cancellation:
+            try:
+                from agno.run.cancel import acleanup_run
 
-            cancel_token = await aget_cancellation_token(job_id)
+                await acleanup_run(job_id)
+            except Exception:
+                log_warning(f"Could not clear cancellation intent for requeued job {job_id}")
         if not await store.requeue_job(job_id):
             raise HTTPException(status_code=400, detail=f"Job {job_id} not found or not in a requeueable state")
-        if cancel_token is not None:
-            try:
-                from agno.run.cancel import acleanup_run_if_token
-
-                await acleanup_run_if_token(job_id, cancel_token)
-            except Exception:
-                log_warning(f"Could not clear stale cancellation intent for requeued job {job_id}")
         return await store.get_job(job_id)
 
     @router.get(
