@@ -316,6 +316,42 @@ class TestAcceptSideEffects:
             es_mod._event_stream = original
 
     @pytest.mark.asyncio
+    async def test_requeue_endpoint_clears_intent_before_the_transition(self):
+        """Serendipity sibling of the round-2 intent-order finding: the
+        operator requeue endpoint had the same shape - transition first,
+        cleanup second - with the same erase-a-legitimate-cancel window."""
+        from types import SimpleNamespace
+
+        from agno.os.routers.job_queue.router import get_queue_router
+        from agno.run.cancel import acancel_run, ais_cancelled, aregister_run
+
+        store = InMemoryQueueStore()
+        await store.enqueue_job(make_job("r1"))
+        claimed = await store.claim_job("w1")
+        await store.retry_or_fail_job("r1", "w1", claimed["attempt"], "boom")  # -> failed
+        await aregister_run("r1")
+        await acancel_run("r1")
+
+        order: list = []
+        original_requeue = store.requeue_job
+
+        async def recording_requeue(job_id):
+            order.append(("requeue", await ais_cancelled(job_id)))
+            return await original_requeue(job_id)
+
+        store.requeue_job = recording_requeue  # type: ignore[method-assign]
+
+        router = get_queue_router(os=SimpleNamespace(), settings=SimpleNamespace(os_security_key=None))  # type: ignore[arg-type]
+        endpoint = next(r.endpoint for r in router.routes if getattr(r, "path", "") == "/queue/jobs/{job_id}/requeue")
+        request = SimpleNamespace(
+            app=SimpleNamespace(state=SimpleNamespace(queue_worker=make_worker(store))),
+            state=SimpleNamespace(),
+        )
+        result = await endpoint(request, "r1")
+        assert result["status"] == "queued"
+        assert order == [("requeue", False)], "stale intent must already be cleared when the requeue transition runs"
+
+    @pytest.mark.asyncio
     async def test_non_stream_submission_does_not_touch_stream_status(self):
         import agno.os.event_streams as es_mod
         from agno.os.event_streams import InMemoryEventStream, set_event_stream

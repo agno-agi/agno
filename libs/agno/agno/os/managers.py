@@ -347,7 +347,7 @@ class EventsBuffer:
         # Trigger cleanup of old completed runs
         self.cleanup_runs()
 
-    def reopen_run(self, run_id: str) -> bool:
+    def reopen_run(self, run_id: str, include_error: bool = False) -> bool:
         """Atomically reopen a PAUSED run for a continuation leg.
 
         Synchronous on purpose: the check-and-flip must not yield to the
@@ -355,9 +355,11 @@ class EventsBuffer:
         worker's terminal write could be overwritten with PENDING. Also
         clears completed_at - the pause stamped it, and a reopened run left
         carrying it would be reaped by cleanup_runs mid-continuation.
+        include_error is the worker-redrive variant (see BaseEventStream).
         """
+        reopenable = (RunStatus.paused, RunStatus.error) if include_error else (RunStatus.paused,)
         metadata = self.run_metadata.get(run_id)
-        if metadata is None or metadata.get("status") != RunStatus.paused:
+        if metadata is None or metadata.get("status") not in reopenable:
             return False
         metadata["status"] = RunStatus.pending
         metadata["last_updated"] = time()

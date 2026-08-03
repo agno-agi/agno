@@ -460,6 +460,15 @@ class QueueWorker:
             # stream is the best-effort view, the run row stays authoritative.
             with contextlib.suppress(Exception):
                 await event_stream.reset_run_events(job_id)
+        if is_continuation:
+            # Belt-and-braces sentinel invalidation (the seam already reopened
+            # on accept, fail-open): covers a seam-side Redis blip AND the
+            # operator-requeue redrive of a FAILED leg - continuations never
+            # reset the stream, so the failed leg's ERROR sentinel would
+            # otherwise close tails attached before this leg's first event.
+            # include_error is safe HERE only: this worker holds the claim.
+            with contextlib.suppress(Exception):
+                await event_stream.reopen_run(job_id, include_error=True)
         with contextlib.suppress(Exception):
             # Fail-open: a Redis blip here must not burn the attempt budget -
             # execution can proceed; tails degrade to the DB view

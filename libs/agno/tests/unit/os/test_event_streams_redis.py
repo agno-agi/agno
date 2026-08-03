@@ -351,6 +351,22 @@ class TestTailResilience:
         assert await stream.get_run_status("r1") == RunStatus.completed
 
     @pytest.mark.asyncio
+    async def test_worker_redrive_reopens_from_error_but_never_completed(self, stream):
+        """include_error is the claim-holding worker's redrive variant: a
+        requeued continuation leg must re-liven the failed leg's ERROR view
+        (continuations never reset the stream, so the ERROR sentinel would
+        close early tails) - but COMPLETED stays untouchable either way."""
+        await stream.register_run("r1", RunStatus.running)
+        await stream.complete_run("r1", RunStatus.error)
+        assert await stream.reopen_run("r1") is False, "seam-side reopen must not resurrect an errored stream"
+        assert await stream.reopen_run("r1", include_error=True) is True
+        assert await stream.get_run_status("r1") == RunStatus.pending
+
+        await stream.complete_run("r1", RunStatus.completed)
+        assert await stream.reopen_run("r1", include_error=True) is False
+        assert await stream.get_run_status("r1") == RunStatus.completed
+
+    @pytest.mark.asyncio
     async def test_reopen_marker_invisible_to_replay_and_index(self, stream):
         await stream.register_run("r1", RunStatus.running)
         await stream.add_event("r1", make_event("r1", "a"))

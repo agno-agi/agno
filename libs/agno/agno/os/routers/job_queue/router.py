@@ -107,17 +107,22 @@ def get_queue_router(os: "AgentOS", settings: AgnoAPISettings = AgnoAPISettings(
     )
     async def requeue_job(request: Request, job_id: str):
         store = _get_store(request)
-        if not await store.requeue_job(job_id):
-            raise HTTPException(status_code=400, detail=f"Job {job_id} not found or not in a requeueable state")
         # A cancelled job's cancellation intent outlives the tombstone (nothing
         # executed, so nothing cleaned it up). Clear it, or the requeued
-        # attempt is instantly re-cancelled at its first checkpoint.
+        # attempt is instantly re-cancelled at its first checkpoint. Cleared
+        # BEFORE the requeue transition (same ordering as the continue seam):
+        # cleared after it, a worker could claim the requeued job and a
+        # LEGITIMATE cancel of that new attempt could land in between - which
+        # this cleanup would then erase. Cleared first, a cancel arriving next
+        # targets a still-terminal ticket and settles at the store.
         try:
             from agno.run.cancel import acleanup_run
 
             await acleanup_run(job_id)
         except Exception:
             log_warning(f"Could not clear cancellation intent for requeued job {job_id}")
+        if not await store.requeue_job(job_id):
+            raise HTTPException(status_code=400, detail=f"Job {job_id} not found or not in a requeueable state")
         return await store.get_job(job_id)
 
     @router.get(

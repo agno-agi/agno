@@ -221,6 +221,9 @@ class RedisEventStream(BaseEventStream):
             self._ensure_refresher()
         else:
             self._active_runs.discard(run_id)
+            # Bookkeeping dies with the run: without this, per-run refresh
+            # timestamps accumulate for the process lifetime
+            self._last_ttl_refresh.pop(run_id, None)
         # Status first, then the sentinel: a tail woken by the sentinel must
         # observe the terminal status.
         pipe = self._redis.pipeline()
@@ -235,7 +238,7 @@ class RedisEventStream(BaseEventStream):
         pipe.expire(self._counter_key(run_id), self._ttl)
         await pipe.execute()
 
-    async def reopen_run(self, run_id: str) -> bool:
+    async def reopen_run(self, run_id: str, include_error: bool = False) -> bool:
         """Atomically reopen a PAUSED run for a continuation leg.
 
         WATCH/MULTI CAS on the status key: the flip to PENDING only lands if
@@ -245,10 +248,12 @@ class RedisEventStream(BaseEventStream):
         only when NOTHING follows it, so the marker invalidates the pause
         sentinel and a tail attached before the leg's first event stays
         open instead of closing empty. Markers carry no idx and are skipped
-        by replay and tail alike.
+        by replay and tail alike. include_error is the worker-redrive
+        variant (see BaseEventStream.reopen_run).
         """
         from redis.exceptions import WatchError
 
+        reopenable = (RunStatus.paused.value, RunStatus.error.value) if include_error else (RunStatus.paused.value,)
         status_key = self._status_key(run_id)
         stream_key = self._stream_key(run_id)
         for _ in range(10):
@@ -256,7 +261,7 @@ class RedisEventStream(BaseEventStream):
                 async with self._redis.pipeline(transaction=True) as pipe:
                     await pipe.watch(status_key)
                     current = _to_str(await pipe.get(status_key))
-                    if current is not None and current != RunStatus.paused.value:
+                    if current is not None and current not in reopenable:
                         await pipe.unwatch()
                         return False
                     pipe.multi()
