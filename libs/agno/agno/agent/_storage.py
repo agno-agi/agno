@@ -134,43 +134,37 @@ def read_session(
     user_id: Optional[str] = None,
     runs_limit: Optional[int] = None,
 ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
-    """Get a Session from the database."""
-    try:
-        if not agent.db:
-            raise ValueError("Db not initialized")
-        # Only pass runs_limit to adapters that support it (SQL); others load full history.
-        if runs_limit is not None and getattr(agent.db, "supports_runs_limit", False):
-            return agent.db.get_session(  # type: ignore
-                session_id=session_id, session_type=session_type, user_id=user_id, runs_limit=runs_limit
-            )
-        return agent.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
-    except Exception as e:
-        import traceback
+    """Get a Session from the database.
 
-        traceback.print_exc(limit=3)
-        log_warning(f"Error getting session from db: {str(e)}")
-        return None
+    Read errors propagate. Do NOT coerce failures to None here: an empty result
+    is indistinguishable from "row does not exist", and the caller will happily
+    create a fresh session with the same id and overwrite the real row on the
+    next write. This is how a transient Postgres failover wiped six weeks of
+    conversation history in a real incident. Let the exception surface and
+    fail the run loudly -- a failed run is recoverable, a wiped session is not.
+    """
+    if not agent.db:
+        raise ValueError("Db not initialized")
+    # Only pass runs_limit to adapters that support it (SQL); others load full history.
+    if runs_limit is not None and getattr(agent.db, "supports_runs_limit", False):
+        return agent.db.get_session(  # type: ignore
+            session_id=session_id, session_type=session_type, user_id=user_id, runs_limit=runs_limit
+        )
+    return agent.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
 
 
 async def aread_session(
     agent: Agent, session_id: str, session_type: SessionType = SessionType.AGENT, user_id: Optional[str] = None
 ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
-    """Get a Session from the database."""
+    """Async twin of :func:`read_session`. Same rationale: do NOT swallow errors."""
     from agno.agent import _init
 
-    try:
-        if not agent.db:
-            raise ValueError("Db not initialized")
-        if _init.has_async_db(agent):
-            return await agent.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
-        else:
-            return agent.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
-    except Exception as e:
-        import traceback
-
-        traceback.print_exc(limit=3)
-        log_warning(f"Error getting session from db: {str(e)}")
-        return None
+    if not agent.db:
+        raise ValueError("Db not initialized")
+    if _init.has_async_db(agent):
+        return await agent.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
+    else:
+        return agent.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
 
 
 def upsert_session(
