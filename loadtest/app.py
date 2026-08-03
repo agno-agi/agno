@@ -59,7 +59,9 @@ def publish(title: str) -> str:
     return f"published: {title}"
 
 
-agent = Agent(id="load-agent", name="Load Agent", model=make_model(), instructions=_TERSE, db=db)
+agent = Agent(
+    id="load-agent", name="Load Agent", model=make_model(), instructions=_TERSE, db=db
+)
 
 # Dedicated HITL agent — instructed to always call the confirmation tool.
 hitl_agent = Agent(
@@ -75,7 +77,15 @@ team = Team(
     id="load-team",
     name="Load Team",
     model=make_model(),
-    members=[Agent(id="load-member", name="Member", model=make_model(), instructions=_TERSE, db=db)],
+    members=[
+        Agent(
+            id="load-member",
+            name="Member",
+            model=make_model(),
+            instructions=_TERSE,
+            db=db,
+        )
+    ],
     instructions=_TERSE,
     db=db,
 )
@@ -85,8 +95,54 @@ workflow = Workflow(
     name="Load Workflow",
     db=db,
     steps=[
-        Step(name="step-one", agent=Agent(id="wf-a", model=make_model(), instructions=_TERSE, db=db)),
-        Step(name="step-two", agent=Agent(id="wf-b", model=make_model(), instructions=_TERSE, db=db)),
+        Step(
+            name="step-one",
+            agent=Agent(id="wf-a", model=make_model(), instructions=_TERSE, db=db),
+        ),
+        Step(
+            name="step-two",
+            agent=Agent(id="wf-b", model=make_model(), instructions=_TERSE, db=db),
+        ),
+    ],
+)
+
+# HITL team — a member holds the confirmation tool, so the team run pauses for
+# approval and must propagate that pause up. Exercises durable team continuation.
+hitl_team = Team(
+    id="hitl-team",
+    name="HITL Team",
+    model=make_model(),
+    members=[
+        Agent(
+            id="hitl-team-member",
+            name="Publisher",
+            model=make_model(),
+            tools=[publish],
+            instructions="When asked to publish anything, call the publish tool. Keep replies short.",
+            db=db,
+        )
+    ],
+    instructions="Delegate publish requests to the Publisher member.",
+    db=db,
+)
+
+# HITL workflow — step two pauses for confirmation. Exercises the durable
+# continuation legs (CAS paused->queued) over both the SSE and WS transports.
+hitl_workflow = Workflow(
+    id="hitl-workflow",
+    name="HITL Workflow",
+    db=db,
+    steps=[
+        Step(
+            name="draft",
+            agent=Agent(id="hw-a", model=make_model(), instructions=_TERSE, db=db),
+        ),
+        Step(
+            name="approve",
+            agent=Agent(id="hw-b", model=make_model(), instructions=_TERSE, db=db),
+            requires_confirmation=True,
+            confirmation_message="Approve the draft before finalizing?",
+        ),
     ],
 )
 
@@ -98,8 +154,14 @@ wf_agent_workflow = Workflow(
     name="Load WorkflowAgent Flow",
     agent=WorkflowAgent(model=make_model(), num_history_runs=3),
     steps=[
-        Step(name="wfa-step-one", agent=Agent(id="wfa-a", model=make_model(), instructions=_TERSE, db=db)),
-        Step(name="wfa-step-two", agent=Agent(id="wfa-b", model=make_model(), instructions=_TERSE, db=db)),
+        Step(
+            name="wfa-step-one",
+            agent=Agent(id="wfa-a", model=make_model(), instructions=_TERSE, db=db),
+        ),
+        Step(
+            name="wfa-step-two",
+            agent=Agent(id="wfa-b", model=make_model(), instructions=_TERSE, db=db),
+        ),
     ],
     db=db,
 )
@@ -108,8 +170,8 @@ agent_os = AgentOS(
     id="loadtest-os",
     description="Load-test AgentOS with a durable Redis-coordinated job queue.",
     agents=[agent, hitl_agent],
-    teams=[team],
-    workflows=[workflow, wf_agent_workflow],
+    teams=[team, hitl_team],
+    workflows=[workflow, wf_agent_workflow, hitl_workflow],
     db=db,
     # DURABLE=0 disables the queue -> background runs take the INLINE
     # (_arun_background) path. The WorkflowAgent empty-ghost regression only
@@ -135,4 +197,6 @@ app = agent_os.get_app()
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("app:app", host="0.0.0.0", port=int(os.environ.get("PORT", 7777)), reload=False)
+    uvicorn.run(
+        "app:app", host="0.0.0.0", port=int(os.environ.get("PORT", 7777)), reload=False
+    )

@@ -38,7 +38,12 @@ TERMINAL = e2e.TERMINAL
 
 
 def _compose(*a):
-    return subprocess.run(["docker", "compose", "-f", COMPOSE, *a], capture_output=True, text=True, timeout=60)
+    return subprocess.run(
+        ["docker", "compose", "-f", COMPOSE, *a],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
 
 
 async def _wait_redis_healthy(timeout=30):
@@ -54,17 +59,45 @@ async def _wait_redis_healthy(timeout=30):
         await asyncio.sleep(1)
 
 
+async def _wait_fleet_healthy(timeout=90):
+    """Block until BOTH replicas (via their direct ports) AND the LB answer /health.
+    A preceding crash/kill scenario - or a suite launched right after a docker
+    bring-up - leaves replicas mid-recovery; a submit then returns no run_id and
+    the streaming scenarios flake with 'no run created'. Gate the whole suite (and
+    the post-crash recovery) on this so those failures can't be a startup artifact."""
+    targets = [R1, R2, LB]
+    deadline = time.time() + timeout
+    async with httpx.AsyncClient(timeout=5) as c:
+        while time.time() < deadline:
+            ok = 0
+            for base in targets:
+                try:
+                    resp = await c.get(f"{base}/health")
+                    if resp.status_code == 200:
+                        ok += 1
+                except Exception:
+                    pass
+            if ok == len(targets):
+                await asyncio.sleep(1)  # settle margin
+                return True
+            await asyncio.sleep(2)
+    return False
+
+
 def _db_run(run_id):
     return e2e._db_run(run_id)
 
 
 # ---------------------------------------------------------------- cross-replica resume
 
+
 async def s_cross_replica_resume():
     """Submit a background stream on replica1; RESUME it on replica2. Assert
     replica2 replays the run's events (cross-replica event stream via Redis),
     with monotonic indices, and the run completes durably."""
-    r = Result("cross-replica resume: submit on R1, resume on R2", "x-replica", "agents")
+    r = Result(
+        "cross-replica resume: submit on R1, resume on R2", "x-replica", "agents"
+    )
     t0 = time.time()
     run_id = None
     frames_r1 = 0
@@ -72,12 +105,16 @@ async def s_cross_replica_resume():
         # submit stream on replica1, read a couple frames, disconnect
         data = {"message": "sleep=4 xrep", "background": "true", "stream": "true"}
         try:
-            async with c.stream("POST", f"{R1}/agents/load-agent/runs", data=data) as resp:
+            async with c.stream(
+                "POST", f"{R1}/agents/load-agent/runs", data=data
+            ) as resp:
                 async for line in resp.aiter_lines():
                     if line.startswith("data:"):
                         frames_r1 += 1
                         try:
-                            run_id = run_id or json.loads(line[5:].strip()).get("run_id")
+                            run_id = run_id or json.loads(line[5:].strip()).get(
+                                "run_id"
+                            )
                         except Exception:
                             pass
                         if frames_r1 >= 2:
@@ -100,7 +137,9 @@ async def s_cross_replica_resume():
         if sid:
             data["session_id"] = sid
         try:
-            async with c.stream("POST", f"{R2}/agents/load-agent/runs/{run_id}/resume", data=data) as resp:
+            async with c.stream(
+                "POST", f"{R2}/agents/load-agent/runs/{run_id}/resume", data=data
+            ) as resp:
                 r.evidence["resume_http"] = resp.status_code
                 async for line in resp.aiter_lines():
                     if line.startswith("data:"):
@@ -120,7 +159,11 @@ async def s_cross_replica_resume():
                         break
         except Exception as e:
             r.evidence["resume_err"] = str(e)[:80]
-    r.evidence.update(resume_frames=resume_frames, indices_monotonic=monotonic, saw_completed=completed)
+    r.evidence.update(
+        resume_frames=resume_frames,
+        indices_monotonic=monotonic,
+        saw_completed=completed,
+    )
     # final durability check
     for _ in range(20):
         dbrun = _db_run(run_id)
@@ -129,7 +172,10 @@ async def s_cross_replica_resume():
         await asyncio.sleep(1.5)
     r.evidence["db_status"] = (dbrun or {}).get("status")
     if resume_frames > 0 and monotonic and (dbrun or {}).get("status") == "COMPLETED":
-        r.status, r.detail = "PASS", f"resumed {resume_frames} events on R2 (submitted on R1), run COMPLETED durably"
+        r.status, r.detail = (
+            "PASS",
+            f"resumed {resume_frames} events on R2 (submitted on R1), run COMPLETED durably",
+        )
     else:
         r.status = "FAIL"
         r.detail = f"cross-replica resume gap: resume_frames={resume_frames} monotonic={monotonic} db={(dbrun or {}).get('status')}"
@@ -138,6 +184,7 @@ async def s_cross_replica_resume():
 
 
 # ---------------------------------------------------------------- Redis fault during run (cancel-check fail-closed)
+
 
 async def s_cancel_check_redis_fault():
     """A Redis fault WHILE a run executes must not fail an otherwise-successful
@@ -151,7 +198,11 @@ async def s_cancel_check_redis_fault():
     a redis TimeoutError, the cancel-check failed CLOSED (regression). It should
     fail-OPEN (treat redis error as 'not cancelled') and complete.
     """
-    r = Result("redis fault: cancellation-check fails-open (not the run)", "cancel-check-fault", "agents")
+    r = Result(
+        "redis fault: cancellation-check fails-open (not the run)",
+        "cancel-check-fault",
+        "agents",
+    )
     t0 = time.time()
     # This scenario asserts server behavior: when Redis faults mid-run, the
     # cancellation-check (RedisRunCancellationManager.ais_cancelled) must
@@ -180,29 +231,47 @@ async def s_cancel_check_redis_fault():
             return r
         await asyncio.sleep(1.5)
         _compose("pause", "redis")
-        await asyncio.sleep(7)  # long enough that a mid-run cancel-check hits the outage
+        await asyncio.sleep(
+            7
+        )  # long enough that a mid-run cancel-check hits the outage
         _compose("unpause", "redis")
         await _wait_redis_healthy()
         final = await e2e._poll(c, "agents", "load-agent", run_id, sid, timeout=60)
     dbrun = _db_run(run_id) or {}
     content = dbrun.get("content")
-    err_is_redis = "redis" in str(content).lower() or "TimeoutError" in str(dbrun.get("error", ""))
+    err_is_redis = "redis" in str(content).lower() or "TimeoutError" in str(
+        dbrun.get("error", "")
+    )
     jobs = _job_state(run_id)
-    r.evidence.update(run_id=run_id, run_status=dbrun.get("status"), content=str(content)[:40],
-                      queue_job=jobs, redis_error=err_is_redis)
+    r.evidence.update(
+        run_id=run_id,
+        run_status=dbrun.get("status"),
+        content=str(content)[:40],
+        queue_job=jobs,
+        redis_error=err_is_redis,
+    )
     if dbrun.get("status") == "ERROR" and err_is_redis:
         r.status = "FAIL"
-        r.detail = ("cancel-check failed CLOSED: run marked ERROR by a Redis fault during execution "
-                    f"(content={str(content)[:30]!r}, queue={jobs}) — should fail-open and complete")
+        r.detail = (
+            "cancel-check failed CLOSED: run marked ERROR by a Redis fault during execution "
+            f"(content={str(content)[:30]!r}, queue={jobs}) — should fail-open and complete"
+        )
     elif dbrun.get("status") in ("COMPLETED",):
-        r.status, r.detail = "PASS", "run completed despite Redis fault mid-execution (cancel-check fail-open)"
+        r.status, r.detail = (
+            "PASS",
+            "run completed despite Redis fault mid-execution (cancel-check fail-open)",
+        )
     else:
-        r.status, r.detail = "WARN", f"inconclusive: status={dbrun.get('status')} redis_error={err_is_redis}"
+        r.status, r.detail = (
+            "WARN",
+            f"inconclusive: status={dbrun.get('status')} redis_error={err_is_redis}",
+        )
     r.duration = time.time() - t0
     return r
 
 
 # ---------------------------------------------------------------- Redis flap mid-stream
+
 
 async def s_redis_flap():
     """Pause Redis for ~8s while durable streaming runs execute. Assert the run
@@ -228,21 +297,30 @@ async def s_redis_flap():
     dbrun = _db_run(run_id)
     r.evidence.update(run_id=run_id, final=final, db_status=(dbrun or {}).get("status"))
     if (dbrun or {}).get("status") in ("COMPLETED", "ERROR"):
-        r.status, r.detail = "PASS", f"run reached {(dbrun or {}).get('status')} despite Redis flap (durable)"
+        r.status, r.detail = (
+            "PASS",
+            f"run reached {(dbrun or {}).get('status')} despite Redis flap (durable)",
+        )
     else:
-        r.status, r.detail = "FAIL", f"run lost/stuck after Redis flap: db={(dbrun or {}).get('status')}"
+        r.status, r.detail = (
+            "FAIL",
+            f"run lost/stuck after Redis flap: db={(dbrun or {}).get('status')}",
+        )
     r.duration = time.time() - t0
     return r
 
 
 # ---------------------------------------------------------------- #7 retryable timeout tail
 
+
 async def s_retryable_timeout_tail():
     """#7: with MAX_ATTEMPTS>1 and a short TIMEOUT, a streaming run times out on
     attempt 1. A terminal ERROR sentinel must NOT be published while the job
     still has retry budget (that closes the client's tail before the retry).
     Detected via the Redis event stream terminal sentinel timing."""
-    r = Result("#7 retryable timeout: tail not closed before retry", "retry-timeout", "agents")
+    r = Result(
+        "#7 retryable timeout: tail not closed before retry", "retry-timeout", "agents"
+    )
     t0 = time.time()
     # This scenario needs a SHORT server timeout + retry budget so 'sleep=8'
     # times out on attempt 1. If the stack is on a sane/long timeout, SKIP
@@ -264,11 +342,15 @@ async def s_retryable_timeout_tail():
         data = {"message": "sleep=8 tmo", "background": "true", "stream": "true"}
         run_id = None
         try:
-            async with c.stream("POST", f"{LB}/agents/load-agent/runs", data=data) as resp:
+            async with c.stream(
+                "POST", f"{LB}/agents/load-agent/runs", data=data
+            ) as resp:
                 async for line in resp.aiter_lines():
                     if line.startswith("data:"):
                         try:
-                            run_id = run_id or json.loads(line[5:].strip()).get("run_id")
+                            run_id = run_id or json.loads(line[5:].strip()).get(
+                                "run_id"
+                            )
                         except Exception:
                             pass
                         if run_id:
@@ -293,32 +375,48 @@ async def s_retryable_timeout_tail():
         r.status = "FAIL"
         r.detail = f"#7 reproduced: terminal sentinel published at +{sentinel_at:.1f}s while job {st} attempt={attempt}/{max_a} (retry pending)"
     elif sentinel_at is None:
-        r.status, r.detail = "PASS", f"no premature terminal sentinel during retry window (job {st} attempt={attempt}/{max_a})"
+        r.status, r.detail = (
+            "PASS",
+            f"no premature terminal sentinel during retry window (job {st} attempt={attempt}/{max_a})",
+        )
     else:
-        r.status, r.detail = "WARN", f"inconclusive: sentinel={sentinel_at} job={st} attempt={attempt}/{max_a}"
+        r.status, r.detail = (
+            "WARN",
+            f"inconclusive: sentinel={sentinel_at} job={st} attempt={attempt}/{max_a}",
+        )
     r.duration = time.time() - t0
     return r
 
 
 # ---------------------------------------------------------------- stream cancellation
 
+
 async def s_stream_cancel():
     """Cancel a streaming durable run mid-flight; the tail should close cleanly
     (terminal/cancelled), not hang, and the run persists CANCELLED."""
-    r = Result("stream cancel mid-flight: tail closes, CANCELLED persisted", "cancel-stream", "agents")
+    r = Result(
+        "stream cancel mid-flight: tail closes, CANCELLED persisted",
+        "cancel-stream",
+        "agents",
+    )
     t0 = time.time()
     run_id, sid, tail_closed = None, None, False
     async with httpx.AsyncClient(timeout=None) as c:
         # start a longer stream, capture run_id, then cancel from a second client
         data = {"message": "sleep=8 cancelme", "background": "true", "stream": "true"}
+
         async def watch():
             nonlocal run_id, tail_closed
             try:
-                async with c.stream("POST", f"{LB}/agents/load-agent/runs", data=data) as resp:
+                async with c.stream(
+                    "POST", f"{LB}/agents/load-agent/runs", data=data
+                ) as resp:
                     async for line in resp.aiter_lines():
                         if line.startswith("data:"):
                             try:
-                                run_id = run_id or json.loads(line[5:].strip()).get("run_id")
+                                run_id = run_id or json.loads(line[5:].strip()).get(
+                                    "run_id"
+                                )
                             except Exception:
                                 pass
                         if time.time() - t0 > 25:
@@ -326,6 +424,7 @@ async def s_stream_cancel():
                 tail_closed = True
             except Exception:
                 tail_closed = True
+
         watcher = asyncio.create_task(watch())
         # wait for run_id then cancel
         for _ in range(20):
@@ -338,7 +437,8 @@ async def s_stream_cancel():
             async with httpx.AsyncClient() as cc:
                 cancel = await cc.post(
                     f"{LB}/agents/load-agent/runs/{run_id}/cancel",
-                    params={"session_id": sid} if sid else {}, timeout=15,
+                    params={"session_id": sid} if sid else {},
+                    timeout=15,
                 )
                 r.evidence["cancel_http"] = cancel.status_code
         await asyncio.wait_for(watcher, timeout=30)
@@ -347,26 +447,39 @@ async def s_stream_cancel():
     if final in ("CANCELLED", "COMPLETED") and tail_closed:
         r.status, r.detail = "PASS", f"stream cancel handled: tail closed, run={final}"
     else:
-        r.status, r.detail = "FAIL", f"cancel-stream issue: final={final} tail_closed={tail_closed}"
+        r.status, r.detail = (
+            "FAIL",
+            f"cancel-stream issue: final={final} tail_closed={tail_closed}",
+        )
     r.duration = time.time() - t0
     return r
 
 
 # ---------------------------------------------------------------- clobber (stream variant)
 
+
 async def s_clobber_stream(n=6):
     """Same-session clobber, but with stream=true durable submissions. Confirms
     whether concurrent CREATES on one session lose run records regardless of
     stream mode."""
-    r = Result("same-session clobber (stream=true): concurrent creates", "clobber", "agents")
+    r = Result(
+        "same-session clobber (stream=true): concurrent creates", "clobber", "agents"
+    )
     t0 = time.time()
     sid = str(uuid.uuid4())
     run_ids = []
 
     async def one(i, c):
-        data = {"message": f"sleep=1 sclob {i}", "background": "true", "stream": "true", "session_id": sid}
+        data = {
+            "message": f"sleep=1 sclob {i}",
+            "background": "true",
+            "stream": "true",
+            "session_id": sid,
+        }
         try:
-            async with c.stream("POST", f"{LB}/agents/load-agent/runs", data=data) as resp:
+            async with c.stream(
+                "POST", f"{LB}/agents/load-agent/runs", data=data
+            ) as resp:
                 async for line in resp.aiter_lines():
                     if line.startswith("data:"):
                         try:
@@ -386,26 +499,42 @@ async def s_clobber_stream(n=6):
     runs = e2e._db_session_runs(sid)
     present = {x.get("run_id") for x in runs}
     missing = [rid for rid in run_ids if rid not in present]
-    r.evidence.update(session_id=sid, submitted=len(run_ids), in_blob=len(present & set(run_ids)), missing=len(missing))
+    r.evidence.update(
+        session_id=sid,
+        submitted=len(run_ids),
+        in_blob=len(present & set(run_ids)),
+        missing=len(missing),
+    )
     if missing:
-        r.status, r.detail = "FAIL", f"{len(missing)}/{len(run_ids)} stream runs clobbered from session blob"
+        r.status, r.detail = (
+            "FAIL",
+            f"{len(missing)}/{len(run_ids)} stream runs clobbered from session blob",
+        )
     else:
-        r.status, r.detail = "PASS", f"all {len(run_ids)} concurrent stream runs present in session"
+        r.status, r.detail = (
+            "PASS",
+            f"all {len(run_ids)} concurrent stream runs present in session",
+        )
     r.duration = time.time() - t0
     return r
 
 
 # ---------------------------------------------------------------- helpers
 
+
 def _job_state(run_id):
     import psycopg
+
     try:
         c = psycopg.connect(PG_DSN)
         cur = c.cursor()
         for schema in ("ai", "public"):
             for tbl in ("agno_jobs", "agno_run_queue"):
                 try:
-                    cur.execute(f"SELECT status, attempt, max_attempts FROM {schema}.{tbl} WHERE id=%s", (run_id,))
+                    cur.execute(
+                        f"SELECT status, attempt, max_attempts FROM {schema}.{tbl} WHERE id=%s",
+                        (run_id,),
+                    )
                     row = cur.fetchone()
                     c.close()
                     return tuple(row) if row else None
@@ -421,9 +550,23 @@ def _redis_terminal_sentinel_time(run_id):
     """Return seconds-from-first-event to the terminal sentinel, or None."""
     try:
         out = subprocess.run(
-            ["docker", "compose", "-f", COMPOSE, "exec", "-T", "redis", "redis-cli",
-             "XRANGE", f"agno:os:events:{run_id}:1:events", "-", "+"],
-            capture_output=True, text=True, timeout=15,
+            [
+                "docker",
+                "compose",
+                "-f",
+                COMPOSE,
+                "exec",
+                "-T",
+                "redis",
+                "redis-cli",
+                "XRANGE",
+                f"agno:os:events:{run_id}:1:events",
+                "-",
+                "+",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
         ).stdout
         lines = out.splitlines()
         first_id = None
@@ -457,6 +600,7 @@ async def _wait_terminal_run(run_id, timeout=40):
 
 # ---------------------------------------------------------------- reserved-kwarg collision (streaming durable)
 
+
 async def s_reserved_kwarg_stream():
     """A STREAMING durable submit that carries a reserved run-method name
     (run_id/input/session_id/user_id) as an extra form field must not blow up.
@@ -476,7 +620,11 @@ async def s_reserved_kwarg_stream():
     code the stream run errors with a 'multiple values' message while the
     non-stream run completes. On fixed code both complete.
     """
-    r = Result("reserved kwarg on streaming durable run does not TypeError", "reserved-kwarg", "agents")
+    r = Result(
+        "reserved kwarg on streaming durable run does not TypeError",
+        "reserved-kwarg",
+        "agents",
+    )
     t0 = time.time()
     extra = "run_id"  # the reserved name most obviously wrong to accept from a client
 
@@ -495,7 +643,9 @@ async def s_reserved_kwarg_stream():
         async with httpx.AsyncClient(timeout=None) as c:
             try:
                 if stream:
-                    async with c.stream("POST", f"{LB}/agents/load-agent/runs", data=data) as resp:
+                    async with c.stream(
+                        "POST", f"{LB}/agents/load-agent/runs", data=data
+                    ) as resp:
                         async for _line in resp.aiter_lines():
                             if time.time() - t0 > 25:
                                 break
@@ -514,8 +664,12 @@ async def s_reserved_kwarg_stream():
             await asyncio.sleep(1)
         blob = json.dumps(dbrun).lower()
         multi = "multiple values for keyword argument" in blob
-        return {"run_id": dbrun.get("run_id"), "status": dbrun.get("status"),
-                "multi_kwarg_error": multi, "detail": str(dbrun.get("content") or dbrun.get("error"))[:80]}
+        return {
+            "run_id": dbrun.get("run_id"),
+            "status": dbrun.get("status"),
+            "multi_kwarg_error": multi,
+            "detail": str(dbrun.get("content") or dbrun.get("error"))[:80],
+        }
 
     stream_res = await submit(stream=True, session_id=f"rkw-stream-{int(t0)}")
     nonstream_res = await submit(stream=False, session_id=f"rkw-nonstream-{int(t0)}")
@@ -531,7 +685,10 @@ async def s_reserved_kwarg_stream():
             "strip the full reserved set before the ** splat."
         )
     elif stream_res["status"] == "COMPLETED":
-        r.status, r.detail = "PASS", f"streaming durable run tolerated an extra '{extra}' field (both paths complete)"
+        r.status, r.detail = (
+            "PASS",
+            f"streaming durable run tolerated an extra '{extra}' field (both paths complete)",
+        )
     else:
         r.status = "WARN"
         r.detail = f"inconclusive: stream status={stream_res['status']} non_stream={nonstream_res['status']}"
@@ -539,22 +696,601 @@ async def s_reserved_kwarg_stream():
     return r
 
 
+# ---------------------------------------------------------------- durable continuation legs (PR #9310)
+#
+# These exercise the CAS `paused -> queued` continuation over BOTH transports:
+#   - SSE:  HTTP /continue with background=true -> 202 PENDING, worker runs the leg
+#   - WS:   continue-workflow action -> 'queued' ack frame + flat-JSON tail
+# and the multi-container behaviours that matter: submit on one replica / continue
+# via the LB (leg may land on either replica), double-click idempotency, and a
+# crash mid-leg (must NOT silently re-run a HITL-approved leg - max_attempts=attempt+1).
+
+WS_LB = LB.replace("http", "ws")
+
+# After a continue is accepted the run is momentarily still PAUSED until a worker
+# claims the leg. TERMINAL includes PAUSED (it's terminal for a fresh submission),
+# so waiting for a CONTINUED run needs a set that EXCLUDES paused.
+_CONTINUED_TERMINAL = {"COMPLETED", "ERROR", "FAILED", "CANCELLED"}
+
+
+async def _wait_run_status(run_id, statuses, timeout=60):
+    """Poll the run row until its status is in `statuses` (or timeout)."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        st = str((_db_run(run_id) or {}).get("status", "")).upper()
+        if st in statuses:
+            return st
+        await asyncio.sleep(1.0)
+    return str((_db_run(run_id) or {}).get("status", "")).upper() or "TIMEOUT"
+
+
+async def _pause_hitl_agent_durable(c, message="Publish an item titled harness."):
+    """Submit a DURABLE (background) HITL agent run and wait until it PAUSES.
+    Returns (run_id, session_id, tools) or (None, None, None)."""
+    r = await c.post(
+        f"{LB}/agents/hitl-agent/runs",
+        data={"message": message, "background": "true", "stream": "false"},
+    )
+    if r.status_code not in (200, 202):
+        return None, None, None
+    b = r.json()
+    run_id, sid = b.get("run_id"), b.get("session_id")
+    for _ in range(30):
+        await asyncio.sleep(1)
+        run = _db_run(run_id) or {}
+        st = str(run.get("status", "")).upper()
+        if st == "PAUSED":
+            tools = run.get("tools") or [
+                dict(x.get("tool_execution", {}))
+                for x in (run.get("requirements") or [])
+            ]
+            for t in tools:
+                t["confirmed"] = True
+            return run_id, sid, tools
+        if st in TERMINAL:
+            return run_id, sid, None
+    return run_id, sid, None
+
+
+# ---- cross-replica continue: submit on R1, continue via R2 (agent/team/workflow) ----
+#
+# Each component's continue takes a different resolution field:
+#   agents    -> tools           (ToolExecution list)
+#   teams     -> requirements    (RunRequirement list)
+#   workflows -> step_requirements (StepRequirement list)
+# The paused run row carries `tools` and/or `requirements`/`step_requirements`;
+# we mark each resolved and post to the OTHER replica's /continue.
+_CONTINUE_SPEC = {
+    "agents": {
+        "cid": "hitl-agent",
+        "field": "tools",
+        "run_field": "tools",
+        "confirm": lambda x: x.update(confirmed=True),
+    },
+    "teams": {
+        "cid": "hitl-team",
+        "field": "requirements",
+        "run_field": "requirements",
+        "confirm": lambda x: x.update(confirmed=True),
+    },
+    "workflows": {
+        "cid": "hitl-workflow",
+        "field": "step_requirements",
+        "run_field": "step_requirements",
+        "confirm": lambda x: x.update(confirmed=True),
+    },
+}
+
+
+async def _submit_and_pause_on(c, base, component, cid, message):
+    """Durable submit on `base` (a specific replica) and wait for PAUSED.
+    Returns (run_id, session_id) or (None, None)."""
+    r = await c.post(
+        f"{base}/{component}/{cid}/runs",
+        data={"message": message, "background": "true", "stream": "false"},
+    )
+    if r.status_code not in (200, 202):
+        return None, None, r.status_code
+    b = r.json()
+    run_id, sid = b.get("run_id"), b.get("session_id")
+    for _ in range(40):
+        await asyncio.sleep(1)
+        st = str((_db_run(run_id) or {}).get("status", "")).upper()
+        if st == "PAUSED":
+            return run_id, sid, r.status_code
+        if st in ("COMPLETED", "ERROR", "FAILED", "CANCELLED"):
+            return run_id, sid, r.status_code
+    return run_id, sid, r.status_code
+
+
+def _resolved_requirements(run, spec):
+    """Extract the paused run's resolution objects and mark each confirmed."""
+    items = run.get(spec["run_field"]) or []
+    # workflows/teams store the object directly; agents store tools directly too
+    resolved = []
+    for it in items:
+        obj = (
+            dict(it.get("tool_execution", it))
+            if isinstance(it, dict) and "tool_execution" in it
+            else dict(it)
+        )
+        obj["confirmed"] = True
+        resolved.append(obj)
+    return resolved
+
+
+async def _cross_replica_continue(component, message):
+    """Submit a durable HITL run on R1, PAUSE, then CONTINUE via R2 (background),
+    asserting the leg completes durably from the other replica."""
+    spec = _CONTINUE_SPEC[component]
+    cid, field = spec["cid"], spec["field"]
+    r = Result(
+        f"cross-replica continue ({component[:-1]}): pause on R1, continue on R2",
+        f"xrep-continue-{component[:-1]}",
+        component,
+    )
+    t0 = time.time()
+    async with httpx.AsyncClient(timeout=None) as c:
+        run_id, sid, submit_code = await _submit_and_pause_on(
+            c, R1, component, cid, message
+        )
+        r.evidence.update(run_id=run_id, submit_http=submit_code, submitted_on="R1")
+        run = _db_run(run_id) or {}
+        if str(run.get("status", "")).upper() != "PAUSED":
+            r.status = "SKIP"
+            r.detail = f"did not pause on R1 (status={run.get('status')}); model may not have called the tool"
+            r.duration = time.time() - t0
+            return r
+        resolved = _resolved_requirements(run, spec)
+        if not resolved:
+            r.status, r.detail = (
+                "SKIP",
+                f"paused but no {field} to resolve (run_id={run_id})",
+            )
+            r.duration = time.time() - t0
+            return r
+        # CONTINUE via R2 (the other replica), durable
+        cont = await c.post(
+            f"{R2}/{component}/{cid}/runs/{run_id}/continue",
+            data={
+                field: json.dumps(resolved),
+                "session_id": sid,
+                "background": "true",
+                "stream": "false",
+            },
+            timeout=30,
+        )
+        cbody = (
+            cont.json()
+            if cont.headers.get("content-type", "").startswith("application/json")
+            else {}
+        )
+        pending = cont.status_code in (200, 202) and cbody.get("status") == "PENDING"
+        final = await _wait_run_status(run_id, _CONTINUED_TERMINAL, timeout=75)
+    r.evidence.update(
+        continued_on="R2",
+        continue_http=cont.status_code,
+        continue_status=cbody.get("status"),
+        final=final,
+    )
+    if pending and final == "COMPLETED":
+        r.status, r.detail = (
+            "PASS",
+            "paused on R1, durable continue accepted on R2 (202 PENDING), completed cross-replica",
+        )
+    elif not pending:
+        r.status, r.detail = (
+            "FAIL",
+            f"R2 continue not durable: http={cont.status_code} status={cbody.get('status')}",
+        )
+    else:
+        r.status, r.detail = "FAIL", f"R2 continue accepted but run ended {final}"
+    r.duration = time.time() - t0
+    return r
+
+
+async def s_xrep_continue_agent():
+    return await _cross_replica_continue("agents", "Publish an item titled xrep-agent.")
+
+
+async def s_xrep_continue_team():
+    return await _cross_replica_continue("teams", "Publish an item titled xrep-team.")
+
+
+async def s_xrep_continue_workflow():
+    return await _cross_replica_continue(
+        "workflows", "Draft then approve xrep-workflow."
+    )
+
+
+async def s_continue_sse_durable():
+    """DURABLE HITL continue over HTTP/SSE: pause a queued run, /continue with
+    background=true, assert the seam returns 202 PENDING (the CAS accepted the
+    leg - not an inline completion) and the run reaches COMPLETED via a worker."""
+    r = Result(
+        "durable HITL continue (SSE/HTTP background): 202 PENDING -> COMPLETED",
+        "continue-sse",
+        "agents",
+    )
+    t0 = time.time()
+    async with httpx.AsyncClient(timeout=None) as c:
+        run_id, sid, tools = await _pause_hitl_agent_durable(c)
+        if not tools:
+            r.status, r.detail = (
+                "SKIP",
+                f"did not pause on tool (run_id={run_id}); model may not have called publish",
+            )
+            r.duration = time.time() - t0
+            return r
+        cont = await c.post(
+            f"{LB}/agents/hitl-agent/runs/{run_id}/continue",
+            data={
+                "tools": json.dumps(tools),
+                "session_id": sid,
+                "background": "true",
+                "stream": "false",
+            },
+            timeout=30,
+        )
+        cbody = (
+            cont.json()
+            if cont.headers.get("content-type", "").startswith("application/json")
+            else {}
+        )
+        pending = cont.status_code in (200, 202) and cbody.get("status") == "PENDING"
+        final = await _wait_run_status(run_id, _CONTINUED_TERMINAL, timeout=60)
+    r.evidence.update(
+        run_id=run_id,
+        continue_http=cont.status_code,
+        continue_status=cbody.get("status"),
+        final=final,
+    )
+    if pending and final == "COMPLETED":
+        r.status, r.detail = (
+            "PASS",
+            "durable continue accepted as PENDING and completed via a worker",
+        )
+    elif not pending:
+        r.status, r.detail = (
+            "FAIL",
+            f"continue was not durable: http={cont.status_code} status={cbody.get('status')} (inline, not CAS)",
+        )
+    else:
+        r.status, r.detail = "FAIL", f"durable continue accepted but run ended {final}"
+    r.duration = time.time() - t0
+    return r
+
+
+async def s_continue_double_click():
+    """Two concurrent durable continues on one paused run: one wins the CAS
+    (queued), the other attaches (both 202) or gets a settling 409; the run
+    must complete EXACTLY ONCE (no double execution of the approved leg)."""
+    r = Result(
+        "durable continue double-click: single completion", "continue-2click", "agents"
+    )
+    t0 = time.time()
+    async with httpx.AsyncClient(timeout=None) as c:
+        run_id, sid, tools = await _pause_hitl_agent_durable(
+            c, message="Publish an item titled twice."
+        )
+        if not tools:
+            r.status, r.detail = "SKIP", f"did not pause on tool (run_id={run_id})"
+            r.duration = time.time() - t0
+            return r
+        data = {
+            "tools": json.dumps(tools),
+            "session_id": sid,
+            "background": "true",
+            "stream": "false",
+        }
+        url = f"{LB}/agents/hitl-agent/runs/{run_id}/continue"
+        c1, c2 = await asyncio.gather(
+            c.post(url, data=data), c.post(url, data=data), return_exceptions=True
+        )
+        codes = sorted(
+            [
+                getattr(x, "status_code", 0)
+                for x in (c1, c2)
+                if not isinstance(x, Exception)
+            ]
+        )
+        final = await _wait_run_status(run_id, _CONTINUED_TERMINAL, timeout=60)
+    r.evidence.update(run_id=run_id, continue_codes=codes, final=final)
+    # accepted set: 202 (queued/attach) and/or 409 (settling). Never a 5xx. Run completes once.
+    codes_ok = all(x in (200, 202, 409) for x in codes) and len(codes) == 2
+    if codes_ok and final == "COMPLETED":
+        r.status, r.detail = (
+            "PASS",
+            f"double-click idempotent (codes={codes}), single completion",
+        )
+    else:
+        r.status, r.detail = "FAIL", f"double-click issue: codes={codes} final={final}"
+    r.duration = time.time() - t0
+    return r
+
+
+async def s_continue_crash():
+    """Crash-during-continue: accept a durable continue, then kill BOTH replicas
+    (durable ticket survives in PG), bring them back, and assert the leg does NOT
+    silently re-run and the run reaches a visible terminal state. With
+    max_attempts=attempt+1 a crashed continuation leg is never auto-reclaimed - it
+    surfaces as FAILED (visible), not a silent re-execution of approved tool calls."""
+    r = Result(
+        "crash during durable continue: no silent re-run, visible terminal",
+        "continue-crash",
+        "agents",
+    )
+    t0 = time.time()
+    async with httpx.AsyncClient(timeout=None) as c:
+        run_id, sid, tools = await _pause_hitl_agent_durable(
+            c, message="Publish an item titled crashme with a slow tool."
+        )
+        if not tools:
+            r.status, r.detail = "SKIP", f"did not pause on tool (run_id={run_id})"
+            r.duration = time.time() - t0
+            return r
+        # Accept the continue (the CAS lands durably in PG), then kill BOTH
+        # replicas so the leg is interrupted. The POST may itself time out if the
+        # kill lands before it returns - the durable ticket is what matters, not
+        # the HTTP response, so tolerate it.
+        accepted = False
+        try:
+            cont = await c.post(
+                f"{LB}/agents/hitl-agent/runs/{run_id}/continue",
+                data={
+                    "tools": json.dumps(tools),
+                    "session_id": sid,
+                    "background": "true",
+                    "stream": "false",
+                },
+                timeout=15,
+            )
+            accepted = cont.status_code in (200, 202)
+            r.evidence["continue_http"] = cont.status_code
+        except Exception as e:
+            r.evidence["continue_http"] = f"{type(e).__name__} (killed in-flight)"
+        # Only crash the fleet if the continue was actually accepted into the
+        # queue - otherwise there is no leg to interrupt and we'd just be killing
+        # replicas for nothing (the run stays correctly PAUSED). This keeps the
+        # crash-mid-leg property the thing under test, not a race with the kill.
+        if accepted:
+            await asyncio.sleep(0.5)  # let the CAS ticket land before killing
+            _compose("kill", "replica1", "replica2")
+            await asyncio.sleep(3)
+            _compose("start", "replica1", "replica2")
+            # Wait for the WHOLE fleet (both replicas + LB) so this crash test does
+            # not leave the next run's early streaming scenarios starved of a worker.
+            await _wait_fleet_healthy(timeout=90)
+            final = await _wait_run_status(run_id, _CONTINUED_TERMINAL, timeout=90)
+        else:
+            # continue was not accepted (fleet was already down) - nothing to crash.
+            final = str((_db_run(run_id) or {}).get("status", "")).upper()
+    dbrun = _db_run(run_id) or {}
+    r.evidence.update(
+        run_id=run_id,
+        accepted=accepted,
+        final=final,
+        content=str(dbrun.get("content"))[:50],
+    )
+    # The crash-durability guarantee only applies if the continue was ACCEPTED
+    # (a CAS ticket exists). If the kill won the race and the continue never
+    # landed (502/timeout, accepted=False), the run staying PAUSED is CORRECT -
+    # nothing was enqueued, so it's resumable, not lost. That's a SKIP, not a
+    # FAIL: the scenario didn't get to exercise the property it's testing.
+    if not accepted:
+        r.status = "SKIP"
+        r.detail = (
+            f"continue not accepted (http={r.evidence.get('continue_http')}) - the kill raced ahead of "
+            f"the continue, so the run is correctly still {final} (nothing enqueued). Re-run to exercise "
+            "the crash-mid-leg path."
+        )
+        r.duration = time.time() - t0
+        return r
+    # Continue WAS accepted -> the durable ticket must reach a visible terminal.
+    # COMPLETED (a worker finished it) or FAILED/ERROR (crashed leg surfaced
+    # visibly, per no-auto-retry). NOT: stuck PENDING/PAUSED, NOT a double-run.
+    if final in ("COMPLETED", "FAILED", "ERROR"):
+        r.status, r.detail = (
+            "PASS",
+            f"crash handled: accepted continue reached a visible terminal ({final}), no silent hang",
+        )
+    else:
+        r.status, r.detail = (
+            "FAIL",
+            f"accepted continue left run non-terminal: {final} (leg lost / stuck)",
+        )
+    r.duration = time.time() - t0
+    return r
+
+
+async def s_continue_ws_workflow():
+    """DURABLE HITL continue over the WebSocket seam (workflows). Start a workflow
+    over WS, drive it to a HITL pause, then send continue-workflow over the SAME
+    socket. Assert we get the 'queued' ack frame and a flat-JSON tail that carries
+    the run through to completion - the WS durable-continue contract from #9310."""
+    r = Result(
+        "durable HITL continue (WS workflow): queued ack + flat tail -> completed",
+        "continue-ws",
+        "workflows",
+    )
+    t0 = time.time()
+    if e2e.websockets is None:
+        r.status, r.detail = "SKIP", "websockets package not installed"
+        return r
+
+    def parse(raw):
+        raw = raw.strip()
+        if raw.startswith("event:") or "\ndata:" in raw:
+            ev = raw.split("\n", 1)[0].replace("event:", "").strip()
+            payload = {}
+            for line in raw.split("\n"):
+                if line.startswith("data:"):
+                    try:
+                        payload = json.loads(line[5:].strip())
+                    except Exception:
+                        pass
+            return ev, payload
+        try:
+            m = json.loads(raw)
+            return m.get("event", ""), m
+        except Exception:
+            return "", {}
+
+    run_id = sid = None
+    saw_paused = saw_queued_ack = flat_tail = completed = False
+    step_requirements = None
+    try:
+        async with e2e.websockets.connect(
+            f"{WS_LB}/workflows/ws", open_timeout=15
+        ) as ws:
+            await ws.recv()  # 'connected'
+            await ws.send(
+                json.dumps(
+                    {
+                        "action": "start-workflow",
+                        "workflow_id": "hitl-workflow",
+                        "message": "Draft then approve.",
+                    }
+                )
+            )
+            deadline = time.time() + 70
+            while time.time() < deadline:
+                try:
+                    raw = await asyncio.wait_for(ws.recv(), timeout=30)
+                except asyncio.TimeoutError:
+                    break
+                ev, payload = parse(raw)
+                run_id = run_id or payload.get("run_id")
+                sid = sid or payload.get("session_id")
+                if "Paused" in ev or "paused" in ev:
+                    saw_paused = True
+                    break
+            # Read the authoritative step_requirements from the persisted run row
+            # (the WS pause frame's copy can be partial), then confirm each.
+            if run_id:
+                for _ in range(20):
+                    dbrun = _db_run(run_id) or {}
+                    if str(dbrun.get("status", "")).upper() == "PAUSED" and dbrun.get(
+                        "step_requirements"
+                    ):
+                        step_requirements = dbrun["step_requirements"]
+                        sid = sid or dbrun.get("session_id")
+                        break
+                    await asyncio.sleep(1)
+            for req in step_requirements or []:
+                req["confirmed"] = True
+            # send the durable continue over the SAME socket
+            await ws.send(
+                json.dumps(
+                    {
+                        "action": "continue-workflow",
+                        "workflow_id": "hitl-workflow",
+                        "run_id": run_id,
+                        **({"session_id": sid} if sid else {}),
+                        **(
+                            {"step_requirements": step_requirements}
+                            if step_requirements
+                            else {}
+                        ),
+                    }
+                )
+            )
+            deadline = time.time() + 70
+            while time.time() < deadline:
+                try:
+                    raw = await asyncio.wait_for(ws.recv(), timeout=30)
+                except asyncio.TimeoutError:
+                    break
+                ev, payload = parse(raw)
+                # the durable continue's first frame is the flat 'queued' ack
+                if ev == "queued" or payload.get("event") == "queued":
+                    saw_queued_ack = True
+                # a flat-JSON frame (not SSE-wrapped) parses as a dict with an 'event' key
+                if (
+                    not raw.strip().startswith("event:")
+                    and isinstance(payload, dict)
+                    and payload.get("event")
+                ):
+                    flat_tail = True
+                if "Completed" in ev:
+                    completed = True
+                    break
+    except Exception as e:
+        r.evidence["ws_err"] = str(e)[:150]
+
+    final = (
+        await _wait_run_status(run_id, _CONTINUED_TERMINAL, timeout=60)
+        if run_id
+        else "NORUN"
+    )
+    r.evidence.update(
+        run_id=run_id,
+        saw_paused=saw_paused,
+        saw_queued_ack=saw_queued_ack,
+        flat_tail=flat_tail,
+        ws_completed=completed,
+        final=final,
+    )
+    if not saw_paused:
+        r.status, r.detail = (
+            "SKIP",
+            "workflow did not pause on the confirmation step over WS",
+        )
+    elif saw_queued_ack and final == "COMPLETED":
+        r.status, r.detail = (
+            "PASS",
+            "WS durable continue: queued ack + tail -> completed",
+        )
+    elif final == "COMPLETED":
+        r.status, r.detail = (
+            "WARN",
+            "run completed but no 'queued' ack observed (continue may have taken the detached path)",
+        )
+    else:
+        r.status, r.detail = (
+            "FAIL",
+            f"WS continue did not complete: queued_ack={saw_queued_ack} final={final}",
+        )
+    r.duration = time.time() - t0
+    return r
+
+
 # ---------------------------------------------------------------- runner
+
 
 async def run_all():
     results = []
+    # Gate the whole suite on a healthy fleet: a docker bring-up still settling,
+    # or a prior run's crash test leaving replicas mid-recovery, otherwise makes
+    # the first streaming scenarios flake with "no run created". This is the fix
+    # for the x-replica / cancel-stream / reserved-kwarg startup flakes.
+    if not await _wait_fleet_healthy(timeout=90):
+        print("WARNING: fleet not fully healthy after 90s; scenarios may flake")
     results.append(await s_cross_replica_resume())
     results.append(await s_clobber_stream())
     results.append(await s_stream_cancel())
     results.append(await s_reserved_kwarg_stream())
     results.append(await s_retryable_timeout_tail())
-    # chaos LAST (both pause redis; each recovers before the next runs)
+    # durable continuation legs (PR #9310) — SSE + WS transports
+    results.append(await s_continue_sse_durable())
+    results.append(await s_continue_double_click())
+    results.append(await s_continue_ws_workflow())
+    # cross-replica continue: pause on R1, continue on R2 (agent/team/workflow)
+    results.append(await s_xrep_continue_agent())
+    results.append(await s_xrep_continue_team())
+    results.append(await s_xrep_continue_workflow())
+    # chaos LAST (redis flaps + a replica-kill; each recovers before the next runs)
     results.append(await s_cancel_check_redis_fault())
     results.append(await s_redis_flap())
+    results.append(await s_continue_crash())
 
     out = [r.to_dict() for r in results]
     with open("distributed_results.json", "w") as f:
-        json.dump({"generated_at": int(time.time()), "base_url": LB, "results": out}, f, indent=2)
+        json.dump(
+            {"generated_at": int(time.time()), "base_url": LB, "results": out},
+            f,
+            indent=2,
+        )
     counts = {"PASS": 0, "FAIL": 0, "WARN": 0, "SKIP": 0}
     print("\n" + "=" * 70)
     for rr in out:
@@ -563,7 +1299,9 @@ async def run_all():
         if rr["status"] in ("FAIL", "WARN"):
             print(f"        -> {rr['detail']}")
     print("=" * 70)
-    print(f"PASS={counts['PASS']} FAIL={counts['FAIL']} WARN={counts['WARN']} SKIP={counts['SKIP']} -> distributed_results.json")
+    print(
+        f"PASS={counts['PASS']} FAIL={counts['FAIL']} WARN={counts['WARN']} SKIP={counts['SKIP']} -> distributed_results.json"
+    )
     return counts
 
 
