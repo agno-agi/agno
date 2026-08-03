@@ -937,7 +937,7 @@ class ValkeyDB(VectorDb):
         if not keys:
             return False
         client = self._get_client()
-        deleted = client.delete(cast(List[Union[str, bytes]], keys))
+        deleted = client.delete(cast(List[Union[str, bytes, bytearray, memoryview]], keys))
         log_debug(f"Deleted {deleted} documents with {tag_field}='{tag_value}'")
         return deleted is not None and int(deleted) > 0
 
@@ -960,7 +960,7 @@ class ValkeyDB(VectorDb):
             result_map = results[1]
             if not isinstance(result_map, dict) or not result_map:
                 break
-            keys: List[Union[str, bytes]] = [_decode_value(k) for k in result_map.keys()]
+            keys: List[Union[str, bytes, bytearray, memoryview]] = [_decode_value(k) for k in result_map.keys()]
             deleted = client.delete(keys)
             if deleted is not None and int(deleted) > 0:
                 any_deleted = True
@@ -980,7 +980,7 @@ class ValkeyDB(VectorDb):
             cursor = scan_result[0]  # type: ignore[assignment]
             keys = scan_result[1]
             if keys:
-                str_keys: List[Union[str, bytes]] = [_decode_value(k) for k in keys]
+                str_keys: List[Union[str, bytes, bytearray, memoryview]] = [_decode_value(k) for k in keys]
                 client.delete(str_keys)
             cursor_str = cursor.decode("utf-8") if isinstance(cursor, bytes) else str(cursor)
             if cursor_str == "0":
