@@ -30,7 +30,10 @@ from agno.os.auth import (
 )
 from agno.os.event_streams import get_event_stream
 from agno.os.job_queue import (
+    acontinue_via_queue,
     aprepare_queued_run,
+    araise_if_ticket_owns_continue,
+    asettle_paused_ticket,
     normalize_idempotency_key,
     payload_is_queueable,
     validate_seam_input,
@@ -128,6 +131,12 @@ async def _pump_event_stream_to_websocket(websocket: WebSocket, run_id: str, fro
             await websocket.send_text(
                 json.dumps({"event": "error", "run_id": run_id, "error": f"stream tail failed: {str(e)[:200]}"})
             )
+
+
+# NOTE on execute-socket wire format: the non-durable execute path sends
+# SSE-wrapped frames (WebSocketHandler.format_sse_event) while the reconnect
+# pump sends flat JSON dicts. Durable tails standardize on the FLAT format:
+# the FE parser accepts both, and one pump beats two formats diverging.
 
 
 async def cancel_subscription_pump(websocket: WebSocket) -> None:
@@ -231,6 +240,85 @@ async def handle_workflow_via_websocket(
                 session_id = workflow.session_id
             else:
                 session_id = str(uuid4())
+
+        # Durable WS submission: the queue row is the acceptance, execution
+        # happens on whichever worker claims it, and this socket becomes a
+        # tail view of the event stream - the run survives this replica.
+        # Wire format: flat JSON dicts (the reconnect/subscribe format; the
+        # FE parser handles both, confirmed) with a leading "queued" ack
+        # frame so the client sees accepted/waiting instead of a silent
+        # socket while the job waits for a claim.
+        queue_worker = getattr(websocket.app.state, "queue_worker", None)
+        queued_ws_payload: Dict[str, Any] = {"input": user_message, "kwargs": {}, "stream": True}
+        ws_submit_queueable = (
+            queue_worker is not None
+            and not is_factory
+            and getattr(workflow, "db", None) is not None
+            and payload_is_queueable(queued_ws_payload)
+            and any(
+                getattr(candidate, "id", None) == workflow_id and not isinstance(candidate, WorkflowFactory)
+                for candidate in (os.workflows or [])
+            )
+        )
+        if ws_submit_queueable:
+            # Accept must honor input_schema exactly like the inline path
+            try:
+                validate_seam_input(workflow, user_message)
+            except HTTPException as e:
+                await websocket.send_text(json.dumps({"event": "error", "error": str(e.detail)}))
+                return
+            assert queue_worker is not None  # narrowed by ws_submit_queueable
+            queued_run_id = str(uuid4())
+            job = QueuedJob(
+                id=queued_run_id,
+                component_type="workflow",
+                component_id=getattr(workflow, "id", None) or workflow_id,
+                session_id=session_id,
+                user_id=user_id,
+                payload=queued_ws_payload,
+                max_attempts=queue_worker.config.max_attempts,
+                deployment_id=queue_worker.config.deployment_id,
+            ).to_dict()
+            enqueue_result = await queue_worker.store.enqueue_job(job, max_depth=queue_worker.config.max_queue_depth)
+            if not enqueue_result["accepted"]:
+                # No Idempotency-Key over WS, so "duplicate" cannot legitimately
+                # happen on a fresh uuid - either way nothing was enqueued and
+                # the client must know the submission was NOT accepted
+                reason = enqueue_result.get("reason") or "rejected"
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "event": "error",
+                            "error": "Job queue is full; retry later"
+                            if reason == "queue_full"
+                            else f"Submission was not accepted ({reason})",
+                        }
+                    )
+                )
+                return
+            with contextlib.suppress(Exception):
+                # Fail-open: the queue row is already committed - a Redis blip
+                # must not kill an accepted submission (tails degrade gracefully)
+                await get_event_stream().register_run(queued_run_id, RunStatus.pending)
+            await aprepare_queued_run(
+                workflow, "workflow", run_id=queued_run_id, session_id=session_id, user_id=user_id, input=user_message
+            )
+            await websocket.send_text(
+                json.dumps({"event": "queued", "run_id": queued_run_id, "session_id": session_id})
+            )
+            # Tail the whole stream from the start (this socket is the primary
+            # view). One pump per socket; the dispatcher cancels it on
+            # disconnect/re-subscribe via the shared registry.
+            await cancel_subscription_pump(websocket)
+            _ws_tail_pumps[websocket] = asyncio.create_task(
+                _pump_event_stream_to_websocket(websocket, queued_run_id, None)
+            )
+            return
+        if queue_worker is not None:
+            log_warning(
+                "WS workflow submission bypasses the durable queue (factory/off-registry/no-db "
+                "workflows are not queueable): bounded and observable, but NOT durable."
+            )
 
         # Execute workflow in background with streaming via WebSocket
         await workflow.arun(  # type: ignore
@@ -610,6 +698,109 @@ async def handle_workflow_continue_via_websocket(
                 )
                 return
 
+        # Durable continue: CAS the run's EXISTING paused ticket back to
+        # queued so the continuation leg survives crashes and executes on
+        # whichever worker claims it; this socket becomes a tail view
+        # speaking the flat-JSON tail format (the same
+        # _pump_event_stream_to_websocket frames the reconnect/subscription
+        # surface sends - the FE parser handles both, per the 2026-08-02
+        # resolution that removed the SSE-wrapped execute pump).
+        queue_worker = getattr(websocket.app.state, "queue_worker", None)
+        continue_payload = {"step_requirements": step_requirements_data}
+        workflow_is_queueable = any(
+            getattr(candidate, "id", None) == workflow_id and not isinstance(candidate, WorkflowFactory)
+            for candidate in (os.workflows or [])
+        )
+        if queue_worker is not None and workflow_is_queueable and payload_is_queueable(continue_payload):
+            # existing_run.is_paused was proven above. stream_requested: this
+            # socket IS a stream - a non-streaming submission's ticket must be
+            # refused before the CAS, not silently pumped from an empty stream
+            continue_outcome = await acontinue_via_queue(
+                queue_worker,
+                run_id,
+                continue_payload,
+                stream_requested=True,
+                component_type="workflow",
+                component_id=getattr(workflow, "id", None) or workflow_id,
+            )
+            if continue_outcome is not None:
+                outcome = continue_outcome["outcome"]
+                if outcome == "stream_mismatch":
+                    await websocket.send_text(
+                        json.dumps(
+                            {
+                                "event": "error",
+                                "run_id": run_id,
+                                "error": "Run was submitted non-streaming; continue it over HTTP "
+                                "and poll for the result instead of a WebSocket",
+                            }
+                        )
+                    )
+                    return
+                if outcome == "settling":
+                    await websocket.send_text(
+                        json.dumps(
+                            {
+                                "event": "error",
+                                "run_id": run_id,
+                                "error": "Run is settling between execution legs; retry in a moment",
+                            }
+                        )
+                    )
+                    return
+                if outcome == "conflict":
+                    ticket_status = (continue_outcome.get("job") or {}).get("status", "unknown")
+                    await websocket.send_text(
+                        json.dumps(
+                            {
+                                "event": "error",
+                                "run_id": run_id,
+                                "error": f"Run is not continuable (ticket status: {ticket_status})",
+                            }
+                        )
+                    )
+                    return
+                # queued (accepted) or attach (double-click): pump the event
+                # stream to this socket. Tail from the PRE-ACCEPT index
+                # (captured by the helper before the CAS) - the execute
+                # socket gets post-approval events only, exactly like the
+                # detached continue producer; earlier history belongs to the
+                # subscription/replay surface. One pump per socket, cancelled
+                # on disconnect/re-subscribe by the dispatcher (same registry
+                # the subscription pump uses).
+                # Also send the "queued" ack here: the continue socket has the
+                # same claim-delay window as a submission, and the FE ignores
+                # unknown frames until it wires this one up
+                with contextlib.suppress(Exception):
+                    await websocket.send_text(
+                        json.dumps({"event": "queued", "run_id": run_id, "session_id": session_id})
+                    )
+                await cancel_subscription_pump(websocket)
+                _ws_tail_pumps[websocket] = asyncio.create_task(
+                    _pump_event_stream_to_websocket(websocket, run_id, continue_outcome.get("tail_from"))
+                )
+                return
+            log_warning(
+                "WS background continue bypasses the durable queue (no paused ticket for this "
+                "run): executing on the accepting replica instead - bounded and observable, "
+                "but NOT durable."
+            )
+
+        # Inline-door admission gate: a paused/queued/running durable ticket
+        # OWNS this run's continuation - the detached WS door must refuse or
+        # the cross-door double-execution race reopens (as an error frame,
+        # this being a socket)
+        try:
+            await araise_if_ticket_owns_continue(
+                getattr(websocket.app.state, "queue_worker", None),
+                run_id,
+                component_type="workflow",
+                component_id=getattr(workflow, "id", None) or workflow_id,
+            )
+        except HTTPException as gate_exc:
+            await websocket.send_text(json.dumps({"event": "error", "run_id": run_id, "error": str(gate_exc.detail)}))
+            return
+
         # Continue workflow in background with WebSocket streaming.
         # Events are broadcast via WebSocketHandler through _handle_event calls,
         # which also handles event buffering and websocket manager broadcasting.
@@ -739,7 +930,7 @@ async def workflow_response_streamer(
         return
 
 
-async def queued_run_tail_streamer(run_id: str) -> AsyncGenerator:
+async def queued_run_tail_streamer(run_id: str, from_index: Optional[int] = None) -> AsyncGenerator:
     """SSE response for a durably queued STREAMING workflow run: tail the event
     stream.
 
@@ -752,7 +943,7 @@ async def queued_run_tail_streamer(run_id: str) -> AsyncGenerator:
 
     async def _pump() -> None:
         try:
-            async for tail_item in event_stream.tail(run_id):
+            async for tail_item in event_stream.tail(run_id, last_event_index=from_index):
                 await tail_queue.put(tail_item)
         except Exception as e:
             # A tail that DIES must not look like a tail that FINISHED: emit an
@@ -853,6 +1044,7 @@ async def workflow_continue_response_streamer(
     user_id: Optional[str] = None,
     step_requirements: Optional[List[Any]] = None,
     background_tasks: Optional[BackgroundTasks] = None,
+    queue_worker: Optional[Any] = None,
     **kwargs: Any,
 ) -> AsyncGenerator:
     try:
@@ -883,7 +1075,12 @@ async def workflow_continue_response_streamer(
         finally:
             # Final status from THIS run's row (never session.runs[-1]: an
             # interleaved run on the same session would be a different run)
-            await acomplete_continue_stream(workflow, run_id, session_id)
+            _final = await acomplete_continue_stream(workflow, run_id, session_id)
+            # Inline continue of a DURABLE paused run: terminalize the queue
+            # ticket too (paused tickets are retention-exempt and would
+            # otherwise say paused forever). CAS no-op for runs that never
+            # rode the queue or whose continuation is owned by a worker.
+            await asettle_paused_ticket(queue_worker, run_id, _final)
 
         # If the workflow re-paused, yield WorkflowPausedEvent as the new clean
         # snapshot event. Also yield the legacy "WorkflowRunOutput" event for
@@ -1412,6 +1609,7 @@ def get_workflow_router(
                         user_id=user_id,
                         payload=queued_stream_payload,
                         max_attempts=queue_worker.config.max_attempts,
+                        deployment_id=queue_worker.config.deployment_id,
                         idempotency_key=normalize_idempotency_key(request.headers.get("idempotency-key")),
                     ).to_dict()
                     enqueue_result = await queue_worker.store.enqueue_job(
@@ -1525,6 +1723,7 @@ def get_workflow_router(
                     user_id=user_id,
                     payload=queued_payload,
                     max_attempts=queue_worker.config.max_attempts,
+                    deployment_id=queue_worker.config.deployment_id,
                     idempotency_key=normalize_idempotency_key(request.headers.get("idempotency-key")),
                 ).to_dict()
 
@@ -1669,6 +1868,10 @@ def get_workflow_router(
         session_id: Optional[str] = Form(None, description="Session ID for the paused run"),
         user_id: Optional[str] = Form(None, description="User identifier for tracking and personalization"),
         stream: bool = Form(True, description="Enable streaming responses via Server-Sent Events (SSE)"),
+        background: bool = Form(
+            False,
+            description="Continue in background (survives client disconnect). Requires database. Use /resume to reconnect.",
+        ),
         factory_input: Optional[str] = Form(
             None,
             description="JSON object with factory-specific parameters for dynamic workflow reconstruction",
@@ -1752,6 +1955,95 @@ def get_workflow_router(
         # attribute the continued run to another user.
         effective_user_id = scoped_user_id if scoped_user_id is not None else user_id
 
+        if background:
+            # Durable continue: CAS the run's EXISTING paused ticket back to
+            # queued (same row, same run_id) so the continuation leg survives
+            # crashes and executes on whichever worker claims it. Runs that
+            # never rode the queue have no ticket to transition and keep the
+            # non-background path below.
+            queue_worker = getattr(request.app.state, "queue_worker", None)
+            continue_payload = {"step_requirements": step_requirements_data}
+            workflow_is_queueable = any(
+                getattr(candidate, "id", None) == workflow_id and not isinstance(candidate, WorkflowFactory)
+                for candidate in (os.workflows or [])
+            )
+            if (
+                queue_worker is not None
+                and not isinstance(workflow, RemoteWorkflow)
+                and workflow_is_queueable
+                and payload_is_queueable(continue_payload)
+            ):
+                # The endpoint already proved the run row is PAUSED above
+                continue_outcome = await acontinue_via_queue(
+                    queue_worker,
+                    run_id,
+                    continue_payload,
+                    stream_requested=stream,
+                    component_type="workflow",
+                    component_id=getattr(workflow, "id", None) or workflow_id,
+                )
+                if continue_outcome is not None:
+                    outcome, ticket = continue_outcome["outcome"], continue_outcome.get("job")
+                    if outcome == "stream_mismatch":
+                        # Pre-CAS refusal: nothing was accepted behind this
+                        # 409 (submit-seam duplicate parity)
+                        raise HTTPException(
+                            status_code=409,
+                            detail=f"Run was submitted non-streaming; poll run {run_id} instead of attaching a stream",
+                        )
+                    if outcome == "settling":
+                        raise HTTPException(
+                            status_code=409,
+                            detail="Run is settling between execution legs; retry in a moment",
+                            headers={"Retry-After": "1"},
+                        )
+                    if outcome == "conflict":
+                        ticket_status = (ticket or {}).get("status", "unknown")
+                        raise HTTPException(
+                            status_code=409,
+                            detail=f"Run is not continuable (ticket status: {ticket_status})",
+                        )
+                    # queued (accepted) or attach (double-click): same
+                    # response shape as the submit seam
+                    if stream:
+                        # Tail from the PRE-ACCEPT index (captured by the
+                        # helper before the CAS): the continue response
+                        # carries post-approval events only, exactly like the
+                        # detached continue streamer; earlier history belongs
+                        # to /resume
+                        return StreamingResponse(
+                            queued_run_tail_streamer(run_id, from_index=continue_outcome.get("tail_from")),
+                            media_type="text/event-stream",
+                        )
+                    return JSONResponse(
+                        status_code=202,
+                        content={"run_id": run_id, "session_id": session_id, "status": "PENDING"},
+                    )
+            # No durable path (no worker, factory/remote workflow, or no
+            # paused ticket): workflows have no detached background-continue
+            # machinery, so serve the regular response below - loudly, since
+            # the caller asked for background semantics that do not exist
+            # here: workflows have no detached background-continue machinery,
+            # so honoring the request is impossible. Refuse honestly instead
+            # of silently serving a replica-bound foreground response (the
+            # background param is NEW in this PR - no back-compat cost).
+            raise HTTPException(
+                status_code=409,
+                detail="background=true continuation is only available for durably-submitted "
+                "workflow runs (a paused queue ticket); this run has none. Retry without "
+                "background, or submit the workflow with background=true and a durable queue.",
+            )
+
+        # Inline-door admission gate: a paused/queued/running durable ticket
+        # OWNS this run's continuation; non-queue doors must refuse or the
+        # cross-door double-execution race reopens. 409/503 raise here.
+        await araise_if_ticket_owns_continue(
+            getattr(request.app.state, "queue_worker", None),
+            run_id,
+            component_type="workflow",
+            component_id=getattr(workflow, "id", None) or workflow_id,
+        )
+
         if stream:
             return StreamingResponse(
                 workflow_continue_response_streamer(
@@ -1761,6 +2053,7 @@ def get_workflow_router(
                     user_id=effective_user_id,
                     step_requirements=parsed_requirements,
                     background_tasks=background_tasks,
+                    queue_worker=getattr(request.app.state, "queue_worker", None),
                 ),
                 media_type="text/event-stream",
             )
@@ -1786,6 +2079,14 @@ def get_workflow_router(
                     session_id,
                     only_if_tracked=True,
                     final_status=getattr(run_response, "status", None),
+                )
+                # Inline continue of a DURABLE paused run: terminalize the
+                # queue ticket too (paused is retention-exempt; the CAS
+                # no-ops for never-queued or worker-owned runs)
+                await asettle_paused_ticket(
+                    getattr(request.app.state, "queue_worker", None),
+                    run_id,
+                    getattr(run_response, "status", None),
                 )
                 return run_response.to_dict()
             except InputCheckError as e:

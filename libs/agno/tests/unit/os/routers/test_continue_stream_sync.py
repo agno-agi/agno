@@ -273,3 +273,81 @@ class TestNonStreamStatusOnlySync:
 
         await acomplete_continue_stream(NoSession(), "r1", "s1", only_if_tracked=True, final_status=RunStatus.paused)
         assert await stream.get_run_status("r1") == RunStatus.paused
+
+
+class TestInlineContinueSettlesTicket:
+    """B2: the inline (background=false, default) continue of a DURABLE
+    paused run must terminalize its queue ticket - paused tickets are
+    retention-exempt, so a leaked one says paused forever and accumulates."""
+
+    @staticmethod
+    async def _paused_ticket_worker(run_id: str = "r1"):
+        from types import SimpleNamespace
+
+        from agno.db.schemas.jobs import QueuedJob
+        from agno.job_queue.store import InMemoryQueueStore
+
+        store = InMemoryQueueStore()
+        await store.enqueue_job(
+            QueuedJob(
+                id=run_id,
+                component_type="agent",
+                component_id="a1",
+                session_id="s1",
+                payload={"input": "hi"},
+                max_attempts=1,
+            ).to_dict()
+        )
+        claimed = await store.claim_job("w1")
+        assert await store.complete_job(run_id, "w1", claimed["attempt"], "paused")
+        return SimpleNamespace(store=store), store
+
+    @pytest.mark.asyncio
+    async def test_inline_stream_continue_terminalizes_ticket(self, stream):
+        from agno.os.routers.agents.router import agent_continue_response_streamer
+        from agno.run.agent import RunContentEvent
+
+        worker, store = await self._paused_ticket_worker()
+        await _park_paused(stream, "r1")
+        final_run = type("R", (), {"run_id": "r1", "status": RunStatus.completed})()
+        agent: Any = FakeAgent([RunContentEvent(run_id="r1", content="post")], final_run)
+
+        async for _c in agent_continue_response_streamer(agent, run_id="r1", session_id="s1", queue_worker=worker):
+            pass
+
+        job = await store.get_job("r1")
+        assert job["status"] == "completed", "the durable ticket must not stay paused after an inline continue"
+
+    @pytest.mark.asyncio
+    async def test_inline_re_pause_leaves_ticket_paused(self, stream):
+        from agno.os.routers.agents.router import agent_continue_response_streamer
+        from agno.run.agent import RunContentEvent
+
+        worker, store = await self._paused_ticket_worker()
+        await _park_paused(stream, "r1")
+        final_run = type("R", (), {"run_id": "r1", "status": RunStatus.paused})()
+        agent: Any = FakeAgent([RunContentEvent(run_id="r1", content="post")], final_run)
+
+        async for _c in agent_continue_response_streamer(agent, run_id="r1", session_id="s1", queue_worker=worker):
+            pass
+
+        assert (await store.get_job("r1"))["status"] == "paused", "a re-paused continue keeps the ticket continuable"
+
+    @pytest.mark.asyncio
+    async def test_settle_maps_error_to_failed_with_reason(self):
+        from agno.os.job_queue import asettle_paused_ticket
+
+        worker, store = await self._paused_ticket_worker()
+        await asettle_paused_ticket(worker, "r1", RunStatus.error)
+        job = await store.get_job("r1")
+        assert job["status"] == "failed"
+        assert "inline continue" in job["error"]
+
+    @pytest.mark.asyncio
+    async def test_settle_without_worker_or_ticket_is_a_noop(self):
+        from agno.os.job_queue import asettle_paused_ticket
+
+        await asettle_paused_ticket(None, "r1", RunStatus.completed)  # no worker: must not raise
+        worker, store = await self._paused_ticket_worker("other")
+        await asettle_paused_ticket(worker, "never-queued", RunStatus.completed)  # no ticket: no-op
+        assert (await store.get_job("other"))["status"] == "paused"

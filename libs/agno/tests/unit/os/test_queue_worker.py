@@ -842,3 +842,325 @@ class TestReservedKwargsParity:
             assert (await store.get_job("rk1"))["status"] == "completed", "reserved fields must not fail the job"
         finally:
             es_mod._event_stream = original
+
+
+class ContinuableFakeAgent(FakeAgent):
+    """FakeAgent that also records acontinue_run calls."""
+
+    def __init__(self, **kwargs: Any):
+        super().__init__(**kwargs)
+        self.continue_calls: list = []
+
+    async def acontinue_run(self, **kwargs: Any) -> SimpleNamespace:
+        self.continue_calls.append(kwargs)
+        if self.delay:
+            await asyncio.sleep(self.delay)
+        if self.raises is not None:
+            raise self.raises
+        return SimpleNamespace(status=self.status, content="continued")
+
+
+async def _park_paused(store: InMemoryQueueStore, worker_id: str = "old-worker", job_id: str = "r1") -> None:
+    """Drive a ticket to paused the way a real leg does: claim + park."""
+    await store.enqueue_job(make_job(job_id))
+    claimed = await store.claim_job(worker_id)
+    assert await store.complete_job(job_id, worker_id, claimed["attempt"], "paused")
+
+
+class TestContinuationExecution:
+    @pytest.mark.asyncio
+    async def test_continuation_calls_acontinue_run_with_rebuilt_tools(self):
+        """A ticket with payload['continue'] re-enters via acontinue_run (not
+        arun), with ToolExecution objects rebuilt from the stored JSON."""
+        store, agent = InMemoryQueueStore(), ContinuableFakeAgent()
+        await _park_paused(store)
+        result = await store.continue_job(
+            "r1", {"updated_tools": [{"tool_call_id": "t1", "tool_name": "search", "result": "ok"}]}
+        )
+        assert result["outcome"] == "queued"
+        worker = make_worker(store, agent, make_config())
+        await worker.start()
+        try:
+            job = await wait_for_status(store, "r1", "completed")
+            assert job["attempt"] == 2  # the continuation leg's generation
+            assert agent.calls == [], "continuation must not call arun"
+            call = agent.continue_calls[0]
+            assert call["run_id"] == "r1"
+            assert call["session_id"] == "s1"
+            assert call["stream"] is False
+            from agno.models.response import ToolExecution
+
+            assert isinstance(call["updated_tools"][0], ToolExecution)
+            assert call["updated_tools"][0].tool_call_id == "t1"
+        finally:
+            await worker.stop()
+
+    @pytest.mark.asyncio
+    async def test_repause_parks_ticket_again(self):
+        """A continuation leg that pauses again re-parks the SAME ticket as
+        paused - re-pause cycles reuse the machinery unchanged."""
+        store = InMemoryQueueStore()
+        agent = ContinuableFakeAgent(status=RunStatus.paused)
+        await _park_paused(store)
+        await store.continue_job("r1", {"updated_tools": []})
+        worker = make_worker(store, agent, make_config())
+        await worker.start()
+        try:
+            job = await wait_for_status(store, "r1", "paused")
+            assert job["attempt"] == 2
+            # And a second continue re-queues it once more
+            assert (await store.continue_job("r1", {"updated_tools": []}))["outcome"] == "queued"
+        finally:
+            await worker.stop()
+
+    @pytest.mark.asyncio
+    async def test_not_continuable_fails_fast_without_burning_budget(self):
+        """RunNotContinuableError is permanent: straight to the dead-letter
+        surface even when retry budget remains."""
+        from agno.exceptions import RunNotContinuableError
+
+        store = InMemoryQueueStore()
+        agent = ContinuableFakeAgent(raises=RunNotContinuableError("run is not paused"))
+        await _park_paused(store)
+        await store.continue_job("r1", {"updated_tools": []})
+        # Inflate the budget: fast-fail must ignore it
+        store._jobs["r1"]["max_attempts"] = 5
+        worker = make_worker(store, agent, make_config())
+        await worker.start()
+        try:
+            job = await wait_for_status(store, "r1", "failed")
+            assert "permanent" in (job["error"] or "")
+            assert len(agent.continue_calls) == 1, "no retry may follow a permanent failure"
+        finally:
+            await worker.stop()
+
+    @pytest.mark.asyncio
+    async def test_workflow_continuation_rebuilds_step_requirements(self):
+        """Workflow continuation kwargs: step_requirements rebuilt as
+        StepRequirement, no user_id (workflow acontinue_run has none)."""
+        calls: list = []
+
+        class FakeWorkflow:
+            id = "wf-1"
+
+            async def acontinue_run(self, **kwargs: Any) -> SimpleNamespace:
+                calls.append(kwargs)
+                return SimpleNamespace(status=RunStatus.completed, content="done")
+
+        store = InMemoryQueueStore()
+        job = make_job("r1")
+        job["component_type"] = "workflow"
+        job["component_id"] = "wf-1"
+        await store.enqueue_job(job)
+        claimed = await store.claim_job("old-worker")
+        assert await store.complete_job("r1", "old-worker", claimed["attempt"], "paused")
+        await store.continue_job("r1", {"step_requirements": [{"step_id": "st1", "step_name": "a", "confirmed": True}]})
+        worker = QueueWorker(
+            store=store,
+            resolve_component=lambda t, i: FakeWorkflow() if (t, i) == ("workflow", "wf-1") else None,
+            config=make_config(),
+            worker_id="live-worker",
+        )
+        await worker.start()
+        try:
+            await wait_for_status(store, "r1", "completed")
+            from agno.workflow.types import StepRequirement
+
+            call = calls[0]
+            assert "user_id" not in call
+            assert isinstance(call["step_requirements"][0], StepRequirement)
+            assert call["step_requirements"][0].step_id == "st1"
+        finally:
+            await worker.stop()
+
+
+class RecoverableFakeWorkflow:
+    """Workflow double with a real paused-state gate: acontinue_run raises
+    the not-paused ValueError exactly like Workflow.acontinue_run, and the
+    run row lives on the instance so the worker's restore can flip it."""
+
+    id = "wf-1"
+
+    def __init__(self):
+        self.run = SimpleNamespace(run_id="r1", status=RunStatus.paused, content=None)
+        self.continue_calls: list = []
+        self.saves: list = []
+
+    async def aget_run_output(self, run_id: str, session_id: str, user_id: Any = None) -> SimpleNamespace:
+        return self.run
+
+    async def aget_session(self, session_id: Any = None) -> SimpleNamespace:
+        return SimpleNamespace(
+            get_run=lambda rid: self.run if rid == self.run.run_id else None,
+            upsert_run=lambda run: None,
+        )
+
+    def _has_async_db(self) -> bool:
+        return True
+
+    async def asave_session(self, session: Any = None) -> None:
+        self.saves.append(session)
+
+    async def acontinue_run(self, **kwargs: Any) -> SimpleNamespace:
+        self.continue_calls.append(kwargs)
+        if self.run.status != RunStatus.paused:
+            raise ValueError(f"Cannot continue a run that is not paused. Current status: {self.run.status}")
+        self.run.status = RunStatus.completed
+        return SimpleNamespace(status=RunStatus.completed, content="recovered")
+
+
+class TestContinuationRedrive:
+    @pytest.mark.asyncio
+    async def test_crashed_leg_sweep_requeue_redrive_completes(self):
+        """SIGKILL mid-continuation -> sweep stamps the run row ERROR ->
+        operator requeue -> the re-driven leg must COMPLETE. Without the
+        worker's ERROR -> PAUSED restore, workflow.acontinue_run raised the
+        not-paused ValueError, classified permanent, and every requeue
+        instantly failed - the re-drive story was a dead letter."""
+        workflow = RecoverableFakeWorkflow()
+        store = InMemoryQueueStore()
+        job = make_job("r1")
+        job["component_type"] = "workflow"
+        job["component_id"] = "wf-1"
+        await store.enqueue_job(job)
+        claimed = await store.claim_job("old-worker")
+        assert await store.complete_job("r1", "old-worker", claimed["attempt"], "paused")
+        assert (await store.continue_job("r1", {"step_requirements": []}))["outcome"] == "queued"
+
+        # The continuation leg is claimed, then its worker dies (SIGKILL)
+        crashed = await store.claim_job("dead-worker")
+        assert crashed is not None and crashed["attempt"] == 2
+        store._jobs["r1"]["locked_at"] -= 1000
+
+        worker = QueueWorker(
+            store=store,
+            resolve_component=lambda t, i: workflow if (t, i) == ("workflow", "wf-1") else None,
+            config=make_config(),
+            worker_id="live-worker",
+        )
+        await worker.start()
+        try:
+            # Sweep fails the exhausted leg visibly and stamps the run row
+            job_row = await wait_for_status(store, "r1", "failed")
+            assert "worker lost" in job_row["error"].lower()
+            assert workflow.run.status == RunStatus.error
+
+            # Operator re-drive: requeue grants one more execution
+            assert await store.requeue_job("r1")
+            job_row = await wait_for_status(store, "r1", "completed")
+            assert workflow.run.status == RunStatus.completed
+            assert len(workflow.continue_calls) == 1, "the re-driven leg must reach acontinue_run exactly once"
+        finally:
+            await worker.stop()
+
+    @pytest.mark.asyncio
+    async def test_cancelled_run_row_is_not_restored(self):
+        """Cancel wins by design: a CANCELLED run row stays terminal, so a
+        requeued continue of it keeps failing visibly instead of resurrecting
+        the run."""
+        workflow = RecoverableFakeWorkflow()
+        workflow.run.status = RunStatus.cancelled
+        store = InMemoryQueueStore()
+        job = make_job("r1")
+        job["component_type"] = "workflow"
+        job["component_id"] = "wf-1"
+        await store.enqueue_job(job)
+        claimed = await store.claim_job("old-worker")
+        assert await store.complete_job("r1", "old-worker", claimed["attempt"], "paused")
+        await store.continue_job("r1", {"step_requirements": []})
+
+        worker = QueueWorker(
+            store=store,
+            resolve_component=lambda t, i: workflow if (t, i) == ("workflow", "wf-1") else None,
+            config=make_config(),
+            worker_id="live-worker",
+        )
+        await worker.start()
+        try:
+            job_row = await wait_for_status(store, "r1", "failed")
+            assert "permanent" in (job_row["error"] or "")
+            assert workflow.run.status == RunStatus.cancelled, "a cancelled run row must never be resurrected"
+        finally:
+            await worker.stop()
+
+
+class TestStreamingContinuation:
+    @pytest.mark.asyncio
+    async def test_streaming_continuation_publishes_and_completes(self):
+        """A queued streaming CONTINUE: the worker re-enters via
+        acontinue_run(stream=True), publishes post-approval events, and the
+        terminal write lands - same machinery as fresh streaming legs. The
+        workflow shape (async def returning the iterator) is also covered:
+        the executor awaits a coroutine before iterating."""
+        import agno.os.event_streams as es_mod
+        from agno.db.schemas.jobs import QueuedJob
+        from agno.os.event_streams import InMemoryEventStream, set_event_stream
+        from agno.os.managers import EventsBuffer, SSESubscriberManager
+
+        original = es_mod._event_stream
+        stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+        set_event_stream(stream)
+        try:
+            store = InMemoryQueueStore()
+            job = QueuedJob(
+                id="sc1",
+                component_type="workflow",
+                component_id="wf-1",
+                session_id="s1",
+                payload={"input": "hi", "stream": True},
+            ).to_dict()
+            await store.enqueue_job(job)
+            claimed = await store.claim_job("old-worker")
+            assert await store.complete_job("sc1", "old-worker", claimed["attempt"], "paused")
+            assert (await store.continue_job("sc1", {"step_requirements": [{"step_id": "st1", "confirmed": True}]}))[
+                "outcome"
+            ] == "queued"
+
+            class FakeEvent:
+                def __init__(self, content):
+                    self.event = "StepOutput"
+                    self.content = content
+                    self.run_id = "sc1"
+
+                def to_dict(self):
+                    return {"event": self.event, "content": self.content, "run_id": self.run_id}
+
+            continue_calls: list = []
+
+            class FakeWorkflow:
+                id = "wf-1"
+                db = None
+
+                # Mirrors Workflow.acontinue_run's shape: an async def whose
+                # awaited result IS the event iterator when stream=True
+                async def acontinue_run(self, **kwargs):
+                    continue_calls.append(kwargs)
+                    assert kwargs["stream"] is True
+
+                    async def _events():
+                        for c in ("post-approval-1", "post-approval-2"):
+                            yield FakeEvent(c)
+
+                    return _events()
+
+                async def aget_run_output(self, run_id, session_id, user_id=None):
+                    return SimpleNamespace(run_id=run_id, status=RunStatus.completed)
+
+            worker = QueueWorker(
+                store=store,
+                resolve_component=lambda t, i: FakeWorkflow(),
+                config=QueueConfig(durable=True, poll_interval=0.05, lock_grace_seconds=60),
+                worker_id="live-worker",
+            )
+            reclaimed = await store.claim_job(worker.worker_id)
+            await worker._execute_claimed(reclaimed)
+
+            assert (await store.get_job("sc1"))["status"] == "completed"
+            assert await stream.get_event_count("sc1") == 2
+            assert await stream.get_run_status("sc1") == RunStatus.completed
+            assert "yield_run_output" not in continue_calls[0], "workflows do not support yield_run_output"
+            from agno.workflow.types import StepRequirement
+
+            assert isinstance(continue_calls[0]["step_requirements"][0], StepRequirement)
+        finally:
+            es_mod._event_stream = original

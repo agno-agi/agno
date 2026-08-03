@@ -15,11 +15,14 @@ from typing import Any, Dict, Optional
 
 from agno.utils.dttm import now_epoch_s, to_epoch_s
 
-# Lifecycle: queued -> running -> completed | failed | cancelled
+# Lifecycle: queued -> running -> completed | failed | cancelled | paused
 # running with a stale lock is claimable again while attempt < max_attempts;
 # otherwise the sweep moves it to failed without executing.
-# paused: the execution leg ended awaiting HITL approval - terminal for the
-# ticket (a continuation is a new leg), distinct from completed for ops honesty
+# paused: the execution leg ended awaiting HITL input. NOT terminal: a
+# continue CAS-flips the SAME ticket paused -> queued (continue_job) with the
+# continuation inputs merged into the payload - one row per run, ever
+# (id == run_id is load-bearing across poll/resume/cancel/idempotency).
+# cancel reaches paused tickets too (paused -> cancelled).
 JOB_STATUSES = ("queued", "running", "completed", "failed", "cancelled", "paused")
 
 
@@ -35,6 +38,10 @@ class QueuedJob:
     # column exists so other AgentOS job types (e.g. knowledge ingestion) can
     # ride the same queue without a schema migration.
     job_type: str = "run"
+    # Claim affinity: workers claim only jobs whose deployment_id is None or
+    # equals their QueueConfig.deployment_id. Stamped at enqueue; a
+    # continuation CAS never touches it (the leg inherits the submit's home).
+    deployment_id: Optional[str] = None
     user_id: Optional[str] = None
     payload: Dict[str, Any] = field(default_factory=dict)  # serialized run params
     status: str = "queued"
@@ -70,6 +77,7 @@ class QueuedJob:
             "component_id": self.component_id,
             "session_id": self.session_id,
             "job_type": self.job_type,
+            "deployment_id": self.deployment_id,
             "user_id": self.user_id,
             "payload": self.payload,
             "status": self.status,
@@ -93,6 +101,7 @@ class QueuedJob:
             "component_id",
             "session_id",
             "job_type",
+            "deployment_id",
             "user_id",
             "payload",
             "status",

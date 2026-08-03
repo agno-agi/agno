@@ -79,3 +79,12 @@
 
 ---
 
+
+### durable_continue.py
+
+**Status:** PASS (live end-to-end, real Postgres + OpenAI, 2026-08-02)
+**Tier:** untagged
+**Description:** Durable HITL continuation legs: background submit paused on a requires_confirmation tool (run row PAUSED, queue ticket paused on the same row); continue with background=true returned 202 PENDING after CAS-flipping the ticket back to queued with the confirmations merged into its payload; the worker's continuation leg executed the confirmed tool and the run reached COMPLETED with the tool's output ("Deleted temp files in /tmp/scratch"), ticket on attempt 2. The wider matrix (re-pause cycles with payload replacement, double-click attach/settling, kill-worker-mid-continue -> sweep -> requeue re-drive, cancel-while-paused blocking continue) is covered by the two-replica live smoke recorded in the PR and by unit + PG integration tests.
+**Result:** PASS end to end.
+
+---

@@ -5544,12 +5544,17 @@ class PostgresDb(BaseDb):
                     return {"accepted": False, "reason": "duplicate", "job": dict(row._mapping)}
             raise
 
-    def claim_job(self, worker_id: str, lock_grace_seconds: int = 60) -> Optional[Dict[str, Any]]:
+    def claim_job(
+        self, worker_id: str, lock_grace_seconds: int = 60, deployment_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
         """Atomically claim the oldest executable job for this worker.
 
         Executable: queued, or running with a stale lock while the attempt
         budget is not exhausted (crash reclaim). Claiming increments attempt,
-        which doubles as the fencing generation.
+        which doubles as the fencing generation. Deployment affinity filters
+        BOTH branches (a reclaim executes too): NULL rides anywhere, stamped
+        jobs only on matching workers; deployment_id=None degenerates to
+        claiming only unstamped jobs.
         """
         try:
             table = self._get_table(table_type="jobs")
@@ -5562,6 +5567,7 @@ class PostgresDb(BaseDb):
                     select(table.c.id)
                     .where(
                         table.c.available_at <= now,
+                        or_(table.c.deployment_id.is_(None), table.c.deployment_id == deployment_id),
                         or_(
                             table.c.status == "queued",
                             and_(
@@ -5702,10 +5708,13 @@ class PostgresDb(BaseDb):
             log_debug(f"Error retrying/failing run job: {e}")
             return None
 
-    def cancel_job(self, job_id: str) -> bool:
-        """Tombstone cancellation: only jobs still waiting can be cancelled
-        here (contract: 'this job will not execute'). Claimed jobs fall
-        through to the running-run cancellation path."""
+    def settle_paused_job(self, job_id: str, status: str, error: Optional[str] = None) -> bool:
+        """Terminalize a PAUSED ticket whose continue ran INLINE, outside the
+        queue (see InMemoryQueueStore.settle_paused_job). Single conditional
+        UPDATE on status='paused'; a queued/claimed continuation owns the
+        ticket and is never clobbered."""
+        if status not in ("completed", "cancelled", "failed"):
+            return False
         try:
             table = self._get_table(table_type="jobs")
             if table is None:
@@ -5714,7 +5723,37 @@ class PostgresDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 result = sess.execute(
                     update(table)
-                    .where(table.c.id == job_id, table.c.status == "queued")
+                    .where(table.c.id == job_id, table.c.status == "paused")
+                    .values(
+                        status=status,
+                        error=error,
+                        locked_by=None,
+                        locked_at=None,
+                        completed_at=now,
+                        updated_at=now,
+                    )
+                )
+                return (result.rowcount or 0) > 0
+        except Exception as e:
+            log_debug(f"Error settling paused job: {e}")
+            return False
+
+    def cancel_job(self, job_id: str) -> bool:
+        """Tombstone cancellation: only jobs still waiting can be cancelled
+        here (contract: 'this job will not execute'). Claimed jobs fall
+        through to the running-run cancellation path. Paused tickets count as
+        waiting - nothing is executing them, and without this a cancelled
+        paused run stayed a paused ticket forever, resurrectable by a later
+        continue."""
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return False
+            now = int(time.time())
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(
+                    update(table)
+                    .where(table.c.id == job_id, table.c.status.in_(["queued", "paused"]))
                     .values(status="cancelled", completed_at=now, updated_at=now)
                 )
                 return (result.rowcount or 0) > 0
@@ -5848,6 +5887,53 @@ class PostgresDb(BaseDb):
             log_debug(f"Error requeueing run job: {e}")
             return False
 
+    def continue_job(self, job_id: str, continue_payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Continuation CAS: flip the EXISTING paused ticket back to queued,
+        mirroring requeue_job's transition (row-locked read + conditional
+        update in one transaction). No new rows, ever - id == run_id is
+        load-bearing. Submit-time payload fields are kept; payload["continue"]
+        is REPLACED WHOLESALE with this continue's inputs (never accumulated
+        across pause cycles). Budget grant: max_attempts = attempt + 1 -
+        exactly one more execution, regardless of the configured retry budget.
+
+        Returns {"outcome": "queued" | "attach" | "conflict", "job": row}:
+        queued = CAS won; attach = ticket already queued/running (double-click
+        idempotency - the caller attaches, this click's inputs are discarded);
+        conflict = terminal ticket or no ticket (job is the row or None).
+
+        Exceptions propagate (like enqueue_job, unlike the ops-surface
+        requeue_job): this CAS is the durable acceptance of the continue, and
+        a DB failure must surface as a 500, never masquerade as "conflict".
+        """
+        table = self._get_table(table_type="jobs")
+        if table is None:
+            raise RuntimeError("Job queue table not found")
+        now = int(time.time())
+        with self.Session() as sess, sess.begin():
+            row = sess.execute(select(table).where(table.c.id == job_id).with_for_update()).fetchone()
+            if row is None:
+                return {"outcome": "conflict", "job": None}
+            job = dict(row._mapping)
+            if job["status"] in ("completed", "failed", "cancelled"):
+                return {"outcome": "conflict", "job": job}
+            if job["status"] in ("queued", "running"):
+                return {"outcome": "attach", "job": job}
+            payload = dict(job.get("payload") or {})
+            payload["continue"] = dict(continue_payload)
+            values: Dict[str, Any] = {
+                "status": "queued",
+                "payload": payload,
+                "max_attempts": job["attempt"] + 1,
+                "available_at": now,
+                "locked_by": None,
+                "locked_at": None,
+                "completed_at": None,
+                "updated_at": now,
+            }
+            sess.execute(update(table).where(table.c.id == job_id).values(**values))
+            job.update(values)
+            return {"outcome": "queued", "job": job}
+
     def queue_stats(self) -> Dict[str, Any]:
         try:
             table = self._get_table(table_type="jobs")
@@ -5867,7 +5953,9 @@ class PostgresDb(BaseDb):
 
     def cleanup_jobs(self, older_than_seconds: int = 86400) -> int:
         """Delete terminal jobs whose completed_at is older than the retention
-        window. Returns the number of rows removed."""
+        window. Returns the number of rows removed. Paused tickets are
+        deliberately EXEMPT: they must outlive arbitrary human latency to stay
+        continuable; cancelling the run is the remedy for abandoned ones."""
         try:
             table = self._get_table(table_type="jobs")
             if table is None:

@@ -30,7 +30,15 @@ from agno.os.auth import (
 )
 from agno.os.checkpoints import build_run_checkpoint_snapshot, list_run_checkpoints
 from agno.os.event_streams import get_event_stream
-from agno.os.job_queue import aprepare_queued_run, normalize_idempotency_key, payload_is_queueable, validate_seam_input
+from agno.os.job_queue import (
+    acontinue_via_queue,
+    aprepare_queued_run,
+    araise_if_ticket_owns_continue,
+    asettle_paused_ticket,
+    normalize_idempotency_key,
+    payload_is_queueable,
+    validate_seam_input,
+)
 from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
     assert_session_matches_component,
@@ -221,7 +229,7 @@ async def team_resumable_response_streamer(
         yield format_sse_event(error_response)
 
 
-async def queued_run_tail_streamer(run_id: str) -> AsyncGenerator:
+async def queued_run_tail_streamer(run_id: str, from_index: Optional[int] = None) -> AsyncGenerator:
     """SSE response for a durably queued STREAMING run: tail the event stream.
 
     The run executes on whichever replica's worker claims it; this connection
@@ -233,7 +241,7 @@ async def queued_run_tail_streamer(run_id: str) -> AsyncGenerator:
 
     async def _pump() -> None:
         try:
-            async for tail_item in event_stream.tail(run_id):
+            async for tail_item in event_stream.tail(run_id, last_event_index=from_index):
                 await tail_queue.put(tail_item)
         except Exception as e:
             # A tail that DIES must not look like a tail that FINISHED: emit an
@@ -450,6 +458,7 @@ async def team_continue_response_streamer(
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
     auth_token: Optional[str] = None,
+    queue_worker: Optional[Any] = None,
     **kwargs: Any,
 ) -> AsyncGenerator:
     """Continue a paused team run and yield streaming response."""
@@ -495,7 +504,13 @@ async def team_continue_response_streamer(
                 yield format_sse_event(run_response_chunk)  # type: ignore
         finally:
             if _sync_stream:
-                await acomplete_continue_stream(team, run_id, session_id)
+                _final = await acomplete_continue_stream(team, run_id, session_id)
+                # Inline continue of a DURABLE paused run: terminalize the
+                # queue ticket too (paused tickets are retention-exempt and
+                # would otherwise say paused forever). CAS no-op for runs
+                # that never rode the queue or whose continuation is owned
+                # by a worker.
+                await asettle_paused_ticket(queue_worker, run_id, _final)
     except (InputCheckError, OutputCheckError) as e:
         error_response = TeamRunErrorEvent(
             content=str(e),
@@ -794,6 +809,7 @@ def get_team_router(
                         user_id=user_id,
                         payload=queued_stream_payload,
                         max_attempts=queue_worker.config.max_attempts,
+                        deployment_id=queue_worker.config.deployment_id,
                         idempotency_key=normalize_idempotency_key(request.headers.get("idempotency-key")),
                     ).to_dict()
                     enqueue_result = await queue_worker.store.enqueue_job(
@@ -911,6 +927,7 @@ def get_team_router(
                     user_id=user_id,
                     payload=queued_payload,
                     max_attempts=queue_worker.config.max_attempts,
+                    deployment_id=queue_worker.config.deployment_id,
                     idempotency_key=normalize_idempotency_key(request.headers.get("idempotency-key")),
                 ).to_dict()
 
@@ -1352,6 +1369,101 @@ def get_team_router(
                 detail="Invalid continue_from. Use 'end', 'last_user', or a numeric message index.",
             )
 
+        if background:
+            # Durable continue: CAS the run's EXISTING paused ticket back to
+            # queued (same row, same run_id) so the continuation leg survives
+            # crashes and executes on whichever worker claims it. Scope: plain
+            # paused-HITL continues only - fork/regenerate mint a NEW run_id
+            # inside acontinue_run (unknowable at 202 time) and runs that
+            # never rode the queue have no ticket to transition; both keep
+            # the detached path below.
+            queue_worker = getattr(request.app.state, "queue_worker", None)
+            continue_payload = {
+                "requirements": requirements_data,
+                "input": input,
+                "continue_from": continue_from_value,
+                "kwargs": kwargs,
+            }
+            team_is_queueable = any(
+                getattr(candidate, "id", None) == team_id and not isinstance(candidate, TeamFactory)
+                for candidate in (os.teams or [])
+            )
+            if (
+                queue_worker is not None
+                and not isinstance(team, RemoteTeam)
+                and team_is_queueable
+                and not fork
+                and not regenerate
+                and payload_is_queueable(continue_payload)
+            ):
+                run_row = await team.aget_run_output(run_id, session_id=session_id, user_id=user_id)
+                if run_row is not None and getattr(run_row, "status", None) == RunStatus.paused:
+                    continue_outcome = await acontinue_via_queue(
+                        queue_worker,
+                        run_id,
+                        continue_payload,
+                        stream_requested=stream,
+                        component_type="team",
+                        component_id=getattr(team, "id", None) or team_id,
+                    )
+                    if continue_outcome is not None:
+                        outcome, ticket = continue_outcome["outcome"], continue_outcome.get("job")
+                        if outcome == "stream_mismatch":
+                            # Pre-CAS refusal: nothing was accepted behind
+                            # this 409 (submit-seam duplicate parity)
+                            raise HTTPException(
+                                status_code=409,
+                                detail="Run was submitted non-streaming; "
+                                f"poll run {run_id} instead of attaching a stream",
+                            )
+                        if outcome == "settling":
+                            raise HTTPException(
+                                status_code=409,
+                                detail="Run is settling between execution legs; retry in a moment",
+                                headers={"Retry-After": "1"},
+                            )
+                        if outcome == "conflict":
+                            ticket_status = (ticket or {}).get("status", "unknown")
+                            raise HTTPException(
+                                status_code=409,
+                                detail=f"Run is not continuable (ticket status: {ticket_status})",
+                            )
+                        # queued (accepted) or attach (double-click): same
+                        # response shape as the submit seam
+                        if stream:
+                            # Tail from the PRE-ACCEPT index (captured by the
+                            # helper before the CAS): the continue response
+                            # carries post-approval events only, exactly like
+                            # the detached continue streamer; earlier history
+                            # belongs to /resume
+                            return StreamingResponse(
+                                queued_run_tail_streamer(run_id, from_index=continue_outcome.get("tail_from")),
+                                media_type="text/event-stream",
+                            )
+                        return JSONResponse(
+                            status_code=202,
+                            content={"run_id": run_id, "session_id": session_id, "status": "PENDING"},
+                        )
+                    log_warning(
+                        "Background continue bypasses the durable queue (no paused ticket for "
+                        "this run): executing on the accepting replica instead - bounded and "
+                        "observable, but NOT durable."
+                    )
+
+        if not fork and not regenerate:
+            # Inline-door admission gate: a paused/queued/running durable
+            # ticket OWNS this run's continuation - every non-queue door
+            # (inline sync, inline SSE, detached-resumable fallback) must
+            # refuse, or the cross-door double-execution race reopens.
+            # fork/regenerate are exempt: they mint a NEW run and never
+            # touch the ticket. 409/503 raise from the helper.
+            await araise_if_ticket_owns_continue(
+                getattr(request.app.state, "queue_worker", None),
+                run_id,
+                component_type="team",
+                component_id=getattr(team, "id", None) or team_id,
+            )
+
         if stream and background:
             # background=True, stream=True: resumable SSE streaming
             # Continue-run runs in a detached asyncio.Task that survives client disconnections.
@@ -1393,6 +1505,7 @@ def get_team_router(
                     user_id=user_id,
                     background_tasks=background_tasks,
                     auth_token=auth_token,
+                    queue_worker=getattr(request.app.state, "queue_worker", None),
                     **kwargs,
                 ),
                 media_type="text/event-stream",
@@ -1433,6 +1546,14 @@ def get_team_router(
                         session_id,
                         only_if_tracked=True,
                         final_status=getattr(run_response_obj, "status", None),
+                    )
+                    # Inline continue of a DURABLE paused run: terminalize
+                    # the queue ticket too (paused is retention-exempt; the
+                    # CAS no-ops for never-queued or worker-owned runs)
+                    await asettle_paused_ticket(
+                        getattr(request.app.state, "queue_worker", None),
+                        run_id,
+                        getattr(run_response_obj, "status", None),
                     )
                 return run_response_obj.to_dict()
 

@@ -97,6 +97,14 @@ class QueueConfig:
     retry_delay_seconds: int = 30
     # Per-run execution timeout enforced by the worker; None disables.
     timeout_seconds: Optional[int] = 3600
+    # Claim affinity for heterogeneous fleets. Stamped onto every job this
+    # replica enqueues; workers claim only jobs whose deployment_id is NULL
+    # or equals their own. None (default) = stamp nothing, claim only
+    # unstamped jobs - a mixed fleet is safe by construction. MISCONFIGURATION
+    # MODE: jobs stamped for a deployment with no live workers wait forever
+    # (they are queued, not stale - no sweep touches them); watch
+    # oldest_queued_age_seconds in /queue/stats.
+    deployment_id: Optional[str] = None
     # Stale-lock grace before a crashed worker's jobs are reclaimed. The
     # worker heartbeat refreshes locks, so this can stay small. Caveat: the
     # heartbeat runs on the event loop - a run doing SYNC blocking work (sync
@@ -106,7 +114,10 @@ class QueueConfig:
     lock_grace_seconds: int = 60
     poll_interval: float = 1.0
     # Terminal jobs older than this are deleted by the worker's retention
-    # sweep; the queue table must not grow unboundedly.
+    # sweep; the queue table must not grow unboundedly. PAUSED tickets are
+    # exempt: a paused run's ticket is what a later continue re-queues, and it
+    # must outlive arbitrary human latency. Abandoned paused tickets therefore
+    # persist until continued or cancelled - cancel the run to release one.
     retention_seconds: int = 86400
 
     def __post_init__(self) -> None:

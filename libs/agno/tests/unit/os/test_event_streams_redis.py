@@ -373,6 +373,69 @@ class TestTailResilience:
         assert received == [0, 1], "post-approval events must not be lost to the stale sentinel"
 
     @pytest.mark.asyncio
+    async def test_reopened_tail_stays_open_before_first_leg_event(self, stream):
+        """Review-round-2 P1: after a continue is accepted, the PAUSED
+        sentinel is still the LAST stream entry until the leg's first event.
+        A tail started in that window must stay open (reopen_run appends a
+        sentinel-invalidating marker), not close empty."""
+        await stream.register_run("r1", RunStatus.running)
+        await stream.add_event("r1", make_event("r1", "before-pause"))
+        await stream.complete_run("r1", RunStatus.paused)
+
+        assert await stream.reopen_run("r1") is True
+        assert await stream.get_run_status("r1") == RunStatus.pending
+
+        received = []
+
+        async def consume():
+            async for idx, _sse in stream.tail("r1"):
+                received.append(idx)
+
+        task = asyncio.create_task(consume())
+        await asyncio.sleep(0.3)  # past the replay + one XREAD block window
+        assert not task.done(), "tail must wait for the continuation, not end on the stale pause sentinel"
+        await stream.add_event("r1", make_event("r1", "after-approval"))
+        await asyncio.sleep(0.2)
+        await stream.complete_run("r1", RunStatus.completed)
+        await asyncio.wait_for(task, timeout=5)
+        assert received == [0, 1]
+
+    @pytest.mark.asyncio
+    async def test_reopen_declines_on_terminal_status(self, stream):
+        """A racing worker may finish the whole leg before the reopen runs:
+        the CAS must decline and never overwrite the terminal status."""
+        await stream.register_run("r1", RunStatus.running)
+        await stream.complete_run("r1", RunStatus.completed)
+        assert await stream.reopen_run("r1") is False
+        assert await stream.get_run_status("r1") == RunStatus.completed
+
+    @pytest.mark.asyncio
+    async def test_worker_redrive_reopens_from_error_but_never_completed(self, stream):
+        """include_error is the claim-holding worker's redrive variant: a
+        requeued continuation leg must re-liven the failed leg's ERROR view
+        (continuations never reset the stream, so the ERROR sentinel would
+        close early tails) - but COMPLETED stays untouchable either way."""
+        await stream.register_run("r1", RunStatus.running)
+        await stream.complete_run("r1", RunStatus.error)
+        assert await stream.reopen_run("r1") is False, "seam-side reopen must not resurrect an errored stream"
+        assert await stream.reopen_run("r1", include_error=True) is True
+        assert await stream.get_run_status("r1") == RunStatus.pending
+
+        await stream.complete_run("r1", RunStatus.completed)
+        assert await stream.reopen_run("r1", include_error=True) is False
+        assert await stream.get_run_status("r1") == RunStatus.completed
+
+    @pytest.mark.asyncio
+    async def test_reopen_marker_invisible_to_replay_and_index(self, stream):
+        await stream.register_run("r1", RunStatus.running)
+        await stream.add_event("r1", make_event("r1", "a"))
+        await stream.complete_run("r1", RunStatus.paused)
+        last_before = await stream.get_last_index("r1")
+        assert await stream.reopen_run("r1")
+        assert await stream.get_last_index("r1") == last_before, "markers must not consume indices"
+        assert [idx for idx, _ in await stream.replay("r1")] == [0], "markers must not appear in replay"
+
+    @pytest.mark.asyncio
     async def test_unknown_status_value_reads_as_running_not_missing(self, stream):
         await stream.register_run("r1", RunStatus.running)
         await stream._redis.set(stream._status_key("r1"), "SOME_FUTURE_STATUS")
@@ -386,6 +449,45 @@ class TestTailResilience:
         assert "r1" in stream._active_runs, "paused runs must keep their keys refreshed until the approval"
         await stream.complete_run("r1", RunStatus.completed)
         assert "r1" not in stream._active_runs
+
+    @pytest.mark.asyncio
+    async def test_refresher_drops_run_finished_on_another_replica(self):
+        """Review-round-2 P2: the replica that parked a run as PAUSED keeps
+        refreshing its keys, but the continuation may finish on ANOTHER
+        replica. The Redis status is the shared truth: once it is terminal,
+        the parker's refresher must drop the run so the TTL can reap the
+        keys instead of renewing them forever."""
+        s = RedisEventStream(fakeredis.FakeAsyncRedis(), ttl_seconds=2, block_ms=100)
+        try:
+            await s.register_run("r1", RunStatus.running)
+            await s.add_event("r1", make_event("r1", "a"))
+            await s.complete_run("r1", RunStatus.paused)
+            assert "r1" in s._active_runs
+
+            # Another replica's worker executes the continuation and finishes:
+            # only the SHARED status key changes; this process is not told
+            await s._redis.set(s._status_key("r1"), RunStatus.completed.value)
+
+            await asyncio.sleep(1.3)  # one refresher tick
+            assert "r1" not in s._active_runs, "refresher must drop runs whose shared status moved to terminal"
+        finally:
+            await s.aclose()
+
+    @pytest.mark.asyncio
+    async def test_refresher_keeps_reopened_run_alive(self):
+        """The reopened (PENDING, awaiting claim) phase is exactly what the
+        parker's refresher exists for - it must NOT drop those."""
+        s = RedisEventStream(fakeredis.FakeAsyncRedis(), ttl_seconds=2, block_ms=100)
+        try:
+            await s.register_run("r1", RunStatus.running)
+            await s.add_event("r1", make_event("r1", "a"))
+            await s.complete_run("r1", RunStatus.paused)
+            assert await s.reopen_run("r1")
+            await asyncio.sleep(1.3)  # one refresher tick
+            assert "r1" in s._active_runs
+            assert await s._redis.ttl(s._status_key("r1")) > 0
+        finally:
+            await s.aclose()
 
 
 class TestProducerOwnedRefresher:
