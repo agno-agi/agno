@@ -128,16 +128,14 @@ def _determine_tools_for_model(
     learning_tools: Optional[List[Callable]] = None,
 ) -> List[Union[Function, dict]]:
     # Connect tools that require connection management
-    from functools import partial
-
     from agno.team._default_tools import (
         _get_chat_history_function,
         _get_delegate_task_function,
         _get_update_user_memory_function,
         _read_past_session_function,
         _search_past_sessions_function,
-        _update_session_state_tool,
         create_knowledge_search_tool,
+        make_update_session_state_entrypoint,
     )
     from agno.team._init import _connect_connectable_tools
     from agno.team._messages import _get_user_message
@@ -203,7 +201,12 @@ def _determine_tools_for_model(
             _tools.extend(_learning_tools)
 
     if team.enable_agentic_state:
-        _tools.append(Function(name="update_session_state", entrypoint=partial(_update_session_state_tool, team)))
+        _tools.append(
+            Function(
+                name="update_session_state",
+                entrypoint=make_update_session_state_entrypoint(team),
+            )
+        )
 
     if team.search_past_sessions:
         _tools.append(
