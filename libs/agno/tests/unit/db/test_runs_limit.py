@@ -135,3 +135,60 @@ class TestGetSessionsIncludeRuns:
 class TestCapabilityFlag:
     def test_sqlite_supports_runs_limit(self):
         assert SqliteDb.supports_runs_limit is True
+
+
+class TestSchemaHasNoBuilderBreakingMetadata:
+    """MySQL/SingleStore table builders iterate every schema entry and access
+    ``col_config["type"]``; a non-column key like ``__composite_indexes__`` would
+    KeyError on table creation. Those adapters must not carry it (yet)."""
+
+    def test_mysql_singlestore_runs_schema_is_columns_only(self):
+        from agno.db.mysql.schemas import _get_run_table_schema as mysql_runs
+        from agno.db.singlestore.schemas import _get_run_table_schema as singlestore_runs
+
+        for schema in (mysql_runs(), singlestore_runs()):
+            for name, cfg in schema.items():
+                assert not name.startswith("__"), f"{name} would break the MySQL/SingleStore builder"
+                assert "type" in cfg
+
+    def test_postgres_sqlite_runs_schema_has_composite_index(self):
+        from agno.db.postgres.schemas import _get_run_table_schema as pg_runs
+        from agno.db.sqlite.schemas import _get_run_table_schema as sqlite_runs
+
+        for schema in (pg_runs(), sqlite_runs()):
+            idx = schema.get("__composite_indexes__", [])
+            assert any(i["columns"] == ["session_id", "run_index"] for i in idx)
+
+
+class TestBoundedHistoryGate:
+    """_bounded_history_runs_limit decides when to push runs_limit to the DB."""
+
+    def _agent(self, db=None):
+        from agno.agent import Agent
+
+        return Agent(id="ag1", db=db, session_id="s1")
+
+    def test_positive_with_sql_db(self):
+        from agno.agent._session import _bounded_history_runs_limit
+
+        db = SqliteDb(db_file=tempfile.mktemp(suffix=".db"))
+        assert _bounded_history_runs_limit(self._agent(db), 3, None) == 3
+
+    def test_nonpositive_falls_back(self):
+        from agno.agent._session import _bounded_history_runs_limit
+
+        db = SqliteDb(db_file=tempfile.mktemp(suffix=".db"))
+        assert _bounded_history_runs_limit(self._agent(db), 0, None) is None
+        assert _bounded_history_runs_limit(self._agent(db), -1, None) is None
+
+    def test_no_db_falls_back(self):
+        from agno.agent._session import _bounded_history_runs_limit
+
+        # cache_session-without-DB must not bound (would bypass the cache into "not found")
+        assert _bounded_history_runs_limit(self._agent(None), 3, None) is None
+
+    def test_custom_skip_statuses_falls_back(self):
+        from agno.agent._session import _bounded_history_runs_limit
+
+        db = SqliteDb(db_file=tempfile.mktemp(suffix=".db"))
+        assert _bounded_history_runs_limit(self._agent(db), 3, [RunStatus.error]) is None
