@@ -380,8 +380,17 @@ class QueueWorker:
         swept = await self.store.sweep_exhausted_jobs(self.config.lock_grace_seconds)
         for job in swept:
             error = "Worker lost and attempt budget exhausted; run was not re-executed"
-            with contextlib.suppress(Exception):
-                await self._persist_run_error(job, error)
+            if not await self._persist_run_error(job, error):
+                # The run row could not be terminalized (component missing
+                # after a deploy, session store fault). Failing the ticket now
+                # would orphan the run row RUNNING/PENDING forever with nothing
+                # left to revisit it - leave the job stale instead; the
+                # staleness recheck re-selects it next tick and this retries.
+                log_error(
+                    f"Job queue: could not persist run-row error for swept job {job['id']}; "
+                    "leaving it for the next sweep tick"
+                )
+                continue
             await self._terminate_stream_view(job)
             await self.store.fail_swept_job(job["id"], self.config.lock_grace_seconds, error)
             log_warning(f"Job queue: swept job {job['id']} to failed ({error})")
@@ -401,8 +410,10 @@ class QueueWorker:
         with contextlib.suppress(Exception):
             job = await self.store.get_job(run_id)
         if job is not None:
-            with contextlib.suppress(Exception):
-                await self._persist_run_error(job, "cancelled before execution", status="cancelled")
+            # Not gated (the tombstone is already committed and honouring the
+            # cancel wins) - but a run row left non-terminal must be loud
+            if not await self._persist_run_error(job, "cancelled before execution", status="cancelled"):
+                log_error(f"Job queue: cancelled queued job {run_id} but its run row could not be terminalized")
         from agno.os.event_streams import get_event_stream
         from agno.run.base import RunStatus
 
@@ -515,17 +526,38 @@ class QueueWorker:
         with contextlib.suppress(Exception):
             await asyncio.shield(get_event_stream().complete_run(job["id"], terminal))
 
-    async def _persist_run_error(self, job: Dict[str, Any], error: str, status: str = "error") -> None:
+    async def _persist_run_error(self, job: Dict[str, Any], error: str, status: str = "error") -> bool:
         """Persist a terminal status on the run row so pollers see it, never a
         stuck RUNNING/PENDING. Atomic-first with attempt fencing: a later
         attempt's write owns the row; this (possibly stale) writer is fenced
         out by the stored queue_attempt. The failure reason lands on
         run.content: the polled run must carry something actionable, not just
         ERROR with content=None (the job row's error field is the operator
-        surface)."""
+        surface).
+
+        Returns True when the run row is KNOWN not to be stuck: written now,
+        already terminal, fenced out by a newer attempt that owns it, or no
+        row exists to orphan. Returns False (never raises) when the write
+        failed or the component cannot be resolved - callers must NOT
+        terminalize the queue ticket on False, or the run row is orphaned
+        RUNNING/PENDING forever with nothing left to revisit it."""
+        try:
+            return await self._persist_run_error_inner(job, error, status)
+        except Exception as e:
+            log_warning(f"Job queue: run-row error persist failed for job {job.get('id')}: {e}")
+            return False
+
+    async def _persist_run_error_inner(self, job: Dict[str, Any], error: str, status: str) -> bool:
         component = self.resolve_component(job["component_type"], job["component_id"])
         if component is None:
-            return
+            # A deploy removed the component: the run row (if any) is
+            # unreachable, so the caller must keep the ticket alive for a
+            # future sweep tick on a replica that has the component back
+            log_warning(
+                f"Job queue: cannot persist run-row error for job {job.get('id')} - "
+                f"component not resolvable: {job.get('component_type')}/{job.get('component_id')}"
+            )
+            return False
         from agno.run.base import RunStatus
         from agno.run.status_persist import apersist_run_status, fallback_allowed
 
@@ -544,7 +576,7 @@ class QueueWorker:
         if not fallback_allowed(result, job.get("attempt")):
             # Written, or fenced out by a newer attempt that owns the row -
             # either way the unfenced fallback below must not run
-            return
+            return True
 
         component_type = job["component_type"]
         if component_type == "agent":
@@ -559,6 +591,7 @@ class QueueWorker:
                 run.content = run.content or error
                 session.upsert_run(run=run)
                 await asave_session(component, session=session)
+            # No row (nothing to orphan) or already terminal: not stuck
         elif component_type == "team":
             from agno.run.team import TeamRunOutput
             from agno.team._session import asave_session as team_asave_session
@@ -582,7 +615,8 @@ class QueueWorker:
             # state (the exact pattern status_persist's fallback avoids)
             workflow_session = await component.aget_session(session_id=job["session_id"])
             if workflow_session is None:
-                return
+                # No session row means no run row to orphan
+                return True
             workflow_run = workflow_session.get_run(job["id"])
             if workflow_run is not None and workflow_run.status not in (RunStatus.completed, RunStatus.cancelled):
                 workflow_run.status = RunStatus.cancelled if status == "cancelled" else RunStatus.error
@@ -592,6 +626,7 @@ class QueueWorker:
                     await component.asave_session(session=workflow_session)
                 else:
                     component.save_session(session=workflow_session)
+        return True
 
     def _retry_delay(self, attempt: int) -> int:
         """Exponential backoff with jitter, capped at 10x the base (the base
@@ -662,8 +697,17 @@ class QueueWorker:
             return
         component = self.resolve_component(job["component_type"], job["component_id"])
         if component is None:
-            error = f"Component not found: {job['component_type']}/{job['component_id']}"
-            await self.store.complete_job(job_id, self.worker_id, attempt, "failed", error)
+            # Same rule as every terminal path: never terminalize the ticket
+            # while the run row (prepared PENDING at accept) cannot be
+            # terminalized with it - without the component there is no way to
+            # reach the row, and a failed ticket would orphan it forever.
+            # Leave the claim to go stale: a replica that has the component
+            # back reclaims it, or the sweep retries the persist each tick.
+            log_error(
+                f"Job queue: component not found for job {job_id} "
+                f"({job['component_type']}/{job['component_id']}); leaving the claim to go stale "
+                "so a redeployed replica or the sweep can finish it"
+            )
             return
 
         payload = job.get("payload") or {}
@@ -714,9 +758,25 @@ class QueueWorker:
                 await self.store.complete_job(job_id, self.worker_id, attempt, "completed")
         except asyncio.CancelledError:
             # Shutdown drain: the run was interrupted, not failed by its own
-            # doing — requeue if budget remains, else fail visibly. If it lands
-            # failed, best-effort persist the run-row error too (shielded: we
-            # are being cancelled) so queue and session state do not diverge.
+            # doing — requeue if budget remains, else fail visibly. When it
+            # would land failed (budget spent), the run-row error is persisted
+            # FIRST and gates the terminal ticket write (shielded: we are
+            # being cancelled) - a failed ticket over a stuck RUNNING row
+            # would never be revisited, while a job left stale is re-swept
+            # after restart.
+            will_fail = attempt >= job.get("max_attempts", 1)
+            if will_fail:
+                persisted = False
+                with contextlib.suppress(Exception, asyncio.CancelledError):
+                    persisted = await asyncio.shield(
+                        self._persist_run_error(job, "interrupted by worker shutdown")
+                    )
+                if not persisted:
+                    log_error(
+                        f"Job queue: could not persist run-row error for drained job {job_id}; "
+                        "leaving it stale for the post-restart sweep"
+                    )
+                    raise
             outcome = await asyncio.shield(
                 self.store.retry_or_fail_job(
                     job_id, self.worker_id, attempt, "interrupted by worker shutdown", self.config.retry_delay_seconds
@@ -724,33 +784,50 @@ class QueueWorker:
             )
             if outcome == "failed":
                 with contextlib.suppress(Exception, asyncio.CancelledError):
-                    await asyncio.shield(self._persist_run_error(job, "interrupted by worker shutdown"))
-                with contextlib.suppress(Exception, asyncio.CancelledError):
                     await asyncio.shield(self._terminate_stream_view(job))
             raise
         except RunCancelledException:
             # Cancelled while waiting for a slot (or via the cancellation
             # manager): honour it - the ticket tombstones as cancelled
             await self.store.complete_job(job_id, self.worker_id, attempt, "cancelled")
-            with contextlib.suppress(Exception):
-                await self._persist_run_error(job, "cancelled while queued for a slot", status="cancelled")
+            # Not gated: honouring the user's cancel on the ticket beats
+            # run-row terminality (leaving the job stale would re-execute a
+            # cancelled run) - but the divergence must be loud, not silent
+            if not await self._persist_run_error(job, "cancelled while queued for a slot", status="cancelled"):
+                log_error(f"Job queue: cancelled job {job_id} but its run row could not be terminalized")
             await self._terminate_stream_view(job, status="cancelled")
         except asyncio.TimeoutError:
             error = f"Run exceeded timeout_seconds={self.config.timeout_seconds}"
             # A timed-out attempt with retry budget left is NOT terminal: the
             # retry continues the same stream, so neither the run row nor the
             # stream view may be marked ERROR yet (tails would close before the
-            # retry's real output). Budget exhausted = genuinely terminal.
+            # retry's real output). Budget exhausted = genuinely terminal - and
+            # the run-row persist gates the terminal ticket write: on failure
+            # the job is left stale for the sweep instead of orphaning the row.
             if attempt >= job.get("max_attempts", 1):
-                with contextlib.suppress(Exception):
-                    await self._persist_run_error(job, error)
+                if not await self._persist_run_error(job, error):
+                    log_error(
+                        f"Job queue: could not persist run-row error for timed-out job {job_id}; "
+                        "leaving it stale for the sweep"
+                    )
+                    return
                 await self._terminate_stream_view(job)
             await self.store.retry_or_fail_job(job_id, self.worker_id, attempt, error, self._retry_delay(attempt))
         except Exception as e:
-            if self._is_permanent_failure(e) or attempt >= job.get("max_attempts", 1):
-                with contextlib.suppress(Exception):
-                    await self._persist_run_error(job, str(e))
-            if self._is_permanent_failure(e):
+            permanent = self._is_permanent_failure(e)
+            if permanent or attempt >= job.get("max_attempts", 1):
+                # Terminal outcome either way: the run-row persist gates the
+                # terminal ticket write below. On failure, leave the job stale
+                # - budget-exhausted jobs are re-swept; a permanent failure
+                # with budget left is re-claimed and fails permanently again
+                # until the persist lands or the budget exhausts into the sweep.
+                if not await self._persist_run_error(job, str(e)):
+                    log_error(
+                        f"Job queue: could not persist run-row error for failed job {job_id}; "
+                        "leaving it stale instead of terminalizing the ticket"
+                    )
+                    return
+            if permanent:
                 # Invalid input / schema violations cannot be cured by retrying.
                 # No retry is coming even if budget remains, so the stream view
                 # must terminate here (the streaming finally skipped its
