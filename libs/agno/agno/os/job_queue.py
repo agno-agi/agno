@@ -109,6 +109,25 @@ def _apply_coordination(redis: Union[str, RedisCoordination]) -> None:
 # Default timeout (in seconds) when stopping the worker
 _DEFAULT_STOP_TIMEOUT = 30
 
+# The replica's active queue worker, set by queue_lifespan. Exists for
+# continue doors that have no Request/app in scope (MCP tools, AG-UI resume,
+# Slack HITL) but still must pass the inline-door admission gate - a durable
+# ticket owns its run's continuation regardless of which public interface
+# the continue arrives through. One worker per process in the standard
+# deployment; with multiple AgentOS apps in one process the last-started
+# lifespan wins (a foreign store's get_job simply misses -> gate allows,
+# identical to pre-gate behavior).
+_active_queue_worker: Optional["QueueWorker"] = None
+
+
+def set_active_queue_worker(worker: Optional["QueueWorker"]) -> None:
+    global _active_queue_worker
+    _active_queue_worker = worker
+
+
+def get_active_queue_worker() -> Optional["QueueWorker"]:
+    return _active_queue_worker
+
 
 class _SyncStoreAdapter:
     """Awaitable facade over a sync queue store (e.g. the sync PostgresDb).
@@ -1495,8 +1514,10 @@ async def queue_lifespan(app: Any, agent_os: Any):
 
     worker = QueueWorker(store=store, resolve_component=resolve_component, config=config)
     app.state.queue_worker = worker
+    set_active_queue_worker(worker)
     await worker.start()
 
     yield
 
+    set_active_queue_worker(None)
     await worker.stop()

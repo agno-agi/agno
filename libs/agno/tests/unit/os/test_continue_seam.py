@@ -198,6 +198,71 @@ class TestInlineDoorGate:
         assert exc.value.status_code == 503, "cannot verify ownership -> must not execute"
 
 
+class TestSideEntranceGate:
+    """Round-9 review: MCP (via the shared run service), AG-UI, and Slack
+    HITL reach acontinue_run outside the routers - the gate must hold there
+    too, via the process-level active queue worker."""
+
+    @pytest.mark.asyncio
+    async def test_shared_run_service_respects_the_gate(self):
+        from fastapi import HTTPException
+
+        from agno.os.job_queue import set_active_queue_worker
+        from agno.os.services import runs as run_service
+
+        store = InMemoryQueueStore()
+        ticket = make_job("r1")
+        ticket["component_type"] = "agent"
+        ticket["component_id"] = "a1"
+        await store.enqueue_job(ticket)
+        claimed = await store.claim_job("w1")
+        assert await store.complete_job("r1", "w1", claimed["attempt"], "paused")
+
+        calls: list = []
+
+        class StubAgent:
+            id = "a1"
+            db = object()
+
+            async def acontinue_run(self, **kwargs):
+                calls.append(kwargs)
+
+        set_active_queue_worker(make_worker(store))
+        try:
+            with pytest.raises(HTTPException) as exc:
+                await run_service.continue_paused_run(StubAgent(), run_id="r1", session_id="s1")  # type: ignore[arg-type]
+            assert exc.value.status_code == 409
+            assert calls == [], "acontinue_run must never be called for a ticket-owned run"
+        finally:
+            set_active_queue_worker(None)
+
+    @pytest.mark.asyncio
+    async def test_service_executes_when_no_ticket_or_no_worker(self):
+        from agno.os.job_queue import set_active_queue_worker
+        from agno.os.services import runs as run_service
+
+        calls: list = []
+
+        class StubAgent:
+            id = "a1"
+            db = object()
+
+            async def acontinue_run(self, **kwargs):
+                calls.append(kwargs)
+                return "run-output"
+
+        # No active worker registered (GA / queue-off deployments)
+        set_active_queue_worker(None)
+        assert await run_service.continue_paused_run(StubAgent(), run_id="r1", session_id="s1") == "run-output"  # type: ignore[arg-type]
+        # Worker active but the run is ticketless
+        set_active_queue_worker(make_worker(InMemoryQueueStore()))
+        try:
+            assert await run_service.continue_paused_run(StubAgent(), run_id="r2", session_id="s1") == "run-output"  # type: ignore[arg-type]
+        finally:
+            set_active_queue_worker(None)
+        assert len(calls) == 2
+
+
 class TestComponentIdentity:
     @pytest.mark.asyncio
     async def test_cross_component_continue_declines_the_durable_path(self):
