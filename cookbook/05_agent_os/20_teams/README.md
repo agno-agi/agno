@@ -33,8 +33,11 @@ Bot Connector can reach.
 | `MICROSOFT_APP_ID` | Bot Framework application id |
 | `MICROSOFT_APP_PASSWORD` | Client secret for the Bot Framework application |
 | `MICROSOFT_APP_TENANT_ID` | Entra tenant guid; leave unset for multi-tenant bots |
-| `MICROSOFT_APP_TYPE` | `MultiTenant`, `SingleTenant`, or `UserAssignedMSI` |
 | `OPENAI_API_KEY` | Model calls for both `basic.py` and `proactive_alert.py` |
+
+Managed Identity (`UserAssignedMSI`) is not supported in v1 — planned for v2 via a
+pluggable `token_provider` hook so operators can wire in `IDENTITY_ENDPOINT` without
+changing the interface signature.
 
 ## Configure Microsoft
 
@@ -57,7 +60,6 @@ For example:
 ```bash
 export MICROSOFT_APP_ID="..."
 export MICROSOFT_APP_PASSWORD="..."
-export MICROSOFT_APP_TYPE="MultiTenant"
 export OPENAI_API_KEY="..."
 
 .venvs/demo/bin/python cookbook/05_agent_os/20_teams/basic.py

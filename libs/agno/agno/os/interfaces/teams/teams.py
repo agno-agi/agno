@@ -50,7 +50,6 @@ class MicrosoftTeams(BaseInterface):
         app_id: Optional[str] = None,
         app_password: Optional[str] = None,
         tenant_id: Optional[str] = None,
-        app_type: Optional[str] = None,
         request_timeout: int = 30,
     ):
         self.agent = agent
@@ -63,7 +62,6 @@ class MicrosoftTeams(BaseInterface):
         self.app_id = app_id
         self.app_password = app_password
         self.tenant_id = tenant_id
-        self.app_type = app_type
         self.request_timeout = request_timeout
 
         if not (self.agent or self.team or self.workflow):
@@ -87,7 +85,6 @@ class MicrosoftTeams(BaseInterface):
             app_id=self.app_id,
             app_password=self.app_password,
             tenant_id=self.tenant_id,
-            app_type=self.app_type,
             request_timeout=self.request_timeout,
         )
 
@@ -150,7 +147,6 @@ class MicrosoftTeams(BaseInterface):
             app_id=self.app_id,
             app_password=self.app_password,
             tenant_id=self.tenant_id,
-            app_type=self.app_type,
             request_timeout=self.request_timeout,
         )
 
