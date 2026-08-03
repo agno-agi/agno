@@ -69,7 +69,9 @@ def _find_key_for_kid(kid: str) -> Optional[Dict[str, Any]]:
 def validate_bot_framework_jwt(auth_header: Optional[str], app_id: str) -> bool:
     """Verify a Bot Framework JWT from an inbound webhook `Authorization` header.
 
-    Returns True on success; raises HTTPException(403) on failure.
+    Returns True on success, False on any validation failure. The router converts
+    False to a 403 response. Raises HTTPException(500) only if `pyjwt[crypto]` is
+    not installed (a configuration error, not a validation failure).
 
     Set `MICROSOFT_APP_SKIP_JWT_VALIDATION=true` to bypass for local development —
     a warning is logged so it's obvious in logs.
