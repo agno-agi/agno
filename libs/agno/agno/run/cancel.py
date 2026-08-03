@@ -80,6 +80,18 @@ async def acleanup_run(run_id: str) -> None:
     await _cancellation_manager.acleanup_run(run_id)
 
 
+async def aget_cancellation_token(run_id: str):
+    """Current cancellation intent's opaque token, or None without intent
+    (or when the manager does not support tokens - see the base class)."""
+    return await _cancellation_manager.aget_cancellation_token(run_id)
+
+
+async def acleanup_run_if_token(run_id: str, token: str) -> bool:
+    """Token-scoped intent cleanup: removes intent ONLY if its token still
+    equals ``token`` - a delayed cleanup can never erase a newer cancel."""
+    return await _cancellation_manager.acleanup_run_if_token(run_id, token)
+
+
 def raise_if_cancelled(run_id: str) -> None:
     """Check if a run should be cancelled and raise exception if so."""
     _cancellation_manager.raise_if_cancelled(run_id)

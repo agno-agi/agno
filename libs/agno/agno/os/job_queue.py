@@ -109,14 +109,6 @@ def _apply_coordination(redis: Union[str, RedisCoordination]) -> None:
 # Default timeout (in seconds) when stopping the worker
 _DEFAULT_STOP_TIMEOUT = 30
 
-# Accept grace for continue/requeue transitions: the ticket becomes queued
-# atomically but stays unclaimable for this long, so the accepting request's
-# post-CAS cancellation-intent cleanup always lands before any claim can.
-# One second dwarfs the cleanup (a single coordination write) by orders of
-# magnitude and stays within the worker's default poll interval, so it adds
-# no visible latency to the continuation.
-_ACCEPT_GRACE_SECONDS = 1
-
 
 class _SyncStoreAdapter:
     """Awaitable facade over a sync queue store (e.g. the sync PostgresDb).
@@ -1153,28 +1145,30 @@ async def acontinue_via_queue(
         # the leg already started publishing
         continue_payload = dict(continue_payload)
         continue_payload["tail_from"] = tail_from
-    # The CAS carries an ACCEPT GRACE (available_at = now + grace): the ticket
-    # becomes queued atomically but is unclaimable for the grace window, and
-    # ONLY the CAS WINNER clears stale cancellation intent - inside that
-    # window, so a claim can never precede the cleanup. This closes both
-    # cancellation races: a pre-CAS clear could be arbitrarily delayed (a
-    # stale reader erasing a cancel aimed at another continue's running leg),
-    # and an ungated post-CAS clear could race a fast claim. Losers clear
-    # nothing; cancels landing during the grace hit a QUEUED ticket and
-    # tombstone it at the store - intent is only ever load-bearing for a
-    # CLAIMED leg, which cannot exist until the grace expires.
-    result = await queue_worker.store.continue_job(
-        run_id, continue_payload, available_delay_seconds=_ACCEPT_GRACE_SECONDS
-    )
-    if result.get("outcome") == "queued":
-        try:
-            from agno.run.cancel import acleanup_run
+    # Stale-intent cleanup is TOKEN-SCOPED (generation-scoped), not ordered:
+    # read the intent's opaque token BEFORE the CAS, and after winning ask
+    # the manager to delete intent ONLY IF its token is unchanged. However
+    # delayed this request gets (stalled coroutine, GC pause, resumed
+    # process), it can only ever remove the exact stale intent it observed -
+    # any newer, legitimate cancel minted a different token and provably
+    # survives. No timing assumption, no grace window, losers clear nothing.
+    # token=None (no pre-CAS intent, or a tokenless custom manager) skips
+    # cleanup entirely: intent arriving after this point is legitimate by
+    # definition. All fail-open: worst case stale intent cancels the leg at
+    # its first checkpoint (visible CANCELLED); operator requeue remedies.
+    cancel_token = None
+    with contextlib.suppress(Exception):
+        from agno.run.cancel import aget_cancellation_token
 
-            await acleanup_run(run_id)
+        cancel_token = await aget_cancellation_token(run_id)
+    result = await queue_worker.store.continue_job(run_id, continue_payload)
+    if result.get("outcome") == "queued" and cancel_token is not None:
+        try:
+            from agno.run.cancel import acleanup_run_if_token
+
+            await acleanup_run_if_token(run_id, cancel_token)
         except Exception:
-            # Worst case the stale intent kills the leg at its first
-            # checkpoint (visible CANCELLED); operator requeue is the remedy
-            log_warning(f"Could not clear cancellation intent for continued run {run_id}")
+            log_warning(f"Could not clear stale cancellation intent for continued run {run_id}")
     if result.get("outcome") == "attach":
         # CAS-race loser: both callers read paused, the other one won. Its
         # boundary is the accepted one - ours may already include the
