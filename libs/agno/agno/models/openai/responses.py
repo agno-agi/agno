@@ -1100,6 +1100,8 @@ class OpenAIResponses(Model):
 
             assistant_message.metrics.start_timer()
 
+            # Relies on the SDK establishing the connection inside create(), so a stale
+            # previous_response_id surfaces as a 400 here rather than during iteration.
             try:
                 stream = self.get_client().responses.create(
                     **self._get_model_request_kwargs(),
@@ -1225,6 +1227,8 @@ class OpenAIResponses(Model):
 
             assistant_message.metrics.start_timer()
 
+            # Relies on the SDK establishing the connection inside create(), so a stale
+            # previous_response_id surfaces as a 400 here rather than during iteration.
             try:
                 async_stream = await self.get_async_client().responses.create(
                     **self._get_model_request_kwargs(),
