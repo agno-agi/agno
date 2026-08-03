@@ -12,7 +12,7 @@ patterns.
 | File | Demonstrates |
 |---|---|
 | `basic.py` | One persistent Agent on the default `/msteams` interface |
-| `proactive_alert.py` | Push a message to a Teams user from a background task via `teams.send_alert(user_id, text)` |
+| `proactive_alert.py` | Push a message to a Teams user from a background task via `teams.asend_alert(user_id, text)` (or its sync `send_alert` wrapper) |
 
 ## Install
 
@@ -98,13 +98,17 @@ the `MicrosoftTeams` instance can later push a message without an inbound
 trigger:
 
 ```python
-await teams.send_alert(user_id="29:1abc...", text="Analysis complete.")
+# Inside a coroutine (scheduled job, background task, another handler)
+await teams.asend_alert(user_id="29:1abc...", text="Analysis complete.")
+
+# From a synchronous script / simple scheduler
+teams.send_alert(user_id="29:1abc...", text="Analysis complete.")
 ```
 
-Returns `True` on delivery, `False` if that user has never chatted with the
-bot (no reference to send to). Safe to call from scheduled jobs, background
-tasks, or other request handlers. See `proactive_alert.py` for a working
-example.
+Both return `True` on delivery and `False` if that user has never chatted
+with the bot (no reference to send to). Safe to call from scheduled jobs,
+background tasks, or other request handlers. See `proactive_alert.py` for
+a working example.
 
 ### Finding a Recipient's `user_id`
 
@@ -140,7 +144,7 @@ it and the channel-scoped `from.id` otherwise:
    ```
 
 Proactive delivery only succeeds against a live conversation reference. Web
-Chat conversations expire when the browser tab closes, and `send_alert` will
+Chat conversations expire when the browser tab closes, and `asend_alert` will
 receive a `403` from the Bot Connector against a stale reference. Use a
 reference captured from a real Teams client for reliable delivery.
 
@@ -169,4 +173,4 @@ Never use that bypass in production.
 Microsoft Teams client belonging to a user in a different tenant via that
 tenant admin's "Manage apps" approval flow. Unit tests under
 `libs/agno/tests/unit/os/interfaces/test_teams_*.py` cover JWT validation,
-helper behavior, and `send_alert` semantics.
+helper behavior, and `asend_alert` / `send_alert` semantics.
