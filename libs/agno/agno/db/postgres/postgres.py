@@ -5868,8 +5868,10 @@ class PostgresDb(BaseDb):
                 result = sess.execute(stmt).fetchone()
                 return dict(result._mapping) if result else None
         except Exception as e:
-            log_debug(f"Error getting skill: {e}")
-            return None
+            # Propagated, not swallowed: a caller must tell a backend fault from a
+            # missing row, or an outage answers 404 or an empty page instead of 500.
+            log_error(f"Error getting skill: {e}")
+            raise e
 
     def get_skills(
         self,
@@ -5913,8 +5915,10 @@ class PostgresDb(BaseDb):
                 results = sess.execute(stmt).fetchall()
                 return [dict(row._mapping) for row in results], total_count
         except Exception as e:
-            log_debug(f"Error listing skills: {e}")
-            return [], 0
+            # Propagated, not swallowed: a caller must tell a backend fault from a
+            # missing row, or an outage answers 404 or an empty page instead of 500.
+            log_error(f"Error listing skills: {e}")
+            raise e
 
     def get_skills_with_content(
         self,
@@ -6006,8 +6010,10 @@ class PostgresDb(BaseDb):
             # A content-validation failure must raise, not read as a version conflict
             raise
         except Exception as e:
-            log_debug(f"Error updating skill: {e}")
-            return None
+            # Propagated, not swallowed: a caller must tell a backend fault from a
+            # missing row, or an outage answers 404 or an empty page instead of 500.
+            log_error(f"Error updating skill: {e}")
+            raise e
 
     def delete_skill(self, name: str, user_id: Optional[str] = None) -> bool:
         try:
@@ -6021,5 +6027,7 @@ class PostgresDb(BaseDb):
                 result = sess.execute(stmt)
                 return result.rowcount > 0
         except Exception as e:
-            log_debug(f"Error deleting skill: {e}")
-            return False
+            # Propagated, not swallowed: a caller must tell a backend fault from a
+            # missing row, or an outage answers 404 or an empty page instead of 500.
+            log_error(f"Error deleting skill: {e}")
+            raise e

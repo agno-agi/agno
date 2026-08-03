@@ -562,10 +562,11 @@ async def test_async_get_skills_with_content_postgres_outage_raises_not_empty():
         await dead.get_skills_with_content()
 
 
-def test_get_skills_with_content_propagates_read_errors(sqlite_db, skill_data, monkeypatch):
-    # The deliberate divergence from the sibling reads: a failed read raises, so a
-    # refreshing loader can tell an outage from an empty table. get_skill swallows
-    # the same failure. If this test breaks, an outage silently wipes the skill set.
+def test_reads_propagate_read_errors(sqlite_db, skill_data, monkeypatch):
+    # A failed read raises so a refreshing loader can tell an outage from an empty
+    # table. get_skill now does the same: swallowing it into None made an outage
+    # indistinguishable from a missing row, so the API answered 404 while the
+    # database was down. If this breaks, an outage silently wipes the skill set.
     sqlite_db.create_skill(skill_data)
 
     def boom():
@@ -574,7 +575,8 @@ def test_get_skills_with_content_propagates_read_errors(sqlite_db, skill_data, m
     monkeypatch.setattr(sqlite_db, "Session", boom)
     with pytest.raises(RuntimeError, match="database down"):
         sqlite_db.get_skills_with_content()
-    assert sqlite_db.get_skill("release-notes") is None
+    with pytest.raises(RuntimeError, match="database down"):
+        sqlite_db.get_skill("release-notes")
 
 
 # ============================================================================
@@ -829,3 +831,113 @@ async def test_async_update_skill_unscoped_is_unchanged(async_sqlite_db, skill_d
     assert updated is not None
     assert updated["version"] == 2
     assert updated["user_id"] == "alice"
+
+
+class _BackendFault(Exception):
+    """Stands in for a driver/connection failure raised from inside a DB method."""
+
+
+def _break_backend(monkeypatch, module_cls):
+    """Make every table lookup fail the way a downed database does."""
+
+    def boom(self, **kwargs):
+        raise _BackendFault("connection refused")
+
+    monkeypatch.setattr(module_cls, "_get_table", boom)
+
+
+def test_read_write_methods_propagate_backend_faults(monkeypatch, sqlite_db, skill_data):
+    """A backend fault must raise, not read as "not found".
+
+    Swallowing it into None/([], 0)/False makes an outage indistinguishable from an absent
+    row, so the API answers 404 or an empty 200 while the database is down. Mirrors
+    get_skills_with_content, which already propagates for the same reason.
+    """
+    from agno.db.sqlite.sqlite import SqliteDb
+
+    sqlite_db.create_skill(skill_data)
+    _break_backend(monkeypatch, SqliteDb)
+
+    with pytest.raises(_BackendFault):
+        sqlite_db.get_skill(skill_data["name"])
+    with pytest.raises(_BackendFault):
+        sqlite_db.get_skills()
+    with pytest.raises(_BackendFault):
+        sqlite_db.update_skill(skill_data["name"], 1, description="x")
+    with pytest.raises(_BackendFault):
+        sqlite_db.delete_skill(skill_data["name"])
+
+
+def test_delete_skill_returns_false_only_when_no_row_matched(sqlite_db, skill_data):
+    """False must mean "nothing matched", never "the database fell over"."""
+    sqlite_db.create_skill(skill_data)
+    assert sqlite_db.delete_skill(skill_data["name"]) is True
+    assert sqlite_db.delete_skill(skill_data["name"]) is False
+    assert sqlite_db.delete_skill("never-existed") is False
+
+
+@pytest.mark.asyncio
+async def test_async_read_write_methods_propagate_backend_faults(monkeypatch, async_sqlite_db, skill_data):
+    from agno.db.sqlite.async_sqlite import AsyncSqliteDb
+
+    await async_sqlite_db.create_skill(skill_data)
+
+    async def boom(self, **kwargs):
+        raise _BackendFault("connection refused")
+
+    monkeypatch.setattr(AsyncSqliteDb, "_get_table", boom)
+
+    with pytest.raises(_BackendFault):
+        await async_sqlite_db.get_skill(skill_data["name"])
+    with pytest.raises(_BackendFault):
+        await async_sqlite_db.get_skills()
+    with pytest.raises(_BackendFault):
+        await async_sqlite_db.update_skill(skill_data["name"], 1, description="x")
+    with pytest.raises(_BackendFault):
+        await async_sqlite_db.delete_skill(skill_data["name"])
+
+
+def test_sqlite_outage_preserves_last_known_good_skills(sqlite_db, skill_data, monkeypatch):
+    """An outage must not read as an empty table and wipe the loaded skill set.
+
+    The table lookup swallows a connection failure into None, which is indistinguishable
+    from "the table was never created". Probing the connection tells them apart, so the
+    refresh raises and Skills keeps its previous mapping. Postgres already did this.
+    """
+    from agno.db.sqlite.sqlite import SqliteDb
+    from agno.skills import DbSkills, Skills
+
+    sqlite_db.create_skill(skill_data)
+    skills = Skills(loaders=[DbSkills(sqlite_db)])
+    assert sorted(skills._skills) == [skill_data["name"]]
+
+    def down_session():
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(SqliteDb, "_get_table", lambda self, **kw: None)
+    monkeypatch.setattr(sqlite_db, "Session", down_session)
+
+    with pytest.raises(RuntimeError, match="connection refused"):
+        sqlite_db.get_skills_with_content()
+
+    skills._refresh_loaders()
+    assert sorted(skills._skills) == [skill_data["name"]], "an outage wiped the last-known-good skills"
+
+
+@pytest.mark.asyncio
+async def test_async_sqlite_outage_propagates(async_sqlite_db, skill_data, monkeypatch):
+    from agno.db.sqlite.async_sqlite import AsyncSqliteDb
+
+    await async_sqlite_db.create_skill(skill_data)
+
+    async def no_table(self, **kwargs):
+        return None
+
+    def down_session():
+        raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(AsyncSqliteDb, "_get_table", no_table)
+    monkeypatch.setattr(async_sqlite_db, "async_session_factory", down_session)
+
+    with pytest.raises(RuntimeError, match="connection refused"):
+        await async_sqlite_db.get_skills_with_content()

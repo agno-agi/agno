@@ -4509,8 +4509,10 @@ class AsyncSqliteDb(AsyncBaseDb):
                 row = result.fetchone()
                 return dict(row._mapping) if row else None
         except Exception as e:
-            log_debug(f"Error getting skill: {e}")
-            return None
+            # Propagated, not swallowed: a caller must tell a backend fault from a
+            # missing row, or an outage answers 404 or an empty page instead of 500.
+            log_error(f"Error getting skill: {e}")
+            raise e
 
     async def get_skills(
         self,
@@ -4555,8 +4557,10 @@ class AsyncSqliteDb(AsyncBaseDb):
                 result = await sess.execute(stmt)
                 return [dict(row._mapping) for row in result.fetchall()], total_count
         except Exception as e:
-            log_debug(f"Error listing skills: {e}")
-            return [], 0
+            # Propagated, not swallowed: a caller must tell a backend fault from a
+            # missing row, or an outage answers 404 or an empty page instead of 500.
+            log_error(f"Error listing skills: {e}")
+            raise e
 
     async def get_skills_with_content(
         self,
@@ -4566,6 +4570,10 @@ class AsyncSqliteDb(AsyncBaseDb):
         try:
             table = await self._get_table(table_type="skills")
             if table is None:
+                # _get_table reads a swallowed connection failure as "no table". Probe the
+                # connection so an outage raises here instead of reading as an empty table.
+                async with self.async_session_factory() as sess:
+                    await sess.execute(text("SELECT 1"))
                 return []
             async with self.async_session_factory() as sess:
                 # The loader's read: every column, uncapped, name-ordered so the loaded
@@ -4646,8 +4654,10 @@ class AsyncSqliteDb(AsyncBaseDb):
             # A content-validation failure must raise, not read as a version conflict
             raise
         except Exception as e:
-            log_debug(f"Error updating skill: {e}")
-            return None
+            # Propagated, not swallowed: a caller must tell a backend fault from a
+            # missing row, or an outage answers 404 or an empty page instead of 500.
+            log_error(f"Error updating skill: {e}")
+            raise e
 
     async def delete_skill(self, name: str, user_id: Optional[str] = None) -> bool:
         try:
@@ -4662,5 +4672,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                     result = await sess.execute(stmt)
                     return result.rowcount > 0  # type: ignore[attr-defined]
         except Exception as e:
-            log_debug(f"Error deleting skill: {e}")
-            return False
+            # Propagated, not swallowed: a caller must tell a backend fault from a
+            # missing row, or an outage answers 404 or an empty page instead of 500.
+            log_error(f"Error deleting skill: {e}")
+            raise e
