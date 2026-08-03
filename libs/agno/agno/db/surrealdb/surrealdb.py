@@ -803,19 +803,30 @@ class SurrealDb(BaseDb):
         table = self._get_table("sessions")
 
         existing = self.client.query(
-            f"SELECT user_id FROM {table} WHERE id = $record",
+            f"SELECT user_id, runs FROM {table} WHERE id = $record",
             {"record": RecordID(table, session.session_id)},
         )
+        legacy_runs: Any = None
         if isinstance(existing, list) and len(existing) > 0:
-            existing_uid = existing[0].get("user_id") if isinstance(existing[0], dict) else None
+            existing_row = existing[0] if isinstance(existing[0], dict) else {}
+            existing_uid = existing_row.get("user_id")
             if existing_uid is not None and existing_uid != session.user_id:
                 return None
+            # Carry legacy `runs` blob forward: UPSERT CONTENT replaces the whole
+            # record, and serialize_session(include_runs=False) omits `runs`, so
+            # bare upsert would silently erase pre-v3 history that only lives in
+            # the legacy blob (upgrade-without-migration data loss).
+            legacy_runs = existing_row.get("runs")
+
+        content = serialize_session(session, self.table_names, include_runs=False)
+        if legacy_runs is not None:
+            content["runs"] = legacy_runs
 
         session_raw = self._query_one(
             "UPSERT ONLY $record CONTENT $content",
             {
                 "record": RecordID(table, session.session_id),
-                "content": serialize_session(session, self.table_names, include_runs=False),
+                "content": content,
             },
             dict,
         )
@@ -853,12 +864,27 @@ class SurrealDb(BaseDb):
         table = self._get_table("sessions")
         sessions_raw: List[Dict[str, Any]] = []
         for session in sessions:
-            # UPSERT does only work for one record at a time
+            # UPSERT does only work for one record at a time. Read the existing
+            # `runs` blob first so we can carry it forward -- otherwise UPSERT
+            # CONTENT would wipe any pre-v3 history on the row (see the
+            # single-record upsert_session above for the full rationale).
+            existing = self.client.query(
+                f"SELECT runs FROM {table} WHERE id = $record",
+                {"record": RecordID(table, session.session_id)},
+            )
+            legacy_runs: Any = None
+            if isinstance(existing, list) and len(existing) > 0 and isinstance(existing[0], dict):
+                legacy_runs = existing[0].get("runs")
+
+            content = serialize_session(session, self.table_names, include_runs=False)
+            if legacy_runs is not None:
+                content["runs"] = legacy_runs
+
             session_raw = self._query_one(
                 "UPSERT ONLY $record CONTENT $content",
                 {
                     "record": RecordID(table, session.session_id),
-                    "content": serialize_session(session, self.table_names, include_runs=False),
+                    "content": content,
                 },
                 dict,
             )

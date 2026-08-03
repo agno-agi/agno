@@ -703,8 +703,14 @@ class JsonDb(BaseDb):
                     existing_uid = existing_session.get("user_id")
                     if existing_uid is not None and existing_uid != session_dict.get("user_id"):
                         return None
-                    # Update existing session — scrub any leftover legacy `runs` field
+                    # Carry the legacy `runs` blob forward. session.to_dict(include_runs=False)
+                    # omits `runs`, so a bare replace here would silently erase any pre-v3
+                    # history that lives only in the legacy blob (upgrade-without-migration
+                    # data loss). Only cleanup_legacy_runs_field() should drop it, explicitly.
+                    legacy_runs = existing_session.get("runs")
                     session_dict["updated_at"] = int(time.time())
+                    if legacy_runs is not None:
+                        session_dict["runs"] = legacy_runs
                     sessions[i] = session_dict
                     session_updated = True
                     break
