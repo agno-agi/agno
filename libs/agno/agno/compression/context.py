@@ -131,30 +131,32 @@ class ContextCompactionManager:
         session: Optional["AgentSession"] = None,
         run_metrics: Optional["RunMetrics"] = None,
     ) -> CompactionResult:
-        """Compact messages. Returns CompactionResult — call commit() after model success."""
+        """Compact messages. Returns CompactionResult — call commit() after model success.
+
+        Note: Stored summary injection is handled by _messages.py during message build.
+        This method only creates NEW summaries when compaction threshold is exceeded.
+        """
         if self.model is None:
             return CompactionResult(view=messages)
 
         active = [m for m in messages if not getattr(m, "is_compacted", False)]
         stored_summary = self._get_stored_summary(session)
 
+        # No compaction needed — return messages as-is (summary already injected by _messages.py)
         if not self._needs_compaction(active):
-            if stored_summary:
-                return CompactionResult(view=self._inject_summary(active, stored_summary))
-            return CompactionResult(view=active)
+            return CompactionResult(view=messages)
 
         system_msgs = [m for m in active if m.role == "system"]
         non_system = [m for m in active if m.role != "system"]
         to_compact, preserved_user, keep_verbatim = self._partition(non_system)
 
+        # Nothing to compact — return as-is
         if not to_compact:
-            if stored_summary:
-                return CompactionResult(view=self._inject_summary(active, stored_summary))
-            return CompactionResult(view=active)
+            return CompactionResult(view=messages)
 
         summary = self._summarize(to_compact, stored_summary, run_metrics)
         if not summary:
-            return CompactionResult(view=active)
+            return CompactionResult(view=messages)
 
         view = system_msgs + [self._make_summary_msg(summary)] + preserved_user + keep_verbatim
         log_info(f"[COMPACTION] Compacted {len(to_compact)} messages ({len(summary)} chars)")
@@ -174,23 +176,21 @@ class ContextCompactionManager:
         active = [m for m in messages if not getattr(m, "is_compacted", False)]
         stored_summary = self._get_stored_summary(session)
 
+        # No compaction needed — return messages as-is (summary already injected by _messages.py)
         if not await self._aneeds_compaction(active):
-            if stored_summary:
-                return CompactionResult(view=self._inject_summary(active, stored_summary))
-            return CompactionResult(view=active)
+            return CompactionResult(view=messages)
 
         system_msgs = [m for m in active if m.role == "system"]
         non_system = [m for m in active if m.role != "system"]
         to_compact, preserved_user, keep_verbatim = self._partition(non_system)
 
+        # Nothing to compact — return as-is
         if not to_compact:
-            if stored_summary:
-                return CompactionResult(view=self._inject_summary(active, stored_summary))
-            return CompactionResult(view=active)
+            return CompactionResult(view=messages)
 
         summary = await self._asummarize(to_compact, stored_summary, run_metrics)
         if not summary:
-            return CompactionResult(view=active)
+            return CompactionResult(view=messages)
 
         view = system_msgs + [self._make_summary_msg(summary)] + preserved_user + keep_verbatim
         log_info(f"[COMPACTION] Compacted {len(to_compact)} messages ({len(summary)} chars)")
@@ -257,11 +257,6 @@ class ContextCompactionManager:
 
         to_compact = [m for i, m in enumerate(remaining) if i not in preserved_indices]
         return to_compact, preserved_user, keep_verbatim
-
-    def _inject_summary(self, active: List[Message], summary: str) -> List[Message]:
-        system_msgs = [m for m in active if m.role == "system"]
-        non_system = [m for m in active if m.role != "system"]
-        return system_msgs + [self._make_summary_msg(summary)] + non_system
 
     def _make_summary_msg(self, summary: str) -> Message:
         return Message(role="user", content=SUMMARY_PREFIX + summary, from_history=True, temporary=True)
