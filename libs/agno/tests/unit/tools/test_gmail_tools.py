@@ -84,8 +84,8 @@ def test_init_with_custom_scopes():
     custom_scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
     tools = GmailTools(
         scopes=custom_scopes,
-        include_tools=["get_latest_emails", "create_draft_email", "send_email"],
-        exclude_tools=["create_draft_email", "send_email"],
+        include_tools=["gmail_get_latest_emails", "gmail_create_draft_email", "gmail_send_email"],
+        exclude_tools=["gmail_create_draft_email", "gmail_send_email"],
     )
     assert tools.scopes == custom_scopes
 
@@ -105,13 +105,13 @@ def test_init_with_invalid_scopes_include_tools():
     with pytest.raises(ValueError, match="required for email composition operations"):
         GmailTools(
             scopes=custom_scopes,
-            include_tools=["create_draft_email", "send_email"],
+            include_tools=["gmail_create_draft_email", "gmail_send_email"],
         )
 
     # Check that it doesn't raise an error if different tools are included
     GmailTools(
         scopes=custom_scopes,
-        include_tools=["get_latest_emails"],
+        include_tools=["gmail_get_latest_emails"],
     )
 
 
@@ -255,7 +255,7 @@ def test_get_starred_emails(gmail_tools, mock_gmail_service):
     mock_gmail_service.users().messages().list().execute.return_value = mock_messages
     mock_gmail_service.users().messages().get().execute.return_value = mock_message_data
 
-    result = gmail_tools.get_starred_emails(count=1)
+    result = gmail_tools.gmail_get_starred_emails(count=1)
 
     assert "Starred Email" in result
     assert "Starred content" in result
@@ -271,7 +271,7 @@ def test_get_emails_by_context(gmail_tools, mock_gmail_service):
     mock_gmail_service.users().messages().list().execute.return_value = mock_messages
     mock_gmail_service.users().messages().get().execute.return_value = mock_message_data
 
-    result = gmail_tools.get_emails_by_context("test context", count=1)
+    result = gmail_tools.gmail_get_emails_by_context("test context", count=1)
 
     assert "Context Email" in result
     assert "Contextual content" in result
@@ -287,7 +287,7 @@ def test_get_emails_by_date(gmail_tools, mock_gmail_service):
     mock_gmail_service.users().messages().list().execute.return_value = mock_messages
     mock_gmail_service.users().messages().get().execute.return_value = mock_message_data
 
-    result = gmail_tools.get_emails_by_date("2024/01/01", range_in_days=1)
+    result = gmail_tools.gmail_get_emails_by_date("2024/01/01", range_in_days=1)
 
     assert "Date Email" in result
     assert "Date-specific content" in result
@@ -627,7 +627,7 @@ def test_send_email_reply_with_attachment(gmail_tools, mock_gmail_service):
     with patch("pathlib.Path.exists", return_value=True):
         with patch("builtins.open", mock_open(read_data=b"fake file content")):
             with patch("mimetypes.guess_type", return_value=("image/jpeg", None)):
-                result = gmail_tools.send_email_reply(
+                result = gmail_tools.gmail_send_email_reply(
                     thread_id="thread123",
                     message_id="msg456",
                     to="recipient@test.com",
@@ -661,7 +661,7 @@ def test_create_draft_attachment_file_not_found(gmail_tools, mock_gmail_service)
 def test_send_reply_attachment_file_not_found(gmail_tools, mock_gmail_service):
     """Test error handling when reply attachment file doesn't exist."""
     with patch("pathlib.Path.exists", return_value=False):
-        result = gmail_tools.send_email_reply(
+        result = gmail_tools.gmail_send_email_reply(
             thread_id="thread123",
             message_id="msg456",
             to="recipient@test.com",
@@ -788,7 +788,7 @@ def test_list_custom_labels_with_custom_labels(gmail_tools, mock_gmail_service):
 
     mock_gmail_service.users().labels().list().execute.return_value = mock_labels_response
 
-    result = gmail_tools.list_custom_labels()
+    result = gmail_tools.gmail_list_custom_labels()
 
     assert "Your Custom Labels (2 total):" in result
     assert "1. CustomLabel1" in result
@@ -809,7 +809,7 @@ def test_list_custom_labels_no_custom_labels(gmail_tools, mock_gmail_service):
 
     mock_gmail_service.users().labels().list().execute.return_value = mock_labels_response
 
-    result = gmail_tools.list_custom_labels()
+    result = gmail_tools.gmail_list_custom_labels()
 
     assert "No custom labels found" in result
     assert "Create labels using apply_label function!" in result
@@ -827,7 +827,7 @@ def test_list_custom_labels_with_missing_type_field(gmail_tools, mock_gmail_serv
 
     mock_gmail_service.users().labels().list().execute.return_value = mock_labels_response
 
-    result = gmail_tools.list_custom_labels()
+    result = gmail_tools.gmail_list_custom_labels()
 
     assert "Your Custom Labels (1 total):" in result
     assert "1. CustomLabel1" in result
@@ -842,7 +842,7 @@ def test_list_custom_labels_error_handling(gmail_tools, mock_gmail_service):
         resp=Mock(status=403), content=b'{"error": {"message": "Access Denied"}}'
     )
 
-    result = gmail_tools.list_custom_labels()
+    result = gmail_tools.gmail_list_custom_labels()
     assert "Error fetching labels" in result
 
 
@@ -869,7 +869,7 @@ def test_apply_label_new_label(gmail_tools, mock_gmail_service):
     mock_gmail_service.users().labels().list().execute.return_value = mock_labels_response
     mock_gmail_service.users().labels().create().execute.return_value = mock_create_label_response
 
-    result = gmail_tools.apply_label("is:unread", "NewLabel", count=2)
+    result = gmail_tools.gmail_apply_label("is:unread", "NewLabel", count=2)
 
     assert "Applied label 'NewLabel' to 2 emails matching 'is:unread'" in result
     # Check that create was called with the correct parameters
@@ -898,7 +898,7 @@ def test_apply_label_existing_label(gmail_tools, mock_gmail_service):
     mock_gmail_service.users().messages().list().execute.return_value = mock_messages_response
     mock_gmail_service.users().labels().list().execute.return_value = mock_labels_response
 
-    result = gmail_tools.apply_label("is:unread", "ExistingLabel", count=2)
+    result = gmail_tools.gmail_apply_label("is:unread", "ExistingLabel", count=2)
 
     assert "Applied label 'ExistingLabel' to 2 emails matching 'is:unread'" in result
     mock_gmail_service.users().labels().create.assert_not_called()
@@ -914,7 +914,7 @@ def test_apply_label_no_messages_found(gmail_tools, mock_gmail_service):
 
     mock_gmail_service.users().messages().list().execute.return_value = mock_messages_response
 
-    result = gmail_tools.apply_label("from:nonexistent@example.com", "TestLabel")
+    result = gmail_tools.gmail_apply_label("from:nonexistent@example.com", "TestLabel")
 
     assert "No emails found matching: 'from:nonexistent@example.com'" in result
     mock_gmail_service.users().labels().create.assert_not_called()
@@ -936,7 +936,7 @@ def test_apply_label_case_insensitive(gmail_tools, mock_gmail_service):
     mock_gmail_service.users().messages().list().execute.return_value = mock_messages_response
     mock_gmail_service.users().labels().list().execute.return_value = mock_labels_response
 
-    result = gmail_tools.apply_label("is:unread", "testlabel", count=1)  # lowercase
+    result = gmail_tools.gmail_apply_label("is:unread", "testlabel", count=1)  # lowercase
 
     assert "Applied label 'testlabel' to 1 emails matching 'is:unread'" in result
     mock_gmail_service.users().labels().create.assert_not_called()
@@ -953,7 +953,7 @@ def test_apply_label_error_handling(gmail_tools, mock_gmail_service):
         resp=Mock(status=403), content=b'{"error": {"message": "Access Denied"}}'
     )
 
-    result = gmail_tools.apply_label("is:unread", "TestLabel")
+    result = gmail_tools.gmail_apply_label("is:unread", "TestLabel")
     assert "Error applying label 'TestLabel'" in result
 
 
@@ -976,7 +976,7 @@ def test_remove_label_success(gmail_tools, mock_gmail_service):
     mock_gmail_service.users().labels().list().execute.return_value = mock_labels_response
     mock_gmail_service.users().messages().list().execute.return_value = mock_messages_response
 
-    result = gmail_tools.remove_label("is:unread", "TargetLabel", count=2)
+    result = gmail_tools.gmail_remove_label("is:unread", "TargetLabel", count=2)
 
     assert "Removed label 'TargetLabel' from 2 emails matching 'is:unread'" in result
     assert mock_gmail_service.users().messages().modify.call_count == 2
@@ -995,7 +995,7 @@ def test_remove_label_not_found(gmail_tools, mock_gmail_service):
 
     mock_gmail_service.users().labels().list().execute.return_value = mock_labels_response
 
-    result = gmail_tools.remove_label("is:unread", "NonexistentLabel")
+    result = gmail_tools.gmail_remove_label("is:unread", "NonexistentLabel")
 
     assert "Label 'NonexistentLabel' not found" in result
     mock_gmail_service.users().messages().modify.assert_not_called()
@@ -1017,7 +1017,7 @@ def test_remove_label_no_messages_found(gmail_tools, mock_gmail_service):
     mock_gmail_service.users().labels().list().execute.return_value = mock_labels_response
     mock_gmail_service.users().messages().list().execute.return_value = mock_messages_response
 
-    result = gmail_tools.remove_label("from:nonexistent@example.com", "TargetLabel")
+    result = gmail_tools.gmail_remove_label("from:nonexistent@example.com", "TargetLabel")
 
     assert "No emails found matching: 'from:nonexistent@example.com' with label 'TargetLabel'" in result
     mock_gmail_service.users().messages().modify.assert_not_called()
@@ -1039,7 +1039,7 @@ def test_remove_label_case_insensitive(gmail_tools, mock_gmail_service):
     mock_gmail_service.users().labels().list().execute.return_value = mock_labels_response
     mock_gmail_service.users().messages().list().execute.return_value = mock_messages_response
 
-    result = gmail_tools.remove_label("is:unread", "testlabel")  # lowercase
+    result = gmail_tools.gmail_remove_label("is:unread", "testlabel")  # lowercase
 
     assert "Removed label 'testlabel' from 1 emails matching 'is:unread'" in result
 
@@ -1055,13 +1055,13 @@ def test_remove_label_error_handling(gmail_tools, mock_gmail_service):
         resp=Mock(status=403), content=b'{"error": {"message": "Access Denied"}}'
     )
 
-    result = gmail_tools.remove_label("is:unread", "TestLabel")
+    result = gmail_tools.gmail_remove_label("is:unread", "TestLabel")
     assert "Error removing label 'TestLabel'" in result
 
 
 def test_delete_custom_label_without_confirmation(gmail_tools, mock_gmail_service):
     """Test delete label without confirmation returns warning."""
-    result = gmail_tools.delete_custom_label("TestLabel")
+    result = gmail_tools.gmail_delete_custom_label("TestLabel")
 
     assert "LABEL DELETION REQUIRES CONFIRMATION" in result
     assert "Set confirm=True to proceed" in result
@@ -1082,7 +1082,7 @@ def test_delete_custom_label_success(gmail_tools, mock_gmail_service):
 
     mock_gmail_service.users().labels().list().execute.return_value = mock_labels_response
 
-    result = gmail_tools.delete_custom_label("CustomLabel", confirm=True)
+    result = gmail_tools.gmail_delete_custom_label("CustomLabel", confirm=True)
 
     assert "Successfully deleted label 'CustomLabel'" in result
     assert "This label has been removed from all emails" in result
@@ -1102,7 +1102,7 @@ def test_delete_custom_label_not_found(gmail_tools, mock_gmail_service):
 
     mock_gmail_service.users().labels().list().execute.return_value = mock_labels_response
 
-    result = gmail_tools.delete_custom_label("NonexistentLabel", confirm=True)
+    result = gmail_tools.gmail_delete_custom_label("NonexistentLabel", confirm=True)
 
     assert "Label 'NonexistentLabel' not found" in result
     mock_gmail_service.users().labels().delete.assert_not_called()
@@ -1121,7 +1121,7 @@ def test_delete_custom_label_system_label(gmail_tools, mock_gmail_service):
 
     mock_gmail_service.users().labels().list().execute.return_value = mock_labels_response
 
-    result = gmail_tools.delete_custom_label("INBOX", confirm=True)
+    result = gmail_tools.gmail_delete_custom_label("INBOX", confirm=True)
 
     assert "Cannot delete system label 'INBOX'. Only user-created labels can be deleted." in result
     mock_gmail_service.users().labels().delete.assert_not_called()
@@ -1140,7 +1140,7 @@ def test_delete_custom_label_missing_type_field(gmail_tools, mock_gmail_service)
 
     mock_gmail_service.users().labels().list().execute.return_value = mock_labels_response
 
-    result = gmail_tools.delete_custom_label("INBOX", confirm=True)
+    result = gmail_tools.gmail_delete_custom_label("INBOX", confirm=True)
 
     assert "Cannot delete system label 'INBOX'" in result
     mock_gmail_service.users().labels().delete.assert_not_called()
@@ -1159,7 +1159,7 @@ def test_delete_custom_label_case_insensitive(gmail_tools, mock_gmail_service):
 
     mock_gmail_service.users().labels().list().execute.return_value = mock_labels_response
 
-    result = gmail_tools.delete_custom_label("testlabel", confirm=True)  # lowercase
+    result = gmail_tools.gmail_delete_custom_label("testlabel", confirm=True)  # lowercase
 
     assert "Successfully deleted label 'testlabel'" in result
     mock_gmail_service.users().labels().delete.assert_called_with(userId="me", id="Label_target")
@@ -1176,7 +1176,7 @@ def test_delete_custom_label_error_handling(gmail_tools, mock_gmail_service):
         resp=Mock(status=403), content=b'{"error": {"message": "Access Denied"}}'
     )
 
-    result = gmail_tools.delete_custom_label("TestLabel", confirm=True)
+    result = gmail_tools.gmail_delete_custom_label("TestLabel", confirm=True)
     assert "Error deleting label 'TestLabel'" in result
 
 
@@ -1207,7 +1207,7 @@ def _full_message_payload(msg_id="msg1", thread_id="thread1", subject="Test", se
 def test_get_message(gmail_tools, mock_gmail_service):
     mock_gmail_service.users().messages().get().execute.return_value = _full_message_payload()
 
-    result = json.loads(gmail_tools.get_message("msg1"))
+    result = json.loads(gmail_tools.gmail_get_message("msg1"))
 
     assert result["id"] == "msg1"
     assert result["subject"] == "Test"
@@ -1219,7 +1219,7 @@ def test_get_message_http_error(gmail_tools, mock_gmail_service):
         resp=Mock(status=404), content=b'{"error": {"message": "Not Found"}}'
     )
 
-    result = json.loads(gmail_tools.get_message("bad_id"))
+    result = json.loads(gmail_tools.gmail_get_message("bad_id"))
     assert "error" in result
 
 
@@ -1255,7 +1255,7 @@ def test_search_threads(gmail_tools, mock_gmail_service):
         "resultSizeEstimate": 2,
     }
 
-    result = json.loads(gmail_tools.search_threads("is:unread", count=5))
+    result = json.loads(gmail_tools.gmail_search_threads("is:unread", count=5))
 
     assert len(result["threads"]) == 2
     assert result["totalEstimate"] == 2
@@ -1266,7 +1266,7 @@ def test_search_threads_http_error(gmail_tools, mock_gmail_service):
         resp=Mock(status=500), content=b'{"error": {"message": "Server Error"}}'
     )
 
-    result = json.loads(gmail_tools.search_threads("query"))
+    result = json.loads(gmail_tools.gmail_search_threads("query"))
     assert "error" in result
 
 
@@ -1277,21 +1277,21 @@ def test_modify_thread_labels(gmail_tools_all, mock_gmail_service):
         "labelIds": ["Label_1"],
     }
 
-    result = json.loads(gmail_tools_all.modify_thread_labels("thread1", add_labels="Work"))
+    result = json.loads(gmail_tools_all.gmail_modify_thread_labels("thread1", add_labels="Work"))
 
     assert result["threadId"] == "thread1"
     assert "Label_1" in result["labelIds"]
 
 
 def test_modify_thread_labels_no_args(gmail_tools_all, mock_gmail_service):
-    result = json.loads(gmail_tools_all.modify_thread_labels("thread1"))
+    result = json.loads(gmail_tools_all.gmail_modify_thread_labels("thread1"))
     assert "error" in result
 
 
 def test_trash_thread(gmail_tools_all, mock_gmail_service):
     mock_gmail_service.users().threads().trash().execute.return_value = {}
 
-    result = json.loads(gmail_tools_all.trash_thread("thread1"))
+    result = json.loads(gmail_tools_all.gmail_trash_thread("thread1"))
 
     assert result["threadId"] == "thread1"
     assert result["action"] == "trashed"
@@ -1302,7 +1302,7 @@ def test_trash_thread_http_error(gmail_tools_all, mock_gmail_service):
         resp=Mock(status=404), content=b'{"error": {"message": "Not Found"}}'
     )
 
-    result = json.loads(gmail_tools_all.trash_thread("bad_id"))
+    result = json.loads(gmail_tools_all.gmail_trash_thread("bad_id"))
     assert "error" in result
 
 
@@ -1355,7 +1355,7 @@ def test_send_draft(gmail_tools_all, mock_gmail_service):
         "labelIds": ["SENT"],
     }
 
-    result = json.loads(gmail_tools_all.send_draft("draft1"))
+    result = json.loads(gmail_tools_all.gmail_send_draft("draft1"))
 
     assert result["id"] == "msg1"
     assert result["threadId"] == "thread1"
@@ -1366,7 +1366,7 @@ def test_send_draft_http_error(gmail_tools_all, mock_gmail_service):
         resp=Mock(status=404), content=b'{"error": {"message": "Not Found"}}'
     )
 
-    result = json.loads(gmail_tools_all.send_draft("bad_id"))
+    result = json.loads(gmail_tools_all.gmail_send_draft("bad_id"))
     assert "error" in result
 
 
@@ -1444,21 +1444,21 @@ def test_modify_message_labels(gmail_tools_all, mock_gmail_service):
         "labelIds": ["STARRED", "INBOX"],
     }
 
-    result = json.loads(gmail_tools_all.modify_message_labels("msg1", add_labels="STARRED"))
+    result = json.loads(gmail_tools_all.gmail_modify_message_labels("msg1", add_labels="STARRED"))
 
     assert result["id"] == "msg1"
     assert "STARRED" in result["labelIds"]
 
 
 def test_modify_message_labels_no_args(gmail_tools_all, mock_gmail_service):
-    result = json.loads(gmail_tools_all.modify_message_labels("msg1"))
+    result = json.loads(gmail_tools_all.gmail_modify_message_labels("msg1"))
     assert "error" in result
 
 
 def test_trash_message(gmail_tools_all, mock_gmail_service):
     mock_gmail_service.users().messages().trash().execute.return_value = {}
 
-    result = json.loads(gmail_tools_all.trash_message("msg1"))
+    result = json.loads(gmail_tools_all.gmail_trash_message("msg1"))
 
     assert result["id"] == "msg1"
     assert result["action"] == "trashed"
@@ -1467,7 +1467,7 @@ def test_trash_message(gmail_tools_all, mock_gmail_service):
 def test_trash_message_undo(gmail_tools_all, mock_gmail_service):
     mock_gmail_service.users().messages().untrash().execute.return_value = {}
 
-    result = json.loads(gmail_tools_all.trash_message("msg1", undo=True))
+    result = json.loads(gmail_tools_all.gmail_trash_message("msg1", undo=True))
 
     assert result["id"] == "msg1"
     assert result["action"] == "untrashed"
@@ -1478,7 +1478,7 @@ def test_trash_message_http_error(gmail_tools_all, mock_gmail_service):
         resp=Mock(status=404), content=b'{"error": {"message": "Not Found"}}'
     )
 
-    result = json.loads(gmail_tools_all.trash_message("bad_id"))
+    result = json.loads(gmail_tools_all.gmail_trash_message("bad_id"))
     assert "error" in result
 
 
@@ -1492,7 +1492,7 @@ def test_download_attachment(gmail_tools_all, mock_gmail_service):
     with patch("tempfile.TemporaryDirectory", return_value=mock_tempdir):
         with patch("pathlib.Path.mkdir"):
             with patch("pathlib.Path.write_bytes") as mock_write:
-                result = json.loads(gmail_tools_all.download_attachment("msg1", "att1", "doc.pdf"))
+                result = json.loads(gmail_tools_all.gmail_download_attachment("msg1", "att1", "doc.pdf"))
 
     assert result["filename"] == "doc.pdf"
     assert result["messageId"] == "msg1"
@@ -1507,7 +1507,7 @@ def test_download_attachment_http_error(gmail_tools_all, mock_gmail_service):
         resp=Mock(status=404), content=b'{"error": {"message": "Not Found"}}'
     )
 
-    result = json.loads(gmail_tools_all.download_attachment("msg1", "att1", "doc.pdf"))
+    result = json.loads(gmail_tools_all.gmail_download_attachment("msg1", "att1", "doc.pdf"))
     assert "error" in result
 
 
@@ -1524,7 +1524,7 @@ def test_label_cache_invalidated_on_create(gmail_tools, mock_gmail_service):
 
     gmail_tools._label_cache = {"old": "old_id"}
 
-    gmail_tools.apply_label("test query", "NewLabel", count=1)
+    gmail_tools.gmail_apply_label("test query", "NewLabel", count=1)
 
     assert gmail_tools._label_cache is None
 
@@ -1537,7 +1537,7 @@ def test_label_cache_invalidated_on_delete(gmail_tools, mock_gmail_service):
 
     gmail_tools._label_cache = {"mylabel": "lbl_1"}
 
-    result = gmail_tools.delete_custom_label("MyLabel", confirm=True)
+    result = gmail_tools.gmail_delete_custom_label("MyLabel", confirm=True)
 
     assert "Successfully deleted" in result
     assert gmail_tools._label_cache is None
@@ -1571,8 +1571,8 @@ def test_temp_dir_reused_across_downloads(gmail_tools_all, mock_gmail_service):
     mock_tempdir.name = "/tmp/gmail_test"
     with patch("tempfile.TemporaryDirectory", return_value=mock_tempdir) as mock_td_cls:
         with patch("pathlib.Path.mkdir"), patch("pathlib.Path.write_bytes"):
-            gmail_tools_all.download_attachment("msg1", "att1", "doc1.pdf")
-            gmail_tools_all.download_attachment("msg2", "att2", "doc2.pdf")
+            gmail_tools_all.gmail_download_attachment("msg1", "att1", "doc1.pdf")
+            gmail_tools_all.gmail_download_attachment("msg2", "att2", "doc2.pdf")
 
     # TemporaryDirectory created only once, reused for second download
     mock_td_cls.assert_called_once()

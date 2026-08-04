@@ -480,7 +480,9 @@ def test_build_instructions_multiple_tools():
 
 
 def test_build_instructions_search_messages_fallback():
-    result = SlackTools._build_instructions(["slack_search_workspace", "slack_search_messages", "slack_get_channel_history"])
+    result = SlackTools._build_instructions(
+        ["slack_search_workspace", "slack_search_messages", "slack_get_channel_history"]
+    )
     assert "Fallback (user-token only)" in result
 
 
