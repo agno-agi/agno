@@ -223,6 +223,7 @@ def resolve_queue_store(config: QueueConfig, default_db: Any) -> Any:
             "continue_job",
             "settle_paused_job",
             "sweep_exhausted_jobs",
+            "acquire_sweep",
             "fail_swept_job",
             "get_job",
             "count_queued_jobs",
@@ -421,61 +422,100 @@ class QueueWorker:
             self._in_flight.pop(job_id, None)
 
     async def _sweep_exhausted(self) -> None:
-        """Fail exhausted stale jobs visibly. Run-row error is persisted FIRST,
-        then the queue row — an interrupted sweep retries idempotently next
-        tick (cross-store atomicity is unavailable; ordering + idempotence).
-        Deliberately NOT deployment-filtered (asymmetric with the claim
-        predicate): sweeping never executes the job, only records a failure
-        that already happened, and any replica may do that honestly."""
+        """Fail exhausted stale jobs visibly. Ownership FIRST: acquire the
+        stale lock (CAS) before any run-row write - the old order stamped
+        ERROR on the run row and only then discovered, via fail_swept_job's
+        staleness recheck, that a live heartbeat owned the ticket: a healthy
+        run's row was already defaced by a sweeper that never owned it.
+        Sequence: acquire -> fenced run-row persist -> stream terminal ->
+        ownership-keyed ticket write. An interrupted sweep retries once its
+        own lock goes stale (which doubles as the retry backoff for a
+        failing run-row persist - a persistently failing write is retried
+        every lock_grace, not every tick). Deliberately NOT
+        deployment-filtered (asymmetric with the claim predicate): sweeping
+        never executes the job, only records a failure that already
+        happened, and any replica may do that honestly."""
         swept = await self.store.sweep_exhausted_jobs(self.config.lock_grace_seconds)
         for job in swept:
+            if not await self.store.acquire_sweep(job["id"], self.worker_id, self.config.lock_grace_seconds):
+                # Lost to a live heartbeat or another sweeper - and the run
+                # row was never touched, which is the point of acquiring first
+                continue
             error = "Worker lost and attempt budget exhausted; run was not re-executed"
             if not await self._persist_run_error(job, error):
                 # The run row could not be terminalized (component missing
                 # after a deploy, session store fault). Failing the ticket now
                 # would orphan the run row RUNNING/PENDING forever with nothing
-                # left to revisit it - leave the job stale instead; the
-                # staleness recheck re-selects it next tick and this retries.
+                # left to revisit it - keep the ticket running under our sweep
+                # lock; it is re-swept when that lock goes stale.
                 log_error(
                     f"Job queue: could not persist run-row error for swept job {job['id']}; "
-                    "leaving it for the next sweep tick"
+                    "it will be re-swept when the sweep lock goes stale"
                 )
                 continue
             await self._terminate_stream_view(job)
-            await self.store.fail_swept_job(job["id"], self.config.lock_grace_seconds, error)
+            await self.store.fail_swept_job(job["id"], self.worker_id, error)
             log_warning(f"Job queue: swept job {job['id']} to failed ({error})")
 
     async def acancel_queued(self, run_id: str) -> bool:
-        """Tombstone a still-waiting ticket (QUEUED or PAUSED) and terminalize
-        its run row and stream view. Claimed/running jobs are not touched
-        here: the cancellation manager reaches the executing attempt instead.
-        Without this, a run cancelled while waiting in the durable queue kept
-        status='queued' and was claimed and executed after a restart - and a
-        cancelled PAUSED run kept a paused ticket a later continue could
-        resurrect."""
-        # Best-effort pre-read for the honest error message: a paused run has
-        # partially executed, so "before execution" would be wrong on it
+        """Cancel a still-waiting ticket (QUEUED or PAUSED): run row FIRST,
+        ticket tombstone second. Claimed/running jobs are not touched here:
+        the cancellation manager reaches the executing attempt instead.
+
+        The old order (tombstone, then row) left a PERMANENT divergence when
+        the row write failed - a cancelled ticket over a PENDING/PAUSED run
+        row that nothing ever revisits (the sweep only sees stale RUNNING).
+        Row-first inverts the failure into documented semantics: on a failed
+        row write the ticket stays queued/paused and the caller's
+        cancellation intent - registered right after this call by every
+        cancel route - kills the eventual execution/continuation leg at its
+        first checkpoint, visibly, bounded by the intent TTL."""
         prior = None
         with contextlib.suppress(Exception):
             prior = await self.store.get_job(run_id)
+        if prior is None or prior.get("job_type", "run") != "run" or prior.get("status") not in ("queued", "paused"):
+            return False
+        # A paused run has partially executed, so "before execution" would be
+        # wrong on it
+        reason = (
+            "cancelled while paused awaiting continuation"
+            if prior.get("status") == "paused"
+            else "cancelled before execution"
+        )
+        # Run row first (fenced): if this cannot land, do NOT tombstone - a
+        # terminal ticket over a live-looking row is the one divergence
+        # nothing heals. Exception: an UNRESOLVABLE component means nobody
+        # (sweep included) can ever reach that row through any path -
+        # refusing the tombstone would loop the ticket in sweep-retry forever
+        # instead of honouring the user's cancel; keep the old loud tombstone
+        # for exactly that case.
+        component_reachable = self.resolve_component(prior.get("component_type"), prior.get("component_id")) is not None
+        if component_reachable and not await self._persist_run_error(prior, reason, status="cancelled"):
+            log_error(
+                f"Job queue: could not persist the cancelled run row for waiting job {run_id}; "
+                "ticket left as-is (the caller's cancellation intent covers any later execution)"
+            )
+            return False
+        if not component_reachable:
+            log_error(
+                f"Job queue: cancelling waiting job {run_id} whose component "
+                f"{prior.get('component_type')}/{prior.get('component_id')} is not resolvable; "
+                "its run row (if any) cannot be terminalized by any path"
+            )
         cancelled = False
         with contextlib.suppress(Exception):
             cancelled = bool(await self.store.cancel_job(run_id))
         if not cancelled:
+            # Raced: a worker claimed it (queued) or a continue CAS won
+            # (paused) between the row write and the tombstone. The row says
+            # CANCELLED and the caller registers intent next: the racing leg
+            # is cancelled at its first checkpoint and the worker's cancel
+            # arm converges ticket and stream.
+            log_warning(
+                f"Job queue: waiting job {run_id} was claimed or continued mid-cancel; "
+                "the racing leg is cancelled by the registered intent at its first checkpoint"
+            )
             return False
-        reason = (
-            "cancelled while paused awaiting continuation"
-            if prior is not None and prior.get("status") == "paused"
-            else "cancelled before execution"
-        )
-        job = None
-        with contextlib.suppress(Exception):
-            job = await self.store.get_job(run_id)
-        if job is not None:
-            # Not gated (the tombstone is already committed and honouring the
-            # cancel wins) - but a run row left non-terminal must be loud
-            if not await self._persist_run_error(job, reason, status="cancelled"):
-                log_error(f"Job queue: cancelled waiting job {run_id} but its run row could not be terminalized")
         from agno.os.event_streams import get_event_stream
         from agno.run.base import RunStatus
 

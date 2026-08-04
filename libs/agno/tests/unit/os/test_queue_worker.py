@@ -272,16 +272,25 @@ class TestCrashRecovery:
         worker = make_worker(store, agent, make_config())
         await worker.start()
         try:
-            # Let several sweep ticks fail the persist: the ticket must stay
-            # running (swept-eligible), and the sweep must keep retrying
+            # The sweep acquires the ticket, the persist fails, and the ticket
+            # must stay running rather than terminalize over a stuck run row
             deadline = asyncio.get_event_loop().time() + 3.0
-            while len(read_attempts) < 2 and asyncio.get_event_loop().time() < deadline:
+            while not read_attempts and asyncio.get_event_loop().time() < deadline:
                 await asyncio.sleep(0.02)
-            assert len(read_attempts) >= 2, "sweep must retry the persist on later ticks"
+            assert read_attempts, "sweep must attempt the persist"
             job = await store.get_job("r1")
             assert job["status"] == "running", "ticket must not terminalize while the run row is stuck"
 
+            # Retry backoff: the sweeper refreshed locked_at when it acquired
+            # the ticket, so a persistently failing write is retried once per
+            # lock_grace instead of on every poll tick
+            await asyncio.sleep(0.2)
+            assert len(read_attempts) == 1, "re-swept before the sweep lock went stale"
+
+            # Once the sweeper's own lock goes stale the job is re-swept, and
+            # with the store back up the persist lands and gates the terminal
             db_down = False
+            store._jobs["r1"]["locked_at"] -= 1000
             job = await wait_for_status(store, "r1", "failed")
             assert run_row.status == RunStatus.error, "the retried persist must land before the terminal write"
             assert "worker lost" in job["error"].lower()
@@ -328,6 +337,9 @@ class TestCrashRecovery:
             assert run_row.status == RunStatus.running
 
             components["agent-1"] = agent  # redeploy restores it
+            # The sweeper holds a fresh lock from its failed attempt; the job
+            # becomes re-sweepable once that lock goes stale (retry backoff)
+            store._jobs["r1"]["locked_at"] -= 1000
             job = await wait_for_status(store, "r1", "failed")
             assert run_row.status == RunStatus.error
         finally:
@@ -759,6 +771,134 @@ class TestCancelQueued:
             assert await worker.acancel_queued("cq2") is False
         finally:
             es_mod._event_stream = original
+
+
+class TestSweepOwnership:
+    @pytest.mark.asyncio
+    async def test_lost_acquisition_never_touches_run_row(self):
+        """The heartbeat-vs-sweep race, decided BEFORE any run-row write: the
+        old order stamped ERROR on the row and only then lost the ticket race
+        via fail_swept_job's staleness recheck - a healthy run's row defaced
+        by a sweeper that never owned it."""
+        store, agent = InMemoryQueueStore(), FakeAgent()
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(make_job("r1"))
+        await store.claim_job("live-but-slow-worker")
+        store._jobs["r1"]["locked_at"] -= 1000  # looks dead...
+
+        real_sweep = store.sweep_exhausted_jobs
+
+        async def racing_sweep(lock_grace_seconds=60, limit=20):
+            stale_view = await real_sweep(lock_grace_seconds, limit)
+            # ...but a heartbeat lands between the select and the acquisition
+            await store.heartbeat_jobs("live-but-slow-worker", ["r1"])
+            return stale_view
+
+        store.sweep_exhausted_jobs = racing_sweep  # type: ignore[method-assign]
+        row_writes: list = []
+
+        async def spy_persist(job, error, status="error"):
+            row_writes.append((job["id"], status, error))
+            return True
+
+        worker._persist_run_error = spy_persist  # type: ignore[method-assign]
+        await worker._sweep_exhausted()
+        assert row_writes == [], "a sweeper that lost the acquisition must never write the run row"
+        assert (await store.get_job("r1"))["status"] == "running"
+        assert (await store.get_job("r1"))["locked_by"] == "live-but-slow-worker"
+
+    @pytest.mark.asyncio
+    async def test_failed_row_persist_keeps_ticket_and_retries_after_lock_stale(self):
+        """Crash-mid-protocol resumability: a failing run-row persist leaves
+        the ticket running under the sweep lock; once that lock goes stale
+        the next sweep re-acquires and finishes."""
+        store, agent = InMemoryQueueStore(), FakeAgent()
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(make_job("r1"))
+        await store.claim_job("dead-worker")
+        store._jobs["r1"]["locked_at"] -= 1000
+
+        persists = {"fail": True, "calls": 0}
+
+        async def flaky_persist(job, error, status="error"):
+            persists["calls"] += 1
+            return not persists["fail"]
+
+        worker._persist_run_error = flaky_persist  # type: ignore[method-assign]
+        await worker._sweep_exhausted()
+        assert persists["calls"] == 1
+        assert (await store.get_job("r1"))["status"] == "running", "ticket must not terminalize past a stuck row"
+
+        # Retry backoff: freshly acquired, so the next tick skips it
+        await worker._sweep_exhausted()
+        assert persists["calls"] == 1, "re-swept before the sweep lock went stale"
+
+        # The sweeper's own lock goes stale; the persist now works
+        persists["fail"] = False
+        store._jobs["r1"]["locked_at"] -= 1000
+        await worker._sweep_exhausted()
+        assert persists["calls"] == 2
+        assert (await store.get_job("r1"))["status"] == "failed"
+
+
+class TestCancelReorder:
+    @pytest.mark.asyncio
+    async def test_row_persisted_before_ticket_tombstone(self):
+        """The write order IS the contract: run row first, ticket second."""
+        store, agent = InMemoryQueueStore(), FakeAgent()
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(make_job("r1"))
+        order: list = []
+
+        async def spy_persist(job, error, status="error"):
+            order.append("row")
+            return True
+
+        real_cancel = store.cancel_job
+
+        async def spy_cancel(job_id):
+            order.append("ticket")
+            return await real_cancel(job_id)
+
+        worker._persist_run_error = spy_persist  # type: ignore[method-assign]
+        store.cancel_job = spy_cancel  # type: ignore[method-assign]
+        assert await worker.acancel_queued("r1") is True
+        assert order == ["row", "ticket"]
+        assert (await store.get_job("r1"))["status"] == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_failed_row_persist_leaves_ticket_untombstoned(self):
+        """The old order left a cancelled ticket over a live-looking row -
+        a PERMANENT divergence (the sweep only sees stale RUNNING). Row-first
+        inverts it: the ticket stays waiting and the caller's cancellation
+        intent kills the eventual leg at its first checkpoint, visibly."""
+        store, agent = InMemoryQueueStore(), FakeAgent()
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(make_job("r1"))
+
+        async def failing_persist(job, error, status="error"):
+            return False
+
+        worker._persist_run_error = failing_persist  # type: ignore[method-assign]
+        assert await worker.acancel_queued("r1") is False
+        assert (await store.get_job("r1"))["status"] == "queued", "no tombstone over a row that could not be written"
+
+    @pytest.mark.asyncio
+    async def test_paused_ticket_stays_continuable_when_row_persist_fails(self):
+        store, agent = InMemoryQueueStore(), FakeAgent()
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(make_job("p1"))
+        claimed = await store.claim_job("w1")
+        assert await store.complete_job("p1", "w1", claimed["attempt"], "paused")
+
+        async def failing_persist(job, error, status="error"):
+            return False
+
+        worker._persist_run_error = failing_persist  # type: ignore[method-assign]
+        assert await worker.acancel_queued("p1") is False
+        assert (await store.get_job("p1"))["status"] == "paused", (
+            "cancel degrades to the documented stale-intent contract, not a divergent tombstone"
+        )
 
 
 class TestConfigValidation:

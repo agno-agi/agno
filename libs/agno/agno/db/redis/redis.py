@@ -2610,7 +2610,12 @@ class RedisDb(BaseDb):
                     break
         return exhausted
 
-    def fail_swept_job(self, job_id: str, lock_grace_seconds: int = 60, error: str = "worker lost") -> bool:
+    def acquire_sweep(self, job_id: str, worker_id: str, lock_grace_seconds: int = 60) -> bool:
+        """Take ownership of a stale, budget-exhausted running job BEFORE any
+        run-row write (WATCH/MULTI CAS). A live heartbeat between the sweep's
+        scan and this acquisition wins here, with the run row still
+        untouched. Refreshing locked_at doubles as the retry backoff for a
+        failing terminalization."""
         from redis.exceptions import WatchError
 
         job_key = self._q_job_key(job_id)
@@ -2624,8 +2629,43 @@ class RedisDb(BaseDb):
                     pipe.unwatch()
                     return False
                 job = json.loads(raw if isinstance(raw, str) else raw.decode())
-                # Re-check staleness inside the CAS: a live heartbeat wins
-                if job["status"] != "running" or job.get("locked_at") is None or job["locked_at"] > stale:
+                if (
+                    job["status"] != "running"
+                    or job.get("locked_at") is None
+                    or job["locked_at"] > stale
+                    or job["attempt"] < job["max_attempts"]
+                ):
+                    pipe.unwatch()
+                    return False
+                job.update(locked_by=worker_id, locked_at=now, updated_at=now)
+                pipe.multi()
+                self._q_save_job_in_pipe(pipe, job)
+                # Keep running-zset membership in the same transaction with
+                # the refreshed score (the sweep scan keys on this score)
+                pipe.zadd(self._q_key("running"), {job_id: now})
+                pipe.execute()
+                return True
+        except WatchError:
+            return False
+
+    def fail_swept_job(self, job_id: str, worker_id: str, error: str = "worker lost") -> bool:
+        """Ownership-keyed terminal write: only the sweeper holding the lock
+        (via acquire_sweep) may fail the job. Replaces the old staleness
+        recheck - after acquire_sweep refreshed locked_at, staleness can no
+        longer serve as the fence."""
+        from redis.exceptions import WatchError
+
+        job_key = self._q_job_key(job_id)
+        now = int(time.time())
+        try:
+            with self.redis_client.pipeline() as pipe:
+                pipe.watch(job_key)
+                raw = pipe.get(job_key)
+                if raw is None:
+                    pipe.unwatch()
+                    return False
+                job = json.loads(raw if isinstance(raw, str) else raw.decode())
+                if job["status"] != "running" or job.get("locked_by") != worker_id:
                     pipe.unwatch()
                     return False
                 job.update(

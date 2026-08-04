@@ -4422,9 +4422,12 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_debug(f"Error sweeping run jobs: {e}")
             return []
 
-    async def fail_swept_job(self, job_id: str, lock_grace_seconds: int = 60, error: str = "worker lost") -> bool:
-        """Mark an exhausted stale job failed. Re-checks staleness inside the
-        write so a live heartbeat between sweep and write wins."""
+    async def acquire_sweep(self, job_id: str, worker_id: str, lock_grace_seconds: int = 60) -> bool:
+        """Take ownership of a stale, budget-exhausted running job BEFORE any
+        run-row write (conditional UPDATE = the CAS). A live heartbeat
+        between the sweep's select and this acquisition wins here, with the
+        run row still untouched. Refreshing locked_at doubles as the retry
+        backoff for a failing terminalization."""
         try:
             table = await self._get_table(table_type="jobs")
             if table is None:
@@ -4439,6 +4442,33 @@ class AsyncPostgresDb(AsyncBaseDb):
                             table.c.id == job_id,
                             table.c.status == "running",
                             table.c.locked_at <= stale,
+                            table.c.attempt >= table.c.max_attempts,
+                        )
+                        .values(locked_by=worker_id, locked_at=now, updated_at=now)
+                    )
+                    return (result.rowcount or 0) > 0  # type: ignore[attr-defined]
+        except Exception as e:
+            log_debug(f"Error acquiring sweep lock: {e}")
+            return False
+
+    async def fail_swept_job(self, job_id: str, worker_id: str, error: str = "worker lost") -> bool:
+        """Ownership-keyed terminal write: only the sweeper holding the lock
+        (via acquire_sweep) may fail the job. Replaces the old staleness
+        recheck - after acquire_sweep refreshed locked_at, staleness can no
+        longer serve as the fence."""
+        try:
+            table = await self._get_table(table_type="jobs")
+            if table is None:
+                return False
+            now = int(time.time())
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    result = await sess.execute(
+                        update(table)
+                        .where(
+                            table.c.id == job_id,
+                            table.c.status == "running",
+                            table.c.locked_by == worker_id,
                         )
                         .values(
                             status="failed",

@@ -151,7 +151,7 @@ class TestPostgresQueueContract:
         assert await db.retry_or_fail_job("r1", "w1", claimed["attempt"], "boom") == "failed"
 
     @pytest.mark.asyncio
-    async def test_sweep_heartbeat_race(self, db):
+    async def test_sweep_acquire_heartbeat_race(self, db):
         await db.enqueue_job(make_job("r1"))
         await db.claim_job("w1")
         await make_stale(db, "r1")
@@ -159,12 +159,33 @@ class TestPostgresQueueContract:
         swept = await db.sweep_exhausted_jobs(lock_grace_seconds=60)
         assert [j["id"] for j in swept] == ["r1"]
 
-        # A heartbeat between sweep and write must win
+        # A heartbeat between the sweep's select and the acquisition must win
+        # - with the run row still untouched (the acquisition IS the fence)
         assert await db.heartbeat_jobs("w1", ["r1"]) == 1
-        assert not await db.fail_swept_job("r1", lock_grace_seconds=60)
+        assert not await db.acquire_sweep("r1", "sweeper", lock_grace_seconds=60)
 
         await make_stale(db, "r1")
-        assert await db.fail_swept_job("r1", lock_grace_seconds=60, error="worker lost")
+        assert await db.acquire_sweep("r1", "sweeper", lock_grace_seconds=60)
+        assert (await db.get_job("r1"))["locked_by"] == "sweeper"
+        assert not await db.fail_swept_job("r1", "someone-else"), "fail is ownership-keyed"
+        assert await db.fail_swept_job("r1", "sweeper", error="worker lost")
+        assert (await db.get_job("r1"))["status"] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_interrupted_sweep_resumable(self, db):
+        """A sweeper crashing mid-protocol leaves the job running under its
+        refreshed lock; once that lock goes stale the sweep re-selects it and
+        another sweeper resumes."""
+        await db.enqueue_job(make_job("r1"))
+        await db.claim_job("w1")
+        await make_stale(db, "r1")
+        assert await db.acquire_sweep("r1", "sweeper-a", lock_grace_seconds=60)
+        assert await db.sweep_exhausted_jobs(lock_grace_seconds=60) == []  # fresh sweep lock
+        await make_stale(db, "r1")  # sweeper-a died
+        swept = await db.sweep_exhausted_jobs(lock_grace_seconds=60)
+        assert [j["id"] for j in swept] == ["r1"]
+        assert await db.acquire_sweep("r1", "sweeper-b", lock_grace_seconds=60)
+        assert await db.fail_swept_job("r1", "sweeper-b")
         assert (await db.get_job("r1"))["status"] == "failed"
 
     @pytest.mark.asyncio
@@ -261,7 +282,8 @@ class TestContinuationCAS:
         assert await db.claim_job("w2", lock_grace_seconds=60) is None  # budget spent
         swept = await db.sweep_exhausted_jobs(lock_grace_seconds=60)
         assert [j["id"] for j in swept] == ["r1"]
-        assert await db.fail_swept_job("r1", lock_grace_seconds=60)
+        assert await db.acquire_sweep("r1", "sweeper", lock_grace_seconds=60)
+        assert await db.fail_swept_job("r1", "sweeper")
 
         assert await db.requeue_job("r1")
         redriven = await db.claim_job("w2")

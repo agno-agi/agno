@@ -110,19 +110,39 @@ class TestContract:
         claimed = db.claim_job("w1")
         assert db.retry_or_fail_job("r1", "w1", claimed["attempt"], "boom") == "failed"
 
-    def test_sweep_and_fail_swept_races_heartbeat(self, db):
+    def test_sweep_acquire_races_heartbeat(self, db):
         db.enqueue_job(make_job("r1"))
         db.claim_job("w1")
         make_stale(db, "r1")
 
         assert [j["id"] for j in db.sweep_exhausted_jobs(lock_grace_seconds=60)] == ["r1"]
 
-        # A heartbeat between sweep and write must win
+        # A heartbeat between the sweep's scan and the acquisition must win -
+        # BEFORE any run-row write happens
         assert db.heartbeat_jobs("w1", ["r1"]) == 1
-        assert not db.fail_swept_job("r1", lock_grace_seconds=60)
+        assert not db.acquire_sweep("r1", "sweeper", lock_grace_seconds=60)
 
         make_stale(db, "r1")
-        assert db.fail_swept_job("r1", lock_grace_seconds=60, error="worker lost")
+        assert db.acquire_sweep("r1", "sweeper", lock_grace_seconds=60)
+        assert db.get_job("r1")["locked_by"] == "sweeper"
+        assert not db.fail_swept_job("r1", "someone-else"), "fail is ownership-keyed"
+        assert db.fail_swept_job("r1", "sweeper", error="worker lost")
+        assert db.get_job("r1")["status"] == "failed"
+
+    def test_interrupted_sweep_resumable_after_lock_stale(self, db):
+        """A sweeper crashing mid-protocol leaves the job running under its
+        (refreshed) lock; once that lock goes stale another sweeper resumes.
+        The refreshed running-zset score keeps the scan able to find it."""
+        db.enqueue_job(make_job("r1"))
+        db.claim_job("w1")
+        make_stale(db, "r1")
+        assert db.acquire_sweep("r1", "sweeper-a", lock_grace_seconds=60)
+        # Freshly acquired: invisible to the sweep until the lock goes stale
+        assert db.sweep_exhausted_jobs(lock_grace_seconds=60) == []
+        make_stale(db, "r1")  # sweeper-a died
+        assert [j["id"] for j in db.sweep_exhausted_jobs(lock_grace_seconds=60)] == ["r1"]
+        assert db.acquire_sweep("r1", "sweeper-b", lock_grace_seconds=60)
+        assert db.fail_swept_job("r1", "sweeper-b")
         assert db.get_job("r1")["status"] == "failed"
 
     def test_cancel_tombstones_queued_only(self, db):
