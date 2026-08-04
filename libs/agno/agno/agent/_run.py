@@ -4741,6 +4741,10 @@ async def _acontinue_run(
                         run_context=run_context,
                     ),
                 )
+
+                # Propagate is_compacted flags from working copies to session originals
+                _propagate_compacted_flags(run_messages.messages, agent_session)
+
                 # Check for cancellation after model call
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -5269,6 +5273,9 @@ async def _acontinue_run_stream(
                         if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event
+
+                # Propagate is_compacted flags from working copies to session originals
+                _propagate_compacted_flags(run_messages.messages, agent_session)
 
                 # Check for cancellation after model processing
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
