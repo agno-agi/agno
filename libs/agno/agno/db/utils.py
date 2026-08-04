@@ -8,6 +8,7 @@ from uuid import UUID
 
 from agno.metrics import ModelMetrics, RunMetrics, SessionMetrics
 from agno.models.message import Message
+from agno.run.base import HISTORY_SKIP_STATUSES as _RUN_HISTORY_SKIP_STATUSES
 from agno.utils.log import log_error, log_warning
 
 if TYPE_CHECKING:
@@ -267,11 +268,11 @@ def build_single_run_row(
     }
 
 
-# Run statuses excluded from context/history reads. Mirrors the default
-# ``skip_statuses`` in ``AgentSession.get_messages`` / ``TeamSession.get_messages``
-# so a DB-side "most recent N runs" fetch returns the same runs the in-memory
-# history builder would (it filters these out *before* slicing the last N).
-HISTORY_SKIP_STATUSES: List[str] = ["PAUSED", "CANCELLED", "ERROR", "REGENERATED"]
+# Run statuses (as stored string values) excluded from context/history reads.
+# Derived from the single source of truth in ``agno.run.base`` so a DB-side
+# "most recent N runs" fetch returns the same runs the in-memory history builder
+# (``get_messages``) would — it filters these out *before* slicing the last N.
+HISTORY_SKIP_STATUSES: List[str] = [status.value for status in _RUN_HISTORY_SKIP_STATUSES]
 
 
 def filter_context_runs(runs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

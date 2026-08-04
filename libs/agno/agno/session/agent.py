@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Mapping, Optional, Union
 
 from agno.models.message import Message
 from agno.run.agent import RunOutput
-from agno.run.base import RunStatus
+from agno.run.base import HISTORY_SKIP_STATUSES, RunStatus
 from agno.run.team import TeamRunOutput
 from agno.session.summary import SessionSummary
 from agno.utils.log import log_debug, log_warning
@@ -164,7 +164,7 @@ class AgentSession:
             return []
 
         if skip_statuses is None:
-            skip_statuses = [RunStatus.paused, RunStatus.cancelled, RunStatus.error, RunStatus.regenerated]
+            skip_statuses = list(HISTORY_SKIP_STATUSES)
 
         runs = self.runs
 
