@@ -97,6 +97,7 @@ from agno.run.workflow import (
 from agno.session.workflow import WorkflowChatInteraction, WorkflowSession
 from agno.team.team import Team
 from agno.utils.agent import validate_input
+from agno.utils.component_versioning import pin_component_version_metadata
 from agno.utils.log import (
     log_debug,
     log_error,
@@ -1140,9 +1141,14 @@ class Workflow:
         if config is None:
             return None
 
-        workflow = cls.from_dict(config, db=db, registry=registry)
+        resolved_version = data.get("version") if isinstance(data.get("version"), int) else version
+        links = db.get_links(component_id=id, version=resolved_version) if resolved_version is not None else []
+
+        workflow = cls.from_dict(config, db=db, links=links, registry=registry)
 
         workflow.id = id
+        workflow._version = resolved_version
+        workflow._stage = data.get("stage")
         # Only fall back to the caller-provided db if the config didn't
         # reconstruct one. Otherwise we'd clobber any custom table names
         # (session_table, memory_table, ...) that were serialized with the
@@ -4149,6 +4155,12 @@ class Workflow:
             dependencies=resolved["dependencies"],
             metadata=resolved["metadata"],
         )
+        run_context.metadata = pin_component_version_metadata(
+            run_context.metadata,
+            component_type="workflow",
+            component_id=self.id,
+            version=getattr(self, "_version", None),
+        )
 
         # Register the run for cancellation tracking before spawning the detached task
         await aregister_run(run_context.run_id)
@@ -4163,6 +4175,7 @@ class Workflow:
             user_id=user_id,
             workflow_id=self.id,
             workflow_name=self.name,
+            metadata=run_context.metadata,
             created_at=int(datetime.now().timestamp()),
             status=RunStatus.pending,
         )
@@ -4292,6 +4305,12 @@ class Workflow:
             dependencies=resolved["dependencies"],
             metadata=resolved["metadata"],
         )
+        run_context.metadata = pin_component_version_metadata(
+            run_context.metadata,
+            component_type="workflow",
+            component_id=self.id,
+            version=getattr(self, "_version", None),
+        )
 
         # Register the run for cancellation tracking before spawning the detached task
         await aregister_run(run_context.run_id)
@@ -4306,6 +4325,7 @@ class Workflow:
             user_id=user_id,
             workflow_id=self.id,
             workflow_name=self.name,
+            metadata=run_context.metadata,
             created_at=int(datetime.now().timestamp()),
             status=RunStatus.pending,
         )
@@ -4475,6 +4495,12 @@ class Workflow:
             session_state=session_state,
             dependencies=dependencies,
         )
+        run_context.metadata = pin_component_version_metadata(
+            run_context.metadata,
+            component_type="workflow",
+            component_id=self.id,
+            version=getattr(self, "_version", None),
+        )
 
         # Register the run for cancellation tracking before spawning the detached task
         await aregister_run(run_context.run_id)
@@ -4489,6 +4515,7 @@ class Workflow:
             user_id=user_id,
             workflow_id=self.id,
             workflow_name=self.name,
+            metadata=run_context.metadata,
             created_at=int(datetime.now().timestamp()),
             status=RunStatus.running,
         )
@@ -5012,6 +5039,7 @@ class Workflow:
                 user_id=session.user_id,
                 workflow_id=self.id,
                 workflow_name=self.name,
+                metadata=run_context.metadata,
                 created_at=int(datetime.now().timestamp()),
                 content=agent_response.content,
                 status=RunStatus.completed,
@@ -5417,6 +5445,7 @@ class Workflow:
                 user_id=session.user_id,
                 workflow_id=self.id,
                 workflow_name=self.name,
+                metadata=run_context.metadata,
                 created_at=int(datetime.now().timestamp()),
                 content=agent_response.content,
                 status=RunStatus.completed,
@@ -9534,6 +9563,12 @@ class Workflow:
             dependencies=resolved["dependencies"],
             metadata=resolved["metadata"],
         )
+        run_context.metadata = pin_component_version_metadata(
+            run_context.metadata,
+            component_type="workflow",
+            component_id=self.id,
+            version=getattr(self, "_version", None),
+        )
 
         # Execute workflow agent if configured
         if self.agent is not None:
@@ -9555,6 +9590,7 @@ class Workflow:
             user_id=user_id,
             workflow_id=self.id,
             workflow_name=self.name,
+            metadata=run_context.metadata,
             created_at=int(datetime.now().timestamp()),
         )
 
@@ -9771,6 +9807,12 @@ class Workflow:
             dependencies=resolved["dependencies"],
             metadata=resolved["metadata"],
         )
+        run_context.metadata = pin_component_version_metadata(
+            run_context.metadata,
+            component_type="workflow",
+            component_id=self.id,
+            version=getattr(self, "_version", None),
+        )
 
         log_debug(f"Async Workflow Run Start: {self.name}", center=True)
 
@@ -9819,6 +9861,7 @@ class Workflow:
             user_id=user_id,
             workflow_id=self.id,
             workflow_name=self.name,
+            metadata=run_context.metadata,
             created_at=int(datetime.now().timestamp()),
         )
 
@@ -10783,6 +10826,8 @@ def get_workflow_by_id(
 
         # Ensure workflow.id is set to the component_id
         workflow.id = id
+        workflow._version = resolved_version if isinstance(resolved_version, int) else version
+        workflow._stage = row.get("stage")
 
         return workflow
 

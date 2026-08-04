@@ -676,10 +676,11 @@ class TestTeamLoad:
 
         Team.load(id="versioned-team", db=mock_db, version=2)
 
-        mock_db.load_component_graph.assert_called_once_with("versioned-team", version=2, label=None)
+        mock_db.load_component_graph.assert_called_once_with("versioned-team", version=2)
 
     def test_load_with_label(self, mock_db):
         """Test load retrieves labeled version."""
+        mock_db.get_config.return_value = {"version": 3}
         mock_db.load_component_graph.return_value = {
             "component": {"component_id": "labeled-team"},
             "config": {"config": {"id": "labeled-team", "name": "Production Team"}},
@@ -688,7 +689,8 @@ class TestTeamLoad:
 
         Team.load(id="labeled-team", db=mock_db, label="production")
 
-        mock_db.load_component_graph.assert_called_once_with("labeled-team", version=None, label="production")
+        mock_db.get_config.assert_called_once_with(component_id="labeled-team", label="production")
+        mock_db.load_component_graph.assert_called_once_with("labeled-team", version=3)
 
     def test_load_hydrates_member_agents(self, mock_db):
         """Test load hydrates member agents from graph."""
@@ -814,6 +816,34 @@ class TestTeamLoad:
         assert team is not None
         assert team.db == mock_db
 
+    def test_load_sets_component_metadata_on_root_and_members(self, mock_db):
+        """Test load preserves version metadata for the saved team graph."""
+        mock_db.load_component_graph.return_value = {
+            "component": {"component_id": "meta-team"},
+            "config": {"config": {"id": "meta-team", "name": "Meta Team"}, "version": 2, "stage": "published"},
+            "children": [
+                {
+                    "link": {"meta": {"type": "agent"}},
+                    "graph": {
+                        "component": {"component_id": "agent-v1"},
+                        "config": {
+                            "config": {"id": "agent-v1", "name": "Agent V1"},
+                            "version": 1,
+                            "stage": "published",
+                        },
+                    },
+                }
+            ],
+        }
+
+        team = Team.load(id="meta-team", db=mock_db)
+
+        assert team is not None
+        assert team._version == 2
+        assert team._stage == "published"
+        assert team.members[0]._version == 1
+        assert team.members[0]._stage == "published"
+
 
 # =============================================================================
 # delete() Tests
@@ -901,19 +931,31 @@ class TestGetTeamById:
 
     def test_get_team_by_id_with_version(self, mock_db):
         """Test get_team_by_id retrieves specific version."""
-        mock_db.get_config.return_value = {"config": {"id": "versioned", "name": "V3"}}
+        mock_db.load_component_graph.return_value = {
+            "component": {"component_id": "versioned"},
+            "config": {"config": {"id": "versioned", "name": "V3"}, "version": 3},
+            "children": [],
+        }
 
-        get_team_by_id(db=mock_db, id="versioned", version=3)
+        team = get_team_by_id(db=mock_db, id="versioned", version=3)
 
-        mock_db.get_config.assert_called_once_with(component_id="versioned", version=3, label=None)
+        assert team is not None
+        mock_db.load_component_graph.assert_called_once_with("versioned", version=3)
 
     def test_get_team_by_id_with_label(self, mock_db):
         """Test get_team_by_id retrieves labeled version."""
-        mock_db.get_config.return_value = {"config": {"id": "labeled", "name": "Staging"}}
+        mock_db.get_config.return_value = {"version": 4}
+        mock_db.load_component_graph.return_value = {
+            "component": {"component_id": "labeled"},
+            "config": {"config": {"id": "labeled", "name": "Staging"}, "version": 4},
+            "children": [],
+        }
 
-        get_team_by_id(db=mock_db, id="labeled", label="staging")
+        team = get_team_by_id(db=mock_db, id="labeled", label="staging")
 
-        mock_db.get_config.assert_called_once_with(component_id="labeled", version=None, label="staging")
+        assert team is not None
+        mock_db.get_config.assert_called_once_with(component_id="labeled", label="staging")
+        mock_db.load_component_graph.assert_called_once_with("labeled", version=4)
 
     def test_get_team_by_id_with_registry(self, mock_db):
         """Test get_team_by_id passes registry."""
@@ -953,6 +995,20 @@ class TestGetTeamById:
 
         assert team is not None
         assert team.db == mock_db
+
+    def test_get_team_by_id_sets_component_metadata(self, mock_db):
+        """Test get_team_by_id preserves component version metadata."""
+        mock_db.get_config.return_value = {
+            "config": {"id": "meta-team", "name": "Meta Team"},
+            "version": 4,
+            "stage": "published",
+        }
+
+        team = get_team_by_id(db=mock_db, id="meta-team")
+
+        assert team is not None
+        assert team._version == 4
+        assert team._stage == "published"
 
     def test_get_team_by_id_handles_error(self, mock_db):
         """Test get_team_by_id returns None on error."""

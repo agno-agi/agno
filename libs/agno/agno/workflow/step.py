@@ -69,6 +69,24 @@ from agno.workflow.types import (
     warn_session_state_param_deprecated,
 )
 
+
+def _get_linked_child_version(
+    links: Optional[List[Dict[str, Any]]], *, link_kind: str, link_key: Optional[str], child_component_id: Optional[str]
+) -> Optional[int]:
+    if not links or link_key is None or child_component_id is None:
+        return None
+
+    for link in links:
+        if (
+            link.get("link_kind") == link_kind
+            and link.get("link_key") == link_key
+            and link.get("child_component_id") == child_component_id
+        ):
+            child_version = link.get("child_version")
+            return child_version if isinstance(child_version, int) else None
+    return None
+
+
 if TYPE_CHECKING:
     from agno.workflow.workflow import Workflow
 
@@ -321,6 +339,7 @@ class Step:
             Step: Reconstructed step instance
         """
         config = data.copy()
+        link_key = config.get("step_id") or config.get("name")
 
         agent = None
         team = None
@@ -330,9 +349,14 @@ class Step:
         # --- Handle Agent reconstruction ---
         if "agent_id" in config and config["agent_id"]:
             agent_id = config.get("agent_id")
+            agent_version = _get_linked_child_version(
+                links, link_kind="step_agent", link_key=link_key, child_component_id=agent_id
+            )
 
-            # First try registry (code-defined agents)
-            if registry and agent_id:
+            # Registry lookup is only valid when the workflow link does not pin
+            # a database version; otherwise it could silently drift to a newer
+            # code-defined component.
+            if agent_version is None and registry and agent_id:
                 registry_agent = registry.get_agent(agent_id)
                 if registry_agent is not None:
                     try:
@@ -345,11 +369,11 @@ class Step:
 
                         agent = registry_agent
 
-            # Fall back to database
+            # Resolve from the database, preserving any linked child version.
             if agent is None and db is not None and agent_id is not None:
                 from agno.agent.agent import get_agent_by_id
 
-                agent = get_agent_by_id(db=db, id=agent_id, registry=registry)
+                agent = get_agent_by_id(db=db, id=agent_id, version=agent_version, registry=registry)
 
             if agent is None and agent_id:
                 log_warning(
@@ -359,9 +383,19 @@ class Step:
         # --- Handle Team reconstruction ---
         if "team_id" in config and config["team_id"]:
             team_id = config.get("team_id")
+            team_version = _get_linked_child_version(
+                links, link_kind="step_team", link_key=link_key, child_component_id=team_id
+            )
 
-            # First try registry (code-defined teams)
-            if registry and team_id:
+            if team_version is not None and db is not None and team_id is not None:
+                from agno.team.team import Team
+
+                team = Team.load(id=team_id, db=db, version=team_version, registry=registry)
+
+            # Registry lookup is only valid when the workflow link does not pin
+            # a database version; otherwise it could silently drift to a newer
+            # code-defined component.
+            if team is None and team_version is None and registry and team_id:
                 registry_team = registry.get_team(team_id)
                 if registry_team is not None:
                     try:
@@ -374,11 +408,11 @@ class Step:
 
                         team = registry_team
 
-            # Fall back to database
+            # Resolve from the database, preserving any linked child version.
             if team is None and db is not None and team_id is not None:
-                from agno.team.team import get_team_by_id
+                from agno.team.team import Team
 
-                team = get_team_by_id(db=db, id=team_id, registry=registry)
+                team = Team.load(id=team_id, db=db, version=team_version, registry=registry)
 
             if team is None and team_id:
                 log_warning(

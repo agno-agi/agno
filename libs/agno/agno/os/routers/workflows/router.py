@@ -56,6 +56,7 @@ from agno.os.utils import (
 )
 from agno.run.base import RunStatus
 from agno.run.workflow import WorkflowErrorEvent
+from agno.utils.component_versioning import get_pinned_component_version
 from agno.utils.log import log_debug, log_warning, logger
 from agno.utils.serialize import json_serializer
 from agno.workflow.factory import WorkflowFactory
@@ -1398,6 +1399,27 @@ def get_workflow_router(
         )
         if existing_run is None:
             raise HTTPException(status_code=404, detail="Run not found")
+
+        pinned_version = get_pinned_component_version(
+            existing_run.metadata,
+            component_type="workflow",
+            component_id=workflow_id,
+        )
+        if pinned_version is not None and pinned_version != getattr(workflow, "_version", None):
+            workflow = await resolve_workflow(
+                workflow_id,
+                os.workflows,
+                os.db,
+                os.registry,
+                version=pinned_version,
+                request=request,
+                user_id=user_id,
+                session_id=session_id,
+                factory_input=factory_input,
+            )
+
+            if isinstance(workflow, RemoteWorkflow):
+                raise HTTPException(status_code=400, detail="Continue is not supported for remote workflows")
 
         if not getattr(existing_run, "is_paused", False):
             status = getattr(existing_run, "status", None)

@@ -96,6 +96,7 @@ from agno.utils.agent import (
     wait_for_open_threads,
     wait_for_thread_tasks_stream,
 )
+from agno.utils.component_versioning import pin_component_version_metadata
 from agno.utils.events import (
     add_team_error_event,
     create_team_run_cancelled_event,
@@ -2000,6 +2001,13 @@ def run_dispatch(
         )
 
         # Create a new run_response for this attempt
+        run_context.metadata = pin_component_version_metadata(
+            run_context.metadata,
+            component_type="team",
+            component_id=team.id,
+            version=getattr(team, "_version", None),
+        )
+
         run_response = TeamRunOutput(
             run_id=run_id,
             session_id=session_id,
@@ -4214,6 +4222,13 @@ def arun_dispatch(  # type: ignore
     )
 
     # Create a new run_response for this attempt
+    run_context.metadata = pin_component_version_metadata(
+        run_context.metadata,
+        component_type="team",
+        component_id=team.id,
+        version=getattr(team, "_version", None),
+    )
+
     run_response = TeamRunOutput(
         run_id=run_id,
         user_id=user_id,

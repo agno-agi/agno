@@ -615,6 +615,20 @@ class TestAgentLoad:
         assert agent is not None
         assert agent.db == mock_db
 
+    def test_load_sets_component_metadata(self, mock_db):
+        """Test load preserves component version metadata for resume pinning."""
+        mock_db.get_config.return_value = {
+            "config": {"id": "meta-agent", "name": "Meta Agent"},
+            "version": 2,
+            "stage": "published",
+        }
+
+        agent = Agent.load(id="meta-agent", db=mock_db)
+
+        assert agent is not None
+        assert agent._version == 2
+        assert agent._stage == "published"
+
     def test_save_load_preserves_store_history_messages(self, mock_db):
         """Test that store_history_messages=True survives save/load round-trip."""
         agent = Agent(id="persist-agent", name="Persist Agent", store_history_messages=True, db=mock_db)
@@ -763,6 +777,20 @@ class TestGetAgentById:
 
         assert agent is not None
         assert agent.db == mock_db
+
+    def test_get_agent_by_id_sets_component_metadata(self, mock_db):
+        """Test get_agent_by_id preserves component version metadata."""
+        mock_db.get_config.return_value = {
+            "config": {"id": "meta-agent", "name": "Meta Agent"},
+            "version": 3,
+            "stage": "published",
+        }
+
+        agent = get_agent_by_id(db=mock_db, id="meta-agent")
+
+        assert agent is not None
+        assert agent._version == 3
+        assert agent._stage == "published"
 
     def test_get_agent_by_id_handles_error(self, mock_db):
         """Test get_agent_by_id returns None on error."""

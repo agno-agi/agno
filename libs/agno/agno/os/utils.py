@@ -2030,6 +2030,7 @@ async def resolve_team(
 ) -> Union[Team, RemoteTeam]:
     """Resolve a team by ID with proper error handling for both factory and non-factory paths."""
     is_factory = teams and any(isinstance(t, TeamFactory) and t.id == team_id for t in teams)
+    is_registered = bool(teams and any(t.id == team_id for t in teams))
     if is_factory:
         if request is None:
             raise HTTPException(status_code=400, detail="Request context is required for factory teams")
@@ -2050,7 +2051,12 @@ async def resolve_team(
             raise HTTPException(status_code=500, detail=f"Error in team factory: {e}")
     else:
         try:
-            team = get_team_by_id(team_id, teams, db=db, version=version, registry=registry, create_fresh=True)
+            if version is not None and isinstance(db, BaseDb) and not is_registered:
+                # Versioned DB-backed teams must load their component graph so member
+                # agents and nested teams use the versions linked to that team version.
+                team = Team.load(id=team_id, db=db, version=version, registry=registry)
+            else:
+                team = get_team_by_id(team_id, teams, db=db, version=version, registry=registry, create_fresh=True)
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")

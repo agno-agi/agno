@@ -1776,6 +1776,8 @@ def get_agent_by_id(
 
         agent = Agent.from_dict(cfg, registry=registry)
         agent.id = id
+        agent._version = row.get("version") if isinstance(row.get("version"), int) else version
+        agent._stage = row.get("stage")
 
         return agent
 

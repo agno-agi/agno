@@ -1082,6 +1082,8 @@ def load(
 
     agent = cls.from_dict(config, registry=registry)
     agent.id = id
+    agent._version = data.get("version") if isinstance(data.get("version"), int) else version
+    agent._stage = data.get("stage")
     # Only fall back to the caller-provided db if the config didn't
     # reconstruct one. Otherwise we'd clobber any custom table names
     # (session_table, memory_table, ...) that were serialized with the agent.

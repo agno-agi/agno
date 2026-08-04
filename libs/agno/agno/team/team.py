@@ -1809,6 +1809,11 @@ def get_team_by_id(
         Team instance or None.
     """
     try:
+        if version is not None or label is not None:
+            # A versioned team must be loaded with its component graph so member
+            # agents and nested teams retain the versions linked to that config.
+            return Team.load(id=id, db=db, version=version, label=label, registry=registry)
+
         row = db.get_config(component_id=id, version=version, label=label)
         if row is None:
             return None
@@ -1820,6 +1825,8 @@ def get_team_by_id(
         team = Team.from_dict(cfg, db=db, registry=registry)
         # Ensure team.id is set to the component_id
         team.id = id
+        team._version = row.get("version") if isinstance(row.get("version"), int) else version
+        team._stage = row.get("stage")
 
         return team
 
