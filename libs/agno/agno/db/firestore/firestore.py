@@ -31,6 +31,7 @@ from agno.db.utils import (
     deserialize_session,
     deserialize_session_json_fields,
     deserialize_sessions,
+    filter_context_runs,
     merge_runs_table_with_legacy_blob,
 )
 from agno.run.agent import RunOutput
@@ -692,6 +693,7 @@ class FirestoreDb(BaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Read a session from the database.
 
@@ -734,6 +736,10 @@ class FirestoreDb(BaseDb):
             if runs_collection_ref is not None:
                 runs_data = self._get_session_runs_docs(runs_collection_ref, session_id)
                 session["runs"] = merge_runs_table_with_legacy_blob(runs_data, session.get("runs"))
+            if runs_limit is not None:
+                # No query engine to push "last N" down: filter+slice in memory to
+                # match the SQL fast path (drop member/skip-status runs, then last N).
+                session["runs"] = filter_context_runs(session.get("runs") or [])[-runs_limit:]
 
             if not deserialize:
                 return session

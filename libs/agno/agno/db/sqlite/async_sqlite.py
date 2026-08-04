@@ -63,8 +63,6 @@ except ImportError:
 
 
 class AsyncSqliteDb(AsyncBaseDb):
-    supports_runs_limit: bool = True
-
     def __init__(
         self,
         db_file: Optional[str] = None,

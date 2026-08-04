@@ -36,11 +36,6 @@ class BaseDb(ABC):
     # We assume the database to be up to date with the 2.0.0 release
     default_schema_version = "2.0.0"
 
-    # Whether this adapter can push a "most recent N runs" limit for a session
-    # down to the database (get_session(runs_limit=...)). Adapters that can't
-    # leave this False; callers then load the full run history (safe, unbounded).
-    supports_runs_limit: bool = False
-
     def __init__(
         self,
         session_table: Optional[str] = None,
@@ -221,7 +216,11 @@ class BaseDb(ABC):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
+        # runs_limit: attach only the most recent N context-relevant runs. Adapters
+        # that don't optimize this MUST still accept it and load the full history
+        # (a safe, unbounded superset); adapters that can push it to the DB do so.
         raise NotImplementedError
 
     @abstractmethod
@@ -1585,9 +1584,6 @@ class BaseDb(ABC):
 class AsyncBaseDb(ABC):
     """Base abstract class for all our async database implementations."""
 
-    # See BaseDb.supports_runs_limit.
-    supports_runs_limit: bool = False
-
     def __init__(
         self,
         id: Optional[str] = None,
@@ -1678,7 +1674,9 @@ class AsyncBaseDb(ABC):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
+        # See BaseDb.get_session for the runs_limit contract.
         raise NotImplementedError
 
     @abstractmethod

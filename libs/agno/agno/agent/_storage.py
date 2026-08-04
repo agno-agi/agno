@@ -145,12 +145,11 @@ def read_session(
     """
     if not agent.db:
         raise ValueError("Db not initialized")
-    # Only pass runs_limit to adapters that support it (SQL); others load full history.
-    if runs_limit is not None and getattr(agent.db, "supports_runs_limit", False):
-        return agent.db.get_session(  # type: ignore
-            session_id=session_id, session_type=session_type, user_id=user_id, runs_limit=runs_limit
-        )
-    return agent.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
+    # Every adapter accepts runs_limit; those that don't optimize it load the full
+    # history (a safe superset), so we can pass it unconditionally.
+    return agent.db.get_session(  # type: ignore
+        session_id=session_id, session_type=session_type, user_id=user_id, runs_limit=runs_limit
+    )
 
 
 async def aread_session(
@@ -165,19 +164,15 @@ async def aread_session(
 
     if not agent.db:
         raise ValueError("Db not initialized")
-    # Only pass runs_limit to adapters that support it (SQL); others load full history.
-    pass_limit = runs_limit is not None and getattr(agent.db, "supports_runs_limit", False)
+    # Every adapter accepts runs_limit; those that don't optimize it load the full
+    # history (a safe superset), so we can pass it unconditionally.
     if _init.has_async_db(agent):
-        if pass_limit:
-            return await agent.db.get_session(  # type: ignore
-                session_id=session_id, session_type=session_type, user_id=user_id, runs_limit=runs_limit
-            )
-        return await agent.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
-    if pass_limit:
-        return agent.db.get_session(  # type: ignore
+        return await agent.db.get_session(  # type: ignore
             session_id=session_id, session_type=session_type, user_id=user_id, runs_limit=runs_limit
         )
-    return agent.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
+    return agent.db.get_session(  # type: ignore
+        session_id=session_id, session_type=session_type, user_id=user_id, runs_limit=runs_limit
+    )
 
 
 def upsert_session(

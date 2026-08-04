@@ -44,10 +44,12 @@ from agno.db.surrealdb.models import (
 from agno.db.surrealdb.queries import COUNT_QUERY, WhereClause, order_limit_start
 from agno.db.surrealdb.utils import build_client
 from agno.db.utils import (
+    HISTORY_SKIP_STATUSES,
     build_single_run_row,
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
+    filter_context_runs,
     merge_runs_table_with_legacy_blob,
 )
 from agno.run.agent import RunOutput
@@ -256,12 +258,32 @@ class SurrealDb(BaseDb):
 
     # --- Runs ---
 
-    def _get_session_runs_data(self, session_id: str) -> List[Dict[str, Any]]:
-        """Return raw run_data dicts for a session, ordered by run_index then created_at."""
+    def _get_session_runs_data(self, session_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Return raw run_data dicts for a session, ordered by run_index then created_at.
+
+        When ``limit`` is set, push the "most recent N context-relevant runs" filter
+        down to the DB: drop member sub-runs (``parent_run_id`` set), drop terminal-skip
+        statuses, order newest-first and take ``limit`` rows, then reverse back to
+        chronological order. SurrealDB uses ``IS NONE`` for null checks (not ``IS NULL``),
+        and the ``status IS NONE OR`` guard keeps runs with no status from being dropped
+        by ``NOT IN $skip``.
+        """
         try:
             runs_table = self._get_table("runs", create_table_if_not_found=False)
         except Exception:
             return []
+        if limit is not None:
+            rows_raw = self._query(
+                f"SELECT * FROM {runs_table} WHERE session_id = $sid "
+                "AND parent_run_id IS NONE AND (status IS NONE OR status NOT IN $skip) "
+                "ORDER BY run_index DESC, created_at DESC LIMIT $lim",
+                {"sid": session_id, "skip": HISTORY_SKIP_STATUSES, "lim": limit},
+                dict,
+            )
+            rows = [desurrealize_run_row(r) for r in rows_raw]
+            run_data = [r["run_data"] for r in rows if "run_data" in r]
+            run_data.reverse()
+            return run_data
         rows_raw = self._query(
             f"SELECT * FROM {runs_table} WHERE session_id = $sid ORDER BY run_index ASC, created_at ASC",
             {"sid": session_id},
@@ -541,6 +563,7 @@ class SurrealDb(BaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         r"""
         Read a session from the database.
@@ -578,10 +601,21 @@ class SurrealDb(BaseDb):
 
         desurrealized = desurrealize_session(raw)
 
-        # Attach runs from the runs table, merged with any legacy `runs` blob
+        # Attach runs from the runs table, merged with any legacy `runs` blob.
         try:
-            runs_data = self._get_session_runs_data(session_id)
-            desurrealized["runs"] = merge_runs_table_with_legacy_blob(runs_data, desurrealized.get("runs"))
+            legacy_runs = desurrealized.get("runs")
+            if runs_limit is not None and not legacy_runs:
+                # Fully migrated: push "most recent N" down to the DB (indexed).
+                desurrealized["runs"] = self._get_session_runs_data(session_id, limit=runs_limit)
+            else:
+                # Full load + merge. Also the un-migrated fallback: the legacy blob
+                # holds the whole history in one column, so "last N" can't be pushed
+                # to SQL — load all, merge, then filter+slice to match the migrated path.
+                runs_data = self._get_session_runs_data(session_id)
+                merged = merge_runs_table_with_legacy_blob(runs_data, legacy_runs)
+                if runs_limit is not None:
+                    merged = filter_context_runs(merged)[-runs_limit:]
+                desurrealized["runs"] = merged
         except Exception as e:
             log_error(f"Failed to load runs for session {session_id}: {str(e)}")
 

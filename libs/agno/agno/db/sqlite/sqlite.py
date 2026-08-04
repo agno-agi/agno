@@ -72,9 +72,6 @@ except ImportError:
 
 
 class SqliteDb(BaseDb):
-    # Whether this adapter can push a "most recent N runs" limit down to the DB.
-    supports_runs_limit: bool = True
-
     def __init__(
         self,
         db_file: Optional[str] = None,

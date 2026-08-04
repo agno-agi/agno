@@ -27,6 +27,7 @@ from agno.db.utils import (
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
+    filter_context_runs,
     merge_runs_table_with_legacy_blob,
 )
 from agno.run.agent import RunOutput
@@ -491,6 +492,7 @@ class JsonDb(BaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession, Dict[str, Any]]]:
         """Read a session from the JSON file.
 
@@ -519,6 +521,10 @@ class JsonDb(BaseDb):
                     # Attach runs from the runs file, merged with any legacy `runs` field
                     runs_data = self._get_session_runs_data(session_id)
                     session_data["runs"] = merge_runs_table_with_legacy_blob(runs_data, session_data.get("runs"))
+                    if runs_limit is not None:
+                        # No query engine to push "last N" down: filter+slice in memory to
+                        # match the SQL fast path (drop member/skip-status runs, then last N).
+                        session_data["runs"] = filter_context_runs(session_data["runs"] or [])[-runs_limit:]
 
                     if not deserialize:
                         return session_data

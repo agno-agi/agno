@@ -62,9 +62,6 @@ except ImportError:
 
 
 class AsyncPostgresDb(AsyncBaseDb):
-    # Whether this adapter can push a "most recent N runs" limit down to the DB.
-    supports_runs_limit: bool = True
-
     def __init__(
         self,
         id: Optional[str] = None,

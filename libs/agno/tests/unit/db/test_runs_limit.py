@@ -20,6 +20,10 @@ import sqlite3
 import tempfile
 from typing import List, Tuple
 
+import pytest
+
+from agno.db.in_memory import InMemoryDb
+from agno.db.json.json_db import JsonDb
 from agno.db.sqlite import SqliteDb
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -132,11 +136,6 @@ class TestGetSessionsIncludeRuns:
         assert _ids(sessions[0]["runs"]) == ["r0", "r1", "r2"]
 
 
-class TestCapabilityFlag:
-    def test_sqlite_supports_runs_limit(self):
-        assert SqliteDb.supports_runs_limit is True
-
-
 class TestSchemaHasNoBuilderBreakingMetadata:
     """MySQL/SingleStore table builders iterate every schema entry and access
     ``col_config["type"]``; a non-column key like ``__composite_indexes__`` would
@@ -192,3 +191,62 @@ class TestBoundedHistoryGate:
 
         db = SqliteDb(db_file=tempfile.mktemp(suffix=".db"))
         assert _bounded_history_runs_limit(self._agent(db), 3, [RunStatus.error]) is None
+
+
+_FILTER_SPECS = [
+    ("r0", "COMPLETED", None),
+    ("r1", "COMPLETED", None),
+    ("r2", "ERROR", None),
+    ("r3", "COMPLETED", None),
+    ("r4", "COMPLETED", "r3"),
+    ("r5", "ERROR", None),
+]
+
+
+def _make_inmemory(specs: List[Tuple[str, str, str]]) -> InMemoryDb:
+    return _seed_adapter(InMemoryDb(), specs)
+
+
+def _make_json(specs: List[Tuple[str, str, str]]) -> JsonDb:
+    return _seed_adapter(JsonDb(db_path=tempfile.mkdtemp()), specs)
+
+
+def _seed_adapter(db, specs: List[Tuple[str, str, str]]):
+    """Write the session row then one run per spec, mirroring _make_migrated_db."""
+    sess = AgentSession(session_id="s1", agent_id="a1")
+    for rid, status, parent in specs:
+        sess.upsert_run(RunOutput(run_id=rid, agent_id="a1", status=RunStatus(status), parent_run_id=parent))
+    db.upsert_session(sess)
+    for i, (rid, status, parent) in enumerate(specs):
+        db.upsert_run(
+            RunOutput(run_id=rid, agent_id="a1", status=RunStatus(status), parent_run_id=parent),
+            session_id="s1",
+            user_id=None,
+            run_index=i,
+        )
+    return db
+
+
+@pytest.mark.parametrize("make_db", [_make_inmemory, _make_json], ids=["in_memory", "json"])
+class TestRunsLimitAcrossAdapters:
+    def test_returns_most_recent_n(self, make_db):
+        db = make_db(COMPLETED + [("r3", "COMPLETED", None), ("r4", "COMPLETED", None)])
+        assert _ids(db.get_session("s1", deserialize=False, runs_limit=2)["runs"]) == ["r3", "r4"]
+
+    def test_none_is_full_history(self, make_db):
+        db = make_db(COMPLETED)
+        assert _ids(db.get_session("s1", deserialize=False, runs_limit=None)["runs"]) == ["r0", "r1", "r2"]
+
+    def test_limit_larger_than_history(self, make_db):
+        db = make_db(COMPLETED)
+        assert _ids(db.get_session("s1", deserialize=False, runs_limit=10)["runs"]) == ["r0", "r1", "r2"]
+
+    def test_filter_before_slice(self, make_db):
+        # last-2 of the context-relevant runs, NOT the last-2 rows.
+        db = make_db(_FILTER_SPECS)
+        assert _ids(db.get_session("s1", deserialize=False, runs_limit=2)["runs"]) == ["r1", "r3"]
+
+    def test_filter_applies_even_when_limit_exceeds_count(self, make_db):
+        # runs_limit larger than the filtered set: still filtered, just not truncated.
+        db = make_db(_FILTER_SPECS)
+        assert _ids(db.get_session("s1", deserialize=False, runs_limit=10)["runs"]) == ["r0", "r1", "r3"]

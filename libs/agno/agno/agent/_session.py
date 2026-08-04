@@ -699,19 +699,22 @@ def _bounded_history_runs_limit(
 ) -> Optional[int]:
     """The ``runs_limit`` to push down for a history read, or None to full-load.
 
-    Only bound when a *positive* run count is requested with default status
-    filtering, on a standalone agent (an AgentSession, so the DB-side filter
-    matches get_messages), and only when the DB actually supports the bounded
-    read. Otherwise return None so the caller full-loads -- which also preserves
-    the in-memory cache path when there is no DB, and lets get_messages handle
-    ``last_n_runs <= 0`` (it returns []) rather than pushing a bad LIMIT to SQL.
+    Only bound when there is a DB, a *positive* run count is requested with
+    default status filtering, on a standalone agent (an AgentSession, so the
+    DB-side filter matches get_messages). Otherwise return None so the caller
+    full-loads -- which preserves the in-memory cache path when there is no DB,
+    and lets get_messages handle ``last_n_runs <= 0`` (it returns []) rather
+    than pushing a bad LIMIT to the DB.
+
+    Every adapter accepts ``runs_limit``; adapters that don't optimize it load
+    the full history, so no capability check is needed here.
     """
     if (
-        last_n_runs is not None
+        agent.db is not None
+        and last_n_runs is not None
         and last_n_runs > 0
         and skip_statuses is None
         and agent.team_id is None
-        and getattr(agent.db, "supports_runs_limit", False)
     ):
         return last_n_runs
     return None
