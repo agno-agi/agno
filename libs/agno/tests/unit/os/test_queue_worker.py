@@ -841,6 +841,47 @@ class TestSweepOwnership:
         assert (await store.get_job("r1"))["status"] == "failed"
 
 
+class TestSettlementResults:
+    """A discarded settlement result is how a ticket silently stays RUNNING
+    while the worker believes it finished."""
+
+    @pytest.mark.asyncio
+    async def test_failed_settlement_is_loud_and_sweep_recoverable(self, caplog):
+        store, agent = InMemoryQueueStore(), FakeAgent()
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(make_job("r1"))
+        claimed = await store.claim_job(worker.worker_id)
+
+        async def declining_complete(job_id, worker_id, attempt, status, error=None):
+            return False  # e.g. the claim was reclaimed under us
+
+        store.complete_job = declining_complete  # type: ignore[method-assign]
+        with caplog.at_level("ERROR"):
+            await worker._execute_claimed(claimed)
+        assert any("could not settle ticket" in r.message for r in caplog.records), (
+            "an unsettled ticket must be loud, never silent"
+        )
+        # The backstop: we stopped refreshing the lease, so the sweep collects it
+        job = await store.get_job("r1")
+        assert job["status"] == "running"
+        store._jobs["r1"]["locked_at"] -= 1000
+        assert [j["id"] for j in await store.sweep_exhausted_jobs(lock_grace_seconds=60)] == ["r1"]
+
+    @pytest.mark.asyncio
+    async def test_settlement_exception_does_not_escape(self):
+        store, agent = InMemoryQueueStore(), FakeAgent()
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(make_job("r1"))
+        claimed = await store.claim_job(worker.worker_id)
+
+        async def raising_complete(job_id, worker_id, attempt, status, error=None):
+            raise RuntimeError("store down")
+
+        store.complete_job = raising_complete  # type: ignore[method-assign]
+        await worker._execute_claimed(claimed)  # must not raise into the poll loop
+        assert (await store.get_job("r1"))["status"] == "running"
+
+
 class TestCancelReorder:
     @pytest.mark.asyncio
     async def test_row_persisted_before_ticket_tombstone(self):

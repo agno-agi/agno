@@ -11,9 +11,27 @@ reclaimed has its write discarded.
 """
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Dict, Optional
 
 from agno.utils.dttm import now_epoch_s, to_epoch_s
+
+
+class QueueWriteOutcome(str, Enum):
+    """Why a fenced queue write did or did not land.
+
+    A bare bool/None could not distinguish "another worker legitimately owns
+    this ticket" (benign - our claim was reclaimed) from "the store could not
+    settle the write" (a real fault that leaves the ticket RUNNING). The
+    worker logs those very differently, and only the second one needs to be
+    loud.
+    """
+
+    APPLIED = "applied"  # the mutation landed
+    FENCED = "fenced"  # not the claim holder / wrong attempt / not running - someone else owns it
+    MISSING = "missing"  # no such job record
+    CONTENDED = "contended"  # optimistic-concurrency retries exhausted (the write did NOT land)
+
 
 # Lifecycle: queued -> running -> completed | failed | cancelled | paused
 # running with a stale lock is claimable again while attempt < max_attempts;

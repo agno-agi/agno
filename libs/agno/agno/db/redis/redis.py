@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Uni
 from uuid import uuid4
 
 if TYPE_CHECKING:
+    from agno.db.schemas.jobs import QueueWriteOutcome
     from agno.tracing.schemas import Span, Trace
 
 from agno.db.base import BaseDb, SessionType
@@ -30,7 +31,7 @@ from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import deserialize_session, deserialize_sessions
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
@@ -2449,43 +2450,60 @@ class RedisDb(BaseDb):
         except WatchError:
             return None
 
-    def _q_fenced_update(self, job_id: str, worker_id: str, attempt: int, mutate: Any) -> Optional[Dict[str, Any]]:
-        """CAS update allowed only for the claim holder of this attempt."""
+    def _q_fenced_update(
+        self, job_id: str, worker_id: str, attempt: int, mutate: Any
+    ) -> Tuple["QueueWriteOutcome", Optional[Dict[str, Any]]]:
+        """CAS update allowed only for the claim holder of this attempt.
+
+        WatchError means the record changed under us - a CONCURRENT WRITER,
+        not a verdict. The single-shot version returned "no" for it, which is
+        indistinguishable from a fence rejection: a final heartbeat racing the
+        completion could make the completion look fenced, leaving the ticket
+        RUNNING with the worker convinced it had settled. Retry the read-CAS
+        a bounded number of times and report what actually happened.
+        """
         from redis.exceptions import WatchError
 
+        from agno.db.schemas.jobs import QueueWriteOutcome
+
         job_key = self._q_job_key(job_id)
-        try:
-            with self.redis_client.pipeline() as pipe:
-                pipe.watch(job_key)
-                raw = pipe.get(job_key)
-                if raw is None:
-                    pipe.unwatch()
-                    return None
-                job = json.loads(raw if isinstance(raw, str) else raw.decode())
-                if job.get("locked_by") != worker_id or job["attempt"] != attempt or job["status"] != "running":
-                    pipe.unwatch()
-                    return None
-                mutate(job)
-                pipe.multi()
-                self._q_save_job_in_pipe(pipe, job)
-                # Zset membership is decided ENTIRELY inside this MULTI from
-                # the post-mutate status. A running job keeps (or refreshes)
-                # its running-zset entry in the same transaction - the old
-                # post-EXEC zadd left a crash window where a heartbeaten job
-                # was status="running" but in NO zset: invisible to reclaim
-                # and sweep alike, a permanent zombie.
-                if job["status"] == "running":
-                    pipe.zadd(self._q_key("running"), {job_id: job.get("locked_at") or int(time.time())})
-                else:
-                    pipe.zrem(self._q_key("running"), job_id)
-                if job["status"] == "queued":
-                    pipe.zadd(self._q_key("queued"), {job_id: job["available_at"]})
-                pipe.execute()
-                return job
-        except WatchError:
-            return None
+        for _ in range(10):
+            try:
+                with self.redis_client.pipeline() as pipe:
+                    pipe.watch(job_key)
+                    raw = pipe.get(job_key)
+                    if raw is None:
+                        pipe.unwatch()
+                        return QueueWriteOutcome.MISSING, None
+                    job = json.loads(raw if isinstance(raw, str) else raw.decode())
+                    if job.get("locked_by") != worker_id or job["attempt"] != attempt or job["status"] != "running":
+                        pipe.unwatch()
+                        return QueueWriteOutcome.FENCED, job
+                    mutate(job)
+                    pipe.multi()
+                    self._q_save_job_in_pipe(pipe, job)
+                    # Zset membership is decided ENTIRELY inside this MULTI from
+                    # the post-mutate status. A running job keeps (or refreshes)
+                    # its running-zset entry in the same transaction - the old
+                    # post-EXEC zadd left a crash window where a heartbeaten job
+                    # was status="running" but in NO zset: invisible to reclaim
+                    # and sweep alike, a permanent zombie.
+                    if job["status"] == "running":
+                        pipe.zadd(self._q_key("running"), {job_id: job.get("locked_at") or int(time.time())})
+                    else:
+                        pipe.zrem(self._q_key("running"), job_id)
+                    if job["status"] == "queued":
+                        pipe.zadd(self._q_key("queued"), {job_id: job["available_at"]})
+                    pipe.execute()
+                    return QueueWriteOutcome.APPLIED, job
+            except WatchError:
+                continue  # the record changed under us; re-read and re-evaluate
+        log_warning(f"Job queue: fenced update for job {job_id} did not settle after 10 attempts (contention)")
+        return QueueWriteOutcome.CONTENDED, None
 
     def heartbeat_jobs(self, worker_id: str, job_ids: List[str]) -> int:
+        from agno.db.schemas.jobs import QueueWriteOutcome
+
         count = 0
         now = int(time.time())
         for job_id in job_ids:
@@ -2496,23 +2514,29 @@ class RedisDb(BaseDb):
             def _beat(j: Dict[str, Any]) -> None:
                 j["locked_at"] = now
 
-            if self._q_fenced_update(job_id, worker_id, job["attempt"], _beat) is not None:
+            outcome, _ = self._q_fenced_update(job_id, worker_id, job["attempt"], _beat)
+            if outcome == QueueWriteOutcome.APPLIED:
                 count += 1
         return count
 
     def complete_job(self, job_id: str, worker_id: str, attempt: int, status: str, error: Optional[str] = None) -> bool:
+        from agno.db.schemas.jobs import QueueWriteOutcome
+
         now = int(time.time())
 
         def _complete(job: Dict[str, Any]) -> None:
             job.update(status=status, error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now)
 
-        return self._q_fenced_update(job_id, worker_id, attempt, _complete) is not None
+        outcome, _ = self._q_fenced_update(job_id, worker_id, attempt, _complete)
+        return outcome == QueueWriteOutcome.APPLIED
 
     def retry_or_fail_job(
         self, job_id: str, worker_id: str, attempt: int, error: str, retry_delay_seconds: int = 30
     ) -> Optional[str]:
+        from agno.db.schemas.jobs import QueueWriteOutcome
+
         now = int(time.time())
-        outcome: Dict[str, str] = {}
+        outcome_status: Dict[str, str] = {}
 
         def _retry(job: Dict[str, Any]) -> None:
             if job["attempt"] < job["max_attempts"]:
@@ -2524,15 +2548,15 @@ class RedisDb(BaseDb):
                     available_at=now + retry_delay_seconds,
                     updated_at=now,
                 )
-                outcome["status"] = "queued"
+                outcome_status["status"] = "queued"
             else:
                 job.update(
                     status="failed", error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now
                 )
-                outcome["status"] = "failed"
+                outcome_status["status"] = "failed"
 
-        updated = self._q_fenced_update(job_id, worker_id, attempt, _retry)
-        return outcome.get("status") if updated is not None else None
+        outcome, _ = self._q_fenced_update(job_id, worker_id, attempt, _retry)
+        return outcome_status.get("status") if outcome == QueueWriteOutcome.APPLIED else None
 
     def settle_paused_job(self, job_id: str, status: str, error: Optional[str] = None) -> bool:
         """Terminalize a PAUSED ticket whose continue ran INLINE, outside the

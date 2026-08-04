@@ -129,6 +129,53 @@ class TestContract:
         assert db.fail_swept_job("r1", "sweeper", error="worker lost")
         assert db.get_job("r1")["status"] == "failed"
 
+    def test_final_heartbeat_racing_completion_still_settles(self, db):
+        """The WatchError case: a final heartbeat commits between the
+        completion's WATCH and its EXEC. Single-shot CAS reported that as
+        'not applied' - indistinguishable from a fence rejection - and the
+        worker moved on leaving the ticket RUNNING. The bounded retry
+        re-reads and settles."""
+        db.enqueue_job(make_job("r1"))
+        claimed = db.claim_job("w1")
+        attempt = claimed["attempt"]
+
+        real_save = db._q_save_job_in_pipe
+        raced = {"done": False}
+
+        def racing_save(pipe, job):
+            # Called after MULTI, before EXEC: a heartbeat committing here
+            # writes the WATCHed key, so this transaction's EXEC aborts
+            if not raced["done"]:
+                raced["done"] = True  # set first: the nested call must not recurse
+                db.heartbeat_jobs("w1", ["r1"])
+            real_save(pipe, job)
+
+        db._q_save_job_in_pipe = racing_save
+        try:
+            assert db.complete_job("r1", "w1", attempt, "completed") is True
+        finally:
+            db._q_save_job_in_pipe = real_save
+        assert raced["done"], "the race must actually have fired"
+        assert db.get_job("r1")["status"] == "completed", "ticket must not be left RUNNING by a lost WATCH"
+
+    def test_fenced_update_reports_why_it_declined(self, db):
+        from agno.db.schemas.jobs import QueueWriteOutcome
+
+        db.enqueue_job(make_job("r1"))
+        claimed = db.claim_job("w1")
+
+        outcome, _ = db._q_fenced_update("nope", "w1", 1, lambda j: None)
+        assert outcome == QueueWriteOutcome.MISSING
+
+        outcome, _ = db._q_fenced_update("r1", "someone-else", claimed["attempt"], lambda j: None)
+        assert outcome == QueueWriteOutcome.FENCED
+
+        outcome, _ = db._q_fenced_update("r1", "w1", claimed["attempt"] + 5, lambda j: None)
+        assert outcome == QueueWriteOutcome.FENCED
+
+        outcome, job = db._q_fenced_update("r1", "w1", claimed["attempt"], lambda j: j.update(error="noted"))
+        assert outcome == QueueWriteOutcome.APPLIED and job["error"] == "noted"
+
     def test_interrupted_sweep_resumable_after_lock_stale(self, db):
         """A sweeper crashing mid-protocol leaves the job running under its
         (refreshed) lock; once that lock goes stale another sweeper resumes.

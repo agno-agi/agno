@@ -938,6 +938,59 @@ class QueueWorker:
             extra.pop(reserved, None)
         return extra
 
+    async def _asettle_ticket(
+        self, job_id: str, attempt: int, status: str, error: Optional[str] = None, shielded: bool = False
+    ) -> bool:
+        """complete_job with MANDATORY result handling.
+
+        A discarded settlement result is how a ticket silently stays RUNNING
+        while the worker believes it finished: the store can decline (another
+        worker reclaimed our claim) or fail to settle (optimistic-concurrency
+        contention, store fault), and both used to look like success. The
+        backstop for a genuinely unsettled ticket is the sweep - we stop
+        refreshing the lock the moment we return, so the ticket is collected
+        once the lease expires - but it must be LOUD, never silent."""
+        try:
+            call = self.store.complete_job(job_id, self.worker_id, attempt, status, error)
+            applied = bool(await (asyncio.shield(call) if shielded else call))
+        except Exception as e:
+            log_error(
+                f"Job queue: settling ticket {job_id} as {status!r} raised ({e}); the ticket stays RUNNING "
+                "with an unrefreshed lease and will be collected by the sweep"
+            )
+            return False
+        if not applied:
+            log_error(
+                f"Job queue: could not settle ticket {job_id} as {status!r} - the claim was reclaimed, or the "
+                "store could not commit the write. The ticket stays RUNNING with an unrefreshed lease and "
+                "will be collected by the sweep."
+            )
+        return applied
+
+    async def _aretry_or_fail_ticket(
+        self, job_id: str, attempt: int, error: str, delay: int, shielded: bool = False
+    ) -> Optional[str]:
+        """retry_or_fail_job with MANDATORY result handling (see
+        _asettle_ticket). None means the store declined or could not commit -
+        the ticket is left RUNNING for the sweep rather than silently
+        assumed requeued."""
+        try:
+            call = self.store.retry_or_fail_job(job_id, self.worker_id, attempt, error, delay)
+            outcome = await (asyncio.shield(call) if shielded else call)
+        except Exception as e:
+            log_error(
+                f"Job queue: retry/fail for ticket {job_id} raised ({e}); the ticket stays RUNNING "
+                "with an unrefreshed lease and will be collected by the sweep"
+            )
+            return None
+        if outcome is None:
+            log_error(
+                f"Job queue: could not retry-or-fail ticket {job_id} - the claim was reclaimed, or the store "
+                "could not commit the write. The ticket stays RUNNING with an unrefreshed lease and will be "
+                "collected by the sweep."
+            )
+        return outcome
+
     async def _execute_claimed(self, job: Dict[str, Any]) -> None:
         from agno.run.concurrency import worker_managed_execution
 
@@ -1001,9 +1054,7 @@ class QueueWorker:
         if job_type != "run":
             # Forward-compat: a newer producer enqueued a job type this worker
             # has no executor for. Fail it visibly rather than guessing.
-            await self.store.complete_job(
-                job_id, self.worker_id, attempt, "failed", f"No executor registered for job type {job_type!r}"
-            )
+            await self._asettle_ticket(job_id, attempt, "failed", f"No executor registered for job type {job_type!r}")
             return
         component = self.resolve_component(job["component_type"], job["component_id"])
         if component is None:
@@ -1086,16 +1137,14 @@ class QueueWorker:
             if status == RunStatus.paused:
                 # HITL pause: the execution leg ended awaiting a human, which
                 # is neither completed nor failed - the ops surface must say so
-                await self.store.complete_job(job_id, self.worker_id, attempt, "paused")
+                await self._asettle_ticket(job_id, attempt, "paused")
             elif status == RunStatus.cancelled:
-                await self.store.complete_job(job_id, self.worker_id, attempt, "cancelled")
+                await self._asettle_ticket(job_id, attempt, "cancelled")
             elif status == RunStatus.error:
                 error_content = str(getattr(result, "content", "") or "run errored")
-                await self.store.retry_or_fail_job(
-                    job_id, self.worker_id, attempt, error_content, self._retry_delay(attempt)
-                )
+                await self._aretry_or_fail_ticket(job_id, attempt, error_content, self._retry_delay(attempt))
             else:
-                await self.store.complete_job(job_id, self.worker_id, attempt, "completed")
+                await self._asettle_ticket(job_id, attempt, "completed")
         except asyncio.CancelledError:
             # Shutdown drain: the run was interrupted, not failed by its own
             # doing — requeue if budget remains, else fail visibly. When it
@@ -1115,10 +1164,12 @@ class QueueWorker:
                         "leaving it stale for the post-restart sweep"
                     )
                     raise
-            outcome = await asyncio.shield(
-                self.store.retry_or_fail_job(
-                    job_id, self.worker_id, attempt, "interrupted by worker shutdown", self.config.retry_delay_seconds
-                )
+            outcome = await self._aretry_or_fail_ticket(
+                job_id,
+                attempt,
+                "interrupted by worker shutdown",
+                self.config.retry_delay_seconds,
+                shielded=True,
             )
             if outcome == "failed":
                 with contextlib.suppress(Exception, asyncio.CancelledError):
@@ -1129,7 +1180,7 @@ class QueueWorker:
             # manager): honour it - the ticket tombstones as cancelled
             if ownership is not None:
                 ownership.cancellation_cause = "user_cancel"
-            await self.store.complete_job(job_id, self.worker_id, attempt, "cancelled")
+            await self._asettle_ticket(job_id, attempt, "cancelled")
             # Not gated: honouring the user's cancel on the ticket beats
             # run-row terminality (leaving the job stale would re-execute a
             # cancelled run) - but the divergence must be loud, not silent
@@ -1152,7 +1203,7 @@ class QueueWorker:
                     )
                     return
                 await self._terminate_stream_view(job)
-            await self.store.retry_or_fail_job(job_id, self.worker_id, attempt, error, self._retry_delay(attempt))
+            await self._aretry_or_fail_ticket(job_id, attempt, error, self._retry_delay(attempt))
         except Exception as e:
             permanent = self._is_permanent_failure(e, job.get("component_type") if payload.get("continue") else None)
             if permanent or attempt >= job.get("max_attempts", 1):
@@ -1172,11 +1223,11 @@ class QueueWorker:
                 # No retry is coming even if budget remains, so the stream view
                 # must terminate here (the streaming finally skipped its
                 # sentinel expecting a retry).
-                await self.store.complete_job(job_id, self.worker_id, attempt, "failed", f"permanent: {str(e)}")
+                await self._asettle_ticket(job_id, attempt, "failed", f"permanent: {str(e)}")
                 with contextlib.suppress(Exception):
                     await self._terminate_stream_view(job)
             else:
-                await self.store.retry_or_fail_job(job_id, self.worker_id, attempt, str(e), self._retry_delay(attempt))
+                await self._aretry_or_fail_ticket(job_id, attempt, str(e), self._retry_delay(attempt))
         finally:
             # Ownership deregistration lives in _execute_claimed's context
             # manager, not here: this finally is unreachable from the pre-try
