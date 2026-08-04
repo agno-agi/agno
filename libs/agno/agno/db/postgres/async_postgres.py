@@ -37,6 +37,7 @@ from agno.db.utils import (
     json_serializer,
     learning_search_patterns,
     merge_runs_table_with_legacy_blob,
+    scrub_run_ids_from_legacy_blob,
     validate_pagination,
 )
 from agno.run.agent import RunOutput
@@ -829,6 +830,42 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_error(f"Exception reading from runs table: {str(e)}")
             return [] if deserialize else ([], 0)
 
+    async def _scrub_run_ids_from_session_legacy_blob(
+        self, sess, runs_table: Table, sessions_table: Optional[Table], run_ids: Set[str]
+    ) -> None:
+        """Remove ``run_ids`` from the legacy ``runs`` blob of every session that owns them.
+
+        Partial-migration hygiene: the v3 migration copies runs into the runs table but
+        leaves the legacy sessions ``runs`` column in place as a frozen backup, so reads
+        merge the two. Deleting only the runs-table row lets
+        ``merge_runs_table_with_legacy_blob`` resurrect the run on the next read.
+
+        Must be called before the runs-table rows are deleted, since the owning
+        session ids are resolved from those rows. ``sessions_table`` is resolved by
+        the caller so the table is not reflected from inside the open transaction.
+        """
+        # The legacy column only exists on databases upgraded from v2.x.
+        if not run_ids or sessions_table is None or "runs" not in sessions_table.c:
+            return
+
+        result = await sess.execute(select(runs_table.c.session_id).where(runs_table.c.run_id.in_(run_ids)))
+        session_ids = {row[0] for row in result if row[0]}
+        if not session_ids:
+            return
+
+        result = await sess.execute(
+            select(sessions_table.c.session_id, sessions_table.c.runs).where(
+                sessions_table.c.session_id.in_(session_ids)
+            )
+        )
+        for session_id, legacy_runs in result.fetchall():
+            kept = scrub_run_ids_from_legacy_blob(legacy_runs, run_ids)
+            if kept is None:
+                continue
+            await sess.execute(
+                sessions_table.update().where(sessions_table.c.session_id == session_id).values(runs=kept)
+            )
+
     async def delete_run(self, run_id: str) -> bool:
         """Delete a single run from the runs table.
 
@@ -843,7 +880,9 @@ class AsyncPostgresDb(AsyncBaseDb):
             if table is None:
                 return False
 
+            sessions_table = await self._get_table(table_type="sessions")
             async with self.async_session_factory() as sess, sess.begin():
+                await self._scrub_run_ids_from_session_legacy_blob(sess, table, sessions_table, {run_id})
                 result = await sess.execute(table.delete().where(table.c.run_id == run_id))
                 return result.rowcount > 0  # type: ignore
 
@@ -862,7 +901,9 @@ class AsyncPostgresDb(AsyncBaseDb):
             if table is None:
                 return
 
+            sessions_table = await self._get_table(table_type="sessions")
             async with self.async_session_factory() as sess, sess.begin():
+                await self._scrub_run_ids_from_session_legacy_blob(sess, table, sessions_table, set(run_ids))
                 result = await sess.execute(table.delete().where(table.c.run_id.in_(run_ids)))
 
             log_debug(f"Successfully deleted {result.rowcount} runs")  # type: ignore

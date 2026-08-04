@@ -1,7 +1,7 @@
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Set, Tuple, Union
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -33,6 +33,7 @@ from agno.db.utils import (
     deserialize_sessions,
     json_serializer,
     merge_runs_table_with_legacy_blob,
+    scrub_run_ids_from_legacy_blob,
     validate_pagination,
 )
 from agno.run.agent import RunOutput
@@ -743,12 +744,52 @@ class SingleStoreDb(BaseDb):
             log_error(f"Exception reading from runs table: {str(e)}")
             raise e
 
+    def _scrub_run_ids_from_session_legacy_blob(
+        self, sess, runs_table: Table, sessions_table: Optional[Table], run_ids: Set[str]
+    ) -> None:
+        """Remove ``run_ids`` from the legacy ``runs`` blob of every session that owns them.
+
+        Partial-migration hygiene: the v3 migration copies runs into the runs table but
+        leaves the legacy sessions ``runs`` column in place as a frozen backup, so reads
+        merge the two. Deleting only the runs-table row lets
+        ``merge_runs_table_with_legacy_blob`` resurrect the run on the next read.
+
+        Must be called before the runs-table rows are deleted, since the owning
+        session ids are resolved from those rows. ``sessions_table`` is resolved by
+        the caller: ``self.Session`` is a scoped session, so reflecting a table from
+        inside the open transaction would re-enter it.
+        """
+        # The legacy column only exists on databases upgraded from v2.x.
+        if not run_ids or sessions_table is None or "runs" not in sessions_table.c:
+            return
+
+        session_ids = {
+            row[0]
+            for row in sess.execute(select(runs_table.c.session_id).where(runs_table.c.run_id.in_(run_ids)))
+            if row[0]
+        }
+        if not session_ids:
+            return
+
+        rows = sess.execute(
+            select(sessions_table.c.session_id, sessions_table.c.runs).where(
+                sessions_table.c.session_id.in_(session_ids)
+            )
+        ).fetchall()
+        for session_id, legacy_runs in rows:
+            kept = scrub_run_ids_from_legacy_blob(legacy_runs, run_ids)
+            if kept is None:
+                continue
+            sess.execute(sessions_table.update().where(sessions_table.c.session_id == session_id).values(runs=kept))
+
     def delete_run(self, run_id: str) -> bool:
         try:
             table = self._get_table(table_type="runs")
             if table is None:
                 return False
+            sessions_table = self._get_table(table_type="sessions")
             with self.Session() as sess, sess.begin():
+                self._scrub_run_ids_from_session_legacy_blob(sess, table, sessions_table, {run_id})
                 result = sess.execute(table.delete().where(table.c.run_id == run_id))
                 return result.rowcount > 0
         except Exception as e:
@@ -760,7 +801,9 @@ class SingleStoreDb(BaseDb):
             table = self._get_table(table_type="runs")
             if table is None:
                 return
+            sessions_table = self._get_table(table_type="sessions")
             with self.Session() as sess, sess.begin():
+                self._scrub_run_ids_from_session_legacy_blob(sess, table, sessions_table, set(run_ids))
                 result = sess.execute(table.delete().where(table.c.run_id.in_(run_ids)))
             log_debug(f"Successfully deleted {result.rowcount} runs")
         except Exception as e:

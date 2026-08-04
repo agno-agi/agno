@@ -3,7 +3,7 @@
 import json
 import time
 from datetime import date, datetime
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union, cast
 from uuid import UUID
 
 from agno.metrics import ModelMetrics, RunMetrics, SessionMetrics
@@ -344,6 +344,52 @@ def merge_runs_table_with_legacy_blob(
         merged.append(table_run)
 
     return merged
+
+
+def scrub_run_ids_from_legacy_blob(
+    legacy_runs: Optional[Union[str, List[Any]]],
+    run_ids: Set[str],
+) -> Optional[Union[str, List[Dict[str, Any]]]]:
+    """Remove ``run_ids`` from a session's legacy ``runs`` blob.
+
+    Write-side counterpart to :func:`merge_runs_table_with_legacy_blob`. Deleting a
+    run from the runs table is not enough while a session is partially migrated: the
+    read path merges the table with the legacy blob, so a run left in the blob is
+    resurrected on the next read.
+
+    The return value keeps the storage shape it was given. Adapters back this column
+    with different types (a JSON string on SQLite/MySQL, a native JSON column on
+    Postgres), so a string blob is re-encoded as a string and a list stays a list.
+
+    Args:
+        legacy_runs: The raw value of the legacy ``runs`` column (may be a list, a
+            JSON-encoded string, or ``None``).
+        run_ids: The run ids being deleted.
+
+    Returns:
+        The remaining runs when the blob actually contained one of ``run_ids``, or
+        ``None`` when there is nothing to write back (blob absent, unparseable, or
+        untouched by this delete). ``None`` means "leave the column alone" so callers
+        skip the UPDATE entirely.
+    """
+    if not run_ids or not legacy_runs:
+        return None
+
+    was_encoded = isinstance(legacy_runs, str)
+    if was_encoded:
+        try:
+            legacy_runs = json.loads(cast(str, legacy_runs))
+        except (json.JSONDecodeError, TypeError):
+            log_warning("Could not parse legacy runs blob during scrub; leaving it untouched")
+            return None
+
+    if not isinstance(legacy_runs, list):
+        return None
+
+    kept = [run for run in legacy_runs if not (isinstance(run, dict) and run.get("run_id") in run_ids)]
+    if len(kept) == len(legacy_runs):
+        return None
+    return json.dumps(kept) if was_encoded else kept
 
 
 async def resolve_session_type(
