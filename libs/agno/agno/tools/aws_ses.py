@@ -26,11 +26,11 @@ class AWSSESTool(Toolkit):
 
         tools: List[Callable] = []
         if all or send_email:
-            tools.append(self.send_email)
+            tools.append(self.aws_ses_send_email)
 
         super().__init__(name="aws_ses_tools", tools=tools, **kwargs)
 
-    def send_email(self, subject: str, body: str, receiver_email: str) -> str:
+    def aws_ses_send_email(self, subject: str, body: str, receiver_email: str) -> str:
         """Send an email using AWS SES.
 
         Args:

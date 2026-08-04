@@ -31,11 +31,11 @@ agent_all = Agent(
 agent_specific = Agent(
     tools=[
         SlackTools(
-            enable_send_message=True,
-            enable_list_channels=True,
-            enable_get_channel_history=False,
-            enable_upload_file=False,
-            enable_download_file=False,
+            send_message=True,
+            list_channels=True,
+            get_channel_history=False,
+            upload_file=False,
+            download_file=False,
         )
     ],
     markdown=True,
@@ -45,11 +45,11 @@ agent_specific = Agent(
 agent_readonly = Agent(
     tools=[
         SlackTools(
-            enable_send_message=False,
-            enable_list_channels=True,
-            enable_get_channel_history=True,
-            enable_upload_file=False,
-            enable_download_file=True,
+            send_message=False,
+            list_channels=True,
+            get_channel_history=True,
+            upload_file=False,
+            download_file=True,
         )
     ],
     markdown=True,

@@ -53,7 +53,7 @@ class GitlabTools(Toolkit):
             tools.append(self.get_merge_request)
             async_tools.append((self.aget_merge_request, "get_merge_request"))
         if all or list_issues:
-            tools.append(self.list_issues)
+            tools.append(self.gitlab_list_issues)
             async_tools.append((self.alist_issues, "list_issues"))
 
         super().__init__(name="gitlab", tools=tools, async_tools=async_tools, **kwargs)
@@ -469,7 +469,7 @@ class GitlabTools(Toolkit):
             logger.exception(f"Unexpected error while getting merge request {merge_request_iid}")
             return self._json_error(str(e))
 
-    def list_issues(
+    def gitlab_list_issues(
         self,
         project_id_or_path: str,
         state: str = "opened",

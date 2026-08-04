@@ -29,13 +29,13 @@ class AgentQLTools(Toolkit):
 
         tools: List[Callable] = []
         if all or scrape_website:
-            tools.append(self.scrape_website)
+            tools.append(self.agentql_scrape_website)
         if all or custom_scrape_website or agentql_query:
             tools.append(self.custom_scrape_website)
 
         super().__init__(name="agentql_tools", tools=tools, **kwargs)
 
-    def scrape_website(self, url: str) -> str:
+    def agentql_scrape_website(self, url: str) -> str:
         """Scrape all text content from a website using AgentQL.
 
         Args:

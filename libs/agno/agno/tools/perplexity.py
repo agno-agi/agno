@@ -55,8 +55,8 @@ class PerplexitySearch(Toolkit):
         tools: List[Callable] = []
         async_tools: List[tuple] = []
         if search:
-            tools.append(self.search)
-            async_tools.append((self.asearch, "search"))
+            tools.append(self.perplexity_search)
+            async_tools.append((self.aperplexity_search, "perplexity_search"))
 
         super().__init__(
             name="perplexity_search",
@@ -65,7 +65,7 @@ class PerplexitySearch(Toolkit):
             **kwargs,
         )
 
-    def search(self, query: str, max_results: Optional[int] = None) -> str:
+    def perplexity_search(self, query: str, max_results: Optional[int] = None) -> str:
         """Use this function to search the web using the Perplexity Search API.
         Returns ranked web search results with titles, URLs, snippets, and dates.
 
@@ -124,7 +124,7 @@ class PerplexitySearch(Toolkit):
             logger.exception("Perplexity search failed")
             return json.dumps({"error": str(e)})
 
-    async def asearch(self, query: str, max_results: Optional[int] = None) -> str:
+    async def aperplexity_search(self, query: str, max_results: Optional[int] = None) -> str:
         """Use this function to search the web using the Perplexity Search API.
         Returns ranked web search results with titles, URLs, snippets, and dates.
 

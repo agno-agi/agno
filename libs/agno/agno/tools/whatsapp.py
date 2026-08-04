@@ -86,21 +86,21 @@ class WhatsAppTools(Toolkit):
 
         tools: List[Callable] = []
         if all or send_text_message:
-            tools.append(self.send_text_message)
+            tools.append(self.whatsapp_send_text_message)
         if all or send_template_message:
-            tools.append(self.send_template_message)
+            tools.append(self.whatsapp_send_template_message)
         if all or send_reply_buttons:
-            tools.append(self.send_reply_buttons)
+            tools.append(self.whatsapp_send_reply_buttons)
         if all or send_list_message:
-            tools.append(self.send_list_message)
+            tools.append(self.whatsapp_send_list_message)
         if all or send_image:
-            tools.append(self.send_image)
+            tools.append(self.whatsapp_send_image)
         if all or send_document:
-            tools.append(self.send_document)
+            tools.append(self.whatsapp_send_document)
         if all or send_location:
-            tools.append(self.send_location)
+            tools.append(self.whatsapp_send_location)
         if all or send_reaction:
-            tools.append(self.send_reaction)
+            tools.append(self.whatsapp_send_reaction)
 
         super().__init__(name="whatsapp", tools=tools, timeout=timeout, **kwargs)
 
@@ -133,7 +133,7 @@ class WhatsAppTools(Toolkit):
             )
         return response.json()
 
-    def send_text_message(
+    def whatsapp_send_text_message(
         self,
         text: str,
         recipient: Optional[str] = None,
@@ -168,7 +168,7 @@ class WhatsAppTools(Toolkit):
             log_exception("Error sending text message")
             raise
 
-    def send_template_message(
+    def whatsapp_send_template_message(
         self,
         template_name: str,
         recipient: Optional[str] = None,
@@ -208,7 +208,7 @@ class WhatsAppTools(Toolkit):
             log_exception("Error sending template message")
             raise
 
-    def send_reply_buttons(
+    def whatsapp_send_reply_buttons(
         self,
         body_text: str,
         buttons: List[ReplyButton],
@@ -261,7 +261,7 @@ class WhatsAppTools(Toolkit):
             log_exception("Error sending reply buttons")
             raise
 
-    def send_list_message(
+    def whatsapp_send_list_message(
         self,
         body_text: str,
         button_text: str,
@@ -336,7 +336,7 @@ class WhatsAppTools(Toolkit):
             log_exception("Error sending list message")
             raise
 
-    def send_image(
+    def whatsapp_send_image(
         self,
         recipient: Optional[str] = None,
         image_url: Optional[str] = None,
@@ -383,7 +383,7 @@ class WhatsAppTools(Toolkit):
             log_exception("Error sending image")
             raise
 
-    def send_document(
+    def whatsapp_send_document(
         self,
         recipient: Optional[str] = None,
         document_url: Optional[str] = None,
@@ -434,7 +434,7 @@ class WhatsAppTools(Toolkit):
             log_exception("Error sending document")
             raise
 
-    def send_location(
+    def whatsapp_send_location(
         self,
         latitude: Union[str, float],
         longitude: Union[str, float],
@@ -481,7 +481,7 @@ class WhatsAppTools(Toolkit):
             log_exception("Error sending location")
             raise
 
-    def send_reaction(
+    def whatsapp_send_reaction(
         self,
         message_id: str,
         emoji: str,

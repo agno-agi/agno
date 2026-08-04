@@ -63,15 +63,15 @@ class ElevenLabsTools(Toolkit):
 
         tools: List[Callable] = []
         if all or get_voices:
-            tools.append(self.get_voices)
+            tools.append(self.elevenlabs_get_voices)
         if all or generate_sound_effect:
             tools.append(self.generate_sound_effect)
         if all or text_to_speech:
-            tools.append(self.text_to_speech)
+            tools.append(self.elevenlabs_text_to_speech)
 
         super().__init__(name="elevenlabs_tools", tools=tools, **kwargs)
 
-    def get_voices(self) -> str:
+    def elevenlabs_get_voices(self) -> str:
         """Get all available voices.
 
         Returns:
@@ -160,7 +160,7 @@ class ElevenLabsTools(Toolkit):
             log_error(f"Failed to generate sound effect: {str(e)}")
             return ToolResult(content=f"Error: {e}")
 
-    def text_to_speech(self, agent: Union[Agent, Team], prompt: str) -> ToolResult:
+    def elevenlabs_text_to_speech(self, agent: Union[Agent, Team], prompt: str) -> ToolResult:
         """Convert text to speech.
 
         Args:

@@ -120,9 +120,9 @@ GMAIL_QUERY_INSTRUCTIONS = textwrap.dedent("""\
 
 GMAIL_COMPOSE_INSTRUCTIONS = textwrap.dedent("""
     ## Composing Emails
-    - **New email:** `send_email(to, subject, body)` or `create_draft_email(to, subject, body)`
-    - **Reply (send now):** `send_email_reply(message_id, body)` keeps the message in the thread
-    - **Reply (draft):** `create_draft_email(to, subject, body, thread_id=..., message_id=...)` \
+    - **New email:** `gmail_send_email(to, subject, body)` or `gmail_create_draft_email(to, subject, body)`
+    - **Reply (send now):** `gmail_send_email_reply(message_id, body)` keeps the message in the thread
+    - **Reply (draft):** `gmail_create_draft_email(to, subject, body, thread_id=..., message_id=...)` \
 creates a draft reply in the thread. Get thread_id and message_id from the original message first.""")
 
 
@@ -233,75 +233,75 @@ class GmailTools(GoogleToolkit):
         tools: List[Callable] = []
         # Reading emails
         if get_latest_emails:
-            tools.append(self.get_latest_emails)
+            tools.append(self.gmail_get_latest_emails)
         if get_emails_from_user:
-            tools.append(self.get_emails_from_user)
+            tools.append(self.gmail_get_emails_from_user)
         if get_unread_emails:
-            tools.append(self.get_unread_emails)
+            tools.append(self.gmail_get_unread_emails)
         if get_starred_emails:
-            tools.append(self.get_starred_emails)
+            tools.append(self.gmail_get_starred_emails)
         if get_emails_by_context:
-            tools.append(self.get_emails_by_context)
+            tools.append(self.gmail_get_emails_by_context)
         if get_emails_by_date:
-            tools.append(self.get_emails_by_date)
+            tools.append(self.gmail_get_emails_by_date)
         if get_emails_by_thread:
-            tools.append(self.get_emails_by_thread)
+            tools.append(self.gmail_get_emails_by_thread)
         if search_emails:
-            tools.append(self.search_emails)
+            tools.append(self.gmail_search_emails)
         # Email management
         if mark_email_as_read:
-            tools.append(self.mark_email_as_read)
+            tools.append(self.gmail_mark_email_as_read)
         if mark_email_as_unread:
-            tools.append(self.mark_email_as_unread)
+            tools.append(self.gmail_mark_email_as_unread)
         if star_email:
-            tools.append(self.star_email)
+            tools.append(self.gmail_star_email)
         if unstar_email:
-            tools.append(self.unstar_email)
+            tools.append(self.gmail_unstar_email)
         if archive_email:
-            tools.append(self.archive_email)
+            tools.append(self.gmail_archive_email)
         # Composing emails
         if create_draft_email:
-            tools.append(self.create_draft_email)
+            tools.append(self.gmail_create_draft_email)
         if send_email:
-            tools.append(self.send_email)
+            tools.append(self.gmail_send_email)
         if send_email_reply:
-            tools.append(self.send_email_reply)
+            tools.append(self.gmail_send_email_reply)
         # Label management
         if list_custom_labels:
-            tools.append(self.list_custom_labels)
+            tools.append(self.gmail_list_custom_labels)
         if apply_label:
-            tools.append(self.apply_label)
+            tools.append(self.gmail_apply_label)
         if remove_label:
-            tools.append(self.remove_label)
+            tools.append(self.gmail_remove_label)
         if delete_custom_label:
-            tools.append(self.delete_custom_label)
+            tools.append(self.gmail_delete_custom_label)
         # Thread & message tools
         if get_message:
-            tools.append(self.get_message)
+            tools.append(self.gmail_get_message)
         if get_thread:
-            tools.append(self.get_thread)
+            tools.append(self.gmail_get_thread)
         if search_threads:
-            tools.append(self.search_threads)
+            tools.append(self.gmail_search_threads)
         if modify_thread_labels:
-            tools.append(self.modify_thread_labels)
+            tools.append(self.gmail_modify_thread_labels)
         if trash_thread:
-            tools.append(self.trash_thread)
+            tools.append(self.gmail_trash_thread)
         if get_draft:
-            tools.append(self.get_draft)
+            tools.append(self.gmail_get_draft)
         if list_drafts:
-            tools.append(self.list_drafts)
+            tools.append(self.gmail_list_drafts)
         if send_draft:
-            tools.append(self.send_draft)
+            tools.append(self.gmail_send_draft)
         if update_draft:
-            tools.append(self.update_draft)
+            tools.append(self.gmail_update_draft)
         if list_labels:
-            tools.append(self.list_labels)
+            tools.append(self.gmail_list_labels)
         if modify_message_labels:
-            tools.append(self.modify_message_labels)
+            tools.append(self.gmail_modify_message_labels)
         if trash_message:
-            tools.append(self.trash_message)
+            tools.append(self.gmail_trash_message)
         if download_attachment:
-            tools.append(self.download_attachment)
+            tools.append(self.gmail_download_attachment)
 
         super().__init__(
             name="gmail_tools",
@@ -393,7 +393,7 @@ class GmailTools(GoogleToolkit):
         return "\n\n".join(formatted_emails)
 
     @authenticate
-    def get_latest_emails(self, count: int = 10, page_token: Optional[str] = None) -> str:
+    def gmail_get_latest_emails(self, count: int = 10, page_token: Optional[str] = None) -> str:
         """
         Get the latest X emails from the user's inbox.
 
@@ -425,7 +425,7 @@ class GmailTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(error).__name__}: {error}"})
 
     @authenticate
-    def get_emails_from_user(self, user: str = "", count: int = 10, page_token: Optional[str] = None) -> str:
+    def gmail_get_emails_from_user(self, user: str = "", count: int = 10, page_token: Optional[str] = None) -> str:
         """
         Get X number of emails from a specific user (name or email).
 
@@ -459,7 +459,7 @@ class GmailTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(error).__name__}: {error}"})
 
     @authenticate
-    def get_unread_emails(self, count: int = 10, page_token: Optional[str] = None) -> str:
+    def gmail_get_unread_emails(self, count: int = 10, page_token: Optional[str] = None) -> str:
         """
         Get the X number of latest unread emails from the user's inbox.
 
@@ -491,7 +491,7 @@ class GmailTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(error).__name__}: {error}"})
 
     @authenticate
-    def get_emails_by_thread(self, thread_id: str = "") -> str:
+    def gmail_get_emails_by_thread(self, thread_id: str = "") -> str:
         """
         Retrieve all emails from a specific thread.
 
@@ -512,7 +512,7 @@ class GmailTools(GoogleToolkit):
             return f"Unexpected error retrieving emails from thread {thread_id}: {type(error).__name__}: {error}"
 
     @authenticate
-    def get_starred_emails(self, count: int = 10, page_token: Optional[str] = None) -> str:
+    def gmail_get_starred_emails(self, count: int = 10, page_token: Optional[str] = None) -> str:
         """
         Get X number of starred emails from the user's inbox.
 
@@ -544,7 +544,7 @@ class GmailTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(error).__name__}: {error}"})
 
     @authenticate
-    def get_emails_by_context(self, context: str = "", count: int = 10, page_token: Optional[str] = None) -> str:
+    def gmail_get_emails_by_context(self, context: str = "", count: int = 10, page_token: Optional[str] = None) -> str:
         """
         Get X number of emails matching a specific context or search term.
 
@@ -577,7 +577,7 @@ class GmailTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(error).__name__}: {error}"})
 
     @authenticate
-    def get_emails_by_date(
+    def gmail_get_emails_by_date(
         self,
         start_date: str = "",
         range_in_days: Optional[int] = None,
@@ -624,7 +624,7 @@ class GmailTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(error).__name__}: {error}"})
 
     @authenticate
-    def create_draft_email(
+    def gmail_create_draft_email(
         self,
         to: str = "",
         subject: str = "",
@@ -689,7 +689,7 @@ class GmailTools(GoogleToolkit):
             return f"Error creating draft: {type(error).__name__}: {error}"
 
     @authenticate
-    def send_email(
+    def gmail_send_email(
         self,
         to: str = "",
         subject: str = "",
@@ -753,7 +753,7 @@ class GmailTools(GoogleToolkit):
             return f"Error sending email: {type(error).__name__}: {error}"
 
     @authenticate
-    def send_email_reply(
+    def gmail_send_email_reply(
         self,
         thread_id: str = "",
         message_id: str = "",
@@ -813,7 +813,7 @@ class GmailTools(GoogleToolkit):
             return f"Error sending reply: {type(error).__name__}: {error}"
 
     @authenticate
-    def search_emails(self, query: str = "", count: int = 10, page_token: Optional[str] = None) -> str:
+    def gmail_search_emails(self, query: str = "", count: int = 10, page_token: Optional[str] = None) -> str:
         """
         Get X number of emails based on a given natural text query.
         Searches in to, from, cc, subject and email body contents.
@@ -847,7 +847,7 @@ class GmailTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(error).__name__}: {error}"})
 
     @authenticate
-    def mark_email_as_read(self, message_id: str = "") -> str:
+    def gmail_mark_email_as_read(self, message_id: str = "") -> str:
         """
         Mark a specific email as read by removing the 'UNREAD' label.
         This is crucial for long polling scenarios to prevent processing the same email multiple times.
@@ -872,7 +872,7 @@ class GmailTools(GoogleToolkit):
             return f"Error marking email {message_id} as read: {type(error).__name__}: {error}"
 
     @authenticate
-    def mark_email_as_unread(self, message_id: str = "") -> str:
+    def gmail_mark_email_as_unread(self, message_id: str = "") -> str:
         """
         Mark a specific email as unread by adding the 'UNREAD' label.
         This is useful for flagging emails that need attention or re-processing.
@@ -897,7 +897,7 @@ class GmailTools(GoogleToolkit):
             return f"Error marking email {message_id} as unread: {type(error).__name__}: {error}"
 
     @authenticate
-    def star_email(self, message_id: str = "") -> str:
+    def gmail_star_email(self, message_id: str = "") -> str:
         """Add a star to an email message.
 
         Args:
@@ -916,7 +916,7 @@ class GmailTools(GoogleToolkit):
             return f"Error starring email {message_id}: {type(error).__name__}: {error}"
 
     @authenticate
-    def unstar_email(self, message_id: str = "") -> str:
+    def gmail_unstar_email(self, message_id: str = "") -> str:
         """Remove the star from an email message.
 
         Args:
@@ -935,7 +935,7 @@ class GmailTools(GoogleToolkit):
             return f"Error unstarring email {message_id}: {type(error).__name__}: {error}"
 
     @authenticate
-    def archive_email(self, message_id: str = "") -> str:
+    def gmail_archive_email(self, message_id: str = "") -> str:
         """Archive an email by removing it from the inbox. The email is NOT deleted and can still be found via search.
 
         Args:
@@ -954,7 +954,7 @@ class GmailTools(GoogleToolkit):
             return f"Error archiving email {message_id}: {type(error).__name__}: {error}"
 
     @authenticate
-    def list_custom_labels(self) -> str:
+    def gmail_list_custom_labels(self) -> str:
         """
         List only user-created custom labels (filters out system labels) in a numbered format.
 
@@ -981,7 +981,7 @@ class GmailTools(GoogleToolkit):
             return f"Unexpected error: {type(e).__name__}: {e}"
 
     @authenticate
-    def apply_label(self, context: str = "", label_name: str = "", count: int = 10) -> str:
+    def gmail_apply_label(self, context: str = "", label_name: str = "", count: int = 10) -> str:
         """
         Find emails matching a context (search query) and apply a label, creating it if necessary.
 
@@ -1031,7 +1031,7 @@ class GmailTools(GoogleToolkit):
             return f"Unexpected error: {type(e).__name__}: {e}"
 
     @authenticate
-    def remove_label(self, context: str = "", label_name: str = "", count: int = 10) -> str:
+    def gmail_remove_label(self, context: str = "", label_name: str = "", count: int = 10) -> str:
         """
         Remove a label from emails matching a context (search query).
 
@@ -1077,7 +1077,7 @@ class GmailTools(GoogleToolkit):
             return f"Unexpected error: {type(e).__name__}: {e}"
 
     @authenticate
-    def delete_custom_label(self, label_name: str = "", confirm: bool = False) -> str:
+    def gmail_delete_custom_label(self, label_name: str = "", confirm: bool = False) -> str:
         """
         Delete a custom label (with safety confirmation).
 
@@ -1436,7 +1436,7 @@ class GmailTools(GoogleToolkit):
     # -- New tools ----------------------------------------------------------------
 
     @authenticate
-    def get_message(self, message_id: str = "", download_attachments: bool = False) -> str:
+    def gmail_get_message(self, message_id: str = "", download_attachments: bool = False) -> str:
         """Get a single email message by its ID with full content including headers, body, and attachment metadata.
 
         Args:
@@ -1465,7 +1465,7 @@ class GmailTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
-    def get_thread(self, thread_id: str = "") -> str:
+    def gmail_get_thread(self, thread_id: str = "") -> str:
         """Get all messages in a Gmail thread as structured JSON.
 
         Args:
@@ -1493,7 +1493,7 @@ class GmailTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
-    def search_threads(self, query: str = "", count: int = 10, page_token: Optional[str] = None) -> str:
+    def gmail_search_threads(self, query: str = "", count: int = 10, page_token: Optional[str] = None) -> str:
         """Search Gmail threads using Gmail query syntax. Returns thread IDs and snippets, not full message content.
 
         Args:
@@ -1529,7 +1529,7 @@ class GmailTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
-    def modify_thread_labels(
+    def gmail_modify_thread_labels(
         self,
         thread_id: str = "",
         add_labels: Optional[str] = None,
@@ -1568,7 +1568,7 @@ class GmailTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
-    def trash_thread(self, thread_id: str = "") -> str:
+    def gmail_trash_thread(self, thread_id: str = "") -> str:
         """Move an entire thread to the trash. All messages in the conversation will be trashed.
 
         Args:
@@ -1589,7 +1589,7 @@ class GmailTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
-    def get_draft(self, draft_id: str = "") -> str:
+    def gmail_get_draft(self, draft_id: str = "") -> str:
         """Get a draft email by its ID with full message content.
 
         Args:
@@ -1616,7 +1616,7 @@ class GmailTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
-    def list_drafts(self, count: int = 10, page_token: Optional[str] = None) -> str:
+    def gmail_list_drafts(self, count: int = 10, page_token: Optional[str] = None) -> str:
         """List draft emails in the mailbox.
 
         Args:
@@ -1651,7 +1651,7 @@ class GmailTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
-    def send_draft(self, draft_id: str = "") -> str:
+    def gmail_send_draft(self, draft_id: str = "") -> str:
         """Send an existing draft email.
 
         Args:
@@ -1678,7 +1678,7 @@ class GmailTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
-    def update_draft(
+    def gmail_update_draft(
         self,
         draft_id: str = "",
         to: str = "",
@@ -1745,7 +1745,7 @@ class GmailTools(GoogleToolkit):
             return json.dumps({"error": f"{type(e).__name__}: {e}"})
 
     @authenticate
-    def list_labels(self) -> str:
+    def gmail_list_labels(self) -> str:
         """List all Gmail labels (system and custom) with message and thread counts.
 
         Returns:
@@ -1782,7 +1782,7 @@ class GmailTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
-    def modify_message_labels(
+    def gmail_modify_message_labels(
         self,
         message_id: str = "",
         add_labels: Optional[str] = None,
@@ -1822,7 +1822,7 @@ class GmailTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
-    def trash_message(self, message_id: str = "", undo: bool = False) -> str:
+    def gmail_trash_message(self, message_id: str = "", undo: bool = False) -> str:
         """Move a message to trash, or restore it from trash with undo=True.
 
         Args:
@@ -1849,7 +1849,7 @@ class GmailTools(GoogleToolkit):
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
     @authenticate
-    def download_attachment(
+    def gmail_download_attachment(
         self,
         message_id: str = "",
         attachment_id: str = "",

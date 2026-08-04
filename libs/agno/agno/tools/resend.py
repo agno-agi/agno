@@ -42,11 +42,11 @@ class ResendTools(Toolkit):
 
         tools: List[Callable] = []
         if all or send_email:
-            tools.append(self.send_email)
+            tools.append(self.resend_send_email)
 
         super().__init__(name="resend_tools", tools=tools, **kwargs)
 
-    def send_email(self, to_email: str, subject: str, body: str) -> str:
+    def resend_send_email(self, to_email: str, subject: str, body: str) -> str:
         """Send an email using the Resend API.
 
         Args:

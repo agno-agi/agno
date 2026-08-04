@@ -35,8 +35,8 @@ media_agent = Agent(
     db=db,
     tools=[
         GeminiTools(
-            enable_generate_image=True,
-            enable_generate_video=False,
+            generate_image=True,
+            generate_video=False,
         ),
         FalTools(model="fal-ai/hunyuan-video"),
     ],

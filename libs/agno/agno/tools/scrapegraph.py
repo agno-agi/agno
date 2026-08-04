@@ -83,9 +83,9 @@ class ScrapeGraphTools(Toolkit):
         if all or searchscraper:
             tools.append(self.searchscraper)
         if all or crawl:
-            tools.append(self.crawl)
+            tools.append(self.scrapegraph_crawl)
         if all or scrape:
-            tools.append(self.scrape)
+            tools.append(self.scrapegraph_scrape)
 
         super().__init__(name="scrapegraph_tools", tools=tools, **kwargs)
 
@@ -160,7 +160,7 @@ class ScrapeGraphTools(Toolkit):
         except Exception as error:
             return json.dumps({"error": f"Error searching: {type(error).__name__}: {error}"})
 
-    def crawl(
+    def scrapegraph_crawl(
         self,
         url: str,
         prompt: str,
@@ -214,7 +214,7 @@ class ScrapeGraphTools(Toolkit):
         except Exception as error:
             return json.dumps({"error": f"Error crawling {url}: {type(error).__name__}: {error}"})
 
-    def scrape(self, url: str) -> str:
+    def scrapegraph_scrape(self, url: str) -> str:
         """Get raw HTML content from a webpage.
 
         Args:
