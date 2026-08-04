@@ -61,6 +61,53 @@ SESSION_COLLECTION_SCHEMA = [
     },
 ]
 
+RUNS_COLLECTION_SCHEMA = [
+    {"key": "run_id"},
+    {"key": "session_id"},
+    {"key": "run_type"},
+    {"key": "agent_id"},
+    {"key": "team_id"},
+    {"key": "workflow_id"},
+    {"key": "user_id"},
+    {"key": "parent_run_id"},
+    {"key": "status"},
+    {"key": "created_at"},
+    {"key": "updated_at"},
+    # Compound index: ordered fetch of runs per session (used by
+    # _get_session_runs_docs — the hot path for reading a session's history).
+    {"key": [("session_id", "ASCENDING"), ("run_index", "ASCENDING")], "collection_group": False},
+    # get_runs supports filter-by-any-of + default order by run_index/created_at.
+    # Firestore requires a composite index for every filter+order combo — without
+    # these, queries fail at runtime with FAILED_PRECONDITION or fall back to
+    # unindexed scans that scale linearly with collection size.
+    {
+        "key": [("session_id", "ASCENDING"), ("status", "ASCENDING"), ("run_index", "ASCENDING")],
+        "collection_group": False,
+    },
+    {
+        "key": [("session_id", "ASCENDING"), ("agent_id", "ASCENDING"), ("run_index", "ASCENDING")],
+        "collection_group": False,
+    },
+    {
+        "key": [("session_id", "ASCENDING"), ("team_id", "ASCENDING"), ("run_index", "ASCENDING")],
+        "collection_group": False,
+    },
+    {
+        "key": [("session_id", "ASCENDING"), ("workflow_id", "ASCENDING"), ("run_index", "ASCENDING")],
+        "collection_group": False,
+    },
+    {"key": [("user_id", "ASCENDING"), ("created_at", "DESCENDING")], "collection_group": False},
+    {"key": [("agent_id", "ASCENDING"), ("created_at", "DESCENDING")], "collection_group": False},
+    {"key": [("team_id", "ASCENDING"), ("created_at", "DESCENDING")], "collection_group": False},
+    {"key": [("workflow_id", "ASCENDING"), ("created_at", "DESCENDING")], "collection_group": False},
+    {"key": [("status", "ASCENDING"), ("created_at", "DESCENDING")], "collection_group": False},
+    # Common HITL / background polling: find PENDING/RUNNING runs per user.
+    {
+        "key": [("user_id", "ASCENDING"), ("status", "ASCENDING"), ("created_at", "DESCENDING")],
+        "collection_group": False,
+    },
+]
+
 USER_MEMORY_COLLECTION_SCHEMA = [
     {"key": "memory_id", "unique": True},
     {"key": "user_id"},
@@ -168,6 +215,7 @@ def get_collection_indexes(collection_type: str) -> List[Dict[str, Any]]:
     """Get the index definitions for a specific collection type."""
     index_definitions = {
         "sessions": SESSION_COLLECTION_SCHEMA,
+        "runs": RUNS_COLLECTION_SCHEMA,
         "memories": USER_MEMORY_COLLECTION_SCHEMA,
         "metrics": METRICS_COLLECTION_SCHEMA,
         "evals": EVAL_COLLECTION_SCHEMA,
