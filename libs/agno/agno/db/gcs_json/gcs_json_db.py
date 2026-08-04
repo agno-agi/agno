@@ -201,10 +201,13 @@ class GcsJsonDb(BaseDb):
         self._write_json_file(self.runs_table_name, rows)
 
     def _get_session_runs_data(self, session_id: str) -> List[Dict[str, Any]]:
+        """run_index is injected into run_data so RunOutput carries its DB position."""
         all_runs = self._read_runs_file(create_table_if_not_found=False)
-        rows = [r for r in all_runs if r.get("session_id") == session_id]
+        rows = [r for r in all_runs if r.get("session_id") == session_id and "run_data" in r]
         rows.sort(key=lambda r: (r.get("run_index") or 0, r.get("created_at") or 0))
-        return [r["run_data"] for r in rows if "run_data" in r]
+        for r in rows:
+            r["run_data"]["run_index"] = r["run_index"]
+        return [r["run_data"] for r in rows]
 
     def _get_sessions_runs_data(self, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
         if not session_ids:

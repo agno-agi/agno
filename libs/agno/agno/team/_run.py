@@ -85,7 +85,6 @@ from agno.run.team import (
     TeamRunOutputEvent,
 )
 from agno.session import TeamSession
-from agno.session._utils import resolve_run_index
 from agno.tools.function import Function
 from agno.utils.agent import (
     await_for_open_threads,
@@ -3392,9 +3391,8 @@ async def _arun_background(
     team_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
     _update_metadata(team, session=team_session)
     team_session.upsert_run(run_response=run_response)
-    run_index = resolve_run_index(team_session, run_response)
     await asave_session(team, session=team_session)
-    await asave_run(team, run=run_response, session_id=session_id, user_id=user_id, run_index=run_index)
+    await asave_run(team, run=run_response, session_id=session_id, user_id=user_id, run_index=run_response.run_index)
 
     log_info(f"Background run {run_response.run_id} created with PENDING status")
 
@@ -3481,9 +3479,8 @@ async def _arun_background_stream(
     team_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
     _update_metadata(team, session=team_session)
     team_session.upsert_run(run_response=run_response)
-    run_index = resolve_run_index(team_session, run_response)
     await asave_session(team, session=team_session)
-    await asave_run(team, run=run_response, session_id=session_id, user_id=user_id, run_index=run_index)
+    await asave_run(team, run=run_response, session_id=session_id, user_id=user_id, run_index=run_response.run_index)
 
     log_info(f"Background stream run {run_id} persisted with RUNNING status")
 
@@ -4463,9 +4460,7 @@ def _persist_member_runs_for_team_run(team: "Team", session: TeamSession, team_r
             log_debug(f"Failed to persist member run {getattr(member_run, 'run_id', None)}: {e}")
 
 
-async def _apersist_member_runs_for_team_run(
-    team: "Team", session: TeamSession, team_run_id: Optional[str]
-) -> None:
+async def _apersist_member_runs_for_team_run(team: "Team", session: TeamSession, team_run_id: Optional[str]) -> None:
     from agno.team._session import asave_run
 
     for idx, member_run in _iter_member_runs_for_team_run(session, team_run_id):
@@ -4518,7 +4513,6 @@ def _cleanup_and_store(
 
     # Add scrubbed RunOutput to Team Session
     session.upsert_run(run_response=storage_copy)
-    run_index = resolve_run_index(session, storage_copy)
 
     # Calculate session metrics
     update_session_metrics(team, session=session, run_response=run_response)
@@ -4544,7 +4538,7 @@ def _cleanup_and_store(
         run=storage_copy,
         session_id=session.session_id,
         user_id=session.user_id,
-        run_index=run_index,
+        run_index=storage_copy.run_index,
     )
 
     # Update approval run_status if this run has an associated approval.
@@ -4589,7 +4583,6 @@ async def _acleanup_and_store(
 
     # Add scrubbed RunOutput to Team Session
     session.upsert_run(run_response=storage_copy)
-    run_index = resolve_run_index(session, storage_copy)
 
     # Calculate session metrics
     update_session_metrics(team, session=session, run_response=run_response)
@@ -4615,7 +4608,7 @@ async def _acleanup_and_store(
         run=storage_copy,
         session_id=session.session_id,
         user_id=session.user_id,
-        run_index=run_index,
+        run_index=storage_copy.run_index,
     )
 
     # Update approval run_status if this run has an associated approval.
@@ -4720,7 +4713,6 @@ def _persist_team_run_in_session(
         storage_copy.session_state = run_context.session_state
 
     session.upsert_run(run_response=storage_copy)
-    run_index = resolve_run_index(session, storage_copy)
     update_session_metrics(team, session=session, run_response=run_response)
 
     if run_context is not None and run_context.session_state is not None:
@@ -4739,7 +4731,7 @@ def _persist_team_run_in_session(
         run=storage_copy,
         session_id=session.session_id,
         user_id=session.user_id,
-        run_index=run_index,
+        run_index=storage_copy.run_index,
     )
 
 
@@ -4776,7 +4768,6 @@ async def _apersist_team_run_in_session(
         storage_copy.session_state = run_context.session_state
 
     session.upsert_run(run_response=storage_copy)
-    run_index = resolve_run_index(session, storage_copy)
     update_session_metrics(team, session=session, run_response=run_response)
 
     if run_context is not None and run_context.session_state is not None:
@@ -4795,7 +4786,7 @@ async def _apersist_team_run_in_session(
         run=storage_copy,
         session_id=session.session_id,
         user_id=session.user_id,
-        run_index=run_index,
+        run_index=storage_copy.run_index,
     )
 
 
@@ -6449,7 +6440,7 @@ def _mark_team_run_regenerated(
                 run=r,
                 session_id=session.session_id,
                 user_id=session.user_id,
-                run_index=resolve_run_index(session, r),
+                run_index=r.run_index,
             )
             return
 
@@ -6470,7 +6461,7 @@ async def _amark_team_run_regenerated(
                 run=r,
                 session_id=session.session_id,
                 user_id=session.user_id,
-                run_index=resolve_run_index(session, r),
+                run_index=r.run_index,
             )
             return
 
@@ -7810,9 +7801,10 @@ async def _acontinue_run_background_stream(
     if run_response is not None:
         run_response.status = RunStatus.running
         team_session.upsert_run(run_response=run_response)
-        run_index = resolve_run_index(team_session, run_response)
         await asave_session(team, session=team_session)
-        await asave_run(team, run=run_response, session_id=session_id, user_id=user_id, run_index=run_index)
+        await asave_run(
+            team, run=run_response, session_id=session_id, user_id=user_id, run_index=run_response.run_index
+        )
         log_info(f"Background continue-run stream {_run_id} persisted with RUNNING status")
     else:
         log_info(f"Background continue-run stream {_run_id} spawned; run will be loaded by the task")

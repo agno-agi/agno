@@ -74,7 +74,6 @@ from agno.run.cancel import (
 from agno.run.messages import RunMessages
 from agno.run.requirement import RunRequirement
 from agno.session import AgentSession
-from agno.session._utils import resolve_run_index
 from agno.tools.function import Function
 from agno.utils.agent import (
     await_for_open_threads,
@@ -1961,9 +1960,9 @@ async def _arun_background(
     agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
     update_metadata(agent, session=agent_session)
     agent_session.upsert_run(run=run_response)
-    run_index = resolve_run_index(agent_session, run_response)
     await asave_session(agent, session=agent_session)
-    await asave_run(agent, run=run_response, session_id=session_id, user_id=user_id, run_index=run_index)
+    # run_index=None for new runs → DB computes via MAX+1 backfill
+    await asave_run(agent, run=run_response, session_id=session_id, user_id=user_id, run_index=run_response.run_index)
 
     log_info(f"Background run {run_response.run_id} created with PENDING status")
 
@@ -2052,9 +2051,9 @@ async def _arun_background_stream(
     agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
     update_metadata(agent, session=agent_session)
     agent_session.upsert_run(run=run_response)
-    run_index = resolve_run_index(agent_session, run_response)
     await asave_session(agent, session=agent_session)
-    await asave_run(agent, run=run_response, session_id=session_id, user_id=user_id, run_index=run_index)
+    # run_index=None for new runs → DB computes via MAX+1 backfill
+    await asave_run(agent, run=run_response, session_id=session_id, user_id=user_id, run_index=run_response.run_index)
 
     log_info(f"Background stream run {run_id} persisted with RUNNING status")
 
@@ -5737,7 +5736,6 @@ def persist_run_in_session(
 
     # Add scrubbed RunOutput to Agent Session
     session.upsert_run(run=storage_copy)
-    run_index = resolve_run_index(session, storage_copy)
 
     # Calculate session metrics
     update_session_metrics(agent, session=session, run_response=run_response)
@@ -5750,13 +5748,14 @@ def persist_run_in_session(
             session.session_data = {"session_state": run_context.session_state}
 
     # Persist the session row and this single run (both O(1))
+    # run_index from RunOutput: None for new runs → DB computes via MAX+1 backfill
     _session.save_session(agent, session=session)
     _session.save_run(
         agent,
         run=storage_copy,
         session_id=session.session_id,
         user_id=session.user_id,
-        run_index=run_index,
+        run_index=storage_copy.run_index,
     )
 
 
@@ -5774,7 +5773,6 @@ async def apersist_run_in_session(
         storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context, isolate_inflight=True)
 
     session.upsert_run(run=storage_copy)
-    run_index = resolve_run_index(session, storage_copy)
     update_session_metrics(agent, session=session, run_response=run_response)
 
     if run_context is not None and run_context.session_state is not None:
@@ -5783,13 +5781,14 @@ async def apersist_run_in_session(
         else:
             session.session_data = {"session_state": run_context.session_state}
 
+    # run_index from RunOutput: None for new runs → DB computes via MAX+1 backfill
     await _session.asave_session(agent, session=session)
     await _session.asave_run(
         agent,
         run=storage_copy,
         session_id=session.session_id,
         user_id=session.user_id,
-        run_index=run_index,
+        run_index=storage_copy.run_index,
     )
 
 
@@ -5975,12 +5974,13 @@ def _mark_run_regenerated(
     for r in session.runs or []:
         if r.run_id == original_run_id:
             r.status = RunStatus.regenerated
+            # Existing run loaded from DB already has run_index set
             save_run(
                 agent,
                 run=cast(RunOutput, r),
                 session_id=session.session_id,
                 user_id=session.user_id,
-                run_index=resolve_run_index(session, r),
+                run_index=r.run_index,
             )
             return
 
@@ -5996,12 +5996,13 @@ async def _amark_run_regenerated(
     for r in session.runs or []:
         if r.run_id == original_run_id:
             r.status = RunStatus.regenerated
+            # Existing run loaded from DB already has run_index set
             await asave_run(
                 agent,
                 run=cast(RunOutput, r),
                 session_id=session.session_id,
                 user_id=session.user_id,
-                run_index=resolve_run_index(session, r),
+                run_index=r.run_index,
             )
             return
 

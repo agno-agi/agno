@@ -255,11 +255,17 @@ class DynamoDb(BaseDb):
         return items
 
     def _get_session_runs_data(self, session_id: str) -> List[Dict[str, Any]]:
-        """Return raw run_data dicts for a session, ordered by run_index then created_at."""
+        """Return raw run_data dicts for a session, ordered by run_index then created_at.
+
+        run_index is injected into run_data so RunOutput carries its DB position.
+        """
         items = self._query_runs_by_session(session_id)
         rows = [deserialize_from_dynamodb_item(it) for it in items]
+        rows = [r for r in rows if "run_data" in r]
         rows.sort(key=lambda r: (r.get("run_index") or 0, r.get("created_at") or 0))
-        return [r["run_data"] for r in rows if "run_data" in r]
+        for r in rows:
+            r["run_data"]["run_index"] = r["run_index"]
+        return [r["run_data"] for r in rows]
 
     def _get_sessions_runs_data(self, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
         if not session_ids:

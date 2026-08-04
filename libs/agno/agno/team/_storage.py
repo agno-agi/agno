@@ -408,9 +408,7 @@ async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optio
 
                 if _has_async_db(team):
                     await asave_session(team, session=team_session)
-                    await _aupsert_run(
-                        team, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0
-                    )
+                    await _aupsert_run(team, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
                 else:
                     save_session(team, session=team_session)
                     _upsert_run(team, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)

@@ -372,7 +372,10 @@ class RedisDb(BaseDb):
             raise e
 
     def _get_session_runs_data(self, session_id: str) -> List[Dict[str, Any]]:
-        """Get raw run_data dicts for a session, ordered by run_index."""
+        """Get raw run_data dicts for a session, ordered by run_index.
+
+        run_index is injected into run_data so RunOutput carries its DB position.
+        """
         index_key = self._runs_by_session_index_key(session_id)
         try:
             run_ids: List[Any] = list(self.redis_client.zrange(index_key, 0, -1))  # type: ignore[arg-type]
@@ -382,16 +385,15 @@ class RedisDb(BaseDb):
         if not run_ids:
             return []
 
-        ordered: List[Dict[str, Any]] = []
+        rows: List[Dict[str, Any]] = []
         for rid in run_ids:
             run_id = rid.decode() if isinstance(rid, bytes) else str(rid)
             row = self._get_record("runs", run_id)
-            if not row:
-                continue
-            run_data = row.get("run_data")
-            if run_data is not None:
-                ordered.append(run_data)
-        return ordered
+            if row and row.get("run_data") is not None:
+                rows.append(row)
+        for row in rows:
+            row["run_data"]["run_index"] = row["run_index"]
+        return [row["run_data"] for row in rows]
 
     def _get_sessions_runs_data(self, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
         """Get raw run_data dicts for several sessions, grouped by session_id."""

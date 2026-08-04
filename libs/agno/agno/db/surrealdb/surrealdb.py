@@ -282,9 +282,11 @@ class SurrealDb(BaseDb):
                 dict,
             )
             rows = [desurrealize_run_row(r) for r in rows_raw]
-            run_data = [r["run_data"] for r in rows if "run_data" in r]
-            run_data.reverse()
-            return run_data
+            rows = [r for r in rows if "run_data" in r]
+            for r in rows:
+                r["run_data"]["run_index"] = r["run_index"]
+            rows.reverse()
+            return [r["run_data"] for r in rows]
         rows_raw = self._query(
             f"SELECT *, run_index ?? 0 AS _ri, created_at ?? 0 AS _ca FROM {runs_table} "
             "WHERE session_id = $sid ORDER BY _ri ASC, _ca ASC",
@@ -292,7 +294,10 @@ class SurrealDb(BaseDb):
             dict,
         )
         rows = [desurrealize_run_row(r) for r in rows_raw]
-        return [r["run_data"] for r in rows if "run_data" in r]
+        rows = [r for r in rows if "run_data" in r]
+        for r in rows:
+            r["run_data"]["run_index"] = r["run_index"]
+        return [r["run_data"] for r in rows]
 
     def _get_sessions_runs_data(self, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
         if not session_ids:

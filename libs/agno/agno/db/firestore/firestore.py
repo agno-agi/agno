@@ -320,13 +320,19 @@ class FirestoreDb(BaseDb):
 
     # -- Run methods --
     def _get_session_runs_docs(self, runs_collection_ref, session_id: str) -> List[Dict[str, Any]]:
-        """Get the raw run_data dicts for the given session, in insertion order."""
+        """Get the raw run_data dicts for the given session, in insertion order.
+
+        run_index is injected into run_data so RunOutput carries its DB position.
+        """
         query = (
             runs_collection_ref.where(filter=FieldFilter("session_id", "==", session_id))
             .order_by("run_index")
             .order_by("created_at")
         )
-        return [doc.to_dict().get("run_data") for doc in query.stream() if doc.exists]
+        docs = [doc.to_dict() for doc in query.stream() if doc.exists and doc.to_dict().get("run_data")]
+        for doc in docs:
+            doc["run_data"]["run_index"] = doc["run_index"]
+        return [doc["run_data"] for doc in docs]
 
     def _get_sessions_runs_docs(self, runs_collection_ref, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
         """Get the raw run_data dicts for several sessions, grouped by session_id.
