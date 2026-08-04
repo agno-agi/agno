@@ -333,24 +333,36 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
         return result
 
     def register_member_run(self, team_run_id: str, member_run_id: str) -> None:
-        """Record that a member run belongs to a team run for cancel-cascade."""
-        client = self._ensure_sync_client()
-        key = self._get_members_key(team_run_id)
-        pipe = client.pipeline()
-        pipe.sadd(key, member_run_id)
-        if self.ttl_seconds and self.ttl_seconds > 0:
-            pipe.expire(key, self.ttl_seconds)
-        pipe.execute()
+        """Record that a member run belongs to a team run for cancel-cascade.
+
+        FAIL-OPEN like every coordination write here: this is called from
+        inside member-delegation tool execution, and a Redis blip must
+        degrade the cancel-cascade (this member is missed by a later team
+        cancel), never error a healthy team run mid-flight."""
+        try:
+            client = self._ensure_sync_client()
+            key = self._get_members_key(team_run_id)
+            pipe = client.pipeline()
+            pipe.sadd(key, member_run_id)
+            if self.ttl_seconds and self.ttl_seconds > 0:
+                pipe.expire(key, self.ttl_seconds)
+            pipe.execute()
+        except Exception as e:
+            log_warning(f"Member-run registration unavailable (Redis fault, failing open): {e}")
 
     async def aregister_member_run(self, team_run_id: str, member_run_id: str) -> None:
-        """Record that a member run belongs to a team run for cancel-cascade (async version)."""
-        client = self._ensure_async_client()
-        key = self._get_members_key(team_run_id)
-        pipe = client.pipeline()
-        pipe.sadd(key, member_run_id)
-        if self.ttl_seconds and self.ttl_seconds > 0:
-            pipe.expire(key, self.ttl_seconds)
-        await pipe.execute()
+        """Record that a member run belongs to a team run for cancel-cascade
+        (async version). Fail-open: see register_member_run."""
+        try:
+            client = self._ensure_async_client()
+            key = self._get_members_key(team_run_id)
+            pipe = client.pipeline()
+            pipe.sadd(key, member_run_id)
+            if self.ttl_seconds and self.ttl_seconds > 0:
+                pipe.expire(key, self.ttl_seconds)
+            await pipe.execute()
+        except Exception as e:
+            log_warning(f"Member-run registration unavailable (Redis fault, failing open): {e}")
 
     def _decode_members(self, members: Iterable[Any]) -> Set[str]:
         """Decode a Redis set response (bytes or str) into a Set[str]."""
@@ -373,11 +385,22 @@ class RedisRunCancellationManager(BaseRunCancellationManager):
         return self._decode_members(results[0] or set())
 
     def cleanup_member_runs(self, team_run_id: str) -> None:
-        """Drop a team run's member mapping when the team run finishes."""
-        client = self._ensure_sync_client()
-        client.delete(self._get_members_key(team_run_id))
+        """Drop a team run's member mapping when the team run finishes.
+
+        FAIL-OPEN: team finalize calls this right before the terminal save,
+        and a Redis blip must not error out a run that already succeeded -
+        an uncleaned mapping simply expires with its TTL."""
+        try:
+            client = self._ensure_sync_client()
+            client.delete(self._get_members_key(team_run_id))
+        except Exception as e:
+            log_warning(f"Member-run cleanup unavailable (Redis fault, failing open): {e}")
 
     async def acleanup_member_runs(self, team_run_id: str) -> None:
-        """Drop a team run's member mapping when the team run finishes (async version)."""
-        client = self._ensure_async_client()
-        await client.delete(self._get_members_key(team_run_id))
+        """Drop a team run's member mapping when the team run finishes
+        (async version). Fail-open: see cleanup_member_runs."""
+        try:
+            client = self._ensure_async_client()
+            await client.delete(self._get_members_key(team_run_id))
+        except Exception as e:
+            log_warning(f"Member-run cleanup unavailable (Redis fault, failing open): {e}")
