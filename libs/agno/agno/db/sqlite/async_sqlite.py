@@ -33,13 +33,13 @@ from agno.db.sqlite.utils import (
     serialize_cultural_knowledge_for_db,
 )
 from agno.db.utils import (
+    HISTORY_SKIP_STATUSES,
     CustomJSONEncoder,
     build_single_run_row,
     deserialize_run,
     deserialize_session,
     deserialize_session_json_fields,
     deserialize_sessions,
-    HISTORY_SKIP_STATUSES,
     filter_context_runs,
     merge_runs_table_with_legacy_blob,
     serialize_session_json_fields,
@@ -63,6 +63,9 @@ except ImportError:
 
 
 class AsyncSqliteDb(AsyncBaseDb):
+    # Indexed "most recent N runs" reads are supported (see BaseDb.supports_runs_limit).
+    supports_runs_limit: bool = True
+
     def __init__(
         self,
         db_file: Optional[str] = None,
@@ -639,8 +642,9 @@ class AsyncSqliteDb(AsyncBaseDb):
                 .where(runs_table.c.parent_run_id.is_(None))
                 .where(or_(runs_table.c.status.is_(None), runs_table.c.status.notin_(HISTORY_SKIP_STATUSES)))
                 .order_by(
-                    func.coalesce(runs_table.c.run_index, 0).desc(),
-                    func.coalesce(runs_table.c.created_at, 0).desc(),
+                    runs_table.c.created_at.desc(),
+                    runs_table.c.run_index.desc(),
+                    runs_table.c.run_id.desc(),
                 )
                 .limit(limit)
             )
@@ -652,8 +656,9 @@ class AsyncSqliteDb(AsyncBaseDb):
             select(runs_table.c.run_data)
             .where(runs_table.c.session_id == session_id)
             .order_by(
-                func.coalesce(runs_table.c.run_index, 0).asc(),
-                func.coalesce(runs_table.c.created_at, 0).asc(),
+                runs_table.c.created_at.asc(),
+                runs_table.c.run_index.asc(),
+                runs_table.c.run_id.asc(),
             )
         )
         result = await sess.execute(stmt)

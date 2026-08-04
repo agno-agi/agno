@@ -145,10 +145,15 @@ def read_session(
     """
     if not agent.db:
         raise ValueError("Db not initialized")
-    # Every adapter accepts runs_limit; those that don't optimize it load the full
-    # history (a safe superset), so we can pass it unconditionally.
+    # Only pass runs_limit to adapters that declare support for it. Omitting the
+    # keyword otherwise keeps third-party BaseDb subclasses on the pre-runs_limit
+    # get_session signature working (they'd raise an unexpected-keyword TypeError).
+    if runs_limit is not None and getattr(agent.db, "supports_runs_limit", False):
+        return agent.db.get_session(  # type: ignore
+            session_id=session_id, session_type=session_type, user_id=user_id, runs_limit=runs_limit
+        )
     return agent.db.get_session(  # type: ignore
-        session_id=session_id, session_type=session_type, user_id=user_id, runs_limit=runs_limit
+        session_id=session_id, session_type=session_type, user_id=user_id
     )
 
 
@@ -164,14 +169,22 @@ async def aread_session(
 
     if not agent.db:
         raise ValueError("Db not initialized")
-    # Every adapter accepts runs_limit; those that don't optimize it load the full
-    # history (a safe superset), so we can pass it unconditionally.
+    # Only pass runs_limit to adapters that declare support (see read_session).
+    supported = runs_limit is not None and getattr(agent.db, "supports_runs_limit", False)
     if _init.has_async_db(agent):
+        if supported:
+            return await agent.db.get_session(  # type: ignore
+                session_id=session_id, session_type=session_type, user_id=user_id, runs_limit=runs_limit
+            )
         return await agent.db.get_session(  # type: ignore
+            session_id=session_id, session_type=session_type, user_id=user_id
+        )
+    if supported:
+        return agent.db.get_session(  # type: ignore
             session_id=session_id, session_type=session_type, user_id=user_id, runs_limit=runs_limit
         )
     return agent.db.get_session(  # type: ignore
-        session_id=session_id, session_type=session_type, user_id=user_id, runs_limit=runs_limit
+        session_id=session_id, session_type=session_type, user_id=user_id
     )
 
 

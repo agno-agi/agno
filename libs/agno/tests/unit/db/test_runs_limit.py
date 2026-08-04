@@ -137,8 +137,8 @@ class TestGetSessionsIncludeRuns:
 
 
 class TestSchemaHasNoBuilderBreakingMetadata:
-    """Every SQL adapter must ship the (session_id, run_index) composite index so
-    ``get_session(runs_limit=N)`` (WHERE session_id=? ORDER BY run_index DESC LIMIT N)
+    """Every SQL adapter must ship the (session_id, created_at) composite index so
+    ``get_session(runs_limit=N)`` (WHERE session_id=? ORDER BY created_at DESC LIMIT N)
     is index-served. Postgres/SQLite declare it under ``__composite_indexes__``;
     MySQL/SingleStore builders pop ``_composite_indexes`` before iterating columns."""
 
@@ -148,7 +148,7 @@ class TestSchemaHasNoBuilderBreakingMetadata:
 
         for schema in (mysql_runs(), singlestore_runs()):
             idx = schema.get("_composite_indexes", [])
-            assert any(i["columns"] == ["session_id", "run_index"] for i in idx)
+            assert any(i["columns"] == ["session_id", "created_at"] for i in idx)
             # Every remaining (column) entry must still be a real column config so the
             # builder's ``col_config["type"]`` access does not KeyError.
             for name, cfg in schema.items():
@@ -162,7 +162,7 @@ class TestSchemaHasNoBuilderBreakingMetadata:
 
         for schema in (pg_runs(), sqlite_runs()):
             idx = schema.get("__composite_indexes__", [])
-            assert any(i["columns"] == ["session_id", "run_index"] for i in idx)
+            assert any(i["columns"] == ["session_id", "created_at"] for i in idx)
 
 
 class TestBoundedHistoryGate:
@@ -197,6 +197,45 @@ class TestBoundedHistoryGate:
 
         db = SqliteDb(db_file=tempfile.mktemp(suffix=".db"))
         assert _bounded_history_runs_limit(self._agent(db), 3, [RunStatus.error]) is None
+
+    def test_unsupported_db_falls_back(self):
+        # An adapter that does not declare supports_runs_limit must never be bounded,
+        # so read_session never passes it an unexpected runs_limit kwarg.
+        from agno.agent._session import _bounded_history_runs_limit
+
+        assert _bounded_history_runs_limit(self._agent(InMemoryDb()), 3, None) is None
+
+
+class TestCapabilityFlag:
+    """supports_runs_limit gates the whole optimization; third-party BaseDb
+    subclasses on the old get_session signature must not receive runs_limit."""
+
+    def test_sql_adapters_declare_support(self):
+        assert SqliteDb.supports_runs_limit is True
+
+    def test_non_sql_adapters_do_not(self):
+        from agno.db.base import BaseDb
+
+        assert BaseDb.supports_runs_limit is False
+        assert InMemoryDb.supports_runs_limit is False
+        assert JsonDb.supports_runs_limit is False
+
+
+class TestIncludeRunsAccepted:
+    """Every adapter's get_sessions must accept include_runs (P2): a BaseDb-typed
+    caller can legally pass it, so a missing kwarg would be a runtime TypeError."""
+
+    def test_include_runs_false_omits_runs(self):
+        for make_db in (_make_inmemory, _make_json):
+            db = make_db(COMPLETED)
+            sessions, _ = db.get_sessions(deserialize=False, include_runs=False)
+            assert sessions, "expected sessions in the list"
+            assert all(not s.get("runs") for s in sessions)
+
+    def test_include_runs_true_is_default_behavior(self):
+        db = _make_json(COMPLETED)
+        with_runs, _ = db.get_sessions(deserialize=False, include_runs=True)
+        assert any(s.get("runs") for s in with_runs)
 
 
 _FILTER_SPECS = [
@@ -287,6 +326,16 @@ class TestRunsLimitNullRunIndex:
                 kwargs["run_index"] = run_index
             db.upsert_run(run, **kwargs)
         return db
+
+    def test_bounded_returns_the_actual_newest_runs(self):
+        # r2/r3 (NULL index) are the newest by created_at (1002/1003). Assert the
+        # concrete expected IDs -- not just parity with full-load -- so a COALESCE
+        # (run_index, 0) style ordering, which sorts NULL as *oldest*, would fail here.
+        db = self._make_mixed_index_db()
+        assert _ids(db.get_session("s1", deserialize=False, runs_limit=None)["runs"]) == ["r0", "r1", "r2", "r3"]
+        assert _ids(db.get_session("s1", deserialize=False, runs_limit=1)["runs"]) == ["r3"]
+        assert _ids(db.get_session("s1", deserialize=False, runs_limit=2)["runs"]) == ["r2", "r3"]
+        assert _ids(db.get_session("s1", deserialize=False, runs_limit=3)["runs"]) == ["r1", "r2", "r3"]
 
     def test_bounded_matches_full_load_slice_with_null_index(self):
         db = self._make_mixed_index_db()

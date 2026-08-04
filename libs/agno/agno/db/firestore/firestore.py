@@ -763,8 +763,13 @@ class FirestoreDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """Get all sessions.
+
+        Pass ``include_runs=False`` to skip attaching each session's run history —
+        a large, usually-unnecessary read for list views. Defaults to True to
+        preserve existing behavior.
 
         Args:
             session_type (Optional[SessionType]): The type of session to get.
@@ -851,13 +856,16 @@ class FirestoreDb(BaseDb):
 
             # Attach runs from the runs collection, merged with any runs still
             # in the legacy `runs` field.
-            if runs_collection_ref is not None and sessions_raw:
+            if include_runs and runs_collection_ref is not None and sessions_raw:
                 runs_by_session = self._get_sessions_runs_docs(
                     runs_collection_ref, [s["session_id"] for s in sessions_raw]
                 )
                 for s in sessions_raw:
                     runs_data = runs_by_session.get(s["session_id"], [])
                     s["runs"] = merge_runs_table_with_legacy_blob(runs_data, s.get("runs"))
+            elif not include_runs:
+                for s in sessions_raw:
+                    s["runs"] = None
 
             if not deserialize:
                 return sessions_raw, total_count

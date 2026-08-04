@@ -741,7 +741,14 @@ class DynamoDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
+        """Get all sessions matching the given filters.
+
+        Pass ``include_runs=False`` to skip attaching each session's run history —
+        a large, usually-unnecessary read for list views. Defaults to True to
+        preserve existing behavior.
+        """
         try:
             table_name = self._get_table("sessions")
             if table_name is None:
@@ -876,7 +883,7 @@ class DynamoDb(BaseDb):
                     sessions_data.append(session_data)
 
             # Attach runs from the runs table, merged with legacy blob
-            if sessions_data:
+            if include_runs and sessions_data:
                 try:
                     runs_by_session = self._get_sessions_runs_data([s["session_id"] for s in sessions_data])
                     for s in sessions_data:
@@ -885,6 +892,9 @@ class DynamoDb(BaseDb):
                         )
                 except Exception as e:
                     log_error(f"Failed to attach runs to sessions: {str(e)}")
+            elif not include_runs:
+                for s in sessions_data:
+                    s["runs"] = None
 
             # Filter by session_name in-memory (stored inside session_data JSON)
             if session_name:

@@ -552,8 +552,13 @@ class GcsJsonDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """Get all sessions from the GCS JSON file with filtering and pagination.
+
+        Pass ``include_runs=False`` to skip attaching each session's run history —
+        a large, usually-unnecessary read for list views. Defaults to True to
+        preserve existing behavior.
 
         Args:
             session_type (Optional[SessionType]): The type of the sessions to read.
@@ -627,11 +632,14 @@ class GcsJsonDb(BaseDb):
                 filtered_sessions = filtered_sessions[start_idx : start_idx + limit]
 
             # Attach runs from the runs file, merged with any legacy `runs` field
-            if filtered_sessions:
+            if include_runs and filtered_sessions:
                 runs_by_session = self._get_sessions_runs_data([s["session_id"] for s in filtered_sessions])
                 for s in filtered_sessions:
                     runs_data = runs_by_session.get(s["session_id"], [])
                     s["runs"] = merge_runs_table_with_legacy_blob(runs_data, s.get("runs"))
+            elif not include_runs:
+                for s in filtered_sessions:
+                    s["runs"] = None
 
             if not deserialize:
                 return filtered_sessions, total_count

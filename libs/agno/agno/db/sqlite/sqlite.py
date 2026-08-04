@@ -40,15 +40,15 @@ from agno.db.sqlite.utils import (
     serialize_cultural_knowledge_for_db,
 )
 from agno.db.utils import (
+    HISTORY_SKIP_STATUSES,
     CustomJSONEncoder,
     build_single_run_row,
     deserialize_run,
     deserialize_session,
     deserialize_session_json_fields,
     deserialize_sessions,
-    learning_search_patterns,
-    HISTORY_SKIP_STATUSES,
     filter_context_runs,
+    learning_search_patterns,
     merge_runs_table_with_legacy_blob,
     serialize_session_json_fields,
     validate_pagination,
@@ -72,6 +72,9 @@ except ImportError:
 
 
 class SqliteDb(BaseDb):
+    # Indexed "most recent N runs" reads are supported (see BaseDb.supports_runs_limit).
+    supports_runs_limit: bool = True
+
     def __init__(
         self,
         db_file: Optional[str] = None,
@@ -836,14 +839,19 @@ class SqliteDb(BaseDb):
         the in-memory history window.
         """
         if limit is not None:
+            # Order by created_at (NOT NULL) first so the newest runs are unambiguous
+            # even when run_index is NULL (a background/continue save can store NULL,
+            # which would sort to a backend-dependent extreme). run_index/run_id are
+            # deterministic tiebreakers. Served by the (session_id, created_at) index.
             stmt = (
                 select(runs_table.c.run_data)
                 .where(runs_table.c.session_id == session_id)
                 .where(runs_table.c.parent_run_id.is_(None))
                 .where(or_(runs_table.c.status.is_(None), runs_table.c.status.notin_(HISTORY_SKIP_STATUSES)))
                 .order_by(
-                    func.coalesce(runs_table.c.run_index, 0).desc(),
-                    func.coalesce(runs_table.c.created_at, 0).desc(),
+                    runs_table.c.created_at.desc(),
+                    runs_table.c.run_index.desc(),
+                    runs_table.c.run_id.desc(),
                 )
                 .limit(limit)
             )
@@ -854,8 +862,9 @@ class SqliteDb(BaseDb):
             select(runs_table.c.run_data)
             .where(runs_table.c.session_id == session_id)
             .order_by(
-                func.coalesce(runs_table.c.run_index, 0).asc(),
-                func.coalesce(runs_table.c.created_at, 0).asc(),
+                runs_table.c.created_at.asc(),
+                runs_table.c.run_index.asc(),
+                runs_table.c.run_id.asc(),
             )
         )
         return [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in sess.execute(stmt).fetchall()]

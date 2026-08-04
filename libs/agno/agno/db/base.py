@@ -33,6 +33,11 @@ class ComponentType(str, Enum):
 class BaseDb(ABC):
     """Base abstract class for all our Database implementations."""
 
+    # Whether get_session(runs_limit=N) is honored (an indexed "most recent N runs"
+    # read). False = the adapter loads the full history and callers must not pass
+    # runs_limit to it. SQL adapters override this to True.
+    supports_runs_limit: bool = False
+
     # We assume the database to be up to date with the 2.0.0 release
     default_schema_version = "2.0.0"
 
@@ -1584,6 +1589,9 @@ class BaseDb(ABC):
 
 class AsyncBaseDb(ABC):
     """Base abstract class for all our async database implementations."""
+
+    # See BaseDb.supports_runs_limit. SQL adapters override this to True.
+    supports_runs_limit: bool = False
 
     def __init__(
         self,

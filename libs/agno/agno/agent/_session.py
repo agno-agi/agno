@@ -710,11 +710,11 @@ def _bounded_history_runs_limit(
     the full history, so no capability check is needed here.
     """
     if (
-        agent.db is not None
-        and last_n_runs is not None
+        last_n_runs is not None
         and last_n_runs > 0
         and skip_statuses is None
         and agent.team_id is None
+        and getattr(agent.db, "supports_runs_limit", False)
     ):
         return last_n_runs
     return None

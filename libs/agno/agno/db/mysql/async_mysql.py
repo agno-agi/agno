@@ -56,6 +56,9 @@ except ImportError:
 
 
 class AsyncMySQLDb(AsyncBaseDb):
+    # Indexed "most recent N runs" reads are supported (see BaseDb.supports_runs_limit).
+    supports_runs_limit: bool = True
+
     def __init__(
         self,
         id: Optional[str] = None,
@@ -539,8 +542,9 @@ class AsyncMySQLDb(AsyncBaseDb):
                 .where(runs_table.c.parent_run_id.is_(None))
                 .where(or_(runs_table.c.status.is_(None), runs_table.c.status.notin_(HISTORY_SKIP_STATUSES)))
                 .order_by(
-                    func.coalesce(runs_table.c.run_index, 0).desc(),
-                    func.coalesce(runs_table.c.created_at, 0).desc(),
+                    runs_table.c.created_at.desc(),
+                    runs_table.c.run_index.desc(),
+                    runs_table.c.run_id.desc(),
                 )
                 .limit(limit)
             )
@@ -552,8 +556,9 @@ class AsyncMySQLDb(AsyncBaseDb):
             select(runs_table.c.run_data)
             .where(runs_table.c.session_id == session_id)
             .order_by(
-                func.coalesce(runs_table.c.run_index, 0).asc(),
-                func.coalesce(runs_table.c.created_at, 0).asc(),
+                runs_table.c.created_at.asc(),
+                runs_table.c.run_index.asc(),
+                runs_table.c.run_id.asc(),
             )
         )
         result = await sess.execute(stmt)
@@ -938,9 +943,14 @@ class AsyncMySQLDb(AsyncBaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """
         Get all sessions in the given table. Can filter by user_id and entity_id.
+
+        Pass ``include_runs=False`` to skip attaching each session's run history —
+        a large, usually-unnecessary read for list views. Defaults to True to
+        preserve existing behavior.
 
         Args:
             user_id (Optional[str]): The ID of the user to filter by.
@@ -1020,13 +1030,16 @@ class AsyncMySQLDb(AsyncBaseDb):
 
                 session = [dict(record._mapping) for record in records]
 
-                if runs_table is not None:
+                if include_runs and runs_table is not None:
                     runs_by_session = await self._get_sessions_runs_data(
                         sess=sess, runs_table=runs_table, session_ids=[s["session_id"] for s in session]
                     )
                     for s in session:
                         runs_data = runs_by_session.get(s["session_id"], [])
                         s["runs"] = merge_runs_table_with_legacy_blob(runs_data, s.get("runs"))
+                elif not include_runs:
+                    for s in session:
+                        s["runs"] = None
 
                 if not deserialize:
                     return session, total_count
