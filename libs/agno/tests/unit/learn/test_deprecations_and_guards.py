@@ -37,7 +37,7 @@ def test_enable_user_memories_is_quiet(caplog, tmp_path) -> None:
     from agno.db.sqlite import SqliteDb
 
     with caplog.at_level(logging.WARNING):
-        agent = Agent(db=SqliteDb(db_file=str(tmp_path / "a.db")), enable_user_memories=True)
+        agent = Agent(db=SqliteDb(db_file=str(tmp_path / "a.db")), update_memory_on_run=True)
         agent.deep_copy()
     assert agent.update_memory_on_run is True
     assert not any("enable_user_memories" in r.getMessage() for r in caplog.records)

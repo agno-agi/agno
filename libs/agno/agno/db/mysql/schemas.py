@@ -52,6 +52,7 @@ EVAL_TABLE_SCHEMA = {
     "evaluated_component_name": {"type": lambda: String(255), "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
+    "user_id": {"type": lambda: String(128), "nullable": True, "index": True},
 }
 
 KNOWLEDGE_TABLE_SCHEMA = {

@@ -1115,11 +1115,11 @@ ImportError: infinity_client not installed, please run `pip install infinity_cli
 
 ---
 
-### session/search_session_history.py
+### session/search_past_sessions.py
 
 **Status:** PASS
 
-**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/07_session/search_session_history.py`.
+**Description:** Executed `.venvs/demo/bin/python cookbook/03_teams/07_session/search_past_sessions.py`.
 
 **Result:** Executed successfully.
 
