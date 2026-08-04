@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Type, Union
 
@@ -45,6 +45,20 @@ class RunContext:
 
 @dataclass
 class BaseRunOutputEvent:
+    # The stream-assigned monotonic index, stamped by the event stream's
+    # add_event at publish time. Stamping the shared object means the
+    # component's own session save persists the REAL index with the stored
+    # event - which is what lets the DB replay fallback honor a client's
+    # last_event_index instead of renumbering from zero (indices are NOT
+    # gapless: retries and continuation legs leave gaps that positional
+    # renumbering destroys). None for events that never rode a stream
+    # (non-streaming runs, legacy rows); to_dict drops None fields, so
+    # storage shape is unchanged for those. kw_only is load-bearing: a
+    # plain defaulted field on this base would break every subclass with
+    # required positional fields (dataclass ordering), including
+    # third-party ones - keyword-only fields are exempt from that rule.
+    event_index: Optional[int] = field(default=None, kw_only=True)
+
     def to_dict(self) -> Dict[str, Any]:
         _dict = {
             k: v

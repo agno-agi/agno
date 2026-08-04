@@ -273,6 +273,50 @@ def format_sse_event_with_index(
         return f"event: message\ndata: {clean_json}\n\n"
 
 
+def stored_event_replay_frames(run_output: Any, run_id: str, last_event_index: Optional[int] = None) -> List[str]:
+    """PATH-3 (DB fallback) replay frames, honoring the client's floor.
+
+    ONE implementation for all three routers - the old triplicated loop
+    ignored last_event_index and renumbered every stored event from zero:
+    duplicates for partially-caught-up clients, and destroyed index
+    continuity (stream indices are NOT gapless - retries and continuation
+    legs leave real gaps that positional renumbering compacted away).
+
+    Events stamped at publish carry their real stream index (event_index);
+    those are floor-filtered and replayed under their stored index.
+    Unstamped legacy events keep the positional fallback and are never
+    floor-filtered: a floor from live-stream indices does not speak their
+    numbering. The meta frame's total reflects what is actually replayed.
+    """
+    from agno.utils.serialize import json_serializer
+
+    floor = last_event_index if last_event_index is not None else -1
+    frames: List[str] = []
+    for position, event in enumerate(getattr(run_output, "events", None) or []):
+        event_dict = event.to_dict()
+        stored_index = event_dict.get("event_index")
+        if stored_index is not None and int(stored_index) <= floor:
+            continue
+        event_dict["event_index"] = int(stored_index) if stored_index is not None else position
+        if "run_id" not in event_dict:
+            event_dict["run_id"] = run_id
+        event_type = event_dict.get("event", "message")
+        frames.append(
+            f"event: {event_type}\n"
+            f"data: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+        )
+    status = run_output.status.value if hasattr(run_output.status, "value") else (run_output.status or "unknown")
+    meta = {
+        "event": "replay",
+        "run_id": run_id,
+        "status": status,
+        "total_events": len(frames),
+        "message": "Run completed. Replaying stored events from database.",
+    }
+    frames.insert(0, f"event: replay\ndata: {json.dumps(meta)}\n\n")
+    return frames
+
+
 async def amark_continue_stream_running(run_id: str) -> None:
     """Sync the event stream at the START of a continue: re-register the run
     (idempotent - a cross-replica continue lands on a replica whose stream has

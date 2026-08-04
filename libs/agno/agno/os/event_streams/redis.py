@@ -302,6 +302,13 @@ class RedisEventStream(BaseEventStream):
         # safe for multi-attempt producers later).
         next_count = await self._redis.incr(self._counter_key(run_id))
         event_index = int(next_count) - 1
+        # Stamp the index onto the event OBJECT: the component accumulates
+        # these same references into run_response.events, so its session save
+        # persists the real index - the durable substrate the DB replay
+        # fallback and post-expiry reopen seeding rely on. Fail-open: an
+        # exotic event object must not kill the publish.
+        with contextlib.suppress(Exception):
+            event.event_index = event_index
         sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=run_id)
 
         pipe = self._redis.pipeline()

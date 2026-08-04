@@ -1916,3 +1916,73 @@ class TestClosingLedger:
         await worker._execute_claimed(claimed)
         statuses = [str(w.get("status", "")).lower() for w in writes]
         assert "running" in statuses, f"expected a fenced RUNNING write, got {writes}"
+
+
+class TestWorkerPathIndexStamp:
+    """Phase-5 item 21 tripwire: the DB-fallback substrate assumes the events
+    the worker PUBLISHES are the same objects the component ACCUMULATES for
+    its session save. If that shared-reference assumption ever breaks (a
+    copy, a reconstruction), indices silently stop reaching storage and the
+    DB replay fallback quietly regresses to positional renumbering - no
+    error anywhere. This test drives the REAL worker streaming path and
+    asserts the component-held objects carry the stream-assigned indices."""
+
+    @pytest.mark.asyncio
+    async def test_component_accumulated_events_carry_stream_indices(self):
+        import agno.os.event_streams as es_mod
+        from agno.os.event_streams import InMemoryEventStream, set_event_stream
+        from agno.os.managers import EventsBuffer, SSESubscriberManager
+        from agno.run.agent import RunContentEvent
+
+        original = es_mod._event_stream
+        stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+        set_event_stream(stream)
+        try:
+            store = InMemoryQueueStore()
+            job = QueuedJob(
+                id="idx1",
+                component_type="agent",
+                component_id="a1",
+                session_id="s1",
+                payload={"input": "hi", "stream": True},
+            ).to_dict()
+            await store.enqueue_job(job)
+
+            accumulated: list = []
+
+            class FakeOutput:
+                run_id = "idx1"
+                status = RunStatus.completed
+
+            class StreamingAgent:
+                id = "a1"
+                db = None
+
+                async def arun(self, **kwargs):
+                    # Accumulate the SAME objects it yields, as the real
+                    # component machinery does into run_response.events
+                    for content in ("a", "b", "c"):
+                        event = RunContentEvent(content=content, run_id="idx1")
+                        accumulated.append(event)
+                        yield event
+                    yield FakeOutput()
+
+            worker = QueueWorker(
+                store=store,
+                resolve_component=lambda t, i: StreamingAgent(),
+                config=make_config(),
+            )
+            claimed = await store.claim_job(worker.worker_id)
+            await worker._execute_claimed(claimed)
+
+            assert (await store.get_job("idx1"))["status"] == "completed"
+            assert [e.event_index for e in accumulated] == [0, 1, 2], (
+                "the component-held event objects must carry the stream-assigned indices - "
+                f"got {[e.event_index for e in accumulated]}; the shared-reference stamp is broken "
+                "and the DB replay fallback will silently renumber"
+            )
+            assert all("event_index" in e.to_dict() for e in accumulated), (
+                "stamped indices must survive serialization into the stored run"
+            )
+        finally:
+            es_mod._event_stream = original

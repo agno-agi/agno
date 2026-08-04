@@ -82,9 +82,16 @@ class InMemoryEventStream(BaseEventStream):
     # ------------------------------------------------------------------
 
     async def add_event(self, run_id: str, event: Any) -> int:
+        import contextlib
+
         from agno.os.utils import format_sse_event_with_index
 
         event_index: int = self._buffer.add_event(run_id, event)
+        # Stamp the index onto the event OBJECT (see the Redis twin): the
+        # component's session save persists the real index with the stored
+        # event, so the DB replay fallback can honor a client's floor.
+        with contextlib.suppress(Exception):
+            event.event_index = event_index
         sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=run_id)
         await self._subscribers.publish(run_id, event_index, sse_data)
         return event_index
