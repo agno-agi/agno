@@ -14,9 +14,27 @@ remaining scope documented in the design note.
 
 import asyncio
 import inspect
+from enum import Enum
 from typing import Any, Dict, Optional
 
-from agno.utils.log import log_warning
+
+class RunPersistOutcome(str, Enum):
+    """Typed result of the atomic run-persistence primitive
+    (``update_run_in_session``) and of ``apersist_run_status``.
+
+    The previous bool/None tri-state conflated three different "False"s -
+    row missing, fence rejection, terminal-row refusal - and the fallback
+    decision had to guess which one it got from the caller's
+    ``expected_attempt``. Guessing wrong meant the unfenced whole-session
+    fallback clobbering a COMPLETED/CANCELLED row. Each outcome now names
+    itself; ``fallback_allowed`` no longer guesses.
+    """
+
+    UPDATED = "updated"  # the atomic primitive wrote the fields
+    MISSING = "missing"  # session or run row not found - the fallback may create it
+    STALE_ATTEMPT = "stale_attempt"  # fence rejected: a newer attempt owns the row. FINAL
+    TERMINAL_REFUSED = "terminal_refused"  # a completed/cancelled row wins over this write. FINAL
+    UNAVAILABLE = "unavailable"  # no atomic primitive - the unfenced fallback is the only write path
 
 
 def _get_db(component: Any) -> Any:
@@ -32,57 +50,65 @@ async def apersist_run_status(
     user_id: Optional[str] = None,
     expected_attempt: Optional[int] = None,
     content_if_absent: Optional[str] = None,
-) -> Optional[bool]:
+) -> RunPersistOutcome:
     """Persist run-status fields atomically when the adapter supports it.
 
-    Tri-state result:
-    - True: the atomic primitive wrote the fields.
-    - False: the atomic primitive RAN and declined - the run row is missing,
-      or (when ``expected_attempt`` was given) the attempt fence rejected this
-      writer because a newer attempt owns the row. When a fence was requested,
-      False is FINAL: falling back to an unfenced whole-session save would
-      hand a fenced-out zombie exactly the clobber the fence exists to stop.
-    - None: no atomic primitive available (no db, no method, or it raised) -
-      the unfenced fallback is the only option and remains legitimate.
+    Returns a ``RunPersistOutcome``. Adapter exceptions PROPAGATE: a DB
+    failure must surface as a failure, never collapse into an outcome that
+    re-opens the unfenced fallback mid-outage (the fence and terminal guards
+    exist precisely for writes that race at odd times). Callers with a retry
+    loop (the queue worker's sweep) treat the raise as not-persisted and come
+    back; producers log it loudly.
+
+    Third-party adapters that still return the legacy bool are mapped to the
+    old semantics: True -> UPDATED; False -> STALE_ATTEMPT when a fence was
+    requested (fence rejections were final), MISSING otherwise (the row does
+    not exist yet and the fallback may create it).
     """
     db = _get_db(component)
     if db is None:
-        return None
+        return RunPersistOutcome.UNAVAILABLE
     method = getattr(db, "update_run_in_session", None)
     if not callable(method):
-        return None
-    try:
-        kwargs: Dict[str, Any] = dict(
-            session_id=session_id,
-            run_id=run_id,
-            fields=fields,
-            expected_attempt=expected_attempt,
-            user_id=user_id,
-        )
-        if content_if_absent is not None:
-            kwargs["content_if_absent"] = content_if_absent
-        if inspect.iscoroutinefunction(method):
-            return bool(await method(**kwargs))
-        return bool(await asyncio.to_thread(method, **kwargs))
-    except Exception as e:
-        # Liveness over strictness: a transient DB error should not strand the
-        # run in a non-terminal state, so the caller may fall back. The fence
-        # bypass this opens needs a zombie AND a coincident DB failure. Loud on
-        # purpose: this downgrade re-opens the clobber window.
-        log_warning(f"Atomic run status persist failed; falling back to unfenced whole-session save: {e}")
-        return None
-
-
-def fallback_allowed(result: Optional[bool], expected_attempt: Optional[int]) -> bool:
-    """Whether the unfenced fallback may run after an atomic-path result."""
+        return RunPersistOutcome.UNAVAILABLE
+    kwargs: Dict[str, Any] = dict(
+        session_id=session_id,
+        run_id=run_id,
+        fields=fields,
+        expected_attempt=expected_attempt,
+        user_id=user_id,
+    )
+    if content_if_absent is not None:
+        kwargs["content_if_absent"] = content_if_absent
+    if inspect.iscoroutinefunction(method):
+        result = await method(**kwargs)
+    else:
+        result = await asyncio.to_thread(method, **kwargs)
+    if isinstance(result, RunPersistOutcome):
+        return result
+    # Legacy bool adapter (third-party): reproduce the historical decisions
     if result is True:
-        return False
-    if result is None:
-        return True
-    # result is False: the atomic path spoke. Without a fence that means the
-    # run row does not exist yet (fallback creates it); with a fence it may
-    # mean a newer attempt owns the row - never override a possible fence.
-    return expected_attempt is None
+        return RunPersistOutcome.UPDATED
+    if expected_attempt is not None:
+        return RunPersistOutcome.STALE_ATTEMPT
+    return RunPersistOutcome.MISSING
+
+
+def fallback_allowed(result: RunPersistOutcome, expected_attempt: Optional[int] = None) -> bool:
+    """Whether the unfenced whole-session fallback may run after the atomic
+    primitive's outcome.
+
+    Only MISSING (the fallback creates the row) and UNAVAILABLE (no atomic
+    primitive - the fallback is the only write path, fenced callers included)
+    allow it. STALE_ATTEMPT and TERMINAL_REFUSED are FINAL: retrying a
+    fenced-out zombie or a write a completed/cancelled row refused through
+    the unfenced save is exactly the clobber those guards exist to stop.
+
+    ``expected_attempt`` is unused and kept for caller compatibility - the
+    fence-vs-missing disambiguation now lives in the outcome itself (legacy
+    bool adapters are mapped inside ``apersist_run_status``).
+    """
+    return result in (RunPersistOutcome.MISSING, RunPersistOutcome.UNAVAILABLE)
 
 
 async def apersist_run_transition(

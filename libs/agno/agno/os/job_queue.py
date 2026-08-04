@@ -664,8 +664,9 @@ class QueueWorker:
             expected_attempt=job.get("attempt"),
         )
         if not fallback_allowed(result, job.get("attempt")):
-            # Written, or fenced out by a newer attempt that owns the row -
-            # either way the unfenced fallback below must not run
+            # UPDATED, STALE_ATTEMPT (a newer attempt owns the row) or
+            # TERMINAL_REFUSED (completed/cancelled wins) - all final; the
+            # unfenced fallback below must not run
             return True
 
         component_type = job["component_type"]
@@ -779,7 +780,7 @@ class QueueWorker:
             status_value = raw_status.value if isinstance(raw_status, RunStatus) else raw_status
             if status_value != RunStatus.error.value:
                 return
-            from agno.run.status_persist import apersist_run_status, fallback_allowed
+            from agno.run.status_persist import RunPersistOutcome, apersist_run_status, fallback_allowed
 
             result = await apersist_run_status(
                 component,
@@ -790,8 +791,12 @@ class QueueWorker:
                 user_id=job.get("user_id"),
                 expected_attempt=job.get("attempt"),
             )
-            if not fallback_allowed(result, job.get("attempt")):
+            if result is RunPersistOutcome.UPDATED:
                 log_info(f"Job queue: restored run row {job['id']} ERROR -> PAUSED for continuation re-drive")
+                return
+            if not fallback_allowed(result, job.get("attempt")):
+                # STALE_ATTEMPT/TERMINAL_REFUSED: final - nothing to restore
+                # over (and nothing was restored, so no success log)
                 return
             # No atomic primitive: read-only session load + patch (same shape
             # as _persist_run_error's workflow fallback)

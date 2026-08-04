@@ -4181,7 +4181,13 @@ class Workflow:
                 # so persist CANCELLED and deregister the run here.
                 log_info(f"Background run {workflow_run_response.run_id} cancelled while waiting for a slot")
                 workflow_run_response.status = RunStatus.cancelled
-                await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
+                try:
+                    await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
+                except Exception:
+                    # A failed persist must not skip the cleanup below (parity
+                    # with the agent/team twins): the atomic primitive raises
+                    # rather than silently falling back, so this is reachable
+                    log_error(f"Failed to persist cancelled state for background run {run_id}", exc_info=True)
                 await acleanup_run(run_id)
             except asyncio.CancelledError:
                 # Task-level shutdown, not run-cancellation: best-effort persist
@@ -4429,7 +4435,15 @@ class Workflow:
                 # persist CANCELLED and deregister the run here.
                 log_info(f"Background stream run {run_context.run_id} cancelled while waiting for a slot")
                 workflow_run_response.status = RunStatus.cancelled
-                await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
+                try:
+                    await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
+                except Exception:
+                    # A failed persist must not skip the cleanup below (parity
+                    # with the agent/team twins)
+                    log_error(
+                        f"Failed to persist cancelled state for background stream run {run_context.run_id}",
+                        exc_info=True,
+                    )
                 await acleanup_run(run_context.run_id)
             except Exception as e:
                 logger.exception("Background streaming workflow execution failed")

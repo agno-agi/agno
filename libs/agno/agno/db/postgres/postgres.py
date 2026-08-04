@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, 
 from uuid import uuid4
 
 if TYPE_CHECKING:
+    from agno.run.status_persist import RunPersistOutcome
     from agno.tracing.schemas import Span, Trace
 
 from agno.db import mcp_oauth_store
@@ -5366,7 +5367,7 @@ class PostgresDb(BaseDb):
         expected_attempt: Optional[int] = None,
         user_id: Optional[str] = None,
         content_if_absent: Optional[str] = None,
-    ) -> bool:
+    ) -> "RunPersistOutcome":
         """Atomically patch fields of ONE run inside the session's runs list.
 
         Row-locked read-modify-write (SELECT ... FOR UPDATE), so concurrent
@@ -5378,12 +5379,21 @@ class PostgresDb(BaseDb):
         reclaimed job's later attempt owns the row; a zombie's stale write is
         discarded). The incoming attempt is stamped onto the run.
 
-        Returns True if the run was found and patched.
+        Returns a typed RunPersistOutcome: UPDATED (patched), MISSING (no
+        session/run row - the caller's fallback may create it),
+        STALE_ATTEMPT (fence rejection, final), TERMINAL_REFUSED (a
+        completed/cancelled row wins, final). Never collapses exceptions
+        into an outcome: a DB failure raises, so it can never be mistaken
+        for a fallback-permitting result.
         """
+        from agno.run.status_persist import RunPersistOutcome
+
         try:
             table = self._get_table(table_type="sessions")
             if table is None:
-                return False
+                # No sessions table yet: no row exists; the fallback's
+                # create-and-save path is the legitimate creator
+                return RunPersistOutcome.MISSING
             with self.Session() as sess, sess.begin():
                 row = sess.execute(
                     select(table.c.runs)
@@ -5392,7 +5402,7 @@ class PostgresDb(BaseDb):
                     .with_for_update()
                 ).fetchone()
                 if row is None or not row[0]:
-                    return False
+                    return RunPersistOutcome.MISSING
                 runs = list(row[0])
                 for i, run in enumerate(runs):
                     if isinstance(run, dict) and run.get("run_id") == run_id:
@@ -5402,7 +5412,7 @@ class PostgresDb(BaseDb):
                             and stored_attempt is not None
                             and stored_attempt > expected_attempt
                         ):
-                            return False  # stale writer fenced out
+                            return RunPersistOutcome.STALE_ATTEMPT  # zombie writer fenced out
                         # A run that reached completed/cancelled is FINAL: a
                         # sweep or drain racing a legitimate completion must
                         # not rewrite it
@@ -5413,7 +5423,7 @@ class PostgresDb(BaseDb):
                             and incoming_status
                             and incoming_status != stored_status
                         ):
-                            return False  # terminal row wins
+                            return RunPersistOutcome.TERMINAL_REFUSED  # terminal row wins
                         updated = dict(run)
                         updated.update(fields)
                         if content_if_absent is not None and not updated.get("content"):
@@ -5429,14 +5439,14 @@ class PostgresDb(BaseDb):
                             .where((table.c.user_id == user_id) | (table.c.user_id.is_(None)))
                             .values(runs=runs, updated_at=int(time.time()))
                         )
-                        return True
-                return False
+                        return RunPersistOutcome.UPDATED
+                return RunPersistOutcome.MISSING
         except Exception as e:
-            # Do NOT collapse unexpected errors into False: the caller treats a
-            # False under a requested fence as final (no fallback), and a
-            # transient DB error must instead surface as "primitive
-            # unavailable" so the terminal state still gets persisted somehow
-            log_warning(f"Error updating run in session (falling back): {e}")
+            # Do NOT collapse unexpected errors into an outcome: the caller's
+            # fallback decision is guard-semantic (MISSING/UNAVAILABLE allow,
+            # STALE_ATTEMPT/TERMINAL_REFUSED forbid), and a transient DB error
+            # fits none of them - it must surface as the failure it is
+            log_warning(f"Error updating run in session: {e}")
             raise
 
     def append_run_to_session_if_absent(

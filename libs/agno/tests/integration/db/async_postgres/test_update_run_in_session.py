@@ -11,6 +11,7 @@ import uuid
 import pytest
 
 from agno.db.postgres import AsyncPostgresDb
+from agno.run.status_persist import RunPersistOutcome
 
 DB_URL = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 
@@ -77,7 +78,8 @@ class TestAtomicRunPatch:
         run_ids = [f"r{i}" for i in range(6)]
         await seed_session(db, "s1", run_ids)
 
-        await asyncio.gather(*[db.update_run_in_session("s1", rid, {"status": "RUNNING"}) for rid in run_ids])
+        results = await asyncio.gather(*[db.update_run_in_session("s1", rid, {"status": "RUNNING"}) for rid in run_ids])
+        assert all(r is RunPersistOutcome.UPDATED for r in results)
 
         runs = await get_runs(db, "s1")
         assert all(runs[rid]["status"] == "RUNNING" for rid in run_ids), runs
@@ -86,15 +88,99 @@ class TestAtomicRunPatch:
     async def test_attempt_fencing_rejects_stale_writer(self, db):
         await seed_session(db, "s1", ["r1"])
         # Attempt 2 (the live reclaimed execution) writes first
-        assert await db.update_run_in_session("s1", "r1", {"status": "COMPLETED"}, expected_attempt=2)
-        # The zombie from attempt 1 arrives late: fenced out
-        assert not await db.update_run_in_session("s1", "r1", {"status": "ERROR"}, expected_attempt=1)
+        result = await db.update_run_in_session("s1", "r1", {"status": "COMPLETED"}, expected_attempt=2)
+        assert result is RunPersistOutcome.UPDATED
+        # The zombie from attempt 1 arrives late: fenced out, typed as such
+        stale = await db.update_run_in_session("s1", "r1", {"status": "ERROR"}, expected_attempt=1)
+        assert stale is RunPersistOutcome.STALE_ATTEMPT
         runs = await get_runs(db, "s1")
         assert runs["r1"]["status"] == "COMPLETED"
         assert runs["r1"]["queue_attempt"] == 2
 
     @pytest.mark.asyncio
-    async def test_missing_run_or_session_returns_false(self, db):
+    async def test_missing_run_or_session_is_typed_missing(self, db):
         await seed_session(db, "s1", ["r1"])
-        assert not await db.update_run_in_session("s1", "nope", {"status": "ERROR"})
-        assert not await db.update_run_in_session("no-session", "r1", {"status": "ERROR"})
+        assert await db.update_run_in_session("s1", "nope", {"status": "ERROR"}) is RunPersistOutcome.MISSING
+        assert await db.update_run_in_session("no-session", "r1", {"status": "ERROR"}) is RunPersistOutcome.MISSING
+
+    @pytest.mark.asyncio
+    async def test_terminal_row_refuses_conflicting_status(self, db):
+        """COMPLETED survives a late CANCELLED write and CANCELLED survives a
+        late ERROR write - typed TERMINAL_REFUSED, so the caller knows the
+        refusal is final and never re-tries it through the unfenced
+        whole-session fallback."""
+        await seed_session(db, "s1", ["r1", "r2"])
+        assert await db.update_run_in_session("s1", "r1", {"status": "COMPLETED"}) is RunPersistOutcome.UPDATED
+        refused = await db.update_run_in_session("s1", "r1", {"status": "CANCELLED"})
+        assert refused is RunPersistOutcome.TERMINAL_REFUSED
+
+        assert await db.update_run_in_session("s1", "r2", {"status": "CANCELLED"}) is RunPersistOutcome.UPDATED
+        refused = await db.update_run_in_session("s1", "r2", {"status": "ERROR"})
+        assert refused is RunPersistOutcome.TERMINAL_REFUSED
+
+        runs = await get_runs(db, "s1")
+        assert runs["r1"]["status"] == "COMPLETED"
+        assert runs["r2"]["status"] == "CANCELLED"
+
+        # Same-status re-write is not a conflict (idempotent terminal write)
+        assert await db.update_run_in_session("s1", "r1", {"status": "COMPLETED"}) is RunPersistOutcome.UPDATED
+
+    @pytest.mark.asyncio
+    async def test_transition_fallback_cannot_clobber_completed_row(self, db):
+        """End-to-end original-bug path: a COMPLETED row + a late unfenced
+        CANCELLED transition. The primitive refuses (TERMINAL_REFUSED); the
+        old ambiguous False sent apersist_run_transition's whole-session
+        fallback - which has no terminal guard - to overwrite the row."""
+        from types import SimpleNamespace
+
+        from agno.run.agent import RunOutput
+        from agno.run.base import RunStatus
+        from agno.run.status_persist import apersist_run_transition
+
+        completed = RunOutput(run_id="r1", session_id="s1", status=RunStatus.completed, content="the real output")
+        table = await db._get_table(table_type="sessions", create_table_if_not_found=True)
+        import time as _time
+
+        async with db.async_session_factory() as sess:
+            async with sess.begin():
+                await sess.execute(
+                    table.insert().values(
+                        session_id="s1",
+                        session_type="agent",
+                        runs=[completed.to_dict()],
+                        created_at=int(_time.time()),
+                    )
+                )
+
+        late = RunOutput(run_id="r1", session_id="s1", status=RunStatus.cancelled)
+        await apersist_run_transition(SimpleNamespace(db=db), "agent", "s1", late)
+
+        runs = await get_runs(db, "s1")
+        assert runs["r1"]["status"] == RunStatus.completed.value, "terminal row must survive the late transition"
+        assert runs["r1"]["content"] == "the real output"
+
+    @pytest.mark.asyncio
+    async def test_sync_adapter_outcome_parity(self, db):
+        """The sync PostgresDb primitive must speak the same typed outcomes
+        as the async twin (worker deployments mix both via the thread
+        adapter)."""
+        from agno.db.postgres import PostgresDb
+
+        await seed_session(db, "s1", ["r1"])
+        sync_db = PostgresDb(db_url=DB_URL, session_table=db.session_table_name)
+
+        def call(**kwargs):
+            return sync_db.update_run_in_session(**kwargs)
+
+        assert (
+            await asyncio.to_thread(call, session_id="s1", run_id="r1", fields={"status": "COMPLETED"})
+        ) is RunPersistOutcome.UPDATED
+        assert (
+            await asyncio.to_thread(call, session_id="s1", run_id="r1", fields={"status": "ERROR"})
+        ) is RunPersistOutcome.TERMINAL_REFUSED
+        assert (
+            await asyncio.to_thread(call, session_id="s1", run_id="r1", fields={"status": "ERROR"}, expected_attempt=1)
+        ) is RunPersistOutcome.TERMINAL_REFUSED
+        assert (
+            await asyncio.to_thread(call, session_id="s1", run_id="nope", fields={"status": "ERROR"})
+        ) is RunPersistOutcome.MISSING
