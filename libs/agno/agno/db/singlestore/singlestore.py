@@ -614,8 +614,9 @@ class SingleStoreDb(BaseDb):
                 .where(runs_table.c.parent_run_id.is_(None))
                 .where(or_(runs_table.c.status.is_(None), runs_table.c.status.notin_(HISTORY_SKIP_STATUSES)))
                 .order_by(
-                    func.coalesce(runs_table.c.run_index, 0).desc(),
-                    func.coalesce(runs_table.c.created_at, 0).desc(),
+                    runs_table.c.run_index.desc(),
+                    runs_table.c.created_at.desc(),
+                    runs_table.c.run_id.desc(),
                 )
                 .limit(limit)
             )
@@ -626,8 +627,9 @@ class SingleStoreDb(BaseDb):
             select(runs_table.c.run_data)
             .where(runs_table.c.session_id == session_id)
             .order_by(
-                func.coalesce(runs_table.c.run_index, 0).asc(),
-                func.coalesce(runs_table.c.created_at, 0).asc(),
+                runs_table.c.run_index.asc(),
+                runs_table.c.created_at.asc(),
+                runs_table.c.run_id.asc(),
             )
         )
         return [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in sess.execute(stmt).fetchall()]
@@ -688,6 +690,16 @@ class SingleStoreDb(BaseDb):
             )
 
             with self.Session() as sess, sess.begin():
+                # Backfill a monotonic run_index when the run arrives without one
+                # (e.g. a background/continue save that couldn't resolve its position).
+                # A NULL index has no position and breaks ORDER BY run_index. ON DUPLICATE KEY
+                # preserves the existing index, so this only sets it on a genuine insert.
+                if row.get("run_index") is None:
+                    current_max = sess.execute(
+                        select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
+                    ).scalar()
+                    row["run_index"] = (current_max + 1) if current_max is not None else 0
+
                 stmt = mysql.insert(runs_table).values(**row)  # type: ignore
                 stmt = stmt.on_duplicate_key_update(
                     status=stmt.inserted.status,
@@ -695,7 +707,9 @@ class SingleStoreDb(BaseDb):
                     user_id=stmt.inserted.user_id,
                     parent_run_id=stmt.inserted.parent_run_id,
                     updated_at=stmt.inserted.updated_at,
-                    # Note: run_index is NOT updated for existing runs to preserve ordering
+                    # Preserve a non-null run_index; only fill it in for a legacy row
+                    # that was stored as NULL (COALESCE keeps the existing value if set).
+                    run_index=func.coalesce(runs_table.c.run_index, stmt.inserted.run_index),
                 )
                 sess.execute(stmt)
 
@@ -800,9 +814,7 @@ class SingleStoreDb(BaseDb):
             wanted = set(run_ids)
             with self.Session() as sess, sess.begin():
                 rows = sess.execute(
-                    select(sessions_table.c.session_id, sessions_table.c.runs).where(
-                        sessions_table.c.runs.isnot(None)
-                    )
+                    select(sessions_table.c.session_id, sessions_table.c.runs).where(sessions_table.c.runs.isnot(None))
                 ).fetchall()
                 for sid, runs_raw in rows:
                     if isinstance(runs_raw, str):
@@ -818,9 +830,7 @@ class SingleStoreDb(BaseDb):
                     if len(kept) == len(runs_list):
                         continue
                     sess.execute(
-                        sessions_table.update()
-                        .where(sessions_table.c.session_id == sid)
-                        .values(runs=_json.dumps(kept))
+                        sessions_table.update().where(sessions_table.c.session_id == sid).values(runs=_json.dumps(kept))
                     )
         except Exception:
             log_debug("legacy-runs scrub failed; the primary delete still succeeded", exc_info=True)
@@ -2379,11 +2389,12 @@ class SingleStoreDb(BaseDb):
             log_error(f"Error deleting eval run {eval_run_id}: {str(e)}")
             raise e
 
-    def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+    def delete_eval_runs(self, eval_run_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete multiple eval runs from the database.
 
         Args:
             eval_run_ids (List[str]): List of eval run IDs to delete.
+            user_id (Optional[str]): If set, only delete runs owned by this user.
         """
         try:
             table = self._get_table(table_type="evals")
@@ -2392,6 +2403,8 @@ class SingleStoreDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = table.delete().where(table.c.run_id.in_(eval_run_ids))
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = sess.execute(stmt)
                 if result.rowcount == 0:
                     log_debug(f"No eval runs found with IDs: {eval_run_ids}")
@@ -2403,13 +2416,14 @@ class SingleStoreDb(BaseDb):
             raise e
 
     def get_eval_run(
-        self, eval_run_id: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Get an eval run from the database.
 
         Args:
             eval_run_id (str): The ID of the eval run to get.
             deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            user_id (Optional[str]): If set, only return the run if owned by this user.
 
         Returns:
             Optional[Union[EvalRunRecord, Dict[str, Any]]]:
@@ -2426,6 +2440,8 @@ class SingleStoreDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.run_id == eval_run_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = sess.execute(stmt).fetchone()
                 if result is None:
                     return None
@@ -2453,6 +2469,7 @@ class SingleStoreDb(BaseDb):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.
 
@@ -2465,6 +2482,7 @@ class SingleStoreDb(BaseDb):
             team_id (Optional[str]): The ID of the team to filter by.
             workflow_id (Optional[str]): The ID of the workflow to filter by.
             model_id (Optional[str]): The ID of the model to filter by.
+            user_id (Optional[str]): If set, only return runs owned by this user.
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
             deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
@@ -2496,6 +2514,8 @@ class SingleStoreDb(BaseDb):
                     stmt = stmt.where(table.c.workflow_id == workflow_id)
                 if model_id is not None:
                     stmt = stmt.where(table.c.model_id == model_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 if eval_type is not None and len(eval_type) > 0:
                     stmt = stmt.where(table.c.eval_type.in_(eval_type))
                 if filter_type is not None:
@@ -2537,13 +2557,14 @@ class SingleStoreDb(BaseDb):
             raise e
 
     def rename_eval_run(
-        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Upsert the name of an eval run in the database, returning raw dictionary.
 
         Args:
             eval_run_id (str): The ID of the eval run to update.
             name (str): The new name of the eval run.
+            user_id (Optional[str]): If set, only rename the run if owned by this user.
 
         Returns:
             Optional[Dict[str, Any]]: The updated eval run, or None if the operation fails.
@@ -2560,9 +2581,11 @@ class SingleStoreDb(BaseDb):
                 stmt = (
                     table.update().where(table.c.run_id == eval_run_id).values(name=name, updated_at=int(time.time()))
                 )
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 sess.execute(stmt)
 
-            eval_run_raw = self.get_eval_run(eval_run_id=eval_run_id, deserialize=deserialize)
+            eval_run_raw = self.get_eval_run(eval_run_id=eval_run_id, deserialize=deserialize, user_id=user_id)
 
             log_debug(f"Renamed eval run with id '{eval_run_id}' to '{name}'")
 
@@ -2573,6 +2596,26 @@ class SingleStoreDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error renaming eval run {eval_run_id}: {str(e)}")
+            raise e
+
+    def update_eval_run_user_id(self, eval_run_id: str, user_id: str) -> None:
+        """Set the owner (user_id) on an existing eval run.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            user_id (str): The owner to set.
+        """
+        try:
+            table = self._get_table(table_type="evals")
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                stmt = table.update().where(table.c.run_id == eval_run_id).values(user_id=user_id)
+                sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Error setting owner on eval run {eval_run_id}: {str(e)}")
             raise e
 
     # -- Culture methods --

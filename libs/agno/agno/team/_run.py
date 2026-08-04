@@ -4560,6 +4560,10 @@ def _cleanup_and_store(
     if not team.store_member_responses:
         storage_copy.member_responses = []
 
+    # Stop the timer for the Run duration
+    if run_response.metrics:
+        run_response.metrics.stop_timer()
+
     # Update run_response.session_state before saving
     if run_context is not None and run_context.session_state is not None:
         run_response.session_state = run_context.session_state
@@ -4682,6 +4686,10 @@ async def _acleanup_and_store(
     # honour the flag regardless of ordering.
     if not team.store_member_responses:
         storage_copy.member_responses = []
+
+    # Stop the timer for the Run duration
+    if run_response.metrics:
+        run_response.metrics.stop_timer()
 
     # Update run_response.session_state before saving
     if run_context is not None and run_context.session_state is not None:
