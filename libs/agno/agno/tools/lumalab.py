@@ -68,7 +68,7 @@ class LumaLabTools(Toolkit):
 
         tools: List[Callable] = []
         if all or generate_video:
-            tools.append(self.generate_video)
+            tools.append(self.lumalab_generate_video)
         if all or image_to_video:
             tools.append(self.image_to_video)
 
@@ -156,7 +156,7 @@ class LumaLabTools(Toolkit):
             logger.exception("Failed to generate video")
             return ToolResult(content=f"Error: {e}")
 
-    def generate_video(
+    def lumalab_generate_video(
         self,
         agent: Agent,
         prompt: str,

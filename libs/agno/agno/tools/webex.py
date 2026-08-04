@@ -38,13 +38,13 @@ class WebexTools(Toolkit):
 
         tools: List[Callable] = []
         if send_message:
-            tools.append(self.send_message)
+            tools.append(self.webex_send_message)
         if list_rooms:
             tools.append(self.list_rooms)
 
         super().__init__(name="webex", tools=tools, **kwargs)
 
-    def send_message(self, room_id: str, text: str) -> str:
+    def webex_send_message(self, room_id: str, text: str) -> str:
         """Send a message to a Webex room.
 
         Args:

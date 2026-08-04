@@ -19,7 +19,7 @@ class WebsiteTools(Toolkit):
         if self.knowledge is not None:
             tools.append(self.add_website_to_knowledge)
         else:
-            tools.append(self.read_url)
+            tools.append(self.website_read)
 
         super().__init__(name="website_tools", tools=tools, **kwargs)
 
@@ -39,7 +39,7 @@ class WebsiteTools(Toolkit):
         self.knowledge.insert(url=url)
         return "Success"
 
-    def read_url(self, url: str) -> str:
+    def website_read(self, url: str) -> str:
         """This function reads a url and returns the content.
 
         :param url: The url of the website to read.

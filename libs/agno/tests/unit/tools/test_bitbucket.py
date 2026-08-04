@@ -335,7 +335,7 @@ class TestBitbucketTools:
         mock_response = {"values": [{"id": 1, "title": "Issue 1"}, {"id": 2, "title": "Issue 2"}]}
         mock_request.return_value = mock_response
 
-        result = bitbucket_tools.list_issues(count=10)
+        result = bitbucket_tools.bitbucket_list_issues(count=10)
 
         assert isinstance(result, str)
         result_data = json.loads(result)
@@ -350,7 +350,7 @@ class TestBitbucketTools:
         mock_response = {"values": []}
         mock_request.return_value = mock_response
 
-        bitbucket_tools.list_issues(count=100)
+        bitbucket_tools.bitbucket_list_issues(count=100)
 
         # Should be limited to 50
         mock_request.assert_called_once_with(

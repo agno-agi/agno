@@ -51,11 +51,11 @@ if __name__ == "__main__":
         tools=[
             DiscordTools(
                 bot_token=discord_token,
-                enable_send_message=True,
-                enable_get_channel_messages=True,
-                enable_get_channel_info=False,
-                enable_list_channels=False,
-                enable_delete_message=False,
+                send_message=True,
+                get_channel_messages=True,
+                get_channel_info=False,
+                list_channels=False,
+                delete_message=False,
             )
         ],
         markdown=True,
@@ -71,11 +71,11 @@ if __name__ == "__main__":
         tools=[
             DiscordTools(
                 bot_token=discord_token,
-                enable_send_message=True,
-                enable_get_channel_messages=True,
-                enable_get_channel_info=True,
-                enable_list_channels=True,
-                enable_delete_message=True,
+                send_message=True,
+                get_channel_messages=True,
+                get_channel_info=True,
+                list_channels=True,
+                delete_message=True,
             )
         ],
         markdown=True,

@@ -59,7 +59,7 @@ class YFinanceTools(Toolkit):
         if all or analyst_recommendations:
             tools.append(self.get_analyst_recommendations)
         if all or company_news:
-            tools.append(self.get_company_news)
+            tools.append(self.yfinance_get_company_news)
         if all or technical_indicators:
             tools.append(self.get_technical_indicators)
         if all or historical_prices:
@@ -256,7 +256,7 @@ class YFinanceTools(Toolkit):
         except Exception as e:
             return json.dumps({"error": f"Error fetching analyst recommendations for {symbol}: {e}"})
 
-    def get_company_news(self, symbol: str, num_stories: int = 3) -> str:
+    def yfinance_get_company_news(self, symbol: str, num_stories: int = 3) -> str:
         """Use this function to get company news and press releases for a given stock symbol.
 
         Args:

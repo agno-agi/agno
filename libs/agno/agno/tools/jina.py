@@ -44,13 +44,13 @@ class JinaReaderTools(Toolkit):
 
         tools: List[Callable] = []
         if all or read_url:
-            tools.append(self.read_url)
+            tools.append(self.jina_read_url)
         if all or search_query:
             tools.append(self.search_query)
 
         super().__init__(name="jina_reader_tools", tools=tools, **kwargs)
 
-    def read_url(self, url: str) -> str:
+    def jina_read_url(self, url: str) -> str:
         """Read a URL and return content using Jina Reader API.
 
         Args:

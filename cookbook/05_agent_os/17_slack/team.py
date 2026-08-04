@@ -49,13 +49,13 @@ documentation_specialist = Agent(
     model=OpenAIResponses(id="gpt-5.5"),
     tools=[
         SlackTools(
-            enable_send_message=False,
-            enable_send_message_thread=False,
-            enable_list_channels=False,
-            enable_get_channel_history=False,
-            enable_upload_file=False,
-            enable_download_file=False,
-            enable_search_workspace=True,
+            send_message=False,
+            send_message_thread=False,
+            list_channels=False,
+            get_channel_history=False,
+            upload_file=False,
+            download_file=False,
+            search_workspace=True,
         )
     ],
     instructions=[

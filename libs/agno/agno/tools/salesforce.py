@@ -136,7 +136,7 @@ class SalesforceTools(Toolkit):
         if all or query:
             tools.append(self.query)
         if all or search:
-            tools.append(self.search)
+            tools.append(self.salesforce_search)
         if all or create_record:
             tools.append(self.create_record)
         if all or update_record:
@@ -340,7 +340,7 @@ class SalesforceTools(Toolkit):
             logger.exception("Error executing SOQL query")
             return json.dumps({"error": str(e)})
 
-    def search(self, sosl: str) -> str:
+    def salesforce_search(self, sosl: str) -> str:
         """Execute a SOSL full-text search across Salesforce objects.
 
         Args:
