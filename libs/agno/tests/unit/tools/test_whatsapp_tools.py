@@ -42,7 +42,8 @@ def test_init_requires_phone_number_id():
 
 def test_init_registers_default_tools():
     with patch.dict("os.environ", ENV):
-        tools = WhatsAppTools()
+        # Default is all tools disabled, toolkit requires explicit enable
+        tools = WhatsAppTools(send_text_message=True, send_template_message=True)
         names = [f.name for f in tools.functions.values()]
         assert "send_text_message" in names
         assert "send_template_message" in names
@@ -57,7 +58,7 @@ def test_init_all_flag_enables_all():
 
 def test_init_selective_enable():
     with patch.dict("os.environ", ENV):
-        tools = WhatsAppTools(enable_send_image=True, enable_send_location=True)
+        tools = WhatsAppTools(send_text_message=True, send_template_message=True, send_image=True, send_location=True)
         names = [f.name for f in tools.functions.values()]
         assert "send_text_message" in names
         assert "send_image" in names
@@ -217,8 +218,8 @@ def test_send_image_no_source(whatsapp_tools):
     assert "image_url or media_id" in parsed["error"]
 
 
-def test_send_document(whatsapp_tools):
-    result = whatsapp_tools.send_document(
+def test_whatsapp_send_document(whatsapp_tools):
+    result = whatsapp_tools.whatsapp_send_document(
         document_url="https://example.com/doc.pdf",
         filename="report.pdf",
         caption="Monthly report",
@@ -233,8 +234,8 @@ def test_send_document(whatsapp_tools):
     assert payload["document"]["filename"] == "report.pdf"
 
 
-def test_send_document_no_source(whatsapp_tools):
-    result = whatsapp_tools.send_document(recipient="+1234567890")
+def test_whatsapp_send_document_no_source(whatsapp_tools):
+    result = whatsapp_tools.whatsapp_send_document(recipient="+1234567890")
     parsed = json.loads(result)
     assert "error" in parsed
 
@@ -304,8 +305,10 @@ def test_send_list_message_exceeds_total_rows(whatsapp_tools):
     assert "10 rows" in parsed["error"]
 
 
-def test_send_document_by_media_id(whatsapp_tools):
-    result = whatsapp_tools.send_document(media_id="doc_media_123", filename="report.pdf", recipient="+1234567890")
+def test_whatsapp_send_document_by_media_id(whatsapp_tools):
+    result = whatsapp_tools.whatsapp_send_document(
+        media_id="doc_media_123", filename="report.pdf", recipient="+1234567890"
+    )
     parsed = json.loads(result)
     assert parsed["ok"] is True
 
@@ -363,10 +366,10 @@ def test_send_image_error(whatsapp_tools):
         whatsapp_tools.send_image(image_url="https://example.com/img.png", recipient="+1234567890")
 
 
-def test_send_document_error(whatsapp_tools):
+def test_whatsapp_send_document_error(whatsapp_tools):
     whatsapp_tools._mock_httpx.post.side_effect = Exception("doc API error")
     with pytest.raises(Exception, match="doc API error"):
-        whatsapp_tools.send_document(document_url="https://example.com/doc.pdf", recipient="+1234567890")
+        whatsapp_tools.whatsapp_send_document(document_url="https://example.com/doc.pdf", recipient="+1234567890")
 
 
 def test_send_location_error(whatsapp_tools):

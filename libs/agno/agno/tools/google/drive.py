@@ -355,21 +355,21 @@ class GoogleDriveTools(GoogleToolkit):
 
         # Reading
         if list_files:
-            tools.append(self.list_files)
-            async_tools.append((self.alist_files, "list_files"))
+            tools.append(self.gdrive_list_files)
+            async_tools.append((self.agdrive_list_files, "gdrive_list_files"))
         if search_files:
-            tools.append(self.search_files)
-            async_tools.append((self.asearch_files, "search_files"))
+            tools.append(self.gdrive_search_files)
+            async_tools.append((self.agdrive_search_files, "gdrive_search_files"))
         if read_file:
-            tools.append(self.read_file)
-            async_tools.append((self.aread_file, "read_file"))
+            tools.append(self.gdrive_read_file)
+            async_tools.append((self.agdrive_read_file, "gdrive_read_file"))
         # Writing
         if upload_file:
-            tools.append(self.upload_file)
-            async_tools.append((self.aupload_file, "upload_file"))
+            tools.append(self.gdrive_upload_file)
+            async_tools.append((self.agdrive_upload_file, "gdrive_upload_file"))
         if download_file:
-            tools.append(self.download_file)
-            async_tools.append((self.adownload_file, "download_file"))
+            tools.append(self.gdrive_download_file)
+            async_tools.append((self.agdrive_download_file, "gdrive_download_file"))
 
         super().__init__(
             name="google_drive_tools",
@@ -409,8 +409,8 @@ class GoogleDriveTools(GoogleToolkit):
             _, done = downloader.next_chunk()
         return buffer.getvalue()
 
-    # No @authenticate — delegates to search_files which handles auth
-    def list_files(
+    # No @authenticate — delegates to gdrive_search_files which handles auth
+    def gdrive_list_files(
         self,
         query: Optional[str] = None,
         page_size: int = 10,
@@ -427,9 +427,9 @@ class GoogleDriveTools(GoogleToolkit):
         Returns:
             str: JSON string containing file metadata or error message
         """
-        return self.search_files(query=query, max_results=page_size, page_token=page_token)
+        return self.gdrive_search_files(query=query, max_results=page_size, page_token=page_token)
 
-    async def alist_files(
+    async def agdrive_list_files(
         self,
         query: Optional[str] = None,
         page_size: int = 10,
@@ -446,10 +446,10 @@ class GoogleDriveTools(GoogleToolkit):
         Returns:
             str: JSON string containing file metadata or error message
         """
-        return await asyncio.to_thread(self.list_files, query=query, page_size=page_size, page_token=page_token)
+        return await asyncio.to_thread(self.gdrive_list_files, query=query, page_size=page_size, page_token=page_token)
 
     @authenticate
-    def search_files(
+    def gdrive_search_files(
         self,
         query: Optional[str] = None,
         max_results: int = 10,
@@ -515,7 +515,7 @@ class GoogleDriveTools(GoogleToolkit):
             log_error(f"Could not search Google Drive files: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
-    async def asearch_files(
+    async def agdrive_search_files(
         self,
         query: Optional[str] = None,
         max_results: int = 10,
@@ -532,10 +532,12 @@ class GoogleDriveTools(GoogleToolkit):
         Returns:
             str: JSON string containing matching files and metadata or error message
         """
-        return await asyncio.to_thread(self.search_files, query=query, max_results=max_results, page_token=page_token)
+        return await asyncio.to_thread(
+            self.gdrive_search_files, query=query, max_results=max_results, page_token=page_token
+        )
 
     @authenticate
-    def read_file(self, file_id: str = "") -> str:
+    def gdrive_read_file(self, file_id: str = "") -> str:
         """
         Read a Drive file and return its text content.
 
@@ -649,7 +651,7 @@ class GoogleDriveTools(GoogleToolkit):
             log_error(f"Could not read Google Drive file {file_id}: {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
-    async def aread_file(self, file_id: str = "") -> str:
+    async def agdrive_read_file(self, file_id: str = "") -> str:
         """
         Read a Drive file and return its text content (async).
 
@@ -659,10 +661,10 @@ class GoogleDriveTools(GoogleToolkit):
         Returns:
             str: JSON string containing file metadata and text content or error message
         """
-        return await asyncio.to_thread(self.read_file, file_id=file_id)
+        return await asyncio.to_thread(self.gdrive_read_file, file_id=file_id)
 
     @authenticate
-    def upload_file(self, file_path: Union[str, Path] = "") -> str:
+    def gdrive_upload_file(self, file_path: Union[str, Path] = "") -> str:
         """
         Upload a local file to Google Drive.
 
@@ -698,7 +700,7 @@ class GoogleDriveTools(GoogleToolkit):
             log_error(f"Could not upload file '{path}': {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
-    async def aupload_file(self, file_path: Union[str, Path] = "") -> str:
+    async def agdrive_upload_file(self, file_path: Union[str, Path] = "") -> str:
         """
         Upload a local file to Google Drive (async).
 
@@ -708,10 +710,10 @@ class GoogleDriveTools(GoogleToolkit):
         Returns:
             str: JSON string with uploaded file metadata (id, name, webViewLink)
         """
-        return await asyncio.to_thread(self.upload_file, file_path=file_path)
+        return await asyncio.to_thread(self.gdrive_upload_file, file_path=file_path)
 
     @authenticate
-    def download_file(self, file_id: str = "", export_format: Optional[str] = None) -> str:
+    def gdrive_download_file(self, file_id: str = "", export_format: Optional[str] = None) -> str:
         """
         Download a Drive file and save it locally.
 
@@ -776,7 +778,7 @@ class GoogleDriveTools(GoogleToolkit):
             log_error(f"Could not download file '{file_id}': {str(e)}")
             return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
 
-    async def adownload_file(self, file_id: str = "", export_format: Optional[str] = None) -> str:
+    async def agdrive_download_file(self, file_id: str = "", export_format: Optional[str] = None) -> str:
         """
         Download a Drive file and save it locally (async).
 
@@ -787,4 +789,4 @@ class GoogleDriveTools(GoogleToolkit):
         Returns:
             str: JSON string containing saved file path and status or error message
         """
-        return await asyncio.to_thread(self.download_file, file_id=file_id, export_format=export_format)
+        return await asyncio.to_thread(self.gdrive_download_file, file_id=file_id, export_format=export_format)

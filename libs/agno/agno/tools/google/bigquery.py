@@ -61,15 +61,15 @@ class GoogleBigQueryTools(Toolkit):
 
         tools: List[Callable] = []
         if all or list_tables:
-            tools.append(self.list_tables)
+            tools.append(self.bigquery_list_tables)
         if all or describe_table:
-            tools.append(self.describe_table)
+            tools.append(self.bigquery_describe_table)
         if all or run_sql_query:
-            tools.append(self.run_sql_query)
+            tools.append(self.bigquery_run_sql_query)
 
         super().__init__(name="google_bigquery_tools", tools=tools, **kwargs)
 
-    def list_tables(self) -> str:
+    def bigquery_list_tables(self) -> str:
         """Use this function to get a list of table names in the dataset.
         Returns:
             str: list of tables in the dataset.
@@ -84,7 +84,7 @@ class GoogleBigQueryTools(Toolkit):
             log_error(f"Error getting tables: {e}")
             return json.dumps({"error": f"Error getting tables: {e}"})
 
-    def describe_table(self, table_id: str) -> str:
+    def bigquery_describe_table(self, table_id: str) -> str:
         """Use this function to describe a table.
         Args:
             table_name (str): The name of the table to get the schema for.
@@ -103,7 +103,7 @@ class GoogleBigQueryTools(Toolkit):
             log_error(f"Error getting table schema: {e}")
             return json.dumps({"error": f"Error getting table schema: {e}"})
 
-    def run_sql_query(self, query: str) -> str:
+    def bigquery_run_sql_query(self, query: str) -> str:
         """Use this function to run a BigQuery SQL query and return the result.
         Args:
             query (str): The query to run.

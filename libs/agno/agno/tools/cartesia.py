@@ -41,7 +41,7 @@ class CartesiaTools(Toolkit):
         if all or localize_voice:
             tools.append(self.localize_voice)
         if all or text_to_speech:
-            tools.append(self.text_to_speech)
+            tools.append(self.cartesia_text_to_speech)
         if all or list_voices:
             tools.append(self.list_voices)
 
@@ -127,7 +127,7 @@ class CartesiaTools(Toolkit):
             log_error(f"Error localizing voice with Cartesia: {str(e)}")
             return json.dumps({"error": str(e), "type": type(e).__name__})
 
-    def text_to_speech(
+    def cartesia_text_to_speech(
         self,
         agent: Union[Agent, Team],
         transcript: str,

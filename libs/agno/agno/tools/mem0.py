@@ -44,9 +44,9 @@ class Mem0Tools(Toolkit):
         """
         tools: List[Callable] = []
         if all or add_memory:
-            tools.append(self.add_memory)
+            tools.append(self.mem0_add_memory)
         if all or search_memory:
-            tools.append(self.search_memory)
+            tools.append(self.mem0_search_memory)
         if all or get_all_memories:
             tools.append(self.get_all_memories)
         if all or delete_all_memories:
@@ -90,7 +90,7 @@ class Mem0Tools(Toolkit):
             return error_msg
         return resolved_user_id
 
-    def add_memory(
+    def mem0_add_memory(
         self,
         run_context: RunContext,
         content: Union[str, Dict[str, str]],
@@ -126,7 +126,7 @@ class Mem0Tools(Toolkit):
             log_error(f"Error adding memory: {str(e)}")
             return json.dumps({"error": f"Error adding memory: {e}"})
 
-    def search_memory(
+    def mem0_search_memory(
         self,
         run_context: RunContext,
         query: str,

@@ -67,17 +67,17 @@ class FirecrawlTools(Toolkit):
 
         tools: List[Callable] = []
         if all or scrape:
-            tools.append(self.scrape_website)
+            tools.append(self.firecrawl_scrape_website)
         if all or crawl:
-            tools.append(self.crawl_website)
+            tools.append(self.firecrawl_crawl_website)
         if all or mapping:
             tools.append(self.map_website)
         if all or search:
-            tools.append(self.search_web)
+            tools.append(self.firecrawl_search_web)
 
         super().__init__(name="firecrawl_tools", tools=tools, **kwargs)
 
-    def scrape_website(self, url: str) -> str:
+    def firecrawl_scrape_website(self, url: str) -> str:
         """Scrape a website using Firecrawl.
 
         Args:
@@ -93,7 +93,7 @@ class FirecrawlTools(Toolkit):
         scrape_result = self.app.scrape(url, **params)
         return json.dumps(scrape_result.model_dump(), cls=CustomJSONEncoder)
 
-    def crawl_website(self, url: str, limit: Optional[int] = None) -> str:
+    def firecrawl_crawl_website(self, url: str, limit: Optional[int] = None) -> str:
         """Crawl a website using Firecrawl.
 
         Args:
@@ -128,7 +128,7 @@ class FirecrawlTools(Toolkit):
         map_result = self.app.map(url)
         return json.dumps(map_result.model_dump(), cls=CustomJSONEncoder)
 
-    def search_web(self, query: str, limit: Optional[int] = None) -> str:
+    def firecrawl_search_web(self, query: str, limit: Optional[int] = None) -> str:
         """Search the web using Firecrawl.
 
         Args:
