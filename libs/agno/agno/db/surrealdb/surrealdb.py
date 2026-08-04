@@ -274,9 +274,10 @@ class SurrealDb(BaseDb):
             return []
         if limit is not None:
             rows_raw = self._query(
-                f"SELECT * FROM {runs_table} WHERE session_id = $sid "
+                f"SELECT *, run_index ?? 0 AS _ri, created_at ?? 0 AS _ca FROM {runs_table} "
+                "WHERE session_id = $sid "
                 "AND parent_run_id IS NONE AND (status IS NONE OR status NOT IN $skip) "
-                "ORDER BY (run_index ?? 0) DESC, (created_at ?? 0) DESC LIMIT $lim",
+                "ORDER BY _ri DESC, _ca DESC LIMIT $lim",
                 {"sid": session_id, "skip": HISTORY_SKIP_STATUSES, "lim": limit},
                 dict,
             )
@@ -285,7 +286,8 @@ class SurrealDb(BaseDb):
             run_data.reverse()
             return run_data
         rows_raw = self._query(
-            f"SELECT * FROM {runs_table} WHERE session_id = $sid ORDER BY (run_index ?? 0) ASC, (created_at ?? 0) ASC",
+            f"SELECT *, run_index ?? 0 AS _ri, created_at ?? 0 AS _ca FROM {runs_table} "
+            "WHERE session_id = $sid ORDER BY _ri ASC, _ca ASC",
             {"sid": session_id},
             dict,
         )
