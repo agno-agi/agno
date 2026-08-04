@@ -1048,6 +1048,46 @@ class PostgresDb(BaseDb):
             log_error(f"Exception reading from runs table: {str(e)}")
             raise e
 
+    def _scrub_run_ids_from_legacy_blob(self, run_ids: List[str]) -> None:
+        """Remove ``run_ids`` from every session row's legacy ``runs`` JSON column.
+
+        Partial-migration state: v3 migration copied runs into the ``agno_runs``
+        table but preserved the legacy embedded blob as a backup. Deleting a run
+        row alone leaves the blob intact and ``merge_runs_table_with_legacy_blob``
+        resurrects it on the next read. Skip cleanly on a fully-migrated DB
+        (no ``runs`` column). Best-effort: a failure here must not roll back
+        the primary runs-table delete.
+        """
+        if not run_ids:
+            return
+        try:
+            sessions_table = self._get_table(table_type="sessions")
+            if sessions_table is None or "runs" not in sessions_table.c:
+                return
+            # Table name is trusted (came from adapter config, not user input);
+            # run_ids are parameterized via bindparam to avoid SQL injection.
+            stmt = text(
+                f"""
+                UPDATE {sessions_table.name}
+                SET runs = COALESCE(
+                    (SELECT jsonb_agg(elem)
+                     FROM jsonb_array_elements(runs) elem
+                     WHERE elem->>'run_id' <> ALL(:ids)),
+                    '[]'::jsonb
+                )
+                WHERE runs IS NOT NULL
+                  AND jsonb_typeof(runs) = 'array'
+                  AND EXISTS (
+                      SELECT 1 FROM jsonb_array_elements(runs) elem
+                      WHERE elem->>'run_id' = ANY(:ids)
+                  )
+                """
+            )
+            with self.Session() as sess, sess.begin():
+                sess.execute(stmt, {"ids": list(run_ids)})
+        except Exception:
+            log_debug("legacy-runs scrub failed; the primary delete still succeeded", exc_info=True)
+
     def delete_run(self, run_id: str) -> bool:
         """Delete a single run from the runs table.
 
@@ -1064,7 +1104,12 @@ class PostgresDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 result = sess.execute(table.delete().where(table.c.run_id == run_id))
-                return result.rowcount > 0
+                deleted = result.rowcount > 0
+
+            # Also scrub the legacy blob so the merge helper doesn't resurrect
+            # the deleted run on the next read (partial-migration state).
+            self._scrub_run_ids_from_legacy_blob([run_id])
+            return deleted
 
         except Exception as e:
             log_error(f"Error deleting run: {str(e)}")
@@ -1084,6 +1129,7 @@ class PostgresDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 result = sess.execute(table.delete().where(table.c.run_id.in_(run_ids)))
 
+            self._scrub_run_ids_from_legacy_blob(list(run_ids))
             log_debug(f"Successfully deleted {result.rowcount} runs")
 
         except Exception as e:
