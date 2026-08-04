@@ -32,6 +32,7 @@ from agno.db.utils import (
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
+    filter_context_runs,
     merge_runs_table_with_legacy_blob,
 )
 from agno.run.agent import RunOutput
@@ -660,6 +661,7 @@ class RedisDb(BaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Read a session from Redis.
 
@@ -686,6 +688,9 @@ class RedisDb(BaseDb):
             # Attach runs from the runs keys, merged with any legacy `runs` blob
             runs_data = self._get_session_runs_data(session_id)
             session["runs"] = merge_runs_table_with_legacy_blob(runs_data, session.get("runs"))
+
+            if runs_limit is not None:
+                session["runs"] = filter_context_runs(session.get("runs") or [])[-runs_limit:]
 
             if not deserialize:
                 return session
@@ -924,6 +929,13 @@ class RedisDb(BaseDb):
                 index_fields = ["user_id", "workflow_id", "session_type"]
             else:
                 raise ValueError(f"Invalid session type: {session.session_type}")
+
+            # Preserve the legacy `runs` field as a frozen backup. _store_record replaces
+            # the whole record, so carry any existing legacy blob forward; runs now live in
+            # their own keys. Only cleanup_legacy_runs_field() reclaims it. Dropping it here
+            # would lose history for sessions not yet migrated.
+            if existing and existing.get("runs") is not None:
+                data["runs"] = existing["runs"]
 
             success = self._store_record(
                 table_type="sessions",
@@ -1698,11 +1710,12 @@ class RedisDb(BaseDb):
             log_error(f"Error deleting eval run {eval_run_id}: {str(e)}")
             raise
 
-    def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+    def delete_eval_runs(self, eval_run_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete multiple eval runs from Redis.
 
         Args:
             eval_run_ids (List[str]): The IDs of the eval runs to delete.
+            user_id (Optional[str]): If set, only delete runs owned by this user.
 
         Raises:
             Exception: If any error occurs while deleting the eval runs.
@@ -1710,6 +1723,10 @@ class RedisDb(BaseDb):
         try:
             deleted_count = 0
             for eval_run_id in eval_run_ids:
+                if user_id is not None:
+                    existing = self._get_record("evals", eval_run_id)
+                    if existing is None or existing.get("user_id") != user_id:
+                        continue
                 if self._delete_record(
                     "evals", eval_run_id, index_fields=["agent_id", "team_id", "workflow_id", "model_id", "eval_type"]
                 ):
@@ -1725,12 +1742,13 @@ class RedisDb(BaseDb):
             raise
 
     def get_eval_run(
-        self, eval_run_id: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Get an eval run from Redis.
 
         Args:
             eval_run_id (str): The ID of the eval run to get.
+            user_id (Optional[str]): If set, only return the run if owned by this user.
 
         Returns:
             Optional[EvalRunRecord]: The eval run if found, None otherwise.
@@ -1741,6 +1759,9 @@ class RedisDb(BaseDb):
         try:
             eval_run_raw = self._get_record("evals", eval_run_id)
             if eval_run_raw is None:
+                return None
+
+            if user_id is not None and eval_run_raw.get("user_id") != user_id:
                 return None
 
             if not deserialize:
@@ -1765,6 +1786,7 @@ class RedisDb(BaseDb):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from Redis.
 
@@ -1794,6 +1816,8 @@ class RedisDb(BaseDb):
                 if workflow_id is not None and run.get("workflow_id") != workflow_id:
                     continue
                 if model_id is not None and run.get("model_id") != model_id:
+                    continue
+                if user_id is not None and run.get("user_id") != user_id:
                     continue
 
                 # Eval type filter
@@ -1829,13 +1853,14 @@ class RedisDb(BaseDb):
             raise e
 
     def rename_eval_run(
-        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Update the name of an eval run in Redis.
 
         Args:
             eval_run_id (str): The ID of the eval run to rename.
             name (str): The new name of the eval run.
+            user_id (Optional[str]): If set, only rename the run if owned by this user.
 
         Returns:
             Optional[Dict[str, Any]]: The updated eval run data if successful, None otherwise.
@@ -1846,6 +1871,9 @@ class RedisDb(BaseDb):
         try:
             eval_run_data = self._get_record("evals", eval_run_id)
             if eval_run_data is None:
+                return None
+
+            if user_id is not None and eval_run_data.get("user_id") != user_id:
                 return None
 
             eval_run_data["name"] = name
@@ -1864,6 +1892,25 @@ class RedisDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error updating eval run name {eval_run_id}: {str(e)}")
+            raise
+
+    def update_eval_run_user_id(self, eval_run_id: str, user_id: str) -> None:
+        """Set the owner (user_id) on an existing eval run.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            user_id (str): The owner to set.
+        """
+        try:
+            eval_run_data = self._get_record("evals", eval_run_id)
+            if eval_run_data is None:
+                return
+
+            eval_run_data["user_id"] = user_id
+            self._store_record("evals", eval_run_id, eval_run_data)
+
+        except Exception as e:
+            log_error(f"Error setting owner on eval run {eval_run_id}: {str(e)}")
             raise
 
     # -- Cultural Knowledge methods --

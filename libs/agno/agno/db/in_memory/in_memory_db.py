@@ -17,7 +17,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.utils import deserialize_session, deserialize_sessions
+from agno.db.utils import deserialize_session, deserialize_sessions, filter_context_runs
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
@@ -116,6 +116,7 @@ class InMemoryDb(BaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession, Dict[str, Any]]]:
         """Read a session from in-memory storage.
 
@@ -140,6 +141,13 @@ class InMemoryDb(BaseDb):
                         continue
 
                     session_data_copy = deepcopy(session_data)
+
+                    if runs_limit is not None:
+                        # No query engine to push "last N" down: filter+slice in memory to
+                        # match the SQL fast path (drop member/skip-status runs, then last N).
+                        session_data_copy["runs"] = filter_context_runs(session_data_copy.get("runs") or [])[
+                            -runs_limit:
+                        ]
 
                     if not deserialize:
                         return session_data_copy
@@ -168,6 +176,7 @@ class InMemoryDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """Get all sessions from in-memory storage with filtering and pagination.
 
@@ -238,6 +247,12 @@ class InMemoryDb(BaseDb):
                 if page is not None:
                     start_idx = (page - 1) * limit
                 filtered_sessions = filtered_sessions[start_idx : start_idx + limit]
+
+            if not include_runs:
+                # List views don't need run history; leave it unattached (deepcopy above,
+                # so the stored session keeps its runs).
+                for s in filtered_sessions:
+                    s["runs"] = None
 
             if not deserialize:
                 return filtered_sessions, total_count
@@ -1125,11 +1140,15 @@ class InMemoryDb(BaseDb):
             log_error(f"Error creating eval run: {str(e)}")
             raise e
 
-    def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+    def delete_eval_runs(self, eval_run_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete multiple eval runs from in-memory storage."""
         try:
             original_count = len(self._eval_runs)
-            self._eval_runs = [run for run in self._eval_runs if run.get("run_id") not in eval_run_ids]
+            self._eval_runs = [
+                run
+                for run in self._eval_runs
+                if not (run.get("run_id") in eval_run_ids and (user_id is None or run.get("user_id") == user_id))
+            ]
 
             deleted_count = original_count - len(self._eval_runs)
             if deleted_count > 0:
@@ -1142,12 +1161,14 @@ class InMemoryDb(BaseDb):
             raise e
 
     def get_eval_run(
-        self, eval_run_id: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Get an eval run from in-memory storage."""
         try:
             for run_data in self._eval_runs:
                 if run_data.get("run_id") == eval_run_id:
+                    if user_id is not None and run_data.get("user_id") != user_id:
+                        return None
                     run_data_copy = deepcopy(run_data)
                     if not deserialize:
                         return run_data_copy
@@ -1172,6 +1193,7 @@ class InMemoryDb(BaseDb):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from in-memory storage with filtering and pagination."""
         try:
@@ -1185,6 +1207,8 @@ class InMemoryDb(BaseDb):
                 if workflow_id is not None and run_data.get("workflow_id") != workflow_id:
                     continue
                 if model_id is not None and run_data.get("model_id") != model_id:
+                    continue
+                if user_id is not None and run_data.get("user_id") != user_id:
                     continue
                 if eval_type is not None and len(eval_type) > 0:
                     if run_data.get("eval_type") not in eval_type:
@@ -1224,12 +1248,14 @@ class InMemoryDb(BaseDb):
             raise e
 
     def rename_eval_run(
-        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Rename an eval run."""
         try:
             for i, run_data in enumerate(self._eval_runs):
                 if run_data.get("run_id") == eval_run_id:
+                    if user_id is not None and run_data.get("user_id") != user_id:
+                        return None
                     run_data["name"] = name
                     run_data["updated_at"] = int(time.time())
                     self._eval_runs[i] = run_data
@@ -1246,6 +1272,23 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error renaming eval run {eval_run_id}: {str(e)}")
+            raise e
+
+    def update_eval_run_user_id(self, eval_run_id: str, user_id: str) -> None:
+        """Set the owner (user_id) on an existing eval run.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            user_id (str): The owner to set.
+        """
+        try:
+            for run_data in self._eval_runs:
+                if run_data.get("run_id") == eval_run_id:
+                    run_data["user_id"] = user_id
+                    break
+
+        except Exception as e:
+            log_error(f"Error setting owner on eval run {eval_run_id}: {str(e)}")
             raise e
 
     # -- Culture methods --

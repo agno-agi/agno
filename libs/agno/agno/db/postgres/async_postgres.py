@@ -30,10 +30,12 @@ from agno.db.schemas.service_accounts import (
     validate_service_account_update,
 )
 from agno.db.utils import (
+    HISTORY_SKIP_STATUSES,
     build_single_run_row,
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
+    filter_context_runs,
     json_serializer,
     learning_search_patterns,
     merge_runs_table_with_legacy_blob,
@@ -48,20 +50,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import sanitize_postgres_string, sanitize_postgres_strings
 
 try:
-    from sqlalchemy import (
-        ForeignKey,
-        Index,
-        String,
-        Table,
-        UniqueConstraint,
-        and_,
-        case,
-        distinct,
-        func,
-        null,
-        or_,
-        update,
-    )
+    from sqlalchemy import ForeignKey, Index, String, Table, UniqueConstraint, and_, case, distinct, func, or_, update
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.dialects.postgresql import TIMESTAMP
     from sqlalchemy.exc import ProgrammingError
@@ -641,12 +630,43 @@ class AsyncPostgresDb(AsyncBaseDb):
             return True
 
     # -- Run methods --
-    async def _get_session_runs_data(self, sess, runs_table: Table, session_id: str) -> List[Dict[str, Any]]:
-        """Get the raw run_data dicts for the given session, in insertion order."""
+    async def _get_session_runs_data(
+        self, sess, runs_table: Table, session_id: str, limit: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Get the raw run_data dicts for the given session, in insertion order.
+
+        When ``limit`` is set, only the most recent ``limit`` context-relevant runs
+        are fetched (indexed ``ORDER BY run_index DESC LIMIT``) and returned in
+        ascending (chronological) order. "Context-relevant" mirrors the pre-slice
+        filtering in ``get_messages``: member sub-runs (``parent_run_id`` set) and
+        terminal-skip statuses are excluded in SQL, so the DB-side last-N matches
+        the in-memory history window.
+        """
+        if limit is not None:
+            stmt = (
+                select(runs_table.c.run_data)
+                .where(runs_table.c.session_id == session_id)
+                .where(runs_table.c.parent_run_id.is_(None))
+                .where(or_(runs_table.c.status.is_(None), runs_table.c.status.notin_(HISTORY_SKIP_STATUSES)))
+                .order_by(
+                    runs_table.c.run_index.desc(),
+                    runs_table.c.created_at.desc(),
+                    runs_table.c.run_id.desc(),
+                )
+                .limit(limit)
+            )
+            result = await sess.execute(stmt)
+            rows = [row[0] for row in result.fetchall()]
+            rows.reverse()
+            return rows
         stmt = (
             select(runs_table.c.run_data)
             .where(runs_table.c.session_id == session_id)
-            .order_by(runs_table.c.run_index.asc(), runs_table.c.created_at.asc())
+            .order_by(
+                runs_table.c.run_index.asc(),
+                runs_table.c.created_at.asc(),
+                runs_table.c.run_id.asc(),
+            )
         )
         result = await sess.execute(stmt)
         return [row[0] for row in result.fetchall()]
@@ -744,6 +764,18 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess:
                 async with sess.begin():
+                    # Backfill a monotonic run_index when the run arrives without one
+                    # (e.g. a background/continue save that couldn't resolve its position).
+                    # A NULL index has no position and breaks ORDER BY run_index. ON CONFLICT
+                    # preserves the existing index, so this only sets it on a genuine insert.
+                    if row.get("run_index") is None:
+                        current_max = (
+                            await sess.execute(
+                                select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
+                            )
+                        ).scalar()
+                        row["run_index"] = (current_max + 1) if current_max is not None else 0
+
                     stmt = postgresql.insert(runs_table).values(**row)
                     stmt = stmt.on_conflict_do_update(
                         index_elements=["run_id"],
@@ -753,7 +785,9 @@ class AsyncPostgresDb(AsyncBaseDb):
                             user_id=stmt.excluded.user_id,
                             parent_run_id=stmt.excluded.parent_run_id,
                             updated_at=stmt.excluded.updated_at,
-                            # Note: run_index is NOT updated for existing runs to preserve ordering
+                            # Preserve a non-null run_index; only fill it in for a legacy row
+                            # that was stored as NULL (COALESCE keeps the existing value if set).
+                            run_index=func.coalesce(runs_table.c.run_index, stmt.excluded.run_index),
                         ),
                     )
                     await sess.execute(stmt)
@@ -842,6 +876,36 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_error(f"Exception reading from runs table: {str(e)}")
             return [] if deserialize else ([], 0)
 
+    async def _ascrub_run_ids_from_legacy_blob(self, run_ids: List[str]) -> None:
+        """Async variant of the legacy-blob scrub. See postgres.py for rationale."""
+        if not run_ids:
+            return
+        try:
+            sessions_table = await self._get_table(table_type="sessions")
+            if sessions_table is None or "runs" not in sessions_table.c:
+                return
+            stmt = text(
+                f"""
+                UPDATE {sessions_table.name}
+                SET runs = COALESCE(
+                    (SELECT jsonb_agg(elem)
+                     FROM jsonb_array_elements(runs) elem
+                     WHERE elem->>'run_id' <> ALL(:ids)),
+                    '[]'::jsonb
+                )
+                WHERE runs IS NOT NULL
+                  AND jsonb_typeof(runs) = 'array'
+                  AND EXISTS (
+                      SELECT 1 FROM jsonb_array_elements(runs) elem
+                      WHERE elem->>'run_id' = ANY(:ids)
+                  )
+                """
+            )
+            async with self.async_session_factory() as sess, sess.begin():
+                await sess.execute(stmt, {"ids": list(run_ids)})
+        except Exception:
+            log_debug("legacy-runs scrub failed; the primary delete still succeeded", exc_info=True)
+
     async def delete_run(self, run_id: str) -> bool:
         """Delete a single run from the runs table.
 
@@ -858,7 +922,10 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 result = await sess.execute(table.delete().where(table.c.run_id == run_id))
-                return result.rowcount > 0  # type: ignore
+                deleted = result.rowcount > 0  # type: ignore
+
+            await self._ascrub_run_ids_from_legacy_blob([run_id])
+            return deleted
 
         except Exception as e:
             log_error(f"Error deleting run: {str(e)}")
@@ -878,6 +945,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             async with self.async_session_factory() as sess, sess.begin():
                 result = await sess.execute(table.delete().where(table.c.run_id.in_(run_ids)))
 
+            await self._ascrub_run_ids_from_legacy_blob(list(run_ids))
             log_debug(f"Successfully deleted {result.rowcount} runs")  # type: ignore
 
         except Exception as e:
@@ -966,6 +1034,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Read a session from the database.
@@ -975,6 +1044,11 @@ class AsyncPostgresDb(AsyncBaseDb):
             user_id (Optional[str]): User ID to filter by. Defaults to None.
             session_type (Optional[SessionType]): Type of session to read. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            runs_limit (Optional[int]): If set, attach only the most recent ``runs_limit``
+                runs instead of the full history. For a fully-migrated session this is an
+                indexed ``ORDER BY run_index DESC LIMIT`` query; for a session that still
+                carries a legacy ``runs`` blob it falls back to a full load + merge, then
+                slices, so no history is ever lost.
 
         Returns:
             Union[Session, Dict[str, Any], None]:
@@ -1006,11 +1080,27 @@ class AsyncPostgresDb(AsyncBaseDb):
                 # Attach the runs stored in the runs table, merged with any runs still
                 # sitting in the legacy `runs` column (so partially-migrated sessions
                 # don't silently lose history).
-                if runs_table is not None:
+                legacy_runs = session.get("runs")
+                if runs_table is not None and runs_limit is not None and not legacy_runs:
+                    # Fully migrated: push "most recent N" down to the DB (indexed).
+                    session["runs"] = await self._get_session_runs_data(
+                        sess=sess, runs_table=runs_table, session_id=session_id, limit=runs_limit
+                    )
+                elif runs_table is not None:
+                    # Full load + merge. Also the un-migrated fallback: the legacy blob
+                    # holds the whole history in one column, so "last N" can't be pushed
+                    # to SQL — load all, merge, then filter+slice to match the migrated path.
                     runs_data = await self._get_session_runs_data(
                         sess=sess, runs_table=runs_table, session_id=session_id
                     )
-                    session["runs"] = merge_runs_table_with_legacy_blob(runs_data, session.get("runs"))
+                    merged = merge_runs_table_with_legacy_blob(runs_data, legacy_runs)
+                    if runs_limit is not None:
+                        merged = filter_context_runs(merged)[-runs_limit:]
+                    session["runs"] = merged
+                elif runs_limit is not None:
+                    # No runs table yet (fully un-migrated): filter+slice the legacy blob.
+                    merged = merge_runs_table_with_legacy_blob([], legacy_runs)
+                    session["runs"] = filter_context_runs(merged)[-runs_limit:]
 
             if not deserialize:
                 return session
@@ -1034,9 +1124,15 @@ class AsyncPostgresDb(AsyncBaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """
         Get all sessions in the given table. Can filter by user_id and entity_id.
+
+        Pass ``include_runs=False`` to skip attaching each session's run history —
+        a large, usually-unnecessary read for list views. The runs are untouched
+        in storage; a single ``get_session`` still returns them. Defaults to True
+        to preserve existing behavior.
 
         Args:
             user_id (Optional[str]): The ID of the user to filter by.
@@ -1117,13 +1213,17 @@ class AsyncPostgresDb(AsyncBaseDb):
 
                 # Attach the runs stored in the runs table. If a session has no rows in the
                 # runs table, fall back to its legacy `runs` column content, if any.
-                if runs_table is not None:
+                if include_runs and runs_table is not None:
                     runs_by_session = await self._get_sessions_runs_data(
                         sess=sess, runs_table=runs_table, session_ids=[s["session_id"] for s in session]
                     )
                     for s in session:
                         runs_data = runs_by_session.get(s["session_id"], [])
                         s["runs"] = merge_runs_table_with_legacy_blob(runs_data, s.get("runs"))
+                elif not include_runs:
+                    # List views don't need run history; leave it unattached (storage untouched).
+                    for s in session:
+                        s["runs"] = None
 
                 if not deserialize:
                     return session, total_count
@@ -1290,9 +1390,10 @@ class AsyncPostgresDb(AsyncBaseDb):
                 raise ValueError(f"Invalid session type: {session.session_type}")
 
             update_values = {k: v for k, v in values.items() if k != "session_type"}
-            # Clear the legacy runs column if it still exists. Runs are stored in the runs table.
-            if "runs" in table.c:
-                update_values["runs"] = null()
+            # The legacy `runs` column is intentionally left untouched here. Runs now
+            # live in the runs table; the legacy column stays as a frozen backup and is
+            # only reclaimed by the explicit cleanup_legacy_runs_column() helper. Nulling
+            # it on write would lose history for sessions not yet migrated to the runs table.
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = postgresql.insert(table).values(
@@ -2482,11 +2583,12 @@ class AsyncPostgresDb(AsyncBaseDb):
         except Exception as e:
             log_error(f"Error deleting eval run {eval_run_id}: {str(e)}")
 
-    async def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+    async def delete_eval_runs(self, eval_run_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete multiple eval runs from the database.
 
         Args:
             eval_run_ids (List[str]): List of eval run IDs to delete.
+            user_id (Optional[str]): If set, only delete runs owned by this user.
         """
         try:
             table = await self._get_table(table_type="evals")
@@ -2495,6 +2597,8 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = table.delete().where(table.c.run_id.in_(eval_run_ids))
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(stmt)
 
                 if result.rowcount == 0:  # type: ignore
@@ -2506,13 +2610,14 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_error(f"Error deleting eval runs {eval_run_ids}: {str(e)}")
 
     async def get_eval_run(
-        self, eval_run_id: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Get an eval run from the database.
 
         Args:
             eval_run_id (str): The ID of the eval run to get.
             deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            user_id (Optional[str]): If set, only return the run if owned by this user.
 
         Returns:
             Optional[Union[EvalRunRecord, Dict[str, Any]]]:
@@ -2529,6 +2634,8 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table).where(table.c.run_id == eval_run_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(stmt)
                 row = result.fetchone()
                 if row is None:
@@ -2557,6 +2664,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.
 
@@ -2572,6 +2680,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
             deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
+            user_id (Optional[str]): If set, only return runs owned by this user.
 
         Returns:
             Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
@@ -2591,6 +2700,8 @@ class AsyncPostgresDb(AsyncBaseDb):
                 stmt = select(table)
 
                 # Filtering
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 if agent_id is not None:
                     stmt = stmt.where(table.c.agent_id == agent_id)
                 if team_id is not None:
@@ -2641,13 +2752,14 @@ class AsyncPostgresDb(AsyncBaseDb):
             return [] if deserialize else ([], 0)
 
     async def rename_eval_run(
-        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Upsert the name of an eval run in the database, returning raw dictionary.
 
         Args:
             eval_run_id (str): The ID of the eval run to update.
             name (str): The new name of the eval run.
+            user_id (Optional[str]): If set, only rename the run if owned by this user.
 
         Returns:
             Optional[Dict[str, Any]]: The updated eval run, or None if the operation fails.
@@ -2667,9 +2779,11 @@ class AsyncPostgresDb(AsyncBaseDb):
                     .where(table.c.run_id == eval_run_id)
                     .values(name=sanitized_name, updated_at=int(time.time()))
                 )
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 await sess.execute(stmt)
 
-            eval_run_raw = await self.get_eval_run(eval_run_id=eval_run_id, deserialize=deserialize)
+            eval_run_raw = await self.get_eval_run(eval_run_id=eval_run_id, deserialize=deserialize, user_id=user_id)
             if not eval_run_raw or not deserialize:
                 return eval_run_raw
 
@@ -2678,6 +2792,26 @@ class AsyncPostgresDb(AsyncBaseDb):
         except Exception as e:
             log_error(f"Error upserting eval run name {eval_run_id}: {str(e)}")
             return None
+
+    async def update_eval_run_user_id(self, eval_run_id: str, user_id: str) -> None:
+        """Set the owner (user_id) on an existing eval run.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            user_id (str): The owner to set.
+        """
+        try:
+            table = await self._get_table(table_type="evals")
+            if table is None:
+                return
+
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = table.update().where(table.c.run_id == eval_run_id).values(user_id=user_id)
+                await sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Error setting owner on eval run {eval_run_id}: {str(e)}")
+            raise e
 
     # -- Migrations --
 

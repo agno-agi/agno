@@ -18,7 +18,6 @@ from agno.db.dynamo.utils import (
     calculate_date_metrics,
     create_table_if_not_exists,
     deserialize_cultural_knowledge_from_db,
-    deserialize_eval_record,
     deserialize_from_dynamodb_item,
     deserialize_knowledge_row,
     deserialize_session_result,
@@ -41,6 +40,7 @@ from agno.db.utils import (
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
+    filter_context_runs,
     merge_runs_table_with_legacy_blob,
 )
 from agno.run.agent import RunOutput
@@ -671,6 +671,7 @@ class DynamoDb(BaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Get a session from the database as a Session object.
@@ -710,6 +711,10 @@ class DynamoDb(BaseDb):
             try:
                 runs_data = self._get_session_runs_data(session_id)
                 session["runs"] = merge_runs_table_with_legacy_blob(runs_data, session.get("runs"))
+                if runs_limit is not None:
+                    # No query engine to push "last N" down: filter+slice in memory to
+                    # match the SQL fast path (drop member/skip-status runs, then last N).
+                    session["runs"] = filter_context_runs(session["runs"] or [])[-runs_limit:]
             except Exception as e:
                 log_error(f"Failed to load runs for session {session_id}: {str(e)}")
 
@@ -1041,11 +1046,10 @@ class DynamoDb(BaseDb):
             else:
                 serialized_session["updated_at"] = serialized_session["created_at"]
 
-            # Drop the legacy `runs` field from what we serialize back — runs now live in
-            # the runs table. The session item's legacy `runs` attribute (if any) is
-            # explicitly removed below so it's nulled for sessions that touch v3.
-            serialized_session.pop("runs", None)
-
+            # The legacy `runs` attribute is intentionally preserved: merge_with_existing_session
+            # above carries it forward from the existing item, and put_item writes it back as a
+            # frozen backup until cleanup_legacy_runs_field() removes it. Dropping it here would
+            # lose history for sessions not yet migrated to the runs table.
             item = serialize_to_dynamo_item(serialized_session)
             put_kwargs: Dict[str, Any] = {"TableName": table_name, "Item": item}
 
@@ -2283,11 +2287,21 @@ class DynamoDb(BaseDb):
             log_error(f"Failed to create eval run: {str(e)}")
             raise e
 
-    def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+    def delete_eval_runs(self, eval_run_ids: List[str], user_id: Optional[str] = None) -> None:
         if not eval_run_ids or not self.eval_table_name:
             return
 
         try:
+            if user_id is not None:
+                # Only delete runs owned by this user.
+                owned = []
+                for eval_run_id in eval_run_ids:
+                    response = self.client.get_item(TableName=self.eval_table_name, Key={"run_id": {"S": eval_run_id}})
+                    item = response.get("Item")
+                    if item is not None and item.get("user_id", {}).get("S") == user_id:
+                        owned.append(eval_run_id)
+                eval_run_ids = owned
+
             for i in range(0, len(eval_run_ids), DYNAMO_BATCH_SIZE_LIMIT):
                 batch = eval_run_ids[i : i + DYNAMO_BATCH_SIZE_LIMIT]
 
@@ -2296,6 +2310,8 @@ class DynamoDb(BaseDb):
                     delete_requests.append({"DeleteRequest": {"Key": {"run_id": {"S": eval_run_id}}}})
 
                 batch_write_with_retry(self.client, {self.eval_table_name: delete_requests})
+                if delete_requests:
+                    self.client.batch_write_item(RequestItems={self.eval_table_name: delete_requests})
 
         except Exception as e:
             log_error(f"Failed to delete eval runs: {str(e)}")
@@ -2317,7 +2333,13 @@ class DynamoDb(BaseDb):
             log_error(f"Failed to get eval run {eval_run_id}: {str(e)}")
             raise e
 
-    def get_eval_run(self, eval_run_id: str, table: Optional[Any] = None) -> Optional[EvalRunRecord]:
+    def get_eval_run(
+        self,
+        eval_run_id: str,
+        deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
+        table: Optional[Any] = None,
+    ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         if not self.eval_table_name:
             return None
 
@@ -2325,9 +2347,17 @@ class DynamoDb(BaseDb):
             response = self.client.get_item(TableName=self.eval_table_name, Key={"run_id": {"S": eval_run_id}})
 
             item = response.get("Item")
-            if item:
-                return deserialize_eval_record(item)
-            return None
+            if not item:
+                return None
+
+            eval_item = deserialize_from_dynamodb_item(item)
+            if user_id is not None and eval_item.get("user_id") != user_id:
+                return None
+
+            if not deserialize:
+                return eval_item
+
+            return EvalRunRecord.model_validate(eval_item)
 
         except Exception as e:
             log_error(f"Failed to get eval run {eval_run_id}: {str(e)}")
@@ -2346,6 +2376,7 @@ class DynamoDb(BaseDb):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         try:
             table_name = self._get_table("evals")
@@ -2372,6 +2403,10 @@ class DynamoDb(BaseDb):
             if model_id:
                 filter_expressions.append("model_id = :model_id")
                 expression_values[":model_id"] = {"S": model_id}
+
+            if user_id is not None:
+                filter_expressions.append("user_id = :user_id")
+                expression_values[":user_id"] = {"S": user_id}
 
             if eval_type is not None and len(eval_type) > 0:
                 eval_type_conditions = []
@@ -2435,13 +2470,13 @@ class DynamoDb(BaseDb):
             raise e
 
     def rename_eval_run(
-        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         if not self.eval_table_name:
             return None
 
         try:
-            response = self.client.update_item(
+            update_kwargs: Dict[str, Any] = dict(
                 TableName=self.eval_table_name,
                 Key={"run_id": {"S": eval_run_id}},
                 UpdateExpression="SET #name = :name, updated_at = :updated_at",
@@ -2452,6 +2487,15 @@ class DynamoDb(BaseDb):
                 },
                 ReturnValues="ALL_NEW",
             )
+            # Only rename if owned by this user (also fails when the run is absent).
+            if user_id is not None:
+                update_kwargs["ConditionExpression"] = "user_id = :user_id"
+                update_kwargs["ExpressionAttributeValues"][":user_id"] = {"S": user_id}
+
+            try:
+                response = self.client.update_item(**update_kwargs)
+            except self.client.exceptions.ConditionalCheckFailedException:
+                return None
 
             item = response.get("Attributes")
             if item is None:
@@ -2464,6 +2508,33 @@ class DynamoDb(BaseDb):
 
         except Exception as e:
             log_error(f"Failed to rename eval run {eval_run_id}: {str(e)}")
+            raise e
+
+    def update_eval_run_user_id(self, eval_run_id: str, user_id: str) -> None:
+        """Set the owner (user_id) on an existing eval run.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            user_id (str): The owner to set.
+        """
+        if not self.eval_table_name:
+            return
+
+        try:
+            self.client.update_item(
+                TableName=self.eval_table_name,
+                Key={"run_id": {"S": eval_run_id}},
+                UpdateExpression="SET user_id = :user_id",
+                # Avoid upserting a phantom item when the run doesn't exist.
+                ConditionExpression="attribute_exists(run_id)",
+                ExpressionAttributeValues={":user_id": {"S": user_id}},
+            )
+
+        except self.client.exceptions.ConditionalCheckFailedException:
+            return
+
+        except Exception as e:
+            log_error(f"Failed to set owner on eval run {eval_run_id}: {str(e)}")
             raise e
 
     # -- Culture methods --

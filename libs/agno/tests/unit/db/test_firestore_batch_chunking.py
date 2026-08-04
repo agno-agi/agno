@@ -110,3 +110,71 @@ class TestDeleteRunsChunksAt500:
 
         # No batches created (loop never entered)
         assert len(batches) == 0
+
+
+class TestDeleteSessionCascadeChunksAt500:
+    """The single-session ``delete_session`` cascade also has to chunk its run
+    deletes -- the plural ``delete_sessions`` did, but ``delete_session`` staged
+    every run into one batch, so deleting a session with >500 runs (exactly the
+    long-lived sessions v3 targets) hit Firestore's INVALID_ARGUMENT.
+    """
+
+    def _setup(self, num_runs: int, db: FirestoreDb) -> list:
+        sessions_collection = MagicMock()
+        runs_collection = MagicMock()
+
+        def get_collection(table_type: str = "sessions", **kwargs):
+            return runs_collection if table_type == "runs" else sessions_collection
+
+        db._get_collection = MagicMock(side_effect=get_collection)  # type: ignore[method-assign]
+
+        # One session doc matches the delete query.
+        session_doc = MagicMock()
+        sessions_collection.where.return_value.stream.return_value = [session_doc]
+
+        # num_runs run docs cascade off it.
+        run_docs = [MagicMock() for _ in range(num_runs)]
+        runs_collection.where.return_value.stream.return_value = run_docs
+
+        batches: list = []
+
+        def new_batch():
+            b = MagicMock()
+            batches.append(b)
+            return b
+
+        db.db_client.batch.side_effect = new_batch
+        return batches
+
+    def test_501_runs_cascade_produces_two_commits(self):
+        db = _make_db_with_mock_client()
+        batches = self._setup(501, db)
+
+        assert db.delete_session("s1") is True
+
+        assert len(batches) == 2, f"expected 2 batches for 501 run deletes, got {len(batches)}"
+        assert batches[0].delete.call_count == 500
+        assert batches[1].delete.call_count == 1
+        assert batches[0].commit.call_count == 1
+        assert batches[1].commit.call_count == 1
+
+    def test_499_runs_cascade_produces_one_commit(self):
+        db = _make_db_with_mock_client()
+        batches = self._setup(499, db)
+
+        assert db.delete_session("s1") is True
+
+        assert len(batches) == 1
+        assert batches[0].delete.call_count == 499
+        assert batches[0].commit.call_count == 1
+
+    def test_zero_runs_cascade_commits_nothing(self):
+        db = _make_db_with_mock_client()
+        batches = self._setup(0, db)
+
+        assert db.delete_session("s1") is True
+
+        # An empty batch may be opened, but nothing is deleted or committed.
+        for b in batches:
+            assert b.delete.call_count == 0
+            assert b.commit.call_count == 0

@@ -128,40 +128,51 @@ async def aget_last_run_output(agent: Agent, session_id: Optional[str] = None) -
 
 
 def read_session(
-    agent: Agent, session_id: str, session_type: SessionType = SessionType.AGENT, user_id: Optional[str] = None
+    agent: Agent,
+    session_id: str,
+    session_type: SessionType = SessionType.AGENT,
+    user_id: Optional[str] = None,
+    runs_limit: Optional[int] = None,
 ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
-    """Get a Session from the database."""
-    try:
-        if not agent.db:
-            raise ValueError("Db not initialized")
-        return agent.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
-    except Exception as e:
-        import traceback
+    """Get a Session from the database.
 
-        traceback.print_exc(limit=3)
-        log_warning(f"Error getting session from db: {str(e)}")
-        return None
+    Read errors propagate. Do NOT coerce failures to None here: an empty result
+    is indistinguishable from "row does not exist", and the caller will happily
+    create a fresh session with the same id and overwrite the real row on the
+    next write. This is how a transient Postgres failover wiped six weeks of
+    conversation history in a real incident. Let the exception surface and
+    fail the run loudly -- a failed run is recoverable, a wiped session is not.
+    """
+    if not agent.db:
+        raise ValueError("Db not initialized")
+    # Every adapter accepts runs_limit; those that don't optimize it load the full
+    # history (a safe superset), so we can pass it unconditionally.
+    return agent.db.get_session(  # type: ignore
+        session_id=session_id, session_type=session_type, user_id=user_id, runs_limit=runs_limit
+    )
 
 
 async def aread_session(
-    agent: Agent, session_id: str, session_type: SessionType = SessionType.AGENT, user_id: Optional[str] = None
+    agent: Agent,
+    session_id: str,
+    session_type: SessionType = SessionType.AGENT,
+    user_id: Optional[str] = None,
+    runs_limit: Optional[int] = None,
 ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
-    """Get a Session from the database."""
+    """Async twin of :func:`read_session`. Same rationale: do NOT swallow errors."""
     from agno.agent import _init
 
-    try:
-        if not agent.db:
-            raise ValueError("Db not initialized")
-        if _init.has_async_db(agent):
-            return await agent.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
-        else:
-            return agent.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
-    except Exception as e:
-        import traceback
-
-        traceback.print_exc(limit=3)
-        log_warning(f"Error getting session from db: {str(e)}")
-        return None
+    if not agent.db:
+        raise ValueError("Db not initialized")
+    # Every adapter accepts runs_limit; those that don't optimize it load the full
+    # history (a safe superset), so we can pass it unconditionally.
+    if _init.has_async_db(agent):
+        return await agent.db.get_session(  # type: ignore
+            session_id=session_id, session_type=session_type, user_id=user_id, runs_limit=runs_limit
+        )
+    return agent.db.get_session(  # type: ignore
+        session_id=session_id, session_type=session_type, user_id=user_id, runs_limit=runs_limit
+    )
 
 
 def upsert_session(
@@ -608,8 +619,8 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     # config["memory_manager"] = agent.memory_manager.to_dict()
     if agent.enable_agentic_memory:
         config["enable_agentic_memory"] = agent.enable_agentic_memory
-    if agent.enable_user_memories:
-        config["enable_user_memories"] = agent.enable_user_memories
+    if agent.update_memory_on_run:
+        config["update_memory_on_run"] = agent.update_memory_on_run
     if agent.add_memories_to_context is not None:
         config["add_memories_to_context"] = agent.add_memories_to_context
 
@@ -984,6 +995,22 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
     config.pop("team_id", None)
     config.pop("workflow_id", None)
 
+    if "search_session_history" in config:
+        log_debug("'search_session_history' has been deprecated. Use 'search_past_sessions' instead.")
+        config.pop("search_session_history", None)
+
+    if "num_history_sessions" in config:
+        log_debug("'num_history_sessions' has been deprecated. Use 'num_past_sessions_to_search' instead.")
+        config.pop("num_history_sessions", None)
+
+    if "enable_user_memories" in config:
+        log_debug("'enable_user_memories' has been deprecated. Use 'update_memory_on_run' instead.")
+        config.pop("enable_user_memories", None)
+
+    if "num_past_session_runs" in config:
+        log_debug("'num_past_session_runs' has been deprecated. Use 'num_past_session_runs_in_search' instead.")
+        config.pop("num_past_session_runs", None)
+
     return cls(
         # --- Agent settings ---
         model=config.get("model"),
@@ -998,11 +1025,9 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
         enable_agentic_state=config.get("enable_agentic_state", False),
         overwrite_db_session_state=config.get("overwrite_db_session_state", False),
         cache_session=config.get("cache_session", False),
-        search_past_sessions=config.get("search_past_sessions", config.get("search_session_history", False)),
-        num_past_sessions_to_search=config.get("num_past_sessions_to_search", config.get("num_history_sessions")),
-        num_past_session_runs_in_search=config.get(
-            "num_past_session_runs_in_search", config.get("num_past_session_runs")
-        ),
+        search_past_sessions=config.get("search_past_sessions", False),
+        num_past_sessions_to_search=config.get("num_past_sessions_to_search"),
+        num_past_session_runs_in_search=config.get("num_past_session_runs_in_search"),
         enable_session_summaries=config.get("enable_session_summaries", False),
         add_session_summary_to_context=config.get("add_session_summary_to_context"),
         # session_summary_manager=config.get("session_summary_manager"),  # TODO
@@ -1012,7 +1037,7 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
         # --- Agentic Memory settings ---
         # memory_manager=config.get("memory_manager"),  # TODO
         enable_agentic_memory=config.get("enable_agentic_memory", False),
-        enable_user_memories=config.get("enable_user_memories", False),
+        update_memory_on_run=config.get("update_memory_on_run", False),
         add_memories_to_context=config.get("add_memories_to_context"),
         # --- Learning settings ---
         learning=config.get("learning"),

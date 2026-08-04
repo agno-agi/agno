@@ -25,6 +25,7 @@ from agno.db.utils import (
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
+    filter_context_runs,
     merge_runs_table_with_legacy_blob,
 )
 from agno.run.agent import RunOutput
@@ -493,6 +494,7 @@ class GcsJsonDb(BaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession, Dict[str, Any]]]:
         """Read a session from the GCS JSON file.
 
@@ -521,6 +523,10 @@ class GcsJsonDb(BaseDb):
                     # Attach runs from the runs file, merged with any legacy `runs` field
                     runs_data = self._get_session_runs_data(session_id)
                     session_data["runs"] = merge_runs_table_with_legacy_blob(runs_data, session_data.get("runs"))
+                    if runs_limit is not None:
+                        # No query engine to push "last N" down: filter+slice in memory to
+                        # match the SQL fast path (drop member/skip-status runs, then last N).
+                        session_data["runs"] = filter_context_runs(session_data["runs"] or [])[-runs_limit:]
 
                     if not deserialize:
                         return session_data
@@ -702,7 +708,14 @@ class GcsJsonDb(BaseDb):
                     existing_uid = existing_session.get("user_id")
                     if existing_uid is not None and existing_uid != session_dict.get("user_id"):
                         return None
+                    # Carry the legacy `runs` blob forward. session.to_dict(include_runs=False)
+                    # omits `runs`, so a bare replace here would silently erase any pre-v3
+                    # history that lives only in the legacy blob (upgrade-without-migration
+                    # data loss). Only cleanup_legacy_runs_field() should drop it, explicitly.
+                    legacy_runs = existing_session.get("runs")
                     session_dict["updated_at"] = int(time.time())
+                    if legacy_runs is not None:
+                        session_dict["runs"] = legacy_runs
                     sessions[i] = session_dict
                     session_updated = True
                     break
@@ -1375,12 +1388,16 @@ class GcsJsonDb(BaseDb):
             log_warning(f"Error deleting eval run {eval_run_id}: {str(e)}")
             raise e
 
-    def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+    def delete_eval_runs(self, eval_run_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete multiple eval runs from the GCS JSON file."""
         try:
             eval_runs = self._read_json_file(self.eval_table_name)
             original_count = len(eval_runs)
-            eval_runs = [run for run in eval_runs if run.get("run_id") not in eval_run_ids]
+            eval_runs = [
+                run
+                for run in eval_runs
+                if not (run.get("run_id") in eval_run_ids and (user_id is None or run.get("user_id") == user_id))
+            ]
 
             deleted_count = original_count - len(eval_runs)
             if deleted_count > 0:
@@ -1393,7 +1410,7 @@ class GcsJsonDb(BaseDb):
             raise e
 
     def get_eval_run(
-        self, eval_run_id: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Get an eval run from the GCS JSON file."""
         try:
@@ -1401,6 +1418,8 @@ class GcsJsonDb(BaseDb):
 
             for run_data in eval_runs:
                 if run_data.get("run_id") == eval_run_id:
+                    if user_id is not None and run_data.get("user_id") != user_id:
+                        return None
                     if not deserialize:
                         return run_data
                     return EvalRunRecord.model_validate(run_data)
@@ -1423,6 +1442,7 @@ class GcsJsonDb(BaseDb):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the GCS JSON file with filtering and pagination."""
         try:
@@ -1438,6 +1458,8 @@ class GcsJsonDb(BaseDb):
                 if workflow_id is not None and run_data.get("workflow_id") != workflow_id:
                     continue
                 if model_id is not None and run_data.get("model_id") != model_id:
+                    continue
+                if user_id is not None and run_data.get("user_id") != user_id:
                     continue
                 if eval_type is not None and len(eval_type) > 0:
                     if run_data.get("eval_type") not in eval_type:
@@ -1477,7 +1499,7 @@ class GcsJsonDb(BaseDb):
             raise e
 
     def rename_eval_run(
-        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Rename an eval run in the GCS JSON file."""
         try:
@@ -1485,6 +1507,8 @@ class GcsJsonDb(BaseDb):
 
             for i, run_data in enumerate(eval_runs):
                 if run_data.get("run_id") == eval_run_id:
+                    if user_id is not None and run_data.get("user_id") != user_id:
+                        return None
                     run_data["name"] = name
                     run_data["updated_at"] = int(time.time())
                     eval_runs[i] = run_data
@@ -1497,6 +1521,26 @@ class GcsJsonDb(BaseDb):
             return None
         except Exception as e:
             log_warning(f"Error renaming eval run {eval_run_id}: {str(e)}")
+            raise e
+
+    def update_eval_run_user_id(self, eval_run_id: str, user_id: str) -> None:
+        """Set the owner (user_id) on an existing eval run.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            user_id (str): The owner to set.
+        """
+        try:
+            eval_runs = self._read_json_file(self.eval_table_name)
+            for i, run_data in enumerate(eval_runs):
+                if run_data.get("run_id") == eval_run_id:
+                    run_data["user_id"] = user_id
+                    eval_runs[i] = run_data
+                    self._write_json_file(self.eval_table_name, eval_runs)
+                    break
+
+        except Exception as e:
+            log_warning(f"Error setting owner on eval run {eval_run_id}: {str(e)}")
             raise e
 
     # -- Cultural Knowledge methods --

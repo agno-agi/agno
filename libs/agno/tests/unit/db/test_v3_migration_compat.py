@@ -150,15 +150,55 @@ def test_continue_legacy_session_writes_all_runs_to_table():
             for r in conn.execute("SELECT run_id FROM agno_runs WHERE session_id='s3' ORDER BY run_index").fetchall()
         ]
         assert ids == ["r0", "r1", "r2"]
-        # The legacy blob has been cleared for this session
+        # Option A: the legacy blob is intentionally preserved as a frozen backup — writes
+        # never null it. Only cleanup_legacy_runs_column() reclaims it.
         blob = conn.execute("SELECT runs FROM agno_sessions WHERE session_id='s3'").fetchone()[0]
-        assert blob is None
+        assert blob is not None
     finally:
         conn.close()
 
-    # Re-read — runs come from the table now, full history preserved
+    # Re-read — runs come from the table (merged with the preserved blob, deduped by
+    # run_id), full history preserved with no duplicates.
     reloaded = db.get_session("s3", SessionType.AGENT)
     assert [r.run_id for r in reloaded.runs] == ["r0", "r1", "r2"]
+
+
+def test_upgrade_without_migration_preserves_runs_on_write():
+    """Option A regression for the upgrade-without-migration data loss.
+
+    A user upgrades to v3 code against a pre-v3 DB but does NOT run the migration,
+    then continues an existing conversation. Before the fix, upsert_session nulled
+    the legacy `runs` blob on write, so the historical runs (which only lived in the
+    blob) were permanently lost. Now the blob is preserved as a frozen backup and the
+    history survives.
+    """
+    db, db_file = _new_db()
+    db.upsert_session(AgentSession(session_id="seed", agent_id="agent-1", user_id="u1"))
+    _add_legacy_runs_column(db_file)
+
+    legacy = [_make_run(f"r{i}", "s9", f"c{i}").to_dict() for i in range(3)]
+    _insert_legacy_session(db_file, "s9", legacy)
+
+    db = SqliteDb(db_file=db_file)
+    # Read works via the legacy-blob fallback even though the migration never ran.
+    loaded = db.get_session("s9", SessionType.AGENT)
+    assert [r.run_id for r in loaded.runs] == ["r0", "r1", "r2"]
+
+    # Continue the conversation: save a new run + the session row (the v3 save contract).
+    new_run = _make_run("r3", "s9", "fresh")
+    loaded.upsert_run(new_run)
+    db.upsert_run(run=new_run, session_id="s9", user_id="u1", run_index=3)
+    db.upsert_session(loaded)
+
+    # The pre-existing runs survive: legacy blob preserved + new run in the table, merged.
+    conn = sqlite3.connect(db_file)
+    try:
+        blob = conn.execute("SELECT runs FROM agno_sessions WHERE session_id='s9'").fetchone()[0]
+        assert blob is not None and len(json.loads(blob)) == 3
+    finally:
+        conn.close()
+    reloaded = db.get_session("s9", SessionType.AGENT)
+    assert [r.run_id for r in reloaded.runs] == ["r0", "r1", "r2", "r3"]
 
 
 # ---------------------------------------------------------------------------
@@ -288,8 +328,11 @@ def test_cleanup_refuses_when_legacy_runs_still_present():
     assert db.cleanup_legacy_runs_column(force=True) is True
 
 
-def test_cleanup_succeeds_after_migration():
-    """After a normal migration + a save touches each session, cleanup should succeed."""
+def test_cleanup_after_migration_requires_force():
+    """Option A: writes never null the legacy column, so after migration the blob stays
+    as a frozen backup. Non-force cleanup refuses (it can't tell migrated-preserved from
+    un-migrated); force=True is the explicit "I've verified the migration" opt-in.
+    """
     db, db_file = _new_db()
     db.upsert_session(AgentSession(session_id="seed", agent_id="agent-1", user_id="u1"))
     _add_legacy_runs_column(db_file)
@@ -300,19 +343,28 @@ def test_cleanup_succeeds_after_migration():
     db = SqliteDb(db_file=db_file)
     asyncio.run(MigrationManager(db).up())
 
-    # Touch each session so the legacy column gets nulled
-    for sid in ["seed", "s8"]:
-        session = db.get_session(sid, SessionType.AGENT)
-        if session is not None:
-            db.upsert_session(session)
+    # Touching the session no longer nulls the legacy column (frozen backup).
+    session = db.get_session("s8", SessionType.AGENT)
+    db.upsert_session(session)
+    conn = sqlite3.connect(db_file)
+    try:
+        blob = conn.execute("SELECT runs FROM agno_sessions WHERE session_id='s8'").fetchone()[0]
+        assert blob is not None
+    finally:
+        conn.close()
 
-    assert db.cleanup_legacy_runs_column() is True
+    # Non-force cleanup refuses while any legacy blob is still present.
+    with pytest.raises(RuntimeError, match="Refusing to drop"):
+        db.cleanup_legacy_runs_column()
+
+    # force=True reclaims the column after the migration copied everything into agno_runs.
+    assert db.cleanup_legacy_runs_column(force=True) is True
 
     conn = sqlite3.connect(db_file)
     try:
         cols = {c[1] for c in conn.execute("PRAGMA table_info(agno_sessions)").fetchall()}
         # SQLite may or may not support DROP COLUMN depending on version; in either case
-        # the cleanup helper should return True and the column (if still there) must be empty.
+        # the cleanup helper returns True and the column (if still there) must be empty.
         if "runs" in cols:
             blob = conn.execute("SELECT runs FROM agno_sessions WHERE runs IS NOT NULL").fetchone()
             assert blob is None

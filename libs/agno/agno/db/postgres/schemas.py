@@ -28,19 +28,6 @@ SESSION_TABLE_SCHEMA = {
 }
 
 
-# DESIGN NOTES (PR #8350):
-#
-# * ``session_id`` is a FOREIGN KEY into the sessions table, with ON DELETE
-#   CASCADE. Delete a session → its runs go with it, atomic and race-free at
-#   the DB layer (no application-level cascade needed). The v3 migration is
-#   FK-safe because ``_migrate_postgres`` runs in a single transaction and
-#   only inserts run rows whose ``session_id`` was just read from the
-#   existing sessions row — the constraint is always satisfied at commit.
-#
-# * Member team runs are NOT written as separate rows here. When
-#   ``store_member_responses=True``, member outputs live inside the team run's
-#   ``member_responses`` array in ``run_data``. Preserves the
-#   1-team-run-per-model-loop invariant and keeps ``run_index`` clean.
 def _get_run_table_schema(session_table_name: str = "agno_sessions") -> dict[str, Any]:
     """Runs table schema; ``session_id`` foreign-keyed to sessions with
     ON DELETE CASCADE.
@@ -71,6 +58,11 @@ def _get_run_table_schema(session_table_name: str = "agno_sessions") -> dict[str
         "run_data": {"type": JSONB, "nullable": False},
         "created_at": {"type": BigInteger, "nullable": False, "index": True},
         "updated_at": {"type": BigInteger, "nullable": True},
+        # Composite index so "most recent N runs of a session"
+        # (WHERE session_id=? ORDER BY run_index DESC LIMIT N) is index-served.
+        "__composite_indexes__": [
+            {"name": "agno_runs_session_id_run_index", "columns": ["session_id", "run_index"]},
+        ],
     }
 
 
@@ -99,6 +91,7 @@ EVAL_TABLE_SCHEMA = {
     "model_id": {"type": String, "nullable": True},
     "model_provider": {"type": String, "nullable": True},
     "evaluated_component_name": {"type": String, "nullable": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
 }

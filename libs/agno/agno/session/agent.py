@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Mapping, Optional, Union
 
 from agno.models.message import Message
 from agno.run.agent import RunOutput
-from agno.run.base import RunStatus
+from agno.run.base import HISTORY_SKIP_STATUSES, RunStatus
 from agno.run.team import TeamRunOutput
 from agno.session.summary import SessionSummary
 from agno.utils.log import log_debug, log_warning
@@ -44,12 +45,12 @@ class AgentSession:
     updated_at: Optional[int] = None
 
     def to_dict(self, include_runs: bool = True) -> Dict[str, Any]:
-        # Exclude runs from asdict to avoid the deep serialization cost when not needed
-        runs, self.runs = self.runs, None
-        try:
-            session_dict = asdict(self)
-        finally:
-            self.runs = runs
+        # Exclude runs from asdict to avoid the deep serialization cost. Serialize
+        # a shallow copy so we never mutate a live (possibly shared/cached) session
+        # while another thread reads self.runs.
+        session_copy = copy.copy(self)
+        session_copy.runs = None
+        session_dict = asdict(session_copy)
 
         if include_runs:
             session_dict["runs"] = [run.to_dict() for run in self.runs] if self.runs else None
@@ -149,10 +150,6 @@ class AgentSession:
             message: Message, skip_roles: Optional[List[str]] = None, skip_history_messages: bool = True
         ) -> bool:
             """Logic to determine if a message should be skipped"""
-            # Skip compacted messages (summarized by context compression)
-            if message.is_compacted:
-                return True
-
             # Skip messages that were tagged as history in previous runs
             if hasattr(message, "from_history") and message.from_history and skip_history_messages:
                 return True
@@ -167,7 +164,7 @@ class AgentSession:
             return []
 
         if skip_statuses is None:
-            skip_statuses = [RunStatus.paused, RunStatus.cancelled, RunStatus.error, RunStatus.regenerated]
+            skip_statuses = list(HISTORY_SKIP_STATUSES)
 
         runs = self.runs
 
@@ -244,18 +241,6 @@ class AgentSession:
                     else:
                         messages_from_history.append(message)
 
-        # Inject stored compaction summary if exists
-        stored_summary = self._get_compaction_summary()
-        if stored_summary and messages_from_history:
-            from agno.compression.manager import build_summary_message
-
-            summary_msg = build_summary_message(stored_summary)
-            # Insert after system message if present
-            if messages_from_history[0].role == "system":
-                messages_from_history.insert(1, summary_msg)
-            else:
-                messages_from_history.insert(0, summary_msg)
-
         log_debug(f"Getting messages from previous runs: {len(messages_from_history)}")
         return messages_from_history
 
@@ -293,12 +278,3 @@ class AgentSession:
         if self.summary is None:
             return None
         return self.summary
-
-    def _get_compaction_summary(self) -> Optional[str]:
-        """Get stored compaction summary from session_data."""
-        if self.session_data is None:
-            return None
-        state = self.session_data.get("compaction_state")
-        if state and isinstance(state, dict):
-            return state.get("summary")
-        return None

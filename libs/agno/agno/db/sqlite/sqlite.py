@@ -40,12 +40,14 @@ from agno.db.sqlite.utils import (
     serialize_cultural_knowledge_for_db,
 )
 from agno.db.utils import (
+    HISTORY_SKIP_STATUSES,
     CustomJSONEncoder,
     build_single_run_row,
     deserialize_run,
     deserialize_session,
     deserialize_session_json_fields,
     deserialize_sessions,
+    filter_context_runs,
     learning_search_patterns,
     merge_runs_table_with_legacy_blob,
     serialize_session_json_fields,
@@ -60,7 +62,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import Column, MetaData, String, Table, func, null, or_, select, text
+    from sqlalchemy import Column, MetaData, String, Table, func, or_, select, text
     from sqlalchemy.dialects import sqlite
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
@@ -821,12 +823,45 @@ class SqliteDb(BaseDb):
             return True
 
     # -- Run methods --
-    def _get_session_runs_data(self, sess, runs_table: Table, session_id: str) -> List[Dict[str, Any]]:
-        """Get the raw run_data dicts for the given session, in insertion order."""
+    def _get_session_runs_data(
+        self, sess, runs_table: Table, session_id: str, limit: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Get the raw run_data dicts for the given session, in insertion order.
+
+        When ``limit`` is set, only the most recent ``limit`` context-relevant runs
+        are fetched (indexed ``ORDER BY run_index DESC LIMIT``) and returned in
+        ascending (chronological) order. "Context-relevant" mirrors the pre-slice
+        filtering in ``get_messages``: member sub-runs (``parent_run_id`` set) and
+        terminal-skip statuses are excluded in SQL, so the DB-side last-N matches
+        the in-memory history window.
+        """
+        # run_index is the monotonic insertion order (backfilled on write, see
+        # upsert_run), so it drives the ordering and the (session_id, run_index)
+        # index serves it; created_at/run_id are deterministic tiebreakers.
+        if limit is not None:
+            stmt = (
+                select(runs_table.c.run_data)
+                .where(runs_table.c.session_id == session_id)
+                .where(runs_table.c.parent_run_id.is_(None))
+                .where(or_(runs_table.c.status.is_(None), runs_table.c.status.notin_(HISTORY_SKIP_STATUSES)))
+                .order_by(
+                    runs_table.c.run_index.desc(),
+                    runs_table.c.created_at.desc(),
+                    runs_table.c.run_id.desc(),
+                )
+                .limit(limit)
+            )
+            rows = [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in sess.execute(stmt).fetchall()]
+            rows.reverse()
+            return rows
         stmt = (
             select(runs_table.c.run_data)
             .where(runs_table.c.session_id == session_id)
-            .order_by(runs_table.c.run_index.asc(), runs_table.c.created_at.asc())
+            .order_by(
+                runs_table.c.run_index.asc(),
+                runs_table.c.created_at.asc(),
+                runs_table.c.run_id.asc(),
+            )
         )
         return [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in sess.execute(stmt).fetchall()]
 
@@ -924,6 +959,15 @@ class SqliteDb(BaseDb):
             row["run_data"] = json.dumps(row["run_data"], cls=CustomJSONEncoder)
 
             with self.Session() as sess, sess.begin():
+                # Backfill a monotonic run_index when the run arrives without one
+                # (e.g. a background/continue save that couldn't resolve its position).
+                # A NULL index has no position and breaks ORDER BY run_index.
+                if row.get("run_index") is None:
+                    current_max = sess.execute(
+                        select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
+                    ).scalar()
+                    row["run_index"] = (current_max + 1) if current_max is not None else 0
+
                 stmt = sqlite.insert(runs_table).values(**row)
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["run_id"],
@@ -933,7 +977,9 @@ class SqliteDb(BaseDb):
                         user_id=stmt.excluded.user_id,
                         parent_run_id=stmt.excluded.parent_run_id,
                         updated_at=stmt.excluded.updated_at,
-                        # Note: run_index is NOT updated for existing runs to preserve ordering
+                        # Preserve a non-null run_index; only fill it in for a legacy row
+                        # that was stored as NULL (COALESCE keeps the existing value if set).
+                        run_index=func.coalesce(runs_table.c.run_index, stmt.excluded.run_index),
                     ),
                 )
                 sess.execute(stmt)
@@ -1027,6 +1073,48 @@ class SqliteDb(BaseDb):
             log_error(f"Exception reading from runs table: {str(e)}")
             raise e
 
+    def _scrub_run_ids_from_legacy_blob(self, run_ids: List[str]) -> None:
+        """Remove ``run_ids`` from every session row's legacy ``runs`` JSON column.
+
+        Partial-migration state: v3 migration copied runs into the ``agno_runs``
+        table but preserved the legacy embedded blob as a backup. Deleting a run
+        row alone leaves the blob intact and ``merge_runs_table_with_legacy_blob``
+        resurrects it on the next read. Skip cleanly on a fully-migrated DB
+        (no ``runs`` column). Best-effort: a failure here must not roll back
+        the primary runs-table delete.
+        """
+        if not run_ids:
+            return
+        try:
+            import json as _json
+
+            sessions_table = self._get_table(table_type="sessions")
+            if sessions_table is None or "runs" not in sessions_table.c:
+                return
+            wanted = set(run_ids)
+            with self.Session() as sess, sess.begin():
+                rows = sess.execute(
+                    select(sessions_table.c.session_id, sessions_table.c.runs).where(sessions_table.c.runs.isnot(None))
+                ).fetchall()
+                for sid, runs_raw in rows:
+                    if isinstance(runs_raw, str):
+                        try:
+                            runs_list = _json.loads(runs_raw)
+                        except (_json.JSONDecodeError, TypeError):
+                            continue
+                    else:
+                        runs_list = runs_raw
+                    if not isinstance(runs_list, list):
+                        continue
+                    kept = [r for r in runs_list if not (isinstance(r, dict) and r.get("run_id") in wanted)]
+                    if len(kept) == len(runs_list):
+                        continue
+                    sess.execute(
+                        sessions_table.update().where(sessions_table.c.session_id == sid).values(runs=_json.dumps(kept))
+                    )
+        except Exception:
+            log_debug("legacy-runs scrub failed; the primary delete still succeeded", exc_info=True)
+
     def delete_run(self, run_id: str) -> bool:
         """Delete a single run from the runs table.
 
@@ -1043,7 +1131,12 @@ class SqliteDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 result = sess.execute(table.delete().where(table.c.run_id == run_id))
-                return result.rowcount > 0
+                deleted = result.rowcount > 0
+
+            # Also scrub the legacy blob so the merge helper doesn't resurrect
+            # the deleted run on the next read (partial-migration state).
+            self._scrub_run_ids_from_legacy_blob([run_id])
+            return deleted
 
         except Exception as e:
             log_error(f"Error deleting run: {str(e)}")
@@ -1063,6 +1156,7 @@ class SqliteDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 result = sess.execute(table.delete().where(table.c.run_id.in_(run_ids)))
 
+            self._scrub_run_ids_from_legacy_blob(list(run_ids))
             log_debug(f"Successfully deleted {result.rowcount} runs")
 
         except Exception as e:
@@ -1150,6 +1244,7 @@ class SqliteDb(BaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Read a session from the database.
@@ -1159,6 +1254,11 @@ class SqliteDb(BaseDb):
             session_type (SessionType): Type of session to get.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            runs_limit (Optional[int]): If set, attach only the most recent ``runs_limit``
+                runs instead of the full history. For a fully-migrated session this is an
+                indexed ``ORDER BY run_index DESC LIMIT`` query; for a session that still
+                carries a legacy ``runs`` blob it falls back to a full load + merge, then
+                slices, so no history is ever lost.
 
         Returns:
             Optional[Union[Session, Dict[str, Any]]]:
@@ -1190,9 +1290,26 @@ class SqliteDb(BaseDb):
                 # Attach the runs stored in the runs table, merged with any runs still
                 # sitting in the legacy `runs` column (so partially-migrated sessions
                 # don't silently lose history).
-                if session_raw is not None and runs_table is not None:
-                    runs_data = self._get_session_runs_data(sess=sess, runs_table=runs_table, session_id=session_id)
-                    session_raw["runs"] = merge_runs_table_with_legacy_blob(runs_data, session_raw.get("runs"))
+                if session_raw is not None:
+                    legacy_runs = session_raw.get("runs")
+                    if runs_table is not None and runs_limit is not None and not legacy_runs:
+                        # Fully migrated: push "most recent N" down to the DB (indexed).
+                        session_raw["runs"] = self._get_session_runs_data(
+                            sess=sess, runs_table=runs_table, session_id=session_id, limit=runs_limit
+                        )
+                    elif runs_table is not None:
+                        # Full load + merge. Also the un-migrated fallback: the legacy blob
+                        # holds the whole history in one column, so "last N" can't be pushed
+                        # to SQL — load all, merge, then filter+slice to match the migrated path.
+                        runs_data = self._get_session_runs_data(sess=sess, runs_table=runs_table, session_id=session_id)
+                        merged = merge_runs_table_with_legacy_blob(runs_data, legacy_runs)
+                        if runs_limit is not None:
+                            merged = filter_context_runs(merged)[-runs_limit:]
+                        session_raw["runs"] = merged
+                    elif runs_limit is not None:
+                        # No runs table yet (fully un-migrated): filter+slice the legacy blob.
+                        merged = merge_runs_table_with_legacy_blob([], legacy_runs)
+                        session_raw["runs"] = filter_context_runs(merged)[-runs_limit:]
 
                 if not session_raw or not deserialize:
                     return session_raw
@@ -1216,9 +1333,15 @@ class SqliteDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """
         Get all sessions in the given table. Can filter by user_id and entity_id.
+
+        Pass ``include_runs=False`` to skip attaching each session's run history —
+        a large, usually-unnecessary read for list views. The runs are untouched
+        in storage; a single ``get_session`` still returns them. Defaults to True
+        to preserve existing behavior.
         Args:
             session_type (Optional[SessionType]): The type of session to get.
             user_id (Optional[str]): The ID of the user to filter by.
@@ -1297,13 +1420,17 @@ class SqliteDb(BaseDb):
 
                 # Attach the runs stored in the runs table. If a session has no rows in the
                 # runs table, fall back to its legacy `runs` column content, if any.
-                if runs_table is not None and sessions_raw:
+                if include_runs and runs_table is not None and sessions_raw:
                     runs_by_session = self._get_sessions_runs_data(
                         sess=sess, runs_table=runs_table, session_ids=[s["session_id"] for s in sessions_raw]
                     )
                     for s in sessions_raw:
                         runs_data = runs_by_session.get(s["session_id"], [])
                         s["runs"] = merge_runs_table_with_legacy_blob(runs_data, s.get("runs"))
+                elif not include_runs:
+                    # List views don't need run history; leave it unattached (storage untouched).
+                    for s in sessions_raw:
+                        s["runs"] = None
 
                 if not deserialize:
                     return sessions_raw, total_count
@@ -1419,9 +1546,10 @@ class SqliteDb(BaseDb):
                 )
 
             update_values = {k: v for k, v in values.items() if k != "session_type"}
-            # Clear the legacy runs column if it still exists. Runs are stored in the runs table.
-            if "runs" in table.c:
-                update_values["runs"] = null()
+            # The legacy `runs` column is intentionally left untouched here. Runs now
+            # live in the runs table; the legacy column stays as a frozen backup and is
+            # only reclaimed by the explicit cleanup_legacy_runs_column() helper. Nulling
+            # it on write would lose history for sessions not yet migrated to the runs table.
 
             with self.Session() as sess, sess.begin():
                 stmt = sqlite.insert(table).values(
@@ -2641,11 +2769,12 @@ class SqliteDb(BaseDb):
             log_error(f"Error deleting eval run {eval_run_id}: {str(e)}")
             raise e
 
-    def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+    def delete_eval_runs(self, eval_run_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete multiple eval runs from the database.
 
         Args:
             eval_run_ids (List[str]): List of eval run IDs to delete.
+            user_id (Optional[str]): If set, only delete runs owned by this user.
         """
         try:
             table = self._get_table(table_type="evals")
@@ -2654,6 +2783,8 @@ class SqliteDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = table.delete().where(table.c.run_id.in_(eval_run_ids))
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = sess.execute(stmt)
                 if result.rowcount == 0:
                     log_debug(f"No eval runs found with IDs: {eval_run_ids}")
@@ -2665,13 +2796,14 @@ class SqliteDb(BaseDb):
             raise e
 
     def get_eval_run(
-        self, eval_run_id: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Get an eval run from the database.
 
         Args:
             eval_run_id (str): The ID of the eval run to get.
             deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            user_id (Optional[str]): If set, only return the run if owned by this user.
 
         Returns:
             Optional[Union[EvalRunRecord, Dict[str, Any]]]:
@@ -2688,11 +2820,13 @@ class SqliteDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = select(table).where(table.c.run_id == eval_run_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = sess.execute(stmt).fetchone()
                 if result is None:
                     return None
 
-                eval_run_raw = result._mapping
+                eval_run_raw = dict(result._mapping)
                 if not eval_run_raw or not deserialize:
                     return eval_run_raw
 
@@ -2715,6 +2849,7 @@ class SqliteDb(BaseDb):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.
 
@@ -2727,6 +2862,7 @@ class SqliteDb(BaseDb):
             team_id (Optional[str]): The ID of the team to filter by.
             workflow_id (Optional[str]): The ID of the workflow to filter by.
             model_id (Optional[str]): The ID of the model to filter by.
+            user_id (Optional[str]): If set, only return runs owned by this user.
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
             deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
@@ -2750,6 +2886,8 @@ class SqliteDb(BaseDb):
                 stmt = select(table)
 
                 # Filtering
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 if agent_id is not None:
                     stmt = stmt.where(table.c.agent_id == agent_id)
                 if team_id is not None:
@@ -2787,7 +2925,7 @@ class SqliteDb(BaseDb):
                 if not result:
                     return [] if deserialize else ([], 0)
 
-                eval_runs_raw = [row._mapping for row in result]
+                eval_runs_raw = [dict(row._mapping) for row in result]
                 if not deserialize:
                     return eval_runs_raw, total_count
 
@@ -2798,7 +2936,7 @@ class SqliteDb(BaseDb):
             raise e
 
     def rename_eval_run(
-        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Upsert the name of an eval run in the database, returning raw dictionary.
 
@@ -2806,6 +2944,7 @@ class SqliteDb(BaseDb):
             eval_run_id (str): The ID of the eval run to update.
             name (str): The new name of the eval run.
             deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            user_id (Optional[str]): If set, only rename the run if owned by this user.
 
         Returns:
             Optional[Union[EvalRunRecord, Dict[str, Any]]]:
@@ -2824,9 +2963,11 @@ class SqliteDb(BaseDb):
                 stmt = (
                     table.update().where(table.c.run_id == eval_run_id).values(name=name, updated_at=int(time.time()))
                 )
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 sess.execute(stmt)
 
-            eval_run_raw = self.get_eval_run(eval_run_id=eval_run_id, deserialize=deserialize)
+            eval_run_raw = self.get_eval_run(eval_run_id=eval_run_id, deserialize=deserialize, user_id=user_id)
 
             log_debug(f"Renamed eval run with id '{eval_run_id}' to '{name}'")
 
@@ -2837,6 +2978,26 @@ class SqliteDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error renaming eval run {eval_run_id}: {str(e)}")
+            raise e
+
+    def update_eval_run_user_id(self, eval_run_id: str, user_id: str) -> None:
+        """Set the owner (user_id) on an existing eval run.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            user_id (str): The owner to set.
+        """
+        try:
+            table = self._get_table(table_type="evals")
+            if table is None:
+                return
+
+            with self.Session() as sess, sess.begin():
+                stmt = table.update().where(table.c.run_id == eval_run_id).values(user_id=user_id)
+                sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Error setting owner on eval run {eval_run_id}: {str(e)}")
             raise e
 
     # -- Trace methods --
@@ -4819,14 +4980,12 @@ class SqliteDb(BaseDb):
         self,
         component_id: str,
         version: Optional[int] = None,
-        label: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Load a component with its full resolved graph.
 
         Args:
             component_id: The component ID.
             version: Specific version or None for current.
-            label: Optional label of the component.
 
         Returns:
             Dictionary with component, config, links, and resolved children.

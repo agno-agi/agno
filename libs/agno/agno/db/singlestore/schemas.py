@@ -51,6 +51,9 @@ def _get_run_table_schema(session_table_name: str = "agno_sessions") -> dict[str
         "run_data": {"type": JSON, "nullable": False},
         "created_at": {"type": BigInteger, "nullable": False, "index": True},
         "updated_at": {"type": BigInteger, "nullable": True},
+        "_composite_indexes": [
+            {"name": "runs_session_id_run_index", "columns": ["session_id", "run_index"]},
+        ],
     }
 
 
@@ -81,6 +84,7 @@ EVAL_TABLE_SCHEMA = {
     "evaluated_component_name": {"type": lambda: String(255), "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
+    "user_id": {"type": lambda: String(128), "nullable": True, "index": True},
 }
 
 KNOWLEDGE_TABLE_SCHEMA = {

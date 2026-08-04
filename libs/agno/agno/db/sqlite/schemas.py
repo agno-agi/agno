@@ -28,7 +28,6 @@ SESSION_TABLE_SCHEMA = {
 }
 
 
-# See postgres schemas.py for design notes on the session_id FK + CASCADE.
 def _get_run_table_schema(session_table_name: str = "agno_sessions") -> dict[str, Any]:
     """Runs table schema with ``session_id`` FK → sessions ON DELETE CASCADE.
 
@@ -57,6 +56,11 @@ def _get_run_table_schema(session_table_name: str = "agno_sessions") -> dict[str
         "run_data": {"type": JSON, "nullable": False},
         "created_at": {"type": BigInteger, "nullable": False, "index": True},
         "updated_at": {"type": BigInteger, "nullable": True},
+        # Composite index so "most recent N runs of a session"
+        # (WHERE session_id=? ORDER BY run_index DESC LIMIT N) is index-served.
+        "__composite_indexes__": [
+            {"name": "agno_runs_session_id_run_index", "columns": ["session_id", "run_index"]},
+        ],
     }
 
 
@@ -85,6 +89,7 @@ EVAL_TABLE_SCHEMA = {
     "model_id": {"type": String, "nullable": True},
     "model_provider": {"type": String, "nullable": True},
     "evaluated_component_name": {"type": String, "nullable": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
 }

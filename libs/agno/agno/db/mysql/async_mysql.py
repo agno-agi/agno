@@ -1,3 +1,4 @@
+import json
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
@@ -26,10 +27,12 @@ from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
+    HISTORY_SKIP_STATUSES,
     build_single_run_row,
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
+    filter_context_runs,
     json_serializer,
     merge_runs_table_with_legacy_blob,
     validate_pagination,
@@ -43,7 +46,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import TEXT, ForeignKey, Index, UniqueConstraint, and_, cast, func, update
+    from sqlalchemy import TEXT, ForeignKey, Index, UniqueConstraint, and_, cast, func, or_, update
     from sqlalchemy.dialects import mysql
     from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
     from sqlalchemy.schema import Column, MetaData, Table
@@ -197,6 +200,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             indexes: List[str] = []
             unique_constraints: List[str] = []
             schema_unique_constraints = table_schema.pop("_unique_constraints", [])
+            schema_composite_indexes = table_schema.pop("_composite_indexes", [])
 
             # Get the columns, indexes, and unique constraints from the table schema
             for col_name, col_config in table_schema.items():
@@ -234,6 +238,11 @@ class AsyncMySQLDb(AsyncBaseDb):
             for idx_col in indexes:
                 idx_name = f"idx_{table_name}_{idx_col}"
                 table.append_constraint(Index(idx_name, idx_col))
+
+            # Add composite indexes with table-specific names
+            for composite in schema_composite_indexes:
+                composite_name = f"{table_name}_{composite['name']}"
+                table.append_constraint(Index(composite_name, *composite["columns"]))
 
             # Create schema if not exists
             if self.create_schema:
@@ -510,20 +519,47 @@ class AsyncMySQLDb(AsyncBaseDb):
             await sess.execute(text(f"ALTER TABLE `{self.db_schema}`.`{self.session_table_name}` DROP COLUMN `runs`"))
             return True
 
-    def _legacy_runs_update(self, table: Table) -> Dict[str, Any]:
-        """Extra UPDATE clauses to clear the legacy runs column when it still exists."""
-        return {"runs": None} if "runs" in table.c else {}
-
     # -- Run methods --
-    async def _get_session_runs_data(self, sess, runs_table: Table, session_id: str) -> List[Dict[str, Any]]:
-        """Get the raw run_data dicts for the given session, in insertion order."""
+    async def _get_session_runs_data(
+        self, sess, runs_table: Table, session_id: str, limit: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Get the raw run_data dicts for the given session, in insertion order.
+
+        When ``limit`` is set, only the most recent ``limit`` context-relevant runs
+        are fetched (indexed ``ORDER BY run_index DESC LIMIT``) and returned in
+        ascending (chronological) order. "Context-relevant" mirrors the pre-slice
+        filtering in ``get_messages``: member sub-runs (``parent_run_id`` set) and
+        terminal-skip statuses are excluded in SQL, so the DB-side last-N matches
+        the in-memory history window.
+        """
+        if limit is not None:
+            stmt = (
+                select(runs_table.c.run_data)
+                .where(runs_table.c.session_id == session_id)
+                .where(runs_table.c.parent_run_id.is_(None))
+                .where(or_(runs_table.c.status.is_(None), runs_table.c.status.notin_(HISTORY_SKIP_STATUSES)))
+                .order_by(
+                    runs_table.c.run_index.desc(),
+                    runs_table.c.created_at.desc(),
+                    runs_table.c.run_id.desc(),
+                )
+                .limit(limit)
+            )
+            result = await sess.execute(stmt)
+            rows = [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in result.fetchall()]
+            rows.reverse()
+            return rows
         stmt = (
             select(runs_table.c.run_data)
             .where(runs_table.c.session_id == session_id)
-            .order_by(runs_table.c.run_index.asc(), runs_table.c.created_at.asc())
+            .order_by(
+                runs_table.c.run_index.asc(),
+                runs_table.c.created_at.asc(),
+                runs_table.c.run_id.asc(),
+            )
         )
         result = await sess.execute(stmt)
-        return [row[0] for row in result.fetchall()]
+        return [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in result.fetchall()]
 
     async def _get_sessions_runs_data(
         self, sess, runs_table: Table, session_ids: List[str]
@@ -539,6 +575,8 @@ class AsyncMySQLDb(AsyncBaseDb):
         result = await sess.execute(stmt)
         runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
         for session_id, run_data in result.fetchall():
+            if isinstance(run_data, str):
+                run_data = json.loads(run_data)
             runs_by_session.setdefault(session_id, []).append(run_data)
         return runs_by_session
 
@@ -581,6 +619,18 @@ class AsyncMySQLDb(AsyncBaseDb):
             )
 
             async with self.async_session_factory() as sess, sess.begin():
+                # Backfill a monotonic run_index when the run arrives without one
+                # (e.g. a background/continue save that couldn't resolve its position).
+                # A NULL index has no position and breaks ORDER BY run_index. ON DUPLICATE KEY
+                # preserves the existing index, so this only sets it on a genuine insert.
+                if row.get("run_index") is None:
+                    current_max = (
+                        await sess.execute(
+                            select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
+                        )
+                    ).scalar()
+                    row["run_index"] = (current_max + 1) if current_max is not None else 0
+
                 stmt = mysql.insert(runs_table).values(**row)  # type: ignore
                 stmt = stmt.on_duplicate_key_update(
                     status=stmt.inserted.status,
@@ -588,7 +638,9 @@ class AsyncMySQLDb(AsyncBaseDb):
                     user_id=stmt.inserted.user_id,
                     parent_run_id=stmt.inserted.parent_run_id,
                     updated_at=stmt.inserted.updated_at,
-                    # Note: run_index is NOT updated for existing runs to preserve ordering
+                    # Preserve a non-null run_index; only fill it in for a legacy row
+                    # that was stored as NULL (COALESCE keeps the existing value if set).
+                    run_index=func.coalesce(runs_table.c.run_index, stmt.inserted.run_index),
                 )
                 await sess.execute(stmt)
 
@@ -676,6 +728,41 @@ class AsyncMySQLDb(AsyncBaseDb):
             log_error(f"Exception reading from runs table: {str(e)}")
             return [] if deserialize else ([], 0)
 
+    async def _ascrub_run_ids_from_legacy_blob(self, run_ids: List[str]) -> None:
+        """Async variant of the legacy-blob scrub. See mysql.py for rationale."""
+        if not run_ids:
+            return
+        try:
+            import json as _json
+
+            sessions_table = await self._get_table(table_type="sessions")
+            if sessions_table is None or "runs" not in sessions_table.c:
+                return
+            wanted = set(run_ids)
+            async with self.async_session_factory() as sess, sess.begin():
+                result = await sess.execute(
+                    select(sessions_table.c.session_id, sessions_table.c.runs).where(sessions_table.c.runs.isnot(None))
+                )
+                rows = result.fetchall()
+                for sid, runs_raw in rows:
+                    if isinstance(runs_raw, str):
+                        try:
+                            runs_list = _json.loads(runs_raw)
+                        except (_json.JSONDecodeError, TypeError):
+                            continue
+                    else:
+                        runs_list = runs_raw
+                    if not isinstance(runs_list, list):
+                        continue
+                    kept = [r for r in runs_list if not (isinstance(r, dict) and r.get("run_id") in wanted)]
+                    if len(kept) == len(runs_list):
+                        continue
+                    await sess.execute(
+                        sessions_table.update().where(sessions_table.c.session_id == sid).values(runs=_json.dumps(kept))
+                    )
+        except Exception:
+            log_debug("legacy-runs scrub failed; the primary delete still succeeded", exc_info=True)
+
     async def delete_run(self, run_id: str) -> bool:
         """Delete a single run from the runs table."""
         try:
@@ -684,7 +771,9 @@ class AsyncMySQLDb(AsyncBaseDb):
                 return False
             async with self.async_session_factory() as sess, sess.begin():
                 result = await sess.execute(table.delete().where(table.c.run_id == run_id))
-                return result.rowcount > 0  # type: ignore
+                deleted = result.rowcount > 0  # type: ignore
+            await self._ascrub_run_ids_from_legacy_blob([run_id])
+            return deleted
         except Exception as e:
             log_error(f"Error deleting run: {str(e)}")
             return False
@@ -697,6 +786,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 return
             async with self.async_session_factory() as sess, sess.begin():
                 result = await sess.execute(table.delete().where(table.c.run_id.in_(run_ids)))
+            await self._ascrub_run_ids_from_legacy_blob(list(run_ids))
             log_debug(f"Successfully deleted {result.rowcount} runs")  # type: ignore
         except Exception as e:
             log_error(f"Error deleting runs: {str(e)}")
@@ -778,6 +868,7 @@ class AsyncMySQLDb(AsyncBaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Read a session from the database.
@@ -812,11 +903,30 @@ class AsyncMySQLDb(AsyncBaseDb):
 
                 session = dict(row._mapping)
 
-                if runs_table is not None:
+                # Attach the runs stored in the runs table, merged with any runs still
+                # sitting in the legacy `runs` column (so partially-migrated sessions
+                # don't silently lose history).
+                legacy_runs = session.get("runs")
+                if runs_table is not None and runs_limit is not None and not legacy_runs:
+                    # Fully migrated: push "most recent N" down to the DB (indexed).
+                    session["runs"] = await self._get_session_runs_data(
+                        sess=sess, runs_table=runs_table, session_id=session_id, limit=runs_limit
+                    )
+                elif runs_table is not None:
+                    # Full load + merge. Also the un-migrated fallback: the legacy blob
+                    # holds the whole history in one column, so "last N" can't be pushed
+                    # to SQL — load all, merge, then filter+slice to match the migrated path.
                     runs_data = await self._get_session_runs_data(
                         sess=sess, runs_table=runs_table, session_id=session_id
                     )
-                    session["runs"] = merge_runs_table_with_legacy_blob(runs_data, session.get("runs"))
+                    merged = merge_runs_table_with_legacy_blob(runs_data, legacy_runs)
+                    if runs_limit is not None:
+                        merged = filter_context_runs(merged)[-runs_limit:]
+                    session["runs"] = merged
+                elif runs_limit is not None:
+                    # No runs table yet (fully un-migrated): filter+slice the legacy blob.
+                    merged = merge_runs_table_with_legacy_blob([], legacy_runs)
+                    session["runs"] = filter_context_runs(merged)[-runs_limit:]
 
             if not deserialize:
                 return session
@@ -1068,7 +1178,8 @@ class AsyncMySQLDb(AsyncBaseDb):
 
             update_values = {k: v for k, v in values.items() if k != "session_type"}
             update_values["updated_at"] = int(time.time())
-            update_values.update(self._legacy_runs_update(table))
+            # Legacy `runs` column intentionally preserved as a frozen backup; only
+            # cleanup_legacy_runs_column() reclaims it (see upsert_session docstring).
 
             async with self.async_session_factory() as sess, sess.begin():
                 existing_result = await sess.execute(
@@ -1157,8 +1268,6 @@ class AsyncMySQLDb(AsyncBaseDb):
                 ]
                 return session_dict
 
-            extra_clear_runs = self._legacy_runs_update(table)
-
             results: List[Union[Session, Dict[str, Any]]] = []
 
             # Process each session type in bulk
@@ -1195,7 +1304,6 @@ class AsyncMySQLDb(AsyncBaseDb):
                             summary=stmt.inserted.summary,
                             metadata=stmt.inserted.metadata,
                             updated_at=stmt.inserted.updated_at,
-                            **extra_clear_runs,
                         )
                         await sess.execute(stmt, agent_data)
 
@@ -1247,7 +1355,6 @@ class AsyncMySQLDb(AsyncBaseDb):
                             summary=stmt.inserted.summary,
                             metadata=stmt.inserted.metadata,
                             updated_at=stmt.inserted.updated_at,
-                            **extra_clear_runs,
                         )
                         await sess.execute(stmt, team_data)
 
@@ -1299,7 +1406,6 @@ class AsyncMySQLDb(AsyncBaseDb):
                             summary=stmt.inserted.summary,
                             metadata=stmt.inserted.metadata,
                             updated_at=stmt.inserted.updated_at,
-                            **extra_clear_runs,
                         )
                         await sess.execute(stmt, workflow_data)
 
@@ -2459,17 +2565,20 @@ class AsyncMySQLDb(AsyncBaseDb):
         except Exception as e:
             log_error(f"Error deleting eval run {eval_run_id}: {str(e)}")
 
-    async def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+    async def delete_eval_runs(self, eval_run_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete multiple eval runs from the database.
 
         Args:
             eval_run_ids (List[str]): List of eval run IDs to delete.
+            user_id (Optional[str]): If set, only delete runs owned by this user.
         """
         try:
             table = await self._get_table(table_type="evals")
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = table.delete().where(table.c.run_id.in_(eval_run_ids))
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(stmt)
 
                 if result.rowcount == 0:  # type: ignore
@@ -2481,13 +2590,14 @@ class AsyncMySQLDb(AsyncBaseDb):
             log_error(f"Error deleting eval runs {eval_run_ids}: {str(e)}")
 
     async def get_eval_run(
-        self, eval_run_id: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Get an eval run from the database.
 
         Args:
             eval_run_id (str): The ID of the eval run to get.
             deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            user_id (Optional[str]): If set, only return the run if owned by this user.
 
         Returns:
             Optional[Union[EvalRunRecord, Dict[str, Any]]]:
@@ -2502,6 +2612,8 @@ class AsyncMySQLDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table).where(table.c.run_id == eval_run_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(stmt)
                 row = result.fetchone()
                 if row is None:
@@ -2530,6 +2642,7 @@ class AsyncMySQLDb(AsyncBaseDb):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.
 
@@ -2542,6 +2655,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             team_id (Optional[str]): The ID of the team to filter by.
             workflow_id (Optional[str]): The ID of the workflow to filter by.
             model_id (Optional[str]): The ID of the model to filter by.
+            user_id (Optional[str]): If set, only return runs owned by this user.
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
             deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
@@ -2570,6 +2684,8 @@ class AsyncMySQLDb(AsyncBaseDb):
                     stmt = stmt.where(table.c.workflow_id == workflow_id)
                 if model_id is not None:
                     stmt = stmt.where(table.c.model_id == model_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 if eval_type is not None and len(eval_type) > 0:
                     stmt = stmt.where(table.c.eval_type.in_(eval_type))
                 if filter_type is not None:
@@ -2612,13 +2728,14 @@ class AsyncMySQLDb(AsyncBaseDb):
             return [] if deserialize else ([], 0)
 
     async def rename_eval_run(
-        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Upsert the name of an eval run in the database, returning raw dictionary.
 
         Args:
             eval_run_id (str): The ID of the eval run to update.
             name (str): The new name of the eval run.
+            user_id (Optional[str]): If set, only rename the run if owned by this user.
 
         Returns:
             Optional[Dict[str, Any]]: The updated eval run, or None if the operation fails.
@@ -2632,9 +2749,11 @@ class AsyncMySQLDb(AsyncBaseDb):
                 stmt = (
                     table.update().where(table.c.run_id == eval_run_id).values(name=name, updated_at=int(time.time()))
                 )
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 await sess.execute(stmt)
 
-            eval_run_raw = await self.get_eval_run(eval_run_id=eval_run_id, deserialize=deserialize)
+            eval_run_raw = await self.get_eval_run(eval_run_id=eval_run_id, deserialize=deserialize, user_id=user_id)
             if not eval_run_raw or not deserialize:
                 return eval_run_raw
 
@@ -2643,6 +2762,24 @@ class AsyncMySQLDb(AsyncBaseDb):
         except Exception as e:
             log_error(f"Error upserting eval run name {eval_run_id}: {str(e)}")
             return None
+
+    async def update_eval_run_user_id(self, eval_run_id: str, user_id: str) -> None:
+        """Set the owner (user_id) on an existing eval run.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            user_id (str): The owner to set.
+        """
+        try:
+            table = await self._get_table(table_type="evals")
+
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = table.update().where(table.c.run_id == eval_run_id).values(user_id=user_id)
+                await sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Error setting owner on eval run {eval_run_id}: {str(e)}")
+            raise e
 
     # -- Migrations --
 
