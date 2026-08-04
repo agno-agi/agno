@@ -355,16 +355,24 @@ class RedisEventStream(BaseEventStream):
         return int(value) - 1 if value is not None else -1
 
     async def get_event_count(self, run_id: str) -> int:
-        count = int(await self._redis.xlen(self._stream_key(run_id)))
-        if count == 0:
-            return 0
-        # The terminal sentinel is a stream entry but not a client-facing
-        # event: exclude it so counts match the in-memory implementation
-        last = await self._redis.xrevrange(self._stream_key(run_id), count=1)
-        if last:
-            _entry_id, fields = last[0]
-            if fields is not None and fields.get(b"terminal", fields.get("terminal")) is not None:
-                return count - 1
+        # Count only idx-bearing entries (the discriminator replay uses):
+        # coordination markers - pause/terminal sentinels and reopen markers,
+        # including STALE mid-stream ones a pause/continue cycle leaves behind
+        # - are stream entries but not client-facing events. The old
+        # XLEN-minus-trailing-sentinel arithmetic counted every mid-stream
+        # marker, inflating the number by 2+ per pause cycle. O(stream) like
+        # replay, MAXLEN-bounded; the count feeds display metadata, and no
+        # O(1) primitive can discriminate (XLEN cannot see fields; the INCR
+        # counter survives resets/trims so it diverges from buffer contents
+        # exactly when the number matters). Restores in-memory parity - that
+        # buffer never holds markers, so its counts were already right.
+        count = 0
+        entries = await self._redis.xrange(self._stream_key(run_id)) or []
+        for _entry_id, fields in entries:
+            if fields is None:
+                continue
+            if fields.get(b"idx", fields.get("idx")) is not None:
+                count += 1
         return count
 
     # ------------------------------------------------------------------

@@ -586,3 +586,34 @@ class TestDeadProducerGate:
                 await task
         finally:
             await s.aclose()
+
+
+class TestEventCountExcludesMarkers:
+    """Phase-5 item 23: coordination markers - pause/terminal sentinels and
+    reopen markers, including stale mid-stream ones - are stream entries but
+    not client-facing events. The old XLEN-minus-trailing-sentinel count
+    inflated by 2+ per pause/continue cycle; anything consuming the count for
+    progress got fictional numbers."""
+
+    @pytest.mark.asyncio
+    async def test_pause_reopen_continue_cycle_counts_real_events_only(self, stream: RedisEventStream):
+        await stream.register_run("r1", RunStatus.running)
+        await stream.add_event("r1", make_event("r1", "a"))
+        await stream.add_event("r1", make_event("r1", "b"))
+        await stream.complete_run("r1", RunStatus.paused)  # sentinel entry
+        await stream.reopen_run("r1")  # reopen marker entry
+        await stream.add_event("r1", make_event("r1", "c"))
+        await stream.complete_run("r1", RunStatus.completed)  # terminal entry
+
+        assert await stream.get_event_count("r1") == 3, (
+            "count must include only client-facing events, never pause/reopen/terminal markers"
+        )
+
+    @pytest.mark.asyncio
+    async def test_two_pause_cycles_stay_accurate(self, stream: RedisEventStream):
+        await stream.register_run("r1", RunStatus.running)
+        for cycle in range(2):
+            await stream.add_event("r1", make_event("r1", f"e{cycle}"))
+            await stream.complete_run("r1", RunStatus.paused)
+            await stream.reopen_run("r1")
+        assert await stream.get_event_count("r1") == 2
