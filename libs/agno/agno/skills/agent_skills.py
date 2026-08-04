@@ -94,7 +94,7 @@ class Skills:
                 merged[skill.name] = skill
         return merged
 
-    def _refresh_loaders(self) -> None:
+    def _refresh_loaders(self, user_id: Optional[str] = None) -> None:
         """Re-run the loaders marked refresh_per_request and swap the rebuilt mapping in once.
 
         Any failure keeps the previous state: a request mid-outage serves the last
@@ -106,7 +106,9 @@ class Skills:
             if not loader.refresh_per_request:
                 continue
             try:
-                results[index] = loader.load()
+                # Only loaders that declare owner scoping receive the run's user; every
+                # other loader is called exactly as it was before this existed.
+                results[index] = loader.load(user_id=user_id) if loader.owner_scoped else loader.load()
                 changed = True
             except Exception as e:
                 log_warning(f"Error refreshing skills from {loader}, keeping the last loaded skills: {str(e)}")
@@ -128,7 +130,7 @@ class Skills:
             self._refresh_lock = asyncio.Lock()
         return self._refresh_lock
 
-    async def _arefresh_loaders(self) -> None:
+    async def _arefresh_loaders(self, user_id: Optional[str] = None) -> None:
         """Async twin of _refresh_loaders: awaits each refreshing loader's aload.
 
         Any failure keeps the previous state: a request mid-outage serves the last
@@ -144,7 +146,9 @@ class Skills:
                 if not loader.refresh_per_request:
                     continue
                 try:
-                    results[index] = await loader.aload()
+                    results[index] = (
+                        await loader.aload(user_id=user_id) if loader.owner_scoped else await loader.aload()
+                    )
                     changed = True
                 except Exception as e:
                     log_warning(f"Error refreshing skills from {loader}, keeping the last loaded skills: {str(e)}")
@@ -230,7 +234,7 @@ class Skills:
                         names.append(name)
         return names
 
-    def get_system_prompt_snippet(self) -> str:
+    def get_system_prompt_snippet(self, user_id: Optional[str] = None) -> str:
         """Generate a system prompt snippet with available skills metadata.
 
         This creates an XML-formatted snippet that provides the agent with
@@ -245,16 +249,16 @@ class Skills:
         """
         # The once-per-request read of database-backed loaders: the system prompt is
         # built once per run, the same moment memory and learning already hit the db.
-        self._refresh_loaders()
+        self._refresh_loaders(user_id=user_id)
         return self._build_system_prompt_snippet()
 
-    async def aget_system_prompt_snippet(self) -> str:
+    async def aget_system_prompt_snippet(self, user_id: Optional[str] = None) -> str:
         """Async twin of get_system_prompt_snippet: the refresh awaits the database read.
 
         Returns:
             An XML-formatted string with skills metadata.
         """
-        await self._arefresh_loaders()
+        await self._arefresh_loaders(user_id=user_id)
         return self._build_system_prompt_snippet()
 
     def _build_system_prompt_snippet(self) -> str:

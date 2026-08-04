@@ -588,7 +588,7 @@ def get_system_message(
         run_context=run_context,
         session_state=session_state,
         add_session_state_to_context=add_session_state_to_context,
-        skills_snippet=team.skills.get_system_prompt_snippet() if team.skills is not None else None,
+        skills_snippet=team.skills.get_system_prompt_snippet(user_id=user_id) if team.skills is not None else None,
     )
 
     # Format the full system message with dependencies and session state variables
@@ -830,7 +830,9 @@ async def aget_system_message(
         run_context=run_context,
         session_state=session_state,
         add_session_state_to_context=add_session_state_to_context,
-        skills_snippet=await team.skills.aget_system_prompt_snippet() if team.skills is not None else None,
+        skills_snippet=await team.skills.aget_system_prompt_snippet(user_id=user_id)
+        if team.skills is not None
+        else None,
     )
 
     # Format the full system message with dependencies and session state variables

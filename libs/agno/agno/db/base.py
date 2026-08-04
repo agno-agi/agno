@@ -1515,10 +1515,16 @@ class BaseDb(ABC):
         self,
         names: Optional[List[str]] = None,
         user_id: Optional[str] = None,
+        include_shared: bool = False,
     ) -> List[Dict[str, Any]]:
         """Get full skill rows, content included, for every skill or a named subset.
 
         The loader's read: unlike get_skills it selects every column and is uncapped.
+
+        include_shared turns on owner scoping: rows with no owner (shared) are always
+        visible, and user_id adds that owner's rows. It is how a run sees its own plus
+        shared skills, and how a load with no user sees only shared ones. Left False the
+        read is unscoped, which is what a caller with no owner concept wants.
         Errors propagate rather than returning [], so a refreshing caller can tell a
         failed read from an empty table and keep its last good skills."""
         raise NotImplementedError
@@ -2566,10 +2572,16 @@ class AsyncBaseDb(ABC):
         self,
         names: Optional[List[str]] = None,
         user_id: Optional[str] = None,
+        include_shared: bool = False,
     ) -> List[Dict[str, Any]]:
         """Get full skill rows, content included, for every skill or a named subset.
 
         The loader's read: unlike get_skills it selects every column and is uncapped.
+
+        include_shared turns on owner scoping: rows with no owner (shared) are always
+        visible, and user_id adds that owner's rows. It is how a run sees its own plus
+        shared skills, and how a load with no user sees only shared ones. Left False the
+        read is unscoped, which is what a caller with no owner concept wants.
         Errors propagate rather than returning [], so a refreshing caller can tell a
         failed read from an empty table and keep its last good skills."""
         raise NotImplementedError

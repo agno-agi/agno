@@ -119,7 +119,8 @@ def test_load_names_subset_in_one_batched_query(sqlite_db, skill_data) -> None:
     skills = DbSkills(sqlite_db, names=["gamma", "alpha"]).load()
 
     assert [s.name for s in skills] == ["alpha", "gamma"]
-    assert calls == [{"names": ["gamma", "alpha"]}]
+    # One batched read, carrying the owner scope: no user means shared skills only.
+    assert calls == [{"names": ["gamma", "alpha"], "user_id": None, "include_shared": True}]
 
 
 def test_load_missing_name_warns_and_loads_rest(sqlite_db, skill_data, monkeypatch) -> None:
@@ -295,3 +296,106 @@ def test_no_import_cycle_between_db_schemas_and_loader() -> None:
         )
         assert result.returncode == 0, result.stderr
         assert result.stdout.strip() == "ok"
+
+
+# ============================================================================
+# OWNER SCOPING
+# ============================================================================
+
+
+def _seed_owned_skills(db) -> None:
+    """One skill per owner plus a shared one, so a scoped read has something to exclude."""
+    db.create_skill(
+        {
+            "name": "alice-private",
+            "description": "Alice's",
+            "instructions": "i",
+            "user_id": "alice",
+            "scripts": {"secret.py": "print('ALICE SECRET')"},
+        }
+    )
+    db.create_skill({"name": "bob-private", "description": "Bob's", "instructions": "i", "user_id": "bob"})
+    db.create_skill({"name": "shared-skill", "description": "Everyone's", "instructions": "i"})
+
+
+def test_load_scoped_to_a_user_returns_own_plus_shared(sqlite_db) -> None:
+    """A run's skills are the caller's own plus the shared ones -- never another owner's.
+
+    Skills carry executable scripts, so loading across owners hands one tenant another
+    tenant's instructions and code.
+    """
+    _seed_owned_skills(sqlite_db)
+
+    skills = DbSkills(sqlite_db).load(user_id="alice")
+
+    assert sorted(s.name for s in skills) == ["alice-private", "shared-skill"]
+    assert all("ALICE SECRET" not in str(s.script_contents) for s in skills if s.name != "alice-private")
+
+
+def test_load_without_a_user_returns_only_shared_skills(sqlite_db) -> None:
+    """No user context means no owner to match, so only shared skills are visible."""
+    _seed_owned_skills(sqlite_db)
+
+    skills = DbSkills(sqlite_db).load()
+
+    assert sorted(s.name for s in skills) == ["shared-skill"]
+
+
+def test_eager_constructor_load_cannot_surface_owned_skills(sqlite_db) -> None:
+    """The eager load in Skills.__init__ runs before any run exists, so it has no user.
+
+    It must not fall back to reading every owner's rows: an agent built at import time
+    would hold every tenant's skills in memory before serving a single request.
+    """
+    _seed_owned_skills(sqlite_db)
+
+    skills = Skills(loaders=[DbSkills(sqlite_db)])
+
+    assert sorted(skills._skills) == ["shared-skill"]
+
+
+def test_refresh_scopes_to_the_run_user(sqlite_db) -> None:
+    """The per-request refresh carries the run's user, so the snippet is that user's view."""
+    _seed_owned_skills(sqlite_db)
+    skills = Skills(loaders=[DbSkills(sqlite_db)])
+
+    snippet = skills.get_system_prompt_snippet(user_id="bob")
+
+    assert "bob-private" in snippet
+    assert "shared-skill" in snippet
+    assert "alice-private" not in snippet
+
+
+@pytest.mark.asyncio
+async def test_async_load_scoped_to_a_user(async_sqlite_db) -> None:
+    await async_sqlite_db.create_skill(
+        {"name": "alice-private", "description": "A", "instructions": "i", "user_id": "alice"}
+    )
+    await async_sqlite_db.create_skill({"name": "shared-skill", "description": "S", "instructions": "i"})
+
+    skills = Skills(loaders=[DbSkills(async_sqlite_db)])
+    snippet = await skills.aget_system_prompt_snippet(user_id="alice")
+
+    assert "alice-private" in snippet and "shared-skill" in snippet
+
+    other = await skills.aget_system_prompt_snippet(user_id="bob")
+    assert "alice-private" not in other
+
+
+def test_a_loader_without_owner_scoping_is_called_untouched(tmp_path, sqlite_db) -> None:
+    """A loader whose source has no owners keeps its original signature.
+
+    Only loaders declaring owner_scoped receive the run's user, so a loader written
+    before owner scoping existed -- LocalSkills, or any third-party one -- is still
+    called with no arguments and cannot break on an unexpected keyword.
+    """
+    folder = tmp_path / "greeter"
+    folder.mkdir()
+    (folder / "SKILL.md").write_text("---\nname: greeter\ndescription: says hi\n---\n\nSay hello.\n", encoding="utf-8")
+    local = LocalSkills(str(tmp_path))
+    assert local.owner_scoped is False
+    assert DbSkills(sqlite_db).owner_scoped is True
+
+    # A refresh carrying a user must not pass it to the un-scoped loader.
+    skills = Skills(loaders=[local])
+    assert "greeter" in skills.get_system_prompt_snippet(user_id="alice")

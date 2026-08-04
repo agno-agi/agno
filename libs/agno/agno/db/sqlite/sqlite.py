@@ -5776,6 +5776,7 @@ class SqliteDb(BaseDb):
         self,
         names: Optional[List[str]] = None,
         user_id: Optional[str] = None,
+        include_shared: bool = False,
     ) -> List[Dict[str, Any]]:
         try:
             table = self._get_table(table_type="skills")
@@ -5791,7 +5792,15 @@ class SqliteDb(BaseDb):
                 stmt = select(table).order_by(table.c.name)
                 if names is not None:
                     stmt = stmt.where(table.c.name.in_(names))
-                if user_id is not None:
+                if include_shared:
+                    # Owner scoping: shared rows are always visible; user_id adds that
+                    # owner's. With no user_id this leaves only the shared rows.
+                    stmt = stmt.where(
+                        table.c.user_id.is_(None)
+                        if user_id is None
+                        else or_(table.c.user_id == user_id, table.c.user_id.is_(None))
+                    )
+                elif user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
                 results = sess.execute(stmt).fetchall()
                 return [dict(row._mapping) for row in results]

@@ -29,13 +29,14 @@ class DbSkills(SkillLoader):
     """
 
     refresh_per_request: ClassVar[bool] = True
+    owner_scoped: ClassVar[bool] = True
 
     def __init__(self, db: Union["BaseDb", "AsyncBaseDb"], *, names: Optional[List[str]] = None, validate: bool = True):
         self.db = db
         self.names = names
         self.validate = validate
 
-    def load(self) -> List[Skill]:
+    def load(self, *, user_id: Optional[str] = None) -> List[Skill]:
         """Load skills from the database.
 
         Returns:
@@ -54,9 +55,11 @@ class DbSkills(SkillLoader):
 
         if isinstance(self.db, AsyncBaseDb):
             raise SkillError("DbSkills.load() requires a sync database; use aload() with an async one")
-        return self._build_skills(self.db.get_skills_with_content(names=self.names))
+        return self._build_skills(
+            self.db.get_skills_with_content(names=self.names, user_id=user_id, include_shared=True)
+        )
 
-    async def aload(self) -> List[Skill]:
+    async def aload(self, *, user_id: Optional[str] = None) -> List[Skill]:
         """Async twin of load: awaits the skills read when the database is async.
 
         Returns:
@@ -70,8 +73,10 @@ class DbSkills(SkillLoader):
         from agno.db.base import AsyncBaseDb
 
         if not isinstance(self.db, AsyncBaseDb):
-            return self.load()
-        return self._build_skills(await self.db.get_skills_with_content(names=self.names))
+            return self.load(user_id=user_id)
+        return self._build_skills(
+            await self.db.get_skills_with_content(names=self.names, user_id=user_id, include_shared=True)
+        )
 
     def _build_skills(self, rows: List[Dict[str, Any]]) -> List[Skill]:
         """Turn stored rows into Skills, validating each and warning on missing names."""
