@@ -17,7 +17,13 @@ class SkillSummaryResponse(BaseModel):
     license: Optional[str] = Field(None, description="License identifier")
     compatibility: Optional[str] = Field(None, description="Compatibility notes")
     allowed_tools: Optional[List[str]] = Field(None, description="Tool names the skill is allowed to use")
-    version: int = Field(..., description="Server-managed version, bumped on every successful update")
+    version: int = Field(
+        ...,
+        description=(
+            "Server-managed concurrency version, bumped on every successful update. Not the skill's "
+            "own semantic version, which is opaque to the system and belongs in `metadata`."
+        ),
+    )
     created_at: Optional[int] = Field(None, description="Creation timestamp (Unix epoch seconds)")
     updated_at: Optional[int] = Field(None, description="Last update timestamp (Unix epoch seconds)")
 
@@ -62,7 +68,13 @@ class SkillUpdate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    version: int = Field(..., description="The version being edited; a mismatch returns 409 with the current version")
+    version: int = Field(
+        ...,
+        description=(
+            "The concurrency version being edited; a mismatch returns 409 with the current version. "
+            "Not the skill's own semantic version, which belongs in `metadata`."
+        ),
+    )
     description: Optional[str] = Field(None, description="What the skill does")
     instructions: Optional[str] = Field(None, description="The skill's instructions (the SKILL.md body)")
     scripts: Optional[Dict[str, str]] = Field(None, description="Script content, filename -> UTF-8 text")

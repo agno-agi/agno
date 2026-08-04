@@ -33,6 +33,9 @@ class SkillRow:
     license: Optional[str] = None
     compatibility: Optional[str] = None
     allowed_tools: Optional[List[str]] = None
+    # Optimistic concurrency, not the skill's own version: server-managed, starts at 1 and
+    # bumps on every successful write, never set by a caller. A semantic version a user
+    # keeps -- typically under `metadata` -- is opaque to the system and unrelated to this.
     version: int = 1
     created_at: Optional[int] = None
     updated_at: Optional[int] = None
