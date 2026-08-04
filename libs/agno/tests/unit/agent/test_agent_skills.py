@@ -27,6 +27,8 @@ from agno.run.agent import RunOutput
 from agno.run.base import RunContext
 from agno.session import AgentSession
 from agno.skills import DbSkills, LocalSkills, Skills
+from agno.skills.errors import SkillError
+from agno.skills.executor import LocalSkillExecutor, SkillExecutor
 
 SAMPLE_SKILLS_DIR = "cookbook/02_agents/16_skills/sample_skills"
 
@@ -513,3 +515,75 @@ async def test_asystem_message_refreshes_skills_through_async_db(tmp_path):
 
     assert msg is not None
     assert "async-skill" in msg.content
+
+
+# ============================================================================
+# EXECUTOR POLICY ACROSS A SAVE/LOAD ROUND TRIP
+# ============================================================================
+
+
+class _SandboxExecutor(SkillExecutor):
+    """Stands in for a sandboxed or remote runner: never executes on the host."""
+
+    def run(self, script_path, *, args=None, timeout=30, cwd=None):
+        raise AssertionError("the sandbox executor should not run on the host")
+
+
+def _db_with_skill(tmp_path):
+    from agno.db.sqlite import SqliteDb
+
+    db = SqliteDb(db_file=str(tmp_path / "exec.db"))
+    db.create_skill({"name": "greeter", "description": "d", "instructions": "i"})
+    return db
+
+
+def test_to_dict_records_that_a_non_default_executor_was_in_use(tmp_path):
+    db = _db_with_skill(tmp_path)
+    agent = Agent(name="a", id="a", db=db, skills=Skills(loaders=[DbSkills(db)], executor=_SandboxExecutor()))
+
+    config = agent.to_dict()
+
+    assert config["skills"]["requires_executor"] is True
+
+
+def test_to_dict_records_nothing_for_the_default_executor(tmp_path):
+    db = _db_with_skill(tmp_path)
+    agent = Agent(name="a", id="a", db=db, skills=Skills(loaders=[DbSkills(db)]))
+
+    config = agent.to_dict()
+
+    assert "requires_executor" not in config["skills"]
+
+
+def test_from_dict_refuses_to_load_when_a_recorded_executor_is_missing(tmp_path):
+    """Loading without the sandbox would move script execution back onto the host.
+
+    Silently falling back to the default executor turns a deliberate sandbox policy into
+    host execution, so the load fails instead.
+    """
+    db = _db_with_skill(tmp_path)
+    agent = Agent(name="a", id="a", db=db, skills=Skills(loaders=[DbSkills(db)], executor=_SandboxExecutor()))
+    config = agent.to_dict()
+
+    with pytest.raises(SkillError, match="executor"):
+        Agent.from_dict(config, db=db)
+
+
+def test_from_dict_loads_when_the_executor_is_supplied(tmp_path):
+    db = _db_with_skill(tmp_path)
+    agent = Agent(name="a", id="a", db=db, skills=Skills(loaders=[DbSkills(db)], executor=_SandboxExecutor()))
+    config = agent.to_dict()
+
+    restored = Agent.from_dict(config, db=db, skill_executor=_SandboxExecutor())
+
+    assert isinstance(restored.skills.executor, _SandboxExecutor)
+
+
+def test_from_dict_with_the_default_executor_is_unaffected(tmp_path):
+    """The common case: no marker, no injection needed, no raise."""
+    db = _db_with_skill(tmp_path)
+    agent = Agent(name="a", id="a", db=db, skills=Skills(loaders=[DbSkills(db)]))
+
+    restored = Agent.from_dict(agent.to_dict(), db=db)
+
+    assert type(restored.skills.executor) is LocalSkillExecutor

@@ -13,11 +13,14 @@ import json
 from typing import List
 from unittest.mock import MagicMock
 
+import pytest
+
 from agno.models.base import Function
 from agno.run.base import RunContext
 from agno.run.team import TeamRunOutput
 from agno.session import TeamSession
 from agno.skills import DbSkills, LocalSkills, Skills
+from agno.skills.executor import SkillExecutor
 from agno.team._messages import aget_system_message, get_system_message
 from agno.team._tools import _determine_tools_for_model
 from agno.team.team import Team, get_team_by_id
@@ -388,3 +391,45 @@ def test_graph_hydrated_member_agent_resolves_skills(tmp_path):
     loaded_member = loaded.members[0]
     assert loaded_member.skills is not None
     assert "release-notes" in loaded_member.skills.get_system_prompt_snippet()
+
+
+class _TeamSandboxExecutor(SkillExecutor):
+    def run(self, script_path, *, args=None, timeout=30, cwd=None):
+        raise AssertionError("the sandbox executor should not run on the host")
+
+
+def test_team_from_dict_refuses_to_load_a_recorded_executor_that_is_missing(tmp_path):
+    """The team twin: a sandbox policy must not silently become host execution."""
+    from agno.db.sqlite import SqliteDb
+    from agno.skills.errors import SkillError
+
+    db = SqliteDb(db_file=str(tmp_path / "team_exec.db"))
+    db.create_skill({"name": "greeter", "description": "d", "instructions": "i"})
+    team = Team(
+        name="t",
+        id="t",
+        members=[],
+        db=db,
+        skills=Skills(loaders=[DbSkills(db)], executor=_TeamSandboxExecutor()),
+    )
+    config = team.to_dict()
+    assert config["skills"]["requires_executor"] is True
+
+    with pytest.raises(SkillError, match="executor"):
+        Team.from_dict(config, db=db)
+
+    restored = Team.from_dict(config, db=db, skill_executor=_TeamSandboxExecutor())
+    assert isinstance(restored.skills.executor, _TeamSandboxExecutor)
+
+
+def test_team_with_the_default_executor_round_trips_unchanged(tmp_path):
+    from agno.db.sqlite import SqliteDb
+    from agno.skills.executor import LocalSkillExecutor
+
+    db = SqliteDb(db_file=str(tmp_path / "team_default.db"))
+    db.create_skill({"name": "greeter", "description": "d", "instructions": "i"})
+    team = Team(name="t", id="t", members=[], db=db, skills=Skills(loaders=[DbSkills(db)]))
+
+    config = team.to_dict()
+    assert "requires_executor" not in config["skills"]
+    assert type(Team.from_dict(config, db=db).skills.executor) is LocalSkillExecutor

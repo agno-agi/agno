@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from agno.skills.executor import SkillExecutor
     from agno.team.mode import TeamMode
     from agno.team.team import Team
 
@@ -551,6 +552,13 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         skill_names = team.skills.get_persistable_skill_names()
         if skill_names:
             config["skills"] = {"names": skill_names}
+            # An executor cannot be serialized, so record only that a non-default one was
+            # configured. Loading without it would move script execution back onto the
+            # host, so from_dict refuses rather than quietly downgrading the policy.
+            from agno.skills.executor import LocalSkillExecutor
+
+            if type(team.skills.executor) is not LocalSkillExecutor:
+                config["skills"]["requires_executor"] = True
         else:
             log_warning("Team skills hold no skills to reference; skills will not be saved.")
 
@@ -744,6 +752,7 @@ def from_dict(
     data: Dict[str, Any],
     db: Optional["BaseDb"] = None,
     registry: Optional["Registry"] = None,
+    skill_executor: Optional["SkillExecutor"] = None,
 ) -> "Team":
     """
     Create a Team from a dictionary.
@@ -892,8 +901,18 @@ def from_dict(
         skill_names = config["skills"].get("names")
         if skill_names and db is not None:
             from agno.skills import DbSkills, Skills
+            from agno.skills.errors import SkillError
 
-            config["skills"] = Skills(loaders=[DbSkills(db, names=skill_names)])
+            # A non-default executor was configured when this was saved and cannot be
+            # serialized. Refuse rather than fall back to the host executor: that would
+            # silently turn a sandbox policy into running scripts on this machine.
+            if config["skills"].get("requires_executor") and skill_executor is None:
+                raise SkillError(
+                    "This was saved with a non-default skill executor, which cannot be serialized. "
+                    "Pass skill_executor= to load it; loading without one would run skill scripts "
+                    "on the host."
+                )
+            config["skills"] = Skills(loaders=[DbSkills(db, names=skill_names)], executor=skill_executor)
         else:
             if skill_names:
                 log_warning(f"No db provided, skills {skill_names} will not be resolved.")

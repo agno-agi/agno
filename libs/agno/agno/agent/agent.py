@@ -58,6 +58,7 @@ from agno.run.requirement import RunRequirement
 from agno.session import AgentSession, SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
 from agno.skills import Skills
+from agno.skills.executor import SkillExecutor
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.log import log_warning
@@ -940,10 +941,11 @@ class Agent:
         registry: Optional[Registry] = None,
         *,
         db: Optional["BaseDb"] = None,
+        skill_executor: Optional[SkillExecutor] = None,
     ) -> "Agent":
         # registry keeps its pre-existing second positional slot; db is keyword-only
         # so external Agent.from_dict(config, registry) calls do not mis-bind it.
-        return _storage.from_dict(cls, data=data, db=db, registry=registry)
+        return _storage.from_dict(cls, data=data, db=db, registry=registry, skill_executor=skill_executor)
 
     def save(
         self,
