@@ -27,6 +27,7 @@ from typing import (
 
 if TYPE_CHECKING:
     from agno.compression.manager import CompressionManager
+    from agno.session.agent import AgentSession
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -657,6 +658,7 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        session: Optional["AgentSession"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], None]] = None,
     ) -> ModelResponse:
         """
@@ -698,23 +700,28 @@ class Model(ABC):
         _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
         _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
-        _compression_manager = compression_manager if _compress_tool_results else None
 
         while True:
-            # Compress tool results if compression is enabled and threshold is met
-            if _compression_manager is not None and _compression_manager.should_compress(
-                messages, tools, model=self, response_format=response_format
-            ):
-                _compression_manager.compress(
-                    messages, run_metrics=run_response.metrics if run_response is not None else None
+            # Compress messages (tool compression + context compaction)
+            compaction_result = None
+            if compression_manager is not None:
+                compaction_result = compression_manager.compress(
+                    messages=messages,
+                    session=session,
+                    tools=tools,
+                    response_format=response_format,
+                    run_metrics=run_response.metrics if run_response is not None else None,
                 )
+                model_messages = compaction_result.view
+            else:
+                model_messages = messages
 
             # Get response from model
             assistant_message = Message(role=self.assistant_message_role)
             # Initialize message metrics and start timer before model call
             self._ensure_message_metrics_initialized(assistant_message)
             self._process_model_response(
-                messages=messages,
+                messages=model_messages,
                 assistant_message=assistant_message,
                 model_response=model_response,
                 response_format=response_format,
@@ -723,6 +730,10 @@ class Model(ABC):
                 run_response=run_response,
                 compress_tool_results=_compress_tool_results,
             )
+
+            # Commit compaction AFTER model success
+            if compaction_result is not None:
+                compaction_result.commit(session, compression_manager.stats if compression_manager else None)
 
             # Accumulate metrics for non-stream responses
             if run_response is not None and model_response.response_usage is not None:
@@ -888,6 +899,7 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        session: Optional["AgentSession"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], Awaitable[None]]] = None,
     ) -> ModelResponse:
         """
@@ -918,25 +930,30 @@ class Model(ABC):
         _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
         _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
-        _compression_manager = compression_manager if _compress_tool_results else None
 
         function_call_count = 0
 
         while True:
-            # Compress existing tool results BEFORE making API call to avoid context overflow
-            if _compression_manager is not None and await _compression_manager.ashould_compress(
-                messages, tools, model=self, response_format=response_format
-            ):
-                await _compression_manager.acompress(
-                    messages, run_metrics=run_response.metrics if run_response is not None else None
+            # Compress messages (tool compression + context compaction)
+            compaction_result = None
+            if compression_manager is not None:
+                compaction_result = await compression_manager.acompress(
+                    messages=messages,
+                    session=session,
+                    tools=tools,
+                    response_format=response_format,
+                    run_metrics=run_response.metrics if run_response is not None else None,
                 )
+                model_messages = compaction_result.view
+            else:
+                model_messages = messages
 
             # Get response from model
             assistant_message = Message(role=self.assistant_message_role)
             # Initialize message metrics and start timer before model call
             self._ensure_message_metrics_initialized(assistant_message)
             await self._aprocess_model_response(
-                messages=messages,
+                messages=model_messages,
                 assistant_message=assistant_message,
                 model_response=model_response,
                 response_format=response_format,
@@ -945,6 +962,10 @@ class Model(ABC):
                 run_response=run_response,
                 compress_tool_results=_compress_tool_results,
             )
+
+            # Commit compaction AFTER model success
+            if compaction_result is not None:
+                compaction_result.commit(session, compression_manager.stats if compression_manager else None)
 
             # Accumulate metrics for non-stream responses
             if run_response is not None and model_response.response_usage is not None:
@@ -1370,6 +1391,7 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        session: Optional["AgentSession"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], None]] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
@@ -1407,25 +1429,28 @@ class Model(ABC):
         _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
         _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
-        _compression_manager = compression_manager if _compress_tool_results else None
 
         function_call_count = 0
 
         while True:
-            # Compress existing tool results BEFORE invoke
-            if _compression_manager is not None and _compression_manager.should_compress(
-                messages, tools, model=self, response_format=response_format
-            ):
-                # Emit compression started event
+            # Compress messages (tool compression + context compaction)
+            compaction_result = None
+            if compression_manager is not None:
                 yield ModelResponse(event=ModelResponseEvent.compression_started.value)
-                _compression_manager.compress(
-                    messages, run_metrics=run_response.metrics if run_response is not None else None
+                compaction_result = compression_manager.compress(
+                    messages=messages,
+                    session=session,
+                    tools=tools,
+                    response_format=response_format,
+                    run_metrics=run_response.metrics if run_response is not None else None,
                 )
-                # Emit compression completed event with stats
+                model_messages = compaction_result.view
                 yield ModelResponse(
                     event=ModelResponseEvent.compression_completed.value,
-                    compression_stats=_compression_manager.stats.copy(),
+                    compression_stats=compression_manager.stats.copy(),
                 )
+            else:
+                model_messages = messages
 
             assistant_message = Message(role=self.assistant_message_role)
             # Create assistant message and stream data
@@ -1435,6 +1460,7 @@ class Model(ABC):
             # Emit LLM request started event
             yield ModelResponse(event=ModelResponseEvent.model_request_started.value)
 
+            stream_success = False
             if stream_model_response:
                 # Initialize message metrics and start timer before model call
                 stream_data.response_metrics = MessageMetrics()
@@ -1444,7 +1470,7 @@ class Model(ABC):
                 # Generate response
                 try:
                     for response in self.process_response_stream(
-                        messages=messages,
+                        messages=model_messages,
                         assistant_message=assistant_message,
                         stream_data=stream_data,
                         response_format=response_format,
@@ -1456,6 +1482,7 @@ class Model(ABC):
                         if self.cache_response and isinstance(response, ModelResponse):
                             streaming_responses.append(response)
                         yield response
+                    stream_success = True
                 finally:
                     # Accumulate metrics for this streamed iteration (also on cancel)
                     if run_response is not None and assistant_message.metrics is not None:
@@ -1469,7 +1496,7 @@ class Model(ABC):
                 # Initialize message metrics and start timer before model call
                 self._ensure_message_metrics_initialized(assistant_message)
                 self._process_model_response(
-                    messages=messages,
+                    messages=model_messages,
                     assistant_message=assistant_message,
                     model_response=model_response,
                     response_format=response_format,
@@ -1478,6 +1505,7 @@ class Model(ABC):
                     run_response=run_response,
                     compress_tool_results=_compress_tool_results,
                 )
+                stream_success = True
                 # Accumulate metrics for non-streamed response within stream
                 if run_response is not None and model_response.response_usage is not None:
                     from agno.metrics import accumulate_model_metrics
@@ -1486,6 +1514,10 @@ class Model(ABC):
                 if self.cache_response:
                     streaming_responses.append(model_response)
                 yield model_response
+
+            # Commit compaction AFTER model success (not on cancel/error)
+            if stream_success and compaction_result is not None:
+                compaction_result.commit(session, compression_manager.stats if compression_manager else None)
 
             # Add assistant message to messages
             messages.append(assistant_message)
@@ -1649,6 +1681,7 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        session: Optional["AgentSession"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], Awaitable[None]]] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
@@ -1686,25 +1719,28 @@ class Model(ABC):
         _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
         _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
-        _compression_manager = compression_manager if _compress_tool_results else None
 
         function_call_count = 0
 
         while True:
-            # Compress existing tool results BEFORE making API call to avoid context overflow
-            if _compression_manager is not None and await _compression_manager.ashould_compress(
-                messages, tools, model=self, response_format=response_format
-            ):
-                # Emit compression started event
+            # Compress messages (tool compression + context compaction)
+            compaction_result = None
+            if compression_manager is not None:
                 yield ModelResponse(event=ModelResponseEvent.compression_started.value)
-                await _compression_manager.acompress(
-                    messages, run_metrics=run_response.metrics if run_response is not None else None
+                compaction_result = await compression_manager.acompress(
+                    messages=messages,
+                    session=session,
+                    tools=tools,
+                    response_format=response_format,
+                    run_metrics=run_response.metrics if run_response is not None else None,
                 )
-                # Emit compression completed event with stats
+                model_messages = compaction_result.view
                 yield ModelResponse(
                     event=ModelResponseEvent.compression_completed.value,
-                    compression_stats=_compression_manager.stats.copy(),
+                    compression_stats=compression_manager.stats.copy(),
                 )
+            else:
+                model_messages = messages
 
             # Create assistant message and stream data
             assistant_message = Message(role=self.assistant_message_role)
@@ -1714,6 +1750,7 @@ class Model(ABC):
             # Emit LLM request started event
             yield ModelResponse(event=ModelResponseEvent.model_request_started.value)
 
+            stream_success = False
             if stream_model_response:
                 # Initialize message metrics and start timer before model call
                 stream_data.response_metrics = MessageMetrics()
@@ -1723,7 +1760,7 @@ class Model(ABC):
                 # Generate response
                 try:
                     async for model_response_delta in self.aprocess_response_stream(
-                        messages=messages,
+                        messages=model_messages,
                         assistant_message=assistant_message,
                         stream_data=stream_data,
                         response_format=response_format,
@@ -1735,6 +1772,7 @@ class Model(ABC):
                         if self.cache_response and isinstance(model_response_delta, ModelResponse):
                             streaming_responses.append(model_response_delta)
                         yield model_response_delta
+                    stream_success = True
                 finally:
                     # Accumulate metrics for this streamed iteration (also on cancel)
                     if run_response is not None and assistant_message.metrics is not None:
@@ -1748,7 +1786,7 @@ class Model(ABC):
                 # Initialize message metrics and start timer before model call
                 self._ensure_message_metrics_initialized(assistant_message)
                 await self._aprocess_model_response(
-                    messages=messages,
+                    messages=model_messages,
                     assistant_message=assistant_message,
                     model_response=model_response,
                     response_format=response_format,
@@ -1757,6 +1795,7 @@ class Model(ABC):
                     run_response=run_response,
                     compress_tool_results=_compress_tool_results,
                 )
+                stream_success = True
                 # Accumulate metrics for non-streamed response within stream
                 if run_response is not None and model_response.response_usage is not None:
                     from agno.metrics import accumulate_model_metrics
@@ -1765,6 +1804,10 @@ class Model(ABC):
                 if self.cache_response:
                     streaming_responses.append(model_response)
                 yield model_response
+
+            # Commit compaction AFTER model success (not on cancel/error)
+            if stream_success and compaction_result is not None:
+                compaction_result.commit(session, compression_manager.stats if compression_manager else None)
 
             # Add assistant message to messages
             messages.append(assistant_message)

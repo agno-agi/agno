@@ -540,7 +540,8 @@ def _run(
                     response_format=response_format,
                     run_response=run_response,
                     send_media_to_model=agent.send_media_to_model,
-                    compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                    compression_manager=agent.compression_manager,
+                    session=agent_session,
                     after_tool_results=build_after_tool_results_callback(
                         agent,
                         run_response=run_response,
@@ -549,6 +550,9 @@ def _run(
                         run_context=run_context,
                     ),
                 )
+
+                # Propagate is_compacted flags from working copies to session originals
+                _propagate_compacted_flags(run_messages.messages, agent_session)
 
                 # Check for cancellation after model call
                 raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -1008,6 +1012,9 @@ def _run_stream(
                         if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                             raise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event  # type: ignore
+
+                # Propagate is_compacted flags from working copies to session originals
+                _propagate_compacted_flags(run_messages.messages, agent_session)
 
                 # Check for cancellation after model processing
                 raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -1681,7 +1688,8 @@ async def _arun(
                     response_format=response_format,
                     send_media_to_model=agent.send_media_to_model,
                     run_response=run_response,
-                    compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                    compression_manager=agent.compression_manager,
+                    session=agent_session,
                     after_tool_results=abuild_after_tool_results_callback(
                         agent,
                         run_response=run_response,
@@ -1690,6 +1698,9 @@ async def _arun(
                         run_context=run_context,
                     ),
                 )
+
+                # Propagate is_compacted flags from working copies to session originals
+                _propagate_compacted_flags(run_messages.messages, agent_session)
 
                 # Check for cancellation after model call
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2415,6 +2426,9 @@ async def _arun_stream(
                         if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event
+
+                # Propagate is_compacted flags from working copies to session originals
+                _propagate_compacted_flags(run_messages.messages, agent_session)
 
                 # Check for cancellation after model processing
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -3636,7 +3650,8 @@ def _continue_run(
                     tool_call_limit=agent.tool_call_limit,
                     run_response=run_response,
                     send_media_to_model=agent.send_media_to_model,
-                    compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                    compression_manager=agent.compression_manager,
+                    session=session,
                     after_tool_results=build_after_tool_results_callback(
                         agent,
                         run_response=run_response,
@@ -3645,6 +3660,9 @@ def _continue_run(
                         run_context=run_context,
                     ),
                 )
+
+                # Propagate is_compacted flags from working copies to session originals
+                _propagate_compacted_flags(run_messages.messages, session)
 
                 # Check for cancellation after model processing
                 raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -3876,6 +3894,9 @@ def _continue_run_stream(
                     if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                         raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
+
+                # Propagate is_compacted flags from working copies to session originals
+                _propagate_compacted_flags(run_messages.messages, session)
 
                 # Parse response with parser model if provided
                 for event in parse_response_with_parser_model_stream(
@@ -4710,7 +4731,8 @@ async def _acontinue_run(
                     tool_call_limit=agent.tool_call_limit,
                     run_response=run_response,
                     send_media_to_model=agent.send_media_to_model,
-                    compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                    compression_manager=agent.compression_manager,
+                    session=agent_session,
                     after_tool_results=abuild_after_tool_results_callback(
                         agent,
                         run_response=run_response,
@@ -4719,6 +4741,10 @@ async def _acontinue_run(
                         run_context=run_context,
                     ),
                 )
+
+                # Propagate is_compacted flags from working copies to session originals
+                _propagate_compacted_flags(run_messages.messages, agent_session)
+
                 # Check for cancellation after model call
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -5248,6 +5274,9 @@ async def _acontinue_run_stream(
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event
 
+                # Propagate is_compacted flags from working copies to session originals
+                _propagate_compacted_flags(run_messages.messages, agent_session)
+
                 # Check for cancellation after model processing
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -5712,6 +5741,65 @@ def _scrub_and_propagate_session_state(
     return storage_copy
 
 
+def _propagate_compacted_flags(messages: List[Message], session: Optional[AgentSession]) -> None:
+    """Copy is_compacted=True from working copies back to session originals.
+
+    During compression, is_compacted is set on deepcopied messages in run_messages.
+    The originals in session.runs are not updated. This function propagates the flag
+    back by matching on message.id (UUID).
+    """
+    if session is None or not session.runs:
+        return
+
+    # Build lookup of compacted message IDs from working copies
+    compacted_ids = {m.id for m in messages if m.is_compacted and m.id}
+    if not compacted_ids:
+        return
+
+    # Propagate to originals in session.runs
+    for run in session.runs:
+        for msg in run.messages or []:
+            if msg.id in compacted_ids:
+                msg.is_compacted = True
+
+
+def _save_compacted_runs(agent: Agent, session: AgentSession, current_run_id: Optional[str]) -> None:
+    """Batch save prior runs that have compacted messages."""
+    if not hasattr(agent.db, "upsert_runs") or agent.db is None:
+        return
+
+    affected_runs = []
+    for run in session.runs or []:
+        if run.run_id == current_run_id:
+            continue
+        if any(m.is_compacted for m in run.messages or []):
+            affected_runs.append((run, session.session_id, session.user_id))
+
+    if affected_runs:
+        agent.db.upsert_runs(affected_runs)
+
+
+async def _asave_compacted_runs(agent: Agent, session: AgentSession, current_run_id: Optional[str]) -> None:
+    """Async batch save prior runs that have compacted messages."""
+    if agent.db is None:
+        return
+
+    affected_runs = []
+    for run in session.runs or []:
+        if run.run_id == current_run_id:
+            continue
+        if any(m.is_compacted for m in run.messages or []):
+            affected_runs.append((run, session.session_id, session.user_id))
+
+    if not affected_runs:
+        return
+
+    if hasattr(agent.db, "aupsert_runs"):
+        await agent.db.aupsert_runs(affected_runs)
+    elif hasattr(agent.db, "upsert_runs"):
+        agent.db.upsert_runs(affected_runs)
+
+
 def persist_run_in_session(
     agent: Agent,
     run_response: RunOutput,
@@ -5759,6 +5847,9 @@ def persist_run_in_session(
         run_index=run_index,
     )
 
+    # Batch save prior runs that have compacted messages
+    _save_compacted_runs(agent, session, current_run_id=storage_copy.run_id)
+
 
 async def apersist_run_in_session(
     agent: Agent,
@@ -5791,6 +5882,9 @@ async def apersist_run_in_session(
         user_id=session.user_id,
         run_index=run_index,
     )
+
+    # Batch save prior runs that have compacted messages
+    await _asave_compacted_runs(agent, session, current_run_id=storage_copy.run_id)
 
 
 def cleanup_and_store(
