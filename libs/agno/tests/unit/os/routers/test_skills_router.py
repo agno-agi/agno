@@ -441,6 +441,70 @@ class TestCustomSkillsTableSelection:
         assert TestClient(app).get("/skills?db_id=default&table=not_a_table").status_code == 404
 
 
+class TestScopedCreateOwnership:
+    """A scoped caller must own what it creates.
+
+    Mutating a skill with no owner is admin-only, so a scoped caller allowed to create one
+    would mint a globally-loadable skill it could never edit or delete afterwards.
+    """
+
+    @pytest.fixture
+    def scoped_client(self, mock_db, settings):
+        app = FastAPI()
+
+        @app.middleware("http")
+        async def add_jwt_user(request, call_next):
+            request.state.user_isolation_enabled = True
+            request.state.user_id = "user-A"
+            request.state.scopes = []
+            return await call_next(request)
+
+        app.include_router(get_skills_router(dbs={"default": [mock_db]}, settings=settings))
+        return TestClient(app)
+
+    def test_omitted_user_id_is_forced_to_the_caller(self, scoped_client, mock_db):
+        mock_db.create_skill = MagicMock(return_value=_make_skill_row(user_id="user-A"))
+        resp = scoped_client.post("/skills", json=_create_body())
+        assert resp.status_code == 201
+        assert mock_db.create_skill.call_args[0][0]["user_id"] == "user-A"
+
+    def test_explicit_null_user_id_is_forced_to_the_caller(self, scoped_client, mock_db):
+        mock_db.create_skill = MagicMock(return_value=_make_skill_row(user_id="user-A"))
+        resp = scoped_client.post("/skills", json=_create_body(user_id=None))
+        assert resp.status_code == 201
+        assert mock_db.create_skill.call_args[0][0]["user_id"] == "user-A"
+
+    def test_another_users_id_is_still_rejected(self, scoped_client, mock_db):
+        resp = scoped_client.post("/skills", json=_create_body(user_id="user-B"))
+        assert resp.status_code == 403
+        mock_db.create_skill.assert_not_called()
+
+    def test_what_a_scoped_caller_creates_it_can_then_delete(self, scoped_client, mock_db):
+        # The manageability gap: owning the row is what makes the later mutation allowed.
+        mock_db.create_skill = MagicMock(return_value=_make_skill_row(user_id="user-A"))
+        assert scoped_client.post("/skills", json=_create_body()).status_code == 201
+
+        mock_db.get_skill = MagicMock(return_value=_make_skill_row(user_id="user-A"))
+        assert scoped_client.delete("/skills/demo-skill").status_code == 204
+
+    def test_admin_can_still_create_a_shared_skill(self, mock_db, settings):
+        # Admins are unscoped, so sharing stays available to them.
+        admin = _scoped_client(
+            mock_db, settings, user_isolation_enabled=True, user_id="admin-1", scopes=["agent_os:admin"]
+        )
+        mock_db.create_skill = MagicMock(return_value=_make_skill_row(user_id=None))
+        resp = admin.post("/skills", json=_create_body())
+        assert resp.status_code == 201
+        assert mock_db.create_skill.call_args[0][0]["user_id"] is None
+
+    def test_isolation_off_can_still_create_a_shared_skill(self, mock_db, settings):
+        off = _scoped_client(mock_db, settings, user_isolation_enabled=False, user_id="user-A", scopes=[])
+        mock_db.create_skill = MagicMock(return_value=_make_skill_row(user_id=None))
+        resp = off.post("/skills", json=_create_body())
+        assert resp.status_code == 201
+        assert mock_db.create_skill.call_args[0][0]["user_id"] is None
+
+
 class TestUserScoping:
     """For a scoped (non-admin) JWT caller with user_isolation enabled, the router enforces
     ownership-based scoping via get_scoped_user_id.
@@ -486,11 +550,13 @@ class TestUserScoping:
         assert resp.status_code == 403
         mock_db.get_skills.assert_not_called()
 
-    def test_create_null_user_id_creates_shared_skill(self, jwt_client, mock_db):
-        mock_db.create_skill = MagicMock(return_value=_make_skill_row(user_id=None))
+    def test_scoped_create_is_owned_by_the_caller_not_shared(self, jwt_client, mock_db):
+        # A scoped caller cannot create a shared skill: an unowned skill is admin-only to
+        # mutate, so it would be one its author could never manage. Admins still can.
+        mock_db.create_skill = MagicMock(return_value=_make_skill_row(user_id="user-A"))
         resp = jwt_client.post("/skills", json=_create_body())
         assert resp.status_code == 201
-        assert mock_db.create_skill.call_args[0][0]["user_id"] is None
+        assert mock_db.create_skill.call_args[0][0]["user_id"] == "user-A"
 
     def test_create_matching_user_id_allowed(self, jwt_client, mock_db):
         mock_db.create_skill = MagicMock(return_value=_make_skill_row(user_id="user-A"))

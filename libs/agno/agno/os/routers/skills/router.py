@@ -124,6 +124,11 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
         scoped_user_id = get_scoped_user_id(request)
         if scoped_user_id is not None and body.user_id is not None and body.user_id != scoped_user_id:
             raise HTTPException(status_code=403, detail="Cannot create skills for another user")
+        if scoped_user_id is not None:
+            # A scoped caller owns what it creates. A skill with no owner is mutable only by
+            # an admin, so letting one be created here would mint a globally-loadable skill
+            # its author could never edit or delete. Admins stay unscoped and can share.
+            body.user_id = scoped_user_id
 
         db = await get_db(dbs, db_id, table)
 
