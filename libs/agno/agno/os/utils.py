@@ -317,12 +317,41 @@ def stored_event_replay_frames(run_output: Any, run_id: str, last_event_index: O
     return frames
 
 
-async def amark_continue_stream_running(run_id: str) -> None:
+async def astream_index_floor(
+    component: Any, run_id: str, session_id: Optional[str], user_id: Optional[str] = None
+) -> Optional[int]:
+    """Durable index floor for a reopen: max stored event_index on the run
+    row (stamped at publish - see BaseRunOutputEvent.event_index). Read this
+    ONLY when the stream's counter is actually gone (get_last_index < 0):
+    it costs a session read, and a live counter never needs it. Fail-open:
+    None means no seed, which is exactly today's behavior."""
+    import contextlib
+
+    with contextlib.suppress(Exception):
+        run_output = await component.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)
+        indices = [
+            e.event_index
+            for e in (getattr(run_output, "events", None) or [])
+            if getattr(e, "event_index", None) is not None
+        ]
+        if indices:
+            return max(indices)
+    return None
+
+
+async def amark_continue_stream_running(
+    run_id: str, component: Any = None, session_id: Optional[str] = None, user_id: Optional[str] = None
+) -> None:
     """Sync the event stream at the START of a continue: re-register the run
     (idempotent - a cross-replica continue lands on a replica whose stream has
     never seen it) and mark it RUNNING so /resume and reconnects stop treating
     it as PAUSED while the post-approval leg executes. Fail-open: coordination
-    writes must never kill the continue."""
+    writes must never kill the continue.
+
+    When the caller passes its component, an EXPIRED index counter (paused
+    run outliving the TTL across a deploy/restart) is re-seeded from the run
+    row's stored indices - without that, the continuation restarts at index 0
+    and resuming clients dedup away every post-approval event."""
     import contextlib
 
     from agno.os.event_streams import get_event_stream
@@ -331,6 +360,9 @@ async def amark_continue_stream_running(run_id: str) -> None:
     with contextlib.suppress(Exception):
         event_stream = get_event_stream()
         await event_stream.register_run(run_id, RunStatus.pending)
+        floor = None
+        if component is not None and await event_stream.get_last_index(run_id) < 0:
+            floor = await astream_index_floor(component, run_id, session_id, user_id)
         # Invalidate the settled pause the way the durable path does: PAUSED
         # is tail-terminal in the stream (status AND a sentinel event), and
         # the status write below only covers the first half - a tail attached
@@ -338,8 +370,9 @@ async def amark_continue_stream_running(run_id: str) -> None:
         # and close empty. reopen_run is atomic per implementation and
         # declines if a racing writer already moved the status past PAUSED;
         # it also clears the pause's completed_at so the reopened run cannot
-        # be reaped mid-continuation.
-        await event_stream.reopen_run(run_id)
+        # be reaped mid-continuation, and seeds the index counter from the
+        # durable floor when the stream's own counter expired.
+        await event_stream.reopen_run(run_id, floor=floor)
         await event_stream.set_run_status(run_id, RunStatus.running)
 
 

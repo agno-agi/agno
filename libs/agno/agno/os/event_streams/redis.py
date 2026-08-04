@@ -237,7 +237,7 @@ class RedisEventStream(BaseEventStream):
         pipe.expire(self._counter_key(run_id), self._ttl)
         await pipe.execute()
 
-    async def reopen_run(self, run_id: str, include_error: bool = False) -> bool:
+    async def reopen_run(self, run_id: str, include_error: bool = False, floor: Optional[int] = None) -> bool:
         """Atomically reopen a PAUSED run for a continuation leg.
 
         WATCH/MULTI CAS on the status key: the flip to PENDING only lands if
@@ -252,7 +252,16 @@ class RedisEventStream(BaseEventStream):
         """
         from redis.exceptions import WatchError
 
-        reopenable = (RunStatus.paused.value, RunStatus.error.value) if include_error else (RunStatus.paused.value,)
+        # PENDING is reopenable alongside PAUSED (and missing keys, handled
+        # below): the guard protects NEWER states - RUNNING and terminals -
+        # and PENDING is pre-execution, where the flip is idempotent. The
+        # expired-state path depends on it: register_run re-creates PENDING
+        # before the reopen, and declining there would drop the counter seed.
+        reopenable = (
+            (RunStatus.paused.value, RunStatus.error.value, RunStatus.pending.value)
+            if include_error
+            else (RunStatus.paused.value, RunStatus.pending.value)
+        )
         status_key = self._status_key(run_id)
         stream_key = self._stream_key(run_id)
         for _ in range(10):
@@ -263,8 +272,24 @@ class RedisEventStream(BaseEventStream):
                     if current is not None and current not in reopenable:
                         await pipe.unwatch()
                         return False
+                    seed_target: Optional[int] = None
+                    if floor is not None:
+                        # Seed the counter to at least floor+1 (the durable
+                        # floor comes from the run row's stored event_index):
+                        # a paused run outliving the TTL across a deploy lost
+                        # its counter, and INCR restarting at 0 makes resuming
+                        # clients dedup away every post-approval event. A live
+                        # counter is never regressed - the run is PAUSED
+                        # (settled, no producer), and the WATCH on the status
+                        # key aborts this whole CAS if anything raced.
+                        raw_counter = await pipe.get(self._counter_key(run_id))
+                        current_counter = int(raw_counter) if raw_counter is not None else 0
+                        if floor + 1 > current_counter:
+                            seed_target = floor + 1
                     pipe.multi()
                     pipe.set(status_key, RunStatus.pending.value, ex=self._ttl)
+                    if seed_target is not None:
+                        pipe.set(self._counter_key(run_id), seed_target, ex=self._ttl)
                     pipe.xadd(stream_key, {"reopen": "1"}, maxlen=self._maxlen, approximate=True)
                     pipe.expire(stream_key, self._ttl)
                     pipe.expire(self._counter_key(run_id), self._ttl)

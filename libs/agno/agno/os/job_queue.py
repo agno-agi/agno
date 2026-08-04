@@ -548,8 +548,20 @@ class QueueWorker:
             # reset the stream, so the failed leg's ERROR sentinel would
             # otherwise close tails attached before this leg's first event.
             # include_error is safe HERE only: this worker holds the claim.
+            # An EXPIRED counter (paused run outliving the TTL across a
+            # deploy) is re-seeded from the run row's stored indices - read
+            # only in that case, or the continuation restarts at index 0 and
+            # resuming clients dedup away every post-approval event. (The
+            # seam's accept-time reopen is deliberately floorless: no event
+            # is published before this reopen, so seeding here is always in
+            # time.)
             with contextlib.suppress(Exception):
-                await event_stream.reopen_run(job_id, include_error=True)
+                floor = None
+                if await event_stream.get_last_index(job_id) < 0:
+                    from agno.os.utils import astream_index_floor
+
+                    floor = await astream_index_floor(component, job_id, job["session_id"], job.get("user_id"))
+                await event_stream.reopen_run(job_id, include_error=True, floor=floor)
         with contextlib.suppress(Exception):
             # Fail-open: a Redis blip here must not burn the attempt budget -
             # execution can proceed; tails degrade to the DB view

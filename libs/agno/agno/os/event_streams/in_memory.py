@@ -60,12 +60,14 @@ class InMemoryEventStream(BaseEventStream):
         self._buffer.set_run_completed(run_id, status)
         await self._subscribers.complete(run_id)
 
-    async def reopen_run(self, run_id: str, include_error: bool = False) -> bool:
+    async def reopen_run(self, run_id: str, include_error: bool = False, floor: Optional[int] = None) -> bool:
         # Single synchronous buffer call: atomic per event loop, so a racing
         # worker's terminal write can never be overwritten with PENDING. No
         # sentinel work needed in-memory - tails consult the buffer status,
-        # which this flip updates.
-        return bool(self._buffer.reopen_run(run_id, include_error=include_error))
+        # which this flip updates. floor seeds the index counter (see
+        # BaseEventStream.reopen_run) - covers the process-restart case where
+        # the buffer came up empty under a paused run's continue.
+        return bool(self._buffer.reopen_run(run_id, include_error=include_error, floor=floor))
 
     async def cleanup_run(self, run_id: str) -> None:
         self._buffer.cleanup_run(run_id)

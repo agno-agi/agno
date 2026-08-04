@@ -793,3 +793,67 @@ class TestInlineContinueReopensStream:
             "the pause's completed_at survived the inline continue - the reopened run "
             "would be eligible for reaping mid-continuation"
         )
+
+
+class TestInlineContinueSeedsExpiredCounter:
+    """Phase-5 item 20, inline door: an inline continue of a paused run whose
+    stream state expired (deploy/restart) must seed the counter from the run
+    row's stored indices - the floor read happens ONLY when the counter is
+    gone, never on the hot path."""
+
+    @pytest.mark.asyncio
+    async def test_amark_seeds_from_run_row_when_counter_expired(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from agno.os.event_streams.in_memory import InMemoryEventStream
+        from agno.os.managers import EventsBuffer, SSESubscriberManager
+        from agno.os.utils import amark_continue_stream_running
+        from agno.run.agent import RunContentEvent
+        from agno.run.base import RunStatus
+
+        stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+        monkeypatch.setattr("agno.os.event_streams.get_event_stream", lambda: stream)
+
+        stored = [RunContentEvent(content=f"c{i}", run_id="r1") for i in range(3)]
+        for i, e in enumerate(stored):
+            e.event_index = i
+
+        reads: list = []
+
+        class FloorComponent:
+            async def aget_run_output(self, run_id=None, session_id=None, user_id=None):
+                reads.append(run_id)
+                return SimpleNamespace(events=stored)
+
+        # Fresh (expired) stream state: nothing registered, counter gone
+        await amark_continue_stream_running("r1", component=FloorComponent(), session_id="s1")
+
+        assert reads == ["r1"], "the floor read must happen exactly once when the counter is gone"
+        idx = await stream.add_event("r1", RunContentEvent(content="after", run_id="r1"))
+        assert idx == 3, f"inline continuation must resume at floor+1, got {idx}"
+        assert await stream.get_run_status("r1") == RunStatus.running
+
+    @pytest.mark.asyncio
+    async def test_amark_skips_floor_read_when_counter_live(self, monkeypatch):
+        from agno.os.event_streams.in_memory import InMemoryEventStream
+        from agno.os.managers import EventsBuffer, SSESubscriberManager
+        from agno.os.utils import amark_continue_stream_running
+        from agno.run.agent import RunContentEvent
+        from agno.run.base import RunStatus
+
+        stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+        monkeypatch.setattr("agno.os.event_streams.get_event_stream", lambda: stream)
+        await stream.register_run("r1", RunStatus.running)
+        await stream.add_event("r1", RunContentEvent(content="a", run_id="r1"))
+        await stream.complete_run("r1", RunStatus.paused)
+
+        reads: list = []
+
+        class FloorComponent:
+            async def aget_run_output(self, **kwargs):
+                reads.append(1)
+
+        await amark_continue_stream_running("r1", component=FloorComponent(), session_id="s1")
+        assert reads == [], "a live counter must not cost a session read"
+        idx = await stream.add_event("r1", RunContentEvent(content="b", run_id="r1"))
+        assert idx == 1

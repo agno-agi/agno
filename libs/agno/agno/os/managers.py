@@ -347,7 +347,7 @@ class EventsBuffer:
         # Trigger cleanup of old completed runs
         self.cleanup_runs()
 
-    def reopen_run(self, run_id: str, include_error: bool = False) -> bool:
+    def reopen_run(self, run_id: str, include_error: bool = False, floor: Optional[int] = None) -> bool:
         """Atomically reopen a PAUSED run for a continuation leg.
 
         Synchronous on purpose: the check-and-flip must not yield to the
@@ -356,14 +356,34 @@ class EventsBuffer:
         clears completed_at - the pause stamped it, and a reopened run left
         carrying it would be reaped by cleanup_runs mid-continuation.
         include_error is the worker-redrive variant (see BaseEventStream).
+        floor seeds the index counter to at least floor+1 (never regressing
+        a live counter): after a restart the buffer comes up empty, and a
+        continue whose indices restart at 0 is deduped away by resuming
+        clients holding the pause-event index.
         """
-        reopenable = (RunStatus.paused, RunStatus.error) if include_error else (RunStatus.paused,)
+        # PENDING and MISSING are reopenable alongside PAUSED: the guard
+        # exists to never overwrite a NEWER state (RUNNING or a terminal),
+        # and both are pre-execution states where the flip is idempotent.
+        # This matters for the expired-state path: register_run re-creates
+        # PENDING before the reopen, and declining there would drop the
+        # counter seed (Redis parity - its missing-key case reopens too).
+        reopenable = (
+            (RunStatus.paused, RunStatus.error, RunStatus.pending)
+            if include_error
+            else (RunStatus.paused, RunStatus.pending)
+        )
         metadata = self.run_metadata.get(run_id)
-        if metadata is None or metadata.get("status") not in reopenable:
+        if metadata is None:
+            # State expired/lost (restart): re-create it, pre-execution
+            self.register_run(run_id, RunStatus.pending)
+            metadata = self.run_metadata[run_id]
+        elif metadata.get("status") not in reopenable:
             return False
         metadata["status"] = RunStatus.pending
         metadata["last_updated"] = time()
         metadata.pop("completed_at", None)
+        if floor is not None:
+            self._next_index[run_id] = max(self._next_index.get(run_id, 0), floor + 1)
         return True
 
     def cleanup_run(self, run_id: str) -> None:

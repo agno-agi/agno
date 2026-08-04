@@ -272,7 +272,7 @@ async def agent_continue_response_streamer(
         # mint a NEW run_id; publishing under the original would corrupt it).
         _sync_stream = not isinstance(agent, RemoteAgent) and not fork and not regenerate
         if _sync_stream:
-            await amark_continue_stream_running(run_id)
+            await amark_continue_stream_running(run_id, component=agent, session_id=session_id, user_id=user_id)
         try:
             async for run_response_chunk in continue_response:
                 if _sync_stream and not isinstance(run_response_chunk, RunOutput):

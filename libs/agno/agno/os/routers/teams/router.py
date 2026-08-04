@@ -479,7 +479,7 @@ async def team_continue_response_streamer(
         # typed params for them (agent-streamer parity gate).
         _sync_stream = not isinstance(team, RemoteTeam) and not kwargs.get("fork") and not kwargs.get("regenerate")
         if _sync_stream:
-            await amark_continue_stream_running(run_id)
+            await amark_continue_stream_running(run_id, component=team, session_id=session_id, user_id=user_id)
         try:
             async for run_response_chunk in continue_response:
                 if _is_run_output_accumulator(run_response_chunk):

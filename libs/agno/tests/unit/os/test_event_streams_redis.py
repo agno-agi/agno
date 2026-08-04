@@ -671,3 +671,57 @@ class TestBatchBoundarySentinel:
         await stream.complete_run("r1", RunStatus.completed)
         await asyncio.wait_for(done.wait(), timeout=5)
         await consumer
+
+
+class TestReopenSeedsCounterFromFloor:
+    """Phase-5 item 20: a paused run outliving the TTL (HITL across a
+    deploy) loses its counter; reopen_run accepted the missing state and
+    INCR restarted indices at 0 - resuming clients, which dedup by index,
+    silently discarded every post-approval event."""
+
+    @pytest.mark.asyncio
+    async def test_reopen_after_key_loss_seeds_next_index(self, stream: RedisEventStream):
+        await stream.register_run("r1", RunStatus.running)
+        for content in ("a", "b", "c"):
+            await stream.add_event("r1", make_event("r1", content))  # indices 0..2
+        await stream.complete_run("r1", RunStatus.paused)
+        await stream.cleanup_run("r1")  # deterministic stand-in for TTL expiry
+
+        assert await stream.reopen_run("r1", floor=2) is True
+        idx = await stream.add_event("r1", make_event("r1", "after-approval"))
+        assert idx == 3, (
+            f"post-expiry continuation must continue at floor+1, got {idx} - "
+            "index 0 is deduped away by clients holding the pause-event index"
+        )
+
+    @pytest.mark.asyncio
+    async def test_live_counter_never_regressed(self, stream: RedisEventStream):
+        await stream.register_run("r1", RunStatus.running)
+        for content in ("a", "b", "c", "d", "e"):
+            await stream.add_event("r1", make_event("r1", content))  # counter = 5
+        await stream.complete_run("r1", RunStatus.paused)
+
+        assert await stream.reopen_run("r1", floor=2) is True  # stale floor
+        idx = await stream.add_event("r1", make_event("r1", "next"))
+        assert idx == 5, f"a live counter must win over a stale floor, got {idx}"
+
+    @pytest.mark.asyncio
+    async def test_true_ttl_expiry_reseeds(self):
+        """Real-clock expiry: 1s TTL, keys genuinely expire, reopen with the
+        durable floor continues the numbering."""
+        import asyncio
+
+        short = RedisEventStream(fakeredis.FakeAsyncRedis(), ttl_seconds=1, block_ms=100)
+        try:
+            await short.register_run("r1", RunStatus.running)
+            await short.add_event("r1", make_event("r1", "a"))
+            await short.add_event("r1", make_event("r1", "b"))
+            await short.complete_run("r1", RunStatus.paused)
+            await asyncio.sleep(1.2)
+            assert await short.get_last_index("r1") == -1, "keys should have expired"
+
+            assert await short.reopen_run("r1", floor=1) is True
+            idx = await short.add_event("r1", make_event("r1", "after"))
+            assert idx == 2
+        finally:
+            await short.aclose()

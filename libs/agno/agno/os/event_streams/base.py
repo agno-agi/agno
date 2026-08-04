@@ -68,7 +68,7 @@ class BaseEventStream(ABC):
         finish once it has yielded the remaining buffered events.
         """
 
-    async def reopen_run(self, run_id: str, include_error: bool = False) -> bool:
+    async def reopen_run(self, run_id: str, include_error: bool = False, floor: Optional[int] = None) -> bool:
         """Atomically reopen a PAUSED run for a continuation leg.
 
         The pause wrote a terminal-for-the-stream state (status + sentinel);
@@ -86,10 +86,28 @@ class BaseEventStream(ABC):
         attached before the redrive's first event. Seam-side callers must
         never pass it - only the claim holder may re-liven an errored view.
 
+        PENDING (and missing state) is reopenable alongside PAUSED: the
+        guard exists to protect NEWER states - RUNNING and true terminals -
+        and pre-execution states make the flip idempotent. The expired-state
+        path depends on it: register_run re-creates PENDING before the
+        reopen, and declining there would drop the counter seed below.
+
+        ``floor``: durable index floor (max stored event_index from the run
+        row). Implementations seed their index counter to at least floor+1 -
+        without it, a reopen whose counter state expired (paused run
+        outliving the TTL across a deploy) restarts indices at 0 and
+        resuming clients, which dedup by index, silently discard every
+        post-approval event. A live counter is never regressed (max wins).
+
         Implementations must make the check-and-flip atomic. This default is
-        a best-effort fallback for third-party streams only.
+        a best-effort fallback for third-party streams only (it cannot seed
+        a counter it does not know about).
         """
-        reopenable = (RunStatus.paused, RunStatus.error) if include_error else (RunStatus.paused,)
+        reopenable = (
+            (RunStatus.paused, RunStatus.error, RunStatus.pending)
+            if include_error
+            else (RunStatus.paused, RunStatus.pending)
+        )
         status = await self.get_run_status(run_id)
         if status is not None and status not in reopenable:
             return False

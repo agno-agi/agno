@@ -1070,7 +1070,7 @@ async def workflow_continue_response_streamer(
         # copy, and a later /resume or WS reconnect would replay just the
         # pre-pause prefix. Re-register (idempotent, cross-replica continue),
         # mark RUNNING, publish per event, and complete with the final status.
-        await amark_continue_stream_running(run_id)
+        await amark_continue_stream_running(run_id, component=workflow, session_id=session_id, user_id=user_id)
 
         try:
             async for run_response_chunk in run_response:

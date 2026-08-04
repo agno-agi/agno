@@ -1986,3 +1986,73 @@ class TestWorkerPathIndexStamp:
             )
         finally:
             es_mod._event_stream = original
+
+
+class TestWorkerRedriveSeedsExpiredCounter:
+    """Phase-5 item 20, durable door: the worker's continuation reopen seeds
+    an EXPIRED counter from the run row before the leg's first event - the
+    seam's accept-time reopen is deliberately floorless (nothing publishes
+    before the worker's reopen), so this is the one seat that must seed."""
+
+    @pytest.mark.asyncio
+    async def test_streaming_continuation_after_expiry_continues_indices(self):
+        from types import SimpleNamespace
+
+        import agno.os.event_streams as es_mod
+        from agno.os.event_streams import InMemoryEventStream, set_event_stream
+        from agno.os.managers import EventsBuffer, SSESubscriberManager
+        from agno.run.agent import RunContentEvent
+
+        original = es_mod._event_stream
+        stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+        set_event_stream(stream)
+        try:
+            store = InMemoryQueueStore()
+            job = QueuedJob(
+                id="seed1",
+                component_type="agent",
+                component_id="a1",
+                session_id="s1",
+                payload={"input": "hi", "stream": True},
+            ).to_dict()
+            await store.enqueue_job(job)
+            claimed = await store.claim_job("old-worker")
+            assert await store.complete_job("seed1", "old-worker", claimed["attempt"], "paused")
+            assert (await store.continue_job("seed1", {"updated_tools": []}))["outcome"] == "queued"
+            # Stream state expired while paused (deploy): nothing survives
+            await stream.cleanup_run("seed1")
+
+            published: list = []
+
+            class FakeOutput:
+                run_id = "seed1"
+                status = RunStatus.completed
+
+            class SeedAgent:
+                id = "a1"
+                db = None
+
+                async def aget_run_output(self, run_id=None, session_id=None, user_id=None):
+                    # The paused leg stored events 0..2 with stamped indices
+                    stored = [RunContentEvent(content=f"c{i}", run_id="seed1") for i in range(3)]
+                    for i, e in enumerate(stored):
+                        e.event_index = i
+                    return SimpleNamespace(events=stored)
+
+                async def acontinue_run(self, **kwargs):
+                    event = RunContentEvent(content="after-approval", run_id="seed1")
+                    published.append(event)
+                    yield event
+                    yield FakeOutput()
+
+            worker = make_worker(store, None, make_config())
+            worker.resolve_component = lambda t, i: SeedAgent()
+            claimed = await store.claim_job(worker.worker_id)
+            await worker._execute_claimed(claimed)
+
+            assert (await store.get_job("seed1"))["status"] == "completed"
+            assert [e.event_index for e in published] == [3], (
+                f"post-expiry continuation must continue at floor+1, got {[e.event_index for e in published]}"
+            )
+        finally:
+            es_mod._event_stream = original
