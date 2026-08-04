@@ -214,9 +214,14 @@ class Skills:
     def get_persistable_skill_names(self) -> List[str]:
         """Get the skill names a stored agent or team saves to re-resolve this object.
 
-        The loaded names, plus each database loader's configured names. A failed
-        database load leaves the mapping empty while the configured names still say
-        what to resolve, so a save during an outage preserves them instead of
+        Only skills a database loader produced, plus each database loader's configured
+        names. A saved name is resolved against the skills table on load, so a skill from
+        any other source cannot be saved: its name would resolve to whatever row happens
+        to share it, or to nothing, silently swapping the skill either way. Those are
+        skipped with a warning, the way an unresolvable knowledge reference is.
+
+        A failed database load leaves the mapping empty while the configured names still
+        say what to resolve, so a save during an outage preserves them instead of
         deleting the stored reference.
 
         Returns:
@@ -224,7 +229,22 @@ class Skills:
         """
         from agno.skills.loaders.db import DbSkills
 
-        names = list(self._skills.keys())
+        # Which loader produced the entry that won a name: _merge_loader_results keeps the
+        # last one, so replaying that order identifies the source of every loaded skill.
+        source: Dict[str, SkillLoader] = {}
+        for index, loader in enumerate(self.loaders):
+            for skill in self._loader_results.get(index, []):
+                source[skill.name] = loader
+
+        names = []
+        for name in self._skills:
+            if isinstance(source.get(name), DbSkills):
+                names.append(name)
+            else:
+                log_warning(
+                    f"Skill '{name}' did not come from the skills table and will not be saved; "
+                    "publish it to the table to persist it."
+                )
         seen = set(names)
         for loader in self.loaders:
             if isinstance(loader, DbSkills) and loader.names:
