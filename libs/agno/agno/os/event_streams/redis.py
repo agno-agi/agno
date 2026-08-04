@@ -452,11 +452,24 @@ class RedisEventStream(BaseEventStream):
                 for batch_position, (entry_id, fields) in enumerate(batch):
                     from_id = _to_str(entry_id) or from_id
                     if fields.get(b"terminal", fields.get("terminal")) is not None:
-                        # Same positional rule as replay: only a batch-final
-                        # sentinel ends the tail (an instant continue can put
-                        # events behind a paused sentinel within one batch)
+                        # A sentinel ends the tail only when NOTHING follows it
+                        # in the STREAM - not merely in this batch. XREAD reads
+                        # count-bounded batches, so a lagging tail's batch can
+                        # end exactly on a stale pause sentinel while the
+                        # reopen marker and continuation events sit in the next
+                        # batch; the old batch-position rule closed the tail
+                        # mid-continuation for any consumer lagging >= one
+                        # batch across a pause/resume. Peek one entry past the
+                        # sentinel before honoring it. (The replay path keeps
+                        # the positional rule: its XRANGE is unbounded, so
+                        # list-final there genuinely means stream-final.)
                         if batch_position == len(batch) - 1:
-                            return
+                            sentinel_id = _to_str(entry_id) or "0-0"
+                            ms, _, seq = sentinel_id.partition("-")
+                            after_sentinel = f"{ms}-{int(seq or 0) + 1}"
+                            following = await self._redis.xrange(stream_key, min=after_sentinel, max="+", count=1)
+                            if not following:
+                                return
                         continue
                     idx_raw = fields.get(b"idx", fields.get("idx"))
                     if idx_raw is None:

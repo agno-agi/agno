@@ -617,3 +617,57 @@ class TestEventCountExcludesMarkers:
             await stream.complete_run("r1", RunStatus.paused)
             await stream.reopen_run("r1")
         assert await stream.get_event_count("r1") == 2
+
+
+class TestBatchBoundarySentinel:
+    """Phase-5 item 22: XREAD reads count-bounded batches (100), and the old
+    tail honored a sentinel that was merely BATCH-final - a lagging consumer
+    whose batch happened to end exactly on a stale pause sentinel was closed
+    even though the reopen marker and continuation events sat in the very
+    next batch. Tail-side read bug: item 5's producer generation fencing
+    would not have fixed it."""
+
+    @pytest.mark.asyncio
+    async def test_lagging_tail_survives_sentinel_at_exact_batch_boundary(self, stream: RedisEventStream):
+        await stream.register_run("r1", RunStatus.running)
+
+        # One-shot filler: bulk-load the stream between the tail's replay
+        # phase (empty stream) and its first XREAD, so the first live batch
+        # holds exactly 100 entries - 99 events + the pause sentinel as the
+        # batch-final entry - with the reopen marker and the continuation
+        # event stranded in batch two.
+        orig_xread = stream._redis.xread
+        filled = {}
+
+        async def fill_then_read(streams, block=None, count=None):
+            if not filled:
+                filled["done"] = True
+                for i in range(99):
+                    await stream.add_event("r1", make_event("r1", f"e{i}"))
+                await stream.complete_run("r1", RunStatus.paused)
+                await stream.reopen_run("r1")
+                await stream.add_event("r1", make_event("r1", "after-approval"))
+            return await orig_xread(streams, block=block, count=count)
+
+        stream._redis.xread = fill_then_read
+
+        received: list = []
+        done = asyncio.Event()
+
+        async def consume():
+            async for idx, _sse in stream.tail("r1"):
+                received.append(idx)
+            done.set()
+
+        consumer = asyncio.create_task(consume())
+        await asyncio.sleep(0.5)
+
+        assert not done.is_set(), (
+            f"tail closed on the batch-final stale sentinel with {len(received)} events - "
+            "the continuation behind the batch boundary was never delivered"
+        )
+        assert received == list(range(100)), f"expected all 100 events including the continuation, got {len(received)}"
+
+        await stream.complete_run("r1", RunStatus.completed)
+        await asyncio.wait_for(done.wait(), timeout=5)
+        await consumer
