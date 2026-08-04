@@ -532,6 +532,22 @@ class Workflow:
     def _has_async_db(self) -> bool:
         return self.db is not None and isinstance(self.db, AsyncBaseDb)
 
+    def _runs_limit_for_workflow_run(self) -> Optional[int]:
+        """The ``runs_limit`` to push down for the workflow run hot path.
+
+        Bounds only when workflow history is injected into steps AND a positive
+        ``num_history_runs`` is configured. Returns None (full load) otherwise
+        — the safe, backwards-compatible default. Adapters that don't optimize
+        ``runs_limit`` load the full history, so no capability check is needed.
+        """
+        if not self.add_workflow_history_to_steps:
+            return None
+        if self.db is None:
+            return None
+        if self.num_history_runs is None or self.num_history_runs <= 0:
+            return None
+        return self.num_history_runs
+
     def _resolve_run_params(
         self,
         *,
@@ -1264,12 +1280,20 @@ class Workflow:
         self,
         session_id: str,
         user_id: Optional[str] = None,
+        runs_limit: Optional[int] = None,
     ) -> WorkflowSession:
+        """Load an existing WorkflowSession (bounded to ``runs_limit`` most
+        recent runs when set) or create a fresh one.
+
+        Bounded loads are NEVER cached — a partial view of ``session.runs`` must
+        not be served to a later unbounded caller.
+        """
         from time import time
 
-        # Returning cached session if we have one
+        # Only serve from cache when the caller wants a full session.
         if (
-            self._workflow_session is not None
+            runs_limit is None
+            and self._workflow_session is not None
             and self._workflow_session.session_id == session_id
             and (user_id is None or self._workflow_session.user_id == user_id)
         ):
@@ -1283,9 +1307,11 @@ class Workflow:
         # Try to load from database
         workflow_session = None
         if self.db is not None:
-            log_debug(f"Reading WorkflowSession: {session_id}")
+            log_debug(f"Reading WorkflowSession: {session_id} (runs_limit={runs_limit})")
 
-            workflow_session = cast(WorkflowSession, self._read_session(session_id=session_id, user_id=user_id))
+            workflow_session = cast(
+                WorkflowSession, self._read_session(session_id=session_id, user_id=user_id, runs_limit=runs_limit)
+            )
 
         if workflow_session is None:
             # Creating new session if none found
@@ -1305,8 +1331,8 @@ class Workflow:
                 created_at=int(time()),
             )
 
-        # Cache the session if relevant
-        if workflow_session is not None and self.cache_session:
+        # Only cache a fully-hydrated session; a bounded load is a partial view.
+        if workflow_session is not None and self.cache_session and runs_limit is None:
             self._workflow_session = workflow_session
 
         return workflow_session
@@ -1315,12 +1341,15 @@ class Workflow:
         self,
         session_id: str,
         user_id: Optional[str] = None,
+        runs_limit: Optional[int] = None,
     ) -> WorkflowSession:
+        """Async twin of :meth:`read_or_create_session`. Same rationale for the
+        ``runs_limit`` param and no-cache-when-bounded semantics."""
         from time import time
 
-        # Returning cached session if we have one
         if (
-            self._workflow_session is not None
+            runs_limit is None
+            and self._workflow_session is not None
             and self._workflow_session.session_id == session_id
             and (user_id is None or self._workflow_session.user_id == user_id)
         ):
@@ -1329,9 +1358,12 @@ class Workflow:
         # Try to load from database
         workflow_session = None
         if self.db is not None:
-            log_debug(f"Reading WorkflowSession: {session_id}")
+            log_debug(f"Reading WorkflowSession: {session_id} (runs_limit={runs_limit})")
 
-            workflow_session = cast(WorkflowSession, await self._aread_session(session_id=session_id, user_id=user_id))
+            workflow_session = cast(
+                WorkflowSession,
+                await self._aread_session(session_id=session_id, user_id=user_id, runs_limit=runs_limit),
+            )
 
         if workflow_session is None:
             # Creating new session if none found
@@ -1351,8 +1383,8 @@ class Workflow:
                 created_at=int(time()),
             )
 
-        # Cache the session if relevant
-        if workflow_session is not None and self.cache_session:
+        # Only cache a fully-hydrated session; a bounded load is a partial view.
+        if workflow_session is not None and self.cache_session and runs_limit is None:
             self._workflow_session = workflow_session
 
         return workflow_session
@@ -1543,7 +1575,12 @@ class Workflow:
         return session.get_chat_history(last_n_runs=last_n_runs)
 
     # -*- Session Database Functions
-    async def _aread_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[WorkflowSession]:
+    async def _aread_session(
+        self,
+        session_id: str,
+        user_id: Optional[str] = None,
+        runs_limit: Optional[int] = None,
+    ) -> Optional[WorkflowSession]:
         """Get a Session from the database.
 
         Read errors propagate. Do NOT coerce failures to None here: an empty result
@@ -1555,22 +1592,33 @@ class Workflow:
         """
         if not self.db:
             raise ValueError("Db not initialized")
+        # Every adapter accepts runs_limit; those that don't optimize it load the full
+        # history (a safe superset), so we can pass it unconditionally.
         if self._has_async_db():
-            session = await self.db.get_session(
-                session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id
-            )  # type: ignore
+            session = await self.db.get_session(  # type: ignore
+                session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id, runs_limit=runs_limit
+            )
         else:
-            session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id)
+            session = self.db.get_session(
+                session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id, runs_limit=runs_limit
+            )
         return session if isinstance(session, (WorkflowSession, type(None))) else None
 
-    def _read_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[WorkflowSession]:
+    def _read_session(
+        self,
+        session_id: str,
+        user_id: Optional[str] = None,
+        runs_limit: Optional[int] = None,
+    ) -> Optional[WorkflowSession]:
         """Sync twin of :meth:`_aread_session`. Same rationale: do NOT swallow errors."""
         if self._has_async_db():
             raise ValueError("Cannot use sync _read_session() with an async database. Use _aread_session() instead.")
 
         if not self.db:
             raise ValueError("Db not initialized")
-        session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id)
+        session = self.db.get_session(
+            session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id, runs_limit=runs_limit
+        )
         return session if isinstance(session, (WorkflowSession, type(None))) else None
 
     async def _aupsert_session(self, session: WorkflowSession) -> Optional[WorkflowSession]:
@@ -1644,31 +1692,27 @@ class Workflow:
         """Persist the session row + this single run (both O(1) writes).
 
         Replaces the v2.x pattern where ``save_session`` rewrote every run on
-        the session. Computes ``run_index`` from the session's in-memory runs
-        list (call ``session.upsert_run(run=...)`` before invoking this).
+        the session. Passes ``run_index=None`` so the adapter backfills via
+        ``MAX(run_index)+1``— correct for both full-load and
+        bounded-load session states, and avoids coupling to how the session
+        was hydrated.
         """
-        from agno.session._utils import resolve_run_index
-
-        run_index = resolve_run_index(session, run)
         self.save_session(session=session)
         self.save_run(
             run=run,
             session_id=session.session_id,
             user_id=session.user_id,
-            run_index=run_index,
+            run_index=None,
         )
 
     async def _apersist_session_and_run(self, session: WorkflowSession, run: "WorkflowRunOutput") -> None:
         """Async variant of ``_persist_session_and_run``."""
-        from agno.session._utils import resolve_run_index
-
-        run_index = resolve_run_index(session, run)
         await self.asave_session(session=session)
         await self.asave_run(
             run=run,
             session_id=session.session_id,
             user_id=session.user_id,
-            run_index=run_index,
+            run_index=None,
         )
 
     def _persist_errored_run_stream(self, session: WorkflowSession, run: "WorkflowRunOutput") -> None:
@@ -3192,11 +3236,18 @@ class Workflow:
         Returns:
             Tuple of (workflow_session, prepared_session_state)
         """
-        # Read existing session from database
+        # Read existing session from database. Push runs_limit down when the
+        # workflow injects history into steps, so we don't full-load a long
+        # session just to slice the last ``num_history_runs`` in memory.
+        runs_limit = self._runs_limit_for_workflow_run()
         if self._has_async_db():
-            workflow_session = await self.aread_or_create_session(session_id=session_id, user_id=user_id)
+            workflow_session = await self.aread_or_create_session(
+                session_id=session_id, user_id=user_id, runs_limit=runs_limit
+            )
         else:
-            workflow_session = self.read_or_create_session(session_id=session_id, user_id=user_id)
+            workflow_session = self.read_or_create_session(
+                session_id=session_id, user_id=user_id, runs_limit=runs_limit
+            )
         self._update_metadata(session=workflow_session)
 
         # Update session state from DB
@@ -9678,8 +9729,14 @@ class Workflow:
         self.initialize_workflow()
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
 
-        # Read existing session from database
-        workflow_session = self.read_or_create_session(session_id=session_id, user_id=user_id)
+        # Read existing session from database. Push runs_limit down when workflow
+        # history is bounded so we don't full-load a long session just to slice
+        # the last num_history_runs in memory.
+        workflow_session = self.read_or_create_session(
+            session_id=session_id,
+            user_id=user_id,
+            runs_limit=self._runs_limit_for_workflow_run(),
+        )
         self._update_metadata(session=workflow_session)
 
         # Initialize session state. Get it from DB if relevant.

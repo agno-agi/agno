@@ -28,7 +28,9 @@ def _patch_team_dispatch_dependencies(team: Team, monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(
         _storage,
         "_read_or_create_session",
-        lambda team, session_id=None, user_id=None: TeamSession(session_id=session_id, user_id=user_id),
+        lambda team, session_id=None, user_id=None, runs_limit=None: TeamSession(
+            session_id=session_id, user_id=user_id
+        ),
     )
     monkeypatch.setattr(_storage, "_update_metadata", lambda team, session=None: None)
     monkeypatch.setattr(_init, "_initialize_session_state", lambda team, session_state=None, **kwargs: session_state)

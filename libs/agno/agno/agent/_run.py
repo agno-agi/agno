@@ -384,6 +384,7 @@ def _run(
         parse_response_with_parser_model,
         update_run_response,
     )
+    from agno.agent._session import _runs_limit_for_agent_run
     from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
     from agno.agent._telemetry import log_agent_telemetry
     from agno.agent._tools import determine_tools_for_model
@@ -408,10 +409,17 @@ def _run(
             run_messages: Optional[RunMessages] = None
             try:
                 # 1. Read or create session. Reuse pre-read session on first attempt.
+                # Push runs_limit down to the DB when history is bounded so the
+                # hot path doesn't full-load a 500-run session to slice N in-memory.
                 if attempt == 0 and pre_session is not None:
                     agent_session = pre_session
                 else:
-                    agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+                    agent_session = read_or_create_session(
+                        agent,
+                        session_id=session_id,
+                        user_id=user_id,
+                        runs_limit=_runs_limit_for_agent_run(agent, add_history_to_context),
+                    )
 
                 # 2. Update metadata and session state
                 if not (attempt == 0 and pre_session is not None):
@@ -796,6 +804,7 @@ def _run_stream(
         handle_reasoning_stream,
         parse_response_with_parser_model_stream,
     )
+    from agno.agent._session import _runs_limit_for_agent_run
     from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
     from agno.agent._telemetry import log_agent_telemetry
     from agno.agent._tools import determine_tools_for_model
@@ -820,10 +829,17 @@ def _run_stream(
             run_messages: Optional[RunMessages] = None
             try:
                 # 1. Read or create session. Reuse pre-read session on first attempt.
+                # Push runs_limit down to the DB when history is bounded so the
+                # hot path doesn't full-load a 500-run session to slice N in-memory.
                 if attempt == 0 and pre_session is not None:
                     agent_session = pre_session
                 else:
-                    agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+                    agent_session = read_or_create_session(
+                        agent,
+                        session_id=session_id,
+                        user_id=user_id,
+                        runs_limit=_runs_limit_for_agent_run(agent, add_history_to_context),
+                    )
 
                 # 2. Update metadata and session state
                 if not (attempt == 0 and pre_session is not None):
@@ -1372,9 +1388,17 @@ def run_dispatch(
 
     # Read existing session and update metadata BEFORE resolving run options,
     # so that session-stored metadata is visible to resolve_run_options.
+    # Push runs_limit down when history is bounded — this is the primary DB
+    # read for the sync ``agent.run`` hot path.
+    from agno.agent._session import _runs_limit_for_agent_run
     from agno.agent._storage import read_or_create_session, update_metadata
 
-    agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+    agent_session = read_or_create_session(
+        agent,
+        session_id=session_id,
+        user_id=user_id,
+        runs_limit=_runs_limit_for_agent_run(agent, add_history_to_context),
+    )
     update_metadata(agent, session=agent_session)
 
     # Resolve all run options centrally
@@ -1519,6 +1543,7 @@ async def _arun(
         convert_response_to_structured_format,
         update_run_response,
     )
+    from agno.agent._session import _runs_limit_for_agent_run
     from agno.agent._storage import aread_or_create_session, load_session_state, update_metadata
     from agno.agent._telemetry import alog_agent_telemetry
     from agno.agent._tools import determine_tools_for_model
@@ -1544,10 +1569,17 @@ async def _arun(
             run_messages: Optional[RunMessages] = None
             try:
                 # 1. Read or create session. Reuse pre-read session on first attempt.
+                # Push runs_limit down to the DB when history is bounded so the
+                # hot path doesn't full-load a 500-run session to slice N in-memory.
                 if attempt == 0 and pre_session is not None:
                     agent_session = pre_session
                 else:
-                    agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+                    agent_session = await aread_or_create_session(
+                        agent,
+                        session_id=session_id,
+                        user_id=user_id,
+                        runs_limit=_runs_limit_for_agent_run(agent, add_history_to_context),
+                    )
 
                 # 2. Update metadata and session state
                 if not (attempt == 0 and pre_session is not None):
@@ -2197,6 +2229,7 @@ async def _arun_stream(
         ahandle_reasoning_stream,
         aparse_response_with_parser_model_stream,
     )
+    from agno.agent._session import _runs_limit_for_agent_run
     from agno.agent._storage import aread_or_create_session, load_session_state, update_metadata
     from agno.agent._telemetry import alog_agent_telemetry
     from agno.agent._tools import determine_tools_for_model
@@ -2221,10 +2254,17 @@ async def _arun_stream(
             run_messages: Optional[RunMessages] = None
             try:
                 # 1. Read or create session. Reuse pre-read session on first attempt.
+                # Push runs_limit down to the DB when history is bounded so the
+                # hot path doesn't full-load a 500-run session to slice N in-memory.
                 if attempt == 0 and pre_session is not None:
                     agent_session = pre_session
                 else:
-                    agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+                    agent_session = await aread_or_create_session(
+                        agent,
+                        session_id=session_id,
+                        user_id=user_id,
+                        runs_limit=_runs_limit_for_agent_run(agent, add_history_to_context),
+                    )
 
                 # Start the Run by yielding a RunStarted event
                 if stream_events:
@@ -2829,9 +2869,15 @@ def arun_dispatch(  # type: ignore
 
     _pre_session: Optional[AgentSession] = None
     if not has_async_db(agent):
+        from agno.agent._session import _runs_limit_for_agent_run
         from agno.agent._storage import read_or_create_session
 
-        _pre_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+        _pre_session = read_or_create_session(
+            agent,
+            session_id=session_id,
+            user_id=user_id,
+            runs_limit=_runs_limit_for_agent_run(agent, add_history_to_context),
+        )
         update_metadata(agent, session=_pre_session)
 
     # Resolve all run options centrally
@@ -5774,7 +5820,11 @@ def persist_run_in_session(
 
     # Add scrubbed RunOutput to Agent Session
     session.upsert_run(run=storage_copy)
-    run_index = resolve_run_index(session, storage_copy)
+    # Pass ``run_index=None`` so the adapter backfills via ``MAX(run_index)+1``
+    # (see #9336). This is always correct: a bounded session load has an
+    # incomplete ``session.runs``, and even for a full load the DB-side backfill
+    # matches ``resolve_run_index`` while avoiding the coupling.
+    run_index = None
 
     # Calculate session metrics
     update_session_metrics(agent, session=session, run_response=run_response)
@@ -5811,7 +5861,8 @@ async def apersist_run_in_session(
         storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context, isolate_inflight=True)
 
     session.upsert_run(run=storage_copy)
-    run_index = resolve_run_index(session, storage_copy)
+    # DB-side MAX+1 backfill (see #9336); avoids a wrong index on bounded reads.
+    run_index = None
     update_session_metrics(agent, session=session, run_response=run_response)
 
     if run_context is not None and run_context.session_state is not None:

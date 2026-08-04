@@ -162,7 +162,11 @@ def get_session_metrics_internal(team: "Team", session: TeamSession) -> SessionM
 
 
 def _read_session(
-    team: "Team", session_id: str, session_type: SessionType = SessionType.TEAM, user_id: Optional[str] = None
+    team: "Team",
+    session_id: str,
+    session_type: SessionType = SessionType.TEAM,
+    user_id: Optional[str] = None,
+    runs_limit: Optional[int] = None,
 ) -> Optional[Union[TeamSession, WorkflowSession]]:
     """Get a Session from the database.
 
@@ -175,12 +179,20 @@ def _read_session(
     """
     if not team.db:
         raise ValueError("Db not initialized")
-    session = team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
+    # Every adapter accepts runs_limit; those that don't optimize it load the full
+    # history (a safe superset), so we can pass it unconditionally.
+    session = team.db.get_session(
+        session_id=session_id, session_type=session_type, user_id=user_id, runs_limit=runs_limit
+    )
     return session  # type: ignore
 
 
 async def _aread_session(
-    team: "Team", session_id: str, session_type: SessionType = SessionType.TEAM, user_id: Optional[str] = None
+    team: "Team",
+    session_id: str,
+    session_type: SessionType = SessionType.TEAM,
+    user_id: Optional[str] = None,
+    runs_limit: Optional[int] = None,
 ) -> Optional[Union[TeamSession, WorkflowSession]]:
     """Async twin of :func:`_read_session`. Same rationale: do NOT swallow errors."""
     from agno.team._init import _has_async_db
@@ -189,9 +201,13 @@ async def _aread_session(
         raise ValueError("Db not initialized")
     if _has_async_db(team):
         team.db = cast(AsyncBaseDb, team.db)
-        session = await team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
+        session = await team.db.get_session(
+            session_id=session_id, session_type=session_type, user_id=user_id, runs_limit=runs_limit
+        )
     else:
-        session = team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore[assignment]
+        session = team.db.get_session(  # type: ignore[assignment]
+            session_id=session_id, session_type=session_type, user_id=user_id, runs_limit=runs_limit
+        )
     return session  # type: ignore
 
 
@@ -267,8 +283,20 @@ async def _aupsert_run(
         log_warning(f"Error upserting run into db: {str(e)}")
 
 
-def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str] = None) -> TeamSession:
-    """Load the TeamSession from storage
+def _read_or_create_session(
+    team: "Team",
+    session_id: str,
+    user_id: Optional[str] = None,
+    runs_limit: Optional[int] = None,
+) -> TeamSession:
+    """Load the TeamSession from storage (bounded to ``runs_limit`` most recent
+    runs) or create a fresh one.
+
+    Args:
+        runs_limit: Optional cap on the number of most-recent runs to hydrate.
+            When set, the DB-side ``ORDER BY run_index DESC LIMIT`` is used.
+            Bounded loads are NEVER cached — a partial view can't safely be
+            served to a later unbounded caller.
 
     Returns:
         Optional[TeamSession]: The loaded TeamSession or None if not found.
@@ -278,9 +306,11 @@ def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str
     from agno.session.team import TeamSession
     from agno.team._telemetry import get_team_data
 
-    # Return existing session if we have one
+    # Only serve from cache when the caller wants a full session; a bounded
+    # request must reload so it doesn't collide with the cached full view.
     if (
-        team._cached_session is not None
+        runs_limit is None
+        and team._cached_session is not None
         and team._cached_session.session_id == session_id
         and (user_id is None or team._cached_session.user_id == user_id)
     ):
@@ -289,7 +319,9 @@ def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str
     # Try to load from database
     team_session = None
     if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
-        team_session = cast(TeamSession, _read_session(team, session_id=session_id, user_id=user_id))
+        team_session = cast(
+            TeamSession, _read_session(team, session_id=session_id, user_id=user_id, runs_limit=runs_limit)
+        )
 
     # Create new session if none found
     if team_session is None:
@@ -332,14 +364,20 @@ def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str
                 save_session(team, session=team_session)
                 _upsert_run(team, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
 
-    # Cache the session if relevant
-    if team_session is not None and team.cache_session:
+    # Only cache a fully-hydrated session. A bounded load is a partial view;
+    # caching it would poison any subsequent unbounded read.
+    if team_session is not None and team.cache_session and runs_limit is None:
         team._cached_session = team_session
 
     return team_session
 
 
-async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optional[str] = None) -> TeamSession:
+async def _aread_or_create_session(
+    team: "Team",
+    session_id: str,
+    user_id: Optional[str] = None,
+    runs_limit: Optional[int] = None,
+) -> TeamSession:
     """Load the TeamSession from storage
 
     Returns:
@@ -351,9 +389,9 @@ async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optio
     from agno.team._init import _has_async_db
     from agno.team._telemetry import get_team_data
 
-    # Return existing session if we have one
     if (
-        team._cached_session is not None
+        runs_limit is None
+        and team._cached_session is not None
         and team._cached_session.session_id == session_id
         and (user_id is None or team._cached_session.user_id == user_id)
     ):
@@ -363,9 +401,14 @@ async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optio
     team_session = None
     if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
         if _has_async_db(team):
-            team_session = cast(TeamSession, await _aread_session(team, session_id=session_id, user_id=user_id))
+            team_session = cast(
+                TeamSession,
+                await _aread_session(team, session_id=session_id, user_id=user_id, runs_limit=runs_limit),
+            )
         else:
-            team_session = cast(TeamSession, _read_session(team, session_id=session_id, user_id=user_id))
+            team_session = cast(
+                TeamSession, _read_session(team, session_id=session_id, user_id=user_id, runs_limit=runs_limit)
+            )
 
     # Create new session if none found
     if team_session is None:
@@ -415,8 +458,9 @@ async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optio
                     save_session(team, session=team_session)
                     _upsert_run(team, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
 
-    # Cache the session if relevant
-    if team_session is not None and team.cache_session:
+    # Only cache a fully-hydrated session. A bounded load is a partial view;
+    # caching it would poison any subsequent unbounded read.
+    if team_session is not None and team.cache_session and runs_limit is None:
         team._cached_session = team_session
 
     return team_session

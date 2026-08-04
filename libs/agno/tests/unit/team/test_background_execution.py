@@ -43,7 +43,9 @@ def _patch_team_dispatch_dependencies(
     monkeypatch.setattr(
         _storage,
         "_read_or_create_session",
-        lambda team, session_id=None, user_id=None: TeamSession(session_id=session_id, user_id=user_id, runs=runs),
+        lambda team, session_id=None, user_id=None, runs_limit=None: TeamSession(
+            session_id=session_id, user_id=user_id, runs=runs
+        ),
     )
 
 

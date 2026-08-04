@@ -179,14 +179,20 @@ async def _asetup_session(
     session_id: str,
     user_id: Optional[str],
     run_id: Optional[str],
+    add_history_to_context: Optional[bool] = None,
 ) -> TeamSession:
     """Read/create session, load state from DB, and resolve callable dependencies.
 
     Shared setup for _arun() and _arun_stream(). Mirrors what the sync
     run_dispatch() does inline before calling _run()/_run_stream().
+
+    ``add_history_to_context`` is forwarded so the session read can push a
+    ``runs_limit`` down to the DB when history is bounded, avoiding a full
+    long-session load in the hot path.
     """
     # Read or create session
     from agno.team._init import _has_async_db, _initialize_session_state
+    from agno.team._session import _runs_limit_for_team_run
     from agno.team._storage import (
         _aread_or_create_session,
         _load_session_state,
@@ -194,10 +200,13 @@ async def _asetup_session(
         _update_metadata,
     )
 
+    runs_limit = _runs_limit_for_team_run(team, add_history_to_context)
     if _has_async_db(team):
-        team_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
+        team_session = await _aread_or_create_session(
+            team, session_id=session_id, user_id=user_id, runs_limit=runs_limit
+        )
     else:
-        team_session = _read_or_create_session(team, session_id=session_id, user_id=user_id)
+        team_session = _read_or_create_session(team, session_id=session_id, user_id=user_id, runs_limit=runs_limit)
 
     # Update metadata
     _update_metadata(team, session=team_session)
@@ -1883,6 +1892,7 @@ def run_dispatch(
     from agno.team._init import _has_async_db, _initialize_session, _initialize_session_state
     from agno.team._response import get_response_format
     from agno.team._run_options import resolve_run_options
+    from agno.team._session import _runs_limit_for_team_run
     from agno.team._storage import _load_session_state, _read_or_create_session, _update_metadata
 
     if _has_async_db(team):
@@ -1935,8 +1945,15 @@ def run_dispatch(
             files=file_artifacts,
         )
 
-        # Read existing session from database
-        team_session = _read_or_create_session(team, session_id=session_id, user_id=user_id)
+        # Read existing session from database. Push runs_limit down when
+        # history is bounded so the hot path doesn't full-load a long session
+        # just to slice N in-memory.
+        team_session = _read_or_create_session(
+            team,
+            session_id=session_id,
+            user_id=user_id,
+            runs_limit=_runs_limit_for_team_run(team, add_history_to_context),
+        )
         _update_metadata(team, session=team_session)
 
         # Resolve run options AFTER _update_metadata so session-stored metadata is visible
@@ -2109,6 +2126,7 @@ async def _arun_tasks(
             session_id=session_id,
             user_id=user_id,
             run_id=run_response.run_id,
+            add_history_to_context=add_history_to_context,
         )
 
         run_input = cast(TeamRunInput, run_response.input)
@@ -2474,6 +2492,7 @@ async def _arun_tasks_stream(
             session_id=session_id,
             user_id=user_id,
             run_id=run_response.run_id,
+            add_history_to_context=add_history_to_context,
         )
 
         run_input = cast(TeamRunInput, run_response.input)
@@ -3033,6 +3052,7 @@ async def _arun(
             session_id=session_id,
             user_id=user_id,
             run_id=run_response.run_id,
+            add_history_to_context=add_history_to_context,
         )
 
         # Set up retry logic
@@ -3379,7 +3399,7 @@ async def _arun_background(
 
     Callers can poll for results via team.aget_run_output(run_id, session_id).
     """
-    from agno.team._session import asave_run, asave_session
+    from agno.team._session import _runs_limit_for_team_run, asave_run, asave_session
     from agno.team._storage import _aread_or_create_session, _update_metadata
 
     # 1. Register the run for cancellation tracking (before spawning the task)
@@ -3388,8 +3408,15 @@ async def _arun_background(
     # 2. Set status to PENDING
     run_response.status = RunStatus.pending
 
-    # 3. Persist the PENDING run so polling can find it immediately
-    team_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
+    # 3. Persist the PENDING run so polling can find it immediately.
+    # Push runs_limit down so the background hot path doesn't full-load a long
+    # session's runs just to slice N in-memory (mirrors the primary arun path).
+    team_session = await _aread_or_create_session(
+        team,
+        session_id=session_id,
+        user_id=user_id,
+        runs_limit=_runs_limit_for_team_run(team, add_history_to_context),
+    )
     _update_metadata(team, session=team_session)
     team_session.upsert_run(run_response=run_response)
     run_index = resolve_run_index(team_session, run_response)
@@ -3468,17 +3495,24 @@ async def _arun_background_stream(
     The detached task keeps running even if the client disconnects.
     The caller (router) just yields the SSE strings to the client.
     """
-    from agno.team._session import asave_run, asave_session
+    from agno.team._session import _runs_limit_for_team_run, asave_run, asave_session
     from agno.team._storage import _aread_or_create_session, _update_metadata
 
     run_id = run_response.run_id
     if not run_id:
         raise ValueError("run_id is required for background streaming")
 
-    # 1. Persist RUNNING status so the run is visible in the DB immediately
+    # 1. Persist RUNNING status so the run is visible in the DB immediately.
+    # Push runs_limit down so the background hot path doesn't full-load a long
+    # session's runs just to slice N in-memory (mirrors the primary arun path).
     run_response.status = RunStatus.running
 
-    team_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
+    team_session = await _aread_or_create_session(
+        team,
+        session_id=session_id,
+        user_id=user_id,
+        runs_limit=_runs_limit_for_team_run(team, add_history_to_context),
+    )
     _update_metadata(team, session=team_session)
     team_session.upsert_run(run_response=run_response)
     run_index = resolve_run_index(team_session, run_response)
@@ -3667,6 +3701,7 @@ async def _arun_stream(
             session_id=session_id,
             user_id=user_id,
             run_id=run_response.run_id,
+            add_history_to_context=add_history_to_context,
         )
 
         # Set up retry logic
@@ -4518,7 +4553,11 @@ def _cleanup_and_store(
 
     # Add scrubbed RunOutput to Team Session
     session.upsert_run(run_response=storage_copy)
-    run_index = resolve_run_index(session, storage_copy)
+    # Pass ``run_index=None`` so the adapter backfills via ``MAX(run_index)+1``
+    # (see #9336). This is always correct: a bounded session load has an
+    # incomplete ``session.runs``, and even for a full load the DB-side backfill
+    # matches ``resolve_run_index`` while avoiding the coupling.
+    run_index = None
 
     # Calculate session metrics
     update_session_metrics(team, session=session, run_response=run_response)
@@ -4589,7 +4628,11 @@ async def _acleanup_and_store(
 
     # Add scrubbed RunOutput to Team Session
     session.upsert_run(run_response=storage_copy)
-    run_index = resolve_run_index(session, storage_copy)
+    # Pass ``run_index=None`` so the adapter backfills via ``MAX(run_index)+1``
+    # (see #9336). This is always correct: a bounded session load has an
+    # incomplete ``session.runs``, and even for a full load the DB-side backfill
+    # matches ``resolve_run_index`` while avoiding the coupling.
+    run_index = None
 
     # Calculate session metrics
     update_session_metrics(team, session=session, run_response=run_response)
@@ -4720,7 +4763,8 @@ def _persist_team_run_in_session(
         storage_copy.session_state = run_context.session_state
 
     session.upsert_run(run_response=storage_copy)
-    run_index = resolve_run_index(session, storage_copy)
+    # DB-side MAX+1 backfill (see #9336); avoids a wrong index on bounded reads.
+    run_index = None
     update_session_metrics(team, session=session, run_response=run_response)
 
     if run_context is not None and run_context.session_state is not None:
@@ -4776,7 +4820,8 @@ async def _apersist_team_run_in_session(
         storage_copy.session_state = run_context.session_state
 
     session.upsert_run(run_response=storage_copy)
-    run_index = resolve_run_index(session, storage_copy)
+    # DB-side MAX+1 backfill (see #9336); avoids a wrong index on bounded reads.
+    run_index = None
     update_session_metrics(team, session=session, run_response=run_response)
 
     if run_context is not None and run_context.session_state is not None:
@@ -6607,6 +6652,7 @@ def continue_run_dispatch(
     from agno.team._init import _has_async_db, _initialize_session
     from agno.team._response import get_response_format
     from agno.team._run_options import resolve_run_options
+    from agno.team._session import _runs_limit_for_team_run
     from agno.team._storage import _load_session_state, _read_or_create_session, _update_metadata
     from agno.team._tools import _determine_tools_for_model
 
@@ -6633,8 +6679,14 @@ def continue_run_dispatch(
     # Initialize the Team
     team.initialize_team(debug_mode=debug_mode)
 
-    # Read existing session from storage
-    team_session = _read_or_create_session(team, session_id=session_id, user_id=user_id)
+    # Read existing session from storage. Push runs_limit down so continue doesn't
+    # full-load a long session's runs just to slice N in-memory (mirrors arun path).
+    team_session = _read_or_create_session(
+        team,
+        session_id=session_id,
+        user_id=user_id,
+        runs_limit=_runs_limit_for_team_run(team),
+    )
     _update_metadata(team, session=team_session)
 
     # Load session state
@@ -7794,15 +7846,22 @@ async def _acontinue_run_background_stream(
     3. Buffers events (via event_buffer) and publishes to SSE subscribers
     4. Yields SSE-formatted strings via an asyncio.Queue
     """
-    from agno.team._session import asave_run, asave_session
+    from agno.team._session import _runs_limit_for_team_run, asave_run, asave_session
     from agno.team._storage import _aread_or_create_session, _update_metadata
 
     _run_id = run_id or (run_response.run_id if run_response else None)
     if not _run_id:
         raise ValueError("run_id is required for background streaming continue-run")
 
-    # 1. Persist RUNNING status so the run is visible in the DB immediately
-    team_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
+    # 1. Persist RUNNING status so the run is visible in the DB immediately.
+    # Push runs_limit down so background continue doesn't full-load a long
+    # session's runs just to slice N in-memory (mirrors the primary path).
+    team_session = await _aread_or_create_session(
+        team,
+        session_id=session_id,
+        user_id=user_id,
+        runs_limit=_runs_limit_for_team_run(team),
+    )
     _update_metadata(team, session=team_session)
 
     # Transition to RUNNING here only if we have the run; otherwise the spawned

@@ -694,6 +694,20 @@ def update_session_metrics(agent: Agent, session: AgentSession, run_response: Ru
 # ---------------------------------------------------------------------------
 
 
+def _runs_limit_for_agent_run(agent: Agent, add_history_to_context: Optional[bool] = None) -> Optional[int]:
+    """The ``runs_limit`` to push down for the ``agent.run`` / ``agent.arun``
+    hot path. Bounds only when history is actually going into the model context
+    AND a positive ``num_history_runs`` is configured. Otherwise returns None
+    (full load), which is the safe, backwards-compatible default.
+
+    Wraps :func:`_bounded_history_runs_limit` with the specific arguments the
+    run path always uses (default status filtering).
+    """
+    if not (add_history_to_context or agent.add_history_to_context):
+        return None
+    return _bounded_history_runs_limit(agent, last_n_runs=agent.num_history_runs, skip_statuses=None)
+
+
 def _bounded_history_runs_limit(
     agent: Agent, last_n_runs: Optional[int], skip_statuses: Optional[List[RunStatus]]
 ) -> Optional[int]:

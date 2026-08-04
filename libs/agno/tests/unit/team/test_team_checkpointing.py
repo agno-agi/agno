@@ -610,7 +610,11 @@ def _patch_team_sync_dispatch(
     monkeypatch.setattr(
         team_storage, "_load_session_state", lambda t, session=None, session_state=None: session_state or {}
     )
-    monkeypatch.setattr(team_storage, "_read_or_create_session", lambda t, session_id=None, user_id=None: session)
+    monkeypatch.setattr(
+        team_storage,
+        "_read_or_create_session",
+        lambda t, session_id=None, user_id=None, runs_limit=None: session,
+    )
     monkeypatch.setattr(team_run, "_resolve_run_dependencies", lambda t, run_context: None)
     monkeypatch.setattr(team_response_mod, "get_response_format", lambda t, run_context=None: None)
     monkeypatch.setattr(team_tools, "_determine_tools_for_model", lambda *a, **kw: [])

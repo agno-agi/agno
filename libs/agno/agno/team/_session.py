@@ -42,6 +42,28 @@ from agno.utils.log import log_debug, log_warning
 # ---------------------------------------------------------------------------
 
 
+def _runs_limit_for_team_run(team: "Team", add_history_to_context: Optional[bool] = None) -> Optional[int]:
+    """The ``runs_limit`` to push down for the ``team.run`` / ``team.arun`` hot
+    path. Bounds only when history is actually going into the model context
+    AND a positive ``num_history_runs`` is configured. Returns None (full load)
+    otherwise, which is the safe, backwards-compatible default.
+
+    Every adapter accepts ``runs_limit``; adapters that don't optimize it load
+    the full history, so no capability check is needed here.
+    """
+    if not (add_history_to_context or team.add_history_to_context):
+        return None
+    if team.db is None:
+        return None
+    if team.num_history_runs is None or team.num_history_runs <= 0:
+        return None
+    if team.parent_team_id is not None or team.workflow_id is not None:
+        # Member teams and workflow-embedded teams share their parent's session;
+        # bounding here would break the parent's expectation of full history.
+        return None
+    return team.num_history_runs
+
+
 def get_session(
     team: "Team",
     session_id: Optional[str] = None,

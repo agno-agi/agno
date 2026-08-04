@@ -48,7 +48,9 @@ def _patch_sync_dispatch_dependencies(
     monkeypatch.setattr(
         _storage,
         "read_or_create_session",
-        lambda agent, session_id=None, user_id=None: AgentSession(session_id=session_id, user_id=user_id, runs=runs),
+        lambda agent, session_id=None, user_id=None, runs_limit=None: AgentSession(
+            session_id=session_id, user_id=user_id, runs=runs
+        ),
     )
 
 

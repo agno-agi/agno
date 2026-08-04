@@ -394,13 +394,28 @@ def read_or_create_session(
     agent: Agent,
     session_id: str,
     user_id: Optional[str] = None,
+    runs_limit: Optional[int] = None,
 ) -> AgentSession:
+    """Load an existing session (bounded to ``runs_limit`` most recent runs) or
+    create a fresh one.
+
+    Args:
+        runs_limit: Optional cap on the number of most-recent runs to hydrate.
+            When set, the DB-side ``ORDER BY run_index DESC LIMIT`` is used,
+            avoiding a full-session load for the ``agent.run`` hot path with
+            ``add_history_to_context=True``. Bounded loads are NEVER cached
+            because subsequent unbounded callers would then see a truncated
+            view of ``session.runs``.
+    """
     from time import time
     from uuid import uuid4
 
-    # Returning cached session if we have one
+    # Only serve from the cache when the caller wants everything; a bounded
+    # request must reload so it doesn't accidentally receive a stale full
+    # session (harmless today, but the guard keeps the contract straight).
     if (
-        agent._cached_session is not None
+        runs_limit is None
+        and agent._cached_session is not None
         and agent._cached_session.session_id == session_id
         and (user_id is None or agent._cached_session.user_id == user_id)
     ):
@@ -409,9 +424,11 @@ def read_or_create_session(
     # Try to load from database
     agent_session = None
     if agent.db is not None and agent.team_id is None and agent.workflow_id is None:
-        log_debug(f"Reading AgentSession: {session_id}")
+        log_debug(f"Reading AgentSession: {session_id} (runs_limit={runs_limit})")
 
-        agent_session = cast(AgentSession, read_session(agent, session_id=session_id, user_id=user_id))
+        agent_session = cast(
+            AgentSession, read_session(agent, session_id=session_id, user_id=user_id, runs_limit=runs_limit)
+        )
 
     if agent_session is None:
         # Creating new session if none found
@@ -454,7 +471,9 @@ def read_or_create_session(
                 save_session(agent, session=agent_session)
                 upsert_run(agent, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
 
-    if agent.cache_session:
+    # Only cache a fully-hydrated session. A bounded load is a partial view;
+    # caching it would poison any subsequent unbounded read.
+    if agent.cache_session and runs_limit is None:
         agent._cached_session = agent_session
 
     return agent_session
@@ -464,15 +483,18 @@ async def aread_or_create_session(
     agent: Agent,
     session_id: str,
     user_id: Optional[str] = None,
+    runs_limit: Optional[int] = None,
 ) -> AgentSession:
+    """Async twin of :func:`read_or_create_session`. Same rationale for the
+    ``runs_limit`` param and no-cache-when-bounded semantics."""
     from time import time
     from uuid import uuid4
 
     from agno.agent import _init
 
-    # Returning cached session if we have one
     if (
-        agent._cached_session is not None
+        runs_limit is None
+        and agent._cached_session is not None
         and agent._cached_session.session_id == session_id
         and (user_id is None or agent._cached_session.user_id == user_id)
     ):
@@ -481,11 +503,16 @@ async def aread_or_create_session(
     # Try to load from database
     agent_session = None
     if agent.db is not None and agent.team_id is None and agent.workflow_id is None:
-        log_debug(f"Reading AgentSession: {session_id}")
+        log_debug(f"Reading AgentSession: {session_id} (runs_limit={runs_limit})")
         if _init.has_async_db(agent):
-            agent_session = cast(AgentSession, await aread_session(agent, session_id=session_id, user_id=user_id))
+            agent_session = cast(
+                AgentSession,
+                await aread_session(agent, session_id=session_id, user_id=user_id, runs_limit=runs_limit),
+            )
         else:
-            agent_session = cast(AgentSession, read_session(agent, session_id=session_id, user_id=user_id))
+            agent_session = cast(
+                AgentSession, read_session(agent, session_id=session_id, user_id=user_id, runs_limit=runs_limit)
+            )
 
     if agent_session is None:
         # Creating new session if none found
@@ -532,7 +559,9 @@ async def aread_or_create_session(
                     save_session(agent, session=agent_session)
                     upsert_run(agent, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
 
-    if agent.cache_session:
+    # Only cache a fully-hydrated session. A bounded load is a partial view;
+    # caching it would poison any subsequent unbounded read.
+    if agent.cache_session and runs_limit is None:
         agent._cached_session = agent_session
 
     return agent_session
