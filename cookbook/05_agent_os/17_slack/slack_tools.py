@@ -50,8 +50,8 @@ workspace_analyst = Agent(
     tools=[workspace_tools],
     instructions=[
         "Use Slack as the source of truth for workspace questions.",
-        "Use search_workspace for topic searches; its action token comes from the Slack event.",
-        "Use get_channel_history for a known channel and slack_get_thread to expand important replies.",
+        "Use slack_search_workspace for topic searches; its action token comes from the Slack event.",
+        "Use slack_get_channel_history for a known channel and slack_get_thread to expand important replies.",
         "Download shared files when analysis needs their contents.",
         "Upload a result file only when the user explicitly asks for one.",
         "Summarize decisions, owners, action items, and unresolved questions.",
