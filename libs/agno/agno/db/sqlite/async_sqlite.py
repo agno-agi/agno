@@ -33,13 +33,13 @@ from agno.db.sqlite.utils import (
     serialize_cultural_knowledge_for_db,
 )
 from agno.db.utils import (
+    HISTORY_SKIP_STATUSES,
     CustomJSONEncoder,
     build_single_run_row,
     deserialize_run,
     deserialize_session,
     deserialize_session_json_fields,
     deserialize_sessions,
-    HISTORY_SKIP_STATUSES,
     filter_context_runs,
     merge_runs_table_with_legacy_blob,
     serialize_session_json_fields,
@@ -639,8 +639,9 @@ class AsyncSqliteDb(AsyncBaseDb):
                 .where(runs_table.c.parent_run_id.is_(None))
                 .where(or_(runs_table.c.status.is_(None), runs_table.c.status.notin_(HISTORY_SKIP_STATUSES)))
                 .order_by(
-                    func.coalesce(runs_table.c.run_index, 0).desc(),
-                    func.coalesce(runs_table.c.created_at, 0).desc(),
+                    runs_table.c.run_index.desc(),
+                    runs_table.c.created_at.desc(),
+                    runs_table.c.run_id.desc(),
                 )
                 .limit(limit)
             )
@@ -652,8 +653,9 @@ class AsyncSqliteDb(AsyncBaseDb):
             select(runs_table.c.run_data)
             .where(runs_table.c.session_id == session_id)
             .order_by(
-                func.coalesce(runs_table.c.run_index, 0).asc(),
-                func.coalesce(runs_table.c.created_at, 0).asc(),
+                runs_table.c.run_index.asc(),
+                runs_table.c.created_at.asc(),
+                runs_table.c.run_id.asc(),
             )
         )
         result = await sess.execute(stmt)
@@ -755,6 +757,18 @@ class AsyncSqliteDb(AsyncBaseDb):
             row["run_data"] = json.dumps(row["run_data"], cls=CustomJSONEncoder)
 
             async with self.async_session_factory() as sess, sess.begin():
+                # Backfill a monotonic run_index when the run arrives without one
+                # (e.g. a background/continue save that couldn't resolve its position).
+                # A NULL index has no position and breaks ORDER BY run_index. ON CONFLICT
+                # preserves the existing index, so this only sets it on a genuine insert.
+                if row.get("run_index") is None:
+                    current_max = (
+                        await sess.execute(
+                            select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
+                        )
+                    ).scalar()
+                    row["run_index"] = (current_max + 1) if current_max is not None else 0
+
                 stmt = sqlite.insert(runs_table).values(**row)
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["run_id"],
@@ -764,7 +778,9 @@ class AsyncSqliteDb(AsyncBaseDb):
                         user_id=stmt.excluded.user_id,
                         parent_run_id=stmt.excluded.parent_run_id,
                         updated_at=stmt.excluded.updated_at,
-                        # Note: run_index is NOT updated for existing runs to preserve ordering
+                        # Preserve a non-null run_index; only fill it in for a legacy row
+                        # that was stored as NULL (COALESCE keeps the existing value if set).
+                        run_index=func.coalesce(runs_table.c.run_index, stmt.excluded.run_index),
                     ),
                 )
                 await sess.execute(stmt)
@@ -876,9 +892,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             wanted = set(run_ids)
             async with self.async_session_factory() as sess, sess.begin():
                 result = await sess.execute(
-                    select(sessions_table.c.session_id, sessions_table.c.runs).where(
-                        sessions_table.c.runs.isnot(None)
-                    )
+                    select(sessions_table.c.session_id, sessions_table.c.runs).where(sessions_table.c.runs.isnot(None))
                 )
                 rows = result.fetchall()
                 for sid, runs_raw in rows:
@@ -895,9 +909,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                     if len(kept) == len(runs_list):
                         continue
                     await sess.execute(
-                        sessions_table.update()
-                        .where(sessions_table.c.session_id == sid)
-                        .values(runs=_json.dumps(kept))
+                        sessions_table.update().where(sessions_table.c.session_id == sid).values(runs=_json.dumps(kept))
                     )
         except Exception:
             log_debug("legacy-runs scrub failed; the primary delete still succeeded", exc_info=True)
