@@ -325,7 +325,17 @@ class QueueWorker:
                 await asyncio.wait_for(self._task, timeout=5)
         self._task = None
 
-        # Drain: give in-flight runs a chance to finish
+        # Drain: give in-flight runs a chance to finish. Stamp the drain
+        # cause FIRST: on drain timeout the wait_for cancels the gather,
+        # which propagates cancellation into the in-flight tasks themselves
+        # (the straggler loop below is the backstop, not the primary vector),
+        # and the foreground cancellation-persist guards consult the cause
+        # while those tasks unwind. Runs that finish healthily inside the
+        # window never read it.
+        from agno.run.concurrency import set_cancellation_cause
+
+        for draining_id in list(self._in_flight.keys()):
+            set_cancellation_cause(draining_id, "drain")
         if self._in_flight:
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(
@@ -889,14 +899,47 @@ class QueueWorker:
         return extra
 
     async def _execute_claimed(self, job: Dict[str, Any]) -> None:
+        from agno.run.concurrency import worker_managed_execution
+
+        # Ownership spans EXACTLY the execution, exception-safe by
+        # construction: the early returns below (foreign job_type, missing
+        # component) and pre-slot exceptions all unwind through the context
+        # manager's finally - the bare mark/unmark pair leaked on all three.
+        with worker_managed_execution(job["id"], self.worker_id, job["attempt"]) as ownership:
+            await self._execute_claimed_inner(job, ownership)
+
+    async def _await_with_timeout(self, execution: Any, ownership: Any) -> Any:
+        """asyncio.wait_for with cause attribution: the cancellation cause is
+        stamped BEFORE the cancel is delivered, because the foreground
+        cancellation-persist guards consult it while the execution unwinds.
+        Also cancels the execution task when we ourselves are cancelled
+        mid-wait (drain/loop shutdown) - wait_for did that, bare wait does
+        not."""
+        exec_task = asyncio.ensure_future(execution)
+        try:
+            done, _ = await asyncio.wait({exec_task}, timeout=self.config.timeout_seconds)
+        except asyncio.CancelledError:
+            # Drain or loop shutdown cancelled US (stop() stamped the drain
+            # cause before cancelling): propagate to the execution task
+            exec_task.cancel()
+            with contextlib.suppress(Exception, asyncio.CancelledError):
+                await exec_task
+            raise
+        if exec_task not in done:
+            if ownership is not None:
+                ownership.cancellation_cause = "timeout"
+            exec_task.cancel()
+            with contextlib.suppress(Exception, asyncio.CancelledError):
+                await exec_task
+            raise asyncio.TimeoutError()
+        return exec_task.result()
+
+    async def _execute_claimed_inner(self, job: Dict[str, Any], ownership: Any = None) -> None:
         from agno.exceptions import RunCancelledException
         from agno.run.base import RunStatus
 
         job_id, attempt = job["id"], job["attempt"]
         job_type = job.get("job_type", "run")
-        from agno.run.concurrency import mark_worker_managed, unmark_worker_managed
-
-        mark_worker_managed(job_id)
         component_for_stamp = self.resolve_component(job.get("component_type"), job.get("component_id"))
         if component_for_stamp is not None:
             # Establish this attempt's generation on the run row BEFORE
@@ -995,7 +1038,7 @@ class QueueWorker:
                     **call_kwargs,
                 )
             if self.config.timeout_seconds:
-                result = await asyncio.wait_for(execution, timeout=self.config.timeout_seconds)
+                result = await self._await_with_timeout(execution, ownership)
             else:
                 result = await execution
 
@@ -1044,6 +1087,8 @@ class QueueWorker:
         except RunCancelledException:
             # Cancelled while waiting for a slot (or via the cancellation
             # manager): honour it - the ticket tombstones as cancelled
+            if ownership is not None:
+                ownership.cancellation_cause = "user_cancel"
             await self.store.complete_job(job_id, self.worker_id, attempt, "cancelled")
             # Not gated: honouring the user's cancel on the ticket beats
             # run-row terminality (leaving the job stale would re-execute a
@@ -1093,7 +1138,9 @@ class QueueWorker:
             else:
                 await self.store.retry_or_fail_job(job_id, self.worker_id, attempt, str(e), self._retry_delay(attempt))
         finally:
-            unmark_worker_managed(job_id)
+            # Ownership deregistration lives in _execute_claimed's context
+            # manager, not here: this finally is unreachable from the pre-try
+            # early returns, which is exactly how the marker used to leak
             if slot_acquired:
                 with contextlib.suppress(Exception):
                     await slot_cm.__aexit__(None, None, None)

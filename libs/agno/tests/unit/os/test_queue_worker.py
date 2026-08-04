@@ -1245,6 +1245,114 @@ class TestStreamingContinuation:
             es_mod._event_stream = original
 
 
+class CauseProbeAgent:
+    """Records worker ownership state as observed INSIDE the cancellation
+    unwinding - the moment the foreground persist guards consult it."""
+
+    id = "agent-1"
+
+    def __init__(self):
+        self.observed: dict = {}
+
+    async def arun(self, run_id=None, **kwargs):
+        from agno.run.concurrency import get_worker_ownership
+
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            ownership = get_worker_ownership(run_id)
+            self.observed["managed"] = ownership is not None
+            self.observed["cause"] = getattr(ownership, "cancellation_cause", None)
+            raise
+        return SimpleNamespace(status=RunStatus.completed, content="done")
+
+
+class TestWorkerOwnership:
+    """The ownership registry must span exactly the execution: no marker may
+    survive any exit path, and cancellation causes must be attributed BEFORE
+    the cancellation is delivered."""
+
+    @pytest.mark.asyncio
+    async def test_no_marker_after_unsupported_job_type(self):
+        from agno.run.concurrency import is_worker_managed
+
+        store, agent = InMemoryQueueStore(), FakeAgent()
+        worker = make_worker(store, agent, make_config())
+        job = make_job("r1")
+        job["job_type"] = "ingest"
+        await store.enqueue_job(job)
+        claimed = await store.claim_job(worker.worker_id)
+        await worker._execute_claimed(claimed)
+        assert not is_worker_managed("r1"), "marker leaked on the unsupported-job-type return"
+        assert (await store.get_job("r1"))["status"] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_no_marker_after_missing_component(self):
+        from agno.run.concurrency import is_worker_managed
+
+        store = InMemoryQueueStore()
+        worker = make_worker(store, None, make_config())  # resolves nothing
+        await store.enqueue_job(make_job("r1"))
+        claimed = await store.claim_job(worker.worker_id)
+        await worker._execute_claimed(claimed)
+        assert not is_worker_managed("r1"), "marker leaked on the missing-component return"
+        assert (await store.get_job("r1"))["status"] == "running", "claim left to go stale"
+
+    @pytest.mark.asyncio
+    async def test_no_marker_after_pre_slot_exception(self):
+        from agno.run.concurrency import is_worker_managed
+
+        store, agent = InMemoryQueueStore(), FakeAgent()
+        calls = {"n": 0}
+
+        def exploding_resolver(ctype, cid):
+            calls["n"] += 1
+            if calls["n"] >= 2:  # the pre-slot component resolve
+                raise RuntimeError("registry exploded")
+            return agent
+
+        worker = QueueWorker(
+            store=store, resolve_component=exploding_resolver, config=make_config(), worker_id="live-worker"
+        )
+        await store.enqueue_job(make_job("r1"))
+        claimed = await store.claim_job(worker.worker_id)
+        with pytest.raises(RuntimeError, match="registry exploded"):
+            await worker._execute_claimed(claimed)
+        assert not is_worker_managed("r1"), "marker leaked on a pre-slot exception"
+
+    @pytest.mark.asyncio
+    async def test_timeout_cause_attributed_before_cancellation(self):
+        agent = CauseProbeAgent()
+        store = InMemoryQueueStore()
+        worker = make_worker(store, agent, make_config(timeout_seconds=1))  # type: ignore[arg-type]
+        worker.config.timeout_seconds = 0.05  # type: ignore[assignment]
+        await store.enqueue_job(make_job("r1"))
+        await worker.start()
+        try:
+            job = await wait_for_status(store, "r1", "failed")
+            assert "timeout" in job["error"].lower()
+            assert agent.observed == {"managed": True, "cause": "timeout"}, (
+                "the handler must see cause=timeout DURING unwinding, not after"
+            )
+        finally:
+            await worker.stop()
+
+    @pytest.mark.asyncio
+    async def test_drain_cause_attributed_before_cancellation(self):
+        agent = CauseProbeAgent()
+        store = InMemoryQueueStore()
+        worker = make_worker(store, agent, make_config())  # type: ignore[arg-type]
+        worker.stop_timeout = 0  # cancel stragglers immediately
+        await store.enqueue_job(make_job("r1"))
+        await worker.start()
+        await wait_for_status(store, "r1", "running")
+        await asyncio.sleep(0.05)  # let the execution enter its sleep
+        await worker.stop()
+        job = await store.get_job("r1")
+        assert job["status"] == "failed" and "shutdown" in job["error"]
+        assert agent.observed == {"managed": True, "cause": "drain"}
+
+
 class TestForegroundCancelPersistGuard:
     """The worker drives the FOREGROUND arun/acontinue_run, so a wait_for
     timeout (or shutdown drain) cancels the foreground handlers - whose
