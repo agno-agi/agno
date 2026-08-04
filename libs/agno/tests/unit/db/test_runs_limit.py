@@ -256,3 +256,90 @@ class TestRunsLimitAcrossAdapters:
         # runs_limit larger than the filtered set: still filtered, just not truncated.
         db = make_db(_FILTER_SPECS)
         assert _ids(db.get_session("s1", deserialize=False, runs_limit=10)["runs"]) == ["r0", "r1", "r3"]
+
+
+class TestRunsLimitNullRunIndex:
+    """Regression for the NULL run_index ordering bug (COALESCE fix).
+
+    ``run_index`` is nullable — a run first persisted without an explicit index
+    (e.g. a background/continue-stream save) stores NULL. The bounded fast path
+    orders by ``run_index DESC``; without ``COALESCE(run_index, 0)`` a NULL sorts
+    to the wrong extreme (NULLS FIRST on Postgres, NULLS LAST on SQLite/MySQL), so
+    ``runs_limit=N`` returned the *wrong* N runs — the oldest instead of the
+    newest, differing per backend. The invariant these tests pin: the bounded
+    fast path returns the SAME window as full-load-then-slice.
+    """
+
+    def _make_mixed_index_db(self) -> SqliteDb:
+        """Session where the two newest runs have a NULL run_index (r0/r1 indexed,
+        r2/r3 NULL), all with increasing created_at so the newest are unambiguous."""
+        db = SqliteDb(db_file=tempfile.mktemp(suffix=".db"))
+        specs = [("r0", 0), ("r1", 1), ("r2", None), ("r3", None)]
+        sess = AgentSession(session_id="s1", agent_id="a1")
+        for rid, _ in specs:
+            sess.upsert_run(RunOutput(run_id=rid, agent_id="a1", status=RunStatus("COMPLETED")))
+        db.upsert_session(sess)
+        for i, (rid, run_index) in enumerate(specs):
+            run = RunOutput(run_id=rid, agent_id="a1", status=RunStatus("COMPLETED"))
+            run.created_at = 1000 + i
+            kwargs = {"session_id": "s1", "user_id": None}
+            if run_index is not None:
+                kwargs["run_index"] = run_index
+            db.upsert_run(run, **kwargs)
+        return db
+
+    def test_bounded_matches_full_load_slice_with_null_index(self):
+        db = self._make_mixed_index_db()
+        full = _ids(db.get_session("s1", deserialize=False, runs_limit=None)["runs"])
+        for n in (1, 2, 3):
+            bounded = _ids(db.get_session("s1", deserialize=False, runs_limit=n)["runs"])
+            # The bounded window must be exactly the last-N of the full history.
+            assert bounded == full[-n:], f"runs_limit={n}: {bounded} != {full[-n:]}"
+
+    def test_null_index_runs_are_not_dropped(self):
+        # All four runs are context-relevant; a large limit must return every one,
+        # so a NULL-index run is never silently dropped from the window.
+        db = self._make_mixed_index_db()
+        assert len(db.get_session("s1", deserialize=False, runs_limit=10)["runs"]) == 4
+
+
+class TestRunsLimitPartialMigration:
+    """Regression for the partial-migration branch: a session with runs in BOTH the
+    ``agno_runs`` table AND a residual legacy ``runs`` blob (the state between running
+    the v3 migration and dropping the legacy column). ``get_session(runs_limit=N)``
+    must merge both, filter, and slice — never the indexed fast path."""
+
+    def _make_partial_migration_db(self) -> SqliteDb:
+        db = _make_migrated_db(COMPLETED)  # r0,r1,r2 in the runs table
+        # The "both populated" state only exists on a DB migrated from v2, which keeps
+        # the legacy ``runs`` column as a backup. A fresh v3 schema has no such column,
+        # so recreate that transitional state: add the column, then seed a blob holding
+        # an OLDER un-migrated run (r_old) plus r0 (already in the table -> dedup, table wins).
+        blob = [
+            {"run_id": "r_old", "agent_id": "a1", "status": "COMPLETED", "parent_run_id": None},
+            {"run_id": "r0", "agent_id": "a1", "status": "COMPLETED", "parent_run_id": None},
+        ]
+        con = sqlite3.connect(db.db_file)
+        con.execute("ALTER TABLE agno_sessions ADD COLUMN runs TEXT")
+        con.execute("UPDATE agno_sessions SET runs = ? WHERE session_id = 's1'", (json.dumps(blob),))
+        con.commit()
+        con.close()
+        return SqliteDb(db_file=db.db_file)
+
+    def test_partial_migration_merges_before_slicing(self):
+        db = self._make_partial_migration_db()
+        # Both stores contribute (dedup drops the duplicate r0, table wins), so the
+        # merged history contains all four distinct runs.
+        full = _ids(db.get_session("s1", deserialize=False)["runs"])
+        assert set(full) == {"r0", "r1", "r2", "r_old"}
+        # Bounded read takes the last-N of that merged+filtered history — whatever the
+        # merge order, the window must be its own suffix (never the fast path, which
+        # would miss the blob-only run).
+        bounded = _ids(db.get_session("s1", deserialize=False, runs_limit=2)["runs"])
+        assert bounded == full[-2:]
+
+    def test_partial_migration_no_run_lost(self):
+        db = self._make_partial_migration_db()
+        # A limit exceeding the count returns every distinct run, none dropped.
+        got = _ids(db.get_session("s1", deserialize=False, runs_limit=10)["runs"])
+        assert set(got) == {"r0", "r1", "r2", "r_old"}
