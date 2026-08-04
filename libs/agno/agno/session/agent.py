@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import copy
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, List, Mapping, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Union
 
 from agno.models.message import Message
 from agno.run.agent import RunOutput
 from agno.run.base import HISTORY_SKIP_STATUSES, RunStatus
 from agno.run.team import TeamRunOutput
 from agno.session.summary import SessionSummary
+
+if TYPE_CHECKING:
+    from agno.compression.context import CompactionState
 from agno.utils.log import log_debug, log_warning
 
 
@@ -38,6 +41,8 @@ class AgentSession:
     runs: Optional[List[Union[RunOutput, TeamRunOutput]]] = None
     # Summary of the session
     summary: Optional["SessionSummary"] = None
+    # Context compaction state
+    compaction: Optional["CompactionState"] = None
 
     # The unix timestamp when this session was created
     created_at: Optional[int] = None
@@ -57,6 +62,7 @@ class AgentSession:
         else:
             session_dict.pop("runs", None)
         session_dict["summary"] = self.summary.to_dict() if self.summary else None
+        session_dict["compaction"] = self.compaction.to_dict() if self.compaction else None
 
         return session_dict
 
@@ -79,6 +85,12 @@ class AgentSession:
         if summary is not None and isinstance(summary, dict):
             summary = SessionSummary.from_dict(summary)
 
+        compaction = data.get("compaction")
+        if compaction is not None and isinstance(compaction, dict):
+            from agno.compression.context import CompactionState
+
+            compaction = CompactionState.from_dict(compaction)
+
         metadata = data.get("metadata")
 
         return cls(
@@ -94,6 +106,7 @@ class AgentSession:
             updated_at=data.get("updated_at"),
             runs=serialized_runs,
             summary=summary,
+            compaction=compaction,
         )
 
     def upsert_run(self, run: RunOutput):

@@ -64,6 +64,8 @@ class Message(BaseModel):
     content: Optional[Union[List[Any], str]] = None
     # Compressed content of the message
     compressed_content: Optional[str] = None
+    # Whether this message has been compacted (summarized away)
+    is_compacted: bool = False
 
     # An optional name for the participant.
     # Provides the model information to differentiate between participants of the same role.
