@@ -1,6 +1,7 @@
 import json
+from inspect import isawaitable, iscoroutinefunction, signature
 from textwrap import dedent
-from typing import Any, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from agno.knowledge.document import Document
 from agno.knowledge.knowledge import Knowledge
@@ -12,7 +13,8 @@ from agno.utils.log import log_debug, log_error
 class KnowledgeTools(Toolkit):
     def __init__(
         self,
-        knowledge: Knowledge,
+        knowledge: Optional[Knowledge] = None,
+        knowledge_retriever: Optional[Callable[..., Optional[List[Union[Dict[str, Any], str]]]]] = None,
         enable_think: bool = True,
         enable_search: bool = True,
         enable_analyze: bool = True,
@@ -23,8 +25,8 @@ class KnowledgeTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        if knowledge is None:
-            raise ValueError("knowledge must be provided when using KnowledgeTools")
+        if knowledge is None and knowledge_retriever is None:
+            raise ValueError("Either knowledge or knowledge_retriever must be provided when using KnowledgeTools")
 
         # Add instructions for using this toolkit
         if instructions is None:
@@ -37,20 +39,25 @@ class KnowledgeTools(Toolkit):
         else:
             self.instructions = instructions
 
-        # The knowledge to search
-        self.knowledge: Knowledge = knowledge
+        # The knowledge to search (optional when a custom retriever is provided)
+        self.knowledge: Optional[Knowledge] = knowledge
+        # Optional custom retriever with the same callable contract as Agent.knowledge_retriever
+        self.knowledge_retriever = knowledge_retriever
 
         tools: List[Any] = []
+        async_tools: List[Any] = []
         if enable_think or all:
             tools.append(self.think)
         if enable_search or all:
             tools.append(self.search_knowledge)
+            async_tools.append((self.asearch_knowledge, "search_knowledge"))
         if enable_analyze or all:
             tools.append(self.analyze)
 
         super().__init__(
             name="knowledge_tools",
             tools=tools,
+            async_tools=async_tools,
             instructions=self.instructions,
             add_instructions=add_instructions,
             **kwargs,
@@ -92,6 +99,43 @@ class KnowledgeTools(Toolkit):
             log_error(f"Error recording thought: {str(e)}")
             return f"Error recording thought: {e}"
 
+    def _num_documents(self) -> Optional[int]:
+        if self.knowledge is None:
+            return None
+        return getattr(self.knowledge, "max_results", None)
+
+    def _build_retriever_kwargs(
+        self,
+        query: str,
+        run_context: RunContext,
+        filters: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        """Build kwargs for a custom retriever using the same contract as Agentic RAG."""
+        assert self.knowledge_retriever is not None
+        dependencies = run_context.dependencies if run_context else None
+        sig = signature(self.knowledge_retriever)
+        knowledge_retriever_kwargs: Dict[str, Any] = {}
+        if "filters" in sig.parameters:
+            knowledge_retriever_kwargs["filters"] = filters
+        if "run_context" in sig.parameters:
+            knowledge_retriever_kwargs["run_context"] = run_context
+        elif "dependencies" in sig.parameters:
+            knowledge_retriever_kwargs["dependencies"] = dependencies
+        knowledge_retriever_kwargs.update({"query": query, "num_documents": self._num_documents()})
+        return knowledge_retriever_kwargs
+
+    def _format_docs(self, docs: Optional[List[Any]]) -> str:
+        if not docs:
+            return "No documents found"
+
+        serialized: List[Any] = []
+        for doc in docs:
+            if isinstance(doc, Document):
+                serialized.append(doc.to_dict())
+            else:
+                serialized.append(doc)
+        return json.dumps(serialized, indent=2, default=str, ensure_ascii=False)
+
     def search_knowledge(self, run_context: RunContext, query: str) -> str:
         """Use this tool to search the knowledge base for relevant information.
         After thinking through the question, use this tool as many times as needed to search for relevant information.
@@ -105,11 +149,58 @@ class KnowledgeTools(Toolkit):
         try:
             log_debug(f"Searching knowledge base: {query}")
 
-            # Get the relevant documents from the knowledge base
+            if self.knowledge_retriever is not None and callable(self.knowledge_retriever):
+                if iscoroutinefunction(self.knowledge_retriever):
+                    return (
+                        "Error searching knowledge base: knowledge_retriever is async; "
+                        "use agent.arun() / agent.aprint_response() so the async search_knowledge path runs."
+                    )
+                docs = self.knowledge_retriever(**self._build_retriever_kwargs(query=query, run_context=run_context))
+                return self._format_docs(docs)
+
+            if self.knowledge is None:
+                return "Error searching knowledge base: no knowledge or knowledge_retriever configured"
+
             relevant_docs: List[Document] = self.knowledge.search(query=query)
-            if len(relevant_docs) == 0:
-                return "No documents found"
-            return json.dumps([doc.to_dict() for doc in relevant_docs])
+            return self._format_docs(relevant_docs)
+        except Exception as e:
+            log_error(f"Error searching knowledge base: {str(e)}")
+            return f"Error searching knowledge base: {e}"
+
+    async def asearch_knowledge(self, run_context: RunContext, query: str) -> str:
+        """Async variant of search_knowledge. Supports async custom retrievers.
+
+        Args:
+            query: The query to search the knowledge base for.
+
+        Returns:
+            str: A string containing the response from the knowledge base.
+        """
+        try:
+            log_debug(f"Searching knowledge base asynchronously: {query}")
+
+            if self.knowledge_retriever is not None and callable(self.knowledge_retriever):
+                docs = self.knowledge_retriever(**self._build_retriever_kwargs(query=query, run_context=run_context))
+                if isawaitable(docs):
+                    docs = await docs
+                return self._format_docs(docs)
+
+            if self.knowledge is None:
+                return "Error searching knowledge base: no knowledge or knowledge_retriever configured"
+
+            aretrieve_fn = getattr(self.knowledge, "aretrieve", None)
+            if callable(aretrieve_fn):
+                num_documents = self._num_documents() or getattr(self.knowledge, "max_results", 10)
+                relevant_docs = await aretrieve_fn(query=query, max_results=num_documents)
+                return self._format_docs(relevant_docs)
+
+            asearch_fn = getattr(self.knowledge, "asearch", None)
+            if callable(asearch_fn):
+                relevant_docs = await asearch_fn(query=query)
+                return self._format_docs(relevant_docs)
+
+            relevant_docs = self.knowledge.search(query=query)
+            return self._format_docs(relevant_docs)
         except Exception as e:
             log_error(f"Error searching knowledge base: {str(e)}")
             return f"Error searching knowledge base: {e}"

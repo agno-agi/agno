@@ -7,6 +7,7 @@ Examples for retrieval-augmented generation, knowledge filters, and custom retri
 - `agentic_rag_with_reasoning.py` - Agentic RAG with reasoning tools.
 - `agentic_rag_with_reranking.py` - Agentic RAG with Cohere reranking.
 - `custom_retriever.py` - Use a custom retrieval function instead of a Knowledge instance.
+- `knowledge_tools_custom_retriever.py` - KnowledgeTools Think/Search/Analyze with a custom retriever.
 - `knowledge_filters.py` - Filter knowledge searches with static or agentic filters.
 - `rag_custom_embeddings.py` - RAG with custom embeddings.
 - `references_format.py` - Control reference format (JSON vs YAML).
