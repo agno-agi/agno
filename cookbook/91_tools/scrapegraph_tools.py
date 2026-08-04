@@ -43,8 +43,8 @@ if __name__ == "__main__":
         stream=True,
     )
 
-    # Should use scrapegraph_scrape
+    # Should use scrape
     agent.print_response(
-        "Use the scrapegraph_scrape tool on https://example.com and confirm whether the HTML contains 'Example Domain'.",
+        "Use the scrape tool on https://example.com and confirm whether the HTML contains 'Example Domain'.",
         stream=True,
     )

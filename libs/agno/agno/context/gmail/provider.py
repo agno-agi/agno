@@ -231,7 +231,7 @@ class GmailContextProvider(ContextProvider):
             star_email=False,
             unstar_email=False,
             create_draft_email=False,
-            gmail_send_email=False,
+            send_email=False,
             send_email_reply=False,
             apply_label=False,
             remove_label=False,
