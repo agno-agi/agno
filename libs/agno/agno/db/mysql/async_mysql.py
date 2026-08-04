@@ -712,6 +712,45 @@ class AsyncMySQLDb(AsyncBaseDb):
             log_error(f"Exception reading from runs table: {str(e)}")
             return [] if deserialize else ([], 0)
 
+    async def _ascrub_run_ids_from_legacy_blob(self, run_ids: List[str]) -> None:
+        """Async variant of the legacy-blob scrub. See mysql.py for rationale."""
+        if not run_ids:
+            return
+        try:
+            import json as _json
+
+            sessions_table = await self._get_table(table_type="sessions")
+            if sessions_table is None or "runs" not in sessions_table.c:
+                return
+            wanted = set(run_ids)
+            async with self.async_session_factory() as sess, sess.begin():
+                result = await sess.execute(
+                    select(sessions_table.c.session_id, sessions_table.c.runs).where(
+                        sessions_table.c.runs.isnot(None)
+                    )
+                )
+                rows = result.fetchall()
+                for sid, runs_raw in rows:
+                    if isinstance(runs_raw, str):
+                        try:
+                            runs_list = _json.loads(runs_raw)
+                        except (_json.JSONDecodeError, TypeError):
+                            continue
+                    else:
+                        runs_list = runs_raw
+                    if not isinstance(runs_list, list):
+                        continue
+                    kept = [r for r in runs_list if not (isinstance(r, dict) and r.get("run_id") in wanted)]
+                    if len(kept) == len(runs_list):
+                        continue
+                    await sess.execute(
+                        sessions_table.update()
+                        .where(sessions_table.c.session_id == sid)
+                        .values(runs=_json.dumps(kept))
+                    )
+        except Exception:
+            log_debug("legacy-runs scrub failed; the primary delete still succeeded", exc_info=True)
+
     async def delete_run(self, run_id: str) -> bool:
         """Delete a single run from the runs table."""
         try:
@@ -720,7 +759,9 @@ class AsyncMySQLDb(AsyncBaseDb):
                 return False
             async with self.async_session_factory() as sess, sess.begin():
                 result = await sess.execute(table.delete().where(table.c.run_id == run_id))
-                return result.rowcount > 0  # type: ignore
+                deleted = result.rowcount > 0  # type: ignore
+            await self._ascrub_run_ids_from_legacy_blob([run_id])
+            return deleted
         except Exception as e:
             log_error(f"Error deleting run: {str(e)}")
             return False
@@ -733,6 +774,7 @@ class AsyncMySQLDb(AsyncBaseDb):
                 return
             async with self.async_session_factory() as sess, sess.begin():
                 result = await sess.execute(table.delete().where(table.c.run_id.in_(run_ids)))
+            await self._ascrub_run_ids_from_legacy_blob(list(run_ids))
             log_debug(f"Successfully deleted {result.rowcount} runs")  # type: ignore
         except Exception as e:
             log_error(f"Error deleting runs: {str(e)}")

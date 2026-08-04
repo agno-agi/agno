@@ -158,6 +158,133 @@ class TestJsonDbDeleteRunScrubsLegacyBlob:
         assert db.delete_run("r0") is True
 
 
+class TestSqliteDbDeleteRunScrubsLegacyBlob:
+    """SQL parallel of the JsonDb tests. Same partial-migration state: v3 runs
+    table populated, but the legacy `agno_sessions.runs` column still holds a
+    backup blob. delete_run must scrub both surfaces."""
+
+    @pytest.fixture
+    def sqlite_partially_migrated(self):
+        """SqliteDb with a v3 runs table AND a legacy `runs` column on
+        agno_sessions carrying the pre-migration blob (as a fully-migrated
+        DB would look before cleanup_legacy_runs_field(force=True))."""
+        import json as _json
+        import time as _time
+
+        from sqlalchemy import MetaData, text
+
+        from agno.db.sqlite import SqliteDb
+
+        tmp = tempfile.mkdtemp()
+        db = SqliteDb(db_file=os.path.join(tmp, "t.db"))
+        db._get_table("sessions", create_table_if_not_found=True)
+        db._get_table("runs", create_table_if_not_found=True)
+
+        # Add the legacy `runs` column and plant a v2.x-shaped session with 3 runs.
+        legacy = [
+            {"run_id": "r0", "agent_id": "a1", "session_id": "s1", "status": "COMPLETED", "created_at": 1},
+            {"run_id": "r1", "agent_id": "a1", "session_id": "s1", "status": "COMPLETED", "created_at": 2},
+            {"run_id": "r2", "agent_id": "a1", "session_id": "s1", "status": "COMPLETED", "created_at": 3},
+        ]
+        with db.Session() as sess, sess.begin():
+            cols = [row[1] for row in sess.execute(text("PRAGMA table_info(agno_sessions)")).fetchall()]
+            if "runs" not in cols:
+                sess.execute(text("ALTER TABLE agno_sessions ADD COLUMN runs TEXT"))
+            sess.execute(text("DELETE FROM agno_sessions WHERE session_id='s1'"))
+            sess.execute(text("DELETE FROM agno_runs WHERE session_id='s1'"))
+            now = int(_time.time())
+            sess.execute(
+                text(
+                    "INSERT INTO agno_sessions (session_id, session_type, agent_id, user_id, agent_data, "
+                    "session_data, metadata, runs, created_at, updated_at) VALUES "
+                    "('s1', 'agent', 'a1', 'u1', '{}', '{}', '{}', :runs, :now, :now)"
+                ),
+                {"runs": _json.dumps(legacy), "now": now},
+            )
+            # Also populate agno_runs so the v3 side has the same data (as the
+            # migration would leave it).
+            for idx, r in enumerate(legacy):
+                sess.execute(
+                    text(
+                        "INSERT INTO agno_runs (run_id, session_id, agent_id, user_id, run_type, run_index, "
+                        "status, run_data, created_at, updated_at) VALUES "
+                        "(:rid, 's1', 'a1', 'u1', 'agent', :idx, 'COMPLETED', :data, :now, :now)"
+                    ),
+                    {"rid": r["run_id"], "idx": idx, "data": _json.dumps(r), "now": now},
+                )
+
+        # Refresh SQLAlchemy metadata so the read path sees the legacy column.
+        db.metadata = MetaData()
+        db.metadata.reflect(bind=db.db_engine)
+        if hasattr(db, "_tables"):
+            db._tables = {}
+
+        return db
+
+    def test_delete_run_scrubs_legacy_blob(self, sqlite_partially_migrated):
+        """The single-delete path must remove the run from both surfaces."""
+        import json as _json
+
+        from sqlalchemy import text
+
+        from agno.db.base import SessionType
+
+        db = sqlite_partially_migrated
+
+        # Sanity: pre-delete state has all 3 runs visible via the merged read.
+        loaded = db.get_session(session_id="s1", session_type=SessionType.AGENT)
+        assert [r.run_id for r in (loaded.runs or [])] == ["r0", "r1", "r2"]
+
+        assert db.delete_run("r1") is True
+
+        # Reload after delete: r1 must not reappear via the merge helper.
+        loaded = db.get_session(session_id="s1", session_type=SessionType.AGENT)
+        assert [r.run_id for r in (loaded.runs or [])] == ["r0", "r2"], (
+            "r1 was resurrected by the legacy blob (delete_run failed to scrub it)"
+        )
+
+        # Raw legacy column must have r1 removed.
+        with db.Session() as sess:
+            raw = sess.execute(text("SELECT runs FROM agno_sessions WHERE session_id='s1'")).first()
+            blob = _json.loads(raw[0]) if raw and raw[0] else []
+        assert [r["run_id"] for r in blob] == ["r0", "r2"]
+
+    def test_delete_runs_bulk_scrubs_legacy_blob(self, sqlite_partially_migrated):
+        """The bulk-delete path must remove all given runs from both surfaces."""
+        import json as _json
+
+        from sqlalchemy import text
+
+        from agno.db.base import SessionType
+
+        db = sqlite_partially_migrated
+
+        db.delete_runs(["r0", "r2"])
+
+        loaded = db.get_session(session_id="s1", session_type=SessionType.AGENT)
+        assert [r.run_id for r in (loaded.runs or [])] == ["r1"]
+
+        with db.Session() as sess:
+            raw = sess.execute(text("SELECT runs FROM agno_sessions WHERE session_id='s1'")).first()
+            blob = _json.loads(raw[0]) if raw and raw[0] else []
+        assert [r["run_id"] for r in blob] == ["r1"]
+
+    def test_scrub_helper_is_a_noop_when_legacy_column_absent(self):
+        """When the sessions table has no `runs` column (fully migrated + cleanup
+        run), the scrub silently returns without erroring."""
+        from agno.db.sqlite import SqliteDb
+
+        tmp = tempfile.mkdtemp()
+        db = SqliteDb(db_file=os.path.join(tmp, "t.db"))
+        db._get_table("sessions", create_table_if_not_found=True)
+        db._get_table("runs", create_table_if_not_found=True)
+
+        # No legacy `runs` column exists on the fresh v3 schema. The helper
+        # must return cleanly without raising.
+        db._scrub_run_ids_from_legacy_blob(["r0"])  # should not raise
+        db._scrub_run_ids_from_legacy_blob([])  # empty list -> early return
+
+
 class TestInMemoryDbDeleteRunDoesNotResurrect:
     """Sanity: InMemoryDb stores runs inline on the session dict — it has no
     separate runs table or legacy blob, so delete must just work."""

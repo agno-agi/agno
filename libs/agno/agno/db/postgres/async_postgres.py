@@ -860,6 +860,36 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_error(f"Exception reading from runs table: {str(e)}")
             return [] if deserialize else ([], 0)
 
+    async def _ascrub_run_ids_from_legacy_blob(self, run_ids: List[str]) -> None:
+        """Async variant of the legacy-blob scrub. See postgres.py for rationale."""
+        if not run_ids:
+            return
+        try:
+            sessions_table = await self._get_table(table_type="sessions")
+            if sessions_table is None or "runs" not in sessions_table.c:
+                return
+            stmt = text(
+                f"""
+                UPDATE {sessions_table.name}
+                SET runs = COALESCE(
+                    (SELECT jsonb_agg(elem)
+                     FROM jsonb_array_elements(runs) elem
+                     WHERE elem->>'run_id' <> ALL(:ids)),
+                    '[]'::jsonb
+                )
+                WHERE runs IS NOT NULL
+                  AND jsonb_typeof(runs) = 'array'
+                  AND EXISTS (
+                      SELECT 1 FROM jsonb_array_elements(runs) elem
+                      WHERE elem->>'run_id' = ANY(:ids)
+                  )
+                """
+            )
+            async with self.async_session_factory() as sess, sess.begin():
+                await sess.execute(stmt, {"ids": list(run_ids)})
+        except Exception:
+            log_debug("legacy-runs scrub failed; the primary delete still succeeded", exc_info=True)
+
     async def delete_run(self, run_id: str) -> bool:
         """Delete a single run from the runs table.
 
@@ -876,7 +906,10 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 result = await sess.execute(table.delete().where(table.c.run_id == run_id))
-                return result.rowcount > 0  # type: ignore
+                deleted = result.rowcount > 0  # type: ignore
+
+            await self._ascrub_run_ids_from_legacy_blob([run_id])
+            return deleted
 
         except Exception as e:
             log_error(f"Error deleting run: {str(e)}")
@@ -896,6 +929,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             async with self.async_session_factory() as sess, sess.begin():
                 result = await sess.execute(table.delete().where(table.c.run_id.in_(run_ids)))
 
+            await self._ascrub_run_ids_from_legacy_blob(list(run_ids))
             log_debug(f"Successfully deleted {result.rowcount} runs")  # type: ignore
 
         except Exception as e:
