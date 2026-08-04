@@ -577,6 +577,8 @@ class AgentOS:
                 dbs=self.dbs,
                 agents=self._agents or None,  # type: ignore[arg-type]
                 teams=self._teams or None,  # type: ignore[arg-type]
+                os_db=self.db,
+                registry=self.registry,
             ),
             get_metrics_router(dbs=self.dbs),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
@@ -1113,6 +1115,8 @@ class AgentOS:
                 dbs=self.dbs,
                 agents=self._agents or None,  # type: ignore[arg-type]
                 teams=self._teams or None,  # type: ignore[arg-type]
+                os_db=self.db,
+                registry=self.registry,
             ),
             get_metrics_router(dbs=self.dbs),
             get_knowledge_router(knowledge_instances=self.knowledge_instances),
