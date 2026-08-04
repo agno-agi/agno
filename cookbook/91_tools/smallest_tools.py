@@ -4,10 +4,9 @@ Smallest AI text-to-speech tools.
 Requires the SMALLEST_API_KEY environment variable.
 Get an API key at https://app.smallest.ai/dashboard (Developer -> API Keys).
 
-Also requires GOOGLE_API_KEY for the agent's model. Gemini is used here because it
-natively accepts audio as input, so the agent can hand the generated clip back to the
-model instead of dropping it with an "audio input unsupported" warning (as most other
-model providers currently do when a tool call returns an Audio artifact).
+Also requires GOOGLE_API_KEY for the agent's model. Use a model with audio input
+support (Gemini here) so the agent can hear the audio it generates across multi-turn
+conversations, instead of losing it after the first response.
 
 Models:
 - lightning_v3.1 (default): 12 languages, supports cloned voices
