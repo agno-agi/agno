@@ -170,11 +170,9 @@ class TestSqliteDbDeleteRunScrubsLegacyBlob:
         DB would look before cleanup_legacy_runs_field(force=True))."""
         import json as _json
         import time as _time
-        from unittest.mock import MagicMock
 
         from sqlalchemy import MetaData, text
 
-        from agno.db.base import SessionType
         from agno.db.sqlite import SqliteDb
 
         tmp = tempfile.mkdtemp()
