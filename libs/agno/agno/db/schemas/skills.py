@@ -114,7 +114,12 @@ class SkillRow:
             license=self.license,
             compatibility=self.compatibility,
             allowed_tools=self.allowed_tools,
-            source_type=self.source_type,
+            # Always "db": everything built here is content-carrying and served from the
+            # table, which is the distinction source_type exists to make. Passing the
+            # column through instead reported "local" for a skill created through the API,
+            # so the field stopped meaning anything past the first hop. The row keeps its
+            # own value as a record of where the skill was authored.
+            source_type="db",
             reference_contents=dict(self.references),
             script_contents=dict(self.scripts),
         )

@@ -941,3 +941,38 @@ async def test_async_sqlite_outage_propagates(async_sqlite_db, skill_data, monke
 
     with pytest.raises(RuntimeError, match="connection refused"):
         await async_sqlite_db.get_skills_with_content()
+
+
+def test_to_skill_reports_the_database_as_the_source(skill_data):
+    """A skill read from the table is database-backed, whatever the row says it was.
+
+    source_type marks the path-versus-content distinction (spec 3.1), and everything
+    to_skill builds is content-carrying. Passing the stored value through meant a skill
+    created through the API reported "local" and the field stopped meaning anything after
+    the first hop. The column keeps its own value as a record of where the skill was
+    authored; the loaded object reports where it is being served from.
+    """
+    row = SkillRow.from_dict({**skill_data, "id": "abc"})
+    assert row.source_type == "local"  # the column default, untouched
+
+    assert row.to_skill().source_type == "db"
+
+
+def test_to_skill_reports_db_whatever_the_row_stored(skill_data):
+    """Any stored provenance still loads as db: it is being served from the table."""
+    for stored in ("local", "url", "db"):
+        row = SkillRow.from_dict({**skill_data, "id": "abc", "source_type": stored})
+        assert row.to_skill().source_type == "db", f"stored={stored}"
+
+
+def test_loader_serves_skills_marked_as_database_backed(sqlite_db, skill_data):
+    """End to end: the loader's skills report db, not the column's default."""
+    from agno.skills.loaders.db import DbSkills
+
+    sqlite_db.create_skill(skill_data)
+
+    loaded = DbSkills(sqlite_db).load()
+
+    assert [s.source_type for s in loaded] == ["db"]
+    # The stored row is unchanged -- only the in-memory object reports db.
+    assert sqlite_db.get_skill(skill_data["name"])["source_type"] == "local"
