@@ -176,6 +176,7 @@ class InMemoryDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """Get all sessions from in-memory storage with filtering and pagination.
 
@@ -246,6 +247,12 @@ class InMemoryDb(BaseDb):
                 if page is not None:
                     start_idx = (page - 1) * limit
                 filtered_sessions = filtered_sessions[start_idx : start_idx + limit]
+
+            if not include_runs:
+                # List views don't need run history; leave it unattached (deepcopy above,
+                # so the stored session keeps its runs).
+                for s in filtered_sessions:
+                    s["runs"] = None
 
             if not deserialize:
                 return filtered_sessions, total_count
