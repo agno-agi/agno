@@ -44,11 +44,11 @@ class SpiderTools(Toolkit):
 
         tools: List[Callable] = []
         if all or search:
-            tools.append(self.search_web)
+            tools.append(self.spider_search_web)
         if all or scrape:
-            tools.append(self.scrape)
+            tools.append(self.spider_scrape)
         if all or crawl:
-            tools.append(self.crawl)
+            tools.append(self.spider_crawl)
 
         super().__init__(name="spider", tools=tools, **kwargs)
 
@@ -58,7 +58,7 @@ class SpiderTools(Toolkit):
             self._client = ExternalSpider(api_key=self.api_key)
         return self._client
 
-    def search_web(self, query: str, max_results: Optional[int] = None) -> str:
+    def spider_search_web(self, query: str, max_results: Optional[int] = None) -> str:
         """Use this function to search the web.
         Args:
             query (str): The query to search the web with.
@@ -68,7 +68,7 @@ class SpiderTools(Toolkit):
         """
         return self._search(query, max_results=max_results)
 
-    def scrape(self, url: Optional[str] = None) -> str:
+    def spider_scrape(self, url: Optional[str] = None) -> str:
         """Use this function to scrape the content of a webpage.
         Args:
             url (str, optional): The URL of the webpage to scrape. Uses default_url if not provided.
@@ -80,7 +80,7 @@ class SpiderTools(Toolkit):
             return json.dumps({"error": "No URL provided. Pass a url or set default_url on the toolkit."})
         return self._scrape(target)
 
-    def crawl(self, url: Optional[str] = None, limit: Optional[int] = None) -> str:
+    def spider_crawl(self, url: Optional[str] = None, limit: Optional[int] = None) -> str:
         """Use this function to crawl the web.
         Args:
             url (str, optional): The URL of the webpage to crawl. Uses default_url if not provided.

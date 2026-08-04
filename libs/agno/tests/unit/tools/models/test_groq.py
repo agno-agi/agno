@@ -99,7 +99,7 @@ def test_transcribe_audio_local_file(mock_exists, mock_toolkit_init, mock_groq_c
 
     # Mock open to simulate reading the file
     with patch("builtins.open", mock_open(read_data=b"dummy audio data")) as mock_file:
-        result = tools.transcribe_audio(mock_file_path)
+        result = tools.groq_transcribe_audio(mock_file_path)
 
     assert result == expected_transcript
     mock_groq_client.audio.transcriptions.create.assert_called_once_with(
@@ -119,7 +119,7 @@ def test_transcribe_audio_error(mock_exists, mock_toolkit_init, mock_transcribe_
     mock_file_path = "/path/to/audio.wav"
 
     with patch("builtins.open", mock_open(read_data=b"dummy audio data")):
-        result = tools.transcribe_audio(mock_file_path)
+        result = tools.groq_transcribe_audio(mock_file_path)
 
     assert "Failed to transcribe audio source" in result
     assert "API Error" in result
@@ -135,7 +135,7 @@ def test_transcribe_audio_url(mock_exists, mock_toolkit_init, mock_groq_client):
 
     mock_groq_client.audio.transcriptions.create.return_value = expected_transcript
 
-    result = tools.transcribe_audio(mock_url)
+    result = tools.groq_transcribe_audio(mock_url)
 
     assert result == expected_transcript
     mock_groq_client.audio.transcriptions.create.assert_called_once_with(
@@ -153,7 +153,7 @@ def test_transcribe_audio_error_url(mock_exists, mock_toolkit_init, mock_transcr
     tools = GroqTools()
     mock_url = "https://example.com/audio.wav"
 
-    result = tools.transcribe_audio(mock_url)
+    result = tools.groq_transcribe_audio(mock_url)
 
     assert "Failed to transcribe audio source" in result
     assert "API Error" in result
@@ -173,7 +173,7 @@ def test_translate_audio_local_file(mock_exists, mock_toolkit_init, mock_groq_cl
     mock_groq_client.audio.translations.create.return_value = expected_translation
 
     with patch("builtins.open", mock_open(read_data=b"dummy audio data")) as mock_file:
-        result = tools.translate_audio(mock_file_path)
+        result = tools.groq_translate_audio(mock_file_path)
 
     assert result == expected_translation
     mock_groq_client.audio.translations.create.assert_called_once_with(
@@ -193,7 +193,7 @@ def test_translate_audio_error(mock_exists, mock_toolkit_init, mock_translate_cr
     mock_file_path = "/path/to/foreign_audio.mp3"
 
     with patch("builtins.open", mock_open(read_data=b"dummy audio data")):
-        result = tools.translate_audio(mock_file_path)
+        result = tools.groq_translate_audio(mock_file_path)
 
     assert "Failed to translate audio source" in result
     assert "API Error" in result
@@ -209,7 +209,7 @@ def test_translate_audio_url(mock_exists, mock_toolkit_init, mock_groq_client):
 
     mock_groq_client.audio.translations.create.return_value = expected_translation
 
-    result = tools.translate_audio(mock_url)
+    result = tools.groq_translate_audio(mock_url)
 
     assert result == expected_translation
     mock_groq_client.audio.translations.create.assert_called_once_with(
@@ -227,7 +227,7 @@ def test_translate_audio_error_url(mock_exists, mock_toolkit_init, mock_translat
     tools = GroqTools()
     mock_url = "https://example.com/foreign_audio.mp3"
 
-    result = tools.translate_audio(mock_url)
+    result = tools.groq_translate_audio(mock_url)
 
     assert "Failed to translate audio source" in result
     assert "API Error" in result
@@ -248,7 +248,7 @@ def test_generate_speech_success(mock_toolkit_init, mock_groq_client):
     mock_speech_response.read.return_value = b"dummy_audio_bytes"
     mock_groq_client.audio.speech.create.return_value = mock_speech_response
 
-    result = tools.generate_speech(agent=mock_agent, text_input=text_input)
+    result = tools.groq_generate_speech(agent=mock_agent, text_input=text_input)
 
     # Check that it returns a ToolResult
     assert isinstance(result, ToolResult)
@@ -273,7 +273,7 @@ def test_generate_speech_error(mock_toolkit_init, mock_groq_client):
     # Simulate an error during the API call
     mock_groq_client.audio.speech.create.side_effect = Exception("API Error")
 
-    result = tools.generate_speech(agent=mock_agent, text_input=text_input)
+    result = tools.groq_generate_speech(agent=mock_agent, text_input=text_input)
 
     # Check that it returns a ToolResult with error
     assert isinstance(result, ToolResult)

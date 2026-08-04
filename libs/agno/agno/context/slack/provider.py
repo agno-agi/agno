@@ -125,7 +125,7 @@ class SlackContextProvider(ContextProvider):
         if self.mode == ContextMode.tools:
             return (
                 f"`{self.name}`: `get_channel_history(channel)` for latest messages in a known channel; "
-                "`get_thread(channel, ts)` to expand a thread; `get_channel_info` / `get_user_info` "
+                "`slack_get_thread(channel, ts)` to expand a thread; `slack_get_channel_info` / `get_user_info` "
                 "to resolve names. Pass channel names like `#agents` directly."
             )
         if self.mode == ContextMode.agent:
@@ -201,18 +201,18 @@ class SlackContextProvider(ContextProvider):
             self._bot_read_tools = SlackTools(
                 token=self.token,
                 user_token=self._user_token,
-                enable_send_message=False,
-                enable_send_message_thread=False,
-                enable_upload_file=False,
-                enable_download_file=self.enable_media_tools,
-                enable_list_channels=True,
-                enable_get_channel_history=True,
-                enable_search_messages=self._enable_search_messages,
-                enable_search_workspace=False,
-                enable_get_thread=True,
-                enable_list_users=True,
-                enable_get_user_info=True,
-                enable_get_channel_info=True,
+                send_message=False,
+                send_message_thread=False,
+                upload_file=False,
+                download_file=self.enable_media_tools,
+                list_channels=True,
+                get_channel_history=True,
+                search_messages=self._enable_search_messages,
+                search_workspace=False,
+                get_thread=True,
+                list_users=True,
+                get_user_info=True,
+                get_channel_info=True,
             )
         return self._bot_read_tools
 
@@ -221,18 +221,18 @@ class SlackContextProvider(ContextProvider):
             self._assisted_read_tools = SlackTools(
                 token=self.token,
                 user_token=self._user_token,
-                enable_send_message=False,
-                enable_send_message_thread=False,
-                enable_upload_file=False,
-                enable_download_file=self.enable_media_tools,
-                enable_list_channels=True,
-                enable_get_channel_history=True,
-                enable_search_messages=self._enable_search_messages,
-                enable_search_workspace=True,
-                enable_get_thread=True,
-                enable_list_users=True,
-                enable_get_user_info=True,
-                enable_get_channel_info=True,
+                send_message=False,
+                send_message_thread=False,
+                upload_file=False,
+                download_file=self.enable_media_tools,
+                list_channels=True,
+                get_channel_history=True,
+                search_messages=self._enable_search_messages,
+                search_workspace=True,
+                get_thread=True,
+                list_users=True,
+                get_user_info=True,
+                get_channel_info=True,
             )
         return self._assisted_read_tools
 
@@ -242,17 +242,17 @@ class SlackContextProvider(ContextProvider):
         if self._write_tools is None:
             self._write_tools = SlackTools(
                 token=self.token,
-                enable_send_message=True,
-                enable_send_message_thread=True,
-                enable_upload_file=self.enable_media_tools,
-                enable_download_file=False,
-                enable_list_channels=True,
-                enable_get_channel_history=False,
-                enable_search_workspace=False,
-                enable_get_thread=False,
-                enable_list_users=True,
-                enable_get_user_info=True,
-                enable_get_channel_info=True,
+                send_message=True,
+                send_message_thread=True,
+                upload_file=self.enable_media_tools,
+                download_file=False,
+                list_channels=True,
+                get_channel_history=False,
+                search_workspace=False,
+                get_thread=False,
+                list_users=True,
+                get_user_info=True,
+                get_channel_info=True,
             )
         return self._write_tools
 
@@ -300,7 +300,7 @@ Workflow:
 1. **Use the deterministic tools for exact reads.** If the user asks for
    recent messages in a specific channel, call
    `get_channel_history(channel)`. If they ask about a thread or a
-   message with replies, call `get_thread(channel, ts)`.
+   message with replies, call `slack_get_thread(channel, ts)`.
 2. **Use search for broad reads.** `search_workspace(query)` uses Slack
    interface permissions; `search_messages(query)` works with user tokens.
    Try one, and if it fails or returns nothing relevant, try the other.
@@ -329,10 +329,10 @@ Workflow:
 2. **Read known channels directly.** If the user provides a channel name
    or ID, pass it straight to `get_channel_history(channel)`. The tool
    resolves names like `#agents` to IDs.
-3. **Discover only when needed.** Use `list_channels` only when the user
+3. **Discover only when needed.** Use `slack_list_channels` only when the user
    did not name a channel. The bot must be a member of private channels.
 4. **Expand threads.** When a message has replies, call
-   `get_thread(channel, ts)` for the full discussion. Pass the same
+   `slack_get_thread(channel, ts)` for the full discussion. Pass the same
    channel name or ID you used for history.
 5. **Resolve names.** `get_user_info` / `list_users` turn Slack user IDs
    into display names. Don't invent a name when the ID doesn't resolve —
@@ -350,15 +350,15 @@ You post messages to Slack on behalf of the caller.
 
 ## Workflow
 
-1. **Pass channel names straight through.** `send_message` (and
+1. **Pass channel names straight through.** `slack_send_message` (and
    `send_message_thread`) accept either a channel ID (`C0123...`)
    or a name like `#releases` — Slack resolves names server-side.
-   **Do NOT call `list_channels` to find an ID first.** On large
+   **Do NOT call `slack_list_channels` to find an ID first.** On large
    workspaces pagination will mask your target and waste calls.
 2. **Compose the message exactly.** Preserve the caller's wording
    unless asked to rephrase.
 3. **Pick the right tool.**
-   - Top-level post: `send_message(channel, text)`.
+   - Top-level post: `slack_send_message(channel, text)`.
    - Reply in thread: `send_message_thread(channel, thread_ts, text)`.
 4. **Only look things up when necessary.**
    - If a post fails with `channel_not_found`, the name is wrong or

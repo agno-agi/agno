@@ -19,8 +19,8 @@ def run_example() -> None:
         model=Gemini(id="gemini-2.5-pro"),
         tools=[
             ReasoningTools(
-                enable_think=True,
-                enable_analyze=True,
+                think=True,
+                analyze=True,
             ),
             YFinanceTools(),
         ],

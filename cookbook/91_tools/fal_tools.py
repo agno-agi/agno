@@ -20,7 +20,7 @@ fal_agent = Agent(
     tools=[
         FalTools(
             model="fal-ai/hunyuan-video",
-            enable_generate_media=True,
+            generate_media=True,
         )
     ],
     description="You are an AI agent that can generate videos using the Fal API.",

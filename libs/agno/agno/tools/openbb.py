@@ -58,7 +58,7 @@ class OpenBBTools(Toolkit):
         if all or search_company_symbol:
             tools.append(self.search_company_symbol)
         if all or get_company_news:
-            tools.append(self.get_company_news)
+            tools.append(self.openbb_get_company_news)
         if all or get_company_profile:
             tools.append(self.get_company_profile)
         if all or get_price_targets:
@@ -135,7 +135,7 @@ class OpenBBTools(Toolkit):
         except Exception as e:
             return f"Error fetching company news for {symbol}: {e}"
 
-    def get_company_news(self, symbol: str, num_stories: int = 10) -> str:
+    def openbb_get_company_news(self, symbol: str, num_stories: int = 10) -> str:
         """Get company news for a stock symbol.
 
         Args:

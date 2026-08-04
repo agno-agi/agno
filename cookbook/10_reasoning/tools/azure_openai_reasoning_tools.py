@@ -20,8 +20,8 @@ def run_example() -> None:
         tools=[
             WebSearchTools(),
             ReasoningTools(
-                enable_think=True,
-                enable_analyze=True,
+                think=True,
+                analyze=True,
                 add_instructions=True,
                 add_few_shot=True,
             ),
