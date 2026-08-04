@@ -950,7 +950,14 @@ class QueueWorker:
             # F3: the run is now EXECUTING - pollers must see RUNNING, not the
             # accept-time PENDING (arun's own persistence only lands at
             # cleanup). Fenced with this attempt's generation; best-effort.
-            if component is not None:
+            # NOT for continuation legs: their run row is PAUSED, and the
+            # continue machinery reads that state - workflow acontinue_run
+            # hard-requires PAUSED (a pre-dispatch RUNNING write dead-letters
+            # every durable workflow continue as a permanent not-paused
+            # failure), and agent/team continues dispatch on the persisted
+            # status (PAUSED + tools = apply HITL results). Each leg persists
+            # its own status once it actually starts executing.
+            if component is not None and not payload.get("continue"):
                 from agno.run.base import RunStatus as _RS
                 from agno.run.status_persist import apersist_run_status as _aps
 

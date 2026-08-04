@@ -1084,6 +1084,85 @@ class TestContinuationRedrive:
             await worker.stop()
 
 
+class DbBackedFakeWorkflow:
+    """Workflow double whose run row lives behind a db primitive, modeling
+    Postgres: the worker's fenced status stamps LAND on the row, and
+    acontinue_run reloads and validates it exactly like Workflow.acontinue_run.
+    (RecoverableFakeWorkflow has no db, so pre-dispatch stamps no-op there -
+    which is how the RUNNING-stamp regression slipped past those tests.)"""
+
+    id = "wf-1"
+
+    def __init__(self):
+        self.run = SimpleNamespace(run_id="r1", status=RunStatus.paused, content=None)
+        self.continue_calls: list = []
+        self.db_writes: list = []
+        fake = self
+
+        class _Db:
+            async def update_run_in_session(
+                self, session_id, run_id, fields, expected_attempt=None, user_id=None, content_if_absent=None
+            ):
+                fake.db_writes.append(dict(fields))
+                if run_id != fake.run.run_id:
+                    return False
+                if "status" in fields:
+                    fake.run.status = RunStatus(fields["status"])
+                return True
+
+        self.db = _Db()
+
+    async def aget_run_output(self, run_id: str, session_id: str, user_id: Any = None) -> SimpleNamespace:
+        return self.run
+
+    async def acontinue_run(self, **kwargs: Any) -> SimpleNamespace:
+        # Reload-and-validate, like the real Workflow.acontinue_run
+        self.continue_calls.append(kwargs)
+        if self.run.status != RunStatus.paused:
+            raise ValueError(f"Cannot continue a run that is not paused. Current status: {self.run.status}")
+        self.run.status = RunStatus.completed
+        return SimpleNamespace(status=RunStatus.completed, content="continued")
+
+
+class TestContinuationRunRowStamp:
+    @pytest.mark.asyncio
+    async def test_no_running_stamp_before_continuation_dispatch(self):
+        """The worker's pre-dispatch RUNNING stamp (F3) must skip continuation
+        legs: with a db-backed run row the stamp lands before acontinue_run
+        reloads and validates PAUSED, the not-paused ValueError is classified
+        permanent, and every durable workflow continue dead-letters."""
+        workflow = DbBackedFakeWorkflow()
+        store = InMemoryQueueStore()
+        job = make_job("r1")
+        job["component_type"] = "workflow"
+        job["component_id"] = "wf-1"
+        await store.enqueue_job(job)
+        claimed = await store.claim_job("old-worker")
+        assert await store.complete_job("r1", "old-worker", claimed["attempt"], "paused")
+        assert (await store.continue_job("r1", {"step_requirements": []}))["outcome"] == "queued"
+
+        worker = QueueWorker(
+            store=store,
+            resolve_component=lambda t, i: workflow if (t, i) == ("workflow", "wf-1") else None,
+            config=make_config(),
+            worker_id="live-worker",
+        )
+        await worker.start()
+        try:
+            job_row = await wait_for_status(store, "r1", "completed")
+            assert job_row["error"] is None
+            assert len(workflow.continue_calls) == 1
+            assert workflow.run.status == RunStatus.completed
+            # The attempt-generation stamp must still land (the fence is not
+            # optional for continuation legs); only the status write is exempt
+            assert any(w.get("queue_attempt") == 2 and "status" not in w for w in workflow.db_writes)
+            assert not any(w.get("status") == RunStatus.running.value for w in workflow.db_writes), (
+                "no RUNNING write may land on a continuation leg's run row before dispatch"
+            )
+        finally:
+            await worker.stop()
+
+
 class TestStreamingContinuation:
     @pytest.mark.asyncio
     async def test_streaming_continuation_publishes_and_completes(self):
