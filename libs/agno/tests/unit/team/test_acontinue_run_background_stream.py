@@ -89,6 +89,9 @@ class TestAcontinueRunBackgroundStream:
         from agno.team._run import _acontinue_run_background_stream
 
         team = MagicMock()
+        # Silence _runs_limit_for_team_run: with add_history_to_context=False,
+        # the helper short-circuits to None and never touches num_history_runs.
+        team.add_history_to_context = False
         run_context = MagicMock()
 
         fake_event = MagicMock(spec=TeamRunOutputEvent)
@@ -144,6 +147,9 @@ class TestAcontinueRunBackgroundStream:
         from agno.team._run import _acontinue_run_background_stream
 
         team = MagicMock()
+        # Silence _runs_limit_for_team_run: with add_history_to_context=False,
+        # the helper short-circuits to None and never touches num_history_runs.
+        team.add_history_to_context = False
         run_context = MagicMock()
         run_response = MagicMock()
         run_response.run_id = "r-1"

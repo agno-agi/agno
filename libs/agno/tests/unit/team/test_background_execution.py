@@ -93,7 +93,7 @@ class TestTeamBackgroundLifecycle:
         """_arun_background returns immediately with PENDING status."""
         team = Team(name="test-team", members=[])
 
-        async def fake_aread_or_create_session(team, session_id=None, user_id=None):
+        async def fake_aread_or_create_session(team, session_id=None, user_id=None, runs_limit=None):
             return TeamSession(session_id=session_id or "test-session", user_id=user_id, runs=[])
 
         async def fake_asave_session(team, session=None):
@@ -139,7 +139,7 @@ class TestTeamBackgroundLifecycle:
 
         persisted_statuses: list[RunStatus] = []
 
-        async def fake_aread_or_create_session(team, session_id=None, user_id=None):
+        async def fake_aread_or_create_session(team, session_id=None, user_id=None, runs_limit=None):
             return TeamSession(session_id=session_id or "test-session", user_id=user_id, runs=[])
 
         async def fake_asave_session(team, session=None):
@@ -187,7 +187,7 @@ class TestTeamBackgroundLifecycle:
 
         final_statuses: list[RunStatus] = []
 
-        async def fake_aread_or_create_session(team, session_id=None, user_id=None):
+        async def fake_aread_or_create_session(team, session_id=None, user_id=None, runs_limit=None):
             return TeamSession(session_id=session_id or "test-session", user_id=user_id, runs=[])
 
         async def fake_asave_session(team, session=None):

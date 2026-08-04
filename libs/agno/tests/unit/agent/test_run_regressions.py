@@ -214,7 +214,9 @@ async def test_arun_stream_impl_cleans_up_registered_run_on_session_read_failure
     agent = Agent(name="test-agent")
     run_id = "arun-stream-session-fail"
 
-    async def fail_aread_or_create_session(agent, session_id: str, user_id: Optional[str] = None):
+    async def fail_aread_or_create_session(
+        agent, session_id: str, user_id: Optional[str] = None, runs_limit: Optional[int] = None
+    ):
         raise RuntimeError("session read failed")
 
     async def fake_disconnect_mcp_tools(agent):
@@ -253,7 +255,9 @@ async def test_arun_impl_preserves_original_error_when_session_read_fails(monkey
     run_id = "arun-session-fail"
     cleanup_calls = []
 
-    async def fail_aread_or_create_session(agent, session_id: str, user_id: Optional[str] = None):
+    async def fail_aread_or_create_session(
+        agent, session_id: str, user_id: Optional[str] = None, runs_limit: Optional[int] = None
+    ):
         raise RuntimeError("session read failed")
 
     async def fake_acleanup_and_store(agent, **kwargs: Any):
@@ -290,7 +294,9 @@ async def test_acontinue_run_preserves_original_error_when_session_read_fails(mo
     run_id = "acontinue-session-fail"
     cleanup_calls = []
 
-    async def fail_aread_or_create_session(agent, session_id: str, user_id: Optional[str] = None):
+    async def fail_aread_or_create_session(
+        agent, session_id: str, user_id: Optional[str] = None, runs_limit: Optional[int] = None
+    ):
         raise RuntimeError("session read failed")
 
     async def fake_acleanup_and_store(agent, **kwargs: Any):
