@@ -491,12 +491,48 @@ def test_get_json_schema_for_enum_integer():
     assert schema == {"type": "integer", "enum": [0, 1, 2]}
 
 
-def test_get_json_schema_for_enum_mixed():
-    """Test that mixed enums have enum values set (even without inferred type)."""
+def test_get_json_schema_for_enum_bool():
+    """Test that bool-based enums get type 'boolean' (not 'integer')."""
     schema = get_json_schema_for_arg(FlagBoolFlag)
-    assert "enum" in schema
-    assert False in schema["enum"]
-    assert True in schema["enum"]
+    assert schema == {"type": "boolean", "enum": [False, True]}
+
+
+def test_get_json_schema_for_enum_float():
+    """Test that float-based enums get type 'number'."""
+    schema = get_json_schema_for_arg(PriorityFloatEnum)
+    assert schema == {"type": "number", "enum": [0.5, 1.5, 2.5]}
+
+
+class EmptyEnum(Enum):
+    pass
+
+
+def test_get_json_schema_for_enum_empty():
+    """Test that empty enums return type 'string' with empty enum list (A1 fix)."""
+    schema = get_json_schema_for_arg(EmptyEnum)
+    assert schema == {"type": "string", "enum": []}
+
+
+class NumMixEnum(Enum):
+    A = 1
+    B = 2.5
+
+
+def test_get_json_schema_for_enum_numeric_mixed():
+    """Test that mixed int+float enums get type 'number' (A2 fix)."""
+    schema = get_json_schema_for_arg(NumMixEnum)
+    assert schema == {"type": "number", "enum": [1, 2.5]}
+
+
+class HeteroEnum(Enum):
+    A = 1
+    B = "x"
+
+
+def test_get_json_schema_for_enum_heterogeneous():
+    """Test that heterogeneous enums fall back to no type key."""
+    schema = get_json_schema_for_arg(HeteroEnum)
+    assert schema == {"enum": [1, "x"]}
 
 
 def test_get_json_schema_for_function_with_intenum():

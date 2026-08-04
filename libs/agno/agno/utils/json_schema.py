@@ -162,11 +162,15 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
 
     if isinstance(type_hint, type) and issubclass(type_hint, Enum):
         enum_values = [member.value for member in type_hint]
+        if not enum_values:
+            return {"type": "string", "enum": []}
         if all(isinstance(v, bool) for v in enum_values):
             return {"type": "boolean", "enum": enum_values}
         if all(isinstance(v, int) and not isinstance(v, bool) for v in enum_values):
             return {"type": "integer", "enum": enum_values}
         if all(isinstance(v, float) for v in enum_values):
+            return {"type": "number", "enum": enum_values}
+        if all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in enum_values):
             return {"type": "number", "enum": enum_values}
         if all(isinstance(v, str) for v in enum_values):
             return {"type": "string", "enum": enum_values}
