@@ -841,7 +841,10 @@ class PostgresDb(BaseDb):
                 .where(runs_table.c.session_id == session_id)
                 .where(runs_table.c.parent_run_id.is_(None))
                 .where(or_(runs_table.c.status.is_(None), runs_table.c.status.notin_(HISTORY_SKIP_STATUSES)))
-                .order_by(runs_table.c.run_index.desc(), runs_table.c.created_at.desc())
+                .order_by(
+                    func.coalesce(runs_table.c.run_index, 0).desc(),
+                    func.coalesce(runs_table.c.created_at, 0).desc(),
+                )
                 .limit(limit)
             )
             rows = [row[0] for row in sess.execute(stmt).fetchall()]
@@ -850,7 +853,10 @@ class PostgresDb(BaseDb):
         stmt = (
             select(runs_table.c.run_data)
             .where(runs_table.c.session_id == session_id)
-            .order_by(runs_table.c.run_index.asc(), runs_table.c.created_at.asc())
+            .order_by(
+                func.coalesce(runs_table.c.run_index, 0).asc(),
+                func.coalesce(runs_table.c.created_at, 0).asc(),
+            )
         )
         return [row[0] for row in sess.execute(stmt).fetchall()]
 
