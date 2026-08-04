@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
-from enum import Enum, IntEnum, StrEnum
-from typing import Any, Dict, get_type_hints
-from typing import Any, Dict, List, Literal, Optional, Union
+from enum import Enum, IntEnum
+from typing import Any, Dict, List, Literal, Optional, Union, get_type_hints
 
 from pydantic import BaseModel
 
@@ -457,7 +456,7 @@ def test_get_json_schema_with_mixed_nested_structures():
 
 
 # Test cases for Enum type inference (P8 fix)
-class ColorStrEnum(StrEnum):
+class ColorStrEnum(str, Enum):
     RED = "red"
     GREEN = "green"
     BLUE = "blue"
