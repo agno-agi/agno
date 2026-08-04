@@ -3444,6 +3444,14 @@ async def _arun_background(
 
             if is_worker_managed(getattr(run_response, "run_id", None) or ""):
                 raise  # worker-claimed: the QueueWorker owns this terminal
+            if run_response.status == RunStatus.paused:
+                # The leg already PAUSED and parked valid, continuable HITL
+                # state (persisted by the leg itself) - a routine deploy's
+                # shutdown must not stamp CANCELLED over it. This in-memory
+                # check is the ONLY protection off-Postgres: adapters without
+                # the atomic primitive reach the whole-session fallback, which
+                # no DB-side guard covers.
+                raise
             with contextlib.suppress(Exception):
                 run_response.status = RunStatus.cancelled
                 await apersist_run_transition(team, "team", session_id, run_response, user_id=user_id)
@@ -3582,6 +3590,14 @@ async def _arun_background_stream(
 
             if is_worker_managed(getattr(run_response, "run_id", None) or ""):
                 raise  # worker-claimed: the QueueWorker owns this terminal
+            if run_response.status == RunStatus.paused:
+                # The leg already PAUSED and parked valid, continuable HITL
+                # state (persisted by the leg itself) - a routine deploy's
+                # shutdown must not stamp CANCELLED over it. This in-memory
+                # check is the ONLY protection off-Postgres: adapters without
+                # the atomic primitive reach the whole-session fallback, which
+                # no DB-side guard covers.
+                raise
             with contextlib.suppress(Exception):
                 run_response.status = RunStatus.cancelled
                 await apersist_run_transition(team, "team", session_id, run_response, user_id=user_id)

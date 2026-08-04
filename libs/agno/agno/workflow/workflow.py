@@ -4196,6 +4196,14 @@ class Workflow:
 
                 if is_worker_managed(getattr(workflow_run_response, "run_id", None) or ""):
                     raise  # worker-claimed: the QueueWorker owns this terminal
+                if workflow_run_response.status == RunStatus.paused:
+                    # The leg already PAUSED and parked valid, continuable HITL
+                    # state (persisted by the leg itself) - a routine deploy's
+                    # shutdown must not stamp CANCELLED over it. This in-memory
+                    # check is the ONLY protection off-Postgres: adapters without
+                    # the atomic primitive reach the whole-session fallback, which
+                    # no DB-side guard covers.
+                    raise
                 with contextlib.suppress(Exception):
                     workflow_run_response.status = RunStatus.cancelled
                     await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
@@ -4426,6 +4434,14 @@ class Workflow:
 
                 if is_worker_managed(getattr(workflow_run_response, "run_id", None) or ""):
                     raise  # worker-claimed: the QueueWorker owns this terminal
+                if workflow_run_response.status == RunStatus.paused:
+                    # The leg already PAUSED and parked valid, continuable HITL
+                    # state (persisted by the leg itself) - a routine deploy's
+                    # shutdown must not stamp CANCELLED over it. This in-memory
+                    # check is the ONLY protection off-Postgres: adapters without
+                    # the atomic primitive reach the whole-session fallback, which
+                    # no DB-side guard covers.
+                    raise
                 with contextlib.suppress(Exception):
                     workflow_run_response.status = RunStatus.cancelled
                     await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
@@ -4669,6 +4685,14 @@ class Workflow:
 
                 if is_worker_managed(getattr(workflow_run_response, "run_id", None) or ""):
                     raise  # worker-claimed: the QueueWorker owns this terminal
+                if workflow_run_response.status == RunStatus.paused:
+                    # The leg already PAUSED and parked valid, continuable HITL
+                    # state (persisted by the leg itself) - a routine deploy's
+                    # shutdown must not stamp CANCELLED over it. This in-memory
+                    # check is the ONLY protection off-Postgres: adapters without
+                    # the atomic primitive reach the whole-session fallback, which
+                    # no DB-side guard covers.
+                    raise
                 with contextlib.suppress(Exception):
                     workflow_run_response.status = RunStatus.cancelled
                     await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
