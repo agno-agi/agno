@@ -1,6 +1,7 @@
+import json
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -26,10 +27,12 @@ from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
+    HISTORY_SKIP_STATUSES,
     build_single_run_row,
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
+    filter_context_runs,
     json_serializer,
     merge_runs_table_with_legacy_blob,
     validate_pagination,
@@ -43,7 +46,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import TEXT, ForeignKey, Index, UniqueConstraint, and_, cast, func, update
+    from sqlalchemy import TEXT, ForeignKey, Index, UniqueConstraint, and_, cast, func, or_, update
     from sqlalchemy.dialects import mysql
     from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
     from sqlalchemy.schema import Column, MetaData, Table
@@ -197,6 +200,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             indexes: List[str] = []
             unique_constraints: List[str] = []
             schema_unique_constraints = table_schema.pop("_unique_constraints", [])
+            schema_composite_indexes = table_schema.pop("_composite_indexes", [])
 
             # Get the columns, indexes, and unique constraints from the table schema
             for col_name, col_config in table_schema.items():
@@ -234,6 +238,11 @@ class AsyncMySQLDb(AsyncBaseDb):
             for idx_col in indexes:
                 idx_name = f"idx_{table_name}_{idx_col}"
                 table.append_constraint(Index(idx_name, idx_col))
+
+            # Add composite indexes with table-specific names
+            for composite in schema_composite_indexes:
+                composite_name = f"{table_name}_{composite['name']}"
+                table.append_constraint(Index(composite_name, *composite["columns"]))
 
             # Create schema if not exists
             if self.create_schema:
@@ -510,20 +519,45 @@ class AsyncMySQLDb(AsyncBaseDb):
             await sess.execute(text(f"ALTER TABLE `{self.db_schema}`.`{self.session_table_name}` DROP COLUMN `runs`"))
             return True
 
-    def _legacy_runs_update(self, table: Table) -> Dict[str, Any]:
-        """Extra UPDATE clauses to clear the legacy runs column when it still exists."""
-        return {"runs": None} if "runs" in table.c else {}
-
     # -- Run methods --
-    async def _get_session_runs_data(self, sess, runs_table: Table, session_id: str) -> List[Dict[str, Any]]:
-        """Get the raw run_data dicts for the given session, in insertion order."""
+    async def _get_session_runs_data(
+        self, sess, runs_table: Table, session_id: str, limit: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Get the raw run_data dicts for the given session, in insertion order.
+
+        When ``limit`` is set, only the most recent ``limit`` context-relevant runs
+        are fetched (indexed ``ORDER BY run_index DESC LIMIT``) and returned in
+        ascending (chronological) order. "Context-relevant" mirrors the pre-slice
+        filtering in ``get_messages``: member sub-runs (``parent_run_id`` set) and
+        terminal-skip statuses are excluded in SQL, so the DB-side last-N matches
+        the in-memory history window.
+        """
+        if limit is not None:
+            stmt = (
+                select(runs_table.c.run_data)
+                .where(runs_table.c.session_id == session_id)
+                .where(runs_table.c.parent_run_id.is_(None))
+                .where(or_(runs_table.c.status.is_(None), runs_table.c.status.notin_(HISTORY_SKIP_STATUSES)))
+                .order_by(
+                    func.coalesce(runs_table.c.run_index, 0).desc(),
+                    func.coalesce(runs_table.c.created_at, 0).desc(),
+                )
+                .limit(limit)
+            )
+            result = await sess.execute(stmt)
+            rows = [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in result.fetchall()]
+            rows.reverse()
+            return rows
         stmt = (
             select(runs_table.c.run_data)
             .where(runs_table.c.session_id == session_id)
-            .order_by(runs_table.c.run_index.asc(), runs_table.c.created_at.asc())
+            .order_by(
+                func.coalesce(runs_table.c.run_index, 0).asc(),
+                func.coalesce(runs_table.c.created_at, 0).asc(),
+            )
         )
         result = await sess.execute(stmt)
-        return [row[0] for row in result.fetchall()]
+        return [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in result.fetchall()]
 
     async def _get_sessions_runs_data(
         self, sess, runs_table: Table, session_ids: List[str]
@@ -539,6 +573,8 @@ class AsyncMySQLDb(AsyncBaseDb):
         result = await sess.execute(stmt)
         runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
         for session_id, run_data in result.fetchall():
+            if isinstance(run_data, str):
+                run_data = json.loads(run_data)
             runs_by_session.setdefault(session_id, []).append(run_data)
         return runs_by_session
 
@@ -778,6 +814,7 @@ class AsyncMySQLDb(AsyncBaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Read a session from the database.
@@ -812,11 +849,30 @@ class AsyncMySQLDb(AsyncBaseDb):
 
                 session = dict(row._mapping)
 
-                if runs_table is not None:
+                # Attach the runs stored in the runs table, merged with any runs still
+                # sitting in the legacy `runs` column (so partially-migrated sessions
+                # don't silently lose history).
+                legacy_runs = session.get("runs")
+                if runs_table is not None and runs_limit is not None and not legacy_runs:
+                    # Fully migrated: push "most recent N" down to the DB (indexed).
+                    session["runs"] = await self._get_session_runs_data(
+                        sess=sess, runs_table=runs_table, session_id=session_id, limit=runs_limit
+                    )
+                elif runs_table is not None:
+                    # Full load + merge. Also the un-migrated fallback: the legacy blob
+                    # holds the whole history in one column, so "last N" can't be pushed
+                    # to SQL — load all, merge, then filter+slice to match the migrated path.
                     runs_data = await self._get_session_runs_data(
                         sess=sess, runs_table=runs_table, session_id=session_id
                     )
-                    session["runs"] = merge_runs_table_with_legacy_blob(runs_data, session.get("runs"))
+                    merged = merge_runs_table_with_legacy_blob(runs_data, legacy_runs)
+                    if runs_limit is not None:
+                        merged = filter_context_runs(merged)[-runs_limit:]
+                    session["runs"] = merged
+                elif runs_limit is not None:
+                    # No runs table yet (fully un-migrated): filter+slice the legacy blob.
+                    merged = merge_runs_table_with_legacy_blob([], legacy_runs)
+                    session["runs"] = filter_context_runs(merged)[-runs_limit:]
 
             if not deserialize:
                 return session
@@ -1068,7 +1124,8 @@ class AsyncMySQLDb(AsyncBaseDb):
 
             update_values = {k: v for k, v in values.items() if k != "session_type"}
             update_values["updated_at"] = int(time.time())
-            update_values.update(self._legacy_runs_update(table))
+            # Legacy `runs` column intentionally preserved as a frozen backup; only
+            # cleanup_legacy_runs_column() reclaims it (see upsert_session docstring).
 
             async with self.async_session_factory() as sess, sess.begin():
                 existing_result = await sess.execute(
@@ -1157,8 +1214,6 @@ class AsyncMySQLDb(AsyncBaseDb):
                 ]
                 return session_dict
 
-            extra_clear_runs = self._legacy_runs_update(table)
-
             results: List[Union[Session, Dict[str, Any]]] = []
 
             # Process each session type in bulk
@@ -1195,7 +1250,6 @@ class AsyncMySQLDb(AsyncBaseDb):
                             summary=stmt.inserted.summary,
                             metadata=stmt.inserted.metadata,
                             updated_at=stmt.inserted.updated_at,
-                            **extra_clear_runs,
                         )
                         await sess.execute(stmt, agent_data)
 
@@ -1247,7 +1301,6 @@ class AsyncMySQLDb(AsyncBaseDb):
                             summary=stmt.inserted.summary,
                             metadata=stmt.inserted.metadata,
                             updated_at=stmt.inserted.updated_at,
-                            **extra_clear_runs,
                         )
                         await sess.execute(stmt, team_data)
 
@@ -1299,7 +1352,6 @@ class AsyncMySQLDb(AsyncBaseDb):
                             summary=stmt.inserted.summary,
                             metadata=stmt.inserted.metadata,
                             updated_at=stmt.inserted.updated_at,
-                            **extra_clear_runs,
                         )
                         await sess.execute(stmt, workflow_data)
 
@@ -3002,6 +3054,7 @@ class AsyncMySQLDb(AsyncBaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        group_by: Literal["session", "agent", "team", "workflow", "endpoint"] = "session",
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 
@@ -3014,12 +3067,19 @@ class AsyncMySQLDb(AsyncBaseDb):
             end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
+            group_by: Only the default "session" grouping is supported by this backend.
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
                 Each dict contains: session_id, user_id, agent_id, team_id, total_traces,
                 workflow_id, first_trace_at, last_trace_at.
         """
+        if group_by != "session":
+            raise NotImplementedError(
+                f"get_trace_stats with group_by={group_by!r} is not supported by {self.__class__.__name__}. "
+                "Only the default 'session' grouping is available."
+            )
+
         try:
             table = await self._get_table(table_type="traces")
             if table is None:

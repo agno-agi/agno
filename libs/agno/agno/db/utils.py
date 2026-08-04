@@ -8,6 +8,7 @@ from uuid import UUID
 
 from agno.metrics import ModelMetrics, RunMetrics, SessionMetrics
 from agno.models.message import Message
+from agno.run.base import HISTORY_SKIP_STATUSES as _RUN_HISTORY_SKIP_STATUSES
 from agno.utils.log import log_error, log_warning
 
 if TYPE_CHECKING:
@@ -159,6 +160,11 @@ def deserialize_run(run_type: Optional[str], run_data: Dict[str, Any]) -> Any:
     from agno.run.team import TeamRunOutput
     from agno.run.workflow import WorkflowRunOutput
 
+    # Some JSON columns (MySQL/SingleStore drivers, SQLite TEXT) hand back the
+    # payload as a str rather than a dict; normalize before dispatching.
+    if isinstance(run_data, str):
+        run_data = json.loads(run_data)
+
     if run_type is None:
         run_type = get_run_type(run_data)
     if run_type == "agent":
@@ -260,6 +266,33 @@ def build_single_run_row(
         "created_at": run_data.get("created_at") or current_time,
         "updated_at": current_time,
     }
+
+
+# Run statuses (as stored string values) excluded from context/history reads.
+# Derived from the single source of truth in ``agno.run.base`` so a DB-side
+# "most recent N runs" fetch returns the same runs the in-memory history builder
+# (``get_messages``) would — it filters these out *before* slicing the last N.
+HISTORY_SKIP_STATUSES: List[str] = [status.value for status in _RUN_HISTORY_SKIP_STATUSES]
+
+
+def filter_context_runs(runs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Keep only top-level, context-relevant runs from a list of run dicts.
+
+    Drops member sub-runs (``parent_run_id`` set) and terminal-skip statuses,
+    mirroring the pre-slice filtering in ``get_messages``. Used on the
+    un-migrated / legacy-blob read path so slicing to "most recent N" yields the
+    same window as the fully-migrated (SQL-filtered) path.
+    """
+    kept: List[Dict[str, Any]] = []
+    for run in runs:
+        if not isinstance(run, dict):
+            continue
+        if run.get("parent_run_id") is not None:
+            continue
+        if run.get("status") in HISTORY_SKIP_STATUSES:
+            continue
+        kept.append(run)
+    return kept
 
 
 def merge_runs_table_with_legacy_blob(
@@ -422,6 +455,68 @@ def get_sort_value(record: Dict[str, Any], sort_by: str) -> Any:
     if value is None and sort_by == "updated_at":
         value = record.get("created_at")
     return value
+
+
+def learning_search_patterns(query: str) -> List[str]:
+    """Build the ILIKE patterns for a learnings text search.
+
+    Three properties, each load-bearing:
+
+    - The stored content mixes display names ("Sarah Chen") with slugs
+      ("sarah_chen"), so runs of spaces and underscores in the query become the
+      single-char LIKE wildcard ``_`` - one pattern crosses both forms.
+    - ``%`` and ``\\`` in the query are escaped (callers pass the pattern with
+      ``escape="\\\\"``), so a model-authored query containing ``%`` cannot
+      collapse search into match-everything-by-recency.
+    - SQLite stores JSON with ``ensure_ascii`` escapes (``café`` is stored as
+      ``caf\\u00e9``), so a non-ASCII query also gets its JSON-escaped variant;
+      on Postgres, where ``::text`` renders real characters, that extra pattern
+      simply never matches.
+
+    A query with no content beyond wildcards and whitespace yields no patterns.
+
+    Args:
+        query: The text to search for.
+
+    Returns:
+        Deduplicated '%...%' patterns to OR together with ILIKE (escape '\\').
+    """
+    import re
+
+    stripped = query.strip()
+    if not re.sub(r"[%_\s]+", "", stripped):
+        return []
+
+    variants = [stripped]
+    # SQLite stores JSON with ensure_ascii escapes, and LIKE folds ASCII only,
+    # so an escape sequence never case-matches: a stored "Ος" is unreachable
+    # from "ΟΣ", "ος" or "οσ". No set of pre-cased whole-string variants covers
+    # the mixed forms, so the escape carries a wildcard per character instead -
+    # \\uXXXX is six characters wide - and the caller's value-scoped Python
+    # check (which casefolds) rejects whatever that lets through. Loose
+    # prefilter, precise verification, which is what this pair is for.
+    #
+    # The wildcards are carried as a sentinel until after the separator
+    # collapse below, which would otherwise fold a run of them into one.
+    wildcard = "\x00"
+    json_form = json.dumps(stripped, ensure_ascii=True)[1:-1]
+    if json_form != stripped:
+        variants.append(re.sub(r"\\u[0-9a-fA-F]{4}", wildcard * 6, json_form))
+
+    patterns: List[str] = []
+    for variant in variants:
+        escaped = variant.replace("\\", "\\\\").replace("%", "\\%")
+        # Runs of separators collapse to the single-char wildcard, so one
+        # pattern crosses the display-name/slug boundary in both directions
+        # ("sarah chen", "sarah_chen", "sarah__chen"). The hyphen is one of
+        # them: without it "multi-tenant" could never reach a stored "multi
+        # tenant", and the client-side verifier - which does fold hyphens -
+        # was already accepting what this pattern refused to fetch.
+        crossed = re.sub(r"[\s_\-]+", "_", escaped).replace(wildcard, "_")
+        pattern = f"%{crossed}%"
+        if pattern not in patterns:
+            patterns.append(pattern)
+    return patterns
 
 
 class CustomJSONEncoder(json.JSONEncoder):

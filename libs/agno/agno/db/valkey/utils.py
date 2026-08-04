@@ -74,6 +74,11 @@ def get_all_keys_for_table(valkey_client: "AnyValkeyClient", prefix: str, table_
     pattern = f"{prefix}:{table_type}:*"
     relevant_keys: List[str] = []
 
+    # Helper namespaces, matched by prefix so a record id that merely contains one
+    # of these markers is not dropped from the results
+    index_prefix = f"{prefix}:{table_type}:index:"
+    runs_by_session_prefix = f"{prefix}:runs:by_session:"
+
     if isinstance(valkey_client, ValkeyClusterClient):
         # Cluster client uses ClusterScanCursor with .is_finished()
         cluster_cursor = ClusterScanCursor()
@@ -84,7 +89,11 @@ def get_all_keys_for_table(valkey_client: "AnyValkeyClient", prefix: str, table_
             cluster_keys = cast(List[bytes], scan_result[1])
             for key in cluster_keys:
                 key_str = _decode_value(key)
-                if ":index:" in key_str:
+                if key_str.startswith(index_prefix):
+                    continue
+                # Skip helper indexes maintained by the v3+ runs collection
+                # (e.g. `<prefix>:runs:by_session:<session_id>` sorted-set indexes)
+                if key_str.startswith(runs_by_session_prefix):
                     continue
                 relevant_keys.append(key_str)
     else:
@@ -99,7 +108,11 @@ def get_all_keys_for_table(valkey_client: "AnyValkeyClient", prefix: str, table_
 
             for key in scan_keys:
                 key_str = _decode_value(key)
-                if ":index:" in key_str:
+                if key_str.startswith(index_prefix):
+                    continue
+                # Skip helper indexes maintained by the v3+ runs collection
+                # (e.g. `<prefix>:runs:by_session:<session_id>` sorted-set indexes)
+                if key_str.startswith(runs_by_session_prefix):
                     continue
                 relevant_keys.append(key_str)
 

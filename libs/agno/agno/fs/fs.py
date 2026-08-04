@@ -1,9 +1,9 @@
 """FileSystem: a durable, private filesystem for agents.
 
 To the agent it looks exactly like a normal filesystem toolkit; underneath it is
-a pluggable ``BaseFS`` backend, database by default. Use it for the agent's
-own working state: records of items already processed, decisions, progress
-checkpoints.
+a pluggable ``BaseFS`` backend, database by default. Use it for the agent's own
+durable notes: decisions with their reasoning, running documents, working state
+it will need again.
 
 Attach the tools, and compose its instructions into your own:
 
@@ -47,40 +47,35 @@ backend with no namespace share this one store, which is the intended behavior
 but is rarely what a multi-tenant app wants (see the templated namespaces above).
 """
 
-_DEFAULT_INSTRUCTIONS = """You have your own private, durable filesystem you can use to persist files across \
-sessions and runs. Use it for your working state: records of items you have processed, decisions, progress \
-checkpoints, notes to your future self.
-
-For storing facts and memories about the user, prefer the user memory if provided and fallback to the \
-filesystem if not.
+_DEFAULT_INSTRUCTIONS = """You have your own private, durable filesystem for notes that persist across \
+sessions and runs. Use it to write, maintain and re-read prose that matters later: decisions with their \
+reasoning, running documents on a topic, notes to your future self.
 
 Conventions:
-  - Paths are relative, like notes/decisions.md or seen/2026-07-24.md. Group related files in directories.
-  - To keep a record set (items already processed): store one record per line in the seen/ directory, one \
-file per date (seen/2026-07-24.md). Call check_lines(lines, directory="seen") BEFORE acting, then record the \
-new ones with append_file(..., unique=True). check_lines matches exact whole lines, and unique=True keeps \
-the log free of duplicates if a run overlaps another one.
+  - Paths are relative, like notes/decisions.md. Group related files in directories.
+  - One topic, one file. Add dated entries as things develop; a note is a living document you maintain, not \
+a log you only append to.
   - To correct or update part of a file, read it, then call replace_lines with the line numbers you saw. \
-Rewriting a whole file with write_file to change a few lines wastes effort and risks losing the rest.
-  - To find something in a large file, use search_content first: it reports the line number of each match, \
-which you can pass to read_file as start_line.
-  - Store extracted facts and identifiers, not raw fetched payloads.
+Never append a contradiction of what a note already says: fix the wording in place, in the same turn you \
+learn it was wrong.
+  - To find something, use search_content first: it reports the file and first-match line, which you can \
+pass to read_file as start_line. Then answer from what the note says, not from memory.
+  - To retire a note that is no longer current, move_file it into an archive/ directory. Do not blank it and \
+do not overwrite it: its history may still be needed.
+  - Store distilled content, not raw fetched payloads.
   - Never store secrets, passwords, or API keys.
-  - Files have size limits. If a write is refused, start a new file in your partition scheme (e.g. a new \
-dated file), or delete only files you are certain are obsolete, like a date partition older than you still \
-need. Never overwrite or delete a file of records to make room if you might still need those records: \
-dropping them means you will repeat work you already did. If nothing is safely disposable, stop and report \
-that storage is full rather than evicting history."""
+  - Files have size limits. If a write is refused, split the topic into smaller files or archive what is \
+finished. Never overwrite a note to make room if you might still need it."""
 
 _READ_ONLY_INSTRUCTIONS = """You have read access to a durable filesystem. The files persist across sessions \
 and runs.
 
-Use it to look up what you have recorded: items you have processed, decisions you made, notes you left. You \
-cannot change these files - you have no tool to write, append, move, or delete.
+Use it to look up what has been recorded: decisions, running documents, notes. You cannot change these \
+files - you have no tool to write, append, move, or delete.
 
 Conventions:
-  - Paths are relative, like notes/decisions.md or seen/2026-07-24.md.
-  - Use check_lines to see what is already recorded before acting."""
+  - Paths are relative, like notes/decisions.md.
+  - Use search_content to find where something is recorded, then read_file to read it."""
 
 
 def _as_backend(source: Any) -> BaseFS:
@@ -445,7 +440,7 @@ class FileSystem:
     # Agent surface
     # ------------------------------------------------------------------
 
-    def tools(self, *, read_only: bool = False, **kwargs) -> "Toolkit":
+    def tools(self, *, read_only: bool = False, allow_delete: bool = False, **kwargs) -> "Toolkit":
         """Build the toolkit for this file store.
 
         ``Agent(tools=[fs.tools()], instructions=[..., fs.instructions()])`` is the
@@ -453,16 +448,23 @@ class FileSystem:
         system prompt stays the developer's to order and edit. Pass
         ``add_instructions=True`` to have the toolkit carry them instead.
 
-        ``read_only=True`` registers only ``read_file``, ``list_files``,
-        ``search_content`` and ``check_lines``; pair it with
-        ``instructions(read_only=True)``. That is the surface for a consumer agent
-        that consults another agent's namespace by shared name. ``**kwargs``
-        forwards to ``Toolkit`` (e.g. ``include_tools``,
-        ``requires_confirmation_tools``).
+        The default surface is the notes seven: ``read_file``, ``write_file``,
+        ``append_file``, ``replace_lines``, ``list_files``, ``search_content``,
+        ``move_file``. ``allow_delete=True`` adds ``delete_file`` - destructive
+        is opt-in; archiving with ``move_file`` is the blessed retirement flow.
+        ``check_lines`` (the batched record-set membership test feed agents use)
+        is requested by name via ``include_tools``, which selects from the whole
+        surface when passed.
+
+        ``read_only=True`` registers only ``read_file``, ``list_files`` and
+        ``search_content``; pair it with ``instructions(read_only=True)``. That
+        is the surface for a consumer agent that consults another agent's
+        namespace by shared name. ``**kwargs`` forwards to ``Toolkit`` (e.g.
+        ``include_tools``, ``requires_confirmation_tools``).
         """
         from agno.fs.toolkit import FileSystemTools
 
-        return FileSystemTools(fs=self, read_only=read_only, **kwargs)
+        return FileSystemTools(fs=self, read_only=read_only, allow_delete=allow_delete, **kwargs)
 
     @staticmethod
     def instructions(read_only: bool = False) -> str:

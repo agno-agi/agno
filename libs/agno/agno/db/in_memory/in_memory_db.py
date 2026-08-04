@@ -1,7 +1,7 @@
 import time
 from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
 from uuid import uuid4
 
 from agno.db.base import BaseDb, SessionType
@@ -17,7 +17,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.utils import deserialize_session, deserialize_sessions
+from agno.db.utils import deserialize_session, deserialize_sessions, filter_context_runs
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
@@ -116,6 +116,7 @@ class InMemoryDb(BaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession, Dict[str, Any]]]:
         """Read a session from in-memory storage.
 
@@ -140,6 +141,13 @@ class InMemoryDb(BaseDb):
                         continue
 
                     session_data_copy = deepcopy(session_data)
+
+                    if runs_limit is not None:
+                        # No query engine to push "last N" down: filter+slice in memory to
+                        # match the SQL fast path (drop member/skip-status runs, then last N).
+                        session_data_copy["runs"] = filter_context_runs(session_data_copy.get("runs") or [])[
+                            -runs_limit:
+                        ]
 
                     if not deserialize:
                         return session_data_copy
@@ -168,6 +176,7 @@ class InMemoryDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """Get all sessions from in-memory storage with filtering and pagination.
 
@@ -238,6 +247,12 @@ class InMemoryDb(BaseDb):
                 if page is not None:
                     start_idx = (page - 1) * limit
                 filtered_sessions = filtered_sessions[start_idx : start_idx + limit]
+
+            if not include_runs:
+                # List views don't need run history; leave it unattached (deepcopy above,
+                # so the stored session keeps its runs).
+                for s in filtered_sessions:
+                    s["runs"] = None
 
             if not deserialize:
                 return filtered_sessions, total_count
@@ -1435,6 +1450,7 @@ class InMemoryDb(BaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        group_by: Literal["session", "agent", "team", "workflow", "endpoint"] = "session",
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 
@@ -1447,12 +1463,18 @@ class InMemoryDb(BaseDb):
             end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
+            group_by: Only the default "session" grouping is supported by this backend.
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
                 Each dict contains: session_id, user_id, agent_id, team_id, workflow_id, total_traces,
                 first_trace_at, last_trace_at.
         """
+        if group_by != "session":
+            raise NotImplementedError(
+                f"get_trace_stats with group_by={group_by!r} is not supported by {self.__class__.__name__}. "
+                "Only the default 'session' grouping is available."
+            )
         raise NotImplementedError
 
     # --- Spans ---

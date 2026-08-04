@@ -1,6 +1,6 @@
 from datetime import date, datetime, timedelta, timezone
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
 
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
@@ -44,10 +44,12 @@ from agno.db.surrealdb.models import (
 from agno.db.surrealdb.queries import COUNT_QUERY, WhereClause, order_limit_start
 from agno.db.surrealdb.utils import build_client
 from agno.db.utils import (
+    HISTORY_SKIP_STATUSES,
     build_single_run_row,
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
+    filter_context_runs,
     merge_runs_table_with_legacy_blob,
 )
 from agno.run.agent import RunOutput
@@ -256,14 +258,36 @@ class SurrealDb(BaseDb):
 
     # --- Runs ---
 
-    def _get_session_runs_data(self, session_id: str) -> List[Dict[str, Any]]:
-        """Return raw run_data dicts for a session, ordered by run_index then created_at."""
+    def _get_session_runs_data(self, session_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Return raw run_data dicts for a session, ordered by run_index then created_at.
+
+        When ``limit`` is set, push the "most recent N context-relevant runs" filter
+        down to the DB: drop member sub-runs (``parent_run_id`` set), drop terminal-skip
+        statuses, order newest-first and take ``limit`` rows, then reverse back to
+        chronological order. SurrealDB uses ``IS NONE`` for null checks (not ``IS NULL``),
+        and the ``status IS NONE OR`` guard keeps runs with no status from being dropped
+        by ``NOT IN $skip``.
+        """
         try:
             runs_table = self._get_table("runs", create_table_if_not_found=False)
         except Exception:
             return []
+        if limit is not None:
+            rows_raw = self._query(
+                f"SELECT *, run_index ?? 0 AS _ri, created_at ?? 0 AS _ca FROM {runs_table} "
+                "WHERE session_id = $sid "
+                "AND parent_run_id IS NONE AND (status IS NONE OR status NOT IN $skip) "
+                "ORDER BY _ri DESC, _ca DESC LIMIT $lim",
+                {"sid": session_id, "skip": HISTORY_SKIP_STATUSES, "lim": limit},
+                dict,
+            )
+            rows = [desurrealize_run_row(r) for r in rows_raw]
+            run_data = [r["run_data"] for r in rows if "run_data" in r]
+            run_data.reverse()
+            return run_data
         rows_raw = self._query(
-            f"SELECT * FROM {runs_table} WHERE session_id = $sid ORDER BY run_index ASC, created_at ASC",
+            f"SELECT *, run_index ?? 0 AS _ri, created_at ?? 0 AS _ca FROM {runs_table} "
+            "WHERE session_id = $sid ORDER BY _ri ASC, _ca ASC",
             {"sid": session_id},
             dict,
         )
@@ -541,6 +565,7 @@ class SurrealDb(BaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         r"""
         Read a session from the database.
@@ -578,10 +603,21 @@ class SurrealDb(BaseDb):
 
         desurrealized = desurrealize_session(raw)
 
-        # Attach runs from the runs table, merged with any legacy `runs` blob
+        # Attach runs from the runs table, merged with any legacy `runs` blob.
         try:
-            runs_data = self._get_session_runs_data(session_id)
-            desurrealized["runs"] = merge_runs_table_with_legacy_blob(runs_data, desurrealized.get("runs"))
+            legacy_runs = desurrealized.get("runs")
+            if runs_limit is not None and not legacy_runs:
+                # Fully migrated: push "most recent N" down to the DB (indexed).
+                desurrealized["runs"] = self._get_session_runs_data(session_id, limit=runs_limit)
+            else:
+                # Full load + merge. Also the un-migrated fallback: the legacy blob
+                # holds the whole history in one column, so "last N" can't be pushed
+                # to SQL — load all, merge, then filter+slice to match the migrated path.
+                runs_data = self._get_session_runs_data(session_id)
+                merged = merge_runs_table_with_legacy_blob(runs_data, legacy_runs)
+                if runs_limit is not None:
+                    merged = filter_context_runs(merged)[-runs_limit:]
+                desurrealized["runs"] = merged
         except Exception as e:
             log_error(f"Failed to load runs for session {session_id}: {str(e)}")
 
@@ -803,19 +839,30 @@ class SurrealDb(BaseDb):
         table = self._get_table("sessions")
 
         existing = self.client.query(
-            f"SELECT user_id FROM {table} WHERE id = $record",
+            f"SELECT user_id, runs FROM {table} WHERE id = $record",
             {"record": RecordID(table, session.session_id)},
         )
+        legacy_runs: Any = None
         if isinstance(existing, list) and len(existing) > 0:
-            existing_uid = existing[0].get("user_id") if isinstance(existing[0], dict) else None
+            existing_row = existing[0] if isinstance(existing[0], dict) else {}
+            existing_uid = existing_row.get("user_id")
             if existing_uid is not None and existing_uid != session.user_id:
                 return None
+            # Carry legacy `runs` blob forward: UPSERT CONTENT replaces the whole
+            # record, and serialize_session(include_runs=False) omits `runs`, so
+            # bare upsert would silently erase pre-v3 history that only lives in
+            # the legacy blob (upgrade-without-migration data loss).
+            legacy_runs = existing_row.get("runs")
+
+        content = serialize_session(session, self.table_names, include_runs=False)
+        if legacy_runs is not None:
+            content["runs"] = legacy_runs
 
         session_raw = self._query_one(
             "UPSERT ONLY $record CONTENT $content",
             {
                 "record": RecordID(table, session.session_id),
-                "content": serialize_session(session, self.table_names, include_runs=False),
+                "content": content,
             },
             dict,
         )
@@ -853,12 +900,27 @@ class SurrealDb(BaseDb):
         table = self._get_table("sessions")
         sessions_raw: List[Dict[str, Any]] = []
         for session in sessions:
-            # UPSERT does only work for one record at a time
+            # UPSERT does only work for one record at a time. Read the existing
+            # `runs` blob first so we can carry it forward -- otherwise UPSERT
+            # CONTENT would wipe any pre-v3 history on the row (see the
+            # single-record upsert_session above for the full rationale).
+            existing = self.client.query(
+                f"SELECT runs FROM {table} WHERE id = $record",
+                {"record": RecordID(table, session.session_id)},
+            )
+            legacy_runs: Any = None
+            if isinstance(existing, list) and len(existing) > 0 and isinstance(existing[0], dict):
+                legacy_runs = existing[0].get("runs")
+
+            content = serialize_session(session, self.table_names, include_runs=False)
+            if legacy_runs is not None:
+                content["runs"] = legacy_runs
+
             session_raw = self._query_one(
                 "UPSERT ONLY $record CONTENT $content",
                 {
                     "record": RecordID(table, session.session_id),
-                    "content": serialize_session(session, self.table_names, include_runs=False),
+                    "content": content,
                 },
                 dict,
             )
@@ -2050,6 +2112,7 @@ class SurrealDb(BaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        group_by: Literal["session", "agent", "team", "workflow", "endpoint"] = "session",
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 
@@ -2062,12 +2125,19 @@ class SurrealDb(BaseDb):
             end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
+            group_by: Only the default "session" grouping is supported by this backend.
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
                 Each dict contains: session_id, user_id, agent_id, team_id, workflow_id, total_traces,
                 first_trace_at, last_trace_at.
         """
+        if group_by != "session":
+            raise NotImplementedError(
+                f"get_trace_stats with group_by={group_by!r} is not supported by {self.__class__.__name__}. "
+                "Only the default 'session' grouping is available."
+            )
+
         try:
             table = self._get_table("traces", create_table_if_not_found=False)
 

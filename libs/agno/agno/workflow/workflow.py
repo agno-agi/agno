@@ -1618,34 +1618,34 @@ class Workflow:
 
     # -*- Session Database Functions
     async def _aread_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[WorkflowSession]:
-        """Get a Session from the database."""
-        try:
-            if not self.db:
-                raise ValueError("Db not initialized")
-            if self._has_async_db():
-                session = await self.db.get_session(
-                    session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id
-                )  # type: ignore
-            else:
-                session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id)
-            return session if isinstance(session, (WorkflowSession, type(None))) else None
-        except Exception as e:
-            log_warning(f"Error getting session from db: {str(e)}")
-            return None
+        """Get a Session from the database.
+
+        Read errors propagate. Do NOT coerce failures to None here: an empty result
+        is indistinguishable from "row does not exist", and the caller will happily
+        create a fresh session with the same id and overwrite the real row on the
+        next write. This is how a transient Postgres failover wiped six weeks of
+        conversation history in a real incident. Let the exception surface and
+        fail the run loudly -- a failed run is recoverable, a wiped session is not.
+        """
+        if not self.db:
+            raise ValueError("Db not initialized")
+        if self._has_async_db():
+            session = await self.db.get_session(
+                session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id
+            )  # type: ignore
+        else:
+            session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id)
+        return session if isinstance(session, (WorkflowSession, type(None))) else None
 
     def _read_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[WorkflowSession]:
-        """Get a Session from the database."""
+        """Sync twin of :meth:`_aread_session`. Same rationale: do NOT swallow errors."""
         if self._has_async_db():
             raise ValueError("Cannot use sync _read_session() with an async database. Use _aread_session() instead.")
 
-        try:
-            if not self.db:
-                raise ValueError("Db not initialized")
-            session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id)
-            return session if isinstance(session, (WorkflowSession, type(None))) else None
-        except Exception as e:
-            log_warning(f"Error getting session from db: {str(e)}")
-            return None
+        if not self.db:
+            raise ValueError("Db not initialized")
+        session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id)
+        return session if isinstance(session, (WorkflowSession, type(None))) else None
 
     async def _aupsert_session(self, session: WorkflowSession) -> Optional[WorkflowSession]:
         """Upsert a Session into the database."""
@@ -1802,6 +1802,54 @@ class Workflow:
             user_id=session.user_id,
             run_index=run_index,
         )
+
+    def _persist_errored_run_stream(self, session: WorkflowSession, run: "WorkflowRunOutput") -> None:
+        """Persist an errored streaming run and finish its terminal bookkeeping.
+
+        Foreground streaming re-raises step exceptions past the fall-through
+        terminal persist, so without this the ERROR run would never reach the
+        runs store (breaking ``get_run``/history and ``/resume`` after a
+        restart). Mirrors the cancelled branch. Guarded so a persistence
+        failure never masks the original exception being re-raised.
+        """
+        if run.metrics:
+            run.metrics.stop_timer()
+        try:
+            self._update_session_metrics(session=session, workflow_run_response=run)
+            session.upsert_run(run=run)
+            self._persist_session_and_run(session=session, run=run)
+        except Exception as store_err:
+            log_warning(f"Failed to persist errored run: {store_err}")
+        cleanup_run(run.run_id)  # type: ignore
+        cleanup_member_runs(run.run_id)  # type: ignore
+        try:
+            from agno.os.managers import event_buffer
+
+            event_buffer.set_run_completed(run.run_id, run.status or RunStatus.error)  # type: ignore
+        except Exception as buffer_err:
+            log_debug(f"Failed to mark run as completed in buffer: {buffer_err}")
+
+    async def _apersist_errored_run_stream(self, session: WorkflowSession, run: "WorkflowRunOutput") -> None:
+        """Async variant of ``_persist_errored_run_stream``."""
+        if run.metrics:
+            run.metrics.stop_timer()
+        try:
+            self._update_session_metrics(session=session, workflow_run_response=run)
+            session.upsert_run(run=run)
+            if self._has_async_db():
+                await self._apersist_session_and_run(session=session, run=run)
+            else:
+                self._persist_session_and_run(session=session, run=run)
+        except Exception as store_err:
+            log_warning(f"Failed to persist errored run: {store_err}")
+        await acleanup_run(run.run_id)  # type: ignore
+        await acleanup_member_runs(run.run_id)  # type: ignore
+        try:
+            from agno.os.managers import event_buffer
+
+            event_buffer.set_run_completed(run.run_id, run.status or RunStatus.error)  # type: ignore
+        except Exception as buffer_err:
+            log_debug(f"Failed to mark run as completed in buffer: {buffer_err}")
 
     def _update_metadata(self, session: WorkflowSession):
         """Update the extra_data in the session"""
@@ -2677,6 +2725,27 @@ class Workflow:
                 if self.telemetry:
                     self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
                 return
+            except Exception as e:
+                logger.exception("Workflow execution failed")
+
+                from agno.run.workflow import WorkflowErrorEvent
+
+                error_event = WorkflowErrorEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    workflow_id=self.id,
+                    workflow_name=self.name,
+                    session_id=session.session_id,
+                    error=str(e),
+                )
+                yield error_event
+
+                # Update workflow_run_response with error
+                workflow_run_response.content = error_event.error
+                workflow_run_response.status = RunStatus.error
+
+                # Persist the ERROR run before re-raising so it is not lost.
+                self._persist_errored_run_stream(session=session, run=workflow_run_response)
+                raise e
 
         else:
             try:
@@ -3149,6 +3218,9 @@ class Workflow:
                 # Update workflow_run_response with error
                 workflow_run_response.content = error_event.error
                 workflow_run_response.status = RunStatus.error
+
+                # Persist the ERROR run before re-raising so it is not lost.
+                self._persist_errored_run_stream(session=session, run=workflow_run_response)
                 raise e
 
         # Yield workflow completed event
@@ -3738,6 +3810,27 @@ class Workflow:
                         session_id=workflow_session.session_id, run_id=workflow_run_response.run_id
                     )
                 return
+            except Exception as e:
+                logger.exception("Workflow execution failed")
+
+                from agno.run.workflow import WorkflowErrorEvent
+
+                error_event = WorkflowErrorEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    workflow_id=self.id,
+                    workflow_name=self.name,
+                    session_id=session_id,
+                    error=str(e),
+                )
+                yield error_event
+
+                # Update workflow_run_response with error
+                workflow_run_response.content = error_event.error
+                workflow_run_response.status = RunStatus.error
+
+                # Persist the ERROR run before re-raising so it is not lost.
+                await self._apersist_errored_run_stream(session=workflow_session, run=workflow_run_response)
+                raise e
 
         else:
             try:
@@ -4261,6 +4354,9 @@ class Workflow:
                 # Update workflow_run_response with error
                 workflow_run_response.content = error_event.error
                 workflow_run_response.status = RunStatus.error
+
+                # Persist the ERROR run before re-raising so it is not lost.
+                await self._apersist_errored_run_stream(session=workflow_session, run=workflow_run_response)
                 raise e
 
         # Yield workflow completed event

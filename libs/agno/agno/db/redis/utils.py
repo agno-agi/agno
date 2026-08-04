@@ -67,14 +67,19 @@ def get_all_keys_for_table(redis_client: Union[Redis, RedisCluster], prefix: str
     all_keys = redis_client.scan_iter(match=pattern)
     relevant_keys = []
 
+    # Helper namespaces, matched by prefix so a record id that merely contains one
+    # of these markers is not dropped from the results
+    index_prefix = f"{prefix}:{table_type}:index:"
+    runs_by_session_prefix = f"{prefix}:runs:by_session:"
+
     for key in all_keys:
         # Coerce bytes -> str for substring checks (decode_responses may not be set)
         key_str = key.decode() if isinstance(key, (bytes, bytearray)) else key
-        if ":index:" in key_str:  # Skip index keys
+        if key_str.startswith(index_prefix):  # Skip index keys
             continue
         # Skip helper indexes maintained by the v3+ runs collection
         # (e.g. `<prefix>:runs:by_session:<session_id>` sorted-set indexes)
-        if ":by_session:" in key_str:
+        if key_str.startswith(runs_by_session_prefix):
             continue
         relevant_keys.append(key)
 

@@ -1,6 +1,6 @@
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -32,6 +32,7 @@ from agno.db.utils import (
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
+    filter_context_runs,
     merge_runs_table_with_legacy_blob,
 )
 from agno.run.agent import RunOutput
@@ -660,6 +661,7 @@ class RedisDb(BaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Read a session from Redis.
 
@@ -686,6 +688,9 @@ class RedisDb(BaseDb):
             # Attach runs from the runs keys, merged with any legacy `runs` blob
             runs_data = self._get_session_runs_data(session_id)
             session["runs"] = merge_runs_table_with_legacy_blob(runs_data, session.get("runs"))
+
+            if runs_limit is not None:
+                session["runs"] = filter_context_runs(session.get("runs") or [])[-runs_limit:]
 
             if not deserialize:
                 return session
@@ -924,6 +929,13 @@ class RedisDb(BaseDb):
                 index_fields = ["user_id", "workflow_id", "session_type"]
             else:
                 raise ValueError(f"Invalid session type: {session.session_type}")
+
+            # Preserve the legacy `runs` field as a frozen backup. _store_record replaces
+            # the whole record, so carry any existing legacy blob forward; runs now live in
+            # their own keys. Only cleanup_legacy_runs_field() reclaims it. Dropping it here
+            # would lose history for sessions not yet migrated.
+            if existing and existing.get("runs") is not None:
+                data["runs"] = existing["runs"]
 
             success = self._store_record(
                 table_type="sessions",
@@ -2299,6 +2311,7 @@ class RedisDb(BaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        group_by: Literal["session", "agent", "team", "workflow", "endpoint"] = "session",
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 
@@ -2311,12 +2324,19 @@ class RedisDb(BaseDb):
             end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
+            group_by: Only the default "session" grouping is supported by this backend.
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
                 Each dict contains: session_id, user_id, agent_id, team_id, total_traces,
                 first_trace_at, last_trace_at.
         """
+        if group_by != "session":
+            raise NotImplementedError(
+                f"get_trace_stats with group_by={group_by!r} is not supported by {self.__class__.__name__}. "
+                "Only the default 'session' grouping is available."
+            )
+
         try:
             log_debug(
                 f"get_trace_stats called with filters: user_id={user_id}, agent_id={agent_id}, "

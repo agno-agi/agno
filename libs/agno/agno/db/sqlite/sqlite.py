@@ -2,7 +2,7 @@ import json
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Set, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union, cast
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -46,6 +46,9 @@ from agno.db.utils import (
     deserialize_session,
     deserialize_session_json_fields,
     deserialize_sessions,
+    learning_search_patterns,
+    HISTORY_SKIP_STATUSES,
+    filter_context_runs,
     merge_runs_table_with_legacy_blob,
     serialize_session_json_fields,
     validate_pagination,
@@ -59,7 +62,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import Column, MetaData, String, Table, func, null, or_, select, text
+    from sqlalchemy import Column, MetaData, String, Table, func, or_, select, text
     from sqlalchemy.dialects import sqlite
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
@@ -209,6 +212,8 @@ class SqliteDb(BaseDb):
 
         # Initialize database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
+        # Zero means never refreshed; get_metrics uses this to refresh lazily, at most once per minute
+        self._metrics_refreshed_at: float = 0.0
 
     # -- Serialization methods --
     def to_dict(self) -> Dict[str, Any]:
@@ -818,12 +823,40 @@ class SqliteDb(BaseDb):
             return True
 
     # -- Run methods --
-    def _get_session_runs_data(self, sess, runs_table: Table, session_id: str) -> List[Dict[str, Any]]:
-        """Get the raw run_data dicts for the given session, in insertion order."""
+    def _get_session_runs_data(
+        self, sess, runs_table: Table, session_id: str, limit: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Get the raw run_data dicts for the given session, in insertion order.
+
+        When ``limit`` is set, only the most recent ``limit`` context-relevant runs
+        are fetched (indexed ``ORDER BY run_index DESC LIMIT``) and returned in
+        ascending (chronological) order. "Context-relevant" mirrors the pre-slice
+        filtering in ``get_messages``: member sub-runs (``parent_run_id`` set) and
+        terminal-skip statuses are excluded in SQL, so the DB-side last-N matches
+        the in-memory history window.
+        """
+        if limit is not None:
+            stmt = (
+                select(runs_table.c.run_data)
+                .where(runs_table.c.session_id == session_id)
+                .where(runs_table.c.parent_run_id.is_(None))
+                .where(or_(runs_table.c.status.is_(None), runs_table.c.status.notin_(HISTORY_SKIP_STATUSES)))
+                .order_by(
+                    func.coalesce(runs_table.c.run_index, 0).desc(),
+                    func.coalesce(runs_table.c.created_at, 0).desc(),
+                )
+                .limit(limit)
+            )
+            rows = [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in sess.execute(stmt).fetchall()]
+            rows.reverse()
+            return rows
         stmt = (
             select(runs_table.c.run_data)
             .where(runs_table.c.session_id == session_id)
-            .order_by(runs_table.c.run_index.asc(), runs_table.c.created_at.asc())
+            .order_by(
+                func.coalesce(runs_table.c.run_index, 0).asc(),
+                func.coalesce(runs_table.c.created_at, 0).asc(),
+            )
         )
         return [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in sess.execute(stmt).fetchall()]
 
@@ -1147,6 +1180,7 @@ class SqliteDb(BaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Read a session from the database.
@@ -1156,6 +1190,11 @@ class SqliteDb(BaseDb):
             session_type (SessionType): Type of session to get.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            runs_limit (Optional[int]): If set, attach only the most recent ``runs_limit``
+                runs instead of the full history. For a fully-migrated session this is an
+                indexed ``ORDER BY run_index DESC LIMIT`` query; for a session that still
+                carries a legacy ``runs`` blob it falls back to a full load + merge, then
+                slices, so no history is ever lost.
 
         Returns:
             Optional[Union[Session, Dict[str, Any]]]:
@@ -1187,9 +1226,26 @@ class SqliteDb(BaseDb):
                 # Attach the runs stored in the runs table, merged with any runs still
                 # sitting in the legacy `runs` column (so partially-migrated sessions
                 # don't silently lose history).
-                if session_raw is not None and runs_table is not None:
-                    runs_data = self._get_session_runs_data(sess=sess, runs_table=runs_table, session_id=session_id)
-                    session_raw["runs"] = merge_runs_table_with_legacy_blob(runs_data, session_raw.get("runs"))
+                if session_raw is not None:
+                    legacy_runs = session_raw.get("runs")
+                    if runs_table is not None and runs_limit is not None and not legacy_runs:
+                        # Fully migrated: push "most recent N" down to the DB (indexed).
+                        session_raw["runs"] = self._get_session_runs_data(
+                            sess=sess, runs_table=runs_table, session_id=session_id, limit=runs_limit
+                        )
+                    elif runs_table is not None:
+                        # Full load + merge. Also the un-migrated fallback: the legacy blob
+                        # holds the whole history in one column, so "last N" can't be pushed
+                        # to SQL — load all, merge, then filter+slice to match the migrated path.
+                        runs_data = self._get_session_runs_data(sess=sess, runs_table=runs_table, session_id=session_id)
+                        merged = merge_runs_table_with_legacy_blob(runs_data, legacy_runs)
+                        if runs_limit is not None:
+                            merged = filter_context_runs(merged)[-runs_limit:]
+                        session_raw["runs"] = merged
+                    elif runs_limit is not None:
+                        # No runs table yet (fully un-migrated): filter+slice the legacy blob.
+                        merged = merge_runs_table_with_legacy_blob([], legacy_runs)
+                        session_raw["runs"] = filter_context_runs(merged)[-runs_limit:]
 
                 if not session_raw or not deserialize:
                     return session_raw
@@ -1213,9 +1269,15 @@ class SqliteDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """
         Get all sessions in the given table. Can filter by user_id and entity_id.
+
+        Pass ``include_runs=False`` to skip attaching each session's run history —
+        a large, usually-unnecessary read for list views. The runs are untouched
+        in storage; a single ``get_session`` still returns them. Defaults to True
+        to preserve existing behavior.
         Args:
             session_type (Optional[SessionType]): The type of session to get.
             user_id (Optional[str]): The ID of the user to filter by.
@@ -1294,13 +1356,17 @@ class SqliteDb(BaseDb):
 
                 # Attach the runs stored in the runs table. If a session has no rows in the
                 # runs table, fall back to its legacy `runs` column content, if any.
-                if runs_table is not None and sessions_raw:
+                if include_runs and runs_table is not None and sessions_raw:
                     runs_by_session = self._get_sessions_runs_data(
                         sess=sess, runs_table=runs_table, session_ids=[s["session_id"] for s in sessions_raw]
                     )
                     for s in sessions_raw:
                         runs_data = runs_by_session.get(s["session_id"], [])
                         s["runs"] = merge_runs_table_with_legacy_blob(runs_data, s.get("runs"))
+                elif not include_runs:
+                    # List views don't need run history; leave it unattached (storage untouched).
+                    for s in sessions_raw:
+                        s["runs"] = None
 
                 if not deserialize:
                     return sessions_raw, total_count
@@ -1416,9 +1482,10 @@ class SqliteDb(BaseDb):
                 )
 
             update_values = {k: v for k, v in values.items() if k != "session_type"}
-            # Clear the legacy runs column if it still exists. Runs are stored in the runs table.
-            if "runs" in table.c:
-                update_values["runs"] = null()
+            # The legacy `runs` column is intentionally left untouched here. Runs now
+            # live in the runs table; the legacy column stays as a frozen backup and is
+            # only reclaimed by the explicit cleanup_legacy_runs_column() helper. Nulling
+            # it on write would lose history for sessions not yet migrated to the runs table.
 
             with self.Session() as sess, sess.begin():
                 stmt = sqlite.insert(table).values(
@@ -2301,6 +2368,9 @@ class SqliteDb(BaseDb):
             Exception: If an error occurs during metrics calculation.
         """
         try:
+            # Stamp first so failed runs are throttled too instead of retried on every read
+            self._metrics_refreshed_at = time.time()
+
             table = self._get_table(table_type="metrics", create_table_if_not_found=True)
             if table is None:
                 return None
@@ -2369,6 +2439,9 @@ class SqliteDb(BaseDb):
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
+        Metrics are refreshed lazily, at most once per minute per process, so results
+        stay current even on deployments where nothing calls the refresh endpoint.
+
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
             ending_date (Optional[date]): The ending date to filter metrics by.
@@ -2380,6 +2453,14 @@ class SqliteDb(BaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
+            # Refresh at most once per minute per process: recalculating the current
+            # day scans all of today's sessions, too costly for every read.
+            if time.time() - self._metrics_refreshed_at >= 60:
+                try:
+                    self.calculate_metrics()
+                except Exception as e:
+                    log_warning(f"Could not refresh metrics before reading them: {str(e)}")
+
             table = self._get_table(table_type="metrics", create_table_if_not_found=True)
             if table is None:
                 return [], None
@@ -3139,8 +3220,9 @@ class SqliteDb(BaseDb):
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
         filter_expr: Optional[Dict[str, Any]] = None,
+        group_by: Literal["session", "agent", "team", "workflow", "endpoint"] = "session",
     ) -> tuple[List[Dict[str, Any]], int]:
-        """Get trace statistics grouped by session.
+        """Get trace statistics grouped by session or by component.
 
         Args:
             user_id: Filter by user ID.
@@ -3149,15 +3231,33 @@ class SqliteDb(BaseDb):
             workflow_id: Filter by workflow ID.
             start_time: Filter sessions with traces created after this datetime.
             end_time: Filter sessions with traces created before this datetime.
-            limit: Maximum number of sessions to return per page.
+            limit: Maximum number of groups to return per page.
             page: Page number (1-indexed).
             filter_expr: Advanced filter expression dict (from FilterExpr.to_dict()).
+            group_by: Grouping key. "session" (default) groups by session_id and keeps
+                the original output shape, ordered by last activity. "agent", "team" and
+                "workflow" group by the corresponding component id, add duration and
+                error aggregates, and are ordered by total_traces descending; traces
+                without the grouping id are excluded. "endpoint" groups traces that
+                carry no component id at all (HTTP/MCP entrypoint wrappers) by trace
+                name, with the same aggregates. SQLite has no percentile function,
+                so p95_duration_ms is always None.
 
         Returns:
-            tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
+            tuple[List[Dict], int]: Tuple of (list of stats dicts, total count).
+                With group_by="session", each dict contains: session_id, user_id,
+                agent_id, team_id, workflow_id, total_traces, first_trace_at, last_trace_at.
+                With a component grouping, each dict contains: <group>_id, total_traces,
+                total_sessions, avg_duration_ms, p95_duration_ms (always None),
+                max_duration_ms, error_traces (traces with status ERROR), first_trace_at,
+                last_trace_at. With group_by="endpoint", the grouping key is name
+                instead of <group>_id.
         """
+        if group_by not in ("session", "agent", "team", "workflow", "endpoint"):
+            raise ValueError(f"Invalid group_by value: {group_by!r}. Allowed: session, agent, team, workflow, endpoint")
+
         try:
-            from sqlalchemy import func
+            from sqlalchemy import and_, case, distinct, func
 
             table = self._get_table(table_type="traces")
             if table is None:
@@ -3165,21 +3265,54 @@ class SqliteDb(BaseDb):
                 return [], 0
 
             with self.Session() as sess:
-                # Build base query grouped by session_id
-                base_stmt = (
-                    select(
-                        table.c.session_id,
-                        func.max(table.c.user_id).label("user_id"),
-                        func.max(table.c.agent_id).label("agent_id"),
-                        func.max(table.c.team_id).label("team_id"),
-                        func.max(table.c.workflow_id).label("workflow_id"),
-                        func.count(table.c.trace_id).label("total_traces"),
-                        func.min(table.c.created_at).label("first_trace_at"),
-                        func.max(table.c.created_at).label("last_trace_at"),
+                if group_by == "session":
+                    # Build base query grouped by session_id
+                    base_stmt = (
+                        select(
+                            table.c.session_id,
+                            func.max(table.c.user_id).label("user_id"),
+                            func.max(table.c.agent_id).label("agent_id"),
+                            func.max(table.c.team_id).label("team_id"),
+                            func.max(table.c.workflow_id).label("workflow_id"),
+                            func.count(table.c.trace_id).label("total_traces"),
+                            func.min(table.c.created_at).label("first_trace_at"),
+                            func.max(table.c.created_at).label("last_trace_at"),
+                        )
+                        .where(table.c.session_id.isnot(None))  # Only sessions with session_id
+                        .group_by(table.c.session_id)
                     )
-                    .where(table.c.session_id.isnot(None))  # Only sessions with session_id
-                    .group_by(table.c.session_id)
-                )
+                else:
+                    if group_by == "endpoint":
+                        # Endpoint-level traces (HTTP/MCP entrypoint wrappers) carry no component ids
+                        group_column = table.c.name
+                        group_label = "name"
+                        group_filter = and_(
+                            table.c.agent_id.is_(None),
+                            table.c.team_id.is_(None),
+                            table.c.workflow_id.is_(None),
+                        )
+                    else:
+                        group_column = {
+                            "agent": table.c.agent_id,
+                            "team": table.c.team_id,
+                            "workflow": table.c.workflow_id,
+                        }[group_by]
+                        group_label = f"{group_by}_id"
+                        group_filter = group_column.isnot(None)  # Only traces attributed to the grouping component
+                    base_stmt = (
+                        select(
+                            group_column.label(group_label),
+                            func.count(table.c.trace_id).label("total_traces"),
+                            func.count(distinct(table.c.session_id)).label("total_sessions"),
+                            func.avg(table.c.duration_ms).label("avg_duration_ms"),
+                            func.max(table.c.duration_ms).label("max_duration_ms"),
+                            func.sum(case((table.c.status == "ERROR", 1), else_=0)).label("error_traces"),
+                            func.min(table.c.created_at).label("first_trace_at"),
+                            func.max(table.c.created_at).label("last_trace_at"),
+                        )
+                        .where(group_filter)
+                        .group_by(group_column)
+                    )
 
                 # Apply filters
                 if user_id is not None:
@@ -3211,13 +3344,18 @@ class SqliteDb(BaseDb):
                     except (KeyError, TypeError) as e:
                         raise ValueError(f"Invalid filter expression: {e}") from e
 
-                # Get total count of sessions
+                # Get total count of groups
                 count_stmt = select(func.count()).select_from(base_stmt.alias())
                 total_count = sess.execute(count_stmt).scalar() or 0
 
                 # Apply pagination and ordering
                 offset = (page - 1) * limit if page and limit else 0
-                paginated_stmt = base_stmt.order_by(func.max(table.c.created_at).desc()).limit(limit).offset(offset)
+                order_by: List[Any] = (
+                    [func.max(table.c.created_at).desc()]
+                    if group_by == "session"
+                    else [func.count(table.c.trace_id).desc(), group_column]
+                )
+                paginated_stmt = base_stmt.order_by(*order_by).limit(limit).offset(offset)
 
                 results = sess.execute(paginated_stmt).fetchall()
 
@@ -3226,26 +3364,39 @@ class SqliteDb(BaseDb):
 
                 stats_list = []
                 for row in results:
-                    # Convert ISO strings to datetime objects
-                    first_trace_at_str = row.first_trace_at
-                    last_trace_at_str = row.last_trace_at
-
                     # Parse ISO format strings to datetime objects
-                    first_trace_at = datetime.fromisoformat(first_trace_at_str.replace("Z", "+00:00"))
-                    last_trace_at = datetime.fromisoformat(last_trace_at_str.replace("Z", "+00:00"))
+                    first_trace_at = datetime.fromisoformat(row.first_trace_at.replace("Z", "+00:00"))
+                    last_trace_at = datetime.fromisoformat(row.last_trace_at.replace("Z", "+00:00"))
 
-                    stats_list.append(
-                        {
-                            "session_id": row.session_id,
-                            "user_id": row.user_id,
-                            "agent_id": row.agent_id,
-                            "team_id": row.team_id,
-                            "workflow_id": row.workflow_id,
-                            "total_traces": row.total_traces,
-                            "first_trace_at": first_trace_at,
-                            "last_trace_at": last_trace_at,
-                        }
-                    )
+                    if group_by == "session":
+                        stats_list.append(
+                            {
+                                "session_id": row.session_id,
+                                "user_id": row.user_id,
+                                "agent_id": row.agent_id,
+                                "team_id": row.team_id,
+                                "workflow_id": row.workflow_id,
+                                "total_traces": row.total_traces,
+                                "first_trace_at": first_trace_at,
+                                "last_trace_at": last_trace_at,
+                            }
+                        )
+                    else:
+                        stats_list.append(
+                            {
+                                group_label: getattr(row, group_label),
+                                "total_traces": row.total_traces,
+                                "total_sessions": row.total_sessions,
+                                "avg_duration_ms": round(float(row.avg_duration_ms), 1)
+                                if row.avg_duration_ms is not None
+                                else None,
+                                "p95_duration_ms": None,
+                                "max_duration_ms": row.max_duration_ms,
+                                "error_traces": row.error_traces,
+                                "first_trace_at": first_trace_at,
+                                "last_trace_at": last_trace_at,
+                            }
+                        )
 
                 return stats_list, total_count
 
@@ -3358,6 +3509,152 @@ class SqliteDb(BaseDb):
         except Exception as e:
             log_error(f"Error getting spans: {str(e)}")
             return []
+
+    def get_span_stats(
+        self,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        name: Optional[str] = None,
+        span_type: Optional[str] = None,
+        limit: Optional[int] = 20,
+        page: Optional[int] = 1,
+        sort_by: str = "total_calls",
+        sort_order: str = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Get span statistics aggregated SQL-side by span name and span type.
+
+        Only span names, durations and status are aggregated. The span attributes
+        payload, which can hold full conversation content, is never selected — the
+        single "openinference.span.kind" key is extracted in SQL as the span type.
+        SQLite has no percentile function, so p95_duration_ms is always None and
+        sorting by p95_duration_ms falls back to total_calls.
+
+        Args:
+            agent_id: Only include spans belonging to traces of this agent.
+            team_id: Only include spans belonging to traces of this team.
+            workflow_id: Only include spans belonging to traces of this workflow.
+            start_time: Only include spans starting after this datetime.
+            end_time: Only include spans starting before this datetime.
+            name: Filter by exact span name.
+            span_type: Filter by span type (e.g. AGENT, LLM, TOOL, CHAIN).
+            limit: Maximum number of groups to return per page.
+            page: Page number (1-indexed).
+            sort_by: Aggregate to sort by: total_calls, avg_duration_ms,
+                max_duration_ms, error_count or last_called_at.
+            sort_order: "asc" or "desc".
+
+        Returns:
+            Tuple[List[Dict], int]: Tuple of (list of stats dicts, total count of groups).
+                Each dict contains: name, span_type, total_calls, avg_duration_ms,
+                p95_duration_ms (always None), max_duration_ms, error_count,
+                last_called_at (datetime).
+        """
+        try:
+            from sqlalchemy import case, func
+
+            table = self._get_table(table_type="spans")
+            if table is None:
+                log_debug("Spans table not found")
+                return [], 0
+
+            span_type_col = func.json_extract(table.c.attributes, '$."openinference.span.kind"')
+
+            total_calls_col = func.count(table.c.span_id)
+            avg_duration_col = func.avg(table.c.duration_ms)
+            max_duration_col = func.max(table.c.duration_ms)
+            error_count_col = func.sum(case((table.c.status_code == "ERROR", 1), else_=0))
+            last_called_at_col = func.max(table.c.start_time)
+
+            with self.Session() as sess:
+                stmt = select(
+                    table.c.name,
+                    span_type_col.label("span_type"),
+                    total_calls_col.label("total_calls"),
+                    avg_duration_col.label("avg_duration_ms"),
+                    max_duration_col.label("max_duration_ms"),
+                    error_count_col.label("error_count"),
+                    last_called_at_col.label("last_called_at"),
+                ).group_by(table.c.name, span_type_col)
+
+                # Component filters live on the traces table
+                if agent_id or team_id or workflow_id:
+                    traces_table = self._get_table(table_type="traces")
+                    if traces_table is None:
+                        log_debug("Traces table not found")
+                        return [], 0
+                    stmt = stmt.select_from(table.join(traces_table, table.c.trace_id == traces_table.c.trace_id))
+                    if agent_id:
+                        stmt = stmt.where(traces_table.c.agent_id == agent_id)
+                    if team_id:
+                        stmt = stmt.where(traces_table.c.team_id == team_id)
+                    if workflow_id:
+                        stmt = stmt.where(traces_table.c.workflow_id == workflow_id)
+
+                if start_time:
+                    # Convert datetime to ISO string for comparison
+                    stmt = stmt.where(table.c.start_time >= start_time.isoformat())
+                if end_time:
+                    # Convert datetime to ISO string for comparison
+                    stmt = stmt.where(table.c.start_time <= end_time.isoformat())
+                if name:
+                    stmt = stmt.where(table.c.name == name)
+                if span_type:
+                    stmt = stmt.where(span_type_col == span_type)
+
+                # Get total count of groups
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                sort_columns = {
+                    "total_calls": total_calls_col,
+                    "avg_duration_ms": avg_duration_col,
+                    "max_duration_ms": max_duration_col,
+                    "error_count": error_count_col,
+                    "last_called_at": last_called_at_col,
+                }
+                sort_col = sort_columns.get(sort_by)
+                if sort_col is None:
+                    log_debug(f"Sort field '{sort_by}' not available on SQLite. Sorting by total_calls.")
+                    sort_col = total_calls_col
+                order_by = sort_col.asc() if sort_order == "asc" else sort_col.desc()
+
+                offset = (page - 1) * limit if page and limit else 0
+                paginated_stmt = stmt.order_by(order_by, table.c.name, span_type_col).limit(limit).offset(offset)
+
+                results = sess.execute(paginated_stmt).fetchall()
+
+                from datetime import datetime
+
+                stats_list = []
+                for row in results:
+                    last_called_at = (
+                        datetime.fromisoformat(row.last_called_at.replace("Z", "+00:00"))
+                        if row.last_called_at
+                        else None
+                    )
+                    stats_list.append(
+                        {
+                            "name": row.name,
+                            "span_type": row.span_type,
+                            "total_calls": row.total_calls,
+                            "avg_duration_ms": round(float(row.avg_duration_ms), 1)
+                            if row.avg_duration_ms is not None
+                            else None,
+                            "p95_duration_ms": None,
+                            "max_duration_ms": row.max_duration_ms,
+                            "error_count": row.error_count,
+                            "last_called_at": last_called_at,
+                        }
+                    )
+
+                return stats_list, total_count
+
+        except Exception as e:
+            log_error(f"Error getting span stats: {str(e)}")
+            return [], 0
 
     # -- Migrations --
 
@@ -4912,6 +5209,69 @@ class SqliteDb(BaseDb):
         except Exception as e:
             log_debug(f"Error getting learnings: {e}")
             return []
+
+    def search_learnings(
+        self,
+        query: str,
+        learning_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        entity_type: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Search learning records by text query. See BaseDb.search_learnings.
+
+        The query matches the content column case-insensitively in both its
+        space and underscore forms. Errors are raised, never swallowed.
+        """
+        try:
+            table = self._get_table(table_type="learnings")
+            if table is None:
+                return []
+
+            patterns = learning_search_patterns(query)
+            if not patterns:
+                return []
+
+            with self.Session() as sess:
+                stmt = select(table)
+
+                if learning_type is not None:
+                    stmt = stmt.where(table.c.learning_type == learning_type)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                if workflow_id is not None:
+                    stmt = stmt.where(table.c.workflow_id == workflow_id)
+                if session_id is not None:
+                    stmt = stmt.where(table.c.session_id == session_id)
+                if namespace is not None:
+                    stmt = stmt.where(table.c.namespace == namespace)
+                if entity_id is not None:
+                    stmt = stmt.where(table.c.entity_id == entity_id)
+                if entity_type is not None:
+                    stmt = stmt.where(table.c.entity_type == entity_type)
+
+                stmt = stmt.where(or_(*[table.c.content.ilike(pattern, escape="\\") for pattern in patterns]))
+
+                stmt = stmt.order_by(table.c.updated_at.desc().nulls_last())
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results]
+
+        except Exception as e:
+            log_error(f"Error searching learnings: {e}")
+            raise e
 
     def get_learning_by_id(self, id: str) -> Optional[Dict[str, Any]]:
         try:
