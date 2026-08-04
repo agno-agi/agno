@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from agno.compression.manager import CompressionManager
 
 
-def compress_tool_messages(
+def compress_tool_results(
     manager: CompressionManager,
     messages: List[Message],
     run_metrics: Optional[RunMetrics],
@@ -34,7 +34,7 @@ def compress_tool_messages(
             log_warning(f"Tool compression failed for {msg.tool_name}")
 
 
-async def acompress_tool_messages(
+async def acompress_tool_results(
     manager: CompressionManager,
     messages: List[Message],
     run_metrics: Optional[RunMetrics],

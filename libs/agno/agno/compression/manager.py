@@ -3,14 +3,8 @@ from typing import Any, Dict, List, Optional, Type, Union
 
 from pydantic import BaseModel
 
-from agno.compression._context import (
-    CompactionResult,
-    _build_summary_message,
-    _get_stored_summary,
-    acompress_messages,
-    compress_messages,
-)
-from agno.compression._tool import acompress_tool_messages, compress_tool_messages
+from agno.compression._context import CompactionResult, acompress_context, compress_context
+from agno.compression._tool import acompress_tool_results, compress_tool_results
 from agno.metrics import RunMetrics
 from agno.models.base import Model
 from agno.models.message import Message
@@ -20,10 +14,10 @@ from agno.utils.log import log_debug, log_info
 
 @dataclass
 class CompressionManager:
-    """Orchestrates tool compression and message compression.
+    """Orchestrates tool compression and context compaction.
 
     Tool compression: Summarizes individual tool outputs (mutates msg.compressed_content)
-    Message compression: Summarizes old conversation history (returns filtered view)
+    Context compaction: Summarizes old conversation history (returns filtered view)
     """
 
     model: Optional[Model] = None
@@ -34,7 +28,7 @@ class CompressionManager:
     compress_tools_token_limit: Optional[int] = None
     compress_tools_instructions: Optional[str] = None
 
-    # --- Message compression config ---
+    # --- Context compaction config ---
     compress_messages: bool = False
     compress_messages_token_limit: Optional[int] = None
     compress_messages_limit: Optional[int] = None
@@ -44,7 +38,6 @@ class CompressionManager:
     stats: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        # Resolve model string to Model instance
         if self.model is not None:
             from agno.models.utils import get_model
 
@@ -55,7 +48,7 @@ class CompressionManager:
             if self.compress_tools_limit is None and self.compress_tools_token_limit is None:
                 self.compress_tools_limit = 3
 
-        # Default message compression trigger: after 50 messages
+        # Default context compaction trigger: after 50 messages
         if self.compress_messages:
             if self.compress_messages_token_limit is None and self.compress_messages_limit is None:
                 self.compress_messages_limit = 50
@@ -69,32 +62,18 @@ class CompressionManager:
         run_metrics: Optional[RunMetrics] = None,
     ) -> CompactionResult:
         """Compress messages for model. Returns CompactionResult — call commit() after model success."""
-        log_info(f"[COMPRESS] CompressionManager.compress: {len(messages)} messages")
-        log_debug(
-            f"[COMPRESS]   compress_messages={self.compress_messages}, compress_tool_results={self.compress_tool_results}"
-        )
+        log_debug(f"[COMPRESS] compress: {len(messages)} messages")
 
-        # 1. Tool compression (mutates in place, no commit needed)
+        # 1. Tool compression (mutates in place)
         if self.compress_tool_results and self.model is not None:
-            tool_messages_to_compress = self._should_compress_tool_messages(messages, tools, response_format)
-            if tool_messages_to_compress:
-                log_info(f"[COMPRESS] TOOL COMPRESSION: {len(tool_messages_to_compress)} tool messages")
-                compress_tool_messages(self, tool_messages_to_compress, run_metrics)
+            tool_msgs = self._get_tool_messages_to_compress(messages, tools, response_format)
+            if tool_msgs:
+                log_info(f"[COMPRESS] Tool compression: {len(tool_msgs)} messages")
+                compress_tool_results(self, tool_msgs, run_metrics)
 
-        # 2. Message compression
+        # 2. Context compaction
         if self.compress_messages and self.model is not None:
-            messages_to_compress = self._should_compress_messages(messages)
-            if messages_to_compress:
-                return compress_messages(self, messages, messages_to_compress, session, run_metrics)
-            # Below threshold — re-inject stored summary if exists
-            active = [m for m in messages if not m.is_compacted]
-            stored = _get_stored_summary(session)
-            if stored:
-                system_msgs = [m for m in active if m.role == "system"]
-                non_system = [m for m in active if m.role != "system"]
-                view = system_msgs + [_build_summary_message(stored)] + non_system
-                return CompactionResult(view=view, to_compact=[])
-            return CompactionResult(view=active, to_compact=[])
+            return compress_context(self, messages, session, run_metrics)
 
         return CompactionResult(view=messages, to_compact=[])
 
@@ -106,147 +85,62 @@ class CompressionManager:
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         run_metrics: Optional[RunMetrics] = None,
     ) -> CompactionResult:
-        """Async version of compress. Returns CompactionResult — call commit() after model success."""
+        """Async version of compress."""
+        log_debug(f"[COMPRESS] acompress: {len(messages)} messages")
 
-        # 1. Tool compression (mutates in place, no commit needed)
+        # 1. Tool compression (mutates in place)
         if self.compress_tool_results and self.model is not None:
-            tool_messages_to_compress = await self._ashould_compress_tool_messages(messages, tools, response_format)
-            if tool_messages_to_compress:
-                await acompress_tool_messages(self, tool_messages_to_compress, run_metrics)
+            tool_msgs = await self._aget_tool_messages_to_compress(messages, tools, response_format)
+            if tool_msgs:
+                log_info(f"[COMPRESS] Tool compression: {len(tool_msgs)} messages")
+                await acompress_tool_results(self, tool_msgs, run_metrics)
 
-        # 2. Message compression
+        # 2. Context compaction
         if self.compress_messages and self.model is not None:
-            messages_to_compress = await self._ashould_compress_messages(messages)
-            if messages_to_compress:
-                return await acompress_messages(self, messages, messages_to_compress, session, run_metrics)
-            # Below threshold — re-inject stored summary if exists
-            active = [m for m in messages if not m.is_compacted]
-            stored = _get_stored_summary(session)
-            if stored:
-                system_msgs = [m for m in active if m.role == "system"]
-                non_system = [m for m in active if m.role != "system"]
-                view = system_msgs + [_build_summary_message(stored)] + non_system
-                return CompactionResult(view=view, to_compact=[])
-            return CompactionResult(view=active, to_compact=[])
+            return await acompress_context(self, messages, session, run_metrics)
 
         return CompactionResult(view=messages, to_compact=[])
 
-    def _should_compress_tool_messages(
+    # --- Tool compression helpers ---
+
+    def _get_tool_messages_to_compress(
         self,
         messages: List[Message],
         tools: Optional[List],
         response_format: Optional[Union[Dict, Type[BaseModel]]],
     ) -> List[Message]:
-        """Returns tool messages to compress, or empty list if not needed."""
+        """Returns tool messages to compress, or empty list if below threshold."""
         uncompressed = [m for m in messages if m.role == "tool" and m.compressed_content is None]
         if not uncompressed:
             return []
 
-        # Check token limit
         if self.compress_tools_token_limit is not None and self.model is not None:
             if self.model.count_tokens(messages, tools, response_format) >= self.compress_tools_token_limit:
-                log_info("Tool compression: token limit hit")
                 return uncompressed
 
-        # Check count limit
         if self.compress_tools_limit is not None:
             if len(uncompressed) >= self.compress_tools_limit:
-                log_info(f"Tool compression: count limit {len(uncompressed)} >= {self.compress_tools_limit}")
                 return uncompressed
 
         return []
 
-    async def _ashould_compress_tool_messages(
+    async def _aget_tool_messages_to_compress(
         self,
         messages: List[Message],
         tools: Optional[List],
         response_format: Optional[Union[Dict, Type[BaseModel]]],
     ) -> List[Message]:
-        """Async version. Returns tool messages to compress, or empty list if not needed."""
+        """Async version."""
         uncompressed = [m for m in messages if m.role == "tool" and m.compressed_content is None]
         if not uncompressed:
             return []
 
-        # Check token limit
         if self.compress_tools_token_limit is not None and self.model is not None:
             if await self.model.acount_tokens(messages, tools, response_format) >= self.compress_tools_token_limit:
-                log_info("Tool compression: token limit hit")
                 return uncompressed
 
-        # Check count limit
         if self.compress_tools_limit is not None:
             if len(uncompressed) >= self.compress_tools_limit:
-                log_info(f"Tool compression: count limit {len(uncompressed)} >= {self.compress_tools_limit}")
                 return uncompressed
 
         return []
-
-    def _should_compress_messages(
-        self,
-        messages: List[Message],
-    ) -> List[Message]:
-        """Returns active messages to compress, or empty list if not needed."""
-        active = [m for m in messages if not m.is_compacted]
-        log_debug(
-            f"_should_compress_messages: {len(messages)} total, {len(active)} active, limit={self.compress_messages_limit}"
-        )
-
-        # Check token limit
-        if self.compress_messages_token_limit is not None and self.model is not None:
-            if self.model.count_tokens(active) >= self.compress_messages_token_limit:
-                log_info(f"Message compression: token limit {self.compress_messages_token_limit} hit")
-                return active
-
-        # Check count limit
-        if self.compress_messages_limit is not None:
-            if len(active) >= self.compress_messages_limit:
-                log_info(f"Message compression: message limit {len(active)} >= {self.compress_messages_limit}")
-                return active
-            else:
-                log_debug(f"_should_compress_messages: {len(active)} < {self.compress_messages_limit}, no compression")
-
-        return []
-
-    async def _ashould_compress_messages(
-        self,
-        messages: List[Message],
-    ) -> List[Message]:
-        """Async version. Returns active messages to compress, or empty list if not needed."""
-        active = [m for m in messages if not m.is_compacted]
-
-        # Check token limit
-        if self.compress_messages_token_limit is not None and self.model is not None:
-            if await self.model.acount_tokens(active) >= self.compress_messages_token_limit:
-                log_info(f"Message compression: token limit {self.compress_messages_token_limit} hit")
-                return active
-
-        # Check count limit
-        if self.compress_messages_limit is not None:
-            if len(active) >= self.compress_messages_limit:
-                log_info(f"Message compression: message limit {self.compress_messages_limit} hit")
-                return active
-
-        return []
-
-    def _get_user_budget(self, active_count: int) -> int:
-        """Get user message budget (10% of limit)."""
-        if self.compress_messages_token_limit is not None:
-            return self.compress_messages_token_limit // 10
-        if self.compress_messages_limit is not None:
-            return max(1, self.compress_messages_limit // 10)
-        return max(1, active_count // 10)
-
-
-def build_summary_message(summary: str) -> Message:
-    """Build a summary message from stored compaction summary.
-
-    Used by session.get_messages() to inject the summary into history.
-    """
-    from agno.compression.prompts import CONTEXT_COMPACTION_SUMMARY_PREFIX
-
-    return Message(
-        role="user",
-        content=CONTEXT_COMPACTION_SUMMARY_PREFIX + summary,
-        from_history=True,
-        temporary=True,
-    )
