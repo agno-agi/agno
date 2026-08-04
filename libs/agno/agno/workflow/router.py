@@ -97,8 +97,6 @@ class Router:
     name: Optional[str] = None
     description: Optional[str] = None
 
-    allow_multiple_selections: bool = False  # If True, user can select multiple choices
-
     human_review: HumanReview = field(default_factory=HumanReview)
 
     def __post_init__(self) -> None:
@@ -112,7 +110,6 @@ class Router:
             "name": self.name,
             "description": self.description,
             "choices": [step.to_dict() for step in self.choices if hasattr(step, "to_dict")],
-            "allow_multiple_selections": self.allow_multiple_selections,
         }
         # Serialize selector
         if self.selector is None:
@@ -176,7 +173,7 @@ class Router:
                 or f"Select a route from: {', '.join(choice_names)}",
                 user_input_schema=schema,
                 available_choices=choice_names,
-                allow_multiple_selections=self.allow_multiple_selections,
+                allow_multiple_selections=self.human_review.allow_multiple_selections,
                 step_input=step_input,
             )
         else:
@@ -307,7 +304,6 @@ class Router:
             choices=[deserialize_step(step) for step in data.get("choices", [])],
             name=data.get("name"),
             description=data.get("description"),
-            allow_multiple_selections=data.get("allow_multiple_selections", False),
             human_review=human_review,
         )
 

@@ -287,6 +287,7 @@ class InfoResponse(BaseModel):
 
     os_id: str = Field(..., description="Unique identifier for the OS instance")
     name: Optional[str] = Field(None, description="Name of the OS instance")
+    os_version: str = Field(..., description="Version of this AgentOS instance")
     agno_version: str = Field(..., description="Version of the agno framework")
     agent_count: int = Field(0, description="Number of agents registered in the OS")
     team_count: int = Field(0, description="Number of teams registered in the OS")
@@ -307,7 +308,10 @@ class ConfigResponse(BaseModel):
     os_id: str = Field(..., description="Unique identifier for the OS instance")
     name: Optional[str] = Field(None, description="Name of the OS instance")
     description: Optional[str] = Field(None, description="Description of the OS instance")
-    available_models: Optional[List[str]] = Field(None, description="List of available models")
+    available_models: List[Model] = Field(
+        default_factory=list,
+        description="Unique models (id + provider) in use by agents and teams in this OS",
+    )
     os_database: Optional[str] = Field(None, description="ID of the database used for the OS instance")
     databases: List[str] = Field(..., description="List of database IDs used by the components of the OS instance")
     chat: Optional[ChatConfig] = Field(None, description="Chat configuration")

@@ -246,14 +246,14 @@ class TestRouterFromDict:
             "name": "hitl-router",
             "description": None,
             "selector": None,
-            "requires_user_input": True,
+            "human_review": {"requires_user_input": True},
             "choices": [],
         }
 
         router = Router.from_dict(data, registry=registry_with_functions)
         assert router.name == "hitl-router"
         assert router.selector is None
-        assert router.requires_user_input is True
+        assert router.human_review.requires_user_input is True
 
     def test_from_dict_without_selector_and_without_hitl(self, registry_with_functions):
         """Test from_dict allows no selector even without HITL (but won't function)."""
@@ -270,7 +270,7 @@ class TestRouterFromDict:
         router = Router.from_dict(data, registry=registry_with_functions)
         assert router.name == "no-selector-router"
         assert router.selector is None
-        assert router.requires_user_input is False
+        assert router.human_review.requires_user_input is False
 
     def test_from_dict_with_multiple_choices(self, registry_with_functions):
         """Test from_dict with multiple choice steps."""
