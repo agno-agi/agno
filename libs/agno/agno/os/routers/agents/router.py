@@ -73,6 +73,7 @@ from agno.os.utils import (
     process_document,
     process_image,
     process_video,
+    queued_run_tail_streamer,
     replayed_payload_to_sse,
     resolve_agent,
 )
@@ -382,51 +383,6 @@ async def agent_resumable_continue_response_streamer(
             content=str(e),
         )
         yield format_sse_event(error_response)
-
-
-async def queued_run_tail_streamer(run_id: str, from_index: Optional[int] = None) -> AsyncGenerator:
-    """SSE response for a durably queued STREAMING run: tail the event stream.
-
-    The run executes on whichever replica's worker claims it; this connection
-    just observes. Keepalives cover the queued wait and silent stretches; a
-    disconnect is harmless (resume replays); the complete output is guaranteed
-    via the run row even if this stream is never watched."""
-    event_stream = get_event_stream()
-    tail_queue: asyncio.Queue = asyncio.Queue()
-
-    async def _pump() -> None:
-        try:
-            async for tail_item in event_stream.tail(run_id, last_event_index=from_index):
-                await tail_queue.put(tail_item)
-        except Exception as e:
-            # A tail that DIES must not look like a tail that FINISHED: emit an
-            # error frame so the client can distinguish and reconnect
-            log_error(f"Queued stream tail failed for run {run_id}: {e}")
-            with contextlib.suppress(Exception):
-                await tail_queue.put(
-                    (-1, f'event: error\ndata: {{"event": "error", "error": "stream tail failed: {str(e)[:200]}"}}\n\n')
-                )
-        finally:
-            await tail_queue.put(None)
-
-    pump_task = asyncio.create_task(_pump())
-    try:
-        while True:
-            try:
-                item = await asyncio.wait_for(tail_queue.get(), timeout=30.0)
-            except asyncio.TimeoutError:
-                yield ": keepalive\n\n"
-                continue
-            if item is None:
-                break
-            _ev_index, sse_data = item
-            yield sse_data
-    finally:
-        pump_task.cancel()
-        # Suppress everything: an exception re-raised here reaches the ASGI
-        # layer on a response whose headers are already sent
-        with contextlib.suppress(BaseException):
-            await pump_task
 
 
 async def _resume_stream_generator(
