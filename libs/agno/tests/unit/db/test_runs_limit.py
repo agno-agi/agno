@@ -90,6 +90,47 @@ class TestRunsLimitMigrated:
         assert _ids(db.get_session("s1", deserialize=False, runs_limit=10)["runs"]) == ["r0", "r1", "r2"]
 
 
+class TestRunIndexBackfill:
+    """run_index is nullable; a run first persisted without one (e.g. a background/
+    continue save) used to store NULL, which has no position and broke ORDER BY
+    run_index. upsert_run now backfills a monotonic MAX+1 so ordering stays correct
+    -- even for two runs sharing a second-resolution created_at, where created_at
+    alone cannot disambiguate them."""
+
+    def _db(self) -> SqliteDb:
+        db = SqliteDb(db_file=tempfile.mktemp(suffix=".db"))
+        sess = AgentSession(session_id="s1", agent_id="a1")
+        for rid in ("r0", "r1"):
+            sess.upsert_run(RunOutput(run_id=rid, agent_id="a1", status=RunStatus.completed))
+        db.upsert_session(sess)
+        return db
+
+    def test_missing_index_is_backfilled_monotonically(self):
+        db = self._db()
+        # Neither run carries a run_index; each must be assigned the next integer.
+        db.upsert_run(RunOutput(run_id="r0", agent_id="a1", status=RunStatus.completed), session_id="s1", user_id=None)
+        db.upsert_run(RunOutput(run_id="r1", agent_id="a1", status=RunStatus.completed), session_id="s1", user_id=None)
+        rows, _ = db.get_runs(session_id="s1", deserialize=False)
+        by_id = {r["run_id"]: r["run_index"] for r in rows}
+        assert by_id == {"r0": 0, "r1": 1}
+        assert all(r["run_index"] is not None for r in rows)
+
+    def test_same_second_null_index_orders_correctly(self):
+        # Codex regression: r0 indexed 0; r1 arrives with NO index in the SAME
+        # created_at second. Backfill gives r1 index 1 (inserted later => newest),
+        # so runs_limit=1 returns r1 -- created_at alone could not decide this.
+        db = self._db()
+        r0 = RunOutput(run_id="r0", agent_id="a1", status=RunStatus.completed)
+        r0.created_at = 1000
+        db.upsert_run(r0, session_id="s1", user_id=None, run_index=0)
+        r1 = RunOutput(run_id="r1", agent_id="a1", status=RunStatus.completed)
+        r1.created_at = 1000
+        db.upsert_run(r1, session_id="s1", user_id=None)  # no run_index -> backfilled to 1
+
+        assert _ids(db.get_session("s1", deserialize=False, runs_limit=1)["runs"]) == ["r1"]
+        assert _ids(db.get_session("s1", deserialize=False)["runs"]) == ["r0", "r1"]
+
+
 class TestRunsLimitUnmigrated:
     def test_blob_fallback_returns_most_recent_n(self):
         db = _make_unmigrated_db(COMPLETED + [("r3", "COMPLETED", None), ("r4", "COMPLETED", None)])
