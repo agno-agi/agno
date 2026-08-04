@@ -4,7 +4,12 @@ from typing import Any, Dict, List, Optional, Type, Union
 from pydantic import BaseModel
 
 from agno.compression._context import CompactionResult, acompress_context, compress_context
-from agno.compression._tool import acompress_tool_results, compress_tool_results
+from agno.compression._tool import (
+    acompress_tool_results,
+    aget_tool_messages_to_compress,
+    compress_tool_results,
+    get_tool_messages_to_compress,
+)
 from agno.metrics import RunMetrics
 from agno.models.base import Model
 from agno.models.message import Message
@@ -66,7 +71,7 @@ class CompressionManager:
 
         # 1. Tool compression (mutates in place)
         if self.compress_tool_results and self.model is not None:
-            tool_msgs = self._get_tool_messages_to_compress(messages, tools, response_format)
+            tool_msgs = get_tool_messages_to_compress(self, messages, tools, response_format)
             if tool_msgs:
                 log_info(f"[COMPRESS] Tool compression: {len(tool_msgs)} messages")
                 compress_tool_results(self, tool_msgs, run_metrics)
@@ -90,7 +95,7 @@ class CompressionManager:
 
         # 1. Tool compression (mutates in place)
         if self.compress_tool_results and self.model is not None:
-            tool_msgs = await self._aget_tool_messages_to_compress(messages, tools, response_format)
+            tool_msgs = await aget_tool_messages_to_compress(self, messages, tools, response_format)
             if tool_msgs:
                 log_info(f"[COMPRESS] Tool compression: {len(tool_msgs)} messages")
                 await acompress_tool_results(self, tool_msgs, run_metrics)
@@ -100,47 +105,3 @@ class CompressionManager:
             return await acompress_context(self, messages, session, run_metrics)
 
         return CompactionResult(view=messages, to_compact=[])
-
-    # --- Tool compression helpers ---
-
-    def _get_tool_messages_to_compress(
-        self,
-        messages: List[Message],
-        tools: Optional[List],
-        response_format: Optional[Union[Dict, Type[BaseModel]]],
-    ) -> List[Message]:
-        """Returns tool messages to compress, or empty list if below threshold."""
-        uncompressed = [m for m in messages if m.role == "tool" and m.compressed_content is None]
-        if not uncompressed:
-            return []
-
-        if self.compress_tools_token_limit is not None and self.model is not None:
-            if self.model.count_tokens(messages, tools, response_format) >= self.compress_tools_token_limit:
-                return uncompressed
-
-        if self.compress_tools_limit is not None:
-            if len(uncompressed) >= self.compress_tools_limit:
-                return uncompressed
-
-        return []
-
-    async def _aget_tool_messages_to_compress(
-        self,
-        messages: List[Message],
-        tools: Optional[List],
-        response_format: Optional[Union[Dict, Type[BaseModel]]],
-    ) -> List[Message]:
-        """Async version."""
-        uncompressed = [m for m in messages if m.role == "tool" and m.compressed_content is None]
-        if not uncompressed:
-            return []
-
-        if self.compress_tools_token_limit is not None and self.model is not None:
-            if await self.model.acount_tokens(messages, tools, response_format) >= self.compress_tools_token_limit:
-                return uncompressed
-
-        if self.compress_tools_limit is not None:
-            if len(uncompressed) >= self.compress_tools_limit:
-                return uncompressed
-
-        return []

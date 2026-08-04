@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Type, Union
+
+from pydantic import BaseModel
 
 from agno.compression.prompts import DEFAULT_TOOL_COMPRESSION_PROMPT
 from agno.metrics import RunMetrics
@@ -11,6 +13,56 @@ from agno.utils.log import log_error, log_warning
 
 if TYPE_CHECKING:
     from agno.compression.manager import CompressionManager
+
+
+# --- Threshold / Selection ---
+
+
+def get_tool_messages_to_compress(
+    manager: CompressionManager,
+    messages: List[Message],
+    tools: Optional[List],
+    response_format: Optional[Union[Dict, Type[BaseModel]]],
+) -> List[Message]:
+    """Returns tool messages to compress, or empty list if below threshold."""
+    uncompressed = [m for m in messages if m.role == "tool" and m.compressed_content is None]
+    if not uncompressed:
+        return []
+
+    if manager.compress_tools_token_limit is not None and manager.model is not None:
+        if manager.model.count_tokens(messages, tools, response_format) >= manager.compress_tools_token_limit:
+            return uncompressed
+
+    if manager.compress_tools_limit is not None:
+        if len(uncompressed) >= manager.compress_tools_limit:
+            return uncompressed
+
+    return []
+
+
+async def aget_tool_messages_to_compress(
+    manager: CompressionManager,
+    messages: List[Message],
+    tools: Optional[List],
+    response_format: Optional[Union[Dict, Type[BaseModel]]],
+) -> List[Message]:
+    """Async version of get_tool_messages_to_compress."""
+    uncompressed = [m for m in messages if m.role == "tool" and m.compressed_content is None]
+    if not uncompressed:
+        return []
+
+    if manager.compress_tools_token_limit is not None and manager.model is not None:
+        if await manager.model.acount_tokens(messages, tools, response_format) >= manager.compress_tools_token_limit:
+            return uncompressed
+
+    if manager.compress_tools_limit is not None:
+        if len(uncompressed) >= manager.compress_tools_limit:
+            return uncompressed
+
+    return []
+
+
+# --- Compression Execution ---
 
 
 def compress_tool_results(
