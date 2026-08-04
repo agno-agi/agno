@@ -320,7 +320,13 @@ class GmailTools(GoogleToolkit):
         )
 
         # Validate that required scopes are present for requested operations (only check registered functions)
-        compose_tools = {"create_draft_email", "send_email", "send_email_reply", "send_draft", "update_draft"}
+        compose_tools = {
+            "gmail_create_draft_email",
+            "gmail_send_email",
+            "gmail_send_email_reply",
+            "gmail_send_draft",
+            "gmail_update_draft",
+        }
         if any(t in self.functions for t in compose_tools):
             if "https://www.googleapis.com/auth/gmail.compose" not in self.scopes:
                 raise ValueError(
@@ -328,22 +334,22 @@ class GmailTools(GoogleToolkit):
                 )
 
         read_operations = {
-            "get_latest_emails",
-            "get_emails_from_user",
-            "get_unread_emails",
-            "get_starred_emails",
-            "get_emails_by_context",
-            "get_emails_by_date",
-            "get_emails_by_thread",
-            "search_emails",
-            "list_custom_labels",
-            "get_message",
-            "get_thread",
-            "search_threads",
-            "list_labels",
-            "get_draft",
-            "list_drafts",
-            "download_attachment",
+            "gmail_get_latest_emails",
+            "gmail_get_emails_from_user",
+            "gmail_get_unread_emails",
+            "gmail_get_starred_emails",
+            "gmail_get_emails_by_context",
+            "gmail_get_emails_by_date",
+            "gmail_get_emails_by_thread",
+            "gmail_search_emails",
+            "gmail_list_custom_labels",
+            "gmail_get_message",
+            "gmail_get_thread",
+            "gmail_search_threads",
+            "gmail_list_labels",
+            "gmail_get_draft",
+            "gmail_list_drafts",
+            "gmail_download_attachment",
         }
         if any(op in self.functions for op in read_operations):
             read_scope = "https://www.googleapis.com/auth/gmail.readonly"
@@ -352,18 +358,18 @@ class GmailTools(GoogleToolkit):
                 raise ValueError(f"The scope {read_scope} is required for email reading operations")
 
         modify_operations = {
-            "mark_email_as_read",
-            "mark_email_as_unread",
-            "star_email",
-            "unstar_email",
-            "archive_email",
-            "apply_label",
-            "remove_label",
-            "delete_custom_label",
-            "modify_message_labels",
-            "modify_thread_labels",
-            "trash_message",
-            "trash_thread",
+            "gmail_mark_email_as_read",
+            "gmail_mark_email_as_unread",
+            "gmail_star_email",
+            "gmail_unstar_email",
+            "gmail_archive_email",
+            "gmail_apply_label",
+            "gmail_remove_label",
+            "gmail_delete_custom_label",
+            "gmail_modify_message_labels",
+            "gmail_modify_thread_labels",
+            "gmail_trash_message",
+            "gmail_trash_thread",
         }
         if any(op in self.functions for op in modify_operations):
             modify_scope = "https://www.googleapis.com/auth/gmail.modify"
