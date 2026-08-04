@@ -587,3 +587,47 @@ def test_from_dict_with_the_default_executor_is_unaffected(tmp_path):
     restored = Agent.from_dict(agent.to_dict(), db=db)
 
     assert type(restored.skills.executor) is LocalSkillExecutor
+
+
+# ============================================================================
+# THE EXECUTOR ACROSS THE PUBLIC load() API
+# ============================================================================
+
+
+def _saved_agent_with(db, executor=None, agent_id="exec-agent"):
+    """Save an agent whose skills use the given executor, and return its id."""
+    skills = Skills(loaders=[DbSkills(db)], executor=executor) if executor else Skills(loaders=[DbSkills(db)])
+    agent = Agent(name=agent_id, id=agent_id, db=db, skills=skills)
+    agent.save(db=db)
+    return agent_id
+
+
+def test_load_refuses_a_sandboxed_agent_without_an_executor(tmp_path):
+    """Branch A: the contract must hold through load(), not only from_dict."""
+    db = _db_with_skill(tmp_path)
+    agent_id = _saved_agent_with(db, _SandboxExecutor())
+
+    with pytest.raises(SkillError, match="executor"):
+        Agent.load(agent_id, db=db)
+
+
+def test_load_accepts_a_re_supplied_executor(tmp_path):
+    """Branch B: re-supplying the executor is the way to load a sandboxed agent."""
+    db = _db_with_skill(tmp_path)
+    agent_id = _saved_agent_with(db, _SandboxExecutor())
+
+    loaded = Agent.load(agent_id, db=db, skill_executor=_SandboxExecutor())
+
+    assert loaded is not None
+    assert isinstance(loaded.skills.executor, _SandboxExecutor)
+
+
+def test_load_of_a_default_executor_agent_is_unchanged(tmp_path):
+    """The common case keeps working with no executor argument at all."""
+    db = _db_with_skill(tmp_path)
+    agent_id = _saved_agent_with(db)
+
+    loaded = Agent.load(agent_id, db=db)
+
+    assert loaded is not None
+    assert type(loaded.skills.executor) is LocalSkillExecutor

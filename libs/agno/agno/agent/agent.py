@@ -966,8 +966,11 @@ class Agent:
         registry: Optional["Registry"] = None,
         label: Optional[str] = None,
         version: Optional[int] = None,
+        skill_executor: Optional[SkillExecutor] = None,
     ) -> Optional["Agent"]:
-        return _storage.load(cls, id=id, db=db, registry=registry, label=label, version=version)
+        return _storage.load(
+            cls, id=id, db=db, registry=registry, label=label, version=version, skill_executor=skill_executor
+        )
 
     def delete(
         self,

@@ -1140,6 +1140,7 @@ def load(
     registry: Optional[Registry] = None,
     label: Optional[str] = None,
     version: Optional[int] = None,
+    skill_executor: Optional["SkillExecutor"] = None,
 ) -> Optional[Agent]:
     """
     Load an agent by id.
@@ -1148,6 +1149,8 @@ def load(
         cls: The Agent class (or subclass) to instantiate.
         id: The id of the agent to load.
         db: The database to load the agent from.
+        skill_executor: Executor to run skill scripts with. Required when the saved config
+            records a non-default executor, since one cannot be serialized.
         registry: Optional registry for rehydrating tools and schemas.
         label: The label of the agent to load.
         version: The version of the agent to load.
@@ -1164,7 +1167,7 @@ def load(
     if config is None:
         return None
 
-    agent = cls.from_dict(config, db=db, registry=registry)
+    agent = cls.from_dict(config, db=db, registry=registry, skill_executor=skill_executor)
     agent.id = id
     # Only fall back to the caller-provided db if the config didn't
     # reconstruct one. Otherwise we'd clobber any custom table names

@@ -433,3 +433,101 @@ def test_team_with_the_default_executor_round_trips_unchanged(tmp_path):
     config = team.to_dict()
     assert "requires_executor" not in config["skills"]
     assert type(Team.from_dict(config, db=db).skills.executor) is LocalSkillExecutor
+
+
+# ============================================================================
+# THE EXECUTOR ACROSS THE PUBLIC load() API
+# ============================================================================
+
+
+def _team_db(tmp_path, name="team_exec_load.db"):
+    """Postgres, not SQLite: Team.load passes label= to load_component_graph, which the
+    SQLite backend's signature does not accept (a pre-existing gap, unrelated to skills),
+    so Team.load cannot run on SQLite at all."""
+    import pytest as _pytest
+
+    from agno.db.postgres import PostgresDb
+
+    try:
+        db = PostgresDb(db_url="postgresql+psycopg://postgres:test@localhost:5433/skillstest")
+        if db.get_skill("greeter") is None:
+            db.create_skill({"name": "greeter", "description": "d", "instructions": "i"})
+    except Exception as exc:  # pragma: no cover - depends on a local server
+        _pytest.skip(f"postgres not available: {exc}")
+    return db
+
+
+def test_team_load_refuses_a_sandboxed_team_without_an_executor(tmp_path):
+    """Branch A: the contract holds through Team.load, not only from_dict."""
+    from agno.skills.errors import SkillError
+
+    db = _team_db(tmp_path)
+    team = Team(
+        name="t",
+        id="t-refuse",
+        members=[],
+        db=db,
+        skills=Skills(loaders=[DbSkills(db)], executor=_TeamSandboxExecutor()),
+    )
+    team.save(db=db)
+
+    with pytest.raises(SkillError, match="executor"):
+        Team.load("t-refuse", db=db)
+
+
+def test_team_load_accepts_a_re_supplied_executor(tmp_path):
+    """Branch B: re-supplying the executor loads the sandboxed team."""
+    db = _team_db(tmp_path)
+    team = Team(
+        name="t",
+        id="t-supply",
+        members=[],
+        db=db,
+        skills=Skills(loaders=[DbSkills(db)], executor=_TeamSandboxExecutor()),
+    )
+    team.save(db=db)
+
+    loaded = Team.load("t-supply", db=db, skill_executor=_TeamSandboxExecutor())
+
+    assert loaded is not None
+    assert isinstance(loaded.skills.executor, _TeamSandboxExecutor)
+
+
+def test_team_load_supplies_the_executor_to_a_sandboxed_member(tmp_path):
+    """The fan-out: a member agent's skills are rebuilt during team hydration too.
+
+    Without threading the executor to the member site, hydrating a team whose member was
+    saved under a sandbox would raise with nothing to catch it.
+    """
+    from agno.agent import Agent
+
+    db = _team_db(tmp_path, "team_member_exec.db")
+    member = Agent(
+        name="m",
+        id="m-sandboxed",
+        db=db,
+        skills=Skills(loaders=[DbSkills(db)], executor=_TeamSandboxExecutor()),
+    )
+    member.save(db=db)
+    team = Team(name="t", id="t-with-member", members=[member], db=db)
+    team.save(db=db)
+
+    loaded = Team.load("t-with-member", db=db, skill_executor=_TeamSandboxExecutor())
+
+    assert loaded is not None
+    hydrated = [m for m in loaded.members if getattr(m, "id", None) == "m-sandboxed"]
+    assert hydrated, "the sandboxed member was not hydrated"
+    assert isinstance(hydrated[0].skills.executor, _TeamSandboxExecutor)
+
+
+def test_team_load_of_a_default_executor_team_is_unchanged(tmp_path):
+    from agno.skills.executor import LocalSkillExecutor
+
+    db = _team_db(tmp_path, "team_default_load.db")
+    team = Team(name="t", id="t-default", members=[], db=db, skills=Skills(loaders=[DbSkills(db)]))
+    team.save(db=db)
+
+    loaded = Team.load("t-default", db=db)
+
+    assert loaded is not None
+    assert type(loaded.skills.executor) is LocalSkillExecutor

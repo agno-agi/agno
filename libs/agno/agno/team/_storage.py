@@ -1174,6 +1174,7 @@ def _hydrate_from_graph(
     *,
     db: "BaseDb",
     registry: Optional["Registry"] = None,
+    skill_executor: Optional["SkillExecutor"] = None,
 ) -> Optional["Team"]:
     """
     Hydrate a team and its members from an already-loaded component graph.
@@ -1186,7 +1187,7 @@ def _hydrate_from_graph(
     if config is None:
         return None
 
-    team = cls.from_dict(config, db=db, registry=registry)
+    team = cls.from_dict(config, db=db, registry=registry, skill_executor=skill_executor)
     team.id = graph["component"]["component_id"]
     # Only fall back to the caller-provided db if the config didn't
     # reconstruct one. Otherwise we'd clobber any custom table names
@@ -1211,14 +1212,14 @@ def _hydrate_from_graph(
         member_type = link_meta.get("type")
 
         if member_type == "agent":
-            agent = Agent.from_dict(child_config, db=db)
+            agent = Agent.from_dict(child_config, db=db, skill_executor=skill_executor)
             agent.id = child_graph["component"]["component_id"]
             if agent.db is None:
                 agent.db = db
             graph_members[agent.id] = agent
         elif member_type == "team":
             # Recursively hydrate nested teams from the already-loaded child graph
-            nested_team = _hydrate_from_graph(cls, child_graph, db=db, registry=registry)
+            nested_team = _hydrate_from_graph(cls, child_graph, db=db, registry=registry, skill_executor=skill_executor)
             if nested_team is not None and nested_team.id is not None:
                 graph_members[nested_team.id] = nested_team
 
@@ -1257,6 +1258,7 @@ def load(
     registry: Optional["Registry"] = None,
     label: Optional[str] = None,
     version: Optional[int] = None,
+    skill_executor: Optional["SkillExecutor"] = None,
 ) -> Optional["Team"]:
     """
     Load a team by id, with hydrated members.
@@ -1274,7 +1276,7 @@ def load(
     if graph is None:
         return None
 
-    return _hydrate_from_graph(cls, graph, db=db, registry=registry)
+    return _hydrate_from_graph(cls, graph, db=db, registry=registry, skill_executor=skill_executor)
 
 
 def delete(
