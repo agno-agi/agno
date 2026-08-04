@@ -88,8 +88,10 @@ from agno.session import TeamSession
 from agno.session._utils import resolve_run_index
 from agno.tools.function import Function
 from agno.utils.agent import (
+    abuild_offloaded_storage_copy,
     await_for_open_threads,
     await_for_thread_tasks_stream,
+    build_offloaded_storage_copy,
     collect_background_metrics,
     store_media_util,
     validate_input,
@@ -3388,13 +3390,17 @@ async def _arun_background(
     # 2. Set status to PENDING
     run_response.status = RunStatus.pending
 
-    # 3. Persist the PENDING run so polling can find it immediately
+    # 3. Persist the PENDING run so polling can find it immediately. This row survives for the
+    # whole run — and forever if the process dies before the terminal write — so its media is
+    # offloaded first rather than parked in the DB as base64. The RUNNING transition below
+    # writes the identical state, so it reuses the same copy instead of offloading twice.
     team_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
     _update_metadata(team, session=team_session)
-    team_session.upsert_run(run_response=run_response)
-    run_index = resolve_run_index(team_session, run_response)
+    storage_run = await abuild_offloaded_storage_copy(team, run_response, session_id) or run_response
+    team_session.upsert_run(run_response=storage_run)
+    run_index = resolve_run_index(team_session, storage_run)
     await asave_session(team, session=team_session)
-    await asave_run(team, run=run_response, session_id=session_id, user_id=user_id, run_index=run_index)
+    await asave_run(team, run=storage_run, session_id=session_id, user_id=user_id, run_index=run_index)
 
     log_info(f"Background run {run_response.run_id} created with PENDING status")
 
@@ -3403,8 +3409,9 @@ async def _arun_background(
         try:
             # Transition to RUNNING — only persist the changed run (O(1))
             run_response.status = RunStatus.running
-            team_session.upsert_run(run_response=run_response)
-            await asave_run(team, run=run_response, session_id=session_id, user_id=user_id)
+            storage_run.status = RunStatus.running
+            team_session.upsert_run(run_response=storage_run)
+            await asave_run(team, run=storage_run, session_id=session_id, user_id=user_id)
 
             # Execute the actual run — _arun handles everything including
             # session persistence and cleanup
@@ -3428,8 +3435,9 @@ async def _arun_background(
             try:
                 run_response.status = RunStatus.error
                 flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
-                team_session.upsert_run(run_response=run_response)
-                await asave_run(team, run=run_response, session_id=session_id, user_id=user_id)
+                error_run = await abuild_offloaded_storage_copy(team, run_response, session_id) or run_response
+                team_session.upsert_run(run_response=error_run)
+                await asave_run(team, run=error_run, session_id=session_id, user_id=user_id)
             except Exception as e:
                 log_error(f"Failed to persist error state for background run {run_response.run_id}: {str(e)}")
             # Note: acleanup_run is already called by _arun's finally block
@@ -3475,15 +3483,17 @@ async def _arun_background_stream(
     if not run_id:
         raise ValueError("run_id is required for background streaming")
 
-    # 1. Persist RUNNING status so the run is visible in the DB immediately
+    # 1. Persist RUNNING status so the run is visible in the DB immediately. The row stands
+    # until the terminal write, so offload its media instead of persisting it inline.
     run_response.status = RunStatus.running
 
     team_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
     _update_metadata(team, session=team_session)
-    team_session.upsert_run(run_response=run_response)
-    run_index = resolve_run_index(team_session, run_response)
+    storage_run = await abuild_offloaded_storage_copy(team, run_response, session_id) or run_response
+    team_session.upsert_run(run_response=storage_run)
+    run_index = resolve_run_index(team_session, storage_run)
     await asave_session(team, session=team_session)
-    await asave_run(team, run=run_response, session_id=session_id, user_id=user_id, run_index=run_index)
+    await asave_run(team, run=storage_run, session_id=session_id, user_id=user_id, run_index=run_index)
 
     log_info(f"Background stream run {run_id} persisted with RUNNING status")
 
@@ -3545,8 +3555,9 @@ async def _arun_background_stream(
             try:
                 run_response.status = RunStatus.error
                 flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
-                team_session.upsert_run(run_response=run_response)
-                await asave_run(team, run=run_response, session_id=session_id, user_id=user_id)
+                error_run = await abuild_offloaded_storage_copy(team, run_response, session_id) or run_response
+                team_session.upsert_run(run_response=error_run)
+                await asave_run(team, run=error_run, session_id=session_id, user_id=user_id)
             except Exception:
                 log_error(f"Failed to persist error state for background stream run {run_id}", exc_info=True)
 
@@ -4449,12 +4460,16 @@ def _iter_member_runs_for_team_run(session: TeamSession, team_run_id: Optional[s
 
 def _persist_member_runs_for_team_run(team: "Team", session: TeamSession, team_run_id: Optional[str]) -> None:
     from agno.team._session import save_run
+    from agno.utils.agent import build_offloaded_storage_copy
 
     for idx, member_run in _iter_member_runs_for_team_run(session, team_run_id):
         try:
+            # The team owns this write, so the team's media_storage offloads it. Without this the
+            # member rows keep raw base64 while the team row written beside them holds references.
+            # Returns None when there is nothing to offload, so the member run is written as-is.
             save_run(
                 team,
-                run=member_run,
+                run=build_offloaded_storage_copy(team, member_run, session.session_id) or member_run,
                 session_id=session.session_id,
                 user_id=session.user_id,
                 run_index=idx,
@@ -4463,16 +4478,15 @@ def _persist_member_runs_for_team_run(team: "Team", session: TeamSession, team_r
             log_debug(f"Failed to persist member run {getattr(member_run, 'run_id', None)}: {e}")
 
 
-async def _apersist_member_runs_for_team_run(
-    team: "Team", session: TeamSession, team_run_id: Optional[str]
-) -> None:
+async def _apersist_member_runs_for_team_run(team: "Team", session: TeamSession, team_run_id: Optional[str]) -> None:
     from agno.team._session import asave_run
+    from agno.utils.agent import abuild_offloaded_storage_copy
 
     for idx, member_run in _iter_member_runs_for_team_run(session, team_run_id):
         try:
             await asave_run(
                 team,
-                run=member_run,
+                run=await abuild_offloaded_storage_copy(team, member_run, session.session_id) or member_run,
                 session_id=session.session_id,
                 user_id=session.user_id,
                 run_index=idx,
@@ -4492,29 +4506,50 @@ def _cleanup_and_store(
     from agno.run.approval import update_approval_run_status
     from agno.team._session import update_session_metrics
 
+    # Stop the timer for the Run duration. Done before the storage copy is taken so the
+    # persisted run carries the duration too.
+    if run_response.metrics:
+        run_response.metrics.stop_timer()
+
     # Scrub a copy for storage — the original run_response is never mutated so the
-    # caller always sees full media regardless of store_media. When offloading,
-    # deep-copy first: offload strips content bytes off media objects, and a shallow
-    # copy would share those objects with the caller (e.g. reused input Images).
+    # caller always sees full media regardless of store_media.
+    storage_copy = copy.copy(run_response)
     if team.media_storage is not None and team.store_media:
-        storage_copy = copy.deepcopy(run_response)
+        from agno.media.storage.base import AsyncMediaStorage
 
-        from agno.media_storage.base import AsyncMediaStorage
-
+        # Raised outside the guard below: an async backend on a sync run is a configuration
+        # error, not a storage failure, and falling back to inline would hide it.
         if isinstance(team.media_storage, AsyncMediaStorage):
-            log_warning("AsyncMediaStorage provided but sync run() called. Skipping media offload.")
-        else:
-            try:
-                from agno.utils.media_offload import offload_run_media
+            raise ValueError("Cannot use sync run() with an AsyncMediaStorage. Use arun() instead.")
 
-                offload_run_media(storage_copy, team.media_storage, session.session_id, run_response.run_id or "")
-            except Exception as e:
-                log_warning(f"Media offload failed, falling back to inline storage: {e}")
-    else:
-        storage_copy = copy.copy(run_response)
+        try:
+            from agno.utils.media_offload import offload_cache_for, offload_run_media
+
+            # Deep-copy first: offload strips content bytes off media objects, and a shallow
+            # copy would share those objects with the caller (e.g. reused input Images). The
+            # copy is taken inside the guard so an uncopyable payload also stays inline.
+            offload_copy = copy.deepcopy(run_response)
+            offload_run_media(
+                offload_copy,
+                team.media_storage,
+                session.session_id,
+                run_response.run_id or "",
+                cache=offload_cache_for(run_response),
+            )
+            storage_copy = offload_copy
+        except Exception as e:
+            log_warning(f"Media offload failed, falling back to inline storage: {e}")
 
     if run_response.run_id:
         cleanup_member_runs(run_response.run_id)
+
+    # The media scrub recurses into member_responses, which are the same objects the sibling
+    # member rows are written from further down. Isolate them so dropping media from the team
+    # row does not also strip it off runs governed by each member's own store_media.
+    if not team.store_media:
+        from agno.utils.agent import isolate_media_scrub_targets
+
+        isolate_media_scrub_targets(storage_copy)
 
     scrub_run_output_for_storage(team, storage_copy)
 
@@ -4524,10 +4559,6 @@ def _cleanup_and_store(
     # honour the flag regardless of ordering.
     if not team.store_member_responses:
         storage_copy.member_responses = []
-
-    # Stop the timer for the Run duration
-    if run_response.metrics:
-        run_response.metrics.stop_timer()
 
     # Update run_response.session_state before saving
     if run_context is not None and run_context.session_state is not None:
@@ -4581,39 +4612,67 @@ async def _acleanup_and_store(
     from agno.run.approval import aupdate_approval_run_status
     from agno.team._session import update_session_metrics
 
-    # Scrub a copy for storage — the original run_response is never mutated so the
-    # caller always sees full media regardless of store_media. When offloading,
-    # deep-copy first: offload strips content bytes off media objects, and a shallow
-    # copy would share those objects with the caller (e.g. reused input Images).
-    if team.media_storage is not None and team.store_media:
-        storage_copy = copy.deepcopy(run_response)
+    # Stop the timer for the Run duration. Done before the storage copy is taken so the
+    # persisted run carries the duration too.
+    if run_response.metrics:
+        run_response.metrics.stop_timer()
 
-        from agno.media_storage.base import AsyncMediaStorage, MediaStorage
+    # Scrub a copy for storage — the original run_response is never mutated so the
+    # caller always sees full media regardless of store_media. When offloading, deep-copy
+    # first: offload strips content bytes off media objects, and a shallow copy would share
+    # those objects with the caller (e.g. reused input Images). Each copy is taken inside its
+    # guard so an uncopyable payload also stays inline.
+    storage_copy = copy.copy(run_response)
+    if team.media_storage is not None and team.store_media:
+        from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 
         if not isinstance(team.media_storage, AsyncMediaStorage):
             if isinstance(team.media_storage, MediaStorage):
+                # Sync storage in an async run — offload it in a worker thread. Calling it
+                # inline would hold the event loop for the whole upload.
                 try:
-                    from agno.utils.media_offload import offload_run_media
+                    from agno.utils.media_offload import offload_cache_for, offload_run_media
 
-                    offload_run_media(storage_copy, team.media_storage, session.session_id, run_response.run_id or "")
+                    offload_copy = copy.deepcopy(run_response)
+                    await asyncio.to_thread(
+                        offload_run_media,
+                        offload_copy,
+                        team.media_storage,
+                        session.session_id,
+                        run_response.run_id or "",
+                        offload_cache_for(run_response),
+                    )
+                    storage_copy = offload_copy
                 except Exception as e:
                     log_warning(f"Media offload failed, falling back to inline storage: {e}")
             else:
-                log_warning("Sync MediaStorage provided but async arun() called. Skipping media offload.")
+                log_warning("media_storage is not a MediaStorage or AsyncMediaStorage. Skipping media offload.")
         else:
             try:
-                from agno.utils.media_offload import aoffload_run_media
+                from agno.utils.media_offload import aoffload_run_media, offload_cache_for
 
+                offload_copy = copy.deepcopy(run_response)
                 await aoffload_run_media(
-                    storage_copy, team.media_storage, session.session_id, run_response.run_id or ""
+                    offload_copy,
+                    team.media_storage,
+                    session.session_id,
+                    run_response.run_id or "",
+                    cache=offload_cache_for(run_response),
                 )
+                storage_copy = offload_copy
             except Exception as e:
                 log_warning(f"Media offload failed, falling back to inline storage: {e}")
-    else:
-        storage_copy = copy.copy(run_response)
 
     if run_response.run_id:
         await acleanup_member_runs(run_response.run_id)
+
+    # The media scrub recurses into member_responses, which are the same objects the sibling
+    # member rows are written from further down. Isolate them so dropping media from the team
+    # row does not also strip it off runs governed by each member's own store_media.
+    if not team.store_media:
+        from agno.utils.agent import isolate_media_scrub_targets
+
+        isolate_media_scrub_targets(storage_copy)
 
     scrub_run_output_for_storage(team, storage_copy)
 
@@ -4623,10 +4682,6 @@ async def _acleanup_and_store(
     # honour the flag regardless of ordering.
     if not team.store_member_responses:
         storage_copy.member_responses = []
-
-    # Stop the timer for the Run duration
-    if run_response.metrics:
-        run_response.metrics.stop_timer()
 
     # Update run_response.session_state before saving
     if run_context is not None and run_context.session_state is not None:
@@ -4745,10 +4800,12 @@ def _persist_team_run_in_session(
     from agno.team._session import update_session_metrics
     from agno.utils.agent import isolate_media_scrub_targets
 
-    storage_copy = copy.copy(run_response)
-    # Mid-run checkpoint: scrubbing mutates shared objects in place, and the
-    # shallow copy aliases the live run. Isolate what the scrubs touch so a
-    # checkpoint never strips state off the still-running team run.
+    # Mid-run checkpoint: offload its media the same way the terminal write does, so the
+    # checkpoint row carries references rather than inline base64 for the rest of the run.
+    storage_copy = build_offloaded_storage_copy(team, run_response, session.session_id) or copy.copy(run_response)
+    # Scrubbing mutates shared objects in place, and a shallow copy aliases the live run.
+    # Isolate what the scrubs touch so a checkpoint never strips state off the still-running
+    # team run. An offloaded copy is a deep copy, so it is already isolated.
     if not team.store_media:
         isolate_media_scrub_targets(storage_copy)
     if storage_copy.member_responses and team.store_member_responses:
@@ -4801,10 +4858,14 @@ async def _apersist_team_run_in_session(
     from agno.team._session import update_session_metrics
     from agno.utils.agent import isolate_media_scrub_targets
 
-    storage_copy = copy.copy(run_response)
-    # Mid-run checkpoint: scrubbing mutates shared objects in place, and the
-    # shallow copy aliases the live run. Isolate what the scrubs touch so a
-    # checkpoint never strips state off the still-running team run.
+    # Mid-run checkpoint: offload its media the same way the terminal write does, so the
+    # checkpoint row carries references rather than inline base64 for the rest of the run.
+    storage_copy = await abuild_offloaded_storage_copy(team, run_response, session.session_id) or copy.copy(
+        run_response
+    )
+    # Scrubbing mutates shared objects in place, and a shallow copy aliases the live run.
+    # Isolate what the scrubs touch so a checkpoint never strips state off the still-running
+    # team run. An offloaded copy is a deep copy, so it is already isolated.
     if not team.store_media:
         isolate_media_scrub_targets(storage_copy)
     if storage_copy.member_responses and team.store_member_responses:
@@ -7875,10 +7936,11 @@ async def _acontinue_run_background_stream(
     # task will load and persist it via _acontinue_run_stream.
     if run_response is not None:
         run_response.status = RunStatus.running
-        team_session.upsert_run(run_response=run_response)
-        run_index = resolve_run_index(team_session, run_response)
+        storage_run = await abuild_offloaded_storage_copy(team, run_response, session_id) or run_response
+        team_session.upsert_run(run_response=storage_run)
+        run_index = resolve_run_index(team_session, storage_run)
         await asave_session(team, session=team_session)
-        await asave_run(team, run=run_response, session_id=session_id, user_id=user_id, run_index=run_index)
+        await asave_run(team, run=storage_run, session_id=session_id, user_id=user_id, run_index=run_index)
         log_info(f"Background continue-run stream {_run_id} persisted with RUNNING status")
     else:
         log_info(f"Background continue-run stream {_run_id} spawned; run will be loaded by the task")
@@ -7946,8 +8008,9 @@ async def _acontinue_run_background_stream(
             try:
                 if run_response is not None:
                     run_response.status = RunStatus.error
-                    team_session.upsert_run(run_response=run_response)
-                    await asave_run(team, run=run_response, session_id=session_id, user_id=user_id)
+                    error_run = await abuild_offloaded_storage_copy(team, run_response, session_id) or run_response
+                    team_session.upsert_run(run_response=error_run)
+                    await asave_run(team, run=error_run, session_id=session_id, user_id=user_id)
             except Exception:
                 log_error(
                     f"Failed to persist error state for background continue-run stream {_run_id}",

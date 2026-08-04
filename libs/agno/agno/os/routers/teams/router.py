@@ -1,6 +1,6 @@
 import asyncio
 import json
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Literal, Optional, Union
+from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Literal, Optional, Union
 from uuid import uuid4
 
 from fastapi import (
@@ -51,6 +51,7 @@ from agno.os.utils import (
     format_sse_event,
     get_request_kwargs,
     get_team_by_id,
+    parse_files_metadata,
     process_audio,
     process_document,
     process_image,
@@ -580,6 +581,9 @@ def get_team_router(
         files: Optional[List[UploadFile]] = File(
             None, description="Files to upload (images, audio, video, or documents)"
         ),
+        files_metadata: Optional[str] = Form(
+            None, description="JSON array of per-file metadata objects, matched to files[] by position"
+        ),
         version: Optional[int] = Form(None, description="Team version to use for this run"),
         background: bool = Form(
             False, description="Run in background and return immediately with run metadata (requires database)"
@@ -592,17 +596,7 @@ def get_team_router(
         kwargs = await get_request_kwargs(request, create_team_run)
 
         # Parse per-file metadata (JSON array matching files[] by position)
-        files_metadata_raw = kwargs.pop("files_metadata", None)
-        files_metadata_list: List[Optional[Dict[str, Any]]] = []
-        if files_metadata_raw and isinstance(files_metadata_raw, str):
-            try:
-                parsed = json.loads(files_metadata_raw)
-                if isinstance(parsed, list):
-                    # Coerce non-object entries to None so the matching file is still
-                    # processed (just without metadata) instead of being dropped.
-                    files_metadata_list = [m if isinstance(m, dict) else None for m in parsed]
-            except json.JSONDecodeError:
-                log_warning(f"Invalid files_metadata JSON: {files_metadata_raw}")
+        files_metadata_list = parse_files_metadata(files_metadata)
 
         # Scoped non-admin callers always get their JWT sub as user_id.
         # Admins and unscoped callers fall through to middleware/form values.
@@ -698,10 +692,23 @@ def get_team_router(
         # Merge media passed as JSON form fields (sent by AgnoClient, e.g. when this team
         # is used as a remote member) with media from uploaded files.
         # Popped from kwargs since they are passed explicitly to the run methods below.
-        base64_images.extend(kwargs.pop("images", None) or [])
-        base64_audios.extend(kwargs.pop("audio", None) or [])
-        base64_videos.extend(kwargs.pop("videos", None) or [])
-        document_files.extend(kwargs.pop("files", None) or [])
+        # These arrive as JSON arrays from AgnoClient. A multipart *file* part of the same
+        # name would otherwise reach .extend() as an UploadFile and 500 — files belong in `files`.
+        for field, target in (
+            ("images", base64_images),
+            ("audio", base64_audios),
+            ("videos", base64_videos),
+            ("files", document_files),
+        ):
+            value = kwargs.pop(field, None)
+            if value is None:
+                continue
+            if not isinstance(value, (list, tuple)):
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"`{field}` must be a JSON array; upload binary content via `files`",
+                )
+            target.extend(value)
 
         # Extract auth token for remote teams
         auth_token = get_auth_token_from_request(request)

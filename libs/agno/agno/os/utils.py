@@ -60,6 +60,96 @@ def to_utc_datetime(value: Optional[Union[str, int, float, date, datetime]]) -> 
     return datetime.fromtimestamp(value, tz=timezone.utc)
 
 
+# Per-file metadata is persisted on the media object and again on its MediaReference, so a
+# caller's dict is stored twice for every file. The object stores cap their own copy (1800 bytes
+# on S3, 8000 on GCS) and nothing capped the database, so a megabyte of metadata turned a 2 KB
+# image into a multi-megabyte run row. Matched to the most generous backend budget.
+MAX_FILES_METADATA_BYTES = 8000
+
+
+def parse_files_metadata(files_metadata: Optional[str]) -> List[Optional[Dict[str, Any]]]:
+    """Parse the per-file metadata array, refusing one too large to persist.
+
+    Rejected rather than truncated: a caller who sends metadata expects to read it back, and
+    silently keeping a prefix of it is worse than being told it did not fit.
+    """
+    if not files_metadata:
+        return []
+    if len(files_metadata.encode("utf-8")) > MAX_FILES_METADATA_BYTES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"files_metadata exceeds the {MAX_FILES_METADATA_BYTES}-byte limit",
+        )
+    try:
+        parsed = json.loads(files_metadata)
+    except json.JSONDecodeError:
+        log_warning(f"Invalid files_metadata JSON: {files_metadata}")
+        return []
+    if not isinstance(parsed, list):
+        return []
+    # Coerce non-object entries to None so the matching file is still processed (just without
+    # metadata) instead of being dropped.
+    return [m if isinstance(m, dict) else None for m in parsed]
+
+
+def iter_run_media(run: Any):
+    """Yield every media object hanging off a run, across agent/team/workflow shapes."""
+    from agno.utils.media_offload import iter_step_outputs
+
+    run_input = getattr(run, "input", None)
+    for attr in ("images", "videos", "audios", "files"):
+        for media in getattr(run_input, attr, None) or []:
+            yield media
+    for message in getattr(run, "messages", None) or []:
+        for attr in ("images", "videos", "audio", "files"):
+            for media in getattr(message, attr, None) or []:
+                yield media
+        audio_output = getattr(message, "audio_output", None)
+        if audio_output is not None:
+            yield audio_output
+    for attr in ("images", "videos", "audio", "files"):
+        for media in getattr(run, attr, None) or []:
+            yield media
+    response_audio = getattr(run, "response_audio", None)
+    if response_audio is not None:
+        yield response_audio
+    for collection in ("additional_input", "reasoning_messages"):
+        for message in getattr(run, collection, None) or []:
+            for attr in ("images", "videos", "audio", "files"):
+                for media in getattr(message, attr, None) or []:
+                    yield media
+    # Team members
+    for member in getattr(run, "member_responses", None) or []:
+        yield from iter_run_media(member)
+    # Workflow steps, including the children nested inside container steps
+    for step_output in iter_step_outputs(run):
+        for attr in ("images", "videos", "audio", "files"):
+            for media in getattr(step_output, attr, None) or []:
+                yield media
+    for executor_run in getattr(run, "step_executor_runs", None) or []:
+        yield from iter_run_media(executor_run)
+    workflow_agent_run = getattr(run, "workflow_agent_run", None)
+    if workflow_agent_run is not None:
+        yield from iter_run_media(workflow_agent_run)
+
+
+def drop_media_references(media_dicts: Any) -> Any:
+    """Drop ``media_reference`` from inbound media dicts.
+
+    A reference is a pointer into the configured storage bucket, minted by the offload engine
+    and trusted downstream: the media route serves any key it finds on a session the caller
+    owns. Honouring one from a request body would let a caller name any key the AgentOS
+    credentials can reach, have it persisted onto their own session, and read it back.
+    Request media carries its own content, url, or filepath; the reference is attached on the
+    way out, never on the way in.
+    """
+    if isinstance(media_dicts, list):
+        for item in media_dicts:
+            if isinstance(item, dict):
+                item.pop("media_reference", None)
+    return media_dicts
+
+
 async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[str, Any]:
     """Given a Request and an endpoint function, return a dictionary with all extra form data fields.
 
@@ -132,7 +222,7 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
             continue
         kwargs.pop(form_key)
         try:
-            reconstructed_media = reconstructor(json.loads(media_value))
+            reconstructed_media = reconstructor(drop_media_references(json.loads(media_value)))
             if reconstructed_media:
                 kwargs[kwarg_key] = reconstructed_media
         except json.JSONDecodeError as e:

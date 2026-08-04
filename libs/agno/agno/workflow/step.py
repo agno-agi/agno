@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import inspect
 from copy import deepcopy
@@ -14,6 +15,7 @@ from agno.agent import Agent
 from agno.db.base import BaseDb
 from agno.exceptions import RunCancelledException
 from agno.media import Audio, Image, Video
+from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.models.message import Message
 from agno.models.metrics import RunMetrics
 from agno.registry import Registry
@@ -740,6 +742,7 @@ class Step:
         run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
@@ -855,13 +858,22 @@ class Step:
                         elif self._executor_type == "team":
                             use_team_logger()
 
+                        media_storage = self._resolve_media_storage(workflow_media_storage)
                         images = (
-                            self._convert_image_artifacts_to_images(step_input.images) if step_input.images else None
+                            self._convert_image_artifacts_to_images(step_input.images, media_storage)
+                            if step_input.images
+                            else None
                         )
                         videos = (
-                            self._convert_video_artifacts_to_videos(step_input.videos) if step_input.videos else None
+                            self._convert_video_artifacts_to_videos(step_input.videos, media_storage)
+                            if step_input.videos
+                            else None
                         )
-                        audios = self._convert_audio_artifacts_to_audio(step_input.audio) if step_input.audio else None
+                        audios = (
+                            self._convert_audio_artifacts_to_audio(step_input.audio, media_storage)
+                            if step_input.audio
+                            else None
+                        )
 
                         kwargs: Dict[str, Any] = {}
                         if isinstance(self.active_executor, Team):
@@ -950,6 +962,7 @@ class Step:
                             workflow_run_response=workflow_run_response,
                             session_state=session_state_copy,
                             store_executor_outputs=store_executor_outputs,
+                            workflow_media_storage=workflow_media_storage,
                             background_tasks=background_tasks,
                         )
 
@@ -1063,6 +1076,7 @@ class Step:
         session_state: Optional[Dict[str, Any]] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         parent_step_id: Optional[str] = None,
         workflow_session: Optional["WorkflowSession"] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
@@ -1190,13 +1204,22 @@ class Step:
                         elif self._executor_type == "team":
                             use_team_logger()
 
+                        media_storage = self._resolve_media_storage(workflow_media_storage)
                         images = (
-                            self._convert_image_artifacts_to_images(step_input.images) if step_input.images else None
+                            self._convert_image_artifacts_to_images(step_input.images, media_storage)
+                            if step_input.images
+                            else None
                         )
                         videos = (
-                            self._convert_video_artifacts_to_videos(step_input.videos) if step_input.videos else None
+                            self._convert_video_artifacts_to_videos(step_input.videos, media_storage)
+                            if step_input.videos
+                            else None
                         )
-                        audios = self._convert_audio_artifacts_to_audio(step_input.audio) if step_input.audio else None
+                        audios = (
+                            self._convert_audio_artifacts_to_audio(step_input.audio, media_storage)
+                            if step_input.audio
+                            else None
+                        )
 
                         kwargs: Dict[str, Any] = {}
                         if isinstance(self.active_executor, Team):
@@ -1306,6 +1329,7 @@ class Step:
                             workflow_run_response=workflow_run_response,
                             session_state=session_state_copy,
                             store_executor_outputs=store_executor_outputs,
+                            workflow_media_storage=workflow_media_storage,
                             stream_events=stream_events,
                             background_tasks=background_tasks,
                         ):
@@ -1383,6 +1407,7 @@ class Step:
         run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         workflow_session: Optional["WorkflowSession"] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
@@ -1529,13 +1554,33 @@ class Step:
                         elif self._executor_type == "team":
                             use_team_logger()
 
+                        media_storage = self._resolve_media_storage(workflow_media_storage)
+                        # An async backend is read back here, on the loop that can await it,
+                        # and drops out of what the converters are handed. What is left is a
+                        # sync backend, whose blocking download stays off the event loop in
+                        # the worker thread the converters already run in.
+                        media_storage = await self._arehydrate_step_input_media(step_input, media_storage)
                         images = (
-                            self._convert_image_artifacts_to_images(step_input.images) if step_input.images else None
+                            await asyncio.to_thread(
+                                self._convert_image_artifacts_to_images, step_input.images, media_storage
+                            )
+                            if step_input.images
+                            else None
                         )
                         videos = (
-                            self._convert_video_artifacts_to_videos(step_input.videos) if step_input.videos else None
+                            await asyncio.to_thread(
+                                self._convert_video_artifacts_to_videos, step_input.videos, media_storage
+                            )
+                            if step_input.videos
+                            else None
                         )
-                        audios = self._convert_audio_artifacts_to_audio(step_input.audio) if step_input.audio else None
+                        audios = (
+                            await asyncio.to_thread(
+                                self._convert_audio_artifacts_to_audio, step_input.audio, media_storage
+                            )
+                            if step_input.audio
+                            else None
+                        )
 
                         kwargs: Dict[str, Any] = {}
                         if isinstance(self.active_executor, Team):
@@ -1624,6 +1669,7 @@ class Step:
                             workflow_run_response=workflow_run_response,
                             session_state=session_state_copy,
                             store_executor_outputs=store_executor_outputs,
+                            workflow_media_storage=workflow_media_storage,
                             background_tasks=background_tasks,
                         )
 
@@ -1667,6 +1713,7 @@ class Step:
         session_state: Optional[Dict[str, Any]] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         parent_step_id: Optional[str] = None,
         workflow_session: Optional["WorkflowSession"] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
@@ -1838,13 +1885,33 @@ class Step:
                         elif self._executor_type == "team":
                             use_team_logger()
 
+                        media_storage = self._resolve_media_storage(workflow_media_storage)
+                        # An async backend is read back here, on the loop that can await it,
+                        # and drops out of what the converters are handed. What is left is a
+                        # sync backend, whose blocking download stays off the event loop in
+                        # the worker thread the converters already run in.
+                        media_storage = await self._arehydrate_step_input_media(step_input, media_storage)
                         images = (
-                            self._convert_image_artifacts_to_images(step_input.images) if step_input.images else None
+                            await asyncio.to_thread(
+                                self._convert_image_artifacts_to_images, step_input.images, media_storage
+                            )
+                            if step_input.images
+                            else None
                         )
                         videos = (
-                            self._convert_video_artifacts_to_videos(step_input.videos) if step_input.videos else None
+                            await asyncio.to_thread(
+                                self._convert_video_artifacts_to_videos, step_input.videos, media_storage
+                            )
+                            if step_input.videos
+                            else None
                         )
-                        audios = self._convert_audio_artifacts_to_audio(step_input.audio) if step_input.audio else None
+                        audios = (
+                            await asyncio.to_thread(
+                                self._convert_audio_artifacts_to_audio, step_input.audio, media_storage
+                            )
+                            if step_input.audio
+                            else None
+                        )
 
                         kwargs: Dict[str, Any] = {}
                         if isinstance(self.active_executor, Team):
@@ -1954,6 +2021,7 @@ class Step:
                             workflow_run_response=workflow_run_response,
                             session_state=session_state_copy,
                             store_executor_outputs=store_executor_outputs,
+                            workflow_media_storage=workflow_media_storage,
                             stream_events=stream_events,
                             background_tasks=background_tasks,
                         ):
@@ -2282,14 +2350,46 @@ class Step:
             # Convert any other type to string
             return RunOutput(content=str(result))
 
-    def _convert_audio_artifacts_to_audio(self, audio_artifacts: List[Audio]) -> List[Audio]:
+    def _convert_audio_artifacts_to_audio(
+        self, audio_artifacts: List[Audio], media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None
+    ) -> List[Audio]:
         """Convert AudioArtifact objects to Audio objects"""
         audios = []
         for audio_artifact in audio_artifacts:
-            if audio_artifact.url:
-                audios.append(Audio(url=audio_artifact.url))
+            # id, format and mime_type carry over so offload keys the same bytes to the same
+            # object across runs instead of minting a fresh uuid each time. An offloaded audio
+            # carries only its reference, so that is checked first or it falls through to the
+            # skip below and the step silently loses it.
+            if audio_artifact.media_reference is not None:
+                self._rehydrate(audio_artifact, media_storage)
+                audios.append(
+                    Audio(
+                        content=audio_artifact.content,
+                        media_reference=audio_artifact.media_reference,
+                        url=audio_artifact.url,
+                        id=audio_artifact.id,
+                        format=audio_artifact.format,
+                        mime_type=audio_artifact.mime_type,
+                    )
+                )
+            elif audio_artifact.url:
+                audios.append(
+                    Audio(
+                        url=audio_artifact.url,
+                        id=audio_artifact.id,
+                        format=audio_artifact.format,
+                        mime_type=audio_artifact.mime_type,
+                    )
+                )
             elif audio_artifact.content:
-                audios.append(Audio(content=audio_artifact.content))
+                audios.append(
+                    Audio(
+                        content=audio_artifact.content,
+                        id=audio_artifact.id,
+                        format=audio_artifact.format,
+                        mime_type=audio_artifact.mime_type,
+                    )
+                )
             else:
                 logger.warning(f"Skipping AudioArtifact with no URL or content: {audio_artifact}")
                 continue
@@ -2345,6 +2445,7 @@ class Step:
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Execute a nested workflow as a step (non-streaming)"""
@@ -2370,6 +2471,7 @@ class Step:
                 workflow_run_response=workflow_run_response,
                 session_state=session_state,
                 store_executor_outputs=store_executor_outputs,
+                workflow_media_storage=workflow_media_storage,
                 background_tasks=background_tasks,
             )
         finally:
@@ -2383,6 +2485,7 @@ class Step:
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Inner implementation of sync non-streaming nested workflow execution"""
@@ -2461,6 +2564,7 @@ class Step:
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         stream_events: bool = False,
         background_tasks: Optional[Any] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
@@ -2487,6 +2591,7 @@ class Step:
                 workflow_run_response=workflow_run_response,
                 session_state=session_state,
                 store_executor_outputs=store_executor_outputs,
+                workflow_media_storage=workflow_media_storage,
                 stream_events=stream_events,
                 background_tasks=background_tasks,
             )
@@ -2501,6 +2606,7 @@ class Step:
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         stream_events: bool = False,
         background_tasks: Optional[Any] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
@@ -2614,6 +2720,7 @@ class Step:
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Execute a nested workflow as a step asynchronously (non-streaming)"""
@@ -2639,6 +2746,7 @@ class Step:
                 workflow_run_response=workflow_run_response,
                 session_state=session_state,
                 store_executor_outputs=store_executor_outputs,
+                workflow_media_storage=workflow_media_storage,
                 background_tasks=background_tasks,
             )
         finally:
@@ -2652,6 +2760,7 @@ class Step:
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Inner implementation of async non-streaming nested workflow execution"""
@@ -2730,6 +2839,7 @@ class Step:
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         stream_events: bool = False,
         background_tasks: Optional[Any] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
@@ -2756,6 +2866,7 @@ class Step:
                 workflow_run_response=workflow_run_response,
                 session_state=session_state,
                 store_executor_outputs=store_executor_outputs,
+                workflow_media_storage=workflow_media_storage,
                 stream_events=stream_events,
                 background_tasks=background_tasks,
             ):
@@ -2771,6 +2882,7 @@ class Step:
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         stream_events: bool = False,
         background_tasks: Optional[Any] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
@@ -2876,7 +2988,82 @@ class Step:
             steps=nested_steps if nested_steps else None,
         )
 
-    def _convert_image_artifacts_to_images(self, image_artifacts: List[Image]) -> List[Image]:
+    def _resolve_media_storage(
+        self, workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]]
+    ) -> Optional[Union[MediaStorage, AsyncMediaStorage]]:
+        """The executor's own backend, falling back to the workflow's.
+
+        Fallback, never override: an executor configured with its own backend has stated where
+        its objects belong, and silently redirecting them to the parent's bucket would be worse
+        than the gap this closes. Resolved per execution rather than assigned onto the executor,
+        which is shared across workflows.
+        """
+        return getattr(self.active_executor, "media_storage", None) or workflow_media_storage
+
+    @staticmethod
+    def _rehydrate(media: Any, media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]]) -> None:
+        """Read an offloaded object's bytes back so the model can actually see it.
+
+        A reference alone is not something a model API can fetch: on a private bucket the
+        reference carries no url, so the executor would receive media with nothing in it.
+        """
+        if media_storage is None or media.media_reference is None or media.content is not None:
+            return
+        if media.url:
+            return
+
+        from agno.media.storage.base import AsyncMediaStorage
+
+        # Raised outside the guard below: an async backend on a sync run is a configuration
+        # error, not a read failure, and warning past it would hand the executor empty media.
+        if isinstance(media_storage, AsyncMediaStorage):
+            raise ValueError("Cannot use sync run() with an AsyncMediaStorage. Use arun() instead.")
+
+        try:
+            media.content = media_storage.download(media.media_reference.storage_key)
+        except Exception as e:
+            logger.warning(f"Could not read stored media {getattr(media, 'id', '?')} back: {e}")
+
+    @staticmethod
+    async def _arehydrate(media: Any, media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]]) -> None:
+        """Async variant of :meth:`_rehydrate`."""
+        if media_storage is None or media.media_reference is None or media.content is not None:
+            return
+        if media.url:
+            return
+        try:
+            from agno.media.storage.base import AsyncMediaStorage
+
+            key = media.media_reference.storage_key
+            if isinstance(media_storage, AsyncMediaStorage):
+                media.content = await media_storage.download(key)
+            else:
+                media.content = await asyncio.to_thread(media_storage.download, key)
+        except Exception as e:
+            logger.warning(f"Could not read stored media {getattr(media, 'id', '?')} back: {e}")
+
+    async def _arehydrate_step_input_media(
+        self, step_input: StepInput, media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]]
+    ) -> Optional[MediaStorage]:
+        """Read an async backend's offloaded objects back, and say what the converters get.
+
+        The converters are sync and run in a worker thread, so they rehydrate through
+        ``download()`` — which an AsyncMediaStorage does not have as a blocking call. Its
+        objects are read here instead, on the loop that can await them, and the converters are
+        handed None because there is nothing left for them to read. A sync backend is passed
+        straight through: its blocking download belongs in the thread they already run in.
+        """
+        from agno.media.storage.base import AsyncMediaStorage
+
+        if not isinstance(media_storage, AsyncMediaStorage):
+            return media_storage
+        for media in [*(step_input.images or []), *(step_input.videos or []), *(step_input.audio or [])]:
+            await self._arehydrate(media, media_storage)
+        return None
+
+    def _convert_image_artifacts_to_images(
+        self, image_artifacts: List[Image], media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None
+    ) -> List[Image]:
         """
         Convert ImageArtifact objects to Image objects with proper content handling.
 
@@ -2892,12 +3079,35 @@ class Step:
         images = []
         for i, img_artifact in enumerate(image_artifacts):
             # Create Image object with proper data from ImageArtifact
-            if img_artifact.url:
-                images.append(Image(url=img_artifact.url))
+            # An offloaded image carries only its reference — url, filepath and content are all
+            # None — so it has to be checked first or it falls through to the skip below and the
+            # step silently loses media that storage holds perfectly well.
+            if img_artifact.media_reference is not None:
+                self._rehydrate(img_artifact, media_storage)
+                images.append(
+                    Image(
+                        content=img_artifact.content,
+                        media_reference=img_artifact.media_reference,
+                        url=img_artifact.url,
+                        id=img_artifact.id,
+                        format=img_artifact.format,
+                        mime_type=img_artifact.mime_type,
+                    )
+                )
+
+            elif img_artifact.url:
+                images.append(Image(url=img_artifact.url, id=img_artifact.id, mime_type=img_artifact.mime_type))
 
             elif img_artifact.filepath:
-                # Pass through filepath-based images directly
-                image_kwargs: Dict[str, Any] = {"filepath": img_artifact.filepath}
+                # Pass through filepath-based images directly. id and mime_type carry over:
+                # Image() mints a fresh uuid when id is None, and a media_storage backend keys
+                # objects off the id, so dropping it stores the same bytes again under a new key
+                # on every run.
+                image_kwargs: Dict[str, Any] = {
+                    "filepath": img_artifact.filepath,
+                    "id": img_artifact.id,
+                    "mime_type": img_artifact.mime_type,
+                }
                 if img_artifact.format:
                     image_kwargs["format"] = img_artifact.format
                 if img_artifact.mime_type:
@@ -2923,7 +3133,11 @@ class Step:
                         actual_image_bytes = img_artifact.content
 
                     # Create Image object with proper format
-                    image_kwargs = {"content": actual_image_bytes}
+                    image_kwargs = {
+                        "content": actual_image_bytes,
+                        "id": img_artifact.id,
+                        "mime_type": img_artifact.mime_type,
+                    }
                     if img_artifact.mime_type:
                         # Convert mime_type to format (e.g., "image/png" -> "png")
                         if "/" in img_artifact.mime_type:
@@ -2944,7 +3158,9 @@ class Step:
 
         return images
 
-    def _convert_video_artifacts_to_videos(self, video_artifacts: List[Video]) -> List[Video]:
+    def _convert_video_artifacts_to_videos(
+        self, video_artifacts: List[Video], media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None
+    ) -> List[Video]:
         """
         Convert VideoArtifact objects to Video objects with proper content handling.
 
@@ -2957,14 +3173,52 @@ class Step:
         videos = []
         for i, video_artifact in enumerate(video_artifacts):
             # Create Video object with proper data from VideoArtifact
-            if video_artifact.url:
-                videos.append(Video(url=video_artifact.url))
+            # id, format and mime_type carry over for the same reason as in
+            # _convert_image_artifacts_to_images: a dropped id becomes a fresh uuid on offload,
+            # which re-stores identical bytes under a new key on every run. An offloaded video
+            # carries only its reference, so that is checked first for the same reason.
+            if video_artifact.media_reference is not None:
+                self._rehydrate(video_artifact, media_storage)
+                videos.append(
+                    Video(
+                        content=video_artifact.content,
+                        media_reference=video_artifact.media_reference,
+                        url=video_artifact.url,
+                        id=video_artifact.id,
+                        format=video_artifact.format,
+                        mime_type=video_artifact.mime_type,
+                    )
+                )
+
+            elif video_artifact.url:
+                videos.append(
+                    Video(
+                        url=video_artifact.url,
+                        id=video_artifact.id,
+                        format=video_artifact.format,
+                        mime_type=video_artifact.mime_type,
+                    )
+                )
 
             elif video_artifact.filepath:
-                videos.append(Video(filepath=video_artifact.filepath))
+                videos.append(
+                    Video(
+                        filepath=video_artifact.filepath,
+                        id=video_artifact.id,
+                        format=video_artifact.format,
+                        mime_type=video_artifact.mime_type,
+                    )
+                )
 
             elif video_artifact.content:
-                videos.append(Video(content=video_artifact.content))
+                videos.append(
+                    Video(
+                        content=video_artifact.content,
+                        id=video_artifact.id,
+                        format=video_artifact.format,
+                        mime_type=video_artifact.mime_type,
+                    )
+                )
 
             else:
                 # Skip videos that have neither URL, filepath, nor content

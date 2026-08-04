@@ -267,11 +267,16 @@ def reconstruct_image_from_dict(img_data):
             if "media_reference" in img_data and isinstance(img_data["media_reference"], dict):
                 ref_data = img_data["media_reference"]
                 if "storage_key" in ref_data:
-                    from agno.media_storage.reference import MediaReference
+                    from agno.media.reference import MediaReference
 
                     ref = MediaReference.from_dict(ref_data)
                     return Image(
-                        url=ref.url,
+                        # The stored url is the fuller value: offload only falls back to the
+                        # reference's url when the media had none of its own, so reading the
+                        # reference first drops a persist_remote_urls image's origin. filepath
+                        # survives offload too and is a content source in its own right.
+                        url=img_data.get("url") or ref.url,
+                        filepath=img_data.get("filepath"),
                         id=img_data.get("id"),
                         mime_type=img_data.get("mime_type"),
                         format=img_data.get("format"),
@@ -316,11 +321,16 @@ def reconstruct_video_from_dict(vid_data):
             if "media_reference" in vid_data and isinstance(vid_data["media_reference"], dict):
                 ref_data = vid_data["media_reference"]
                 if "storage_key" in ref_data:
-                    from agno.media_storage.reference import MediaReference
+                    from agno.media.reference import MediaReference
 
                     ref = MediaReference.from_dict(ref_data)
                     return Video(
-                        url=ref.url,
+                        # The stored url is the fuller value: offload only falls back to the
+                        # reference's url when the media had none of its own, so reading the
+                        # reference first drops a persist_remote_urls video's origin. filepath
+                        # survives offload too and is a content source in its own right.
+                        url=vid_data.get("url") or ref.url,
+                        filepath=vid_data.get("filepath"),
                         id=vid_data.get("id"),
                         mime_type=vid_data.get("mime_type"),
                         format=vid_data.get("format"),
@@ -364,11 +374,16 @@ def reconstruct_audio_from_dict(aud_data):
             if "media_reference" in aud_data and isinstance(aud_data["media_reference"], dict):
                 ref_data = aud_data["media_reference"]
                 if "storage_key" in ref_data:
-                    from agno.media_storage.reference import MediaReference
+                    from agno.media.reference import MediaReference
 
                     ref = MediaReference.from_dict(ref_data)
                     return Audio(
-                        url=ref.url,
+                        # The stored url is the fuller value: offload only falls back to the
+                        # reference's url when the media had none of its own, so reading the
+                        # reference first drops a persist_remote_urls audio's origin. filepath
+                        # survives offload too and is a content source in its own right.
+                        url=aud_data.get("url") or ref.url,
+                        filepath=aud_data.get("filepath"),
                         id=aud_data.get("id"),
                         mime_type=aud_data.get("mime_type"),
                         format=aud_data.get("format"),
@@ -413,11 +428,16 @@ def reconstruct_file_from_dict(file_data):
             if "media_reference" in file_data and isinstance(file_data["media_reference"], dict):
                 ref_data = file_data["media_reference"]
                 if "storage_key" in ref_data:
-                    from agno.media_storage.reference import MediaReference
+                    from agno.media.reference import MediaReference
 
                     ref = MediaReference.from_dict(ref_data)
                     return File(
-                        url=ref.url,
+                        # The stored url is the fuller value: offload only falls back to the
+                        # reference's url when the media had none of its own, so reading the
+                        # reference first drops a persist_remote_urls file's origin. filepath
+                        # survives offload too and is a content source in its own right.
+                        url=file_data.get("url") or ref.url,
+                        filepath=file_data.get("filepath"),
                         id=file_data.get("id"),
                         mime_type=file_data.get("mime_type"),
                         file_type=file_data.get("file_type"),

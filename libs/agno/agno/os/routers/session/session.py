@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 from typing import Any, Dict, List, Optional, Union, cast
@@ -7,6 +8,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Reques
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.db.utils import deserialize_session_by_type, resolve_session_type
+from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.middleware.user_scope import (
     enforce_owner_on_entity,
@@ -35,6 +37,7 @@ from agno.os.schema import (
 from agno.os.services.sessions import SessionNotFoundError, get_sessions_page
 from agno.os.services.sessions import get_session_runs as get_session_runs_from_service
 from agno.os.settings import AgnoAPISettings
+from agno.os.utils import iter_run_media
 from agno.remote.base import RemoteDb
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 
@@ -42,7 +45,9 @@ logger = logging.getLogger(__name__)
 
 
 def get_session_router(
-    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]], settings: AgnoAPISettings = AgnoAPISettings()
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
+    settings: AgnoAPISettings = AgnoAPISettings(),
+    media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
 ) -> APIRouter:
     """Create session router with comprehensive OpenAPI documentation for session management endpoints."""
     session_router = APIRouter(
@@ -56,10 +61,51 @@ def get_session_router(
             500: {"description": "Internal Server Error", "model": InternalServerErrorResponse},
         },
     )
-    return attach_routes(router=session_router, dbs=dbs)
+    return attach_routes(router=session_router, dbs=dbs, media_storage=media_storage)
 
 
-def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]]) -> APIRouter:
+def attach_routes(
+    router: APIRouter,
+    dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]],
+    media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
+) -> APIRouter:
+    async def _collect_media_keys(db: Any, session_ids: List[str], user_id: Optional[str]) -> List[str]:
+        """Storage keys held by these sessions, read before the rows that name them are gone.
+
+        The reference is the only record of which object belongs to which session, so a caller
+        that deletes first can never find the objects again.
+        """
+        keys: List[str] = []
+        for session_id in session_ids:
+            get_kwargs: Dict[str, Any] = {"session_id": session_id, "user_id": user_id}
+            try:
+                if isinstance(db, AsyncBaseDb):
+                    session = await db.get_session(**get_kwargs)
+                else:
+                    session = db.get_session(**get_kwargs)
+            except Exception as e:
+                logger.warning(f"Could not read session {session_id} for media deletion: {e}")
+                continue
+            for run in getattr(session, "runs", None) or []:
+                for media in iter_run_media(run):
+                    ref = getattr(media, "media_reference", None)
+                    key = getattr(ref, "storage_key", None)
+                    if key:
+                        keys.append(key)
+        return list(dict.fromkeys(keys))
+
+    async def _delete_media_keys(keys: List[str]) -> None:
+        """Best-effort: the rows are already gone, so a storage failure must not fail the request."""
+        if not keys or media_storage is None:
+            return
+        try:
+            if isinstance(media_storage, AsyncMediaStorage):
+                await media_storage.delete_many(keys)
+            else:
+                await asyncio.to_thread(media_storage.delete_many, keys)
+        except Exception as e:
+            logger.warning(f"Failed to delete {len(keys)} media objects: {e}")
+
     @router.get(
         "/sessions",
         response_model=PaginatedResponse[SessionSchema],
@@ -772,8 +818,17 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         user_id: Optional[str] = Query(default=None, description="User ID to scope deletion to"),
         db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
         table: Optional[str] = Query(default=None, description="Table to use for deletion"),
+        delete_media: bool = Query(
+            default=False, description="Also delete the session's offloaded media from media storage"
+        ),
     ) -> None:
         db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
+
+        if delete_media and media_storage is None:
+            raise HTTPException(status_code=503, detail="Media storage is not configured on AgentOS")
+        if delete_media and isinstance(db, RemoteDb):
+            # The remote owns the rows that name the objects, so the keys cannot be read here.
+            raise HTTPException(status_code=501, detail="Media deletion is not supported for remote databases")
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
@@ -787,11 +842,15 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         # for admins / unscoped callers it falls back to the query param.
         local_kwargs: Dict[str, Any] = {"session_id": session_id, "user_id": effective_user_id}
 
+        media_keys = await _collect_media_keys(db, [session_id], effective_user_id) if delete_media else []
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             await db.delete_session(**local_kwargs)
         else:
             db.delete_session(**local_kwargs)
+
+        await _delete_media_keys(media_keys)
 
     @router.delete(
         "/sessions",
@@ -817,11 +876,20 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         user_id: Optional[str] = Query(default=None, description="User ID to scope deletion to"),
         db_id: Optional[str] = Query(default=None, description="Database ID to use for deletion"),
         table: Optional[str] = Query(default=None, description="Table to use for deletion"),
+        delete_media: bool = Query(
+            default=False, description="Also delete the sessions' offloaded media from media storage"
+        ),
     ) -> None:
         if len(request.session_ids) != len(request.session_types):
             raise HTTPException(status_code=400, detail="Session IDs and session types must have the same length")
 
         db, effective_user_id = await resolve_db_and_scope(http_request, dbs, db_id, table, fallback_user_id=user_id)
+
+        if delete_media and media_storage is None:
+            raise HTTPException(status_code=503, detail="Media storage is not configured on AgentOS")
+        if delete_media and isinstance(db, RemoteDb):
+            # The remote owns the rows that name the objects, so the keys cannot be read here.
+            raise HTTPException(status_code=501, detail="Media deletion is not supported for remote databases")
 
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(http_request)
@@ -843,11 +911,15 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             "user_id": effective_user_id,
         }
 
+        media_keys = await _collect_media_keys(db, request.session_ids, effective_user_id) if delete_media else []
+
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
             await db.delete_sessions(**local_kwargs)
         else:
             db.delete_sessions(**local_kwargs)
+
+        await _delete_media_keys(media_keys)
 
     @router.post(
         "/sessions/{session_id}/rename",

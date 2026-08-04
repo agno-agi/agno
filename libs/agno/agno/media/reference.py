@@ -7,8 +7,8 @@ class MediaReference(BaseModel):
     """Lightweight reference stored in DB instead of base64 content."""
 
     media_id: str
-    storage_key: str  # S3 object key — also serves as discriminator for deserialization
-    storage_backend: str  # "s3", "local", etc.
+    storage_key: str  # backend object key — also serves as discriminator for deserialization
+    storage_backend: str  # "s3", "gcs", "local", etc.
     bucket: Optional[str] = None
     region: Optional[str] = None
     url: Optional[str] = None  # presigned or public URL

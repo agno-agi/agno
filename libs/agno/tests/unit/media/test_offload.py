@@ -6,12 +6,16 @@ import pytest
 
 from agno.media import File, Image
 from agno.models.message import Message
+from agno.run.workflow import WorkflowRunOutput
 from agno.utils.media_offload import (
     _offload_single_media,
     arefresh_message_media_urls,
+    iter_step_outputs,
     offload_run_media,
+    offload_workflow_media,
     refresh_message_media_urls,
 )
+from agno.workflow.types import StepOutput
 
 
 def _mock_storage(persist_remote_urls: bool = False):
@@ -38,7 +42,7 @@ class TestOffloadSingleMedia:
 
     def test_skip_already_offloaded(self):
         storage = _mock_storage()
-        from agno.media_storage.reference import MediaReference
+        from agno.media.reference import MediaReference
 
         ref = MediaReference(media_id="img-2", storage_key="key", storage_backend="s3")
         img = Image(url="https://example.com/img.png", media_reference=ref, id="img-2")
@@ -126,12 +130,75 @@ class TestOffloadRunMedia:
         storage.upload.assert_not_called()
 
 
+class TestOffloadWorkflowMediaNestedSteps:
+    """Loop/Condition/Router/Parallel/Steps wrap their children in a container StepOutput
+    and hang them off ``StepOutput.steps``.
+
+    Each container also copies its children's images, videos and audio up onto itself, so
+    an end-to-end workflow test using those three cannot tell the nested traversal from
+    the copy. None of them copies ``files``, and a hand-built container copies nothing at
+    all, so both are exercised here through the ``steps`` traversal only.
+    """
+
+    def test_yields_children_of_a_container_step(self):
+        grandchild = StepOutput(step_name="grandchild")
+        child = StepOutput(step_name="child", steps=[grandchild])
+        container = StepOutput(step_name="parallel", steps=[child])
+        run = WorkflowRunOutput(run_id="wr", workflow_id="wf", step_results=[container])
+
+        names = [s.step_name for s in iter_step_outputs(run)]
+        assert names == ["parallel", "child", "grandchild"]
+
+    def test_yields_step_results_entries_that_are_lists(self):
+        """Loop iterations land in step_results as a list per iteration, not a StepOutput."""
+        run = WorkflowRunOutput(run_id="wr", workflow_id="wf")
+        run.step_results = [[StepOutput(step_name="iter-1"), StepOutput(step_name="iter-2")]]
+
+        assert [s.step_name for s in iter_step_outputs(run)] == ["iter-1", "iter-2"]
+
+    def test_offloads_file_nested_in_container_step(self):
+        storage = _mock_storage()
+        nested_file = File(content=b"nested-report-bytes", id="nested-file", mime_type="text/plain")
+        container = StepOutput(step_name="parallel", steps=[StepOutput(step_name="p1", files=[nested_file])])
+        run = WorkflowRunOutput(run_id="wr", workflow_id="wf", step_results=[container])
+
+        offload_workflow_media(run, storage, "session-1", "wr")
+
+        storage.upload.assert_called_once()
+        assert nested_file.media_reference is not None
+        assert nested_file.content is None
+
+    def test_offloads_image_nested_two_containers_deep(self):
+        storage = _mock_storage()
+        deep_img = Image(content=b"deep-png-bytes", id="deep-img", mime_type="image/png")
+        inner = StepOutput(step_name="inner", steps=[StepOutput(step_name="leaf", images=[deep_img])])
+        outer = StepOutput(step_name="outer", steps=[inner])
+        run = WorkflowRunOutput(run_id="wr", workflow_id="wf", step_results=[outer])
+
+        offload_workflow_media(run, storage, "session-1", "wr")
+
+        assert deep_img.media_reference is not None
+        assert deep_img.content is None
+
+    def test_scrub_drops_file_nested_in_container_step(self):
+        """store_media=False takes the same traversal, so a nested file must not survive."""
+        from agno.utils.agent import scrub_workflow_media
+
+        nested = StepOutput(step_name="p1", files=[File(content=b"nested-report-bytes", id="nested-file")])
+        container = StepOutput(step_name="parallel", steps=[nested])
+        run = WorkflowRunOutput(run_id="wr", workflow_id="wf", step_results=[container])
+
+        scrub_workflow_media(run)
+
+        assert nested.files is None
+
+
 class TestRefreshMessageMediaUrls:
     def test_refresh_urls(self):
         storage = _mock_storage()
         storage.get_url.return_value = "https://example.com/fresh-url"
 
-        from agno.media_storage.reference import MediaReference
+        from agno.media.reference import MediaReference
 
         ref = MediaReference(media_id="img-1", storage_key="key-1", storage_backend="s3", url="https://old-url.com")
         img = Image(url="https://old-url.com", media_reference=ref, id="img-1")
@@ -171,7 +238,7 @@ class TestAsyncRefreshMessageMediaUrls:
     async def test_async_refresh_urls(self):
         storage = _mock_async_storage()
 
-        from agno.media_storage.reference import MediaReference
+        from agno.media.reference import MediaReference
 
         ref = MediaReference(media_id="img-1", storage_key="key-1", storage_backend="s3", url="https://old-url.com")
         img = Image(url="https://old-url.com", media_reference=ref, id="img-1")

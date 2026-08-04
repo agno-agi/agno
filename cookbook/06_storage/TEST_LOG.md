@@ -40,9 +40,9 @@
 
 **Status:** PASS
 
-**Description:** S3MediaStorage offload against a real S3-compatible endpoint (MinIO via `AWS_ENDPOINT_URL`/`MEDIA_S3_BUCKET`). Ran with `OpenAIResponses(id="gpt-5.5")`.
+**Description:** S3MediaStorage offload against a real AWS S3 bucket (`MEDIA_S3_BUCKET`, no `AWS_ENDPOINT_URL`). Ran with `OpenAIResponses(id="gpt-5.5")`.
 
-**Result:** Exit 0. Three vision responses returned; 2 content-addressed objects uploaded under `agno/media/`, URL-only media skipped by default.
+**Result:** Exit 0. Three vision responses returned; 2 content-addressed objects uploaded under `agno/media/` (65129 bytes each, matching the source hash), URL-only media skipped by default. The persisted run holds a `media_reference`, not base64.
 
 ---
 
@@ -50,9 +50,18 @@
 
 **Status:** PASS
 
-**Description:** Multi-turn reuse with `store_media=False` + LocalMediaStorage. Turn 1 sends an image; turn 2 asks about it without re-sending. Ran with `OpenAIResponses(id="gpt-5.5")`.
+**Description:** Multi-turn reuse with LocalMediaStorage. Turn 1 sends an image; turn 2 asks about it without re-sending. Ran with `OpenAIResponses(id="gpt-5.5", store=False)` so history stays client-side.
 
-**Result:** Exit 0. Turn 2 recalled the image (reference reloaded from history, URL refreshed); DB stayed far smaller than the image (raw bytes kept out of the DB).
+**Result:** Exit 0, both turns answered about the same image. Instrumenting the outbound request shows turn 2 carries one `input_image` (~151 KB) re-read from storage, while the run row stays at 3002 bytes with only a `media_reference`.
 
 ---
 
+### 08_media_storage_gcs.py
+
+**Status:** PASS
+
+**Description:** GCSMediaStorage offload with application-default credentials.
+
+**Result:** Objects uploaded under `agno/media/`; the persisted run holds a `media_reference` with backend `gcs`. ADC cannot sign URLs, so the reference stores no URL and AgentOS streams the bytes instead.
+
+---

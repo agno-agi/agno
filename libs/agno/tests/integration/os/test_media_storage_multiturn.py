@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 
 from agno.agent.agent import Agent
 from agno.db.sqlite import SqliteDb
-from agno.media_storage.local import LocalMediaStorage
+from agno.media.storage.local import LocalMediaStorage
 from agno.models.base import Model
 from agno.models.message import MessageMetrics
 from agno.models.response import ModelResponse

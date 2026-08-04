@@ -33,6 +33,7 @@ from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
 from agno.knowledge.protocol import KnowledgeProtocol
 from agno.learn.machine import LearningMachine
+from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.memory import MemoryManager
 from agno.models.base import Model
 from agno.models.fallback import FallbackConfig
@@ -121,7 +122,7 @@ def __init__(
     add_search_knowledge_instructions: bool = True,
     read_chat_history: bool = False,
     store_media: bool = True,
-    media_storage: Optional[Any] = None,
+    media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
     store_tool_messages: bool = True,
     store_history_messages: bool = False,
     send_media_to_model: bool = True,

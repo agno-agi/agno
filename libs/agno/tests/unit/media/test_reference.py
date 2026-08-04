@@ -1,6 +1,6 @@
 """Tests for MediaReference serialization round-trip."""
 
-from agno.media_storage.reference import MediaReference
+from agno.media.reference import MediaReference
 
 
 def test_media_reference_to_dict():

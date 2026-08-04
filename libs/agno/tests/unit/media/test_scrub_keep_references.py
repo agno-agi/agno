@@ -11,13 +11,13 @@ from unittest.mock import MagicMock, Mock
 
 from agno.agent.agent import Agent
 from agno.media import Audio, File, Image, Video
-from agno.media_storage.reference import MediaReference
+from agno.media.reference import MediaReference
 from agno.models.base import Model
 from agno.models.message import Message, MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunInput, RunOutput
 from agno.run.team import TeamRunOutput
-from agno.utils.agent import scrub_media_from_message, scrub_media_from_run_output
+from agno.utils.agent import _media_carries_data, scrub_media_from_message, scrub_media_from_run_output
 
 # -- Helpers --
 
@@ -67,6 +67,15 @@ def _offloaded_file(media_id: str = "file-offloaded") -> File:
 
 def _raw_file(media_id: str = "file-raw") -> File:
     return File(content=b"fake-file", id=media_id)
+
+
+def _external_file(media_id: str = "file-external") -> File:
+    """File held by the model provider (e.g. a Gemini Files API handle).
+
+    It carries no bytes and no storage reference, so the external handle is the only
+    thing that makes it retrievable.
+    """
+    return File(external={"provider": "gemini", "uri": f"files/{media_id}"}, id=media_id)
 
 
 def _mock_storage():
@@ -127,6 +136,32 @@ class MockModel(Model):
 
     def _parse_provider_response_delta(self, response: Any) -> ModelResponse:
         return self._mock_response
+
+
+# ---------------------------------------------------------------------------
+# _media_carries_data, the predicate the whole keep_references path is built on
+# ---------------------------------------------------------------------------
+
+
+class TestMediaCarriesData:
+    """The predicate ORs three independent clauses, so it short-circuits: any test that
+    sets two of them at once cannot tell whether the later clause is live. Each clause
+    therefore gets a case where it is the only reason the media survives.
+    """
+
+    def test_reference_alone_carries_data(self):
+        assert _media_carries_data(_offloaded_image("ref-only")) is True
+
+    def test_content_alone_carries_data(self):
+        assert _media_carries_data(_raw_image("content-only")) is True
+
+    def test_external_handle_alone_carries_data(self):
+        f = _external_file("external-only")
+        assert f.content is None and f.media_reference is None
+        assert _media_carries_data(f) is True
+
+    def test_url_only_media_carries_nothing(self):
+        assert _media_carries_data(Image(url="https://example.com/x.png", id="url-only")) is False
 
 
 # ---------------------------------------------------------------------------
@@ -206,6 +241,24 @@ class TestScrubKeepReferencesRunOutput:
         assert len(run_output.input.videos) == 1
         assert len(run_output.input.audios) == 1
         assert len(run_output.input.files) == 1
+
+    def test_keeps_external_only_files(self):
+        """A provider-held file has no bytes to fall back on and no reference to rebuild
+        from, so dropping the external handle loses the file for good."""
+        run_output = RunOutput(
+            input=RunInput(input_content="test input", files=[_external_file("in-file-external")]),
+            files=[_external_file("out-file-external")],
+        )
+        scrub_media_from_run_output(run_output, keep_references=True)
+
+        assert [f.id for f in run_output.input.files] == ["in-file-external"]
+        assert run_output.files is not None
+        kept = run_output.files[0]
+        assert kept.id == "out-file-external"
+        assert kept.external is not None
+        # Neither of the other two clauses can be what kept it.
+        assert kept.content is None
+        assert kept.media_reference is None
 
     def test_drops_empty_url_only_media(self):
         """Media with no reference, content, or external handle (url-only) is dropped."""

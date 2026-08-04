@@ -1,7 +1,7 @@
 """Tests for media classes with media_reference and metadata fields."""
 
 from agno.media import Audio, File, Image, Video
-from agno.media_storage.reference import MediaReference
+from agno.media.reference import MediaReference
 
 
 def _make_ref(media_type: str = "image") -> MediaReference:
@@ -114,3 +114,52 @@ class TestFileMediaReference:
         f = File(content=b"hello", mime_type="text/plain")
         d = f.to_dict(include_base64_content=False)
         assert "content" not in d
+
+
+class TestFileIdDefaults:
+    def test_file_gets_an_id_like_its_siblings(self):
+        """Image, Audio and Video auto-generate an id; File did not.
+
+        Offload runs on a fresh deep copy per persist, so an id-less File was handed a new
+        uuid every time — the cache key changed, the bytes uploaded again, and each upload
+        landed under a key nothing referenced.
+        """
+        assert File(content=b"hello", mime_type="text/plain").id is not None
+        assert Image(content=b"hello", mime_type="image/png").id is not None
+
+    def test_file_keeps_an_explicit_id(self):
+        """Provider ids must survive: OpenAI routes on a file id starting with 'file-'."""
+        assert File(id="file-abc123").id == "file-abc123"
+
+    def test_file_still_requires_a_source(self):
+        """The generated id is assigned after the source check, so it cannot satisfy it."""
+        import pytest
+
+        with pytest.raises(Exception):
+            File()
+
+    def test_id_less_file_uploads_once_across_persists(self):
+        """The end the id exists for: repeated persists of one run reuse a single object."""
+        import copy
+        import tempfile
+
+        from agno.media.storage.local import LocalMediaStorage
+        from agno.run.agent import RunOutput
+        from agno.utils.media_offload import offload_cache_for, offload_run_media
+
+        uploaded: list = []
+
+        class CountingStorage(LocalMediaStorage):
+            def upload(self, *args, **kwargs):
+                key = super().upload(*args, **kwargs)
+                uploaded.append(key)
+                return key
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage = CountingStorage(base_path=tmpdir)
+            run = RunOutput(run_id="r1", files=[File(content=b"CSV" * 300, mime_type="text/csv")])
+            for _ in range(3):
+                offload_run_media(copy.deepcopy(run), storage, "s1", "r1", offload_cache_for(run))
+
+        assert len(uploaded) == 1
+        assert len(set(uploaded)) == 1

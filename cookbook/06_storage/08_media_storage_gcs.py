@@ -11,12 +11,14 @@ public). To download and store media from every source -- filepath, content byte
 set persist_remote_urls=True on the storage.
 
 Requirements:
-    pip install 'agno[media-storage-gcs]'
+- uv pip install 'agno[gcs]'
+- Authenticate with application-default credentials (`gcloud auth application-default login`)
+  or a service-account JSON via credentials_path
+- Set MEDIA_GCS_BUCKET to a bucket you own; GCP_PROJECT to set the project
 
-Environment:
-    Authenticate with application-default credentials (`gcloud auth application-default login`)
-    or a service-account JSON via credentials_path. MEDIA_GCS_BUCKET to pick the bucket;
-    GCP_PROJECT to set the project.
+Signing a GCS URL needs a service-account private key, so presigned_url_expiry only takes
+effect when you authenticate via credentials_path. Under application-default credentials no
+URL can be signed and AgentOS streams the bytes through the /media route instead.
 """
 
 import os
@@ -25,61 +27,44 @@ import httpx
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.media import Image
-from agno.media_storage.gcs import GCSMediaStorage
+from agno.media.storage import GCSMediaStorage
 from agno.models.openai import OpenAIResponses
-from dotenv import load_dotenv
 
 # from agno.db.postgres import PostgresDb
 
 # ---------------------------------------------------------------------------
-# Setup of .env file
+# Setup
 # ---------------------------------------------------------------------------
-load_dotenv()
+IMAGE_URL = "https://thumbs.dreamstime.com/b/mountain-landscape-pieniny-national-park-foot-tatra-mountains-mountain-landscape-pieniny-national-park-437239881.jpg?w=768"
+
+# A bucket you do not own makes every upload fail, and offload falls back to inline
+# base64 -- the run still succeeds, so the failure is easy to miss. Ask for the bucket
+# up front instead.
+bucket = os.getenv("MEDIA_GCS_BUCKET")
+if not bucket:
+    raise ValueError("MEDIA_GCS_BUCKET must be set to a GCS bucket you own")
 
 # ---------------------------------------------------------------------------
 # Approach 1: Pre-download the media yourself and send bytes.
 # URL-only media is skipped by default.
 # ---------------------------------------------------------------------------
 
-# Create the storage. If you want to use async use AsyncGCSMediaStorage instead.
+# Create the storage. For async runs, swap in AsyncGCSMediaStorage.
 storage = GCSMediaStorage(
-    bucket=os.getenv(
-        "MEDIA_GCS_BUCKET", "my-agno-media"
-    ),  # set MEDIA_GCS_BUCKET to a bucket you own
+    bucket=bucket,
     project=os.getenv("GCP_PROJECT"),  # optional if a default project is configured
     prefix="agno/media/",
-    presigned_url_expiry=3600,  # 1 hour
+    presigned_url_expiry=3600,  # 1 hour; needs credentials_path to take effect
 )
 
+# ---------------------------------------------------------------------------
+# Create the Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.5"),
     media_storage=storage,
     db=SqliteDb(db_file="tmp/data.db"),
     # db=PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")  # Postgres option
-)
-
-# Download image content first so media storage can offload it to GCS
-image_url = "https://thumbs.dreamstime.com/b/mountain-landscape-pieniny-national-park-foot-tatra-mountains-mountain-landscape-pieniny-national-park-437239881.jpg?w=768"
-image_bytes = httpx.get(image_url, follow_redirects=True).content
-
-agent.print_response(
-    "What do you see in this image?",
-    images=[
-        Image(
-            content=image_bytes,
-            format="jpeg",
-        )
-    ],
-)
-
-# URL-only media is NOT stored in GCS by default -- it is skipped during offload.
-agent.print_response(
-    "What do you see in this image?",
-    images=[
-        Image(
-            url="https://thumbs.dreamstime.com/b/mountain-landscape-pieniny-national-park-foot-tatra-mountains-mountain-landscape-pieniny-national-park-437239881.jpg?w=768"
-        )
-    ],
 )
 
 # ---------------------------------------------------------------------------
@@ -88,12 +73,10 @@ agent.print_response(
 # ---------------------------------------------------------------------------
 
 storage_with_persist = GCSMediaStorage(
-    bucket=os.getenv(
-        "MEDIA_GCS_BUCKET", "my-agno-media"
-    ),  # set MEDIA_GCS_BUCKET to a bucket you own
+    bucket=bucket,
     project=os.getenv("GCP_PROJECT"),  # optional if a default project is configured
     prefix="agno/media/",
-    presigned_url_expiry=3600,  # 1 hour
+    presigned_url_expiry=3600,  # 1 hour; needs credentials_path to take effect
     persist_remote_urls=True,
 )
 
@@ -104,12 +87,27 @@ agent_with_persist = Agent(
     # db=PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")  # Postgres option
 )
 
-# URL-only images are automatically downloaded and stored when persist_remote_urls=True
-agent_with_persist.print_response(
-    "What do you see in this image?",
-    images=[
-        Image(
-            url="https://thumbs.dreamstime.com/b/mountain-landscape-pieniny-national-park-foot-tatra-mountains-mountain-landscape-pieniny-national-park-437239881.jpg?w=768"
-        )
-    ],
-)
+# ---------------------------------------------------------------------------
+# Run the Agents
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    # Download image content first so media storage can offload it to GCS.
+    # mime_type gives the stored object its file extension and Content-Type.
+    image_bytes = httpx.get(IMAGE_URL, follow_redirects=True).content
+
+    agent.print_response(
+        "What do you see in this image?",
+        images=[Image(content=image_bytes, format="jpeg", mime_type="image/jpeg")],
+    )
+
+    # URL-only media is NOT stored in GCS by default -- it is skipped during offload.
+    agent.print_response(
+        "What do you see in this image?",
+        images=[Image(url=IMAGE_URL)],
+    )
+
+    # URL-only images are automatically downloaded and stored when persist_remote_urls=True
+    agent_with_persist.print_response(
+        "What do you see in this image?",
+        images=[Image(url=IMAGE_URL)],
+    )

@@ -1,107 +1,67 @@
-"""Media fetch router.
-
-Serves stored media to the frontend by re-signing or streaming it from the configured
-``media_storage`` backend. Access is scoped two ways: the caller must own the session
-(``user_id`` is bound to the JWT subject via ``resolve_db_and_scope``), and the requested
-``storage_key`` must actually belong to that session — so owning one session does not grant
-access to another session's media.
-
-The frontend stores the ``storage_key`` from a ``media_reference`` (never a presigned URL,
-which expires) and calls this endpoint; the server re-signs or streams on every request, so
-expiry is never the frontend's problem.
-"""
+"""Media API router -- stream or re-sign session media held in external media storage."""
 
 import asyncio
-import io
 import mimetypes
-from typing import Any, Optional
+import re
+from typing import Any, Optional, Union
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
+from fastapi.responses import RedirectResponse
 
 from agno.db.base import AsyncBaseDb, SessionType
 from agno.db.utils import resolve_session_type
-from agno.media_storage.base import AsyncMediaStorage
+from agno.exceptions import PathSecurityError
+from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import resolve_db_and_scope
 from agno.os.schema import NotFoundResponse, UnauthenticatedResponse
 from agno.os.settings import AgnoAPISettings
+from agno.os.utils import iter_run_media
 from agno.remote.base import RemoteDb
 from agno.utils.log import log_warning
 
-# Content types that a browser can execute as script on the API origin; served as downloads.
-_ACTIVE_CONTENT_TYPES = {"text/html", "application/xhtml+xml", "image/svg+xml"}
+# A type/subtype of RFC 9110 tokens and nothing else. Anything else is served as
+# application/octet-stream, which covers a newline injected into the header as well as the
+# wildcards and novel subtypes the active-content list cannot enumerate.
+_MIME_TYPE_PATTERN = re.compile(r"[A-Za-z0-9!#$%&'*+.^_`|~-]+/[A-Za-z0-9!#$%&'*+.^_`|~-]+")
 
-
-def _iter_media_objects(run: Any):
-    """Yield every media object hanging off a run, across agent/team/workflow shapes."""
-    run_input = getattr(run, "input", None)
-    for attr in ("images", "videos", "audios", "files"):
-        for media in getattr(run_input, attr, None) or []:
-            yield media
-    for message in getattr(run, "messages", None) or []:
-        for attr in ("images", "videos", "audio", "files"):
-            for media in getattr(message, attr, None) or []:
-                yield media
-        audio_output = getattr(message, "audio_output", None)
-        if audio_output is not None:
-            yield audio_output
-    for attr in ("images", "videos", "audio", "files"):
-        for media in getattr(run, attr, None) or []:
-            yield media
-    response_audio = getattr(run, "response_audio", None)
-    if response_audio is not None:
-        yield response_audio
-    for collection in ("additional_input", "reasoning_messages"):
-        for message in getattr(run, collection, None) or []:
-            for attr in ("images", "videos", "audio", "files"):
-                for media in getattr(message, attr, None) or []:
-                    yield media
-    # Team members
-    for member in getattr(run, "member_responses", None) or []:
-        yield from _iter_media_objects(member)
-    # Workflow steps
-    for step_result in getattr(run, "step_results", None) or []:
-        for step_output in step_result if isinstance(step_result, list) else [step_result]:
-            for attr in ("images", "videos", "audio", "files"):
-                for media in getattr(step_output, attr, None) or []:
-                    yield media
-    for executor_run in getattr(run, "step_executor_runs", None) or []:
-        yield from _iter_media_objects(executor_run)
-    workflow_agent_run = getattr(run, "workflow_agent_run", None)
-    if workflow_agent_run is not None:
-        yield from _iter_media_objects(workflow_agent_run)
+# Content types a browser can execute as script on the API origin. These are re-typed as
+# application/octet-stream on the way out: nosniff only blocks execution when the declared
+# type is not already executable, and XML can carry an XSLT/entity payload.
+_ACTIVE_CONTENT_TYPES = {
+    "text/html",
+    "application/xhtml+xml",
+    "image/svg+xml",
+    "text/javascript",
+    "application/javascript",
+    "application/x-javascript",
+    "text/xml",
+    "application/xml",
+}
 
 
 def _find_media_reference(session: Any, storage_key: str) -> Optional[Any]:
     """Return the MediaReference with this storage_key if it belongs to the session, else None."""
     for run in getattr(session, "runs", None) or []:
-        for media in _iter_media_objects(run):
+        for media in iter_run_media(run):
             ref = getattr(media, "media_reference", None)
             if ref is not None and getattr(ref, "storage_key", None) == storage_key:
                 return ref
     return None
 
 
-def _is_stable_public_url(url: Optional[str]) -> bool:
-    """True if ``url`` is a plain public http(s) link, not a presigned/expiring one."""
-    if not url or not url.startswith(("http://", "https://")):
-        return False
-    lowered = url.lower()
-    # Presigned URLs carry a signature/expiry that can go stale; don't hand those back.
-    return not any(m in lowered for m in ("x-amz-signature", "signature=", "x-amz-expires", "expires="))
-
-
 def get_media_router(
     dbs: dict,
-    media_storage: Optional[Any] = None,
+    media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
     settings: AgnoAPISettings = AgnoAPISettings(),
 ) -> APIRouter:
     router = APIRouter(dependencies=[Depends(get_authentication_dependency(settings))], tags=["Media"])
     return attach_routes(router=router, dbs=dbs, media_storage=media_storage)
 
 
-def attach_routes(router: APIRouter, dbs: dict, media_storage: Optional[Any]) -> APIRouter:
+def attach_routes(
+    router: APIRouter, dbs: dict, media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]]
+) -> APIRouter:
     @router.get(
         "/sessions/{session_id}/media/{storage_key:path}",
         status_code=200,
@@ -113,9 +73,14 @@ def attach_routes(router: APIRouter, dbs: dict, media_storage: Optional[Any]) ->
             "storage_key must belong to the session."
         ),
         responses={
+            200: {
+                "description": "The media bytes, served with the stored mime type",
+                "content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}},
+            },
             401: {"description": "Unauthenticated", "model": UnauthenticatedResponse},
             404: {"description": "Session or media not found", "model": NotFoundResponse},
             501: {"description": "Remote databases are not supported"},
+            502: {"description": "Media storage could not be reached"},
             503: {"description": "Media storage is not configured"},
         },
     )
@@ -123,10 +88,14 @@ def attach_routes(router: APIRouter, dbs: dict, media_storage: Optional[Any]) ->
         request: Request,
         session_id: str = Path(description="Session ID the media belongs to"),
         storage_key: str = Path(description="Storage key of the media to fetch"),
-        session_type: Optional[SessionType] = Query(default=None, alias="type"),
-        user_id: Optional[str] = Query(default=None),
-        db_id: Optional[str] = Query(default=None),
-        table: Optional[str] = Query(default=None),
+        session_type: Optional[SessionType] = Query(
+            default=None,
+            description="Session type (agent, team, or workflow). If not provided, auto-detected from session data.",
+            alias="type",
+        ),
+        user_id: Optional[str] = Query(default=None, description="User ID to query session from"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to query session from"),
+        table: Optional[str] = Query(default=None, description="Table to query session from"),
         redirect: bool = Query(
             default=False, description="Redirect to a freshly-signed URL instead of streaming bytes"
         ),
@@ -138,8 +107,9 @@ def attach_routes(router: APIRouter, dbs: dict, media_storage: Optional[Any]) ->
         if isinstance(db, RemoteDb):
             raise HTTPException(status_code=501, detail="Media fetch is not supported for remote databases")
 
-        # Ownership: get_session is scoped to the JWT-bound user_id, so a caller can only read
-        # sessions they own.
+        # Ownership: with user_isolation on, resolve_db_and_scope binds user_id to the JWT
+        # subject, so a caller only reads sessions they own. Without it RBAC alone applies and
+        # the session membership check below is the only thing scoping the fetch.
         if session_type is None:
             session_type, _ = await resolve_session_type(db, session_id, session_type, effective_user_id)
             if session_type is None:
@@ -175,21 +145,17 @@ def attach_routes(router: APIRouter, dbs: dict, media_storage: Optional[Any]) ->
         if os_bucket is not None and ref_bucket is not None and ref_bucket != os_bucket:
             raise HTTPException(status_code=404, detail="Media is not served by the configured storage backend")
 
-        # If the reference already carries a stable public URL (e.g. acl="public-read"), use it
-        # directly — no need to re-sign or stream. Presigned/local URLs fall through and are
-        # re-signed or streamed from the storage_key below.
-        if _is_stable_public_url(getattr(ref, "url", None)):
-            return RedirectResponse(ref.url)
-
-        is_async = isinstance(media_storage, AsyncMediaStorage)
-
         if redirect:
+            # Always re-derive the URL from storage_key, never redirect to the one stored on the
+            # reference. The key has just been checked against this session; a stored url is an
+            # opaque string that only has to look like a link, so honouring it would turn this
+            # route into an open redirect. A public-bucket backend returns its stable public URL
+            # from get_url anyway, so nothing is lost by re-deriving.
             try:
-                url = (
-                    await media_storage.get_url(storage_key)
-                    if is_async
-                    else await asyncio.to_thread(media_storage.get_url, storage_key)
-                )
+                if isinstance(media_storage, AsyncMediaStorage):
+                    url = await media_storage.get_url(storage_key)
+                else:
+                    url = await asyncio.to_thread(media_storage.get_url, storage_key)
             except Exception as e:
                 log_warning(f"Failed to generate media URL for {storage_key}: {e}")
                 raise HTTPException(status_code=502, detail="Failed to generate a media URL")
@@ -200,12 +166,13 @@ def attach_routes(router: APIRouter, dbs: dict, media_storage: Optional[Any]) ->
 
         # Proxy-stream the bytes (works for local and S3, keeps the bucket private, one CORS surface).
         try:
-            data = (
-                await media_storage.download(storage_key)
-                if is_async
-                else await asyncio.to_thread(media_storage.download, storage_key)
-            )
-        except FileNotFoundError:
+            if isinstance(media_storage, AsyncMediaStorage):
+                data = await media_storage.download(storage_key)
+            else:
+                data = await asyncio.to_thread(media_storage.download, storage_key)
+        except (FileNotFoundError, PathSecurityError):
+            # A key the backend refuses to resolve is as absent as one that is missing, so a
+            # path-security rejection answers 404 here rather than falling through to 502.
             raise HTTPException(status_code=404, detail="Media object not found")
         except Exception as e:
             # Log the real error for debugging; never echo it (it can leak filesystem paths or bucket internals).
@@ -215,11 +182,22 @@ def attach_routes(router: APIRouter, dbs: dict, media_storage: Optional[Any]) ->
         media_type = getattr(ref, "mime_type", None)
         if not media_type:
             media_type = mimetypes.guess_type(storage_key)[0] or "application/octet-stream"
-        # nosniff stops the browser from re-interpreting the bytes as active content; active
-        # types (html/svg) are forced to download so they can't execute on the API origin.
+        # The mime type arrives from the client at upload time and is then persisted, so it is
+        # validated on the way out rather than trusted. Starlette copies it into Content-Type
+        # verbatim, and a newline in it breaks every response for that object, permanently.
+        media_type = media_type.split(";")[0].strip().lower()
+        if not _MIME_TYPE_PATTERN.fullmatch(media_type):
+            media_type = "application/octet-stream"
         headers = {"X-Content-Type-Options": "nosniff"}
-        if media_type.split(";")[0].strip().lower() in _ACTIVE_CONTENT_TYPES:
+        if media_type in _ACTIVE_CONTENT_TYPES:
+            # Content-Disposition is ignored for subresources, so it alone does not stop a
+            # <script src> include. Declaring a non-executable type is what makes nosniff
+            # bite; the disposition then covers top-level navigation to the same URL.
             headers["Content-Disposition"] = "attachment"
-        return StreamingResponse(io.BytesIO(data), media_type=media_type, headers=headers)
+            media_type = "application/octet-stream"
+        # download() already returns the whole object, so send it as one body with a
+        # Content-Length. Handing the bytes to StreamingResponse instead would iterate them
+        # as lines, emitting one chunked-transfer frame per newline in the payload.
+        return Response(content=data, media_type=media_type, headers=headers)
 
     return router

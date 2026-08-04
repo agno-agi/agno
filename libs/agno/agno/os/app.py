@@ -20,6 +20,7 @@ from agno.agent.protocol import AgentProtocol
 from agno.agents.base import BaseExternalAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.knowledge.knowledge import Knowledge
+from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.os.config import (
     AgentOSConfig,
     AuthorizationConfig,
@@ -245,7 +246,7 @@ class AgentOS:
         authorization: bool = False,
         authorization_config: Optional[AuthorizationConfig] = None,
         cors_allowed_origins: Optional[List[str]] = None,
-        media_storage: Optional[Any] = None,
+        media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         config: Optional[Union[str, AgentOSConfig]] = None,
         settings: Optional[AgnoAPISettings] = None,
         lifespan: Optional[Any] = None,
@@ -309,6 +310,8 @@ class AgentOS:
             authorization: Whether to enable authorization
             authorization_config: Configuration for the authorization middleware
             cors_allowed_origins: List of allowed CORS origins (will be merged with default Agno domains)
+            media_storage: Backend the media routes read stored media from. Defaults to the first
+                one configured on an agent, team or workflow.
             tracing: If True, enables OpenTelemetry tracing for all agents and teams in the OS
             run_hooks_in_background: If True, run agent/team pre/post hooks as FastAPI background tasks (non-blocking)
             telemetry: Whether to enable telemetry
@@ -534,6 +537,7 @@ class AgentOS:
         # Check for duplicate IDs
         self._raise_if_duplicate_ids()
         self._auto_discover_databases()
+        self._auto_discover_media_storage()
         self._auto_discover_knowledge_instances()
         self._populate_registry_knowledge()
 
@@ -573,7 +577,7 @@ class AgentOS:
         # The home router is added by _add_built_in_routes below; adding it here too
         # would duplicate the GET / route on every resync.
         updated_routers = [
-            get_session_router(dbs=self.dbs),
+            get_session_router(dbs=self.dbs, media_storage=self.media_storage),
             get_media_router(dbs=self.dbs, media_storage=self.media_storage, settings=self.settings),
             get_memory_router(dbs=self.dbs),
             get_learnings_router(dbs=self.dbs, settings=self.settings),
@@ -1103,6 +1107,7 @@ class AgentOS:
         self._add_built_in_routes(app=fastapi_app)
 
         self._auto_discover_databases()
+        self._auto_discover_media_storage()
         self._auto_discover_knowledge_instances()
         self._populate_registry_knowledge()
 
@@ -1110,7 +1115,7 @@ class AgentOS:
         self._populate_registry_components()
 
         routers = [
-            get_session_router(dbs=self.dbs),
+            get_session_router(dbs=self.dbs, media_storage=self.media_storage),
             get_media_router(dbs=self.dbs, media_storage=self.media_storage, settings=self.settings),
             get_memory_router(dbs=self.dbs),
             get_learnings_router(dbs=self.dbs, settings=self.settings),
@@ -1564,6 +1569,41 @@ class AgentOS:
             "workflows": workflow_ids,
             "interfaces": [interface.type for interface in self.interfaces] if self.interfaces else None,
         }
+
+    def _auto_discover_media_storage(self) -> None:
+        """Fall back to the first media storage configured on an agent, team or workflow.
+
+        Media offload is configured per agent/team/workflow, so the usual setup leaves AgentOS
+        itself without a backend and every media route answers 503 even though the references
+        in the database are perfectly good. Mirrors how tracing falls back to the first
+        available database.
+        """
+        if self.media_storage is not None:
+            return
+
+        # Collected rather than short-circuited so a mixed tree can be reported: the routes
+        # bind to one backend, and the route answers 404 for a reference minted by any other.
+        found = [
+            entity.media_storage
+            for group in (self._agents, self._teams, self._workflows)
+            for entity in group
+            if entity.media_storage
+        ]
+        if not found:
+            return
+
+        self.media_storage = found[0]
+        # Compared on what the media route itself discriminates on, so two equivalent
+        # instances of the same backend do not read as a conflict.
+        identities = {(getattr(storage, "backend_name", None), getattr(storage, "bucket", None)) for storage in found}
+        if len(identities) > 1:
+            log_warning(
+                f"Several media storage backends are configured across the agent tree. Serving media with "
+                f"{type(self.media_storage).__name__} only; media stored by the others answers 404. Set "
+                "media_storage on AgentOS to choose explicitly."
+            )
+        else:
+            log_debug(f"Serving media with {type(self.media_storage).__name__} found on the agent tree")
 
     def _auto_discover_databases(self) -> None:
         """Auto-discover and initialize the databases used by all contextual agents, teams and workflows."""

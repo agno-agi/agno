@@ -78,8 +78,10 @@ from agno.session import AgentSession
 from agno.session._utils import resolve_run_index
 from agno.tools.function import Function
 from agno.utils.agent import (
+    abuild_offloaded_storage_copy,
     await_for_open_threads,
     await_for_thread_tasks_stream,
+    build_offloaded_storage_copy,
     collect_background_metrics,
     isolate_media_scrub_targets,
     scrub_history_messages_from_run_output,
@@ -1958,13 +1960,17 @@ async def _arun_background(
     # 2. Set status to PENDING
     run_response.status = RunStatus.pending
 
-    # 3. Persist the PENDING run so polling can find it immediately
+    # 3. Persist the PENDING run so polling can find it immediately. This row survives for the
+    # whole run — and forever if the process dies before the terminal write — so its media is
+    # offloaded first rather than parked in the DB as base64. The RUNNING transition below
+    # writes the identical state, so it reuses the same copy instead of offloading twice.
     agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
     update_metadata(agent, session=agent_session)
-    agent_session.upsert_run(run=run_response)
-    run_index = resolve_run_index(agent_session, run_response)
+    storage_run = await abuild_offloaded_storage_copy(agent, run_response, session_id) or run_response
+    agent_session.upsert_run(run=storage_run)
+    run_index = resolve_run_index(agent_session, storage_run)
     await asave_session(agent, session=agent_session)
-    await asave_run(agent, run=run_response, session_id=session_id, user_id=user_id, run_index=run_index)
+    await asave_run(agent, run=storage_run, session_id=session_id, user_id=user_id, run_index=run_index)
 
     log_info(f"Background run {run_response.run_id} created with PENDING status")
 
@@ -1973,8 +1979,9 @@ async def _arun_background(
         try:
             # Transition to RUNNING — only persist the changed run (O(1))
             run_response.status = RunStatus.running
-            agent_session.upsert_run(run=run_response)
-            await asave_run(agent, run=run_response, session_id=session_id, user_id=user_id)
+            storage_run.status = RunStatus.running
+            agent_session.upsert_run(run=storage_run)
+            await asave_run(agent, run=storage_run, session_id=session_id, user_id=user_id)
 
             # Execute the actual run — _arun handles everything including
             # session persistence and cleanup
@@ -1997,8 +2004,9 @@ async def _arun_background(
             # Persist ERROR status — only persist the changed run (O(1))
             try:
                 run_response.status = RunStatus.error
-                agent_session.upsert_run(run=run_response)
-                await asave_run(agent, run=run_response, session_id=session_id, user_id=user_id)
+                error_run = await abuild_offloaded_storage_copy(agent, run_response, session_id) or run_response
+                agent_session.upsert_run(run=error_run)
+                await asave_run(agent, run=error_run, session_id=session_id, user_id=user_id)
             except Exception as e:
                 log_error(f"Failed to persist error state for background run {run_response.run_id}: {str(e)}")
             # Note: acleanup_run is already called by _arun's finally block
@@ -2047,15 +2055,17 @@ async def _arun_background_stream(
     if not run_id:
         raise ValueError("run_id is required for background streaming")
 
-    # 1. Persist RUNNING status so the run is visible in the DB immediately
+    # 1. Persist RUNNING status so the run is visible in the DB immediately. The row stands
+    # until the terminal write, so offload its media instead of persisting it inline.
     run_response.status = RunStatus.running
 
     agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
     update_metadata(agent, session=agent_session)
-    agent_session.upsert_run(run=run_response)
-    run_index = resolve_run_index(agent_session, run_response)
+    storage_run = await abuild_offloaded_storage_copy(agent, run_response, session_id) or run_response
+    agent_session.upsert_run(run=storage_run)
+    run_index = resolve_run_index(agent_session, storage_run)
     await asave_session(agent, session=agent_session)
-    await asave_run(agent, run=run_response, session_id=session_id, user_id=user_id, run_index=run_index)
+    await asave_run(agent, run=storage_run, session_id=session_id, user_id=user_id, run_index=run_index)
 
     log_info(f"Background stream run {run_id} persisted with RUNNING status")
 
@@ -2117,8 +2127,9 @@ async def _arun_background_stream(
             # Persist ERROR status — only persist the changed run (O(1))
             try:
                 run_response.status = RunStatus.error
-                agent_session.upsert_run(run=run_response)
-                await asave_run(agent, run=run_response, session_id=session_id, user_id=user_id)
+                error_run = await abuild_offloaded_storage_copy(agent, run_response, session_id) or run_response
+                agent_session.upsert_run(run=error_run)
+                await asave_run(agent, run=error_run, session_id=session_id, user_id=user_id)
             except Exception:
                 log_error(f"Failed to persist error state for background stream run {run_id}", exc_info=True)
 
@@ -4369,9 +4380,10 @@ async def _acontinue_run_background_stream(
     # task will load and persist it via _acontinue_run_stream.
     if run_response:
         run_response.status = RunStatus.running
-        agent_session.upsert_run(run=run_response)
+        storage_run = await abuild_offloaded_storage_copy(agent, run_response, session_id) or run_response
+        agent_session.upsert_run(run=storage_run)
         await asave_session(agent, session=agent_session)
-        await asave_run(agent, run=run_response, session_id=session_id, user_id=user_id)
+        await asave_run(agent, run=storage_run, session_id=session_id, user_id=user_id)
         log_info(f"Background continue-run stream {_run_id} persisted with RUNNING status")
     else:
         log_info(f"Background continue-run stream {_run_id} spawned; run will be loaded by the task")
@@ -4440,8 +4452,9 @@ async def _acontinue_run_background_stream(
             try:
                 if run_response:
                     run_response.status = RunStatus.error
-                    agent_session.upsert_run(run=run_response)
-                    await asave_run(agent, run=run_response, session_id=session_id, user_id=user_id)
+                    error_run = await abuild_offloaded_storage_copy(agent, run_response, session_id) or run_response
+                    agent_session.upsert_run(run=error_run)
+                    await asave_run(agent, run=error_run, session_id=session_id, user_id=user_id)
             except Exception:
                 log_error(f"Failed to persist error state for background continue-run stream {_run_id}", exc_info=True)
 
@@ -5781,7 +5794,13 @@ def persist_run_in_session(
     from agno.agent import _session
 
     if storage_copy is None:
-        storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context, isolate_inflight=True)
+        # No pre-built copy means this is a mid-run checkpoint. Offload its media the same
+        # way the terminal write does, so the checkpoint row carries references rather than
+        # inline base64 for the rest of the run.
+        offloaded = build_offloaded_storage_copy(agent, run_response, session.session_id)
+        storage_copy = _scrub_and_propagate_session_state(
+            agent, run_response, run_context, isolate_inflight=True, storage_copy=offloaded
+        )
 
     # Add scrubbed RunOutput to Agent Session
     session.upsert_run(run=storage_copy)
@@ -5819,7 +5838,10 @@ async def apersist_run_in_session(
     from agno.agent import _session
 
     if storage_copy is None:
-        storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context, isolate_inflight=True)
+        offloaded = await abuild_offloaded_storage_copy(agent, run_response, session.session_id)
+        storage_copy = _scrub_and_propagate_session_state(
+            agent, run_response, run_context, isolate_inflight=True, storage_copy=offloaded
+        )
 
     session.upsert_run(run=storage_copy)
     run_index = resolve_run_index(session, storage_copy)
@@ -5852,29 +5874,39 @@ def cleanup_and_store(
 
     from agno.run.approval import update_approval_run_status
 
-    # Offload media to external storage onto a deep copy before scrubbing, so the caller's
-    # reused input media is never mutated (offload strips content bytes off media objects).
-    storage_copy: Optional[RunOutput] = None
-    if agent.media_storage is not None and agent.store_media:
-        storage_copy = copy.deepcopy(run_response)
-
-        from agno.media_storage.base import AsyncMediaStorage
-
-        if isinstance(agent.media_storage, AsyncMediaStorage):
-            log_warning("AsyncMediaStorage provided but sync run() called. Skipping media offload.")
-        else:
-            try:
-                from agno.utils.media_offload import offload_run_media
-
-                offload_run_media(storage_copy, agent.media_storage, session.session_id, run_response.run_id or "")
-            except Exception as e:
-                log_warning(f"Media offload failed, falling back to inline storage: {e}")
-
-    storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context, storage_copy=storage_copy)
-
-    # Stop the timer for the Run duration (terminal only)
+    # Stop the timer for the Run duration (terminal only). Done before the storage copy is
+    # taken so the persisted run carries the duration too.
     if run_response.metrics:
         run_response.metrics.stop_timer()
+
+    storage_copy: Optional[RunOutput] = None
+    if agent.media_storage is not None and agent.store_media:
+        from agno.media.storage.base import AsyncMediaStorage
+
+        # Raised outside the guard below: an async backend on a sync run is a configuration
+        # error, not a storage failure, and falling back to inline would hide it.
+        if isinstance(agent.media_storage, AsyncMediaStorage):
+            raise ValueError("Cannot use sync run() with an AsyncMediaStorage. Use arun() instead.")
+
+        try:
+            from agno.utils.media_offload import offload_cache_for, offload_run_media
+
+            # Offload onto a deep copy before scrubbing, so the caller's reused input media
+            # is never mutated (offload strips content bytes off media objects). The copy is
+            # taken inside the guard so an uncopyable payload also falls back to inline.
+            storage_copy = copy.deepcopy(run_response)
+            offload_run_media(
+                storage_copy,
+                agent.media_storage,
+                session.session_id,
+                run_response.run_id or "",
+                cache=offload_cache_for(run_response),
+            )
+        except Exception as e:
+            storage_copy = None
+            log_warning(f"Media offload failed, falling back to inline storage: {e}")
+
+    storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context, storage_copy=storage_copy)
 
     # Optional: Save output to file if save_response_to_file is set (terminal only)
     save_run_response_to_file(
@@ -5943,39 +5975,56 @@ async def acleanup_and_store(
 
     from agno.run.approval import aupdate_approval_run_status
 
+    # Stop the timer for the Run duration (terminal only). Done before the storage copy is
+    # taken so the persisted run carries the duration too.
+    if run_response.metrics:
+        run_response.metrics.stop_timer()
+
     # Offload media to external storage onto a deep copy before scrubbing, so the caller's
     # reused input media is never mutated (offload strips content bytes off media objects).
+    # The copy is taken inside each guard so an uncopyable payload also falls back to inline.
     storage_copy: Optional[RunOutput] = None
     if agent.media_storage is not None and agent.store_media:
-        storage_copy = copy.deepcopy(run_response)
-
-        from agno.media_storage.base import AsyncMediaStorage, MediaStorage
+        from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 
         if not isinstance(agent.media_storage, AsyncMediaStorage):
             if isinstance(agent.media_storage, MediaStorage):
-                # Sync storage in async context — run synchronously as fallback
+                # Sync storage in an async run — offload it in a worker thread. Calling it
+                # inline would hold the event loop for the whole upload.
                 try:
-                    from agno.utils.media_offload import offload_run_media
+                    from agno.utils.media_offload import offload_cache_for, offload_run_media
 
-                    offload_run_media(storage_copy, agent.media_storage, session.session_id, run_response.run_id or "")
+                    storage_copy = copy.deepcopy(run_response)
+                    await asyncio.to_thread(
+                        offload_run_media,
+                        storage_copy,
+                        agent.media_storage,
+                        session.session_id,
+                        run_response.run_id or "",
+                        offload_cache_for(run_response),
+                    )
                 except Exception as e:
+                    storage_copy = None
                     log_warning(f"Media offload failed, falling back to inline storage: {e}")
             else:
-                log_warning("Sync MediaStorage provided but async arun() called. Skipping media offload.")
+                log_warning("media_storage is not a MediaStorage or AsyncMediaStorage. Skipping media offload.")
         else:
             try:
-                from agno.utils.media_offload import aoffload_run_media
+                from agno.utils.media_offload import aoffload_run_media, offload_cache_for
 
+                storage_copy = copy.deepcopy(run_response)
                 await aoffload_run_media(
-                    storage_copy, agent.media_storage, session.session_id, run_response.run_id or ""
+                    storage_copy,
+                    agent.media_storage,
+                    session.session_id,
+                    run_response.run_id or "",
+                    cache=offload_cache_for(run_response),
                 )
             except Exception as e:
+                storage_copy = None
                 log_warning(f"Media offload failed, falling back to inline storage: {e}")
 
     storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context, storage_copy=storage_copy)
-
-    if run_response.metrics:
-        run_response.metrics.stop_timer()
 
     save_run_response_to_file(
         agent,

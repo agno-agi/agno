@@ -60,7 +60,29 @@ agent = Agent(
 
 Offload media content (images, audio, video, files) to external storage and keep only lightweight references in the database.
 
+The S3 and GCS backends need their optional dependencies:
+
+```shell
+uv pip install 'agno[s3]'   # S3 (boto3 + aioboto3)
+uv pip install 'agno[gcs]'  # GCS (google-cloud-storage)
+```
+
 - [`05_media_storage_local.py`](05_media_storage_local.py) - Offload media to the local filesystem (LocalMediaStorage)
 - [`06_media_storage_s3.py`](06_media_storage_s3.py) - Offload media to S3-compatible object storage (S3MediaStorage)
+- [`07_media_storage_multiturn.py`](07_media_storage_multiturn.py) - Multi-turn media reuse: offload on turn 1, reference reloaded on turn 2
 - [`08_media_storage_gcs.py`](08_media_storage_gcs.py) - Offload media to Google Cloud Storage (GCSMediaStorage)
-- [`07_media_storage_multiturn.py`](07_media_storage_multiturn.py) - Multi-turn media reuse with store_media=False
+
+### Enable this only after the whole fleet is upgraded
+
+Turning media storage on is a one-way door. There is no schema change — no new table, no new
+column, no migration — but the shape of the media inside the existing column changes: an
+offloaded image carries a `media_reference` and no `content`.
+
+A reader that predates this feature validates that media has one of `url`, `filepath`, or
+`content`, and an offloaded image has none of the three. It does not skip that image, it
+raises — so one offloaded row makes `get_sessions()` fail for the whole session list,
+including clean sessions written before the upgrade.
+
+New code reads old rows fine, so the upgrade direction is safe. The rollback direction is not.
+Roll the release out everywhere first, then enable `media_storage` — and expect that once rows
+carry references, going back to an older build leaves that media unreadable until you return.

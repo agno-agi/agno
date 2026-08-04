@@ -18,29 +18,31 @@ import httpx
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.media import Image
-from agno.media_storage.local import LocalMediaStorage
+from agno.media.storage import LocalMediaStorage
 from agno.models.openai import OpenAIResponses
-from dotenv import load_dotenv
 
 # from agno.db.postgres import PostgresDb
 
 # ---------------------------------------------------------------------------
-# Setup of .env file
+# Setup
 # ---------------------------------------------------------------------------
-load_dotenv()
+IMAGE_URL = "https://thumbs.dreamstime.com/b/mountain-landscape-pieniny-national-park-foot-tatra-mountains-mountain-landscape-pieniny-national-park-437239881.jpg?w=768"
 
 # ---------------------------------------------------------------------------
 # Approach 1: Pre-download the media yourself and send bytes.
 # URL-only media is skipped by default.
 # ---------------------------------------------------------------------------
 
-# Create the storage. If you want to use async use AsyncLocalMediaStorage instead.
+# Create the storage. For async runs, swap in AsyncLocalMediaStorage.
 storage = LocalMediaStorage(
     base_path="./tmp/media_storage",
     # Optional: set base_url if serving files via a local HTTP server
     # base_url="http://localhost:8080/media",
 )
 
+# ---------------------------------------------------------------------------
+# Create the Agent
+# ---------------------------------------------------------------------------
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.5"),
     media_storage=storage,
@@ -48,36 +50,11 @@ agent = Agent(
     # db=PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")  # Postgres option
 )
 
-# Download image content first so media storage can offload it
-image_url = "https://thumbs.dreamstime.com/b/mountain-landscape-pieniny-national-park-foot-tatra-mountains-mountain-landscape-pieniny-national-park-437239881.jpg?w=768"
-image_bytes = httpx.get(image_url, follow_redirects=True).content
-
-agent.print_response(
-    "What do you see in this image?",
-    images=[
-        Image(
-            content=image_bytes,
-            format="jpeg",
-        )
-    ],
-)
-
-# URL-only media is NOT stored locally by default -- it is skipped during offload.
-agent.print_response(
-    "What do you see in this image?",
-    images=[
-        Image(
-            url="https://thumbs.dreamstime.com/b/mountain-landscape-pieniny-national-park-foot-tatra-mountains-mountain-landscape-pieniny-national-park-437239881.jpg?w=768"
-        )
-    ],
-)
-
 # ---------------------------------------------------------------------------
 # Approach 2: Use the flag persist_remote_urls=True.
 # This will download every URL-only media automatically and store it locally.
 # ---------------------------------------------------------------------------
 
-# Create the storage. If you want to use async use AsyncLocalMediaStorage instead.
 storage_with_persist = LocalMediaStorage(
     base_path="./tmp/media_storage",
     persist_remote_urls=True,
@@ -90,15 +67,29 @@ agent_with_persist = Agent(
     # db=PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")  # Postgres option
 )
 
-# URL-only images are automatically downloaded and stored when persist_remote_urls=True
-agent_with_persist.print_response(
-    "What do you see in this image?",
-    images=[
-        Image(
-            url="https://thumbs.dreamstime.com/b/mountain-landscape-pieniny-national-park-foot-tatra-mountains-mountain-landscape-pieniny-national-park-437239881.jpg?w=768"
-        )
-    ],
-)
+# ---------------------------------------------------------------------------
+# Run the Agents
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    # Download image content first so media storage can offload it
+    image_bytes = httpx.get(IMAGE_URL, follow_redirects=True).content
 
-# After running, check ./tmp/media_storage/ for the saved media files
-# (a .meta.json sidecar is written alongside each file when filename/mime-type/metadata is available).
+    agent.print_response(
+        "What do you see in this image?",
+        images=[Image(content=image_bytes, format="jpeg", mime_type="image/jpeg")],
+    )
+
+    # URL-only media is NOT stored locally by default -- it is skipped during offload.
+    agent.print_response(
+        "What do you see in this image?",
+        images=[Image(url=IMAGE_URL)],
+    )
+
+    # URL-only images are automatically downloaded and stored when persist_remote_urls=True
+    agent_with_persist.print_response(
+        "What do you see in this image?",
+        images=[Image(url=IMAGE_URL)],
+    )
+
+    # After running, check ./tmp/media_storage/ for the saved media files
+    # (a .meta.json sidecar is written alongside each file when filename/mime-type/metadata is available).

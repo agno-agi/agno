@@ -288,13 +288,45 @@ def _format_file_for_message(file: File, enable_citations: bool = True) -> Optio
 
     # Case 1: Document is a URL
     if file.url is not None:
-        document = {
-            "type": "document",
-            "source": {
-                "type": "url",
-                "url": file.url,
-            },
-        }
+        # Anthropic accepts a url document source for PDFs only. Media storage hands every
+        # offloaded File a signed url regardless of its type, so a csv or json would reach the
+        # provider as a url document and come back as a 400; fetch those and send the bytes.
+        media_type = file.mime_type
+        if media_type is None or media_type == "application/pdf":
+            document = {
+                "type": "document",
+                "source": {
+                    "type": "url",
+                    "url": file.url,
+                },
+            }
+        else:
+            import base64
+
+            raw_bytes = file.get_content_bytes()
+            if raw_bytes is None:
+                log_error(f"Document could not be read from url: {file}")
+                return None
+
+            source_type = mime_mapping.get(media_type, "base64")
+            if source_type == "text":
+                document = {
+                    "type": "document",
+                    "source": {
+                        "type": "text",
+                        "media_type": "text/plain",
+                        "data": raw_bytes.decode("utf-8", errors="replace"),
+                    },
+                }
+            else:
+                document = {
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": base64.standard_b64encode(raw_bytes).decode("utf-8"),
+                    },
+                }
     # Case 2: Document is a local file path
     elif file.filepath is not None:
         import base64

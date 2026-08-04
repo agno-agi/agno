@@ -166,9 +166,43 @@ class TestExtractFormat:
         assert extract_format(upload) == "mpeg"
 
     def test_no_filename_no_content_type(self):
+        """With no headers Starlette leaves content_type None, so there is no format to infer."""
         upload = UploadFile(file=io.BytesIO(b"x"), filename=None)
-        # content_type defaults to "text/plain" in UploadFile when headers have no content-type
-        # but if explicitly None, extract_format returns None
-        result = extract_format(upload)
-        # UploadFile will have a content_type so this will return something
-        assert result is not None or result is None  # just ensure no crash
+        assert upload.content_type is None
+        assert extract_format(upload) is None
+
+    def test_no_filename_empty_content_type(self):
+        upload = _make_upload(b"x", None, "")
+        assert extract_format(upload) is None
+
+
+class TestFilesMetadataParsing:
+    """Per-file metadata is persisted on the media object and again on its MediaReference, so
+    an unbounded value was stored twice per file — the object stores cap their own copy, the
+    database had no cap at all."""
+
+    def test_oversized_metadata_is_refused(self):
+        import json
+
+        import pytest
+        from fastapi import HTTPException
+
+        from agno.os.utils import MAX_FILES_METADATA_BYTES, parse_files_metadata
+
+        payload = json.dumps([{"note": "x" * MAX_FILES_METADATA_BYTES}])
+        with pytest.raises(HTTPException) as exc:
+            parse_files_metadata(payload)
+        assert exc.value.status_code == 422
+
+    def test_ordinary_metadata_passes_through(self):
+        import json
+
+        from agno.os.utils import parse_files_metadata
+
+        assert parse_files_metadata(json.dumps([{"page": 1}, "junk", None])) == [{"page": 1}, None, None]
+
+    def test_invalid_json_is_ignored_not_raised(self):
+        from agno.os.utils import parse_files_metadata
+
+        assert parse_files_metadata("{not json") == []
+        assert parse_files_metadata(None) == []

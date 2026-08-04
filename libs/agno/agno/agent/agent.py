@@ -42,6 +42,7 @@ from agno.guardrails import BaseGuardrail
 from agno.knowledge.protocol import KnowledgeProtocol
 from agno.learn.machine import LearningMachine
 from agno.media import Audio, File, Image, Video
+from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.memory import MemoryManager
 from agno.metrics import SessionMetrics
 from agno.models.base import Model
@@ -224,7 +225,7 @@ class Agent:
     # If set, media content is uploaded to this storage backend before DB persistence when
     # store_media is True; only references (not raw bytes) are stored. With store_media False,
     # media is not offloaded.
-    media_storage: Optional[Any] = None  # MediaStorage or AsyncMediaStorage
+    media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None
     # If True, store tool results in run output
     store_tool_messages: bool = True
     # If True, store history messages in run output.
@@ -428,7 +429,7 @@ class Agent:
         num_history_messages: Optional[int] = None,
         max_tool_calls_from_history: Optional[int] = None,
         store_media: bool = True,
-        media_storage: Optional[Any] = None,
+        media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         store_tool_messages: bool = True,
         store_history_messages: bool = False,
         knowledge: Optional[KnowledgeProtocol] = None,

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from agno.team.team import Team
 
+import asyncio
 import json
 from collections import ChainMap
 from typing import (
@@ -949,13 +950,15 @@ def _get_run_messages(
 
             # Refresh pre-signed URLs for media loaded from history
             if team.media_storage is not None:
-                from agno.media_storage.base import AsyncMediaStorage
+                from agno.media.storage.base import AsyncMediaStorage
 
-                if not isinstance(team.media_storage, AsyncMediaStorage):
-                    from agno.utils.media_offload import refresh_message_media_urls
+                if isinstance(team.media_storage, AsyncMediaStorage):
+                    raise ValueError("Cannot use sync run() with an AsyncMediaStorage. Use arun() instead.")
 
-                    for _msg in history_copy:
-                        refresh_message_media_urls(_msg, team.media_storage)
+                from agno.utils.media_offload import refresh_message_media_urls
+
+                for _msg in history_copy:
+                    refresh_message_media_urls(_msg, team.media_storage)
 
             # Filter tool calls from history messages
             if team.max_tool_calls_from_history is not None:
@@ -1094,7 +1097,7 @@ async def _aget_run_messages(
 
             # Refresh pre-signed URLs for media loaded from history
             if team.media_storage is not None:
-                from agno.media_storage.base import AsyncMediaStorage
+                from agno.media.storage.base import AsyncMediaStorage
 
                 if isinstance(team.media_storage, AsyncMediaStorage):
                     from agno.utils.media_offload import arefresh_message_media_urls
@@ -1104,8 +1107,11 @@ async def _aget_run_messages(
                 else:
                     from agno.utils.media_offload import refresh_message_media_urls
 
+                    # Sync storage in an async run — refresh in a worker thread. Inline, every
+                    # history image re-signs (and on a non-signing backend, downloads) on the
+                    # event loop before the model call can start.
                     for _msg in history_copy:
-                        refresh_message_media_urls(_msg, team.media_storage)
+                        await asyncio.to_thread(refresh_message_media_urls, _msg, team.media_storage)
 
             # Filter tool calls from history messages
             if team.max_tool_calls_from_history is not None:

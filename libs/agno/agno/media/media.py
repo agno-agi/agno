@@ -5,15 +5,18 @@ from uuid import uuid4
 
 from pydantic import BaseModel, field_validator, model_validator
 
+from agno.media.reference import MediaReference
 from agno.utils.log import log_error
 
 
 def _bytes_from_url(url: str) -> Optional[bytes]:
-    """Read bytes from an http(s) or file:// URL. Raises on HTTP error responses."""
-    if url.startswith("file://"):
-        from urllib.parse import unquote, urlparse
+    """Read bytes from an http(s) URL. Raises on HTTP error responses.
 
-        return Path(unquote(urlparse(url).path)).read_bytes()
+    Deliberately no ``file://`` support: every ``url`` reaching here is caller-supplied — an
+    AgentOS request body, a tool result, a model-generated string — so reading one off the
+    local filesystem would be an arbitrary-file-read primitive. Media held by the local
+    storage backend is rehydrated through ``storage.download()`` instead.
+    """
     import httpx
 
     resp = httpx.get(url, follow_redirects=True)
@@ -23,11 +26,6 @@ def _bytes_from_url(url: str) -> Optional[bytes]:
 
 async def _abytes_from_url(url: str) -> Optional[bytes]:
     """Async variant of _bytes_from_url."""
-    if url.startswith("file://"):
-        from urllib.parse import unquote, urlparse
-
-        path = unquote(urlparse(url).path)
-        return await asyncio.to_thread(lambda: Path(path).read_bytes())
     import httpx
 
     async with httpx.AsyncClient(follow_redirects=True) as client:
@@ -60,7 +58,7 @@ class Image(BaseModel):
     alt_text: Optional[str] = None  # Alt text description
 
     # External media storage reference (set when media is offloaded to object storage)
-    media_reference: Optional[Any] = None  # MediaReference when offloaded
+    media_reference: Optional[MediaReference] = None
     # User-facing custom metadata
     metadata: Optional[Dict[str, Any]] = None
 
@@ -71,8 +69,6 @@ class Image(BaseModel):
             # media_reference is a valid source — skip normal validation
             if data.get("media_reference") is not None:
                 if isinstance(data["media_reference"], dict):
-                    from agno.media_storage.reference import MediaReference
-
                     data["media_reference"] = MediaReference.from_dict(data["media_reference"])
                 if data.get("id") is None:
                     data["id"] = str(uuid4())
@@ -197,7 +193,7 @@ class Audio(BaseModel):
     expires_at: Optional[int] = None  # Expiration timestamp for temporary URLs
 
     # External media storage reference (set when media is offloaded to object storage)
-    media_reference: Optional[Any] = None  # MediaReference when offloaded
+    media_reference: Optional[MediaReference] = None
     # User-facing custom metadata
     metadata: Optional[Dict[str, Any]] = None
 
@@ -208,8 +204,6 @@ class Audio(BaseModel):
             # media_reference is a valid source — skip normal validation
             if data.get("media_reference") is not None:
                 if isinstance(data["media_reference"], dict):
-                    from agno.media_storage.reference import MediaReference
-
                     data["media_reference"] = MediaReference.from_dict(data["media_reference"])
                 if data.get("id") is None:
                     data["id"] = str(uuid4())
@@ -348,7 +342,7 @@ class Video(BaseModel):
     revised_prompt: Optional[str] = None
 
     # External media storage reference (set when media is offloaded to object storage)
-    media_reference: Optional[Any] = None  # MediaReference when offloaded
+    media_reference: Optional[MediaReference] = None
     # User-facing custom metadata
     metadata: Optional[Dict[str, Any]] = None
 
@@ -359,8 +353,6 @@ class Video(BaseModel):
             # media_reference is a valid source — skip normal validation
             if data.get("media_reference") is not None:
                 if isinstance(data["media_reference"], dict):
-                    from agno.media_storage.reference import MediaReference
-
                     data["media_reference"] = MediaReference.from_dict(data["media_reference"])
                 if data.get("id") is None:
                     data["id"] = str(uuid4())
@@ -487,7 +479,7 @@ class File(BaseModel):
     citations: Optional[bool] = None
 
     # External media storage reference (set when media is offloaded to object storage)
-    media_reference: Optional[Any] = None  # MediaReference when offloaded
+    media_reference: Optional[MediaReference] = None
     # User-facing custom metadata
     metadata: Optional[Dict[str, Any]] = None
 
@@ -503,9 +495,13 @@ class File(BaseModel):
                     "At least one of id, url, filepath, content, external, or media_reference must be provided"
                 )
             if isinstance(data.get("media_reference"), dict):
-                from agno.media_storage.reference import MediaReference
-
                 data["media_reference"] = MediaReference.from_dict(data["media_reference"])
+            # Auto-generate ID if not provided, after the check above so it still decides on
+            # the caller's own fields. Image, Audio and Video already do this; without it a
+            # File is handed a fresh id on every persist, so the offload cache never hits and
+            # the same bytes land under a new key each time.
+            if data.get("id") is None:
+                data["id"] = str(uuid4())
         return data
 
     @field_validator("mime_type")
