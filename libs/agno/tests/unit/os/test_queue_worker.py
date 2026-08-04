@@ -1726,38 +1726,105 @@ class TestForegroundCancelPersistGuard:
         assert len(wf_saves) == 1
 
 
-class TestClosingLedger:
-    def test_accept_grace_is_in_the_future(self):
-        import time
+class TestWorkerEnsuresRunRow:
+    """Phase-3 item 9 (lean): a claimed run's row is guaranteed durable BEFORE
+    execution - the accepting request's prepare can fail or die after the
+    ticket committed, and the old worker executed rowless (pollers 404ed a
+    real run until its terminal save; the accept grace only narrowed the
+    window, it never covered a dead router)."""
 
-        from agno.os.job_queue import ACCEPT_GRACE_SECONDS, accept_grace_available_at
+    class _RecordingDb:
+        """Db double exposing only the atomic append primitive: aprepare's
+        agent branch goes append-first, so a True return keeps the whole
+        prepare inside the primitive and records the ensured row."""
 
-        assert accept_grace_available_at() >= int(time.time()) + ACCEPT_GRACE_SECONDS - 1
+        def __init__(self):
+            self.appended: list = []
+
+        async def append_run_to_session_if_absent(self, session_id=None, run_dict=None, user_id=None):
+            self.appended.append(dict(run_dict))
+            return True
 
     @pytest.mark.asyncio
-    async def test_graced_job_not_claimable_until_available(self):
-        import time
+    async def test_run_row_ensured_before_execution(self):
+        store = InMemoryQueueStore()
+        agent = FakeAgent()
+        agent.db = self._RecordingDb()
+        order: list = []
+        real_arun = agent.arun
 
-        from agno.job_queue.store import InMemoryQueueStore
+        async def tracking_arun(**kwargs):
+            order.append("arun")
+            return await real_arun(**kwargs)
+
+        agent.arun = tracking_arun
+        real_append = agent.db.append_run_to_session_if_absent
+
+        async def tracking_append(**kwargs):
+            order.append("ensure")
+            return await real_append(**kwargs)
+
+        agent.db.append_run_to_session_if_absent = tracking_append
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(make_job("row1"))
+        job = await store.claim_job(worker.worker_id)
+        await worker._execute_claimed(job)
+
+        assert len(agent.db.appended) == 1, "worker must ensure the run row before executing"
+        row = agent.db.appended[0]
+        assert row["run_id"] == "row1" and str(row["status"]).upper() == "PENDING"
+        assert order == ["ensure", "arun"], "the row ensure must land before execution starts"
+        assert (await store.get_job("row1"))["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_ensure_failure_leaves_claim_stale_and_run_unexecuted(self, monkeypatch):
+        class _BrokenDb:
+            async def append_run_to_session_if_absent(self, **kwargs):
+                raise RuntimeError("session store down")
+
+            async def insert_session_if_absent(self, session=None):
+                raise RuntimeError("session store down")
 
         store = InMemoryQueueStore()
-        await store.enqueue_job(
-            {
-                "id": "g1",
-                "component_type": "agent",
-                "component_id": "a1",
-                "session_id": "s1",
-                "job_type": "run",
-                "payload": {"input": "x", "kwargs": {}},
-                "status": "queued",
-                "attempt": 0,
-                "max_attempts": 1,
-                "available_at": int(time.time()) + 5,
-                "created_at": 0,
-            }
-        )
-        assert await store.claim_job("w1") is None, "graced job must be unclaimable inside the window"
+        agent = FakeAgent()
+        agent.db = _BrokenDb()
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(make_job("row2"))
+        job = await store.claim_job(worker.worker_id)
 
+        # The broken primitives fall through to the legacy path, which needs
+        # real agent machinery the fixture stubs benignly - make the stubbed
+        # read fail too so the ensure itself raises
+        async def broken_read(component, session_id=None, user_id=None):
+            raise RuntimeError("session store down")
+
+        monkeypatch.setattr("agno.agent._storage.aread_or_create_session", broken_read)
+        await worker._execute_claimed(job)
+
+        assert agent.calls == [], "a run whose row cannot be guaranteed must not execute"
+        ticket = await store.get_job("row2")
+        assert ticket["status"] == "running", "claim is left to go stale for retry, never terminalized"
+
+    @pytest.mark.asyncio
+    async def test_continuation_leg_skips_ensure(self):
+        """A continuation's run row is PAUSED by definition; the ensure must
+        not touch it (a fresh PENDING append would be declined anyway, but
+        the prepare must not even run - workflow continues read the session
+        before acontinue_run)."""
+        store = InMemoryQueueStore()
+        agent = ContinuableFakeAgent()
+        agent.db = self._RecordingDb()
+        await _park_paused(store, job_id="cont1")
+        result = await store.continue_job("cont1", {"updated_tools": []})
+        assert result["outcome"] == "queued"
+        worker = make_worker(store, agent, make_config())
+        claimed = await store.claim_job(worker.worker_id)
+        await worker._execute_claimed(claimed)
+        assert agent.db.appended == [], "continuation legs must not run the row ensure"
+        assert agent.continue_calls, "the continuation itself must still execute"
+
+
+class TestClosingLedger:
     @pytest.mark.asyncio
     async def test_worker_managed_lifecycle(self):
         """F2: claimed jobs are marked worker-managed for exactly the span of

@@ -4105,8 +4105,8 @@ class AsyncPostgresDb(AsyncBaseDb):
         unlocked read-check-save would clobber the completed run back to
         PENDING. Returns True (appended), False (already present - a worker
         got there first, its row wins), None (session row does not exist yet -
-        the caller's create-and-save path is the only option; fresh sessions
-        keep the narrow legacy race, documented).
+        the caller creates it via insert_session_if_absent and retries, so no
+        whole-session save remains on the prepare path).
         """
         try:
             table = await self._get_table(table_type="sessions")
@@ -4138,6 +4138,75 @@ class AsyncPostgresDb(AsyncBaseDb):
                     return True
         except Exception as e:
             log_warning(f"Error appending run to session (caller falls back): {e}")
+            return None
+
+    async def insert_session_if_absent(self, session: Session) -> Optional[bool]:
+        """Insert the session row only when no row with this session_id exists
+        (INSERT ... ON CONFLICT DO NOTHING).
+
+        The missing half of the atomic queued-run prepare: when the session
+        does not exist yet, append_run_to_session_if_absent has no row to
+        lock, and the legacy create-and-save fallback re-opened the unlocked
+        read-check-save window (a worker completing the run inside it was
+        clobbered back to PENDING). Creating the row this way instead makes
+        the append primitive always applicable - no whole-session save
+        remains on the prepare path.
+
+        Returns True (inserted), False (a row already existed - the
+        concurrent writer's row is authoritative), None (error - the caller
+        falls back to the legacy path).
+        """
+        try:
+            table = await self._get_table(table_type="sessions", create_table_if_not_found=True)
+            if table is None:
+                return None
+            session_dict = session.to_dict()
+            for data_field in ("agent_data", "team_data", "workflow_data", "session_data", "summary", "metadata"):
+                if session_dict.get(data_field):
+                    session_dict[data_field] = sanitize_postgres_strings(session_dict[data_field])
+            values: Dict[str, Any] = dict(
+                session_id=session_dict.get("session_id"),
+                user_id=session_dict.get("user_id"),
+                runs=session_dict.get("runs") or [],
+                session_data=session_dict.get("session_data"),
+                summary=session_dict.get("summary"),
+                metadata=session_dict.get("metadata"),
+                created_at=session_dict.get("created_at"),
+                updated_at=session_dict.get("created_at"),
+            )
+            if isinstance(session, AgentSession):
+                values.update(
+                    session_type=SessionType.AGENT.value,
+                    agent_id=session_dict.get("agent_id"),
+                    agent_data=session_dict.get("agent_data"),
+                )
+            elif isinstance(session, TeamSession):
+                values.update(
+                    session_type=SessionType.TEAM.value,
+                    team_id=session_dict.get("team_id"),
+                    team_data=session_dict.get("team_data"),
+                )
+            elif isinstance(session, WorkflowSession):
+                values.update(
+                    session_type=SessionType.WORKFLOW.value,
+                    workflow_id=session_dict.get("workflow_id"),
+                    workflow_data=session_dict.get("workflow_data"),
+                )
+            else:
+                return None
+            async with self.async_session_factory() as sess, sess.begin():
+                # RETURNING yields a row only when the insert landed; rowcount
+                # is unreliable here (psycopg3 reports -1 for this statement)
+                stmt = (
+                    postgresql.insert(table)
+                    .values(**values)
+                    .on_conflict_do_nothing(index_elements=["session_id"])
+                    .returning(table.c.session_id)
+                )
+                result = await sess.execute(stmt)
+                return result.fetchone() is not None
+        except Exception as e:
+            log_warning(f"Error inserting session if absent (caller falls back): {e}")
             return None
 
     async def enqueue_job(self, job: Dict[str, Any], max_depth: int = 0) -> Dict[str, Any]:

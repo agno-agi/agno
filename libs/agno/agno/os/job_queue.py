@@ -162,22 +162,6 @@ def normalize_idempotency_key(raw: Any) -> Any:
     return raw
 
 
-ACCEPT_GRACE_SECONDS = 1
-
-
-def accept_grace_available_at() -> int:
-    """available_at for freshly accepted jobs: now + a short grace, inside the
-    same CAS/insert, so no worker can claim before the accepting request's
-    run-row prepare commits. Closes the fresh-session TOCTOU (a fast worker
-    creating and completing the session before aprepare's read-check-save,
-    whose stale save then clobbered COMPLETED back to PENDING). Same
-    mechanism as the continue/requeue grace; sits inside the default poll
-    interval, so added latency is nil."""
-    import time as _time
-
-    return int(_time.time()) + ACCEPT_GRACE_SECONDS
-
-
 def payload_is_queueable(payload: Any) -> bool:
     """True when the job payload survives a JSON round-trip as-is.
 
@@ -1033,7 +1017,39 @@ class QueueWorker:
 
         job_id, attempt = job["id"], job["attempt"]
         job_type = job.get("job_type", "run")
+        payload = job.get("payload") or {}
         component_for_stamp = self.resolve_component(job.get("component_type"), job.get("component_id"))
+        if (
+            job_type == "run"
+            and component_for_stamp is not None
+            and not payload.get("continue")
+            and getattr(component_for_stamp, "db", None) is not None
+        ):
+            # The run row must be durable before this attempt executes: the
+            # ticket commits the acceptance, but the accepting request's
+            # prepare can fail or die between the two writes. Without this,
+            # the run executes with no row for pollers to find and the
+            # attempt stamp below has nothing to fence. Idempotent: the
+            # append-if-absent inside declines when a row already landed.
+            # Failure leaves the claim to go stale (same rule as an
+            # unresolvable component): never execute a run whose row cannot
+            # be guaranteed. Continuation legs are excluded - their PAUSED
+            # row exists by definition, or acontinue_run fails honestly.
+            try:
+                await aprepare_queued_run(
+                    component_for_stamp,
+                    job.get("component_type", ""),
+                    run_id=job_id,
+                    session_id=job["session_id"],
+                    user_id=job.get("user_id"),
+                    input=payload.get("input"),
+                )
+            except Exception as e:
+                log_error(
+                    f"Job queue: could not ensure the run row for claimed job {job_id} ({e}); "
+                    "leaving the claim to go stale so a later attempt can retry"
+                )
+                return
         if component_for_stamp is not None:
             # Establish this attempt's generation on the run row BEFORE
             # executing: the fence compares terminal writes against the stored
@@ -1071,7 +1087,6 @@ class QueueWorker:
             )
             return
 
-        payload = job.get("payload") or {}
         is_stream = bool(payload.get("stream"))
         slot_acquired = False
         try:
@@ -1512,7 +1527,9 @@ async def _atomic_append_run(
 
     Returns True (appended), False (run already present - a worker got there
     first and its row wins), or None (no primitive / no session row yet - the
-    caller must use the legacy create-and-save path)."""
+    caller creates the session row via _ainsert_session_if_absent and
+    retries, or uses the legacy create-and-save path on adapters without the
+    primitives)."""
     db = getattr(component, "db", None)
     method = getattr(db, "append_run_to_session_if_absent", None) if db is not None else None
     if not callable(method):
@@ -1526,13 +1543,41 @@ async def _atomic_append_run(
         return None
 
 
+async def _ainsert_session_if_absent(component: Any, session: Any) -> Optional[bool]:
+    """Try the insert-if-absent session primitive on the component's db.
+
+    Returns True (inserted), False (a row already existed - the concurrent
+    writer's row is authoritative), or None (no primitive / error - the
+    caller must use the legacy create-and-save path)."""
+    db = getattr(component, "db", None)
+    method = getattr(db, "insert_session_if_absent", None) if db is not None else None
+    if not callable(method):
+        return None
+    try:
+        if inspect.iscoroutinefunction(method):
+            return await method(session=session)
+        return await asyncio.to_thread(method, session=session)
+    except Exception as e:
+        log_warning(f"Atomic session insert failed; falling back to read-modify-write: {e}")
+        return None
+
+
 async def aprepare_queued_run(
     component: Any, component_type: str, run_id: str, session_id: str, user_id: Optional[str], input: Any
 ) -> None:
     """Persist the PENDING run row after a successful enqueue so pollers find
     the run immediately. Idempotent: if a worker already started (and possibly
     finished) this run between enqueue and this write, the existing row wins -
-    it is never overwritten with PENDING."""
+    it is never overwritten with PENDING.
+
+    Atomic end to end on adapters with the primitives: the run lands via the
+    row-locked append-if-absent, and a missing session row is created EMPTY
+    with insert-if-absent first, then appended into - never a whole-session
+    save. This is what lets the worker claim immediately (no accept grace):
+    whoever reaches the append first wins, and a worker completing the run
+    concurrently can never be clobbered back to PENDING. Adapters without
+    the primitives keep the legacy create-and-save path (narrow unlocked
+    read-check-save window, documented)."""
     from agno.run.base import RunStatus
 
     if component_type == "agent":
@@ -1546,32 +1591,28 @@ async def aprepare_queued_run(
             agent_id=getattr(component, "id", None),
             agent_name=getattr(component, "name", None),
             user_id=user_id,
-            input=RunInput(input_content=input),
-            status=RunStatus.pending,
-        )
-        appended = await _atomic_append_run(component, session_id, run_response_early.to_dict(), user_id)
-        if appended is not None:
-            return  # atomically landed (True) or a worker's row already won (False)
-        # No session row yet: create-and-save (fresh sessions keep the narrow
-        # legacy read-save window; the worker cannot have run before the
-        # session exists in the common case)
-        session = await aread_or_create_session(component, session_id=session_id, user_id=user_id)
-        if session.get_run(run_id) is not None:
-            return
-        run_response = RunOutput(
-            run_id=run_id,
-            session_id=session_id,
-            agent_id=getattr(component, "id", None),
-            agent_name=getattr(component, "name", None),
-            user_id=user_id,
             # RunOutput.input is a RunInput; a raw value would make to_dict()
             # raise inside the session save and the PENDING row would never
             # land (silently - pollers 404 and the attempt stamp finds no row)
             input=RunInput(input_content=input),
             status=RunStatus.pending,
         )
+        run_dict = run_response_early.to_dict()
+        appended = await _atomic_append_run(component, session_id, run_dict, user_id)
+        if appended is not None:
+            return  # atomically landed (True) or a worker's row already won (False)
+        # No session row yet: create it EMPTY via insert-if-absent, then
+        # retry the row-locked append. Both steps decline to a concurrent
+        # winner, so the prepare never overwrites anyone.
+        session = await aread_or_create_session(component, session_id=session_id, user_id=user_id)
         update_metadata(component, session=session)
-        session.upsert_run(run=run_response)
+        if await _ainsert_session_if_absent(component, session) is not None:
+            if await _atomic_append_run(component, session_id, run_dict, user_id) is not None:
+                return
+        # Legacy create-and-save: adapters without the atomic primitives only
+        if session.get_run(run_id) is not None:
+            return
+        session.upsert_run(run=run_response_early)
         await asave_session(component, session=session)
     elif component_type == "team":
         from agno.run.team import TeamRunInput, TeamRunOutput
@@ -1587,23 +1628,18 @@ async def aprepare_queued_run(
             input=TeamRunInput(input_content=input),
             status=RunStatus.pending,
         )
-        appended = await _atomic_append_run(component, session_id, team_run_early.to_dict(), user_id)
+        team_run_dict = team_run_early.to_dict()
+        appended = await _atomic_append_run(component, session_id, team_run_dict, user_id)
         if appended is not None:
             return
         team_session = await _aread_or_create_session(component, session_id=session_id, user_id=user_id)
+        _update_metadata(component, session=team_session)
+        if await _ainsert_session_if_absent(component, team_session) is not None:
+            if await _atomic_append_run(component, session_id, team_run_dict, user_id) is not None:
+                return
         if team_session.get_run(run_id) is not None:
             return
-        team_run = TeamRunOutput(
-            run_id=run_id,
-            session_id=session_id,
-            team_id=getattr(component, "id", None),
-            team_name=getattr(component, "name", None),
-            user_id=user_id,
-            input=TeamRunInput(input_content=input),
-            status=RunStatus.pending,
-        )
-        _update_metadata(component, session=team_session)
-        team_session.upsert_run(run_response=team_run)
+        team_session.upsert_run(run_response=team_run_early)
         await team_asave_session(component, session=team_session)
     elif component_type == "workflow":
         from datetime import datetime
@@ -1620,25 +1656,19 @@ async def aprepare_queued_run(
             created_at=int(datetime.now().timestamp()),
             status=RunStatus.pending,
         )
-        appended = await _atomic_append_run(component, session_id, workflow_run_early.to_dict(), user_id)
+        workflow_run_dict = workflow_run_early.to_dict()
+        appended = await _atomic_append_run(component, session_id, workflow_run_dict, user_id)
         if appended is not None:
             return
         workflow_session, _ = await component._aload_or_create_session(
             session_id=session_id, user_id=user_id, session_state=None
         )
+        if await _ainsert_session_if_absent(component, workflow_session) is not None:
+            if await _atomic_append_run(component, session_id, workflow_run_dict, user_id) is not None:
+                return
         if workflow_session.get_run(run_id) is not None:
             return
-        workflow_run = WorkflowRunOutput(
-            run_id=run_id,
-            input=input,
-            session_id=session_id,
-            user_id=user_id,
-            workflow_id=getattr(component, "id", None),
-            workflow_name=getattr(component, "name", None),
-            created_at=int(datetime.now().timestamp()),
-            status=RunStatus.pending,
-        )
-        workflow_session.upsert_run(run=workflow_run)
+        workflow_session.upsert_run(run=workflow_run_early)
         if component._has_async_db():
             await component.asave_session(session=workflow_session)
         else:

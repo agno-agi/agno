@@ -30,7 +30,6 @@ from agno.os.auth import (
 )
 from agno.os.event_streams import get_event_stream
 from agno.os.job_queue import (
-    accept_grace_available_at,
     acontinue_via_queue,
     aprepare_queued_run,
     araise_if_ticket_owns_continue,
@@ -278,7 +277,6 @@ async def handle_workflow_via_websocket(
                 user_id=user_id,
                 payload=queued_ws_payload,
                 max_attempts=queue_worker.config.max_attempts,
-                available_at=accept_grace_available_at(),
                 deployment_id=queue_worker.config.deployment_id,
             ).to_dict()
             enqueue_result = await queue_worker.store.enqueue_job(job, max_depth=queue_worker.config.max_queue_depth)
@@ -1611,7 +1609,6 @@ def get_workflow_router(
                         user_id=user_id,
                         payload=queued_stream_payload,
                         max_attempts=queue_worker.config.max_attempts,
-                        available_at=accept_grace_available_at(),
                         deployment_id=queue_worker.config.deployment_id,
                         idempotency_key=normalize_idempotency_key(request.headers.get("idempotency-key")),
                     ).to_dict()
@@ -1726,7 +1723,6 @@ def get_workflow_router(
                     user_id=user_id,
                     payload=queued_payload,
                     max_attempts=queue_worker.config.max_attempts,
-                    available_at=accept_grace_available_at(),
                     deployment_id=queue_worker.config.deployment_id,
                     idempotency_key=normalize_idempotency_key(request.headers.get("idempotency-key")),
                 ).to_dict()
