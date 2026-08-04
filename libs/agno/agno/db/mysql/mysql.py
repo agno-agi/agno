@@ -195,6 +195,7 @@ class MySQLDb(BaseDb):
             indexes: List[str] = []
             unique_constraints: List[str] = []
             schema_unique_constraints = table_schema.pop("_unique_constraints", [])
+            schema_composite_indexes = table_schema.pop("_composite_indexes", [])
 
             # Get the columns, indexes, and unique constraints from the table schema
             for col_name, col_config in table_schema.items():
@@ -232,6 +233,11 @@ class MySQLDb(BaseDb):
             for idx_col in indexes:
                 idx_name = f"idx_{table_name}_{idx_col}"
                 table.append_constraint(Index(idx_name, idx_col))
+
+            # Add multi-column (composite) indexes with table-specific names
+            for composite in schema_composite_indexes:
+                composite_name = f"{table_name}_{composite['name']}"
+                table.append_constraint(Index(composite_name, *composite["columns"]))
 
             if self.create_schema:
                 with self.Session() as sess, sess.begin():

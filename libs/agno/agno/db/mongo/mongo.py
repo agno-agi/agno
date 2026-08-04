@@ -429,18 +429,33 @@ class MongoDb(BaseDb):
         ``status IS NULL OR status NOT IN (...)`` fast path.
         """
         if limit is not None:
-            filter = {
-                "session_id": session_id,
-                "parent_run_id": None,
-                "status": {"$nin": HISTORY_SKIP_STATUSES},
-            }
-            cursor = runs_collection.find(filter).sort([("run_index", -1), ("created_at", -1)]).limit(limit)
-            docs = [doc["run_data"] for doc in cursor if "run_data" in doc]
+            pipeline: List[Dict[str, Any]] = [
+                {
+                    "$match": {
+                        "session_id": session_id,
+                        "parent_run_id": None,
+                        "status": {"$nin": HISTORY_SKIP_STATUSES},
+                    }
+                },
+                {
+                    "$addFields": {
+                        "_ri": {"$ifNull": ["$run_index", 0]},
+                        "_ca": {"$ifNull": ["$created_at", 0]},
+                    }
+                },
+                {"$sort": {"_ri": -1, "_ca": -1}},
+                {"$limit": limit},
+            ]
+            docs = [doc["run_data"] for doc in runs_collection.aggregate(pipeline) if "run_data" in doc]
             docs.reverse()  # back to chronological order
             return docs
 
-        cursor = runs_collection.find({"session_id": session_id}).sort([("run_index", 1), ("created_at", 1)])
-        return [doc["run_data"] for doc in cursor if "run_data" in doc]
+        pipeline = [
+            {"$match": {"session_id": session_id}},
+            {"$addFields": {"_ri": {"$ifNull": ["$run_index", 0]}, "_ca": {"$ifNull": ["$created_at", 0]}}},
+            {"$sort": {"_ri": 1, "_ca": 1}},
+        ]
+        return [doc["run_data"] for doc in runs_collection.aggregate(pipeline) if "run_data" in doc]
 
     def _get_sessions_runs_docs(
         self, runs_collection: Collection, session_ids: List[str]

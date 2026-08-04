@@ -628,19 +628,34 @@ class AsyncMongoDb(AsyncBaseDb):
         ``status IS NULL OR status NOT IN (...)`` fast path.
         """
         if limit is not None:
-            filter = {
-                "session_id": session_id,
-                "parent_run_id": None,
-                "status": {"$nin": HISTORY_SKIP_STATUSES},
-            }
-            cursor = runs_collection.find(filter).sort([("run_index", -1), ("created_at", -1)]).limit(limit)
-            docs = await cursor.to_list(length=limit)
+            pipeline: List[Dict[str, Any]] = [
+                {
+                    "$match": {
+                        "session_id": session_id,
+                        "parent_run_id": None,
+                        "status": {"$nin": HISTORY_SKIP_STATUSES},
+                    }
+                },
+                {
+                    "$addFields": {
+                        "_ri": {"$ifNull": ["$run_index", 0]},
+                        "_ca": {"$ifNull": ["$created_at", 0]},
+                    }
+                },
+                {"$sort": {"_ri": -1, "_ca": -1}},
+                {"$limit": limit},
+            ]
+            docs = await runs_collection.aggregate(pipeline).to_list(length=limit)
             run_docs = [doc["run_data"] for doc in docs if "run_data" in doc]
             run_docs.reverse()  # back to chronological order
             return run_docs
 
-        cursor = runs_collection.find({"session_id": session_id}).sort([("run_index", 1), ("created_at", 1)])
-        docs = await cursor.to_list(length=None)
+        pipeline = [
+            {"$match": {"session_id": session_id}},
+            {"$addFields": {"_ri": {"$ifNull": ["$run_index", 0]}, "_ca": {"$ifNull": ["$created_at", 0]}}},
+            {"$sort": {"_ri": 1, "_ca": 1}},
+        ]
+        docs = await runs_collection.aggregate(pipeline).to_list(length=None)
         return [doc["run_data"] for doc in docs if "run_data" in doc]
 
     async def _get_sessions_runs_docs(

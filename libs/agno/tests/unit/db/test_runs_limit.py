@@ -137,17 +137,23 @@ class TestGetSessionsIncludeRuns:
 
 
 class TestSchemaHasNoBuilderBreakingMetadata:
-    """MySQL/SingleStore table builders iterate every schema entry and access
-    ``col_config["type"]``; a non-column key like ``__composite_indexes__`` would
-    KeyError on table creation. Those adapters must not carry it (yet)."""
+    """Every SQL adapter must ship the (session_id, run_index) composite index so
+    ``get_session(runs_limit=N)`` (WHERE session_id=? ORDER BY run_index DESC LIMIT N)
+    is index-served. Postgres/SQLite declare it under ``__composite_indexes__``;
+    MySQL/SingleStore builders pop ``_composite_indexes`` before iterating columns."""
 
-    def test_mysql_singlestore_runs_schema_is_columns_only(self):
+    def test_mysql_singlestore_runs_schema_has_composite_index(self):
         from agno.db.mysql.schemas import _get_run_table_schema as mysql_runs
         from agno.db.singlestore.schemas import _get_run_table_schema as singlestore_runs
 
         for schema in (mysql_runs(), singlestore_runs()):
+            idx = schema.get("_composite_indexes", [])
+            assert any(i["columns"] == ["session_id", "run_index"] for i in idx)
+            # Every remaining (column) entry must still be a real column config so the
+            # builder's ``col_config["type"]`` access does not KeyError.
             for name, cfg in schema.items():
-                assert not name.startswith("__"), f"{name} would break the MySQL/SingleStore builder"
+                if name.startswith("_"):
+                    continue
                 assert "type" in cfg
 
     def test_postgres_sqlite_runs_schema_has_composite_index(self):
