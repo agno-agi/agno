@@ -4111,16 +4111,22 @@ class Workflow:
         workflow_run_response.metrics = WorkflowMetrics(steps={})
         workflow_run_response.metrics.start_timer()
 
-        # Store PENDING response immediately. Skip for the workflow-agent case:
-        # _aexecute_workflow_agent persists the real run (reusing this run id),
-        # so pre-persisting an empty outer run here would leave a duplicate the
-        # UI renders as "0 out of 4 steps done".
-        if self.agent is None:
-            workflow_session.upsert_run(run=workflow_run_response)
-            if self._has_async_db():
-                await self.asave_session(session=workflow_session)
-            else:
-                self.save_session(session=workflow_session)
+        # Store PENDING response immediately - the workflow-agent case
+        # included. The placeholder is what makes the 202'd run id visible to
+        # pollers and verifiable by tenant-scoped cancel BEFORE execution
+        # starts writing; without it the run 404s while queued and (on the
+        # non-durable path, which has no ticket to fall back on) is fully
+        # invisible. Reconciliation is by construction: the workflow-agent
+        # tool and the direct-answer branch both persist the real run under
+        # THIS run id (see agent.py's run_workflow), and upsert_run replaces
+        # by run_id - the same contract the stream producers already rely on.
+        # The old "0 of N steps" duplicate belonged to the era when the tool
+        # minted a fresh id; id-reuse retired it.
+        workflow_session.upsert_run(run=workflow_run_response)
+        if self._has_async_db():
+            await self.asave_session(session=workflow_session)
+        else:
+            self.save_session(session=workflow_session)
 
         # Prepare execution input
         inputs = WorkflowExecutionInput(
@@ -4143,10 +4149,9 @@ class Workflow:
                 async with background_run_slot(run_id=workflow_run_response.run_id):
                     if self.agent is not None:
                         # WorkflowAgent case: _aexecute_workflow_agent owns the
-                        # run rows and reuses this run id, so there is no empty
-                        # outer run to transition or finalize. Delegating cleanly
-                        # (no pre-persist, no safety-net upsert) yields a single
-                        # run per turn instead of an extra "0 out of 4 steps done".
+                        # run rows and reuses this run id - its persist replaces
+                        # the PENDING placeholder pre-persisted above (upsert by
+                        # run_id), yielding a single run per turn.
                         await self._aexecute_workflow_agent(
                             user_input=input,  # type: ignore
                             execution_input=inputs,

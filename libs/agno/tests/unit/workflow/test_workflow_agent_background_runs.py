@@ -112,3 +112,62 @@ async def test_background_workflow_agent_cancel_lands_a_run_row(monkeypatch):
     row = session.get_run(out.run_id)
     assert row is not None, "the cancelled row must carry the 202'd run id"
     assert row.status == RunStatus.cancelled
+
+
+@pytest.mark.asyncio
+async def test_background_workflow_agent_run_visible_while_executing(monkeypatch):
+    """Phase-4 item 17: the 202'd run id must be poll-visible from acceptance,
+    not only after execution writes. The skip removed with the 9079 safety net
+    made non-durable WorkflowAgent background runs fully invisible while
+    queued/executing - polls 404ed and tenant-scoped cancel had nothing to
+    verify ownership against. The restored placeholder is reconciled by
+    id-reuse (this file's exactly-one-run test pins that no duplicate comes
+    back)."""
+    executed: dict = {}
+    wf, sessions = make_workflow_agent_workflow(monkeypatch, executed)
+
+    release = asyncio.Event()
+
+    async def hanging_then_real_execute(user_input=None, execution_input=None, run_context=None, **kwargs):
+        executed["run_context_run_id"] = run_context.run_id if run_context else None
+        await release.wait()
+        session, _ = await wf._aload_or_create_session(session_id="s1")
+        real_run = WorkflowRunOutput(
+            run_id=run_context.run_id,
+            workflow_id=wf.id,
+            session_id="s1",
+            status=RunStatus.completed,
+            content="answer",
+        )
+        session.upsert_run(run=real_run)
+        return real_run
+
+    monkeypatch.setattr(wf, "_aexecute_workflow_agent", hanging_then_real_execute)
+
+    out = await wf.arun(input="q", session_id="s1", background=True)
+    accepted_id = out.run_id
+
+    # While execution is in flight, the accepted run must already be a row
+    for _ in range(100):
+        await asyncio.sleep(0.01)
+        session = sessions.get("s1")
+        if session is not None and session.get_run(accepted_id) is not None:
+            break
+    session = sessions.get("s1")
+    assert session is not None and session.get_run(accepted_id) is not None, (
+        "the 202'd run id must be visible to pollers before execution writes anything"
+    )
+    placeholder = session.get_run(accepted_id)
+    assert placeholder.status == RunStatus.pending
+
+    # Release the leg: the real run must RECONCILE the placeholder, not join it
+    release.set()
+    for _ in range(100):
+        await asyncio.sleep(0.01)
+        row = sessions["s1"].get_run(accepted_id)
+        if row is not None and row.status == RunStatus.completed:
+            break
+    assert len(sessions["s1"].runs) == 1, (
+        f"expected the placeholder to be replaced, got {[r.run_id for r in sessions['s1'].runs]}"
+    )
+    assert sessions["s1"].runs[0].content == "answer"
