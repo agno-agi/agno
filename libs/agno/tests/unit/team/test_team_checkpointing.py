@@ -555,6 +555,8 @@ class TestTeamCheckpointScrubIsolation:
         captured: dict = {}
 
         class FakeSession:
+            session_id = "sess-1"
+            user_id = "u1"
             session_data = None
             runs: list = []
 
@@ -567,6 +569,11 @@ class TestTeamCheckpointScrubIsolation:
             store_history_messages=True,
             store_member_responses=True,
             save_session=lambda session: None,
+            # Required by _persist_team_run_in_session -> save_run -> team._session.save_run
+            # which short-circuits on team.db is None (so no _upsert_run dispatch).
+            db=None,
+            parent_team_id=None,
+            workflow_id=None,
         )
 
         team_run._persist_team_run_in_session(team, run_response, FakeSession(), run_context=None)

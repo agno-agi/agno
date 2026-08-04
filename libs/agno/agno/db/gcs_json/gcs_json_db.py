@@ -20,7 +20,18 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.utils import deserialize_session, deserialize_sessions
+from agno.db.utils import (
+    build_single_run_row,
+    deserialize_run,
+    deserialize_session,
+    deserialize_sessions,
+    filter_context_runs,
+    merge_runs_table_with_legacy_blob,
+)
+from agno.run.agent import RunOutput
+from agno.run.base import RunStatus
+from agno.run.team import TeamRunOutput
+from agno.run.workflow import WorkflowRunOutput
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
@@ -37,6 +48,7 @@ class GcsJsonDb(BaseDb):
         bucket_name: str,
         prefix: Optional[str] = None,
         session_table: Optional[str] = None,
+        runs_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
@@ -55,6 +67,7 @@ class GcsJsonDb(BaseDb):
             bucket_name (str): Name of the GCS bucket where JSON files will be stored.
             prefix (Optional[str]): Path prefix for organizing files in the bucket. Defaults to "agno/".
             session_table (Optional[str]): Name of the JSON file to store sessions (without .json extension).
+            runs_table (Optional[str]): Name of the JSON file to store runs (one entry per run).
             memory_table (Optional[str]): Name of the JSON file to store user memories.
             metrics_table (Optional[str]): Name of the JSON file to store metrics.
             eval_table (Optional[str]): Name of the JSON file to store evaluation runs.
@@ -75,6 +88,7 @@ class GcsJsonDb(BaseDb):
         super().__init__(
             id=id,
             session_table=session_table,
+            runs_table=runs_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
             eval_table=eval_table,
@@ -111,25 +125,34 @@ class GcsJsonDb(BaseDb):
             List[Dict[str, Any]]: The data from the JSON file.
 
         Raises:
-            json.JSONDecodeError: If the JSON file is not valid.
+            google.cloud.exceptions.GoogleCloudError: On any GCS read failure
+                other than "file not found" (permission denied, quota, network).
+                Do not silently swallow — a swallowed read returns [] and the
+                caller believes the table is empty when it isn't.
         """
+        from google.cloud.exceptions import NotFound  # type: ignore[import-untyped]
+
         blob_name = self._get_blob_name(filename)
         blob = self.bucket.blob(blob_name)
 
         try:
             data_str = blob.download_as_bytes().decode("utf-8")
-            return json.loads(data_str)
-
+        except NotFound:
+            if create_table_if_not_found:
+                log_debug(f"Creating new GCS JSON file: {blob_name}")
+                blob.upload_from_string("[]", content_type="application/json")
+            return []
         except Exception as e:
-            # Check if it's a 404 (file not found) error
-            if "404" in str(e) or "Not Found" in str(e):
-                if create_table_if_not_found:
-                    log_debug(f"Creating new GCS JSON file: {blob_name}")
-                    blob.upload_from_string("[]", content_type="application/json")
-                return []
-            else:
-                log_error(f"Error reading the {blob_name} JSON file from GCS: {str(e)}")
-                raise json.JSONDecodeError(f"Error reading {blob_name}", "", 0)
+            # Any other GCS error (auth, network, quota) must propagate — a
+            # silent empty-list return corrupts the caller's view of state.
+            log_error(f"Error reading the {blob_name} JSON file from GCS: {str(e)}")
+            raise
+
+        try:
+            return json.loads(data_str)
+        except json.JSONDecodeError:
+            log_error(f"Malformed JSON in GCS blob {blob_name}")
+            raise
 
     def _write_json_file(self, filename: str, data: List[Dict[str, Any]]) -> None:
         """Write data to a JSON file in GCS.
@@ -149,16 +172,248 @@ class GcsJsonDb(BaseDb):
             blob.upload_from_string(json_data, content_type="application/json")
 
         except Exception as e:
+            # Do NOT swallow: silent write failures make the caller believe
+            # the data landed when it didn't (misconfigured credentials, GCS
+            # outage, quota exhausted, etc). Log then propagate.
             log_error(f"Error writing to the {blob_name} JSON file in GCS: {str(e)}")
+            raise
+
+    def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
+        """Get the latest version of the database schema.
+
+        ``table_name`` is accepted for parity with the SQL adapters and the
+        ``BaseDb`` contract, but this adapter has no per-table versioning
+        (each table is a single blob), so it is ignored.
+        """
+        return None
+
+    def upsert_schema_version(self, table_name: str = "", version: str = "") -> None:
+        """Upsert the schema version. ``table_name`` is ignored — see
+        ``get_latest_schema_version``."""
+        pass
+
+    # -- Run methods --
+
+    def _read_runs_file(self, create_table_if_not_found: Optional[bool] = True) -> List[Dict[str, Any]]:
+        return self._read_json_file(self.runs_table_name, create_table_if_not_found=create_table_if_not_found)
+
+    def _write_runs_file(self, rows: List[Dict[str, Any]]) -> None:
+        self._write_json_file(self.runs_table_name, rows)
+
+    def _get_session_runs_data(self, session_id: str) -> List[Dict[str, Any]]:
+        all_runs = self._read_runs_file(create_table_if_not_found=False)
+        rows = [r for r in all_runs if r.get("session_id") == session_id]
+        rows.sort(key=lambda r: (r.get("run_index") or 0, r.get("created_at") or 0))
+        return [r["run_data"] for r in rows if "run_data" in r]
+
+    def _get_sessions_runs_data(self, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+        if not session_ids:
+            return {}
+        all_runs = self._read_runs_file(create_table_if_not_found=False)
+        wanted = set(session_ids)
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
+        for r in all_runs:
+            sid = r.get("session_id")
+            if sid in wanted and "run_data" in r:
+                grouped.setdefault(sid, []).append(r)
+        for sid, items in grouped.items():
+            items.sort(key=lambda r: (r.get("run_index") or 0, r.get("created_at") or 0))
+            grouped[sid] = [it["run_data"] for it in items]
+        return grouped  # type: ignore[return-value]
+
+    def upsert_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> None:
+        """Upsert a single run row in the runs file on GCS.
+
+        Optimized for updating existing runs (e.g., status changes in HITL or
+        background mode) without re-upserting all runs in the session.
+
+        For new runs, ``run_index`` should be provided or will be read from
+        ``run_data``. For updates to existing runs, ``run_index`` is preserved
+        from the original insert.
+
+        Args:
+            run: The run object or dictionary to upsert.
+            session_id: The session ID this run belongs to.
+            user_id: Optional user ID to associate with the run.
+            run_index: Optional run index for new runs.
+
+        Raises:
+            ValueError: If the run has no run_id.
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            row = build_single_run_row(
+                run=run,
+                session_id=session_id,
+                user_id=user_id,
+                run_index=run_index,
+            )
+
+            existing = self._read_runs_file(create_table_if_not_found=True)
+            replaced = False
+            for i, r in enumerate(existing):
+                if r.get("run_id") == row["run_id"]:
+                    row["run_index"] = r.get("run_index", row.get("run_index"))
+                    existing[i] = row
+                    replaced = True
+                    break
+            if not replaced:
+                existing.append(row)
+            self._write_runs_file(existing)
+        except Exception as e:
+            log_error(f"Exception upserting run into runs file: {str(e)}")
+            raise e
+
+    def _delete_session_runs(self, session_id: str) -> int:
+        existing = self._read_runs_file(create_table_if_not_found=False)
+        kept = [r for r in existing if r.get("session_id") != session_id]
+        deleted = len(existing) - len(kept)
+        if deleted:
+            self._write_runs_file(kept)
+        return deleted
+
+    def cleanup_legacy_runs_field(self, force: bool = False) -> bool:
+        """Unset the legacy ``runs`` field from session records.
+
+        See :meth:`JsonDb.cleanup_legacy_runs_field` for the contract.
+        """
+        sessions = self._read_json_file(self.session_table_name, create_table_if_not_found=False)
+        if not sessions:
+            return False
+
+        if not force:
+            pending = sum(1 for s in sessions if s.get("runs"))
+            if pending > 0:
+                raise RuntimeError(
+                    f"Refusing to unset {self.session_table_name}.runs: {pending} session(s) still have "
+                    "non-null `runs` content. Run MigrationManager(db).up() first, or pass force=True."
+                )
+
+        touched = 0
+        for s in sessions:
+            if "runs" in s:
+                s.pop("runs", None)
+                touched += 1
+        if touched:
+            self._write_json_file(self.session_table_name, sessions)
+        log_info(f"Unset runs on {touched} session record(s)")
+        return touched > 0
+
+    def get_run(
+        self, run_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]]]:
+        try:
+            for r in self._read_runs_file(create_table_if_not_found=False):
+                if r.get("run_id") == run_id:
+                    if not deserialize:
+                        return r
+                    return deserialize_run(r.get("run_type"), r["run_data"])
+            return None
+        except Exception as e:
+            log_error(f"Exception reading run: {str(e)}")
+            raise e
+
+    def get_runs(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[RunStatus] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
+        try:
+            rows = self._read_runs_file(create_table_if_not_found=False)
+            if session_id is not None:
+                rows = [r for r in rows if r.get("session_id") == session_id]
+            if user_id is not None:
+                rows = [r for r in rows if r.get("user_id") == user_id]
+            if agent_id is not None:
+                rows = [r for r in rows if r.get("agent_id") == agent_id]
+            if team_id is not None:
+                rows = [r for r in rows if r.get("team_id") == team_id]
+            if workflow_id is not None:
+                rows = [r for r in rows if r.get("workflow_id") == workflow_id]
+            if status is not None:
+                status_value = status.value if isinstance(status, RunStatus) else status
+                rows = [r for r in rows if r.get("status") == status_value]
+
+            total_count = len(rows)
+
+            if sort_by is not None:
+                rows = apply_sorting(rows, sort_by, sort_order)
+            else:
+                rows = sorted(rows, key=lambda r: (r.get("run_index") or 0, r.get("created_at") or 0))
+
+            if limit is not None:
+                start = 0
+                if page is not None:
+                    start = (page - 1) * limit
+                rows = rows[start : start + limit]
+
+            if not deserialize:
+                return rows, total_count
+            return [deserialize_run(r.get("run_type"), r["run_data"]) for r in rows]
+        except Exception as e:
+            log_error(f"Exception reading runs: {str(e)}")
+            raise e
+
+    def _scrub_run_ids_from_legacy_blob(self, run_ids: set) -> None:
+        """Remove ``run_ids`` from every session's legacy ``runs`` field —
+        see ``JsonDb`` for the rationale."""
+        if not run_ids:
             return
+        try:
+            sessions = self._read_json_file(self.session_table_name, create_table_if_not_found=False)
+        except Exception:
+            return
+        mutated = False
+        for s in sessions:
+            legacy = s.get("runs")
+            if not isinstance(legacy, list):
+                continue
+            kept = [r for r in legacy if not (isinstance(r, dict) and r.get("run_id") in run_ids)]
+            if len(kept) != len(legacy):
+                s["runs"] = kept
+                mutated = True
+        if mutated:
+            self._write_json_file(self.session_table_name, sessions)
 
-    def get_latest_schema_version(self):
-        """Get the latest version of the database schema."""
-        pass
+    def delete_run(self, run_id: str) -> bool:
+        try:
+            rows = self._read_runs_file(create_table_if_not_found=False)
+            kept = [r for r in rows if r.get("run_id") != run_id]
+            deleted = len(kept) != len(rows)
+            if deleted:
+                self._write_runs_file(kept)
+            self._scrub_run_ids_from_legacy_blob({run_id})
+            return deleted
+        except Exception as e:
+            log_error(f"Error deleting run: {str(e)}")
+            raise e
 
-    def upsert_schema_version(self, version: str) -> None:
-        """Upsert the schema version into the database."""
-        pass
+    def delete_runs(self, run_ids: List[str]) -> None:
+        try:
+            rows = self._read_runs_file(create_table_if_not_found=False)
+            to_drop = set(run_ids)
+            kept = [r for r in rows if r.get("run_id") not in to_drop]
+            if len(kept) != len(rows):
+                self._write_runs_file(kept)
+            self._scrub_run_ids_from_legacy_blob(to_drop)
+        except Exception as e:
+            log_error(f"Error deleting runs: {str(e)}")
+            raise e
 
     # -- Session methods --
 
@@ -186,6 +441,8 @@ class GcsJsonDb(BaseDb):
 
             if len(sessions) < original_count:
                 self._write_json_file(self.session_table_name, sessions)
+                # Cascade-delete runs
+                self._delete_session_runs(session_id)
                 log_debug(f"Successfully deleted session with session_id: {session_id}")
                 return True
 
@@ -209,12 +466,22 @@ class GcsJsonDb(BaseDb):
         """
         try:
             sessions = self._read_json_file(self.session_table_name)
+            deleted_ids = {
+                s.get("session_id")
+                for s in sessions
+                if s.get("session_id") in session_ids and (user_id is None or s.get("user_id") == user_id)
+            }
             sessions = [
                 s
                 for s in sessions
                 if not (s.get("session_id") in session_ids and (user_id is None or s.get("user_id") == user_id))
             ]
             self._write_json_file(self.session_table_name, sessions)
+            if deleted_ids:
+                all_runs = self._read_runs_file(create_table_if_not_found=False)
+                kept_runs = [r for r in all_runs if r.get("session_id") not in deleted_ids]
+                if len(kept_runs) != len(all_runs):
+                    self._write_runs_file(kept_runs)
             log_debug(f"Successfully deleted sessions with ids: {session_ids}")
 
         except Exception as e:
@@ -227,6 +494,7 @@ class GcsJsonDb(BaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession, Dict[str, Any]]]:
         """Read a session from the GCS JSON file.
 
@@ -251,6 +519,14 @@ class GcsJsonDb(BaseDb):
                 if session_data.get("session_id") == session_id:
                     if user_id is not None and session_data.get("user_id") != user_id:
                         continue
+
+                    # Attach runs from the runs file, merged with any legacy `runs` field
+                    runs_data = self._get_session_runs_data(session_id)
+                    session_data["runs"] = merge_runs_table_with_legacy_blob(runs_data, session_data.get("runs"))
+                    if runs_limit is not None:
+                        # No query engine to push "last N" down: filter+slice in memory to
+                        # match the SQL fast path (drop member/skip-status runs, then last N).
+                        session_data["runs"] = filter_context_runs(session_data["runs"] or [])[-runs_limit:]
 
                     if not deserialize:
                         return session_data
@@ -350,6 +626,13 @@ class GcsJsonDb(BaseDb):
                     start_idx = (page - 1) * limit
                 filtered_sessions = filtered_sessions[start_idx : start_idx + limit]
 
+            # Attach runs from the runs file, merged with any legacy `runs` field
+            if filtered_sessions:
+                runs_by_session = self._get_sessions_runs_data([s["session_id"] for s in filtered_sessions])
+                for s in filtered_sessions:
+                    runs_data = runs_by_session.get(s["session_id"], [])
+                    s["runs"] = merge_runs_table_with_legacy_blob(runs_data, s.get("runs"))
+
             if not deserialize:
                 return filtered_sessions, total_count
 
@@ -386,6 +669,10 @@ class GcsJsonDb(BaseDb):
                 sessions[i] = session_data
                 self._write_json_file(self.session_table_name, sessions)
 
+                # Attach runs from the runs file, merged with any legacy `runs` field
+                runs_data = self._get_session_runs_data(session_id)
+                session_data["runs"] = merge_runs_table_with_legacy_blob(runs_data, session_data.get("runs"))
+
                 if not deserialize:
                     return session_data
 
@@ -402,7 +689,7 @@ class GcsJsonDb(BaseDb):
         """Insert or update a session in the GCS JSON file."""
         try:
             sessions = self._read_json_file(self.session_table_name, create_table_if_not_found=True)
-            session_dict = session.to_dict()
+            session_dict = session.to_dict(include_runs=False)
 
             # Add session_type based on session instance type
             if isinstance(session, AgentSession):
@@ -421,19 +708,28 @@ class GcsJsonDb(BaseDb):
                     existing_uid = existing_session.get("user_id")
                     if existing_uid is not None and existing_uid != session_dict.get("user_id"):
                         return None
-                    # Update existing session
+                    # Carry the legacy `runs` blob forward. session.to_dict(include_runs=False)
+                    # omits `runs`, so a bare replace here would silently erase any pre-v3
+                    # history that lives only in the legacy blob (upgrade-without-migration
+                    # data loss). Only cleanup_legacy_runs_field() should drop it, explicitly.
+                    legacy_runs = existing_session.get("runs")
                     session_dict["updated_at"] = int(time.time())
+                    if legacy_runs is not None:
+                        session_dict["runs"] = legacy_runs
                     sessions[i] = session_dict
                     session_updated = True
                     break
 
             if not session_updated:
-                # Add new session
                 session_dict["created_at"] = session_dict.get("created_at", int(time.time()))
                 session_dict["updated_at"] = session_dict.get("created_at")
                 sessions.append(session_dict)
 
             self._write_json_file(self.session_table_name, sessions)
+
+            # Runs are persisted separately via upsert_run by the caller (agent loop).
+            # Attach the in-memory runs to the returned dict so callers see the full picture.
+            session_dict["runs"] = [run if isinstance(run, dict) else run.to_dict() for run in session.runs or []]
 
             if not deserialize:
                 return session_dict
@@ -900,15 +1196,30 @@ class GcsJsonDb(BaseDb):
                 if end_timestamp is not None and created_at >= end_timestamp:
                     continue
 
-                # Only include necessary fields for metrics
                 filtered_session = {
+                    "session_id": session.get("session_id"),
                     "user_id": session.get("user_id"),
                     "session_data": session.get("session_data"),
-                    "runs": session.get("runs"),
+                    "runs": session.get("runs"),  # legacy fallback
                     "created_at": session.get("created_at"),
                     "session_type": session.get("session_type"),
                 }
                 filtered_sessions.append(filtered_session)
+
+            # Attach lightweight run info (model + provider) from the runs file.
+            if filtered_sessions:
+                session_ids: List[str] = [str(s["session_id"]) for s in filtered_sessions if s.get("session_id")]
+                runs_by_session = self._get_sessions_runs_data(session_ids)
+                for s in filtered_sessions:
+                    sid = s.get("session_id")
+                    if sid is None:
+                        continue
+                    rb = [
+                        {"model": rd.get("model"), "model_provider": rd.get("model_provider")}
+                        for rd in runs_by_session.get(sid, [])
+                    ]
+                    if rb or not s.get("runs"):
+                        s["runs"] = rb
 
             return filtered_sessions
 

@@ -3066,7 +3066,7 @@ class Model(ABC):
             # message with the media artifacts which throws error for some models
             media_message = Message(
                 role="user",
-                content="Take note of the following content",
+                content="The tool call above generated the attached media.",
                 images=all_images if all_images else None,
                 videos=all_videos if all_videos else None,
                 audio=all_audio if all_audio else None,

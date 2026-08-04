@@ -26,20 +26,32 @@ from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
+    build_single_run_row,
+    deserialize_run,
     deserialize_session,
     deserialize_session_json_fields,
     deserialize_sessions,
+    filter_context_runs,
+    merge_runs_table_with_legacy_blob,
 )
+from agno.run.agent import RunOutput
+from agno.run.base import RunStatus
+from agno.run.team import TeamRunOutput
+from agno.run.workflow import WorkflowRunOutput
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
 
 try:
-    from google.cloud.firestore import Client, FieldFilter  # type: ignore[import-untyped]
+    from google.cloud.firestore import DELETE_FIELD, Client, FieldFilter  # type: ignore[import-untyped]
 except ImportError:
     raise ImportError(
         "`google-cloud-firestore` not installed. Please install it using `pip install google-cloud-firestore`"
     )
+
+
+# Firestore batched writes have a hard 500-operation limit per commit.
+FIRESTORE_BATCH_LIMIT = 500
 
 
 class FirestoreDb(BaseDb):
@@ -48,6 +60,7 @@ class FirestoreDb(BaseDb):
         db_client: Optional[Client] = None,
         project_id: Optional[str] = None,
         session_collection: Optional[str] = None,
+        runs_collection: Optional[str] = None,
         memory_collection: Optional[str] = None,
         metrics_collection: Optional[str] = None,
         eval_collection: Optional[str] = None,
@@ -64,6 +77,7 @@ class FirestoreDb(BaseDb):
             db_client (Optional[Client]): The Firestore client to use.
             project_id (Optional[str]): The GCP project ID for Firestore.
             session_collection (Optional[str]): Name of the collection to store sessions.
+            runs_collection (Optional[str]): Name of the collection to store runs (one document per run).
             memory_collection (Optional[str]): Name of the collection to store memories.
             metrics_collection (Optional[str]): Name of the collection to store metrics.
             eval_collection (Optional[str]): Name of the collection to store evaluation runs.
@@ -83,6 +97,7 @@ class FirestoreDb(BaseDb):
         super().__init__(
             id=id,
             session_table=session_collection,
+            runs_table=runs_collection,
             memory_table=memory_collection,
             metrics_table=metrics_collection,
             eval_table=eval_collection,
@@ -133,6 +148,16 @@ class FirestoreDb(BaseDb):
                 create_collection_if_not_found=create_collection_if_not_found,
             )
             return self.session_collection
+
+        if table_type == "runs":
+            if self.runs_table_name is None:
+                raise ValueError("Runs collection was not provided on initialization")
+            self.runs_collection = self._get_or_create_collection(
+                collection_name=self.runs_table_name,
+                collection_type="runs",
+                create_collection_if_not_found=create_collection_if_not_found,
+            )
+            return self.runs_collection
 
         if table_type == "memories":
             if self.memory_table_name is None:
@@ -237,6 +262,311 @@ class FirestoreDb(BaseDb):
             log_error(f"Error getting collection {collection_name}: {str(e)}")
             raise
 
+    def cleanup_legacy_runs_field(self, force: bool = False) -> bool:
+        """Unset the legacy ``runs`` field from session documents.
+
+        The v3.0.0 migration intentionally leaves the legacy ``runs`` field on
+        session documents as a backup. Once you have verified the migration
+        and taken a backup, call this to reclaim the storage.
+
+        Args:
+            force: If True, unset the field even on sessions that still hold a
+                non-null ``runs`` array (a sign that they were not migrated).
+                Defaults to False.
+
+        Returns:
+            True if any documents were touched, False if there was nothing to
+            clean up.
+        """
+        collection_ref = self._get_collection(table_type="sessions")
+        if collection_ref is None:
+            log_info(f"{self.session_table_name} collection does not exist, nothing to clean up")
+            return False
+
+        # Pre-flight: refuse if any session still has a non-empty legacy `runs` value
+        if not force:
+            pending = 0
+            for doc in collection_ref.stream():
+                data = doc.to_dict() or {}
+                runs_val = data.get("runs")
+                if runs_val:
+                    pending += 1
+            if pending > 0:
+                raise RuntimeError(
+                    f"Refusing to unset {self.session_table_name}.runs: {pending} session(s) still have "
+                    "non-null `runs` content. Run MigrationManager(db).up() first, or pass force=True."
+                )
+
+        log_info(f"Unsetting legacy runs field from {self.session_table_name} documents")
+        # Firestore's 500-op-per-batch hard limit — chunk to avoid
+        # INVALID_ARGUMENT on installs with many sessions.
+        batch = self.db_client.batch()
+        touched = 0
+        in_batch = 0
+        for doc in collection_ref.stream():
+            data = doc.to_dict() or {}
+            if "runs" in data:
+                batch.update(doc.reference, {"runs": DELETE_FIELD})
+                touched += 1
+                in_batch += 1
+                if in_batch >= FIRESTORE_BATCH_LIMIT:
+                    batch.commit()
+                    batch = self.db_client.batch()
+                    in_batch = 0
+        if in_batch > 0:
+            batch.commit()
+        log_info(f"Unset runs on {touched} session document(s)")
+        return touched > 0
+
+    # -- Run methods --
+    def _get_session_runs_docs(self, runs_collection_ref, session_id: str) -> List[Dict[str, Any]]:
+        """Get the raw run_data dicts for the given session, in insertion order."""
+        query = (
+            runs_collection_ref.where(filter=FieldFilter("session_id", "==", session_id))
+            .order_by("run_index")
+            .order_by("created_at")
+        )
+        return [doc.to_dict().get("run_data") for doc in query.stream() if doc.exists]
+
+    def _get_sessions_runs_docs(self, runs_collection_ref, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+        """Get the raw run_data dicts for several sessions, grouped by session_id.
+
+        Firestore's ``in`` filter caps at 30 values per query, so we chunk.
+        """
+        if not session_ids:
+            return {}
+        runs_buffer: Dict[str, List[Any]] = {}
+        # Chunk to fit Firestore's `in` query limit (30)
+        for start in range(0, len(session_ids), 30):
+            chunk = session_ids[start : start + 30]
+            query = runs_collection_ref.where(filter=FieldFilter("session_id", "in", chunk))
+            for doc in query.stream():
+                data = doc.to_dict() or {}
+                sid = data.get("session_id")
+                run_data = data.get("run_data")
+                if sid is None or run_data is None:
+                    continue
+                runs_buffer.setdefault(sid, []).append(
+                    (data.get("run_index") or 0, data.get("created_at") or 0, run_data)
+                )
+        # Sort each list by (run_index, created_at)
+        runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
+        for sid, items in runs_buffer.items():
+            items.sort(key=lambda t: (t[0], t[1]))
+            runs_by_session[sid] = [t[2] for t in items]
+        return runs_by_session
+
+    def upsert_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> None:
+        """Upsert a single run document into the runs collection (O(1) operation).
+
+        Optimized for updating existing runs (e.g., status changes in HITL or
+        background mode) without re-upserting all runs in the session.
+
+        For new runs, ``run_index`` should be provided or will be read from
+        ``run_data``. For updates to existing runs, ``run_index`` is preserved
+        from the original insert.
+
+        Args:
+            run: The run object or dictionary to upsert.
+            session_id: The session ID this run belongs to.
+            user_id: Optional user ID to associate with the run.
+            run_index: Optional run index for new runs.
+
+        Raises:
+            ValueError: If the run has no run_id.
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            runs_collection_ref = self._get_collection(table_type="runs", create_collection_if_not_found=True)
+            if runs_collection_ref is None:
+                return
+
+            row = build_single_run_row(
+                run=run,
+                session_id=session_id,
+                user_id=user_id,
+                run_index=run_index,
+            )
+
+            # Preserve the original run_index if the doc already exists
+            doc_ref = runs_collection_ref.document(row["run_id"])
+            snapshot = doc_ref.get()
+            if snapshot.exists:
+                existing = snapshot.to_dict() or {}
+                if "run_index" in existing:
+                    row["run_index"] = existing["run_index"]
+
+            doc_ref.set(row)
+        except Exception as e:
+            log_error(f"Exception upserting run into runs collection: {str(e)}")
+            raise e
+
+    def get_run(
+        self, run_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]]]:
+        """Read a single run from the runs collection."""
+        try:
+            collection_ref = self._get_collection(table_type="runs")
+            if collection_ref is None:
+                return None
+            doc = collection_ref.document(run_id).get()
+            if not doc.exists:
+                return None
+            data = doc.to_dict() or {}
+            if not deserialize:
+                return data
+            return deserialize_run(data.get("run_type"), data["run_data"])
+        except Exception as e:
+            log_error(f"Exception reading from runs collection: {str(e)}")
+            raise e
+
+    def get_runs(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[RunStatus] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
+        """Get all runs matching the given filters."""
+        try:
+            collection_ref = self._get_collection(table_type="runs")
+            if collection_ref is None:
+                return [] if deserialize else ([], 0)
+
+            query = collection_ref
+            if session_id is not None:
+                query = query.where(filter=FieldFilter("session_id", "==", session_id))
+            if user_id is not None:
+                query = query.where(filter=FieldFilter("user_id", "==", user_id))
+            if agent_id is not None:
+                query = query.where(filter=FieldFilter("agent_id", "==", agent_id))
+            if team_id is not None:
+                query = query.where(filter=FieldFilter("team_id", "==", team_id))
+            if workflow_id is not None:
+                query = query.where(filter=FieldFilter("workflow_id", "==", workflow_id))
+            if status is not None:
+                status_value = status.value if isinstance(status, RunStatus) else status
+                query = query.where(filter=FieldFilter("status", "==", status_value))
+
+            if sort_by is None:
+                query = query.order_by("run_index").order_by("created_at")
+            else:
+                query = apply_sorting(query, sort_by, sort_order)
+
+            all_docs = [doc.to_dict() for doc in query.stream() if doc.exists]
+            total_count = len(all_docs)
+
+            if limit is not None and page is not None:
+                start_index = (page - 1) * limit
+                run_rows = all_docs[start_index : start_index + limit]
+            elif limit is not None:
+                run_rows = all_docs[:limit]
+            else:
+                run_rows = all_docs
+
+            if not deserialize:
+                return run_rows, total_count
+            return [deserialize_run(d.get("run_type"), d["run_data"]) for d in run_rows]
+        except Exception as e:
+            log_error(f"Exception reading from runs collection: {str(e)}")
+            raise e
+
+    def _scrub_run_ids_from_session_legacy_blob(self, session_id: str, run_ids: set) -> None:
+        """Remove ``run_ids`` from the given session's legacy ``runs`` array.
+
+        Partial-migration hygiene: v3 copied runs into their own collection but
+        preserved the embedded ``runs`` array on the session doc as a backup.
+        Deleting run docs alone leaves that array intact and the read path's
+        ``merge_runs_table_with_legacy_blob`` resurrects the ghost.
+        """
+        if not run_ids or not session_id:
+            return
+        try:
+            sessions_ref = self._get_collection(table_type="sessions")
+            if sessions_ref is None:
+                return
+            session_ref = sessions_ref.document(session_id)
+            snapshot = session_ref.get()
+            if not snapshot.exists:
+                return
+            data = snapshot.to_dict() or {}
+            legacy = data.get("runs")
+            if not isinstance(legacy, list):
+                return
+            kept = [r for r in legacy if not (isinstance(r, dict) and r.get("run_id") in run_ids)]
+            if len(kept) != len(legacy):
+                session_ref.update({"runs": kept})
+        except Exception:
+            log_debug("legacy-runs scrub failed; primary delete still succeeded", exc_info=True)
+
+    def delete_run(self, run_id: str) -> bool:
+        """Delete a single run from the runs collection."""
+        try:
+            collection_ref = self._get_collection(table_type="runs")
+            if collection_ref is None:
+                return False
+            doc_ref = collection_ref.document(run_id)
+            snapshot = doc_ref.get()
+            if not snapshot.exists:
+                return False
+            sid = (snapshot.to_dict() or {}).get("session_id")
+            doc_ref.delete()
+            if sid:
+                self._scrub_run_ids_from_session_legacy_blob(sid, {run_id})
+            return True
+        except Exception as e:
+            log_error(f"Error deleting run: {str(e)}")
+            raise e
+
+    def delete_runs(self, run_ids: List[str]) -> None:
+        """Delete all given runs from the runs collection."""
+        try:
+            collection_ref = self._get_collection(table_type="runs")
+            if collection_ref is None:
+                return
+            # Collect session_id → run_ids before deleting so we can scrub the
+            # legacy blob on each affected session.
+            runs_by_session: Dict[str, set] = {}
+            for rid in run_ids:
+                snap = collection_ref.document(rid).get()
+                if not snap.exists:
+                    continue
+                sid = (snap.to_dict() or {}).get("session_id")
+                if sid:
+                    runs_by_session.setdefault(sid, set()).add(rid)
+
+            # Firestore batched writes have a hard 500-op limit — chunk to
+            # avoid ``INVALID_ARGUMENT`` on bulk deletes.
+            deleted = 0
+            for start in range(0, len(run_ids), FIRESTORE_BATCH_LIMIT):
+                chunk = run_ids[start : start + FIRESTORE_BATCH_LIMIT]
+                batch = self.db_client.batch()
+                for rid in chunk:
+                    batch.delete(collection_ref.document(rid))
+                batch.commit()
+                deleted += len(chunk)
+
+            for sid, rids in runs_by_session.items():
+                self._scrub_run_ids_from_session_legacy_blob(sid, rids)
+
+            log_debug(f"Successfully deleted {deleted} runs")
+        except Exception as e:
+            log_error(f"Error deleting runs: {str(e)}")
+            raise e
+
     # -- Session methods --
 
     def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
@@ -254,6 +584,8 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="sessions")
+            runs_collection_ref = self._get_collection(table_type="runs", create_collection_if_not_found=False)
+
             query = collection_ref.where(filter=FieldFilter("session_id", "==", session_id))
             if user_id is not None:
                 query = query.where(filter=FieldFilter("user_id", "==", user_id))
@@ -261,6 +593,24 @@ class FirestoreDb(BaseDb):
 
             for doc in docs:
                 doc.reference.delete()
+
+                # Cascade-delete the session's runs, chunked to Firestore's
+                # 500-op-per-commit limit so sessions with many runs don't blow
+                # the batch (mirrors delete_sessions).
+                if runs_collection_ref is not None:
+                    runs_query = runs_collection_ref.where(filter=FieldFilter("session_id", "==", session_id))
+                    batch = self.db_client.batch()
+                    in_batch = 0
+                    for run_doc in runs_query.stream():
+                        batch.delete(run_doc.reference)
+                        in_batch += 1
+                        if in_batch >= FIRESTORE_BATCH_LIMIT:
+                            batch.commit()
+                            batch = self.db_client.batch()
+                            in_batch = 0
+                    if in_batch > 0:
+                        batch.commit()
+
                 log_debug(f"Successfully deleted session with session_id: {session_id}")
                 return True
 
@@ -271,12 +621,17 @@ class FirestoreDb(BaseDb):
             log_error(f"Error deleting session: {str(e)}")
             raise e
 
-    def get_latest_schema_version(self):
-        """Get the latest version of the database schema."""
-        pass
+    def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
+        """Get the latest version of the database schema.
 
-    def upsert_schema_version(self, version: str) -> None:
-        """Upsert the schema version into the database."""
+        ``table_name`` is accepted for parity with the SQL adapters and the
+        ``BaseDb`` contract; Firestore is schemaless so it is ignored.
+        """
+        return None
+
+    def upsert_schema_version(self, table_name: str = "", version: str = "") -> None:
+        """Upsert the schema version. ``table_name`` is ignored — see
+        ``get_latest_schema_version``."""
         pass
 
     def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
@@ -288,19 +643,43 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="sessions")
+            runs_collection_ref = self._get_collection(table_type="runs", create_collection_if_not_found=False)
+            # Firestore's 500-op-per-batch limit — chunk to survive cascade
+            # deletes of sessions with many runs.
             batch = self.db_client.batch()
-
+            in_batch = 0
             deleted_count = 0
+
+            def _flush():
+                nonlocal batch, in_batch
+                if in_batch > 0:
+                    batch.commit()
+                    batch = self.db_client.batch()
+                    in_batch = 0
+
+            def _stage_delete(ref):
+                nonlocal batch, in_batch
+                batch.delete(ref)
+                in_batch += 1
+                if in_batch >= FIRESTORE_BATCH_LIMIT:
+                    _flush()
+
             for session_id in session_ids:
                 query = collection_ref.where(filter=FieldFilter("session_id", "==", session_id))
                 if user_id is not None:
                     query = query.where(filter=FieldFilter("user_id", "==", user_id))
-                docs = query.stream()
-                for doc in docs:
-                    batch.delete(doc.reference)
+                for doc in query.stream():
+                    _stage_delete(doc.reference)
                     deleted_count += 1
 
-            batch.commit()
+                if runs_collection_ref is not None:
+                    runs_query = runs_collection_ref.where(filter=FieldFilter("session_id", "==", session_id))
+                    if user_id is not None:
+                        runs_query = runs_query.where(filter=FieldFilter("user_id", "==", user_id))
+                    for run_doc in runs_query.stream():
+                        _stage_delete(run_doc.reference)
+
+            _flush()
 
             log_debug(f"Successfully deleted {deleted_count} sessions")
 
@@ -314,6 +693,7 @@ class FirestoreDb(BaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Read a session from the database.
 
@@ -333,6 +713,8 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="sessions")
+            runs_collection_ref = self._get_collection(table_type="runs", create_collection_if_not_found=False)
+
             query = collection_ref.where(filter=FieldFilter("session_id", "==", session_id))
 
             if user_id is not None:
@@ -348,6 +730,16 @@ class FirestoreDb(BaseDb):
                 return None
 
             session = deserialize_session_json_fields(result)
+
+            # Attach runs from the runs collection, merged with any runs still
+            # sitting in the legacy `runs` field.
+            if runs_collection_ref is not None:
+                runs_data = self._get_session_runs_docs(runs_collection_ref, session_id)
+                session["runs"] = merge_runs_table_with_legacy_blob(runs_data, session.get("runs"))
+            if runs_limit is not None:
+                # No query engine to push "last N" down: filter+slice in memory to
+                # match the SQL fast path (drop member/skip-status runs, then last N).
+                session["runs"] = filter_context_runs(session.get("runs") or [])[-runs_limit:]
 
             if not deserialize:
                 return session
@@ -399,6 +791,7 @@ class FirestoreDb(BaseDb):
             collection_ref = self._get_collection(table_type="sessions")
             if collection_ref is None:
                 return [] if deserialize else ([], 0)
+            runs_collection_ref = self._get_collection(table_type="runs", create_collection_if_not_found=False)
 
             query = collection_ref
 
@@ -455,6 +848,16 @@ class FirestoreDb(BaseDb):
                 sessions_raw = all_sessions_raw[:limit]
             else:
                 sessions_raw = all_sessions_raw
+
+            # Attach runs from the runs collection, merged with any runs still
+            # in the legacy `runs` field.
+            if runs_collection_ref is not None and sessions_raw:
+                runs_by_session = self._get_sessions_runs_docs(
+                    runs_collection_ref, [s["session_id"] for s in sessions_raw]
+                )
+                for s in sessions_raw:
+                    runs_data = runs_by_session.get(s["session_id"], [])
+                    s["runs"] = merge_runs_table_with_legacy_blob(runs_data, s.get("runs"))
 
             if not deserialize:
                 return sessions_raw, total_count
@@ -543,6 +946,14 @@ class FirestoreDb(BaseDb):
                 return None
             deserialized_session = deserialize_session_json_fields(result)
 
+            # Attach runs from the runs collection
+            runs_collection_ref = self._get_collection(table_type="runs", create_collection_if_not_found=False)
+            if runs_collection_ref is not None:
+                runs_data = self._get_session_runs_docs(runs_collection_ref, session_id)
+                deserialized_session["runs"] = merge_runs_table_with_legacy_blob(
+                    runs_data, deserialized_session.get("runs")
+                )
+
             log_debug(f"Renamed session with id '{session_id}' to '{session_name}'")
 
             if not deserialize:
@@ -570,7 +981,8 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="sessions", create_collection_if_not_found=True)
-            session_dict = session.to_dict()
+
+            session_dict = session.to_dict(include_runs=False)
 
             if isinstance(session, AgentSession):
                 record = {
@@ -578,7 +990,6 @@ class FirestoreDb(BaseDb):
                     "session_type": SessionType.AGENT.value,
                     "agent_id": session_dict.get("agent_id"),
                     "user_id": session_dict.get("user_id"),
-                    "runs": session_dict.get("runs"),
                     "agent_data": session_dict.get("agent_data"),
                     "session_data": session_dict.get("session_data"),
                     "summary": session_dict.get("summary"),
@@ -586,14 +997,12 @@ class FirestoreDb(BaseDb):
                     "created_at": session_dict.get("created_at"),
                     "updated_at": int(time.time()),
                 }
-
             elif isinstance(session, TeamSession):
                 record = {
                     "session_id": session_dict.get("session_id"),
                     "session_type": SessionType.TEAM.value,
                     "team_id": session_dict.get("team_id"),
                     "user_id": session_dict.get("user_id"),
-                    "runs": session_dict.get("runs"),
                     "team_data": session_dict.get("team_data"),
                     "session_data": session_dict.get("session_data"),
                     "summary": session_dict.get("summary"),
@@ -601,14 +1010,12 @@ class FirestoreDb(BaseDb):
                     "created_at": session_dict.get("created_at"),
                     "updated_at": int(time.time()),
                 }
-
             elif isinstance(session, WorkflowSession):
                 record = {
                     "session_id": session_dict.get("session_id"),
                     "session_type": SessionType.WORKFLOW.value,
                     "workflow_id": session_dict.get("workflow_id"),
                     "user_id": session_dict.get("user_id"),
-                    "runs": session_dict.get("runs"),
                     "workflow_data": session_dict.get("workflow_data"),
                     "session_data": session_dict.get("session_data"),
                     "summary": session_dict.get("summary"),
@@ -616,6 +1023,8 @@ class FirestoreDb(BaseDb):
                     "created_at": session_dict.get("created_at"),
                     "updated_at": int(time.time()),
                 }
+            else:
+                raise ValueError(f"Invalid session type: {session.session_type}")
 
             # Find existing document or create new one
             docs = collection_ref.where(filter=FieldFilter("session_id", "==", record["session_id"])).stream()
@@ -624,19 +1033,21 @@ class FirestoreDb(BaseDb):
             if doc_ref is not None:
                 existing_doc = doc_ref.get()
                 if existing_doc.exists:
-                    existing_data = existing_doc.to_dict()
-                    if (
-                        existing_data
-                        and existing_data.get("user_id") is not None
-                        and existing_data.get("user_id") != record.get("user_id")
+                    existing_data = existing_doc.to_dict() or {}
+                    if existing_data.get("user_id") is not None and existing_data.get("user_id") != record.get(
+                        "user_id"
                     ):
                         return None
             else:
                 # Create new document
                 doc_ref = collection_ref.document()
 
+            # The legacy `runs` field is intentionally left untouched: set(merge=True)
+            # preserves it as a frozen backup until cleanup_legacy_runs_field() removes it.
+            # Deleting it here would lose history for sessions not yet migrated.
             doc_ref.set(record, merge=True)
 
+            # Runs are persisted separately via upsert_run by the caller (agent loop).
             # Get the updated document
             updated_doc = doc_ref.get()
             if not updated_doc.exists:
@@ -646,6 +1057,11 @@ class FirestoreDb(BaseDb):
             if result is None:
                 return None
             deserialized_session = deserialize_session_json_fields(result)
+
+            # Attach the in-memory runs to the returned dict so callers see the full picture
+            deserialized_session["runs"] = [
+                run if isinstance(run, dict) else run.to_dict() for run in session.runs or []
+            ]
 
             if not deserialize:
                 return deserialized_session
@@ -756,26 +1172,36 @@ class FirestoreDb(BaseDb):
         """
         try:
             collection_ref = self._get_collection(table_type="memories")
+            # Chunk to the Firestore 500-op-per-batch limit.
             batch = self.db_client.batch()
+            in_batch = 0
             deleted_count = 0
 
-            # If user_id is provided, filter memory_ids to only those belonging to the user
+            def _stage(ref):
+                nonlocal batch, in_batch, deleted_count
+                batch.delete(ref)
+                in_batch += 1
+                deleted_count += 1
+                if in_batch >= FIRESTORE_BATCH_LIMIT:
+                    batch.commit()
+                    batch = self.db_client.batch()
+                    in_batch = 0
+
             if user_id is not None:
                 for memory_id in memory_ids:
                     docs = collection_ref.where(filter=FieldFilter("memory_id", "==", memory_id)).stream()
                     for doc in docs:
                         data = doc.to_dict()
                         if data.get("user_id") == user_id:
-                            batch.delete(doc.reference)
-                            deleted_count += 1
+                            _stage(doc.reference)
             else:
                 for memory_id in memory_ids:
                     docs = collection_ref.where(filter=FieldFilter("memory_id", "==", memory_id)).stream()
                     for doc in docs:
-                        batch.delete(doc.reference)
-                        deleted_count += 1
+                        _stage(doc.reference)
 
-            batch.commit()
+            if in_batch > 0:
+                batch.commit()
 
             if deleted_count == 0:
                 log_info(f"No memories found with ids: {memory_ids}")
@@ -1339,6 +1765,7 @@ class FirestoreDb(BaseDb):
         """Get all sessions of all types for metrics calculation."""
         try:
             collection_ref = self._get_collection(table_type="sessions")
+            runs_collection_ref = self._get_collection(table_type="runs", create_collection_if_not_found=False)
 
             query = collection_ref
             if start_timestamp is not None:
@@ -1352,13 +1779,41 @@ class FirestoreDb(BaseDb):
                 data = doc.to_dict()
                 # Only include required fields for metrics
                 result = {
+                    "session_id": data.get("session_id"),
                     "user_id": data.get("user_id"),
                     "session_data": data.get("session_data"),
-                    "runs": data.get("runs"),
+                    "runs": data.get("runs"),  # legacy field, for un-migrated sessions
                     "created_at": data.get("created_at"),
                     "session_type": data.get("session_type"),
                 }
                 results.append(result)
+
+            # Attach lightweight run info (model + provider) from the runs collection.
+            # calculate_date_metrics only needs len(runs) and run["model"] / run["model_provider"].
+            if runs_collection_ref is not None and results:
+                session_ids = [s["session_id"] for s in results if s.get("session_id")]
+                runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
+                # Chunk for the 30-value `in` limit
+                for start in range(0, len(session_ids), 30):
+                    chunk = session_ids[start : start + 30]
+                    q = runs_collection_ref.where(filter=FieldFilter("session_id", "in", chunk))
+                    for doc in q.stream():
+                        d = doc.to_dict() or {}
+                        rd = d.get("run_data") or {}
+                        sid = d.get("session_id")
+                        if sid is None:
+                            continue
+                        runs_by_session.setdefault(sid, []).append(
+                            {"model": rd.get("model"), "model_provider": rd.get("model_provider")}
+                        )
+
+                for s in results:
+                    sid = s.get("session_id")
+                    if not sid:
+                        continue
+                    rb = runs_by_session.get(sid, [])
+                    if rb or not s.get("runs"):
+                        s["runs"] = rb
 
             return results
 
