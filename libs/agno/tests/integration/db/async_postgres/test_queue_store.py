@@ -387,3 +387,39 @@ class TestAnonymousIdempotency:
         second = await db.enqueue_job(make_job(str(_uuid.uuid4()), idempotency_key=key, user_id=None))
         assert second["accepted"] is False and second["reason"] == "duplicate"
         assert second["job"]["id"] == first["job"]["id"]
+
+    @pytest.mark.asyncio
+    async def test_null_user_concurrent_race_accepts_exactly_one(self, db):
+        """The CONCURRENT anonymous race: both submits pass the pre-check
+        before either row is visible, so only a unique index can arbitrate -
+        and the composite (idempotency_key, user_id) index treats every NULL
+        user_id as distinct, letting both INSERTs land. The anon partial index
+        must make the loser block, hit IntegrityError, and resolve to the
+        winner via the duplicate-recovery path.
+
+        Deterministic repro: the winner's row is inserted in an UNCOMMITTED
+        transaction, so the loser's pre-check cannot see it (READ COMMITTED)
+        and proceeds to its INSERT - exactly the race-window state."""
+        import uuid as _uuid
+
+        key = f"anon-{_uuid.uuid4().hex[:8]}"
+        table = await db._get_table(table_type="jobs", create_table_if_not_found=True)
+        winner = make_job(str(_uuid.uuid4()), idempotency_key=key, user_id=None)
+        loser = make_job(str(_uuid.uuid4()), idempotency_key=key, user_id=None)
+
+        async with db.async_session_factory() as sess_a:
+            async with sess_a.begin():
+                await sess_a.execute(table.insert().values(**winner))
+                # Winner uncommitted: the loser's pre-check sees nothing and
+                # reaches its INSERT, which must block on the anon index until
+                # the winner's transaction resolves
+                loser_task = asyncio.create_task(db.enqueue_job(dict(loser)))
+                await asyncio.sleep(0.5)
+                assert not loser_task.done(), (
+                    "the racing anonymous enqueue did not block on the unique index - both submits would be accepted"
+                )
+            # Exiting begin() commits the winner; the loser's INSERT now
+            # raises IntegrityError and recovers to the committed winner
+        result = await loser_task
+        assert result["accepted"] is False and result["reason"] == "duplicate"
+        assert result["job"]["id"] == winner["id"]

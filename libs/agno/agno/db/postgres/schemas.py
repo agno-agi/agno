@@ -315,7 +315,18 @@ JOBS_TABLE_SCHEMA = {
             # key must not attach to (and observe) the first tenant's run
             "columns": ["idempotency_key", "user_id"],
             "where": "idempotency_key IS NOT NULL",
-        }
+        },
+        {
+            "name": "uq_jobs_idempotency_key_anon",
+            # Anonymous submits (user_id IS NULL) need their own index: the
+            # composite index above treats every NULL user_id as distinct, so
+            # two CONCURRENT anonymous submits with the same key both insert
+            # (the IS NOT DISTINCT FROM pre-check only catches the sequential
+            # case). A single-column partial index is used instead of
+            # NULLS NOT DISTINCT, which requires PG15+.
+            "columns": ["idempotency_key"],
+            "where": "idempotency_key IS NOT NULL AND user_id IS NULL",
+        },
     ],
 }
 
