@@ -216,7 +216,11 @@ class BaseDb(ABC):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
+        # runs_limit: attach only the most recent N context-relevant runs. Adapters
+        # that don't optimize this MUST still accept it and load the full history
+        # (a safe, unbounded superset); adapters that can push it to the DB do so.
         raise NotImplementedError
 
     @abstractmethod
@@ -233,6 +237,7 @@ class BaseDb(ABC):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
 
@@ -1670,7 +1675,9 @@ class AsyncBaseDb(ABC):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
+        # See BaseDb.get_session for the runs_limit contract.
         raise NotImplementedError
 
     @abstractmethod
@@ -1687,6 +1694,7 @@ class AsyncBaseDb(ABC):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
 

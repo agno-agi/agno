@@ -27,10 +27,12 @@ from agno.db.singlestore.utils import (
     serialize_cultural_knowledge_for_db,
 )
 from agno.db.utils import (
+    HISTORY_SKIP_STATUSES,
     build_single_run_row,
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
+    filter_context_runs,
     json_serializer,
     merge_runs_table_with_legacy_blob,
     validate_pagination,
@@ -44,7 +46,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import ForeignKey, Index, UniqueConstraint, and_, func, select, update
+    from sqlalchemy import ForeignKey, Index, UniqueConstraint, and_, func, or_, select, update
     from sqlalchemy.dialects import mysql
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.orm import scoped_session, sessionmaker
@@ -255,6 +257,7 @@ class SingleStoreDb(BaseDb):
             indexes: List[str] = []
             unique_constraints: List[str] = []
             schema_unique_constraints = table_schema.pop("_unique_constraints", [])
+            schema_composite_indexes = table_schema.pop("_composite_indexes", [])
 
             # Get the columns, indexes, and unique constraints from the table schema
             for col_name, col_config in table_schema.items():
@@ -295,6 +298,11 @@ class SingleStoreDb(BaseDb):
             for idx_col in indexes:
                 idx_name = f"idx_{table_name}_{idx_col}"
                 table.append_constraint(Index(idx_name, idx_col))
+
+            # Add multi-column (composite) indexes with table-specific names
+            for composite in schema_composite_indexes:
+                composite_name = f"{table_name}_{composite['name']}"
+                table.append_constraint(Index(composite_name, *composite["columns"]))
 
             # Create schema if one is specified
             if self.create_schema and self.db_schema is not None:
@@ -587,11 +595,40 @@ class SingleStoreDb(BaseDb):
             return True
 
     # -- Run methods --
-    def _get_session_runs_data(self, sess, runs_table: Table, session_id: str) -> List[Dict[str, Any]]:
+    def _get_session_runs_data(
+        self, sess, runs_table: Table, session_id: str, limit: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Get the raw run_data dicts for the given session, in insertion order.
+
+        When ``limit`` is set, only the most recent ``limit`` context-relevant runs
+        are fetched (``ORDER BY run_index DESC LIMIT``) and returned in ascending
+        (chronological) order. "Context-relevant" mirrors the pre-slice filtering in
+        ``get_messages``: member sub-runs (``parent_run_id`` set) and terminal-skip
+        statuses are excluded in SQL, so the DB-side last-N matches the in-memory
+        history window.
+        """
+        if limit is not None:
+            stmt = (
+                select(runs_table.c.run_data)
+                .where(runs_table.c.session_id == session_id)
+                .where(runs_table.c.parent_run_id.is_(None))
+                .where(or_(runs_table.c.status.is_(None), runs_table.c.status.notin_(HISTORY_SKIP_STATUSES)))
+                .order_by(
+                    func.coalesce(runs_table.c.run_index, 0).desc(),
+                    func.coalesce(runs_table.c.created_at, 0).desc(),
+                )
+                .limit(limit)
+            )
+            rows = [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in sess.execute(stmt).fetchall()]
+            rows.reverse()
+            return rows
         stmt = (
             select(runs_table.c.run_data)
             .where(runs_table.c.session_id == session_id)
-            .order_by(runs_table.c.run_index.asc(), runs_table.c.created_at.asc())
+            .order_by(
+                func.coalesce(runs_table.c.run_index, 0).asc(),
+                func.coalesce(runs_table.c.created_at, 0).asc(),
+            )
         )
         return [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in sess.execute(stmt).fetchall()]
 
@@ -848,6 +885,7 @@ class SingleStoreDb(BaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Read a session from the database.
@@ -883,9 +921,28 @@ class SingleStoreDb(BaseDb):
 
                 session = dict(result._mapping)
 
-                if runs_table is not None:
+                # Attach the runs stored in the runs table, merged with any runs still
+                # sitting in the legacy `runs` column (so partially-migrated sessions
+                # don't silently lose history).
+                legacy_runs = session.get("runs")
+                if runs_table is not None and runs_limit is not None and not legacy_runs:
+                    # Fully migrated: push "most recent N" down to the DB.
+                    session["runs"] = self._get_session_runs_data(
+                        sess=sess, runs_table=runs_table, session_id=session_id, limit=runs_limit
+                    )
+                elif runs_table is not None:
+                    # Full load + merge. Also the un-migrated fallback: the legacy blob
+                    # holds the whole history in one column, so "last N" can't be pushed
+                    # to SQL — load all, merge, then filter+slice to match the migrated path.
                     runs_data = self._get_session_runs_data(sess=sess, runs_table=runs_table, session_id=session_id)
-                    session["runs"] = merge_runs_table_with_legacy_blob(runs_data, session.get("runs"))
+                    merged = merge_runs_table_with_legacy_blob(runs_data, legacy_runs)
+                    if runs_limit is not None:
+                        merged = filter_context_runs(merged)[-runs_limit:]
+                    session["runs"] = merged
+                elif runs_limit is not None:
+                    # No runs table yet (fully un-migrated): filter+slice the legacy blob.
+                    merged = merge_runs_table_with_legacy_blob([], legacy_runs)
+                    session["runs"] = filter_context_runs(merged)[-runs_limit:]
 
             if not deserialize:
                 return session

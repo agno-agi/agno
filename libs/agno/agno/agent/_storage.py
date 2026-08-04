@@ -128,7 +128,11 @@ async def aget_last_run_output(agent: Agent, session_id: Optional[str] = None) -
 
 
 def read_session(
-    agent: Agent, session_id: str, session_type: SessionType = SessionType.AGENT, user_id: Optional[str] = None
+    agent: Agent,
+    session_id: str,
+    session_type: SessionType = SessionType.AGENT,
+    user_id: Optional[str] = None,
+    runs_limit: Optional[int] = None,
 ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
     """Get a Session from the database.
 
@@ -141,21 +145,34 @@ def read_session(
     """
     if not agent.db:
         raise ValueError("Db not initialized")
-    return agent.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
+    # Every adapter accepts runs_limit; those that don't optimize it load the full
+    # history (a safe superset), so we can pass it unconditionally.
+    return agent.db.get_session(  # type: ignore
+        session_id=session_id, session_type=session_type, user_id=user_id, runs_limit=runs_limit
+    )
 
 
 async def aread_session(
-    agent: Agent, session_id: str, session_type: SessionType = SessionType.AGENT, user_id: Optional[str] = None
+    agent: Agent,
+    session_id: str,
+    session_type: SessionType = SessionType.AGENT,
+    user_id: Optional[str] = None,
+    runs_limit: Optional[int] = None,
 ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
     """Async twin of :func:`read_session`. Same rationale: do NOT swallow errors."""
     from agno.agent import _init
 
     if not agent.db:
         raise ValueError("Db not initialized")
+    # Every adapter accepts runs_limit; those that don't optimize it load the full
+    # history (a safe superset), so we can pass it unconditionally.
     if _init.has_async_db(agent):
-        return await agent.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
-    else:
-        return agent.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
+        return await agent.db.get_session(  # type: ignore
+            session_id=session_id, session_type=session_type, user_id=user_id, runs_limit=runs_limit
+        )
+    return agent.db.get_session(  # type: ignore
+        session_id=session_id, session_type=session_type, user_id=user_id, runs_limit=runs_limit
+    )
 
 
 def upsert_session(
@@ -510,9 +527,7 @@ async def aread_or_create_session(
 
                 if _init.has_async_db(agent):
                     await asave_session(agent, session=agent_session)
-                    await aupsert_run(
-                        agent, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0
-                    )
+                    await aupsert_run(agent, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
                 else:
                     save_session(agent, session=agent_session)
                     upsert_run(agent, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)

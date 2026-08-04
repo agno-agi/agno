@@ -39,10 +39,12 @@ from agno.db.schemas.service_accounts import (
     validate_service_account_update,
 )
 from agno.db.utils import (
+    HISTORY_SKIP_STATUSES,
     build_single_run_row,
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
+    filter_context_runs,
     json_serializer,
     learning_search_patterns,
     merge_runs_table_with_legacy_blob,
@@ -821,12 +823,40 @@ class PostgresDb(BaseDb):
             return True
 
     # -- Run methods --
-    def _get_session_runs_data(self, sess, runs_table: Table, session_id: str) -> List[Dict[str, Any]]:
-        """Get the raw run_data dicts for the given session, in insertion order."""
+    def _get_session_runs_data(
+        self, sess, runs_table: Table, session_id: str, limit: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Get the raw run_data dicts for the given session, in insertion order.
+
+        When ``limit`` is set, only the most recent ``limit`` context-relevant runs
+        are fetched (indexed ``ORDER BY run_index DESC LIMIT``) and returned in
+        ascending (chronological) order. "Context-relevant" mirrors the pre-slice
+        filtering in ``get_messages``: member sub-runs (``parent_run_id`` set) and
+        terminal-skip statuses are excluded in SQL, so the DB-side last-N matches
+        the in-memory history window.
+        """
+        if limit is not None:
+            stmt = (
+                select(runs_table.c.run_data)
+                .where(runs_table.c.session_id == session_id)
+                .where(runs_table.c.parent_run_id.is_(None))
+                .where(or_(runs_table.c.status.is_(None), runs_table.c.status.notin_(HISTORY_SKIP_STATUSES)))
+                .order_by(
+                    func.coalesce(runs_table.c.run_index, 0).desc(),
+                    func.coalesce(runs_table.c.created_at, 0).desc(),
+                )
+                .limit(limit)
+            )
+            rows = [row[0] for row in sess.execute(stmt).fetchall()]
+            rows.reverse()
+            return rows
         stmt = (
             select(runs_table.c.run_data)
             .where(runs_table.c.session_id == session_id)
-            .order_by(runs_table.c.run_index.asc(), runs_table.c.created_at.asc())
+            .order_by(
+                func.coalesce(runs_table.c.run_index, 0).asc(),
+                func.coalesce(runs_table.c.created_at, 0).asc(),
+            )
         )
         return [row[0] for row in sess.execute(stmt).fetchall()]
 
@@ -1144,6 +1174,7 @@ class PostgresDb(BaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Read a session from the database.
@@ -1153,6 +1184,11 @@ class PostgresDb(BaseDb):
             session_type (SessionType): Type of session to get.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            runs_limit (Optional[int]): If set, attach only the most recent ``runs_limit``
+                runs instead of the full history. For a fully-migrated session this is an
+                indexed ``ORDER BY run_index DESC LIMIT`` query; for a session that still
+                carries a legacy ``runs`` blob it falls back to a full load + merge, then
+                slices, so no history is ever lost.
 
         Returns:
             Union[Session, Dict[str, Any], None]:
@@ -1183,9 +1219,25 @@ class PostgresDb(BaseDb):
                 # Attach the runs stored in the runs table, merged with any runs still
                 # sitting in the legacy `runs` column (so partially-migrated sessions
                 # don't silently lose history).
-                if runs_table is not None:
+                legacy_runs = session.get("runs")
+                if runs_table is not None and runs_limit is not None and not legacy_runs:
+                    # Fully migrated: push "most recent N" down to the DB (indexed).
+                    session["runs"] = self._get_session_runs_data(
+                        sess=sess, runs_table=runs_table, session_id=session_id, limit=runs_limit
+                    )
+                elif runs_table is not None:
+                    # Full load + merge. Also the un-migrated fallback: the legacy blob
+                    # holds the whole history in one column, so "last N" can't be pushed
+                    # to SQL — load all, merge, then filter+slice to match the migrated path.
                     runs_data = self._get_session_runs_data(sess=sess, runs_table=runs_table, session_id=session_id)
-                    session["runs"] = merge_runs_table_with_legacy_blob(runs_data, session.get("runs"))
+                    merged = merge_runs_table_with_legacy_blob(runs_data, legacy_runs)
+                    if runs_limit is not None:
+                        merged = filter_context_runs(merged)[-runs_limit:]
+                    session["runs"] = merged
+                elif runs_limit is not None:
+                    # No runs table yet (fully un-migrated): filter+slice the legacy blob.
+                    merged = merge_runs_table_with_legacy_blob([], legacy_runs)
+                    session["runs"] = filter_context_runs(merged)[-runs_limit:]
 
             if not deserialize:
                 return session
@@ -1209,9 +1261,15 @@ class PostgresDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """
         Get all sessions in the given table. Can filter by user_id and component_id.
+
+        Pass ``include_runs=False`` to skip attaching each session's run history —
+        a large, usually-unnecessary read for list views. The runs are untouched
+        in storage; a single ``get_session`` still returns them. Defaults to True
+        to preserve existing behavior.
 
         Args:
             session_type (Optional[SessionType]): The type of session to get.
@@ -1292,13 +1350,17 @@ class PostgresDb(BaseDb):
 
                 # Attach the runs stored in the runs table. If a session has no rows in the
                 # runs table, fall back to its legacy `runs` column content, if any.
-                if runs_table is not None:
+                if include_runs and runs_table is not None:
                     runs_by_session = self._get_sessions_runs_data(
                         sess=sess, runs_table=runs_table, session_ids=[s["session_id"] for s in session]
                     )
                     for s in session:
                         runs_data = runs_by_session.get(s["session_id"], [])
                         s["runs"] = merge_runs_table_with_legacy_blob(runs_data, s.get("runs"))
+                elif not include_runs:
+                    # List views don't need run history; leave it unattached (storage untouched).
+                    for s in session:
+                        s["runs"] = None
 
                 if not deserialize:
                     return session, total_count

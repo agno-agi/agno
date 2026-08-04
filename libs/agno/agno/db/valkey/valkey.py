@@ -16,6 +16,7 @@ from agno.db.utils import (
     deserialize_run,
     deserialize_session,
     deserialize_sessions,
+    filter_context_runs,
     merge_runs_table_with_legacy_blob,
 )
 from agno.db.valkey.utils import (
@@ -786,6 +787,7 @@ class ValkeyDb(BaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Read a session from Valkey.
 
@@ -812,6 +814,10 @@ class ValkeyDb(BaseDb):
             # Attach runs from the runs keys, merged with any legacy `runs` blob
             runs_data = self._get_session_runs_data(session_id)
             session["runs"] = merge_runs_table_with_legacy_blob(runs_data, session.get("runs"))
+            if runs_limit is not None:
+                # No query engine to push "last N" down: filter+slice in memory to
+                # match the SQL fast path (drop member/skip-status runs, then last N).
+                session["runs"] = filter_context_runs(session["runs"] or [])[-runs_limit:]
 
             if not deserialize:
                 return session

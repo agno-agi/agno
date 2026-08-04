@@ -29,11 +29,13 @@ from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
+    HISTORY_SKIP_STATUSES,
     build_single_run_row,
     deserialize_run,
     deserialize_session,
     deserialize_session_json_fields,
     deserialize_sessions,
+    filter_context_runs,
     merge_runs_table_with_legacy_blob,
 )
 from agno.run.agent import RunOutput
@@ -414,10 +416,46 @@ class MongoDb(BaseDb):
         return result.modified_count > 0 or result.matched_count > 0
 
     # -- Run methods --
-    def _get_session_runs_docs(self, runs_collection: Collection, session_id: str) -> List[Dict[str, Any]]:
-        """Get the raw run_data dicts for the given session, in insertion order."""
-        cursor = runs_collection.find({"session_id": session_id}).sort([("run_index", 1), ("created_at", 1)])
-        return [doc["run_data"] for doc in cursor if "run_data" in doc]
+    def _get_session_runs_docs(
+        self, runs_collection: Collection, session_id: str, limit: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Get the raw run_data dicts for the given session, in insertion order.
+
+        When ``limit`` is set, push "most recent N context-relevant runs" down to
+        the DB: drop member sub-runs (``parent_run_id`` set) and terminal-skip
+        statuses, sort newest-first, take N, then reverse back to chronological
+        order. ``$nin``/``None`` in Mongo also match a null or missing field, so
+        this keeps runs whose ``status`` is null/absent — mirroring the SQL
+        ``status IS NULL OR status NOT IN (...)`` fast path.
+        """
+        if limit is not None:
+            pipeline: List[Dict[str, Any]] = [
+                {
+                    "$match": {
+                        "session_id": session_id,
+                        "parent_run_id": None,
+                        "status": {"$nin": HISTORY_SKIP_STATUSES},
+                    }
+                },
+                {
+                    "$addFields": {
+                        "_ri": {"$ifNull": ["$run_index", 0]},
+                        "_ca": {"$ifNull": ["$created_at", 0]},
+                    }
+                },
+                {"$sort": {"_ri": -1, "_ca": -1}},
+                {"$limit": limit},
+            ]
+            docs = [doc["run_data"] for doc in runs_collection.aggregate(pipeline) if "run_data" in doc]
+            docs.reverse()  # back to chronological order
+            return docs
+
+        pipeline = [
+            {"$match": {"session_id": session_id}},
+            {"$addFields": {"_ri": {"$ifNull": ["$run_index", 0]}, "_ca": {"$ifNull": ["$created_at", 0]}}},
+            {"$sort": {"_ri": 1, "_ca": 1}},
+        ]
+        return [doc["run_data"] for doc in runs_collection.aggregate(pipeline) if "run_data" in doc]
 
     def _get_sessions_runs_docs(
         self, runs_collection: Collection, session_ids: List[str]
@@ -683,6 +721,7 @@ class MongoDb(BaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Read a session from the database.
 
@@ -719,9 +758,23 @@ class MongoDb(BaseDb):
             # Attach the runs stored in the runs collection, merged with any runs still
             # sitting in the legacy `runs` field (so partially-migrated sessions don't
             # silently lose history).
-            if runs_collection is not None:
+            legacy_runs = session.get("runs")
+            if runs_collection is not None and runs_limit is not None and not legacy_runs:
+                # Fully migrated: push "most recent N" down to the DB (indexed).
+                session["runs"] = self._get_session_runs_docs(runs_collection, session_id, limit=runs_limit)
+            elif runs_collection is not None:
+                # Full load + merge. Also the un-migrated fallback: the legacy blob
+                # holds the whole history in one field, so "last N" can't be pushed
+                # to the DB — load all, merge, then filter+slice to match the migrated path.
                 runs_data = self._get_session_runs_docs(runs_collection, session_id)
-                session["runs"] = merge_runs_table_with_legacy_blob(runs_data, session.get("runs"))
+                merged = merge_runs_table_with_legacy_blob(runs_data, legacy_runs)
+                if runs_limit is not None:
+                    merged = filter_context_runs(merged)[-runs_limit:]
+                session["runs"] = merged
+            elif runs_limit is not None:
+                # No runs collection yet (fully un-migrated): filter+slice the legacy blob.
+                merged = merge_runs_table_with_legacy_blob([], legacy_runs)
+                session["runs"] = filter_context_runs(merged)[-runs_limit:]
 
             if not deserialize:
                 return session
