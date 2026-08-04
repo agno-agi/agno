@@ -130,6 +130,33 @@ class TestRunIndexBackfill:
         assert _ids(db.get_session("s1", deserialize=False, runs_limit=1)["runs"]) == ["r1"]
         assert _ids(db.get_session("s1", deserialize=False)["runs"]) == ["r0", "r1"]
 
+    def test_existing_null_index_is_backfilled_on_next_write(self):
+        # A row persisted by pre-fix code with a NULL run_index gets filled in the
+        # next time it is written (e.g. a status change), via COALESCE in the
+        # conflict clause -- a non-null index is never overwritten.
+        db = self._db()
+        db.upsert_run(
+            RunOutput(run_id="r0", agent_id="a1", status=RunStatus.completed),
+            session_id="s1",
+            user_id=None,
+            run_index=0,
+        )
+        con = sqlite3.connect(db.db_file)
+        con.execute(
+            "INSERT INTO agno_runs (run_id, session_id, run_type, status, run_index, run_data, created_at) "
+            "VALUES ('r1', 's1', 'agent', 'COMPLETED', NULL, '{\"run_id\": \"r1\"}', 1001)"
+        )
+        con.commit()
+        con.close()
+
+        # Re-upsert r1 (its NULL index must be backfilled); r0's index must be preserved.
+        db.upsert_run(RunOutput(run_id="r1", agent_id="a1", status=RunStatus.completed), session_id="s1", user_id=None)
+
+        rows, _ = db.get_runs(session_id="s1", deserialize=False)
+        by_id = {r["run_id"]: r["run_index"] for r in rows}
+        assert by_id["r0"] == 0
+        assert by_id["r1"] is not None and by_id["r1"] >= 1
+
 
 class TestRunsLimitUnmigrated:
     def test_blob_fallback_returns_most_recent_n(self):

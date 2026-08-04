@@ -961,8 +961,7 @@ class SqliteDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 # Backfill a monotonic run_index when the run arrives without one
                 # (e.g. a background/continue save that couldn't resolve its position).
-                # A NULL index has no position and breaks ORDER BY run_index. ON CONFLICT
-                # preserves the existing index, so this only sets it on a genuine insert.
+                # A NULL index has no position and breaks ORDER BY run_index.
                 if row.get("run_index") is None:
                     current_max = sess.execute(
                         select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
@@ -978,7 +977,9 @@ class SqliteDb(BaseDb):
                         user_id=stmt.excluded.user_id,
                         parent_run_id=stmt.excluded.parent_run_id,
                         updated_at=stmt.excluded.updated_at,
-                        # Note: run_index is NOT updated for existing runs to preserve ordering
+                        # Preserve a non-null run_index; only fill it in for a legacy row
+                        # that was stored as NULL (COALESCE keeps the existing value if set).
+                        run_index=func.coalesce(runs_table.c.run_index, stmt.excluded.run_index),
                     ),
                 )
                 sess.execute(stmt)

@@ -785,7 +785,9 @@ class AsyncPostgresDb(AsyncBaseDb):
                             user_id=stmt.excluded.user_id,
                             parent_run_id=stmt.excluded.parent_run_id,
                             updated_at=stmt.excluded.updated_at,
-                            # Note: run_index is NOT updated for existing runs to preserve ordering
+                            # Preserve a non-null run_index; only fill it in for a legacy row
+                            # that was stored as NULL (COALESCE keeps the existing value if set).
+                            run_index=func.coalesce(runs_table.c.run_index, stmt.excluded.run_index),
                         ),
                     )
                     await sess.execute(stmt)

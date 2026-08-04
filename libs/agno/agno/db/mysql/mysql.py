@@ -636,7 +636,9 @@ class MySQLDb(BaseDb):
                     user_id=stmt.inserted.user_id,
                     parent_run_id=stmt.inserted.parent_run_id,
                     updated_at=stmt.inserted.updated_at,
-                    # Note: run_index is NOT updated for existing runs to preserve ordering
+                    # Preserve a non-null run_index; only fill it in for a legacy row
+                    # that was stored as NULL (COALESCE keeps the existing value if set).
+                    run_index=func.coalesce(runs_table.c.run_index, stmt.inserted.run_index),
                 )
                 sess.execute(stmt)
 
