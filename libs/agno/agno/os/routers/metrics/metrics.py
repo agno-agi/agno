@@ -1,6 +1,6 @@
 import logging
 from datetime import date, datetime, timezone
-from typing import List, Optional, Union
+from typing import List, Optional, Union, cast
 
 from fastapi import BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from fastapi.routing import APIRouter
@@ -145,6 +145,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             )
 
         except Exception as e:
+            logger.exception("GET /metrics failed")
             raise HTTPException(status_code=500, detail=f"Error getting metrics: {str(e)}")
 
     # Most recent refresh state per db id, doubling as the in-flight guard ('running').
