@@ -9,6 +9,7 @@ Requires: PostgreSQL at postgresql+psycopg://ai:ai@localhost:5532/ai
 """
 
 import asyncio
+import time
 import uuid
 
 import pytest
@@ -170,6 +171,27 @@ class TestPostgresQueueContract:
         assert not await db.fail_swept_job("r1", "someone-else"), "fail is ownership-keyed"
         assert await db.fail_swept_job("r1", "sweeper", error="worker lost")
         assert (await db.get_job("r1"))["status"] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_lease_math_survives_a_fast_replica_clock(self, db, monkeypatch):
+        """Lease decisions are anchored to DB time, so a replica whose clock
+        runs minutes fast cannot see healthy leases as expired. Under
+        app-clock math this replica sweeps and steals a live run's lock, and
+        the victim's completion is then fenced out - the run is reported
+        failed despite completing."""
+        await db.enqueue_job(make_job("r1"))
+        claimed = await db.claim_job("w1", lock_grace_seconds=60)
+        assert claimed is not None
+
+        real_time = time.time
+        monkeypatch.setattr(time, "time", lambda: real_time() + 3600)  # this replica is an hour fast
+
+        assert await db.sweep_exhausted_jobs(lock_grace_seconds=60) == [], "a fast clock must not age other leases"
+        assert not await db.acquire_sweep("r1", "fast-replica", lock_grace_seconds=60)
+        assert await db.claim_job("fast-replica", lock_grace_seconds=60) is None, "must not steal a live claim"
+        # The true owner still holds it and can still settle
+        assert await db.heartbeat_jobs("w1", ["r1"]) == 1
+        assert await db.complete_job("r1", "w1", claimed["attempt"], "completed")
 
     @pytest.mark.asyncio
     async def test_interrupted_sweep_resumable(self, db):

@@ -807,6 +807,55 @@ class TestSweepOwnership:
         assert (await store.get_job("r1"))["status"] == "running"
         assert (await store.get_job("r1"))["locked_by"] == "live-but-slow-worker"
 
+    @pytest.mark.parametrize("boundary", ["before_acquire", "after_acquire", "after_row"])
+    @pytest.mark.asyncio
+    async def test_heartbeat_at_every_boundary_leaves_a_consistent_pair(self, boundary):
+        """A heartbeat landing at ANY step of the sweep protocol must leave
+        the pair consistent: either fully-RUNNING (the sweeper lost) or
+        fully-failed (it won) - never run=ERROR with ticket=RUNNING.
+
+        The acquisition is what makes this hold: it steals locked_by, so
+        every later heartbeat from the presumed-dead worker is a no-op."""
+        store, agent = InMemoryQueueStore(), FakeAgent()
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(make_job("r1"))
+        await store.claim_job("presumed-dead")
+        store._jobs["r1"]["locked_at"] -= 1000
+
+        run_state = {"status": "running"}
+
+        async def spy_persist(job, error, status="error"):
+            if boundary == "after_row":
+                await store.heartbeat_jobs("presumed-dead", ["r1"])
+            run_state["status"] = status
+            return True
+
+        worker._persist_run_error = spy_persist  # type: ignore[method-assign]
+
+        real_acquire = store.acquire_sweep
+
+        async def acquire_with_race(job_id, worker_id, lock_grace_seconds=60):
+            if boundary == "before_acquire":
+                await store.heartbeat_jobs("presumed-dead", ["r1"])
+            acquired = await real_acquire(job_id, worker_id, lock_grace_seconds)
+            if boundary == "after_acquire":
+                await store.heartbeat_jobs("presumed-dead", ["r1"])
+            return acquired
+
+        store.acquire_sweep = acquire_with_race  # type: ignore[method-assign]
+        await worker._sweep_exhausted()
+
+        ticket = (await store.get_job("r1"))["status"]
+        if boundary == "before_acquire":
+            # The heartbeat refreshed the lease first: the sweeper never
+            # acquired, so nothing anywhere was touched
+            assert (run_state["status"], ticket) == ("running", "running")
+        else:
+            # Acquisition already stole locked_by, so the heartbeat was a
+            # no-op and the protocol ran to completion
+            assert (run_state["status"], ticket) == ("error", "failed")
+        assert not (run_state["status"] == "error" and ticket == "running"), "run=ERROR over ticket=RUNNING"
+
     @pytest.mark.asyncio
     async def test_failed_row_persist_keeps_ticket_and_retries_after_lock_stale(self):
         """Crash-mid-protocol resumability: a failing run-row persist leaves
@@ -923,6 +972,10 @@ class TestCancelReorder:
         worker._persist_run_error = failing_persist  # type: ignore[method-assign]
         assert await worker.acancel_queued("r1") is False
         assert (await store.get_job("r1"))["status"] == "queued", "no tombstone over a row that could not be written"
+        # "Recoverable" concretely: the ticket can still be claimed and run,
+        # and the caller's cancellation intent (registered right after this
+        # call by every cancel route) kills that leg at its first checkpoint
+        assert await store.claim_job("w1") is not None, "the ticket must stay recoverable, not stranded"
 
     @pytest.mark.asyncio
     async def test_paused_ticket_stays_continuable_when_row_persist_fails(self):

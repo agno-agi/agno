@@ -37,7 +37,21 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import sanitize_postgres_string, sanitize_postgres_strings
 
 try:
-    from sqlalchemy import ForeignKey, Index, String, Table, UniqueConstraint, and_, case, distinct, func, or_, update
+    from sqlalchemy import (
+        BigInteger,
+        ForeignKey,
+        Index,
+        String,
+        Table,
+        UniqueConstraint,
+        and_,
+        case,
+        distinct,
+        func,
+        or_,
+        update,
+    )
+    from sqlalchemy import cast as sa_cast
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.dialects.postgresql import TIMESTAMP
     from sqlalchemy.exc import ProgrammingError
@@ -46,6 +60,23 @@ try:
     from sqlalchemy.sql.expression import select, text
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
+
+
+def _db_epoch() -> Any:
+    """Postgres transaction time as an integer epoch, for LEASE math.
+
+    Lease decisions must be anchored to ONE clock. With app-side time a
+    replica whose clock runs fast sees healthy leases as expired and sweeps
+    live runs - and now that the sweep steals the lock, the victim's own
+    completion is fenced out and its run is reported failed despite having
+    finished. NOW() is transaction-start time, identical for every replica
+    talking to the same database, so claim/heartbeat/sweep all agree.
+
+    Not applied to enqueue's available_at (computed by the accepting replica
+    before any transaction exists) or to queue_stats' age arithmetic; both
+    only shift scheduling/reporting by the skew, never ownership.
+    """
+    return sa_cast(func.floor(func.extract("epoch", func.now())), BigInteger)
 
 
 class AsyncPostgresDb(AsyncBaseDb):
@@ -4185,7 +4216,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             table = await self._get_table(table_type="jobs")
             if table is None:
                 return None
-            now = int(time.time())
+            now = _db_epoch()
             stale = now - lock_grace_seconds
             async with self.async_session_factory() as sess:
                 async with sess.begin():
@@ -4235,7 +4266,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             table = await self._get_table(table_type="jobs")
             if table is None:
                 return 0
-            now = int(time.time())
+            now = _db_epoch()
             async with self.async_session_factory() as sess:
                 async with sess.begin():
                     result = await sess.execute(
@@ -4261,7 +4292,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             table = await self._get_table(table_type="jobs")
             if table is None:
                 return False
-            now = int(time.time())
+            now = _db_epoch()
             async with self.async_session_factory() as sess:
                 async with sess.begin():
                     result = await sess.execute(
@@ -4296,7 +4327,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             table = await self._get_table(table_type="jobs")
             if table is None:
                 return None
-            now = int(time.time())
+            now = _db_epoch()
             async with self.async_session_factory() as sess:
                 async with sess.begin():
                     fence = (
@@ -4350,7 +4381,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             table = await self._get_table(table_type="jobs")
             if table is None:
                 return False
-            now = int(time.time())
+            now = _db_epoch()
             async with self.async_session_factory() as sess:
                 async with sess.begin():
                     result = await sess.execute(
@@ -4381,7 +4412,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             table = await self._get_table(table_type="jobs")
             if table is None:
                 return False
-            now = int(time.time())
+            now = _db_epoch()
             async with self.async_session_factory() as sess:
                 async with sess.begin():
                     result = await sess.execute(
@@ -4405,7 +4436,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             table = await self._get_table(table_type="jobs")
             if table is None:
                 return []
-            stale = int(time.time()) - lock_grace_seconds
+            stale = _db_epoch() - lock_grace_seconds
             async with self.async_session_factory() as sess:
                 result = await sess.execute(
                     select(table)
@@ -4432,7 +4463,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             table = await self._get_table(table_type="jobs")
             if table is None:
                 return False
-            now = int(time.time())
+            now = _db_epoch()
             stale = now - lock_grace_seconds
             async with self.async_session_factory() as sess:
                 async with sess.begin():
@@ -4460,7 +4491,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             table = await self._get_table(table_type="jobs")
             if table is None:
                 return False
-            now = int(time.time())
+            now = _db_epoch()
             async with self.async_session_factory() as sess:
                 async with sess.begin():
                     result = await sess.execute(
@@ -4531,7 +4562,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             table = await self._get_table(table_type="jobs")
             if table is None:
                 return False
-            now = int(time.time())
+            now = _db_epoch()
             async with self.async_session_factory() as sess:
                 async with sess.begin():
                     result = await sess.execute(
@@ -4573,7 +4604,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         table = await self._get_table(table_type="jobs")
         if table is None:
             raise RuntimeError("Job queue table not found")
-        now = int(time.time())
+        now = _db_epoch()
         async with self.async_session_factory() as sess:
             async with sess.begin():
                 row = (await sess.execute(select(table).where(table.c.id == job_id).with_for_update())).fetchone()
