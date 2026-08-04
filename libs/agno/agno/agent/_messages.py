@@ -1258,6 +1258,19 @@ def get_run_messages(
         run_messages.system_message = system_message
         run_messages.messages.append(system_message)
 
+    # 1.1 Inject stored compaction summary right after system message
+    if session.compaction and session.compaction.summary:
+        from agno.compression.context import SUMMARY_PREFIX
+
+        summary_msg = Message(
+            role="user",
+            content=SUMMARY_PREFIX + session.compaction.summary,
+            from_history=True,
+            temporary=True,
+        )
+        run_messages.messages.append(summary_msg)
+        log_debug(f"Injected compaction summary ({len(session.compaction.summary)} chars)")
+
     # 2. Add extra messages to run_messages if provided
     if agent.additional_input is not None:
         messages_to_add_to_run_response: List[Message] = []
@@ -1314,6 +1327,9 @@ def get_run_messages(
             # Filter tool calls from history if limit is set (before adding to run_messages)
             if agent.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
+
+            # Filter out compacted messages (their content is in the summary)
+            history_copy = [m for m in history_copy if not getattr(m, "is_compacted", False)]
 
             log_debug(f"Adding {len(history_copy)} messages from history")
 
@@ -1464,6 +1480,19 @@ async def aget_run_messages(
         run_messages.system_message = system_message
         run_messages.messages.append(system_message)
 
+    # 1.1 Inject stored compaction summary right after system message
+    if session.compaction and session.compaction.summary:
+        from agno.compression.context import SUMMARY_PREFIX
+
+        summary_msg = Message(
+            role="user",
+            content=SUMMARY_PREFIX + session.compaction.summary,
+            from_history=True,
+            temporary=True,
+        )
+        run_messages.messages.append(summary_msg)
+        log_debug(f"Injected compaction summary ({len(session.compaction.summary)} chars)")
+
     # 2. Add extra messages to run_messages if provided
     if agent.additional_input is not None:
         messages_to_add_to_run_response: List[Message] = []
@@ -1520,6 +1549,9 @@ async def aget_run_messages(
             # Filter tool calls from history if limit is set (before adding to run_messages)
             if agent.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
+
+            # Filter out compacted messages (their content is in the summary)
+            history_copy = [m for m in history_copy if not getattr(m, "is_compacted", False)]
 
             log_debug(f"Adding {len(history_copy)} messages from history")
 
@@ -1663,6 +1695,19 @@ def get_continue_run_messages(
     if system_message is not None:
         run_messages.messages.append(system_message)
 
+    # 1.1 Inject stored compaction summary right after system message
+    if session is not None and session.compaction and session.compaction.summary:
+        from agno.compression.context import SUMMARY_PREFIX
+
+        summary_msg = Message(
+            role="user",
+            content=SUMMARY_PREFIX + session.compaction.summary,
+            from_history=True,
+            temporary=True,
+        )
+        run_messages.messages.append(summary_msg)
+        log_debug(f"Injected compaction summary ({len(session.compaction.summary)} chars)")
+
     # 2. Add history messages if not already present in input
     if add_history_to_context and session is not None and not input_has_history:
         from copy import deepcopy
@@ -1692,6 +1737,9 @@ def get_continue_run_messages(
             # Filter tool calls from history if limit is set (before adding to run_messages)
             if agent.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
+
+            # Filter out compacted messages (their content is in the summary)
+            history_copy = [m for m in history_copy if not getattr(m, "is_compacted", False)]
 
             log_debug(f"Adding {len(history_copy)} messages from history")
             run_messages.messages += history_copy
