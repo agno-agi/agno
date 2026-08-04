@@ -6099,6 +6099,16 @@ def _persist_cancelled_run_in_background(
     run. Scheduling it on _background_tasks runs the write to completion outside that
     scope.
     """
+    from agno.run.concurrency import is_worker_managed
+
+    if run_response.run_id and is_worker_managed(run_response.run_id):
+        # Worker-claimed durable run: every caller reaches this helper via a
+        # task-cancellation branch, and for a claimed job that cancellation is
+        # the QueueWorker's wait_for timeout or shutdown drain - not a client
+        # disconnect. The worker owns the terminal write (fenced ERROR/requeue
+        # with the true cause); an unfenced CANCELLED here lands first and
+        # splits the run row from the ticket. User cancels persist elsewhere.
+        return
 
     async def _persist() -> None:
         try:

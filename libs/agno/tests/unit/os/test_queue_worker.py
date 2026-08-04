@@ -1245,6 +1245,145 @@ class TestStreamingContinuation:
             es_mod._event_stream = original
 
 
+class TestForegroundCancelPersistGuard:
+    """The worker drives the FOREGROUND arun/acontinue_run, so a wait_for
+    timeout (or shutdown drain) cancels the foreground handlers - whose
+    disconnect branch persisted an unfenced CANCELLED that raced the worker's
+    fenced terminal: run row CANCELLED (wrong cause) vs ticket failed-timeout.
+    The F2 is_worker_managed guards sat only in the detached wrappers, which
+    the worker never invokes; the guard must live in the foreground
+    cancellation-persist helpers (agent, team, workflow)."""
+
+    @pytest.mark.asyncio
+    async def test_timeout_does_not_trigger_foreground_cancel_persist(self, monkeypatch):
+        from agno.session import AgentSession
+
+        persists: list = []
+
+        async def record_store(agent, run_response=None, session=None, run_context=None, user_id=None):
+            persists.append(getattr(run_response, "status", None))
+
+        monkeypatch.setattr("agno.agent._run.acleanup_and_store", record_store)
+
+        class ForegroundCancelAgent:
+            """arun mimics foreground _arun's disconnect branch: on task
+            cancellation it schedules the detached CANCELLED persist via the
+            real helper, then re-raises - the exact write the worker's
+            wait_for timeout used to race."""
+
+            id = "agent-1"
+
+            async def arun(self, run_id=None, session_id=None, **kwargs):
+                from agno.agent._run import _persist_cancelled_run_in_background
+                from agno.run.agent import RunOutput
+
+                try:
+                    await asyncio.sleep(10)
+                except asyncio.CancelledError:
+                    _persist_cancelled_run_in_background(
+                        self,  # type: ignore[arg-type]
+                        run_response=RunOutput(run_id=run_id, session_id=session_id, status=RunStatus.cancelled),
+                        session=AgentSession(session_id=session_id or "s1", runs=[]),
+                    )
+                    raise
+
+        store = InMemoryQueueStore()
+        worker = make_worker(store, ForegroundCancelAgent(), make_config(timeout_seconds=1))  # type: ignore[arg-type]
+        # Sub-second timeout is not configurable; patch after construction
+        worker.config.timeout_seconds = 0.05  # type: ignore[assignment]
+        await store.enqueue_job(make_job())
+        await worker.start()
+        try:
+            job = await wait_for_status(store, "r1", "failed")
+            assert "timeout" in job["error"].lower()
+            await asyncio.sleep(0.05)  # let any (wrongly) scheduled persist task run
+            assert persists == [], "worker-managed timeout must not schedule the foreground CANCELLED persist"
+        finally:
+            await worker.stop()
+
+    @pytest.mark.asyncio
+    async def test_guard_covers_all_three_helpers(self, monkeypatch):
+        """Worker-managed runs skip the detached CANCELLED persist in every
+        component's foreground helper; unmanaged runs (real client
+        disconnects) still persist."""
+        from agno.run.concurrency import mark_worker_managed, unmark_worker_managed
+        from agno.run.team import TeamRunOutput
+        from agno.run.workflow import WorkflowRunOutput
+        from agno.session import AgentSession
+        from agno.team._run import _persist_cancelled_team_run_in_background
+        from agno.workflow.workflow import Workflow
+
+        # Agent
+        agent_persists: list = []
+
+        async def agent_store(agent, run_response=None, session=None, run_context=None, user_id=None):
+            agent_persists.append(run_response.run_id)
+
+        monkeypatch.setattr("agno.agent._run.acleanup_and_store", agent_store)
+        from agno.agent._run import _persist_cancelled_run_in_background
+        from agno.run.agent import RunOutput
+
+        session = AgentSession(session_id="s1", runs=[])
+        mark_worker_managed("wm-a")
+        try:
+            _persist_cancelled_run_in_background(
+                SimpleNamespace(), run_response=RunOutput(run_id="wm-a"), session=session
+            )  # type: ignore[arg-type]
+            await asyncio.sleep(0.02)
+            assert agent_persists == []
+        finally:
+            unmark_worker_managed("wm-a")
+        _persist_cancelled_run_in_background(
+            SimpleNamespace(), run_response=RunOutput(run_id="free-a"), session=session
+        )  # type: ignore[arg-type]
+        await asyncio.sleep(0.02)
+        assert agent_persists == ["free-a"]
+
+        # Team
+        team_persists: list = []
+
+        async def team_store(team, run_response=None, session=None, run_context=None):
+            team_persists.append(run_response.run_id)
+
+        monkeypatch.setattr("agno.team._run._acleanup_and_store", team_store)
+        mark_worker_managed("wm-t")
+        try:
+            _persist_cancelled_team_run_in_background(
+                SimpleNamespace(), TeamRunOutput(run_id="wm-t"), SimpleNamespace()
+            )  # type: ignore[arg-type]
+            await asyncio.sleep(0.02)
+            assert team_persists == []
+        finally:
+            unmark_worker_managed("wm-t")
+        _persist_cancelled_team_run_in_background(SimpleNamespace(), TeamRunOutput(run_id="free-t"), SimpleNamespace())  # type: ignore[arg-type]
+        await asyncio.sleep(0.02)
+        assert team_persists == ["free-t"]
+
+        # Workflow (bound method invoked with a duck-typed self)
+        wf_saves: list = []
+
+        async def wf_asave(session=None):
+            wf_saves.append(session)
+
+        wf_self = SimpleNamespace(
+            _update_session_metrics=lambda session=None, workflow_run_response=None: None,
+            _has_async_db=lambda: True,
+            asave_session=wf_asave,
+        )
+        wf_session = SimpleNamespace(upsert_run=lambda run=None: None)
+        helper = Workflow._persist_cancelled_run_in_background
+        mark_worker_managed("wm-w")
+        try:
+            helper(wf_self, WorkflowRunOutput(run_id="wm-w"), wf_session)  # type: ignore[arg-type]
+            await asyncio.sleep(0.02)
+            assert wf_saves == []
+        finally:
+            unmark_worker_managed("wm-w")
+        helper(wf_self, WorkflowRunOutput(run_id="free-w"), wf_session)  # type: ignore[arg-type]
+        await asyncio.sleep(0.02)
+        assert len(wf_saves) == 1
+
+
 class TestClosingLedger:
     def test_accept_grace_is_in_the_future(self):
         import time

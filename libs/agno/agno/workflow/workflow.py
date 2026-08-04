@@ -1478,6 +1478,15 @@ class Workflow:
         session write inline lets it be re-cancelled mid-flight, losing the run. Scheduling
         it on _workflow_background_tasks runs the write to completion outside that scope.
         """
+        from agno.run.concurrency import is_worker_managed
+
+        if workflow_run_response.run_id and is_worker_managed(workflow_run_response.run_id):
+            # Worker-claimed durable run: the cancellation reaching this helper
+            # is the QueueWorker's wait_for timeout or shutdown drain, not a
+            # client disconnect. The worker owns the terminal write (fenced,
+            # true cause); an unfenced CANCELLED here lands first and splits
+            # the run row from the ticket.
+            return
 
         async def _persist() -> None:
             try:

@@ -4600,6 +4600,14 @@ def _persist_cancelled_team_run_in_background(
     members' content is already on run_response; in-flight member tasks are not drained here
     since on a cancel/disconnect they are themselves cancelled and would never complete.
     """
+    from agno.run.concurrency import is_worker_managed
+
+    if run_response.run_id and is_worker_managed(run_response.run_id):
+        # Worker-claimed durable run: the cancellation reaching this helper is
+        # the QueueWorker's wait_for timeout or shutdown drain, not a client
+        # disconnect. The worker owns the terminal write (fenced, true cause);
+        # an unfenced CANCELLED here lands first and splits run row vs ticket.
+        return
 
     async def _persist() -> None:
         try:
