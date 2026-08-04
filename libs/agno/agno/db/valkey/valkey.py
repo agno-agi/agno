@@ -485,8 +485,14 @@ class ValkeyDb(BaseDb):
         return rows
 
     def _get_session_runs_data(self, session_id: str) -> List[Dict[str, Any]]:
-        """Get raw run_data dicts for a session, ordered by run_index."""
-        return [row["run_data"] for row in self._get_session_run_rows(session_id) if row.get("run_data") is not None]
+        """Get raw run_data dicts for a session, ordered by run_index.
+
+        run_index is injected into run_data so RunOutput carries its DB position.
+        """
+        rows = [row for row in self._get_session_run_rows(session_id) if row.get("run_data") is not None]
+        for row in rows:
+            row["run_data"]["run_index"] = row["run_index"]
+        return [row["run_data"] for row in rows]
 
     def _get_sessions_runs_data(self, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
         """Get raw run_data dicts for several sessions, grouped by session_id."""

@@ -627,6 +627,7 @@ class AsyncMongoDb(AsyncBaseDb):
         this keeps runs whose ``status`` is null/absent — mirroring the SQL
         ``status IS NULL OR status NOT IN (...)`` fast path.
         """
+        # run_index is injected into run_data so RunOutput carries its DB position
         if limit is not None:
             pipeline: List[Dict[str, Any]] = [
                 {
@@ -645,18 +646,23 @@ class AsyncMongoDb(AsyncBaseDb):
                 {"$sort": {"_ri": -1, "_ca": -1}},
                 {"$limit": limit},
             ]
-            docs = await runs_collection.aggregate(pipeline).to_list(length=limit)
-            run_docs = [doc["run_data"] for doc in docs if "run_data" in doc]
-            run_docs.reverse()  # back to chronological order
-            return run_docs
+            raw_docs = await runs_collection.aggregate(pipeline).to_list(length=limit)  # type: ignore[union-attr]
+            docs = [doc for doc in raw_docs if "run_data" in doc]
+            for doc in docs:
+                doc["run_data"]["run_index"] = doc["run_index"]
+            docs.reverse()
+            return [doc["run_data"] for doc in docs]
 
         pipeline = [
             {"$match": {"session_id": session_id}},
             {"$addFields": {"_ri": {"$ifNull": ["$run_index", 0]}, "_ca": {"$ifNull": ["$created_at", 0]}}},
             {"$sort": {"_ri": 1, "_ca": 1}},
         ]
-        docs = await runs_collection.aggregate(pipeline).to_list(length=None)
-        return [doc["run_data"] for doc in docs if "run_data" in doc]
+        raw_docs = await runs_collection.aggregate(pipeline).to_list(length=None)  # type: ignore[union-attr]
+        docs = [doc for doc in raw_docs if "run_data" in doc]
+        for doc in docs:
+            doc["run_data"]["run_index"] = doc["run_index"]
+        return [doc["run_data"] for doc in docs]
 
     async def _get_sessions_runs_docs(
         self, runs_collection: AsyncMongoCollectionType, session_ids: List[str]

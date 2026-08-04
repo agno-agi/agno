@@ -1683,28 +1683,22 @@ class Workflow:
         the session. Computes ``run_index`` from the session's in-memory runs
         list (call ``session.upsert_run(run=...)`` before invoking this).
         """
-        from agno.session._utils import resolve_run_index
-
-        run_index = resolve_run_index(session, run)
         self.save_session(session=session)
         self.save_run(
             run=run,
             session_id=session.session_id,
             user_id=session.user_id,
-            run_index=run_index,
+            run_index=run.run_index,
         )
 
     async def _apersist_session_and_run(self, session: WorkflowSession, run: "WorkflowRunOutput") -> None:
         """Async variant of ``_persist_session_and_run``."""
-        from agno.session._utils import resolve_run_index
-
-        run_index = resolve_run_index(session, run)
         await self.asave_session(session=session)
         await self.asave_run(
             run=run,
             session_id=session.session_id,
             user_id=session.user_id,
-            run_index=run_index,
+            run_index=run.run_index,
         )
 
     def _persist_errored_run_stream(self, session: WorkflowSession, run: "WorkflowRunOutput") -> None:

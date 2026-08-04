@@ -88,7 +88,6 @@ from agno.run.team import (
     TeamRunOutputEvent,
 )
 from agno.session import TeamSession
-from agno.session._utils import resolve_run_index
 from agno.tools.function import Function
 from agno.utils.agent import (
     await_for_open_threads,
@@ -3395,9 +3394,8 @@ async def _arun_background(
     team_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
     _update_metadata(team, session=team_session)
     team_session.upsert_run(run_response=run_response)
-    run_index = resolve_run_index(team_session, run_response)
     await asave_session(team, session=team_session)
-    await asave_run(team, run=run_response, session_id=session_id, user_id=user_id, run_index=run_index)
+    await asave_run(team, run=run_response, session_id=session_id, user_id=user_id, run_index=run_response.run_index)
 
     log_info(f"Background run {run_response.run_id} created with PENDING status")
 
@@ -3518,9 +3516,8 @@ async def _arun_background_stream(
     team_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
     _update_metadata(team, session=team_session)
     team_session.upsert_run(run_response=run_response)
-    run_index = resolve_run_index(team_session, run_response)
     await asave_session(team, session=team_session)
-    await asave_run(team, run=run_response, session_id=session_id, user_id=user_id, run_index=run_index)
+    await asave_run(team, run=run_response, session_id=session_id, user_id=user_id, run_index=run_response.run_index)
 
     # Pre-register with the event buffer so reconnecting clients can attach and
     # wait while the run is still queued (no events buffered yet).
@@ -4595,7 +4592,6 @@ def _cleanup_and_store(
 
     # Add scrubbed RunOutput to Team Session
     session.upsert_run(run_response=storage_copy)
-    run_index = resolve_run_index(session, storage_copy)
 
     # Calculate session metrics
     update_session_metrics(team, session=session, run_response=run_response)
@@ -4621,7 +4617,7 @@ def _cleanup_and_store(
         run=storage_copy,
         session_id=session.session_id,
         user_id=session.user_id,
-        run_index=run_index,
+        run_index=storage_copy.run_index,
     )
 
     # Update approval run_status if this run has an associated approval.
@@ -4666,7 +4662,6 @@ async def _acleanup_and_store(
 
     # Add scrubbed RunOutput to Team Session
     session.upsert_run(run_response=storage_copy)
-    run_index = resolve_run_index(session, storage_copy)
 
     # Calculate session metrics
     update_session_metrics(team, session=session, run_response=run_response)
@@ -4692,7 +4687,7 @@ async def _acleanup_and_store(
         run=storage_copy,
         session_id=session.session_id,
         user_id=session.user_id,
-        run_index=run_index,
+        run_index=storage_copy.run_index,
     )
 
     # Update approval run_status if this run has an associated approval.
@@ -4810,7 +4805,6 @@ def _persist_team_run_in_session(
         storage_copy.session_state = run_context.session_state
 
     session.upsert_run(run_response=storage_copy)
-    run_index = resolve_run_index(session, storage_copy)
     update_session_metrics(team, session=session, run_response=run_response)
 
     if run_context is not None and run_context.session_state is not None:
@@ -4829,7 +4823,7 @@ def _persist_team_run_in_session(
         run=storage_copy,
         session_id=session.session_id,
         user_id=session.user_id,
-        run_index=run_index,
+        run_index=storage_copy.run_index,
     )
 
 
@@ -4866,7 +4860,6 @@ async def _apersist_team_run_in_session(
         storage_copy.session_state = run_context.session_state
 
     session.upsert_run(run_response=storage_copy)
-    run_index = resolve_run_index(session, storage_copy)
     update_session_metrics(team, session=session, run_response=run_response)
 
     if run_context is not None and run_context.session_state is not None:
@@ -4885,7 +4878,7 @@ async def _apersist_team_run_in_session(
         run=storage_copy,
         session_id=session.session_id,
         user_id=session.user_id,
-        run_index=run_index,
+        run_index=storage_copy.run_index,
     )
 
 
@@ -6539,7 +6532,7 @@ def _mark_team_run_regenerated(
                 run=r,
                 session_id=session.session_id,
                 user_id=session.user_id,
-                run_index=resolve_run_index(session, r),
+                run_index=r.run_index,
             )
             return
 
@@ -6560,7 +6553,7 @@ async def _amark_team_run_regenerated(
                 run=r,
                 session_id=session.session_id,
                 user_id=session.user_id,
-                run_index=resolve_run_index(session, r),
+                run_index=r.run_index,
             )
             return
 
@@ -7910,7 +7903,9 @@ async def _acontinue_run_background_stream(
         persist_run.status = RunStatus.pending
         team_session.upsert_run(run_response=persist_run)
         # v3 substrate: the run persists via the O(1) per-run save
-        await asave_run(team, run=persist_run, session_id=session_id, user_id=user_id)
+        await asave_run(
+            team, run=persist_run, session_id=session_id, user_id=user_id, run_index=persist_run.run_index
+        )
     await asave_session(team, session=team_session)
 
     # Pre-register with the event buffer so reconnecting clients can attach and
