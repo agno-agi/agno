@@ -287,6 +287,15 @@ async def amark_continue_stream_running(run_id: str) -> None:
     with contextlib.suppress(Exception):
         event_stream = get_event_stream()
         await event_stream.register_run(run_id, RunStatus.pending)
+        # Invalidate the settled pause the way the durable path does: PAUSED
+        # is tail-terminal in the stream (status AND a sentinel event), and
+        # the status write below only covers the first half - a tail attached
+        # before this leg's first event would read the stale pause sentinel
+        # and close empty. reopen_run is atomic per implementation and
+        # declines if a racing writer already moved the status past PAUSED;
+        # it also clears the pause's completed_at so the reopened run cannot
+        # be reaped mid-continuation.
+        await event_stream.reopen_run(run_id)
         await event_stream.set_run_status(run_id, RunStatus.running)
 
 

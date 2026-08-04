@@ -715,3 +715,81 @@ class TestContinueStreamEventsPrecedence:
         assert result["outcome"] == "queued"
         stored = (await store.get_job("r1"))["payload"]["continue"]
         assert stored["stream_events"] is True
+
+
+class TestInlineContinueReopensStream:
+    """Phase-4 item 15: the INLINE continue path (amark_continue_stream_running)
+    must invalidate the settled pause the same way the durable path does.
+    PAUSED is tail-terminal in the stream twice over - the status key AND a
+    sentinel event - and the old helper only rewrote the status: a client
+    resuming its tail before the continuation leg's first event read the
+    stale pause sentinel as the last stream entry and closed empty."""
+
+    @pytest.mark.asyncio
+    async def test_resumed_tail_survives_inline_continue_start_redis(self, monkeypatch):
+        import asyncio
+
+        fakeredis = pytest.importorskip("fakeredis", reason="fakeredis not installed")
+        from agno.os.event_streams.redis import RedisEventStream
+        from agno.os.utils import amark_continue_stream_running
+        from agno.run.agent import RunContentEvent
+        from agno.run.base import RunStatus
+
+        stream = RedisEventStream(fakeredis.FakeAsyncRedis(), block_ms=100)
+        try:
+            monkeypatch.setattr("agno.os.event_streams.get_event_stream", lambda: stream)
+
+            # The paused history: one event, then the leg settled PAUSED
+            await stream.register_run("r1", RunStatus.running)
+            await stream.add_event("r1", RunContentEvent(content="before-pause", run_id="r1"))
+            await stream.complete_run("r1", RunStatus.paused)
+
+            # Inline continue accepted; leg has not emitted anything yet
+            await amark_continue_stream_running("r1")
+
+            received: list = []
+            done = asyncio.Event()
+
+            async def consume():
+                async for idx, _sse in stream.tail("r1", last_event_index=0):
+                    received.append(idx)
+                done.set()
+
+            consumer = asyncio.create_task(consume())
+            await asyncio.sleep(0.4)
+            assert not done.is_set(), (
+                "tail closed on the stale pause sentinel before the continuation leg produced anything"
+            )
+
+            # The leg's first event arrives; the tail must deliver it
+            await stream.add_event("r1", RunContentEvent(content="after-approval", run_id="r1"))
+            await asyncio.sleep(0.2)
+            await stream.complete_run("r1", RunStatus.completed)
+            await asyncio.wait_for(done.wait(), timeout=5)
+            assert received == [1], f"expected the continuation's event, got {received}"
+            await consumer
+        finally:
+            await stream.aclose()
+
+    @pytest.mark.asyncio
+    async def test_inline_continue_clears_pause_completed_at_in_memory(self, monkeypatch):
+        from agno.os.event_streams.in_memory import InMemoryEventStream
+        from agno.os.managers import EventsBuffer, SSESubscriberManager
+        from agno.os.utils import amark_continue_stream_running
+        from agno.run.base import RunStatus
+
+        buffer = EventsBuffer()
+        stream = InMemoryEventStream(events_buffer=buffer, subscriber_manager=SSESubscriberManager())
+        monkeypatch.setattr("agno.os.event_streams.get_event_stream", lambda: stream)
+
+        await stream.register_run("r1", RunStatus.running)
+        await stream.complete_run("r1", RunStatus.paused)
+        assert "completed_at" in buffer.run_metadata["r1"]
+
+        await amark_continue_stream_running("r1")
+
+        assert await stream.get_run_status("r1") == RunStatus.running
+        assert "completed_at" not in buffer.run_metadata["r1"], (
+            "the pause's completed_at survived the inline continue - the reopened run "
+            "would be eligible for reaping mid-continuation"
+        )
