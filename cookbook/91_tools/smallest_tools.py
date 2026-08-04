@@ -4,6 +4,11 @@ Smallest AI text-to-speech tools.
 Requires the SMALLEST_API_KEY environment variable.
 Get an API key at https://app.smallest.ai/dashboard (Developer -> API Keys).
 
+Also requires GOOGLE_API_KEY for the agent's model. Gemini is used here because it
+natively accepts audio as input, so the agent can hand the generated clip back to the
+model instead of dropping it with an "audio input unsupported" warning (as most other
+model providers currently do when a tool call returns an Audio artifact).
+
 Models:
 - lightning_v3.1 (default): 12 languages, supports cloned voices
 - lightning_v3.1_pro: premium voice pool, 29 languages
@@ -17,7 +22,7 @@ import base64
 from textwrap import dedent
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIResponses
+from agno.models.google import Gemini
 from agno.tools.smallest import SmallestTools
 from agno.utils.media import save_base64_data
 
@@ -27,7 +32,7 @@ from agno.utils.media import save_base64_data
 
 
 audio_agent = Agent(
-    model=OpenAIResponses(id="gpt-5.5"),
+    model=Gemini(id="gemini-pro-latest"),
     tools=[
         SmallestTools(
             voice_id="magnus",
@@ -50,7 +55,7 @@ audio_agent = Agent(
 
 # Premium voices: use the Lightning v3.1 Pro pool with a Pro voice
 pro_audio_agent = Agent(
-    model=OpenAIResponses(id="gpt-5.5"),
+    model=Gemini(id="gemini-pro-latest"),
     tools=[
         SmallestTools(
             voice_id="meher",
