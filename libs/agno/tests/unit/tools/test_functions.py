@@ -3,6 +3,7 @@ from typing import Any, Callable, Dict, List, Optional
 import pytest
 from pydantic import BaseModel, ValidationError
 
+import agno.tools.function as function_module
 from agno.models.message import Message
 from agno.run.base import RunContext
 from agno.tools.decorator import tool
@@ -143,6 +144,20 @@ def test_wrap_callable():
     with pytest.raises(ValidationError):
         test_func.entrypoint(param1="test")
     assert test_func.entrypoint._wrapped_for_validation is True
+
+
+def test_wrap_callable_caches_pydantic_version_lookup(mocker):
+    """Pydantic package metadata should only be read once across many tool wraps."""
+    function_module._get_pydantic_version.cache_clear()
+    version_spy = mocker.spy(function_module, "version")
+
+    def test_func(value: str) -> str:
+        return value
+
+    for _ in range(100):
+        Function._wrap_callable(test_func)
+
+    assert version_spy.call_count == 1
 
 
 def test_function_from_callable_strict():
