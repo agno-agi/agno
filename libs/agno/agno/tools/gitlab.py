@@ -54,7 +54,7 @@ class GitlabTools(Toolkit):
             async_tools.append((self.aget_merge_request, "get_merge_request"))
         if all or list_issues:
             tools.append(self.gitlab_list_issues)
-            async_tools.append((self.alist_issues, "list_issues"))
+            async_tools.append((self.alist_issues, "gitlab_list_issues"))
 
         super().__init__(name="gitlab", tools=tools, async_tools=async_tools, **kwargs)
 
