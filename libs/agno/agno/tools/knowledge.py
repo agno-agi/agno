@@ -42,11 +42,11 @@ class KnowledgeTools(Toolkit):
 
         tools: List[Callable] = []
         if all or think:
-            tools.append(self.knowledge_think)
+            tools.append(self.think)
         if all or search:
             tools.append(self.search_knowledge)
         if all or analyze:
-            tools.append(self.knowledge_analyze)
+            tools.append(self.analyze)
 
         super().__init__(
             name="knowledge_tools",
@@ -56,10 +56,10 @@ class KnowledgeTools(Toolkit):
             **kwargs,
         )
 
-    def knowledge_think(self, run_context: RunContext, thought: str) -> str:
+    def think(self, run_context: RunContext, thought: str) -> str:
         """Use this tool as a scratchpad to reason about the question, refine your approach, brainstorm search terms, or revise your plan.
 
-        Call `knowledge_think` whenever you need to figure out what to do next, analyze the user's question, or plan your approach.
+        Call `Think` whenever you need to figure out what to do next, analyze the user's question, or plan your approach.
         You should use this tool as frequently as needed.
 
         Args:
@@ -114,9 +114,9 @@ class KnowledgeTools(Toolkit):
             log_error(f"Error searching knowledge base: {str(e)}")
             return json.dumps({"error": f"Error searching knowledge base: {e}"})
 
-    def knowledge_analyze(self, run_context: RunContext, analysis: str) -> str:
+    def analyze(self, run_context: RunContext, analysis: str) -> str:
         """Use this tool to evaluate whether the returned documents are correct and sufficient.
-        If not, go back to "knowledge_think" or "search_knowledge" with refined queries.
+        If not, go back to "Think" or "Search" with refined queries.
 
         Args:
             analysis: A thought to think about and log.

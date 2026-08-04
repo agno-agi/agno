@@ -57,7 +57,7 @@ class MemoryTools(Toolkit):
 
         tools: List[Callable] = []
         if all or think:
-            tools.append(self.think)
+            tools.append(self.memory_think)
         if all or get_memories:
             tools.append(self.get_memories)
         if all or add_memory:
@@ -67,7 +67,7 @@ class MemoryTools(Toolkit):
         if all or delete_memory:
             tools.append(self.delete_memory)
         if all or analyze:
-            tools.append(self.analyze)
+            tools.append(self.memory_analyze)
 
         super().__init__(
             name="memory_tools",
@@ -77,7 +77,7 @@ class MemoryTools(Toolkit):
             **kwargs,
         )
 
-    def think(self, run_context: RunContext, thought: str) -> str:
+    def memory_think(self, run_context: RunContext, thought: str) -> str:
         """Scratchpad for reasoning about memory operations.
 
         Args:
@@ -329,7 +329,7 @@ class MemoryTools(Toolkit):
             log_error(f"Error deleting memory: {str(e)}")
             return json.dumps({"success": False, "operation": "delete_memory", "error": str(e)}, indent=2)
 
-    def analyze(self, run_context: RunContext, analysis: str) -> str:
+    def memory_analyze(self, run_context: RunContext, analysis: str) -> str:
         """Evaluate memory operations results for correctness and sufficiency.
 
         Args:
