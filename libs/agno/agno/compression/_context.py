@@ -60,16 +60,7 @@ def compress_context(
     active = [m for m in messages if not m.is_compacted]
     stored_summary = session.compaction.summary if session and session.compaction else None
 
-    # Check if we need to compact
-    needs_compaction = False
-    if manager.compress_messages_token_limit is not None:
-        if manager.model.count_tokens(active) >= manager.compress_messages_token_limit:
-            needs_compaction = True
-    if manager.compress_messages_limit is not None:
-        if len(active) >= manager.compress_messages_limit:
-            needs_compaction = True
-
-    if not needs_compaction:
+    if not _needs_compaction(manager, active):
         # Below threshold — inject stored summary if exists
         if stored_summary:
             view = _build_view_with_summary(active, stored_summary)
@@ -116,16 +107,7 @@ async def acompress_context(
     active = [m for m in messages if not m.is_compacted]
     stored_summary = session.compaction.summary if session and session.compaction else None
 
-    # Check if we need to compact
-    needs_compaction = False
-    if manager.compress_messages_token_limit is not None:
-        if await manager.model.acount_tokens(active) >= manager.compress_messages_token_limit:
-            needs_compaction = True
-    if manager.compress_messages_limit is not None:
-        if len(active) >= manager.compress_messages_limit:
-            needs_compaction = True
-
-    if not needs_compaction:
+    if not await _aneeds_compaction(manager, active):
         if stored_summary:
             view = _build_view_with_summary(active, stored_summary)
             return CompactionResult(view=view, to_compact=[])
@@ -158,7 +140,29 @@ async def acompress_context(
     return CompactionResult(view=view, to_compact=to_compact, summary=summary)
 
 
-# --- Helpers ---
+# --- Private helpers ---
+
+
+def _needs_compaction(manager: CompressionManager, active: List[Message]) -> bool:
+    """Threshold check — should we compact?"""
+    if manager.compress_messages_token_limit is not None and manager.model is not None:
+        if manager.model.count_tokens(active) >= manager.compress_messages_token_limit:
+            return True
+    if manager.compress_messages_limit is not None:
+        if len(active) >= manager.compress_messages_limit:
+            return True
+    return False
+
+
+async def _aneeds_compaction(manager: CompressionManager, active: List[Message]) -> bool:
+    """Async threshold check."""
+    if manager.compress_messages_token_limit is not None and manager.model is not None:
+        if await manager.model.acount_tokens(active) >= manager.compress_messages_token_limit:
+            return True
+    if manager.compress_messages_limit is not None:
+        if len(active) >= manager.compress_messages_limit:
+            return True
+    return False
 
 
 def _build_view_with_summary(active: List[Message], summary: str) -> List[Message]:

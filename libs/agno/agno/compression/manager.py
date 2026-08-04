@@ -4,17 +4,12 @@ from typing import Any, Dict, List, Optional, Type, Union
 from pydantic import BaseModel
 
 from agno.compression._context import CompactionResult, acompress_context, compress_context
-from agno.compression._tool import (
-    acompress_tool_results,
-    aget_tool_messages_to_compress,
-    compress_tool_results,
-    get_tool_messages_to_compress,
-)
+from agno.compression._tool import acompress_tool_results, compress_tool_results
 from agno.metrics import RunMetrics
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.session.agent import AgentSession
-from agno.utils.log import log_debug, log_info
+from agno.utils.log import log_debug
 
 
 @dataclass
@@ -69,12 +64,9 @@ class CompressionManager:
         """Compress messages for model. Returns CompactionResult — call commit() after model success."""
         log_debug(f"[COMPRESS] compress: {len(messages)} messages")
 
-        # 1. Tool compression (mutates in place)
+        # 1. Tool compression (mutates in place, handles threshold internally)
         if self.compress_tool_results and self.model is not None:
-            tool_msgs = get_tool_messages_to_compress(self, messages, tools, response_format)
-            if tool_msgs:
-                log_info(f"[COMPRESS] Tool compression: {len(tool_msgs)} messages")
-                compress_tool_results(self, tool_msgs, run_metrics)
+            compress_tool_results(self, messages, tools, response_format, run_metrics)
 
         # 2. Context compaction
         if self.compress_messages and self.model is not None:
@@ -93,12 +85,9 @@ class CompressionManager:
         """Async version of compress."""
         log_debug(f"[COMPRESS] acompress: {len(messages)} messages")
 
-        # 1. Tool compression (mutates in place)
+        # 1. Tool compression (mutates in place, handles threshold internally)
         if self.compress_tool_results and self.model is not None:
-            tool_msgs = await aget_tool_messages_to_compress(self, messages, tools, response_format)
-            if tool_msgs:
-                log_info(f"[COMPRESS] Tool compression: {len(tool_msgs)} messages")
-                await acompress_tool_results(self, tool_msgs, run_metrics)
+            await acompress_tool_results(self, messages, tools, response_format, run_metrics)
 
         # 2. Context compaction
         if self.compress_messages and self.model is not None:
