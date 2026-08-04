@@ -1684,6 +1684,122 @@ async def aprepare_queued_agent_run(
     await aprepare_queued_run(agent, "agent", run_id, session_id, user_id, input)
 
 
+async def aprepare_accepted_or_abort(
+    queue_worker: Any,
+    component: Any,
+    component_type: str,
+    run_id: str,
+    session_id: str,
+    user_id: Optional[str],
+    input: Any,
+) -> None:
+    """Post-enqueue prepare under the acceptance invariant: once the ticket
+    committed, every response must either ACKNOWLEDGE the durable acceptance
+    (202/tail) or first make the ticket permanently non-executable. The old
+    behavior violated it in both directions - a prepare failure 500ed while
+    the queued ticket stayed claimable (the client retries a run that is
+    already executing), and nothing recorded that the acceptance was aborted.
+
+    On prepare failure:
+    - CAS-cancel the still-waiting ticket (cancel_job on queued). If the
+      tombstone lands, nothing will ever execute: raise an honest 500. The
+      ticket reads CANCELLED with the abort reason in the response; the
+      stream view (registered pre-prepare on stream seams) is closed so
+      tails do not idle.
+    - If the cancel loses (a worker already claimed the ticket), the run IS
+      executing and the worker's claim-time ensure guarantees the run row:
+      swallow the prepare failure and acknowledge. A 500 here would be the
+      lie - the work happens anyway.
+    """
+    try:
+        await aprepare_queued_run(component, component_type, run_id, session_id, user_id, input)
+        return
+    except Exception as e:
+        cancelled = False
+        with contextlib.suppress(Exception):
+            cancelled = bool(await queue_worker.store.cancel_job(run_id))
+        if not cancelled:
+            log_warning(
+                f"Run {run_id}: accept-time prepare failed ({e}) but the ticket is already "
+                "claimed - acknowledging; the worker's claim-time ensure owns the run row"
+            )
+            return
+        from fastapi import HTTPException
+
+        from agno.os.event_streams import get_event_stream
+        from agno.run.base import RunStatus
+
+        with contextlib.suppress(Exception):
+            # Stream seams register the run before preparing; the tombstoned
+            # acceptance must close that view or tails idle to timeout
+            event_stream = get_event_stream()
+            await event_stream.register_run(run_id, RunStatus.pending)
+            await asyncio.shield(event_stream.complete_run(run_id, RunStatus.cancelled))
+        log_error(f"Run {run_id}: acceptance aborted - run-row prepare failed ({e}); ticket cancelled")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Run acceptance aborted: the run row could not be prepared ({str(e)[:200]}); "
+            "the queued job was cancelled and will not execute. Retry the submission.",
+        )
+
+
+async def aticket_poll_fallback(
+    queue_worker: Any,
+    run_id: str,
+    session_id: str,
+    component_type: str,
+    component_id: Optional[str],
+    user_id: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    """Tenant-authorized ticket view for run polls that found no run row.
+
+    The acceptance is the committed ticket, but the run row lands a beat
+    later (accepting request's prepare, or the worker's claim-time ensure) -
+    and a dead router can widen that beat to the next claim. A poll 404ing
+    inside it reports a real, accepted run as nonexistent. When the session
+    yields no run, the poll consults the ticket instead and answers with the
+    202-shaped body.
+
+    Every identity check fails CLOSED (None = keep the 404): the ticket must
+    be a run, belong to the path component and the queried session, and be
+    visible to the scoped user under the same predicate the session read
+    uses (owner match, or an ownerless ticket). A guessable run_id must not
+    leak another tenant's run existence.
+    """
+    if queue_worker is None:
+        return None
+    job = None
+    with contextlib.suppress(Exception):
+        job = await queue_worker.store.get_job(run_id)
+    if job is None or job.get("job_type", "run") != "run":
+        return None
+    if job.get("component_type") != component_type:
+        return None
+    if component_id is not None and job.get("component_id") != component_id:
+        return None
+    if job.get("session_id") != session_id:
+        return None
+    # Same visibility predicate as the session read: (user_id == scoped) OR
+    # row user is NULL. A ticket owned by a DIFFERENT user stays a 404.
+    if job.get("user_id") is not None and job.get("user_id") != user_id:
+        return None
+    status_map = {
+        "queued": "PENDING",
+        "running": "RUNNING",
+        "paused": "PAUSED",
+        "completed": "COMPLETED",
+        "failed": "ERROR",
+        "cancelled": "CANCELLED",
+    }
+    status = status_map.get(job.get("status", ""))
+    if status is None:
+        return None
+    body: Dict[str, Any] = {"run_id": run_id, "session_id": session_id, "status": status}
+    if status == "ERROR" and job.get("error"):
+        body["content"] = job["error"]
+    return body
+
+
 @contextlib.asynccontextmanager
 async def queue_lifespan(app: Any, agent_os: Any):
     """Start and stop the durable job queue worker (one per replica)."""

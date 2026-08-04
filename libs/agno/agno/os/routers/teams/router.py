@@ -32,9 +32,10 @@ from agno.os.checkpoints import build_run_checkpoint_snapshot, list_run_checkpoi
 from agno.os.event_streams import get_event_stream
 from agno.os.job_queue import (
     acontinue_via_queue,
-    aprepare_queued_run,
+    aprepare_accepted_or_abort,
     araise_if_ticket_owns_continue,
     asettle_paused_ticket,
+    aticket_poll_fallback,
     normalize_idempotency_key,
     payload_is_queueable,
     validate_seam_input,
@@ -851,13 +852,8 @@ def get_team_router(
                         # Fail-open: the queue row is already committed - a Redis blip
                         # must not 500 an accepted submission (tails degrade gracefully)
                         await get_event_stream().register_run(queued_run_id, RunStatus.pending)
-                    await aprepare_queued_run(
-                        team,
-                        "team",
-                        run_id=queued_run_id,
-                        session_id=queued_session_id,
-                        user_id=user_id,
-                        input=message,
+                    await aprepare_accepted_or_abort(
+                        queue_worker, team, "team", queued_run_id, queued_session_id, user_id, message
                     )
                     return StreamingResponse(queued_run_tail_streamer(queued_run_id), media_type="text/event-stream")
                 if queue_worker is not None:
@@ -961,13 +957,8 @@ def get_team_router(
                     )
                 # Accepted: persist the PENDING run row so pollers find it.
                 # Idempotent - a worker that already claimed the job wins.
-                await aprepare_queued_run(
-                    team,
-                    "team",
-                    run_id=queued_run_id,
-                    session_id=queued_session_id,
-                    user_id=user_id,
-                    input=message,
+                await aprepare_accepted_or_abort(
+                    queue_worker, team, "team", queued_run_id, queued_session_id, user_id, message
                 )
                 return JSONResponse(
                     status_code=202,
@@ -1894,11 +1885,25 @@ def get_team_router(
         if hasattr(team, "aget_session"):
             session = await team.aget_session(session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
             if session is None:
+                # The acceptance is the committed ticket; the run row (and on
+                # a fresh session, the session row) lands a beat later. A 404
+                # inside that beat reports an accepted run as nonexistent -
+                # answer from the ticket instead, tenant-checked, fail-closed.
+                ticket_view = await aticket_poll_fallback(
+                    getattr(request.app.state, "queue_worker", None), run_id, session_id, "team", team_id, user_id
+                )
+                if ticket_view is not None:
+                    return ticket_view
                 raise HTTPException(status_code=404, detail="Run not found")
             assert_session_matches_component(session, "teams", team_id, not_found_detail="Run not found")
 
         run_output = await team.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
         if run_output is None:
+            ticket_view = await aticket_poll_fallback(
+                getattr(request.app.state, "queue_worker", None), run_id, session_id, "team", team_id, user_id
+            )
+            if ticket_view is not None:
+                return ticket_view
             raise HTTPException(status_code=404, detail="Run not found")
 
         # Per-resource RBAC: the run must explicitly belong to the path team.
