@@ -338,6 +338,31 @@ async def ahandle_agent_run_paused_stream(
     log_debug(f"Agent Run Paused: {run_response.run_id}", center=True, symbol="*")
 
 
+def _compute_runs_limit(agent: Agent, add_history_to_context: Optional[bool] = None) -> Optional[int]:
+    """Compute runs_limit for bounded session loads based on agent config.
+
+    Returns the number of recent runs to load from DB, or None to load all.
+    Only applies when:
+    - History will be added to context
+    - num_history_runs is set and positive
+    - Agent is standalone (not a team member)
+    - DB supports bounded reads
+    """
+    use_history = add_history_to_context if add_history_to_context is not None else agent.add_history_to_context
+    if not use_history:
+        return None
+
+    if (
+        agent.num_history_runs is not None
+        and agent.num_history_runs > 0
+        and agent.team_id is None
+        and getattr(agent.db, "supports_runs_limit", False)
+    ):
+        return agent.num_history_runs
+
+    return None
+
+
 def _run(
     agent: Agent,
     run_response: RunOutput,
@@ -411,7 +436,10 @@ def _run(
                 if attempt == 0 and pre_session is not None:
                     agent_session = pre_session
                 else:
-                    agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+                    runs_limit = _compute_runs_limit(agent, add_history_to_context)
+                    agent_session = read_or_create_session(
+                        agent, session_id=session_id, user_id=user_id, runs_limit=runs_limit
+                    )
 
                 # 2. Update metadata and session state
                 if not (attempt == 0 and pre_session is not None):
@@ -823,7 +851,10 @@ def _run_stream(
                 if attempt == 0 and pre_session is not None:
                     agent_session = pre_session
                 else:
-                    agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+                    runs_limit = _compute_runs_limit(agent, add_history_to_context)
+                    agent_session = read_or_create_session(
+                        agent, session_id=session_id, user_id=user_id, runs_limit=runs_limit
+                    )
 
                 # 2. Update metadata and session state
                 if not (attempt == 0 and pre_session is not None):
@@ -1374,7 +1405,8 @@ def run_dispatch(
     # so that session-stored metadata is visible to resolve_run_options.
     from agno.agent._storage import read_or_create_session, update_metadata
 
-    agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+    runs_limit = _compute_runs_limit(agent, add_history_to_context)
+    agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id, runs_limit=runs_limit)
     update_metadata(agent, session=agent_session)
 
     # Resolve all run options centrally
@@ -1547,7 +1579,10 @@ async def _arun(
                 if attempt == 0 and pre_session is not None:
                     agent_session = pre_session
                 else:
-                    agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+                    runs_limit = _compute_runs_limit(agent, add_history_to_context)
+                    agent_session = await aread_or_create_session(
+                        agent, session_id=session_id, user_id=user_id, runs_limit=runs_limit
+                    )
 
                 # 2. Update metadata and session state
                 if not (attempt == 0 and pre_session is not None):
@@ -1959,7 +1994,8 @@ async def _arun_background(
     run_response.status = RunStatus.pending
 
     # 3. Persist the PENDING run so polling can find it immediately
-    agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+    runs_limit = _compute_runs_limit(agent, add_history_to_context)
+    agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id, runs_limit=runs_limit)
     update_metadata(agent, session=agent_session)
     agent_session.upsert_run(run=run_response)
     run_index = resolve_run_index(agent_session, run_response)
@@ -2050,7 +2086,8 @@ async def _arun_background_stream(
     # 1. Persist RUNNING status so the run is visible in the DB immediately
     run_response.status = RunStatus.running
 
-    agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+    runs_limit = _compute_runs_limit(agent, add_history_to_context)
+    agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id, runs_limit=runs_limit)
     update_metadata(agent, session=agent_session)
     agent_session.upsert_run(run=run_response)
     run_index = resolve_run_index(agent_session, run_response)
@@ -2224,7 +2261,10 @@ async def _arun_stream(
                 if attempt == 0 and pre_session is not None:
                     agent_session = pre_session
                 else:
-                    agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+                    runs_limit = _compute_runs_limit(agent, add_history_to_context)
+                    agent_session = await aread_or_create_session(
+                        agent, session_id=session_id, user_id=user_id, runs_limit=runs_limit
+                    )
 
                 # Start the Run by yielding a RunStarted event
                 if stream_events:
@@ -2831,7 +2871,8 @@ def arun_dispatch(  # type: ignore
     if not has_async_db(agent):
         from agno.agent._storage import read_or_create_session
 
-        _pre_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+        runs_limit = _compute_runs_limit(agent, add_history_to_context)
+        _pre_session = read_or_create_session(agent, session_id=session_id, user_id=user_id, runs_limit=runs_limit)
         update_metadata(agent, session=_pre_session)
 
     # Resolve all run options centrally
@@ -3335,7 +3376,8 @@ def continue_run_dispatch(
     agent.initialize_agent(debug_mode=debug_mode)
 
     # Read existing session from storage
-    agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+    runs_limit = _compute_runs_limit(agent)
+    agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id, runs_limit=runs_limit)
     update_metadata(agent, session=agent_session)
 
     # Initialize session state. Get it from DB if relevant.
@@ -4208,7 +4250,8 @@ def acontinue_run_dispatch(  # type: ignore
     if not has_async_db(agent):
         from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
 
-        _pre_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+        runs_limit = _compute_runs_limit(agent)
+        _pre_session = read_or_create_session(agent, session_id=session_id, user_id=user_id, runs_limit=runs_limit)
         update_metadata(agent, session=_pre_session)
         _session_state = load_session_state(agent, session=_pre_session, session_state={})
 
@@ -4362,7 +4405,8 @@ async def _acontinue_run_background_stream(
         raise ValueError("run_id is required for background streaming")
 
     # 1. Persist RUNNING status so the run is visible in the DB immediately
-    agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+    runs_limit = _compute_runs_limit(agent)
+    agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id, runs_limit=runs_limit)
     update_metadata(agent, session=agent_session)
 
     # Transition to RUNNING here only if we have the run; otherwise the spawned
@@ -4544,7 +4588,10 @@ async def _acontinue_run(
                     log_debug(f"Retrying Agent acontinue_run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
 
                 # 1. Read existing session from db
-                agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+                runs_limit = _compute_runs_limit(agent)
+                agent_session = await aread_or_create_session(
+                    agent, session_id=session_id, user_id=user_id, runs_limit=runs_limit
+                )
 
                 # 2. Resolve dependencies
                 if run_context.dependencies is not None:
@@ -5028,7 +5075,10 @@ async def _acontinue_run_stream(
                 # is built, and the cancellation handler reads it.
                 run_messages: Optional[RunMessages] = None
                 # 1. Read existing session from db
-                agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
+                runs_limit = _compute_runs_limit(agent)
+                agent_session = await aread_or_create_session(
+                    agent, session_id=session_id, user_id=user_id, runs_limit=runs_limit
+                )
 
                 # 2. Update session state and metadata
                 update_metadata(agent, session=agent_session)
