@@ -1,4 +1,6 @@
 from dataclasses import dataclass, field
+from enum import Enum, IntEnum, StrEnum
+from typing import Any, Dict, get_type_hints
 from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel
@@ -452,3 +454,60 @@ def test_get_json_schema_with_mixed_nested_structures():
     assert "contact_info" in dataclass_schema["properties"]
     assert "address" in pydantic_schema["properties"]["contact_info"]["properties"]
     assert "address" in dataclass_schema["properties"]["contact_info"]["properties"]
+
+
+# Test cases for Enum type inference (P8 fix)
+class ColorStrEnum(StrEnum):
+    RED = "red"
+    GREEN = "green"
+    BLUE = "blue"
+
+
+class StatusIntEnum(IntEnum):
+    PENDING = 0
+    ACTIVE = 1
+    DONE = 2
+
+
+class PriorityFloatEnum(float, Enum):
+    LOW = 0.5
+    MEDIUM = 1.5
+    HIGH = 2.5
+
+
+class FlagBoolFlag(Enum):
+    OFF = False
+    ON = True
+
+
+def test_get_json_schema_for_enum_string():
+    """Test that str-based enums get type 'string'."""
+    schema = get_json_schema_for_arg(ColorStrEnum)
+    assert schema == {"type": "string", "enum": ["red", "green", "blue"]}
+
+
+def test_get_json_schema_for_enum_integer():
+    """Test that int-based enums get type 'integer' (P8 fix)."""
+    schema = get_json_schema_for_arg(StatusIntEnum)
+    assert schema == {"type": "integer", "enum": [0, 1, 2]}
+
+
+def test_get_json_schema_for_enum_mixed():
+    """Test that mixed enums have enum values set (even without inferred type)."""
+    schema = get_json_schema_for_arg(FlagBoolFlag)
+    assert "enum" in schema
+    assert False in schema["enum"]
+    assert True in schema["enum"]
+
+
+def test_get_json_schema_for_function_with_intenum():
+    """Test that IntEnum in function params gets correct type."""
+
+    def my_func(status: StatusIntEnum = StatusIntEnum.PENDING):
+        pass
+
+    hints = get_type_hints(my_func)
+    schema = get_json_schema(hints)
+    props = schema.get("properties", {})
+    assert "status" in props
+    assert props["status"]["type"] == "integer"
