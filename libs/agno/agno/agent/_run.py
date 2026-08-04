@@ -4438,9 +4438,15 @@ async def _acontinue_run_background_stream(
     agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
     update_metadata(agent, session=agent_session)
 
-    if run_response:
-        run_response.status = RunStatus.pending
-        agent_session.upsert_run(run=run_response)
+    # HITL continues may arrive with run_response=None (router passes only
+    # run_id): load the run from the session already in hand, or the row
+    # reads PAUSED for the whole execution while the run actually runs. The
+    # loaded run is used ONLY for the status persists - the continue dispatch
+    # below still receives the caller's run_response untouched.
+    persist_run = run_response or cast(Optional[RunOutput], agent_session.get_run(_run_id))
+    if persist_run:
+        persist_run.status = RunStatus.pending
+        agent_session.upsert_run(run=persist_run)
     await asave_session(agent, session=agent_session)
 
     # Pre-register with the event buffer so reconnecting clients can attach and
@@ -4468,10 +4474,11 @@ async def _acontinue_run_background_stream(
             await slot_cm.__aenter__()
             slot_held = True
 
-            # Transition to RUNNING now that a slot is held (atomic helper)
-            if run_response:
-                run_response.status = RunStatus.running
-                await apersist_run_transition(agent, "agent", session_id, run_response, user_id=user_id)
+            # Transition to RUNNING now that a slot is held (atomic helper).
+            # persist_run covers the run-ID-only continue (loaded above).
+            if persist_run:
+                persist_run.status = RunStatus.running
+                await apersist_run_transition(agent, "agent", session_id, persist_run, user_id=user_id)
             with contextlib.suppress(Exception):
                 # Fail-open: coordination writes must not kill the run
                 await event_stream.set_run_status(_run_id, RunStatus.running)

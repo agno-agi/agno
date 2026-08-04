@@ -7668,9 +7668,17 @@ async def _acontinue_run_background_stream(
     team_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
     _update_metadata(team, session=team_session)
 
-    if run_response is not None:
-        run_response.status = RunStatus.pending
-        team_session.upsert_run(run_response=run_response)
+    # HITL continues may arrive with run_response=None (router passes only
+    # run_id): load the run from the session already in hand, or the row
+    # reads PAUSED for the whole execution while the run actually runs. The
+    # loaded run is used ONLY for the status persists - the continue dispatch
+    # below still receives the caller's run_response untouched.
+    persist_run = (
+        run_response if run_response is not None else cast(Optional[TeamRunOutput], team_session.get_run(_run_id))
+    )
+    if persist_run is not None:
+        persist_run.status = RunStatus.pending
+        team_session.upsert_run(run_response=persist_run)
     await asave_session(team, session=team_session)
 
     # Pre-register with the event buffer so reconnecting clients can attach and
@@ -7698,10 +7706,11 @@ async def _acontinue_run_background_stream(
             await slot_cm.__aenter__()
             slot_held = True
 
-            # Transition to RUNNING now that a slot is held (atomic helper)
-            if run_response is not None:
-                run_response.status = RunStatus.running
-                await apersist_run_transition(team, "team", session_id, run_response, user_id=user_id)
+            # Transition to RUNNING now that a slot is held (atomic helper).
+            # persist_run covers the run-ID-only continue (loaded above).
+            if persist_run is not None:
+                persist_run.status = RunStatus.running
+                await apersist_run_transition(team, "team", session_id, persist_run, user_id=user_id)
             with contextlib.suppress(Exception):
                 # Fail-open: coordination writes must not kill the run
                 await event_stream.set_run_status(_run_id, RunStatus.running)

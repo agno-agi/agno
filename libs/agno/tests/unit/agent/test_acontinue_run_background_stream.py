@@ -38,7 +38,12 @@ class TestRePausedContinueFinalStatus:
         agent_session.get_run.return_value = session_run
 
         async def pausing_stream(*args, **kwargs):
+            # The leg's own persistence parks the pause on the run row. The
+            # pre-set PAUSED no longer survives to the assertion point: since
+            # the run-ID-only fix, the producer stamps the loaded run
+            # PENDING/RUNNING at startup, exactly like the run_response path.
             yield MagicMock(spec=RunOutputEvent)
+            session_run.status = RunStatus.paused
 
         mock_stream = make_mock_event_stream()
         with (
@@ -143,7 +148,7 @@ class TestRePausedContinueFinalStatus:
         run_context = MagicMock()
 
         session_run = MagicMock()
-        session_run.status = RunStatus.paused  # the leg already re-paused
+        session_run.status = RunStatus.running  # overwritten by startup stamps either way
         agent_session = MagicMock()
         agent_session.get_run.return_value = session_run
 
@@ -151,6 +156,7 @@ class TestRePausedContinueFinalStatus:
 
         async def hanging_stream(*args, **kwargs):
             yield MagicMock(spec=RunOutputEvent)
+            session_run.status = RunStatus.paused  # the leg re-pauses before hanging
             started.set()
             await asyncio.sleep(3600)
 
@@ -195,11 +201,13 @@ class TestRePausedContinueFinalStatus:
         run_context = MagicMock()
 
         session_run = MagicMock()
-        session_run.status = "PAUSED"  # plain str from a DB read (enum .value)
+        session_run.status = RunStatus.running  # overwritten by startup stamps either way
         agent_session = MagicMock()
         agent_session.get_run.return_value = session_run
 
         async def empty_stream(*args, **kwargs):
+            # The leg parks the pause as a plain str (a DB round-trip shape)
+            session_run.status = "PAUSED"
             return
             yield  # pragma: no cover
 
@@ -224,3 +232,80 @@ class TestRePausedContinueFinalStatus:
                 pass
 
         assert mock_stream.complete_run.call_args.args[1] == RunStatus.paused
+
+
+class TestRunIdOnlyContinuePersistsStatus:
+    """Phase-4 item 16: HITL continues arrive with run_response=None (the
+    router passes only run_id), and both persistence points sat behind
+    `if run_response:` - the run executed fine while the DB read PAUSED for
+    the entire leg. The producer must load the run from the session it
+    already holds and persist PENDING, then RUNNING; the continue dispatch
+    itself still receives run_response=None untouched."""
+
+    @pytest.mark.asyncio
+    async def test_run_id_only_continue_persists_pending_then_running(self):
+        from agno.agent._run import _acontinue_run_background_stream
+        from agno.run import RunStatus
+        from agno.run.agent import RunOutputEvent
+
+        agent = MagicMock()
+        agent.db = None
+        run_context = MagicMock()
+
+        class RecordingRun:
+            def __init__(self):
+                self.run_id = "r-1"
+                self.history = [RunStatus.paused]
+                self._status = RunStatus.paused
+
+            @property
+            def status(self):
+                return self._status
+
+            @status.setter
+            def status(self, value):
+                self._status = value
+                self.history.append(value)
+
+        session_run = RecordingRun()
+        agent_session = MagicMock()
+        agent_session.get_run.return_value = session_run
+
+        seen_dispatch_kwargs: dict = {}
+
+        async def one_event_stream(*args, **kwargs):
+            seen_dispatch_kwargs.update(kwargs)
+            yield MagicMock(spec=RunOutputEvent)
+
+        mock_stream = make_mock_event_stream()
+        with (
+            patch("agno.agent._run._acontinue_run_stream", side_effect=one_event_stream),
+            patch(
+                "agno.agent._storage.aread_or_create_session",
+                new_callable=AsyncMock,
+                return_value=agent_session,
+            ),
+            patch("agno.agent._storage.update_metadata"),
+            patch("agno.agent._session.asave_session", new_callable=AsyncMock),
+            patch("agno.agent._run.apersist_run_transition", new_callable=AsyncMock) as mock_transition,
+            patch("agno.os.event_streams.get_event_stream", return_value=mock_stream),
+            patch("agno.os.utils.format_sse_event_with_index", return_value="data: x\n\n"),
+        ):
+            async for _chunk in _acontinue_run_background_stream(
+                agent,
+                run_context=run_context,
+                session_id="s-1",
+                run_id="r-1",
+            ):
+                pass
+
+        assert RunStatus.pending in session_run.history and RunStatus.running in session_run.history, (
+            f"run-ID-only continue must persist PENDING and RUNNING; status history: {session_run.history}"
+        )
+        assert session_run.history.index(RunStatus.pending) < session_run.history.index(RunStatus.running)
+        agent_session.upsert_run.assert_called_once_with(run=session_run)
+        assert mock_transition.await_count >= 1
+        assert mock_transition.await_args_list[0].args[3] is session_run
+        assert seen_dispatch_kwargs.get("run_response") is None, (
+            "the loaded run is for persistence only - the dispatch must still receive run_response=None"
+        )
