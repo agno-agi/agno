@@ -27,11 +27,18 @@ from agno.vectordb.base import VectorDb
 from agno.vectordb.search import SearchType
 from agno.vectordb.weaviate.index import Distance, VectorIndex
 
+# Per-user RAG isolation. A scalar user_id property scopes each row to its owner.
+# * Inserts with user_id stamp the property; user_id=None leaves it NULL (shared bucket).
+# * Searches with user_id=X match own OR NULL; user_id=None sees all (admin view).
+USER_ID_PROPERTY = "user_id"
+
 
 class Weaviate(VectorDb):
     """
     Weaviate class for managing vector operations with Weaviate vector database (v4 client).
     """
+
+    USER_ID_KEY = USER_ID_PROPERTY
 
     def __init__(
         self,
@@ -145,50 +152,61 @@ class Weaviate(VectorDb):
 
         return self.async_client  # type: ignore
 
+    def _collection_properties(self) -> List[Property]:
+        """The collection schema; user_id is a first-class property the scope filter can match."""
+        return [
+            Property(name="name", data_type=DataType.TEXT),
+            Property(name="content", data_type=DataType.TEXT, tokenization=Tokenization.LOWERCASE),
+            Property(name="meta_data", data_type=DataType.TEXT),
+            Property(name="content_id", data_type=DataType.TEXT),
+            Property(name="content_hash", data_type=DataType.TEXT),
+            # FIELD tokenization so the scope filter matches the owner exactly (WORD would leak across owners).
+            Property(name=self.USER_ID_KEY, data_type=DataType.TEXT, tokenization=Tokenization.FIELD),
+        ]
+
     def create(self) -> None:
         """Create the collection in Weaviate if it doesn't exist."""
         if not self.exists():
             log_debug(f"Creating collection '{self.collection}' in Weaviate.")
             self.get_client().collections.create(
                 name=self.collection,
-                properties=[
-                    Property(name="name", data_type=DataType.TEXT),
-                    Property(name="content", data_type=DataType.TEXT, tokenization=Tokenization.LOWERCASE),
-                    Property(name="meta_data", data_type=DataType.TEXT),
-                    Property(name="content_id", data_type=DataType.TEXT),
-                    Property(name="content_hash", data_type=DataType.TEXT),
-                ],
+                properties=self._collection_properties(),
                 vectorizer_config=Configure.Vectorizer.none(),
                 vector_index_config=self.get_vector_index_config(self.vector_index, self.distance),
+                # Null-state indexing so the shared bucket can be filtered as user_id IS NULL.
+                inverted_index_config=Configure.inverted_index(index_null_state=True),
             )
             log_debug(f"Collection '{self.collection}' created in Weaviate.")
 
     async def async_create(self) -> None:
         client = await self.get_async_client()
         try:
-            await client.collections.create(
-                name=self.collection,
-                properties=[
-                    Property(name="name", data_type=DataType.TEXT),
-                    Property(name="content", data_type=DataType.TEXT, tokenization=Tokenization.LOWERCASE),
-                    Property(name="meta_data", data_type=DataType.TEXT),
-                    Property(name="content_id", data_type=DataType.TEXT),
-                    Property(name="content_hash", data_type=DataType.TEXT),
-                ],
-                vectorizer_config=Configure.Vectorizer.none(),
-                vector_index_config=self.get_vector_index_config(self.vector_index, self.distance),
-            )
-            log_debug(f"Collection '{self.collection}' created in Weaviate asynchronously.")
+            if not await client.collections.exists(self.collection):
+                await client.collections.create(
+                    name=self.collection,
+                    properties=self._collection_properties(),
+                    vectorizer_config=Configure.Vectorizer.none(),
+                    vector_index_config=self.get_vector_index_config(self.vector_index, self.distance),
+                    # Null-state indexing so the shared bucket can be filtered as user_id IS NULL.
+                    inverted_index_config=Configure.inverted_index(index_null_state=True),
+                )
+                log_debug(f"Collection '{self.collection}' created in Weaviate asynchronously.")
         finally:
             await client.close()
 
-    def content_hash_exists(self, content_hash: str) -> bool:
-        """Check if a document with the given content hash exists in the collection."""
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        """Check if a document with the given content hash exists in the collection.
+
+        Args:
+            content_hash (str): The content hash to check.
+            user_id (Optional[str]): When set, restrict the check to the owner's chunks.
+        """
+        self._validate_user_id(user_id)
         collection = self.get_client().collections.get(self.collection)
-        result = collection.query.fetch_objects(
-            limit=1,
-            filters=Filter.by_property("content_hash").equal(content_hash),
-        )
+        where = Filter.by_property("content_hash").equal(content_hash)
+        if user_id is not None:
+            where = where & Filter.by_property(self.USER_ID_KEY).equal(user_id)
+        result = collection.query.fetch_objects(limit=1, filters=where)
         return len(result.objects) > 0
 
     def name_exists(self, name: str) -> bool:
@@ -229,14 +247,23 @@ class Weaviate(VectorDb):
         finally:
             await client.close()
 
-    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """
         Insert documents into Weaviate.
 
         Args:
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
+            user_id (Optional[str]): Owner of these chunks for per-user isolation.
+                None (default) writes to the shared bucket.
         """
+        self._validate_user_id(user_id)
         log_debug(f"Inserting {len(documents)} documents into Weaviate.")
         collection = self.get_client().collections.get(self.collection)
 
@@ -249,7 +276,9 @@ class Weaviate(VectorDb):
             cleaned_content = document.content.replace("\x00", "\ufffd")
             # Include content_hash in ID to ensure uniqueness across different content hashes
             base_id = document.id or md5(cleaned_content.encode()).hexdigest()
-            record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+            # Fold the owner into the id so two users' identical content get distinct uuids; None keeps the base id.
+            seed = f"{base_id}_{content_hash}" if user_id is None else f"{base_id}_{content_hash}_{user_id}"
+            record_id = md5(seed.encode()).hexdigest()
             doc_uuid = uuid.UUID(hex=record_id[:32])
 
             # Merge filters with metadata
@@ -267,6 +296,8 @@ class Weaviate(VectorDb):
                     "meta_data": meta_data_str,
                     "content_id": document.content_id,
                     "content_hash": content_hash,
+                    # user_id is a first-class property so the scope filter can match it.
+                    self.USER_ID_KEY: user_id,
                 },
                 vector=document.embedding,
                 uuid=doc_uuid,
@@ -274,7 +305,11 @@ class Weaviate(VectorDb):
             log_debug(f"Inserted document: {document.name} ({meta_data})")
 
     async def async_insert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """
         Insert documents into Weaviate asynchronously.
@@ -282,7 +317,10 @@ class Weaviate(VectorDb):
         Args:
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
+            user_id (Optional[str]): Owner of these chunks for per-user isolation.
+                None (default) writes to the shared bucket.
         """
+        self._validate_user_id(user_id)
         log_debug(f"Inserting {len(documents)} documents into Weaviate asynchronously.")
         if not documents:
             return
@@ -342,11 +380,18 @@ class Weaviate(VectorDb):
                     cleaned_content = document.content.replace("\x00", "\ufffd")
                     # Include content_hash in ID to ensure uniqueness across different content hashes
                     base_id = document.id or md5(cleaned_content.encode()).hexdigest()
-                    record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+                    # Fold the owner into the id so two users' identical content get distinct uuids; None keeps the base id.
+                    seed = f"{base_id}_{content_hash}" if user_id is None else f"{base_id}_{content_hash}_{user_id}"
+                    record_id = md5(seed.encode()).hexdigest()
                     doc_uuid = uuid.UUID(hex=record_id[:32])
 
+                    # Merge filters with metadata (parity with sync insert)
+                    meta_data = document.meta_data or {}
+                    if filters:
+                        meta_data.update(filters)
+
                     # Serialize meta_data to JSON string
-                    meta_data_str = json.dumps(document.meta_data) if document.meta_data else None
+                    meta_data_str = json.dumps(meta_data) if meta_data else None
 
                     # Insert properties and vector separately
                     properties = {
@@ -355,6 +400,7 @@ class Weaviate(VectorDb):
                         "meta_data": meta_data_str,
                         "content_id": document.content_id,
                         "content_hash": content_hash,
+                        self.USER_ID_KEY: user_id,
                     }
 
                     # Use the API correctly - properties, vector and uuid are separate parameters
@@ -367,21 +413,33 @@ class Weaviate(VectorDb):
         finally:
             await client.close()
 
-    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """
         Upsert documents into Weaviate.
 
         Args:
             documents (List[Document]): List of documents to upsert
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
+            user_id (Optional[str]): Owner of these chunks for per-user isolation.
         """
+        self._validate_user_id(user_id)
         log_debug(f"Upserting {len(documents)} documents into Weaviate.")
-        if self.content_hash_exists(content_hash):
-            self._delete_by_content_hash(content_hash)
-        self.insert(content_hash=content_hash, documents=documents, filters=filters)
+        if self.content_hash_exists(content_hash, user_id=user_id):
+            self._delete_by_content_hash(content_hash, user_id=user_id)
+        self.insert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
 
     async def async_upsert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """
         Upsert documents into Weaviate asynchronously.
@@ -391,14 +449,20 @@ class Weaviate(VectorDb):
         Args:
             documents (List[Document]): List of documents to upsert
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
+            user_id (Optional[str]): Owner of these chunks for per-user isolation.
         """
-        if self.content_hash_exists(content_hash):
-            self._delete_by_content_hash(content_hash)
-        await self.async_insert(content_hash=content_hash, documents=documents, filters=filters)
+        self._validate_user_id(user_id)
+        if self.content_hash_exists(content_hash, user_id=user_id):
+            self._delete_by_content_hash(content_hash, user_id=user_id)
+        await self.async_insert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
         return
 
     def search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """
         Perform a search based on the configured search type.
@@ -407,25 +471,32 @@ class Weaviate(VectorDb):
             query (str): The search query.
             limit (int): Maximum number of results to return.
             filters (Optional[Dict[str, Any]]): Filters to apply to the search.
+            user_id (Optional[str]): Restrict results to the caller's chunks plus
+                the shared bucket. None means no scope (admin view).
 
         Returns:
             List[Document]: List of matching documents.
         """
+        self._validate_user_id(user_id)
         if isinstance(filters, List):
             log_warning("Filters Expressions are not supported in Weaviate. No filters will be applied.")
             filters = None
         if self.search_type == SearchType.vector:
-            return self.vector_search(query, limit, filters)
+            return self.vector_search(query, limit, filters, user_id=user_id)
         elif self.search_type == SearchType.keyword:
-            return self.keyword_search(query, limit, filters)
+            return self.keyword_search(query, limit, filters, user_id=user_id)
         elif self.search_type == SearchType.hybrid:
-            return self.hybrid_search(query, limit, filters)
+            return self.hybrid_search(query, limit, filters, user_id=user_id)
         else:
             log_error(f"Invalid search type '{self.search_type}'.")
             return []
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """
         Perform a search based on the configured search type asynchronously.
@@ -434,25 +505,32 @@ class Weaviate(VectorDb):
             query (str): The search query.
             limit (int): Maximum number of results to return.
             filters (Optional[Dict[str, Any]]): Filters to apply to the search.
+            user_id (Optional[str]): Restrict results to the caller's chunks plus
+                the shared bucket. None means no scope (admin view).
 
         Returns:
             List[Document]: List of matching documents.
         """
+        self._validate_user_id(user_id)
         if isinstance(filters, List):
             log_warning("Filters Expressions are not supported in Weaviate. No filters will be applied.")
             filters = None
         if self.search_type == SearchType.vector:
-            return await self.async_vector_search(query, limit, filters)
+            return await self.async_vector_search(query, limit, filters, user_id=user_id)
         elif self.search_type == SearchType.keyword:
-            return await self.async_keyword_search(query, limit, filters)
+            return await self.async_keyword_search(query, limit, filters, user_id=user_id)
         elif self.search_type == SearchType.hybrid:
-            return await self.async_hybrid_search(query, limit, filters)
+            return await self.async_hybrid_search(query, limit, filters, user_id=user_id)
         else:
             log_error(f"Invalid search type '{self.search_type}'.")
             return []
 
     def vector_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         try:
             query_embedding = self.embedder.get_embedding(query)
@@ -461,7 +539,7 @@ class Weaviate(VectorDb):
                 return []
 
             collection = self.get_client().collections.get(self.collection)
-            filter_expr = self._build_filter_expression(filters)
+            filter_expr = self._scoped_filter_expression(filters, user_id)
 
             response = collection.query.near_vector(
                 near_vector=query_embedding,
@@ -488,7 +566,11 @@ class Weaviate(VectorDb):
             self.get_client().close()
 
     async def async_vector_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """
         Perform a vector search in Weaviate asynchronously.
@@ -509,7 +591,7 @@ class Weaviate(VectorDb):
         client = await self.get_async_client()
         try:
             collection = client.collections.get(self.collection)
-            filter_expr = self._build_filter_expression(filters)
+            filter_expr = self._scoped_filter_expression(filters, user_id)
 
             response = await collection.query.near_vector(
                 near_vector=query_embedding,
@@ -526,19 +608,25 @@ class Weaviate(VectorDb):
 
             log_info(f"Found {len(search_results)} documents")
 
-            await client.close()
             return search_results
 
         except Exception:
             logger.exception("Error searching for documents")
             return []
 
+        finally:
+            await client.close()
+
     def keyword_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         try:
             collection = self.get_client().collections.get(self.collection)
-            filter_expr = self._build_filter_expression(filters)
+            filter_expr = self._scoped_filter_expression(filters, user_id)
 
             response = collection.query.bm25(
                 query=query,
@@ -566,7 +654,11 @@ class Weaviate(VectorDb):
             self.get_client().close()
 
     async def async_keyword_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """
         Perform a keyword search in Weaviate asynchronously.
@@ -583,7 +675,7 @@ class Weaviate(VectorDb):
         try:
             collection = client.collections.get(self.collection)
 
-            filter_expr = self._build_filter_expression(filters)
+            filter_expr = self._scoped_filter_expression(filters, user_id)
             response = await collection.query.bm25(
                 query=query,
                 query_properties=["content"],
@@ -600,15 +692,21 @@ class Weaviate(VectorDb):
 
             log_info(f"Found {len(search_results)} documents")
 
-            await client.close()
             return search_results
 
         except Exception:
             logger.exception("Error searching for documents")
             return []
 
+        finally:
+            await client.close()
+
     def hybrid_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         try:
             query_embedding = self.embedder.get_embedding(query)
@@ -617,7 +715,7 @@ class Weaviate(VectorDb):
                 return []
 
             collection = self.get_client().collections.get(self.collection)
-            filter_expr = self._build_filter_expression(filters)
+            filter_expr = self._scoped_filter_expression(filters, user_id)
 
             response = collection.query.hybrid(
                 query=query,
@@ -647,7 +745,11 @@ class Weaviate(VectorDb):
             self.get_client().close()
 
     async def async_hybrid_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """
         Perform a hybrid search combining vector and keyword search in Weaviate asynchronously.
@@ -669,7 +771,7 @@ class Weaviate(VectorDb):
         try:
             collection = client.collections.get(self.collection)
 
-            filter_expr = self._build_filter_expression(filters)
+            filter_expr = self._scoped_filter_expression(filters, user_id)
             response = await collection.query.hybrid(
                 query=query,
                 vector=query_embedding,
@@ -688,12 +790,14 @@ class Weaviate(VectorDb):
 
             log_info(f"Found {len(search_results)} documents")
 
-            await client.close()
             return search_results
 
         except Exception:
             logger.exception("Error searching for documents")
             return []
+
+        finally:
+            await client.close()
 
     def exists(self) -> bool:
         """Check if the collection exists in Weaviate."""
@@ -788,15 +892,26 @@ class Weaviate(VectorDb):
             logger.exception(f"Error deleting documents by metadata '{metadata}'")
             return False
 
-    def delete_by_content_id(self, content_id: str) -> bool:
-        """Delete content by content ID using direct filter deletion."""
+    def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
+        """Delete content by content ID using direct filter deletion.
+
+        Args:
+            content_id (str): The content ID to delete.
+            user_id (Optional[str]): Restrict the delete to the owner's chunks. Only None
+                deletes all chunks with this content_id regardless of owner.
+        """
+        self._validate_user_id(user_id)
         try:
             collection = self.get_client().collections.get(self.collection)
 
-            collection.data.delete_many(where=Filter.by_property("content_id").equal(content_id))
+            where = Filter.by_property("content_id").equal(content_id)
+            if user_id is not None:
+                where = where & Filter.by_property(self.USER_ID_KEY).equal(user_id)
+
+            result = collection.data.delete_many(where=where)
 
             log_info(f"Deleted documents with content_id '{content_id}' from collection '{self.collection}'.")
-            return True
+            return result.successful > 0
 
         except Exception:
             logger.exception(f"Error deleting documents by content_id '{content_id}'")
@@ -914,6 +1029,34 @@ class Weaviate(VectorDb):
 
         return None
 
+    def _validate_user_id(self, user_id: Optional[str]) -> None:
+        """Reject user_id values FIELD tokenization would fold into the shared (null) bucket.
+
+        Weaviate's FIELD tokenizer trims a value to a single token, so an empty or
+        whitespace-only owner indexes as null and is swept in by the is_none() half of
+        every scope clause, leaking that doc to every caller. Use None for unscoped access.
+        """
+        if user_id is not None and user_id.strip() == "":
+            raise ValueError("user_id must not be empty or whitespace-only; use None for unscoped access")
+
+    def _user_scope_filter(self, user_id: Optional[str]):
+        """Build the per-user read scope: user_id == X OR user_id IS NULL; only None (admin) returns no scope."""
+        if user_id is None:
+            return None
+        return Filter.by_property(self.USER_ID_KEY).equal(user_id) | Filter.by_property(self.USER_ID_KEY).is_none(True)
+
+    def _scoped_filter_expression(
+        self, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]], user_id: Optional[str]
+    ):
+        """AND the per-user scope into the user-supplied metadata filter."""
+        base = self._build_filter_expression(filters)
+        scope = self._user_scope_filter(user_id)
+        if scope is None:
+            return base
+        if base is None:
+            return scope
+        return base & scope
+
     def id_exists(self, id: str) -> bool:
         """Check if a document with the given ID exists in the collection.
 
@@ -942,13 +1085,15 @@ class Weaviate(VectorDb):
             content_id (str): The content ID to update
             metadata (Dict[str, Any]): The metadata to update
         """
+        # Never let caller metadata reassign chunk ownership.
+        metadata = {k: v for k, v in metadata.items() if k != self.USER_ID_KEY}
         try:
             weaviate_client = self.get_client()
             collection = weaviate_client.collections.get(self.collection)
 
             # Query for objects with the given content_id
             query_result = collection.query.fetch_objects(  # type: ignore
-                where=Filter.by_property("content_id").equal(content_id),
+                filters=Filter.by_property("content_id").equal(content_id),
                 limit=1000,  # Get all matching objects
             )
 
@@ -963,19 +1108,18 @@ class Weaviate(VectorDb):
                 current_properties = obj.properties or {}
 
                 # Merge existing metadata with new metadata
-                updated_properties = current_properties.copy()
+                updated_properties = dict(current_properties)
 
-                # Handle nested metadata updates
-                if "meta_data" in updated_properties and isinstance(updated_properties["meta_data"], dict):
-                    updated_properties["meta_data"].update(metadata)
-                else:
-                    # If no existing meta_data or it's not a dict, set it directly
-                    updated_properties["meta_data"] = metadata
-
-                if "filters" in updated_properties and isinstance(updated_properties["filters"], dict):
-                    updated_properties["filters"].update(metadata)
-                else:
-                    updated_properties["filters"] = metadata
+                # meta_data is stored as a JSON string (see insert); parse, merge and re-serialize so
+                # the property stays TEXT. Never emit a typeless `filters` object property here — insert
+                # folds filters into meta_data, and Weaviate rejects an empty/typeless object with a 422.
+                existing_meta = updated_properties.get("meta_data")
+                if isinstance(existing_meta, str):
+                    existing_meta = json.loads(existing_meta) if existing_meta else {}
+                elif not isinstance(existing_meta, dict):
+                    existing_meta = {}
+                existing_meta.update(metadata)
+                updated_properties["meta_data"] = json.dumps(existing_meta)
 
                 # Update the object
                 collection.data.update(uuid=obj.uuid, properties=updated_properties)
@@ -987,13 +1131,24 @@ class Weaviate(VectorDb):
             logger.exception(f"Error updating metadata for content_id '{content_id}'")
             raise
 
-    def _delete_by_content_hash(self, content_hash: str) -> bool:
-        """Delete documents by content hash using direct filter deletion."""
+    def _delete_by_content_hash(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        """Delete documents by content hash using direct filter deletion.
+
+        Args:
+            content_hash (str): The content hash to delete.
+            user_id (Optional[str]): Restrict the delete to the owner's chunks. None
+                scopes to the shared (null) bucket so a shared re-upsert never wipes a
+                scoped owner's identical-content row.
+        """
         try:
             collection = self.get_client().collections.get(self.collection)
 
             # Build filter for content_hash search
             filter_expr = Filter.by_property("content_hash").equal(content_hash)
+            if user_id is not None:
+                filter_expr = filter_expr & Filter.by_property(self.USER_ID_KEY).equal(user_id)
+            else:
+                filter_expr = filter_expr & Filter.by_property(self.USER_ID_KEY).is_none(True)
 
             collection.data.delete_many(where=filter_expr)
 
