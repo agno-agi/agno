@@ -16,7 +16,6 @@ the concurrency boundary deliberately is NOT.
 Skips per backend when its server is unreachable (PG at 5532, Redis at 6379).
 """
 
-import time
 import uuid
 
 import pytest
