@@ -939,6 +939,8 @@ class Function(BaseModel):
             result = cache_data.get("result")
 
             if time() - timestamp <= self.cache_ttl:
+                if cache_data.get("result_type") == "ToolResult":
+                    return ToolResult.model_validate(result)
                 return result
 
             # Remove expired entry
@@ -954,9 +956,24 @@ class Function(BaseModel):
         from time import time
 
         try:
-            serializable_result = result.model_dump() if isinstance(result, BaseModel) else result
+            cache_data: Dict[str, Any] = {"timestamp": time()}
+            if isinstance(result, ToolResult):
+                if result.images or result.videos or result.audios or result.files:
+                    # Media bytes do not survive a JSON round trip; skip caching
+                    # so a later call re-executes instead of being served a
+                    # result with the media stripped.
+                    log_debug(f"Skipping cache for {self.name}: ToolResult with media is not cacheable")
+                    return
+                # Tag the entry so a cache hit restores a ToolResult instead of
+                # handing the model loop a plain dict.
+                cache_data["result"] = result.model_dump()
+                cache_data["result_type"] = "ToolResult"
+            elif isinstance(result, BaseModel):
+                cache_data["result"] = result.model_dump()
+            else:
+                cache_data["result"] = result
             with open(cache_file, "w", encoding="utf-8") as f:
-                json.dump({"timestamp": time(), "result": serializable_result}, f)
+                json.dump(cache_data, f)
         except Exception:
             log_exception("Error writing cache")
 

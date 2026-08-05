@@ -9,7 +9,7 @@ from agno.models.message import Message
 from agno.run.base import RunContext
 from agno.tools import Toolkit
 from agno.tools.decorator import tool
-from agno.tools.function import Function, FunctionCall
+from agno.tools.function import Function, FunctionCall, ToolResult
 
 
 def test_function_initialization():
@@ -2240,3 +2240,86 @@ async def test_cache_hits_across_runs_for_same_user_and_session_async(tmp_path):
 
     assert result.result == "secret for alice"
     assert executions == ["alice"]
+
+
+# =============================================================================
+# Cached ToolResult round-trip tests
+# =============================================================================
+
+
+def test_cached_tool_result_round_trips_as_tool_result(tmp_path):
+    """A cached ToolResult must come back as a ToolResult on a hit, not as a
+    plain dict."""
+
+    def get_data() -> ToolResult:
+        return ToolResult(content="hello", metadata={"structured_content": {"k": "v"}})
+
+    func = Function(name="get_data", entrypoint=get_data, cache_results=True, cache_dir=str(tmp_path))
+
+    first = FunctionCall(function=func).execute()
+    second = FunctionCall(function=func).execute()
+
+    assert isinstance(first.result, ToolResult)
+    assert isinstance(second.result, ToolResult)
+    assert second.result.content == "hello"
+    assert second.result.metadata == {"structured_content": {"k": "v"}}
+
+
+@pytest.mark.asyncio
+async def test_cached_tool_result_round_trips_as_tool_result_async(tmp_path):
+    """Async variant: cached ToolResult round-trips through aexecute."""
+
+    async def get_data() -> ToolResult:
+        return ToolResult(content="hello", metadata={"structured_content": {"k": "v"}})
+
+    func = Function(name="get_data", entrypoint=get_data, cache_results=True, cache_dir=str(tmp_path))
+
+    first = await FunctionCall(function=func).aexecute()
+    second = await FunctionCall(function=func).aexecute()
+
+    assert isinstance(first.result, ToolResult)
+    assert isinstance(second.result, ToolResult)
+    assert second.result.content == "hello"
+    assert second.result.metadata == {"structured_content": {"k": "v"}}
+
+
+def test_tool_result_with_media_is_not_cached(tmp_path):
+    """Media bytes do not survive a JSON round trip; a ToolResult carrying
+    media is executed every time instead of being served media-stripped."""
+    from agno.media import Image
+
+    executions = []
+
+    def get_image() -> ToolResult:
+        executions.append(1)
+        return ToolResult(content="image attached", images=[Image(content=b"\x89PNG raw")])
+
+    func = Function(name="get_image", entrypoint=get_image, cache_results=True, cache_dir=str(tmp_path))
+
+    FunctionCall(function=func).execute()
+    second = FunctionCall(function=func).execute()
+
+    assert len(executions) == 2
+    assert isinstance(second.result, ToolResult)
+    assert second.result.images[0].content == b"\x89PNG raw"
+
+
+@pytest.mark.asyncio
+async def test_tool_result_with_media_is_not_cached_async(tmp_path):
+    """Async variant: media-bearing ToolResults are never served from cache."""
+    from agno.media import Image
+
+    executions = []
+
+    async def get_image() -> ToolResult:
+        executions.append(1)
+        return ToolResult(content="image attached", images=[Image(content=b"\x89PNG raw")])
+
+    func = Function(name="get_image", entrypoint=get_image, cache_results=True, cache_dir=str(tmp_path))
+
+    await FunctionCall(function=func).aexecute()
+    second = await FunctionCall(function=func).aexecute()
+
+    assert len(executions) == 2
+    assert isinstance(second.result, ToolResult)
+    assert second.result.images[0].content == b"\x89PNG raw"

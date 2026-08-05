@@ -1657,3 +1657,29 @@ async def test_mcp_cached_results_key_per_user_and_hit_across_runs(tmp_path):
     result = await FunctionCall(function=fn).aexecute()
     assert session.call_tool.await_count == 2
     assert result.status == "success"
+
+
+@pytest.mark.asyncio
+async def test_mcp_cached_hit_returns_tool_result(tmp_path):
+    """A cache hit for an MCP tool must return a ToolResult, not the plain
+    dict it was serialized to, so downstream result handling keeps working."""
+    from agno.run.base import RunContext
+
+    tool = _make_mcp_tool_mock("get_data")
+    session = _make_session_returning("payload")
+
+    fn = Function(
+        name="get_data",
+        entrypoint=get_entrypoint_for_tool(tool, session),
+        skip_entrypoint_processing=True,
+        cache_results=True,
+        cache_dir=str(tmp_path),
+    )
+    fn._run_context = RunContext(run_id="r1", session_id="s1", user_id="alice")
+
+    await FunctionCall(function=fn).aexecute()
+    second = await FunctionCall(function=fn).aexecute()
+
+    assert session.call_tool.await_count == 1
+    assert isinstance(second.result, ToolResult)
+    assert second.result.content == "payload"
