@@ -55,9 +55,7 @@ team = Team(
         user_profile=UserProfileConfig(
             mode=LearningMode.ALWAYS,
         ),
-        entity_memory=EntityMemoryConfig(
-            mode=LearningMode.ALWAYS,
-        ),
+        entity_memory=EntityMemoryConfig(),  # AGENTIC-only: the agent records through its four tools
     ),
     markdown=True,
     show_members_responses=True,

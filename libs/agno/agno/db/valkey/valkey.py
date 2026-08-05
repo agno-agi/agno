@@ -1,6 +1,6 @@
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -11,7 +11,14 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.utils import deserialize_session, deserialize_sessions
+from agno.db.utils import (
+    build_single_run_row,
+    deserialize_run,
+    deserialize_session,
+    deserialize_sessions,
+    filter_context_runs,
+    merge_runs_table_with_legacy_blob,
+)
 from agno.db.valkey.utils import (
     apply_filters,
     apply_pagination,
@@ -29,6 +36,10 @@ from agno.db.valkey.utils import (
     serialize_data,
     validate_filter_expr,
 )
+from agno.run.agent import RunOutput
+from agno.run.base import RunStatus
+from agno.run.team import TeamRunOutput
+from agno.run.workflow import WorkflowRunOutput
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
@@ -43,6 +54,7 @@ try:
         GlideClientConfiguration,
         GlideClusterClient,
         NodeAddress,
+        RangeByIndex,
         RequestError,
         ServerCredentials,
     )
@@ -66,6 +78,7 @@ class ValkeyDb(BaseDb):
         client_name: str = "agno_db_client",
         expire: Optional[int] = None,
         session_table: Optional[str] = None,
+        runs_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
@@ -101,6 +114,7 @@ class ValkeyDb(BaseDb):
             client_name (str): Connection name set via CLIENT SETNAME, visible in CLIENT LIST.
             expire (Optional[int]): TTL for Valkey keys in seconds
             session_table (Optional[str]): Name of the table to store sessions
+            runs_table (Optional[str]): Name of the table to store runs (one key per run)
             memory_table (Optional[str]): Name of the table to store memories
             metrics_table (Optional[str]): Name of the table to store metrics
             eval_table (Optional[str]): Name of the table to store evaluation runs
@@ -120,6 +134,7 @@ class ValkeyDb(BaseDb):
         super().__init__(
             id=id,
             session_table=session_table,
+            runs_table=runs_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
             eval_table=eval_table,
@@ -173,6 +188,9 @@ class ValkeyDb(BaseDb):
         """Get the active table name for the given table type."""
         if table_type == "sessions":
             return self.session_table_name
+
+        elif table_type == "runs":
+            return self.runs_table_name
 
         elif table_type == "memories":
             return self.memory_table_name
@@ -361,6 +379,304 @@ class ValkeyDb(BaseDb):
         """
         pass
 
+    # -- Run methods --
+
+    _RUNS_BY_SESSION_INDEX_PATTERN = "{prefix}:runs:by_session:{session_id}"
+
+    def _runs_by_session_index_key(self, session_id: str) -> str:
+        """Sorted-set key listing run_ids for a session, scored by run_index."""
+        return self._RUNS_BY_SESSION_INDEX_PATTERN.format(prefix=self.db_prefix, session_id=session_id)
+
+    def upsert_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> None:
+        """Upsert a single run as its own Valkey key + maintain the session index (O(1)).
+
+        Optimized for updating existing runs (e.g., status changes in HITL or
+        background mode) without re-upserting all runs in the session.
+
+        For new runs, ``run_index`` should be provided or will be read from
+        ``run_data``. For updates to existing runs, ``run_index`` is preserved
+        from the original insert.
+
+        Args:
+            run: The run object or dictionary to upsert.
+            session_id: The session ID this run belongs to.
+            user_id: Optional user ID to associate with the run.
+            run_index: Optional run index for new runs.
+
+        Raises:
+            ValueError: If the run has no run_id.
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            row = build_single_run_row(
+                run=run,
+                session_id=session_id,
+                user_id=user_id,
+                run_index=run_index,
+            )
+
+            # Preserve the original run_index if the row already exists
+            existing = self._get_record("runs", row["run_id"])
+            if existing is not None and "run_index" in existing:
+                row["run_index"] = existing["run_index"]
+
+            index_key = self._runs_by_session_index_key(session_id)
+            run_key = generate_valkey_key(prefix=self.db_prefix, table_type="runs", key_id=row["run_id"])
+
+            pipeline = self._create_pipeline()
+            expiry = ExpirySet(ExpiryType.SEC, self.expire) if self.expire is not None else None
+            pipeline.set(run_key, serialize_data(row), expiry=expiry)
+            pipeline.zadd(index_key, {row["run_id"]: float(row.get("run_index") or 0)})
+            if self.expire is not None:
+                pipeline.expire(index_key, self.expire)
+            self._exec_pipeline(pipeline)
+
+            # Maintain field indexes for cross-session run queries
+            create_index_entries(
+                valkey_client=self.valkey_client,
+                prefix=self.db_prefix,
+                table_type="runs",
+                record_id=row["run_id"],
+                record_data=row,
+                index_fields=["session_id", "user_id", "agent_id", "team_id", "workflow_id", "run_type", "status"],
+            )
+        except Exception as e:
+            log_error(f"Exception upserting run into Valkey: {str(e)}")
+            raise e
+
+    def _get_session_run_rows(self, session_id: str) -> List[Dict[str, Any]]:
+        """Get the run rows for a session, ordered by run_index, in a single batched read."""
+        index_key = self._runs_by_session_index_key(session_id)
+        try:
+            run_ids: List[str] = [
+                m.decode("utf-8") if isinstance(m, bytes) else str(m)
+                for m in self.valkey_client.zrange(index_key, RangeByIndex(0, -1))
+            ]
+        except Exception:
+            run_ids = []
+
+        if not run_ids:
+            return []
+
+        pipeline = self._create_pipeline()
+        for run_id in run_ids:
+            pipeline.get(generate_valkey_key(prefix=self.db_prefix, table_type="runs", key_id=run_id))
+        results = self._exec_pipeline(pipeline)
+        if not results:
+            return []
+
+        rows: List[Dict[str, Any]] = []
+        for raw in results:
+            if raw is None or isinstance(raw, RequestError):
+                continue
+            raw_str = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+            if raw_str:
+                rows.append(deserialize_data(raw_str))
+
+        # ZRANGE breaks equal run_index scores lexicographically by run_id; sort so
+        # the order matches get_runs
+        rows.sort(key=lambda r: (r.get("run_index") or 0, r.get("created_at") or 0))
+        return rows
+
+    def _get_session_runs_data(self, session_id: str) -> List[Dict[str, Any]]:
+        """Get raw run_data dicts for a session, ordered by run_index."""
+        return [row["run_data"] for row in self._get_session_run_rows(session_id) if row.get("run_data") is not None]
+
+    def _get_sessions_runs_data(self, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
+        """Get raw run_data dicts for several sessions, grouped by session_id."""
+        return {sid: self._get_session_runs_data(sid) for sid in session_ids}
+
+    def _delete_session_runs(self, session_id: str) -> int:
+        """Delete every run row associated with a session (and the session's run index)."""
+        index_key = self._runs_by_session_index_key(session_id)
+        try:
+            run_ids: List[str] = [
+                m.decode("utf-8") if isinstance(m, bytes) else str(m)
+                for m in self.valkey_client.zrange(index_key, RangeByIndex(0, -1))
+            ]
+        except Exception:
+            run_ids = []
+
+        deleted = 0
+        for run_id in run_ids:
+            if self._delete_record(
+                table_type="runs",
+                record_id=run_id,
+                index_fields=["session_id", "user_id", "agent_id", "team_id", "workflow_id", "run_type", "status"],
+            ):
+                deleted += 1
+        # Drop the sorted-set itself
+        try:
+            self.valkey_client.delete([index_key])
+        except Exception:
+            pass
+        return deleted
+
+    def cleanup_legacy_runs_field(self, force: bool = False) -> bool:
+        """Unset the legacy ``runs`` field from session records in Valkey.
+
+        The v3.0.0 migration intentionally leaves the legacy ``runs`` field in
+        place on the session record as a backup. Call this once you have
+        verified the migration to reclaim the storage.
+
+        Args:
+            force: If True, unset the field even on sessions that still hold
+                non-null ``runs`` content (a sign that they were not migrated).
+                Defaults to False.
+
+        Returns:
+            True if any sessions were touched, False otherwise.
+        """
+        sessions = self._get_all_records("sessions")
+
+        if not force:
+            pending = sum(1 for s in sessions if s.get("runs"))
+            if pending > 0:
+                raise RuntimeError(
+                    f"Refusing to unset {self.session_table_name}.runs: {pending} session(s) still have "
+                    "non-null `runs` content. Run MigrationManager(db).up() first, or pass force=True."
+                )
+
+        touched = 0
+        for session in sessions:
+            if "runs" not in session:
+                continue
+            session.pop("runs", None)
+            self._store_record(
+                table_type="sessions",
+                record_id=session["session_id"],
+                data=session,
+            )
+            touched += 1
+        log_info(f"Unset runs on {touched} session record(s)")
+        return touched > 0
+
+    def get_run(
+        self, run_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]]]:
+        """Read a single run from Valkey."""
+        try:
+            row = self._get_record("runs", run_id)
+            if row is None:
+                return None
+            if not deserialize:
+                return row
+            return deserialize_run(row.get("run_type"), row["run_data"])
+        except Exception as e:
+            log_error(f"Exception reading run: {str(e)}")
+            raise e
+
+    def get_runs(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[RunStatus] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
+        """Get all runs matching the given filters.
+
+        Filters are applied in-memory after fetching candidate rows. When ``session_id``
+        is provided, only that session's runs are fetched (cheap, indexed by sorted set).
+        """
+        try:
+            # Fast path: filter by session_id uses the index
+            if session_id is not None:
+                rows: List[Dict[str, Any]] = self._get_session_run_rows(session_id)
+            else:
+                rows = self._get_all_records("runs")
+
+            conditions: Dict[str, Any] = {}
+            if user_id is not None:
+                conditions["user_id"] = user_id
+            if agent_id is not None:
+                conditions["agent_id"] = agent_id
+            if team_id is not None:
+                conditions["team_id"] = team_id
+            if workflow_id is not None:
+                conditions["workflow_id"] = workflow_id
+            if status is not None:
+                conditions["status"] = status.value if isinstance(status, RunStatus) else status
+            rows = apply_filters(records=rows, conditions=conditions)
+            total_count = len(rows)
+
+            if sort_by is None:
+                # Default: ordered by run_index then created_at
+                rows = sorted(rows, key=lambda r: (r.get("run_index") or 0, r.get("created_at") or 0))
+            else:
+                rows = apply_sorting(records=rows, sort_by=sort_by, sort_order=sort_order)
+
+            rows = apply_pagination(records=rows, limit=limit, page=page)
+
+            if not deserialize:
+                return rows, total_count
+            return [deserialize_run(r.get("run_type"), r["run_data"]) for r in rows]
+        except Exception as e:
+            log_error(f"Exception reading runs: {str(e)}")
+            raise e
+
+    def _scrub_run_ids_from_session_legacy_blob(self, session_id: str, run_ids: set) -> None:
+        """Remove ``run_ids`` from the given session's legacy ``runs`` field.
+
+        Partial-migration state: v3 migration copied runs into per-run keys but
+        preserved the legacy embedded blob as a backup. Deleting a run row
+        alone leaves the blob intact and ``merge_runs_table_with_legacy_blob``
+        resurrects it on the next read.
+        """
+        if not run_ids:
+            return
+        session = self._get_record("sessions", session_id)
+        if session is None:
+            return
+        legacy = session.get("runs")
+        if not isinstance(legacy, list):
+            return
+        kept = [r for r in legacy if not (isinstance(r, dict) and r.get("run_id") in run_ids)]
+        if len(kept) == len(legacy):
+            return
+        session["runs"] = kept
+        self._store_record("sessions", session_id, session)
+
+    def delete_run(self, run_id: str) -> bool:
+        """Delete a single run from Valkey (and its entry in the session's run index)."""
+        try:
+            row = self._get_record("runs", run_id)
+            if row is None:
+                return False
+            sid = row.get("session_id")
+            ok = self._delete_record(
+                table_type="runs",
+                record_id=run_id,
+                index_fields=["session_id", "user_id", "agent_id", "team_id", "workflow_id", "run_type", "status"],
+            )
+            if ok and sid:
+                try:
+                    self.valkey_client.zrem(self._runs_by_session_index_key(sid), [run_id])
+                except Exception:
+                    pass
+                self._scrub_run_ids_from_session_legacy_blob(sid, {run_id})
+            return ok
+        except Exception as e:
+            log_error(f"Error deleting run: {str(e)}")
+            raise e
+
+    def delete_runs(self, run_ids: List[str]) -> None:
+        """Delete all given runs."""
+        for run_id in run_ids:
+            self.delete_run(run_id)
+
     # -- Session methods --
 
     def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
@@ -384,6 +700,8 @@ class ValkeyDb(BaseDb):
                 record_id=session_id,
                 index_fields=["user_id", "agent_id", "team_id", "workflow_id", "session_type"],
             ):
+                # Cascade-delete runs
+                self._delete_session_runs(session_id)
                 log_debug(f"Successfully deleted session: {session_id}")
                 return True
             else:
@@ -423,6 +741,7 @@ class ValkeyDb(BaseDb):
             # Phase 2: Build delete pipeline
             delete_pipeline = self._create_pipeline()
             delete_count = 0
+            deleted_session_ids: List[str] = []
 
             for i, session_id in enumerate(session_ids):
                 raw = read_results[i] if read_results else None
@@ -447,9 +766,14 @@ class ValkeyDb(BaseDb):
 
                 delete_pipeline.delete([keys[i]])
                 delete_count += 1
+                deleted_session_ids.append(session_id)
 
             if delete_count > 0:
                 self._exec_pipeline(delete_pipeline)
+
+            # Cascade-delete runs for every session actually removed
+            for session_id in deleted_session_ids:
+                self._delete_session_runs(session_id)
 
             log_debug(f"Successfully deleted {delete_count} sessions")
 
@@ -463,6 +787,7 @@ class ValkeyDb(BaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Read a session from Valkey.
 
@@ -485,6 +810,14 @@ class ValkeyDb(BaseDb):
             # Apply filters
             if user_id is not None and session.get("user_id") != user_id:
                 return None
+
+            # Attach runs from the runs keys, merged with any legacy `runs` blob
+            runs_data = self._get_session_runs_data(session_id)
+            session["runs"] = merge_runs_table_with_legacy_blob(runs_data, session.get("runs"))
+            if runs_limit is not None:
+                # No query engine to push "last N" down: filter+slice in memory to
+                # match the SQL fast path (drop member/skip-status runs, then last N).
+                session["runs"] = filter_context_runs(session["runs"] or [])[-runs_limit:]
 
             if not deserialize:
                 return session
@@ -572,6 +905,11 @@ class ValkeyDb(BaseDb):
             sorted_sessions = apply_sorting(records=filtered_sessions, sort_by=sort_by, sort_order=sort_order)
             sessions = apply_pagination(records=sorted_sessions, limit=limit, page=page)
 
+            # Attach runs from the runs keys, merged with any legacy `runs` blob
+            runs_by_session = self._get_sessions_runs_data([s["session_id"] for s in sessions])
+            for s in sessions:
+                s["runs"] = merge_runs_table_with_legacy_blob(runs_by_session.get(s["session_id"], []), s.get("runs"))
+
             if not deserialize:
                 return sessions, len(filtered_sessions)
 
@@ -620,12 +958,17 @@ class ValkeyDb(BaseDb):
             session["session_data"]["session_name"] = session_name
             session["updated_at"] = int(time.time())
 
-            # Store updated session
-            success = self._store_record("sessions", session_id, session)
+            # Don't drop the runs field on rename; if it existed it stays. Persist without runs in v3 shape.
+            session_to_store = {k: v for k, v in session.items() if k != "runs"}
+            success = self._store_record("sessions", session_id, session_to_store)
             if not success:
                 return None
 
             log_debug(f"Renamed session with id '{session_id}' to '{session_name}'")
+
+            # Attach runs from the runs keys for the returned object
+            runs_data = self._get_session_runs_data(session_id)
+            session["runs"] = merge_runs_table_with_legacy_blob(runs_data, session.get("runs"))
 
             if not deserialize:
                 return session
@@ -651,7 +994,7 @@ class ValkeyDb(BaseDb):
             Exception: If any error occurs while upserting the session.
         """
         try:
-            session_dict = session.to_dict()
+            session_dict = session.to_dict(include_runs=False)
 
             existing = self._get_record(table_type="sessions", record_id=session.session_id)
             if (
@@ -669,7 +1012,6 @@ class ValkeyDb(BaseDb):
                     "team_id": session_dict.get("team_id"),
                     "workflow_id": session_dict.get("workflow_id"),
                     "user_id": session_dict.get("user_id"),
-                    "runs": session_dict.get("runs"),
                     "agent_data": session_dict.get("agent_data"),
                     "team_data": session_dict.get("team_data"),
                     "workflow_data": session_dict.get("workflow_data"),
@@ -679,20 +1021,7 @@ class ValkeyDb(BaseDb):
                     "created_at": session_dict.get("created_at") or int(time.time()),
                     "updated_at": int(time.time()),
                 }
-
-                success = self._store_record(
-                    table_type="sessions",
-                    record_id=session.session_id,
-                    data=data,
-                    index_fields=["user_id", "agent_id", "session_type"],
-                )
-                if not success:
-                    return None
-
-                if not deserialize:
-                    return data
-
-                return AgentSession.from_dict(data)
+                index_fields = ["user_id", "agent_id", "session_type"]
 
             elif isinstance(session, TeamSession):
                 data = {
@@ -702,7 +1031,6 @@ class ValkeyDb(BaseDb):
                     "team_id": session_dict.get("team_id"),
                     "workflow_id": None,
                     "user_id": session_dict.get("user_id"),
-                    "runs": session_dict.get("runs"),
                     "team_data": session_dict.get("team_data"),
                     "agent_data": None,
                     "workflow_data": None,
@@ -712,28 +1040,14 @@ class ValkeyDb(BaseDb):
                     "created_at": session_dict.get("created_at") or int(time.time()),
                     "updated_at": int(time.time()),
                 }
+                index_fields = ["user_id", "team_id", "session_type"]
 
-                success = self._store_record(
-                    table_type="sessions",
-                    record_id=session.session_id,
-                    data=data,
-                    index_fields=["user_id", "team_id", "session_type"],
-                )
-                if not success:
-                    return None
-
-                if not deserialize:
-                    return data
-
-                return TeamSession.from_dict(data)
-
-            else:
+            elif isinstance(session, WorkflowSession):
                 data = {
                     "session_id": session_dict.get("session_id"),
                     "session_type": SessionType.WORKFLOW.value,
                     "workflow_id": session_dict.get("workflow_id"),
                     "user_id": session_dict.get("user_id"),
-                    "runs": session_dict.get("runs"),
                     "workflow_data": session_dict.get("workflow_data"),
                     "session_data": session_dict.get("session_data"),
                     "metadata": session_dict.get("metadata"),
@@ -745,20 +1059,36 @@ class ValkeyDb(BaseDb):
                     "team_data": None,
                     "summary": None,
                 }
+                index_fields = ["user_id", "workflow_id", "session_type"]
 
-                success = self._store_record(
-                    table_type="sessions",
-                    record_id=session.session_id,
-                    data=data,
-                    index_fields=["user_id", "workflow_id", "session_type"],
-                )
-                if not success:
-                    return None
+            else:
+                raise ValueError(f"Invalid session type: {session.session_type}")
 
-                if not deserialize:
-                    return data
+            # Preserve the legacy `runs` field as a frozen backup. _store_record does
+            # a full SET (whole-record replace), and session.to_dict(include_runs=False)
+            # omits `runs`, so a bare write would silently erase any pre-v3 history
+            # that lives only in the legacy blob (upgrade-without-migration data loss).
+            # Only cleanup_legacy_runs_field() should drop it, explicitly.
+            if existing and existing.get("runs") is not None:
+                data["runs"] = existing["runs"]
 
-                return WorkflowSession.from_dict(data)
+            success = self._store_record(
+                table_type="sessions",
+                record_id=session.session_id,
+                data=data,
+                index_fields=index_fields,
+            )
+            if not success:
+                return None
+
+            # Runs are persisted separately via upsert_run by the caller (agent loop).
+            # Attach the in-memory runs for callers.
+            data["runs"] = [run if isinstance(run, dict) else run.to_dict() for run in session.runs or []]
+
+            if not deserialize:
+                return data
+
+            return deserialize_session(None, data)
 
         except Exception as e:
             log_error(f"Error upserting session: {str(e)}")
@@ -816,7 +1146,7 @@ class ValkeyDb(BaseDb):
             write_cmd_count = 0
 
             for session in valid_sessions:
-                session_dict = session.to_dict()
+                session_dict = session.to_dict(include_runs=False)
 
                 # Check user_id ownership
                 existing = existing_map.get(session.session_id)
@@ -835,7 +1165,6 @@ class ValkeyDb(BaseDb):
                         "team_id": session_dict.get("team_id"),
                         "workflow_id": session_dict.get("workflow_id"),
                         "user_id": session_dict.get("user_id"),
-                        "runs": session_dict.get("runs"),
                         "agent_data": session_dict.get("agent_data"),
                         "team_data": session_dict.get("team_data"),
                         "workflow_data": session_dict.get("workflow_data"),
@@ -854,7 +1183,6 @@ class ValkeyDb(BaseDb):
                         "team_id": session_dict.get("team_id"),
                         "workflow_id": None,
                         "user_id": session_dict.get("user_id"),
-                        "runs": session_dict.get("runs"),
                         "team_data": session_dict.get("team_data"),
                         "agent_data": None,
                         "workflow_data": None,
@@ -871,7 +1199,6 @@ class ValkeyDb(BaseDb):
                         "session_type": SessionType.WORKFLOW.value,
                         "workflow_id": session_dict.get("workflow_id"),
                         "user_id": session_dict.get("user_id"),
-                        "runs": session_dict.get("runs"),
                         "workflow_data": session_dict.get("workflow_data"),
                         "session_data": session_dict.get("session_data"),
                         "metadata": session_dict.get("metadata"),
@@ -884,6 +1211,14 @@ class ValkeyDb(BaseDb):
                         "summary": None,
                     }
                     index_fields = ["user_id", "workflow_id", "session_type"]
+
+                # Preserve the legacy `runs` field as a frozen backup. The pipeline
+                # SET replaces the whole record, and session.to_dict(include_runs=False)
+                # omits `runs`, so a bare write would erase any pre-v3 history that
+                # lives only in the legacy blob. Only cleanup_legacy_runs_field()
+                # should drop it, explicitly.
+                if existing and existing.get("runs") is not None:
+                    data["runs"] = existing["runs"]
 
                 key = generate_valkey_key(prefix=self.db_prefix, table_type="sessions", key_id=session.session_id)
                 expiry = ExpirySet(ExpiryType.SEC, self.expire) if self.expire is not None else None
@@ -906,6 +1241,11 @@ class ValkeyDb(BaseDb):
             for session, data, set_cmd_index in prepared:
                 if write_results is None or isinstance(write_results[set_cmd_index], RequestError):
                     continue
+
+                # Runs are persisted separately via upsert_run by the caller.
+                # Attach the in-memory runs for callers.
+                data["runs"] = [run if isinstance(run, dict) else run.to_dict() for run in session.runs or []]
+
                 if not deserialize:
                     results.append(data)
                     continue
@@ -1411,7 +1751,25 @@ class ValkeyDb(BaseDb):
                     if end_timestamp is not None and created_at > end_timestamp:
                         continue
                     filtered_sessions.append(session)
-                return filtered_sessions
+                all_sessions = filtered_sessions
+
+            # Attach lightweight run info (model + provider) per session. For Valkey, we
+            # walk the per-session sorted-set index and read each run row — cheap for
+            # typical session sizes, and `calculate_date_metrics` only needs len(runs)
+            # plus run["model"] / run["model_provider"].
+            runs_by_session = self._get_sessions_runs_data(
+                [s["session_id"] for s in all_sessions if s.get("session_id")]
+            )
+            for session in all_sessions:
+                sid = session.get("session_id")
+                if not sid:
+                    continue
+                lightweight = [
+                    {"model": rd.get("model"), "model_provider": rd.get("model_provider")}
+                    for rd in runs_by_session.get(sid, [])
+                ]
+                if lightweight or not session.get("runs"):
+                    session["runs"] = lightweight
 
             return all_sessions
 
@@ -2323,6 +2681,7 @@ class ValkeyDb(BaseDb):
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
         filter_expr: Optional[Dict[str, Any]] = None,
+        group_by: Literal["session", "agent", "team", "workflow", "endpoint"] = "session",
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 
@@ -2336,12 +2695,19 @@ class ValkeyDb(BaseDb):
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
             filter_expr: Serialized FilterExpr dict to apply on trace fields.
+            group_by: Only the default "session" grouping is supported by this backend.
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
                 Each dict contains: session_id, user_id, agent_id, team_id, total_traces,
                 first_trace_at, last_trace_at.
         """
+        if group_by != "session":
+            raise NotImplementedError(
+                f"get_trace_stats with group_by={group_by!r} is not supported by {self.__class__.__name__}. "
+                "Only the default 'session' grouping is available."
+            )
+
         try:
             from agno.db.filter_converter import TRACE_COLUMNS
 

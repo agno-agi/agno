@@ -102,6 +102,9 @@ class HumanReview:
     user_input_message: Optional[str] = None
     user_input_schema: Optional[List[Dict[str, Any]]] = None
 
+    # Route selection (Router only): allow the user to pick more than one route
+    allow_multiple_selections: bool = False
+
     # Post-execution output review (Step, Router only)
     requires_output_review: Union[bool, Any] = False  # Union[bool, Callable[[StepOutput], bool]]
     output_review_message: Optional[str] = None
@@ -133,6 +136,7 @@ class HumanReview:
             "requires_user_input": self.requires_user_input,
             "user_input_message": self.user_input_message,
             "user_input_schema": self.user_input_schema,
+            "allow_multiple_selections": self.allow_multiple_selections,
             "requires_output_review": self.requires_output_review
             if isinstance(self.requires_output_review, bool)
             else True,
@@ -155,6 +159,7 @@ class HumanReview:
             requires_user_input=data.get("requires_user_input", False),
             user_input_message=data.get("user_input_message"),
             user_input_schema=data.get("user_input_schema"),
+            allow_multiple_selections=data.get("allow_multiple_selections", False),
             requires_output_review=data.get("requires_output_review", False),
             output_review_message=data.get("output_review_message"),
             requires_iteration_review=data.get("requires_iteration_review", False),
@@ -1145,7 +1150,9 @@ class StepRequirement:
         # Executor HITL fields
         if self.requires_executor_input:
             result["requires_executor_input"] = self.requires_executor_input
-            result["executor_requirements"] = self.executor_requirements
+            result["executor_requirements"] = [
+                req.to_dict() if hasattr(req, "to_dict") else req for req in (self.executor_requirements or [])
+            ]
             result["executor_id"] = self.executor_id
             result["executor_name"] = self.executor_name
             result["executor_run_id"] = self.executor_run_id
