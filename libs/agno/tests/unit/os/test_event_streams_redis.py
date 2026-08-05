@@ -743,3 +743,80 @@ class TestClusterRejection:
     def test_standalone_client_accepted(self):
         stream = RedisEventStream(fakeredis.FakeAsyncRedis(), block_ms=100)
         assert stream is not None
+
+
+class TestIdleProbeResilience:
+    """Phase-7 item 28: the status probe on the idle path was the one
+    unguarded call in the tail loop - a Redis blip there escaped the loop
+    (client sees an error close) instead of riding through like the same
+    outage one line earlier at the XREAD. And when a connection fails FAST,
+    block_ms never paces the loop, so the shared-counter backoff is what
+    keeps an outage from becoming a busy loop."""
+
+    @pytest.mark.asyncio
+    async def test_probe_blip_does_not_kill_the_tail(self, stream: RedisEventStream):
+        await stream.register_run("r1", RunStatus.running)
+        await stream.add_event("r1", make_event("r1", "a"))
+
+        real_get = stream._redis.get
+        blips = {"left": 2}
+
+        async def blipping_get(key):
+            if blips["left"] > 0:
+                blips["left"] -= 1
+                from redis.exceptions import ConnectionError as RedisConnectionError
+
+                raise RedisConnectionError("blip")
+            return await real_get(key)
+
+        stream._redis.get = blipping_get
+
+        received: list = []
+        done = asyncio.Event()
+
+        async def consume():
+            async for idx, _sse in stream.tail("r1"):
+                received.append(idx)
+            done.set()
+
+        consumer = asyncio.create_task(consume())
+        await asyncio.sleep(0.8)  # several idle passes hit the blipping probe
+        assert not done.is_set(), "a transient probe failure must not close the tail"
+
+        await stream.add_event("r1", make_event("r1", "b"))
+        await asyncio.sleep(0.3)
+        await stream.complete_run("r1", RunStatus.completed)
+        await asyncio.wait_for(done.wait(), timeout=5)
+        assert received == [0, 1], f"the tail must survive the blip and deliver later events, got {received}"
+        await consumer
+
+    @pytest.mark.asyncio
+    async def test_full_outage_is_paced_not_busy_looped(self, stream: RedisEventStream):
+        from redis.exceptions import ConnectionError as RedisConnectionError
+
+        await stream.register_run("r1", RunStatus.running)
+        calls = {"xread": 0}
+
+        async def dead_xread(*args, **kwargs):
+            calls["xread"] += 1
+            raise RedisConnectionError("redis down")
+
+        async def dead_get(*args, **kwargs):
+            raise RedisConnectionError("redis down")
+
+        stream._redis.xread = dead_xread
+        stream._redis.get = dead_get
+
+        async def consume():
+            async for _ in stream.tail("r1"):
+                pass
+
+        consumer = asyncio.create_task(consume())
+        await asyncio.sleep(1.0)
+        consumer.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await consumer
+        assert calls["xread"] <= 12, (
+            f"{calls['xread']} XREAD attempts in 1s of full outage - the fast-failing connection "
+            "bypassed block_ms pacing and the loop is spinning hot"
+        )

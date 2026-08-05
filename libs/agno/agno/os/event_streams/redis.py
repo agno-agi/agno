@@ -467,19 +467,39 @@ class RedisEventStream(BaseEventStream):
         from redis.exceptions import ConnectionError as RedisConnectionError
         from redis.exceptions import TimeoutError as RedisTimeoutError
 
+        # ONE consecutive-failure counter shared by the XREAD and the status
+        # probe: they are the same outage, and pacing must cover the pair.
+        # When the connection fails FAST, block_ms never paces the loop - so
+        # the backoff below is what keeps a Redis outage from turning every
+        # tail into a busy loop. Capped, and reset on the first success.
+        consecutive_failures = 0
         while True:
             try:
                 # redis-py types the XREAD response too loosely to destructure cleanly
                 response: Any = await self._redis.xread({stream_key: from_id}, block=self._block_ms, count=100)
+                consecutive_failures = 0
             except (RedisTimeoutError, RedisConnectionError):
                 # A client-level socket_timeout below block_ms (redis-py >= 8
                 # defaults Redis(...) to 5s) or a transient outage must not
                 # kill the tail: treat as an idle pass and re-check status.
                 response = None
+                consecutive_failures += 1
             if not response:
                 # Idle: producer may have died without a sentinel, or the run
                 # may be unknown/terminal. Never block forever.
-                status = await self.get_run_status(run_id)
+                try:
+                    status = await self.get_run_status(run_id)
+                    consecutive_failures = 0
+                except (RedisTimeoutError, RedisConnectionError):
+                    # The SAME outage the XREAD guard above absorbs - it must
+                    # not escape the loop here, and it must not read as
+                    # "unknown run" either (status None closes a live tail).
+                    # Skip the terminal decision entirely this pass.
+                    consecutive_failures += 1
+                    await asyncio.sleep(min(0.1 * (2 ** min(consecutive_failures, 6)), 5.0))
+                    continue
+                if consecutive_failures:
+                    await asyncio.sleep(min(0.1 * (2 ** min(consecutive_failures, 6)), 5.0))
                 if status is None or status in _TERMINAL_STATUSES:
                     return
                 # Dead-producer bound: only the producing process refreshes the
