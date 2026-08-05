@@ -87,6 +87,9 @@ class StudioTools(Toolkit):
         teams_list: Same as ``agents_list`` but for teams.
         workflows_list: Same as ``agents_list`` but for workflows.
         default_model_id: Model id to use when a caller omits one.
+        default_num_history_runs: History depth for created agents when a
+            caller omits ``num_history_runs``. None lets Agent's own default
+            apply.
         agents: Expose agent operations. Defaults to True.
         teams: Expose team operations. Defaults to False (see module docstring
             for auto-enable rules).
@@ -112,6 +115,7 @@ class StudioTools(Toolkit):
         teams_list: Optional[List["Team"]] = None,
         workflows_list: Optional[List["Workflow"]] = None,
         default_model_id: Optional[str] = None,
+        default_num_history_runs: Optional[int] = None,
         agents: Optional[bool] = None,
         teams: Optional[bool] = None,
         workflows: Optional[bool] = None,
@@ -125,6 +129,7 @@ class StudioTools(Toolkit):
         self.teams_list = teams_list
         self.workflows_list = workflows_list
         self.default_model_id = default_model_id
+        self.default_num_history_runs = default_num_history_runs
 
         self.enable_agents, self.enable_teams, self.enable_workflows = _resolve_flags(
             agents=agents,
@@ -273,6 +278,8 @@ class StudioTools(Toolkit):
             "are exact and case-sensitive -- do NOT guess.",
             "Create: create_agent/create_team/create_workflow. When the user mentions specific "
             "tools, you MUST include ALL of those names in tool_names; do not silently drop any.",
+            "Created agents remember the session by default; pass add_history_to_context=False "
+            "only for stateless agents.",
             "Edit: ALWAYS call get_agent/get_team/get_workflow first to read the current state, "
             "then call edit_agent/edit_team/edit_workflow with only the fields that change.",
         ]
@@ -797,6 +804,8 @@ class StudioTools(Toolkit):
                 "instructions": getattr(agent, "instructions", None),
                 "description": getattr(agent, "description", None),
                 "tools": self._normalize_tool_names(_summarize_tools(getattr(agent, "tools", None))),
+                "add_history_to_context": getattr(agent, "add_history_to_context", None),
+                "num_history_runs": getattr(agent, "num_history_runs", None),
             },
             default=str,
         )
@@ -873,6 +882,8 @@ class StudioTools(Toolkit):
         tool_names: Optional[List[str]] = None,
         db_id: Optional[str] = None,
         description: Optional[str] = None,
+        add_history_to_context: bool = True,
+        num_history_runs: Optional[int] = None,
     ) -> str:
         """Create a new agent and persist it as a published component.
 
@@ -884,9 +895,14 @@ class StudioTools(Toolkit):
                 (see list_tools). Include EVERY tool the user mentioned.
             db_id (Optional[str]): Database id from the registry. Uses the default if omitted.
             description (Optional[str]): Optional human-readable description.
+            add_history_to_context (bool): Include prior turns of the session so the
+                agent remembers the conversation. Defaults to True; pass False for a
+                stateless agent.
+            num_history_runs (Optional[int]): How many prior runs to include when
+                history is on. Omit for the default.
 
         Returns:
-            str: JSON with {status, id, name, model_id, tools, db_version}.
+            str: JSON with {status, id, name, model_id, tools, add_history_to_context, db_version}.
         """
         from agno.agent.agent import Agent
 
@@ -909,6 +925,8 @@ class StudioTools(Toolkit):
                 instructions=instructions,
                 db=db,
                 description=description,
+                add_history_to_context=add_history_to_context,
+                num_history_runs=num_history_runs if num_history_runs is not None else self.default_num_history_runs,
             )
 
             version = _persist_only(agent, db)
@@ -920,6 +938,7 @@ class StudioTools(Toolkit):
                     "name": name,
                     "model_id": getattr(model, "id", None),
                     "tools": _summarize_tools(tools),
+                    "add_history_to_context": add_history_to_context,
                     "db_version": version,
                 }
             )
@@ -1059,6 +1078,8 @@ class StudioTools(Toolkit):
         model_id: Optional[str] = None,
         tool_names: Optional[List[str]] = None,
         description: Optional[str] = None,
+        add_history_to_context: Optional[bool] = None,
+        num_history_runs: Optional[int] = None,
     ) -> str:
         """Edit an agent.
 
@@ -1073,6 +1094,9 @@ class StudioTools(Toolkit):
             model_id (Optional[str]): New model id from the registry. Omit to keep.
             tool_names (Optional[List[str]]): New tool list (replaces existing). Omit to keep.
             description (Optional[str]): New description. Omit to keep.
+            add_history_to_context (Optional[bool]): Whether the agent sees prior turns
+                of the session. Omit to keep.
+            num_history_runs (Optional[int]): New history depth. Omit to keep.
         """
         if self.db is None:
             return json.dumps({"error": "StudioTools has no db configured; cannot edit components."})
@@ -1100,6 +1124,13 @@ class StudioTools(Toolkit):
                 agent.model = model
             if tool_names is not None:
                 agent.tools = self._resolve_tools(tool_names) or None
+            if add_history_to_context is not None:
+                agent.add_history_to_context = add_history_to_context
+            if num_history_runs is not None:
+                agent.num_history_runs = num_history_runs
+                # Mirror Agent.__init__'s resolution: num_history_runs wins
+                # over num_history_messages.
+                agent.num_history_messages = None
 
             result = self._save_edit(agent)
             log_debug(f"StudioTools edited agent id={agent_id} result={result}")
@@ -1755,6 +1786,8 @@ class StudioTools(Toolkit):
         tool_names: Optional[List[str]] = None,
         db_id: Optional[str] = None,
         description: Optional[str] = None,
+        add_history_to_context: bool = True,
+        num_history_runs: Optional[int] = None,
     ) -> str:
         """Async variant of create_agent."""
         return await self._run_sync_tool(
@@ -1765,6 +1798,8 @@ class StudioTools(Toolkit):
             tool_names=tool_names,
             db_id=db_id,
             description=description,
+            add_history_to_context=add_history_to_context,
+            num_history_runs=num_history_runs,
         )
 
     async def acreate_team(
@@ -1810,6 +1845,8 @@ class StudioTools(Toolkit):
         model_id: Optional[str] = None,
         tool_names: Optional[List[str]] = None,
         description: Optional[str] = None,
+        add_history_to_context: Optional[bool] = None,
+        num_history_runs: Optional[int] = None,
     ) -> str:
         """Async variant of edit_agent."""
         return await self._run_sync_tool(
@@ -1819,6 +1856,8 @@ class StudioTools(Toolkit):
             model_id=model_id,
             tool_names=tool_names,
             description=description,
+            add_history_to_context=add_history_to_context,
+            num_history_runs=num_history_runs,
         )
 
     async def aedit_team(

@@ -353,6 +353,52 @@ class TestCreateAgent:
         assert out["status"] == "created"
         assert db.get_component("async-agent") is not None
 
+    def test_history_on_by_default(self, studio, db):
+        out = _loads(studio.create_agent(name="mem", instructions="i", model_id="gpt-5.4"))
+        assert out["add_history_to_context"] is True
+
+        config = db.get_config("mem")["config"]
+        assert config["add_history_to_context"] is True
+        assert config["num_history_runs"] == 3  # Agent.__init__ normalization
+
+    def test_stateless_opt_out_omits_history_from_config(self, studio, db):
+        out = _loads(
+            studio.create_agent(name="stateless", instructions="i", model_id="gpt-5.4", add_history_to_context=False)
+        )
+        assert out["add_history_to_context"] is False
+
+        # to_dict omits falsy add_history_to_context, so the key is absent.
+        config = db.get_config("stateless")["config"]
+        assert "add_history_to_context" not in config
+
+    def test_explicit_num_history_runs_round_trips(self, studio, db):
+        studio.create_agent(name="deep", instructions="i", model_id="gpt-5.4", num_history_runs=10)
+
+        config = db.get_config("deep")["config"]
+        assert config["num_history_runs"] == 10
+
+        agent = studio._load_agent_from_db("deep")
+        assert agent.add_history_to_context is True
+        assert agent.num_history_runs == 10
+
+    def test_toolkit_default_num_history_runs_applies(self, registry, db):
+        tool = StudioTools(registry=registry, db=db, default_num_history_runs=5)
+        tool.create_agent(name="five", instructions="i", model_id="gpt-5.4")
+
+        config = db.get_config("five")["config"]
+        assert config["num_history_runs"] == 5
+
+    @pytest.mark.asyncio
+    async def test_async_create_agent_stateless(self, studio, db):
+        out = _loads(
+            await studio.acreate_agent(
+                name="async-stateless", instructions="i", model_id="gpt-5.4", add_history_to_context=False
+            )
+        )
+        assert out["add_history_to_context"] is False
+        config = db.get_config("async-stateless")["config"]
+        assert "add_history_to_context" not in config
+
 
 class TestToolNameResolution:
     """Multiple MCP servers in one registry must stay independently addressable."""
@@ -641,6 +687,39 @@ class TestEditAgent:
         draft = _loads(studio_versioned.get_version("tutor", version=out["draft_version"]))
         assert draft["config"]["instructions"] == "new instructions"
         assert draft["config"]["description"] == "new description"
+
+    def test_edit_turns_history_off_and_keeps_other_fields(self, studio):
+        self._create(studio)
+        out = _loads(studio.edit_agent(agent_id="tutor", add_history_to_context=False))
+        assert out["status"] == "edited"
+
+        got = _loads(studio.get_agent("tutor"))
+        assert got["add_history_to_context"] is False
+        assert got["instructions"] == "orig"
+        assert got["tools"] == ["calculator"]
+
+    def test_edit_num_history_runs_only_keeps_history_on(self, studio):
+        self._create(studio)
+        _loads(studio.edit_agent(agent_id="tutor", num_history_runs=7))
+
+        got = _loads(studio.get_agent("tutor"))
+        assert got["add_history_to_context"] is True  # untouched from create
+        assert got["num_history_runs"] == 7
+
+    def test_history_edit_accumulates_in_same_draft(self, studio_versioned):
+        self._create(studio_versioned)
+        studio_versioned.edit_agent(agent_id="tutor", add_history_to_context=False)
+        out = _loads(studio_versioned.edit_agent(agent_id="tutor", description="new description"))
+
+        draft = _loads(studio_versioned.get_version("tutor", version=out["draft_version"]))
+        assert "add_history_to_context" not in draft["config"]  # history off survives edit 2
+        assert draft["config"]["description"] == "new description"
+
+    def test_get_agent_reports_history_settings(self, studio):
+        self._create(studio)
+        got = _loads(studio.get_agent("tutor"))
+        assert got["add_history_to_context"] is True
+        assert got["num_history_runs"] == 3
 
     def test_edit_unknown_agent_returns_error(self, studio):
         out = _loads(studio.edit_agent(agent_id="ghost", instructions="x"))
