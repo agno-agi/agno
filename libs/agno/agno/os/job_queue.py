@@ -788,7 +788,9 @@ class QueueWorker:
                 workflow_run.content = workflow_run.content or error
                 workflow_session.upsert_run(run=workflow_run)
                 if component._has_async_db():
-                    await component.asave_run(run=workflow_run, session_id=job["session_id"], user_id=job.get("user_id"))
+                    await component.asave_run(
+                        run=workflow_run, session_id=job["session_id"], user_id=job.get("user_id")
+                    )
                     await component.asave_session(session=workflow_session)
                 else:
                     component.save_run(run=workflow_run, session_id=job["session_id"], user_id=job.get("user_id"))
@@ -884,7 +886,9 @@ class QueueWorker:
                 workflow_run.status = RunStatus.paused
                 workflow_session.upsert_run(run=workflow_run)
                 if component._has_async_db():
-                    await component.asave_run(run=workflow_run, session_id=job["session_id"], user_id=job.get("user_id"))
+                    await component.asave_run(
+                        run=workflow_run, session_id=job["session_id"], user_id=job.get("user_id")
+                    )
                 else:
                     component.save_run(run=workflow_run, session_id=job["session_id"], user_id=job.get("user_id"))
                 log_info(f"Job queue: restored run row {job['id']} ERROR -> PAUSED for continuation re-drive")

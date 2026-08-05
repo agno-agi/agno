@@ -4542,9 +4542,7 @@ def _persist_member_runs_for_team_run(team: "Team", session: TeamSession, team_r
             log_debug(f"Failed to persist member run {getattr(member_run, 'run_id', None)}: {e}")
 
 
-async def _apersist_member_runs_for_team_run(
-    team: "Team", session: TeamSession, team_run_id: Optional[str]
-) -> None:
+async def _apersist_member_runs_for_team_run(team: "Team", session: TeamSession, team_run_id: Optional[str]) -> None:
     from agno.team._session import asave_run
 
     for idx, member_run in _iter_member_runs_for_team_run(session, team_run_id):

@@ -4535,11 +4535,19 @@ class AsyncPostgresDb(AsyncBaseDb):
                         return RunPersistOutcome.MISSING
                     run = dict(row[0])
                     stored_attempt = run.get("queue_attempt")
-                    if expected_attempt is not None and stored_attempt is not None and stored_attempt > expected_attempt:
+                    if (
+                        expected_attempt is not None
+                        and stored_attempt is not None
+                        and stored_attempt > expected_attempt
+                    ):
                         return RunPersistOutcome.STALE_ATTEMPT  # zombie writer fenced out
                     stored_status = str(run.get("status") or row[1] or "").lower()
                     incoming_status = str(fields.get("status") or "").lower()
-                    if stored_status in ("completed", "cancelled") and incoming_status and incoming_status != stored_status:
+                    if (
+                        stored_status in ("completed", "cancelled")
+                        and incoming_status
+                        and incoming_status != stored_status
+                    ):
                         return RunPersistOutcome.TERMINAL_REFUSED  # terminal row wins
                     run.update(fields)
                     if content_if_absent is not None and not run.get("content"):

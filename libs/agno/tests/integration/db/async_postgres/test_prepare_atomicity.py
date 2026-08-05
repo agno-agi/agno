@@ -38,9 +38,7 @@ def db() -> AsyncPostgresDb:
     # creation time, so a shared default runs table would reference a
     # previous test's dropped session table
     suffix = uuid.uuid4().hex[:8]
-    return AsyncPostgresDb(
-        db_url=DB_URL, session_table=f"test_prep_{suffix}", runs_table=f"test_prep_runs_{suffix}"
-    )
+    return AsyncPostgresDb(db_url=DB_URL, session_table=f"test_prep_{suffix}", runs_table=f"test_prep_runs_{suffix}")
 
 
 @pytest.fixture(autouse=True)
