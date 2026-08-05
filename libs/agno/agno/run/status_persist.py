@@ -153,18 +153,23 @@ async def apersist_run_transition(
     # Fallback: fresh-read + whole-session save (narrows, does not close, the
     # concurrent-write window - see module docstring)
     if component_type == "agent":
-        from agno.agent._session import asave_session
+        from agno.agent._session import asave_run, asave_session
         from agno.agent._storage import aread_or_create_session
 
         session = await aread_or_create_session(component, session_id=session_id, user_id=user_id)
         session.upsert_run(run=run_response)
+        # v3 substrate: asave_session writes ONLY the session row - the run
+        # itself persists via the O(1) per-run save
+        await asave_run(component, run=run_response, session_id=session_id, user_id=user_id)
         await asave_session(component, session=session)
     elif component_type == "team":
+        from agno.team._session import asave_run as team_asave_run
         from agno.team._session import asave_session as team_asave_session
         from agno.team._storage import _aread_or_create_session
 
         team_session = await _aread_or_create_session(component, session_id=session_id, user_id=user_id)
         team_session.upsert_run(run_response=run_response)
+        await team_asave_run(component, run=run_response, session_id=session_id, user_id=user_id)
         await team_asave_session(component, session=team_session)
     elif component_type == "workflow":
         # Read-only fetch first: _aload_or_create_session(session_state=None)
@@ -177,6 +182,8 @@ async def apersist_run_transition(
             )
         workflow_session.upsert_run(run=run_response)
         if component._has_async_db():
+            await component.asave_run(run=run_response, session_id=session_id, user_id=user_id)
             await component.asave_session(session=workflow_session)
         else:
+            component.save_run(run=run_response, session_id=session_id, user_id=user_id)
             component.save_session(session=workflow_session)

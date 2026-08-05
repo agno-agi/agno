@@ -34,7 +34,13 @@ pytestmark = pytest.mark.skipif(not _pg_available(), reason="Postgres not availa
 
 @pytest.fixture()
 def db() -> AsyncPostgresDb:
-    return AsyncPostgresDb(db_url=DB_URL, session_table=f"test_prep_{uuid.uuid4().hex[:8]}")
+    # Unique RUNS table too: its FK binds to the session table name at
+    # creation time, so a shared default runs table would reference a
+    # previous test's dropped session table
+    suffix = uuid.uuid4().hex[:8]
+    return AsyncPostgresDb(
+        db_url=DB_URL, session_table=f"test_prep_{suffix}", runs_table=f"test_prep_runs_{suffix}"
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -44,6 +50,8 @@ def cleanup_table(db):
 
     engine = sqlalchemy.create_engine(DB_URL)
     with engine.begin() as conn:
+        # Runs first: it FKs the session table
+        conn.execute(sqlalchemy.text(f'DROP TABLE IF EXISTS {db.db_schema}."{db.runs_table_name}"'))
         conn.execute(sqlalchemy.text(f'DROP TABLE IF EXISTS {db.db_schema}."{db.session_table_name}"'))
     engine.dispose()
 
@@ -51,17 +59,26 @@ def cleanup_table(db):
 async def read_runs(db: AsyncPostgresDb, session_id: str):
     from sqlalchemy import select
 
-    table = await db._get_table(table_type="sessions")
+    runs_table = await db._get_table(table_type="runs")
     async with db.async_session_factory() as sess:
-        row = (await sess.execute(select(table.c.runs).where(table.c.session_id == session_id))).fetchone()
-        return list(row[0]) if row is not None and row[0] else []
+        rows = (
+            await sess.execute(
+                select(runs_table.c.run_data)
+                .where(runs_table.c.session_id == session_id)
+                .order_by(runs_table.c.run_index)
+            )
+        ).fetchall()
+        return [dict(r[0]) for r in rows]
 
 
 async def worker_completes_run(db: AsyncPostgresDb, session_id: str, run_id: str) -> None:
-    """Simulate the racing worker: session row created with the run already
-    COMPLETED (claim + execute + terminal save, all inside the accepting
-    request's read-save window)."""
+    """Simulate the racing worker on the v3 substrate: session row plus a
+    COMPLETED run in the runs table (claim + execute + terminal save, all
+    inside the accepting request's read window)."""
+    import time as _time
+
     table = await db._get_table(table_type="sessions", create_table_if_not_found=True)
+    runs_table = await db._get_table(table_type="runs", create_table_if_not_found=True)
     async with db.async_session_factory() as sess:
         async with sess.begin():
             await sess.execute(
@@ -69,8 +86,19 @@ async def worker_completes_run(db: AsyncPostgresDb, session_id: str, run_id: str
                     session_id=session_id,
                     session_type="agent",
                     agent_id="prep-agent",
-                    runs=[{"run_id": run_id, "status": "COMPLETED", "content": "done"}],
-                    created_at=int(time.time()),
+                    created_at=int(_time.time()),
+                )
+            )
+            await sess.execute(
+                runs_table.insert().values(
+                    run_id=run_id,
+                    session_id=session_id,
+                    run_type="agent",
+                    agent_id="prep-agent",
+                    status="COMPLETED",
+                    run_index=0,
+                    run_data={"run_id": run_id, "status": "COMPLETED", "content": "done"},
+                    created_at=int(_time.time()),
                 )
             )
 
@@ -145,7 +173,7 @@ class TestInsertSessionIfAbsentContract:
     def test_insert_then_decline_sync(self, db):
         from agno.session import AgentSession
 
-        sync_db = PostgresDb(db_url=DB_URL, session_table=db.session_table_name)
+        sync_db = PostgresDb(db_url=DB_URL, session_table=db.session_table_name, runs_table=db.runs_table_name)
         sid = f"s-{uuid.uuid4().hex[:8]}"
         session = AgentSession(session_id=sid, agent_id="a1", runs=[], created_at=int(time.time()))
         assert sync_db.insert_session_if_absent(session) is True

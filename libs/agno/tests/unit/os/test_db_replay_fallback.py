@@ -104,8 +104,10 @@ class TestResumeEndpointHonorsFloor:
         )
         import time
 
-        session = AgentSession(session_id="s-replay", agent_id="qa-agent", runs=[run], created_at=int(time.time()))
+        session = AgentSession(session_id="s-replay", agent_id="qa-agent", created_at=int(time.time()))
         db.upsert_session(session)
+        # v3 substrate: runs persist via the per-run save, not the session row
+        db.upsert_run(run=run, session_id="s-replay")
         return TestClient(app, raise_server_exceptions=False)
 
     def test_resume_with_floor_replays_only_missed_events_with_real_indices(self, harness):

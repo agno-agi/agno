@@ -7911,6 +7911,8 @@ async def _acontinue_run_background_stream(
     if persist_run is not None:
         persist_run.status = RunStatus.pending
         team_session.upsert_run(run_response=persist_run)
+        # v3 substrate: the run persists via the O(1) per-run save
+        await asave_run(team, run=persist_run, session_id=session_id, user_id=user_id)
     await asave_session(team, session=team_session)
 
     # Pre-register with the event buffer so reconnecting clients can attach and

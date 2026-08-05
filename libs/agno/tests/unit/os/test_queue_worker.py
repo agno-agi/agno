@@ -51,8 +51,13 @@ def _stub_run_row_persist(monkeypatch: pytest.MonkeyPatch):
     async def fake_save(component, session=None):
         pass
 
+    async def fake_save_run(component, run=None, session_id=None, user_id=None, run_index=None):
+        pass
+
     monkeypatch.setattr("agno.agent._storage.aread_or_create_session", fake_read)
     monkeypatch.setattr("agno.agent._session.asave_session", fake_save)
+    # v3 substrate: the fallbacks persist the run via asave_run too
+    monkeypatch.setattr("agno.agent._session.asave_run", fake_save_run)
 
 
 def make_config(**overrides: Any) -> QueueConfig:
@@ -1248,6 +1253,13 @@ class RecoverableFakeWorkflow:
     async def asave_session(self, session: Any = None) -> None:
         self.saves.append(session)
 
+    async def asave_run(self, run: Any = None, session_id: Any = None, user_id: Any = None) -> None:
+        # v3 substrate: the fallbacks persist the run via the per-run save
+        self.saves.append(run)
+
+    def save_run(self, run: Any = None, session_id: Any = None, user_id: Any = None) -> None:
+        self.saves.append(run)
+
     async def acontinue_run(self, **kwargs: Any) -> SimpleNamespace:
         self.continue_calls.append(kwargs)
         if self.run.status != RunStatus.paused:
@@ -1717,13 +1729,16 @@ class TestForegroundCancelPersistGuard:
         # Workflow (bound method invoked with a duck-typed self)
         wf_saves: list = []
 
-        async def wf_asave(session=None):
-            wf_saves.append(session)
+        async def wf_apersist(session=None, run=None):
+            wf_saves.append(run)
 
+        # v3 substrate: the workflow helper persists via
+        # _apersist_session_and_run (session + run in one call), no longer
+        # asave_session - the guard semantics under test are unchanged
         wf_self = SimpleNamespace(
             _update_session_metrics=lambda session=None, workflow_run_response=None: None,
             _has_async_db=lambda: True,
-            asave_session=wf_asave,
+            _apersist_session_and_run=wf_apersist,
         )
         wf_session = SimpleNamespace(upsert_run=lambda run=None: None)
         helper = Workflow._persist_cancelled_run_in_background

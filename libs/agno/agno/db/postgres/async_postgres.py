@@ -4500,89 +4500,62 @@ class AsyncPostgresDb(AsyncBaseDb):
         user_id: Optional[str] = None,
         content_if_absent: Optional[str] = None,
     ) -> "RunPersistOutcome":
-        """Atomically patch fields of ONE run inside the session's runs list.
-
-        Row-locked read-modify-write (SELECT ... FOR UPDATE), so concurrent
-        status transitions on different runs of the same session can no longer
-        clobber each other - the fix the fresh-read mitigation only narrowed.
+        """Atomically patch fields of ONE run - ported to the denormalized
+        runs table (v3.0). Same signature and typed-outcome contract as the
+        session-JSON original; the implementation is now a single row-locked
+        UPDATE on agno_runs instead of a session-blob rewrite, which is the
+        shape the P1 fencing design always wanted.
 
         Attempt fencing: when ``expected_attempt`` is given, the write is
         rejected if the stored run carries a NEWER ``queue_attempt`` (a
-        reclaimed job's later attempt owns the row; a zombie's stale write is
-        discarded). The incoming attempt is stamped onto the run.
-
-        Returns a typed RunPersistOutcome: UPDATED (patched), MISSING (no
-        session/run row - the caller's fallback may create it),
-        STALE_ATTEMPT (fence rejection, final), TERMINAL_REFUSED (a
-        completed/cancelled row wins, final). Never collapses exceptions
-        into an outcome: a DB failure raises, so it can never be mistaken
-        for a fallback-permitting result.
+        reclaimed job's later attempt owns the row). Terminal guard: a
+        completed/cancelled run is never rewritten to a different status.
+        The indexed ``status`` column is kept in sync with run_data.
+        Exceptions PROPAGATE - a DB failure must never read as a
+        fallback-permitting outcome.
         """
         from agno.run.status_persist import RunPersistOutcome
 
         try:
-            table = await self._get_table(table_type="sessions")
-            if table is None:
-                # No sessions table yet: no row exists; the fallback's
-                # create-and-save path is the legitimate creator
+            runs_table = await self._get_table(table_type="runs")
+            if runs_table is None:
                 return RunPersistOutcome.MISSING
             async with self.async_session_factory() as sess:
                 async with sess.begin():
-                    result = await sess.execute(
-                        select(table.c.runs)
-                        .where(table.c.session_id == session_id)
-                        .where((table.c.user_id == user_id) | (table.c.user_id.is_(None)))
-                        .with_for_update()
-                    )
-                    row = result.fetchone()
-                    if row is None or not row[0]:
+                    row = (
+                        await sess.execute(
+                            select(runs_table.c.run_data, runs_table.c.status)
+                            .where(runs_table.c.run_id == run_id)
+                            .where(runs_table.c.session_id == session_id)
+                            .where((runs_table.c.user_id == user_id) | (runs_table.c.user_id.is_(None)))
+                            .with_for_update()
+                        )
+                    ).fetchone()
+                    if row is None or row[0] is None:
                         return RunPersistOutcome.MISSING
-                    runs = list(row[0])
-                    for i, run in enumerate(runs):
-                        if isinstance(run, dict) and run.get("run_id") == run_id:
-                            stored_attempt = run.get("queue_attempt")
-                            if (
-                                expected_attempt is not None
-                                and stored_attempt is not None
-                                and stored_attempt > expected_attempt
-                            ):
-                                return RunPersistOutcome.STALE_ATTEMPT  # zombie writer fenced out
-                            # A run that reached completed/cancelled is FINAL:
-                            # a sweep or drain racing a legitimate completion
-                            # must not rewrite it (the classic case: zombie
-                            # finished arun, its complete_job never landed, the
-                            # sweeper then tried to mark the run ERROR)
-                            stored_status = str(run.get("status") or "").lower()
-                            incoming_status = str(fields.get("status") or "").lower()
-                            if (
-                                stored_status in ("completed", "cancelled")
-                                and incoming_status
-                                and incoming_status != stored_status
-                            ):
-                                return RunPersistOutcome.TERMINAL_REFUSED  # terminal row wins
-                            updated = dict(run)
-                            updated.update(fields)
-                            if content_if_absent is not None and not updated.get("content"):
-                                # Error reason fills content only when execution left none:
-                                # partial output beats the error string (fallback parity)
-                                updated["content"] = content_if_absent
-                            if expected_attempt is not None:
-                                updated["queue_attempt"] = expected_attempt
-                            runs[i] = updated
-                            await sess.execute(
-                                update(table)
-                                .where(table.c.session_id == session_id)
-                                .where((table.c.user_id == user_id) | (table.c.user_id.is_(None)))
-                                .values(runs=runs, updated_at=int(time.time()))
-                            )
-                            return RunPersistOutcome.UPDATED
-                    return RunPersistOutcome.MISSING
+                    run = dict(row[0])
+                    stored_attempt = run.get("queue_attempt")
+                    if expected_attempt is not None and stored_attempt is not None and stored_attempt > expected_attempt:
+                        return RunPersistOutcome.STALE_ATTEMPT  # zombie writer fenced out
+                    stored_status = str(run.get("status") or row[1] or "").lower()
+                    incoming_status = str(fields.get("status") or "").lower()
+                    if stored_status in ("completed", "cancelled") and incoming_status and incoming_status != stored_status:
+                        return RunPersistOutcome.TERMINAL_REFUSED  # terminal row wins
+                    run.update(fields)
+                    if content_if_absent is not None and not run.get("content"):
+                        run["content"] = content_if_absent
+                    if expected_attempt is not None:
+                        run["queue_attempt"] = expected_attempt
+                    values: Dict[str, Any] = {
+                        "run_data": sanitize_postgres_strings(run),
+                        "updated_at": int(time.time()),
+                    }
+                    if fields.get("status") is not None:
+                        values["status"] = fields["status"]
+                    await sess.execute(update(runs_table).where(runs_table.c.run_id == run_id).values(**values))
+                    return RunPersistOutcome.UPDATED
         except Exception as e:
-            # Do NOT collapse unexpected errors into an outcome: the caller's
-            # fallback decision is guard-semantic (MISSING/UNAVAILABLE allow,
-            # STALE_ATTEMPT/TERMINAL_REFUSED forbid), and a transient DB error
-            # fits none of them - it must surface as the failure it is
-            log_warning(f"Error updating run in session: {e}")
+            log_warning(f"Error updating run in runs table: {e}")
             raise
 
     async def append_run_to_session_if_absent(
@@ -4591,47 +4564,51 @@ class AsyncPostgresDb(AsyncBaseDb):
         run_dict: Dict[str, Any],
         user_id: Optional[str] = None,
     ) -> Optional[bool]:
-        """Atomically append a run to an EXISTING session's runs list, only if
-        no run with that run_id is present - under the session row lock.
+        """Atomically insert a run only if absent - ported to the
+        denormalized runs table (v3.0): INSERT ... ON CONFLICT (run_id)
+        DO NOTHING, mirroring upsert_run's row shape and run_index backfill.
 
-        Closes the enqueue-vs-prepare race: the worker can claim and COMPLETE a
-        run between the router's read and its whole-session save, and the
-        unlocked read-check-save would clobber the completed run back to
-        PENDING. Returns True (appended), False (already present - a worker
-        got there first, its row wins), None (session row does not exist yet -
-        the caller creates it via insert_session_if_absent and retries, so no
-        whole-session save remains on the prepare path).
+        Returns True (inserted), False (already present - a concurrent
+        writer won, its row wins), None (the SESSION row does not exist yet:
+        the FK rejects the insert, and the caller creates the session via
+        insert_session_if_absent and retries - the identical contract the
+        session-JSON original exposed for a missing session row).
         """
+        from sqlalchemy.exc import IntegrityError
+
+        from agno.db.utils import build_single_run_row
+
         try:
-            table = await self._get_table(table_type="sessions")
-            if table is None:
+            runs_table = await self._get_table(table_type="runs", create_table_if_not_found=True)
+            if runs_table is None:
                 return None
-            async with self.async_session_factory() as sess:
-                async with sess.begin():
-                    result = await sess.execute(
-                        select(table.c.runs)
-                        .where(table.c.session_id == session_id)
-                        .where((table.c.user_id == user_id) | (table.c.user_id.is_(None)))
-                        .with_for_update()
-                    )
-                    row = result.fetchone()
-                    if row is None:
-                        return None
-                    runs = list(row[0] or [])
-                    run_id = run_dict.get("run_id")
-                    for run in runs:
-                        if isinstance(run, dict) and run.get("run_id") == run_id:
-                            return False
-                    runs.append(run_dict)
-                    await sess.execute(
-                        update(table)
-                        .where(table.c.session_id == session_id)
-                        .where((table.c.user_id == user_id) | (table.c.user_id.is_(None)))
-                        .values(runs=runs, updated_at=int(time.time()))
-                    )
-                    return True
+            row = build_single_run_row(run=run_dict, session_id=session_id, user_id=user_id, run_index=None)
+            row["run_data"] = sanitize_postgres_strings(row["run_data"])
+            try:
+                async with self.async_session_factory() as sess:
+                    async with sess.begin():
+                        if row.get("run_index") is None:
+                            current_max = (
+                                await sess.execute(
+                                    select(func.max(runs_table.c.run_index)).where(
+                                        runs_table.c.session_id == session_id
+                                    )
+                                )
+                            ).scalar()
+                            row["run_index"] = (current_max + 1) if current_max is not None else 0
+                        stmt = (
+                            postgresql.insert(runs_table)
+                            .values(**row)
+                            .on_conflict_do_nothing(index_elements=["run_id"])
+                            .returning(runs_table.c.run_id)
+                        )
+                        inserted = (await sess.execute(stmt)).fetchone()
+                        return inserted is not None
+            except IntegrityError:
+                # FK violation: no session row yet - caller creates it and retries
+                return None
         except Exception as e:
-            log_warning(f"Error appending run to session (caller falls back): {e}")
+            log_warning(f"Error appending run to runs table (caller falls back): {e}")
             return None
 
     async def insert_session_if_absent(self, session: Session) -> Optional[bool]:
@@ -4661,7 +4638,6 @@ class AsyncPostgresDb(AsyncBaseDb):
             values: Dict[str, Any] = dict(
                 session_id=session_dict.get("session_id"),
                 user_id=session_dict.get("user_id"),
-                runs=session_dict.get("runs") or [],
                 session_data=session_dict.get("session_data"),
                 summary=session_dict.get("summary"),
                 metadata=session_dict.get("metadata"),

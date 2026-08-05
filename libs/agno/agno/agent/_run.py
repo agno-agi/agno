@@ -4436,6 +4436,10 @@ async def _acontinue_run_background_stream(
     if persist_run:
         persist_run.status = RunStatus.pending
         agent_session.upsert_run(run=persist_run)
+        # v3 substrate: the run persists via the O(1) per-run save
+        from agno.agent._session import asave_run as _asave_run
+
+        await _asave_run(agent, run=persist_run, session_id=session_id, user_id=user_id)
     await asave_session(agent, session=agent_session)
 
     # Pre-register with the event buffer so reconnecting clients can attach and

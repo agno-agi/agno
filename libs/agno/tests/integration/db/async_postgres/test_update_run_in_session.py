@@ -31,7 +31,13 @@ pytestmark = pytest.mark.skipif(not _pg_available(), reason="Postgres not availa
 
 @pytest.fixture()
 def db() -> AsyncPostgresDb:
-    return AsyncPostgresDb(db_url=DB_URL, session_table=f"test_atomic_{uuid.uuid4().hex[:8]}")
+    # Unique RUNS table too: its FK binds to the session table name at
+    # creation time, so a shared default runs table would reference a
+    # previous test's dropped session table
+    suffix = uuid.uuid4().hex[:8]
+    return AsyncPostgresDb(
+        db_url=DB_URL, session_table=f"test_atomic_{suffix}", runs_table=f"test_atomic_runs_{suffix}"
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -41,33 +47,54 @@ def cleanup_table(db):
 
     engine = sqlalchemy.create_engine(DB_URL)
     with engine.begin() as conn:
-        conn.execute(sqlalchemy.text(f'DROP TABLE IF EXISTS agno."{db.session_table_name}"'))
+        conn.execute(sqlalchemy.text(f'DROP TABLE IF EXISTS {db.db_schema}."{db.runs_table_name}"'))
+        conn.execute(sqlalchemy.text(f'DROP TABLE IF EXISTS {db.db_schema}."{db.session_table_name}"'))
     engine.dispose()
 
 
 async def seed_session(db: AsyncPostgresDb, session_id: str, run_ids):
-    table = await db._get_table(table_type="sessions", create_table_if_not_found=True)
+    """v3 substrate: session row + one runs-table row per run (the old seed
+    wrote a sessions.runs blob, a column the denormalized schema dropped)."""
     import time as _time
 
+    table = await db._get_table(table_type="sessions", create_table_if_not_found=True)
+    runs_table = await db._get_table(table_type="runs", create_table_if_not_found=True)
     async with db.async_session_factory() as sess:
         async with sess.begin():
             await sess.execute(
                 table.insert().values(
                     session_id=session_id,
                     session_type="agent",
-                    runs=[{"run_id": rid, "status": "PENDING"} for rid in run_ids],
                     created_at=int(_time.time()),
                 )
             )
+            for i, rid in enumerate(run_ids):
+                await sess.execute(
+                    runs_table.insert().values(
+                        run_id=rid,
+                        session_id=session_id,
+                        run_type="agent",
+                        status="PENDING",
+                        run_index=i,
+                        run_data={"run_id": rid, "status": "PENDING"},
+                        created_at=int(_time.time()),
+                    )
+                )
 
 
 async def get_runs(db: AsyncPostgresDb, session_id: str):
     from sqlalchemy import select
 
-    table = await db._get_table(table_type="sessions")
+    runs_table = await db._get_table(table_type="runs")
     async with db.async_session_factory() as sess:
-        row = (await sess.execute(select(table.c.runs).where(table.c.session_id == session_id))).fetchone()
-        return {r["run_id"]: r for r in row[0]}
+        rows = (
+            await sess.execute(
+                select(runs_table.c.run_data)
+                .where(runs_table.c.session_id == session_id)
+                .order_by(runs_table.c.run_index)
+            )
+        ).fetchall()
+        return {dict(r[0])["run_id"]: dict(r[0]) for r in rows}
 
 
 class TestAtomicRunPatch:
@@ -139,6 +166,7 @@ class TestAtomicRunPatch:
 
         completed = RunOutput(run_id="r1", session_id="s1", status=RunStatus.completed, content="the real output")
         table = await db._get_table(table_type="sessions", create_table_if_not_found=True)
+        runs_table = await db._get_table(table_type="runs", create_table_if_not_found=True)
         import time as _time
 
         async with db.async_session_factory() as sess:
@@ -147,7 +175,17 @@ class TestAtomicRunPatch:
                     table.insert().values(
                         session_id="s1",
                         session_type="agent",
-                        runs=[completed.to_dict()],
+                        created_at=int(_time.time()),
+                    )
+                )
+                await sess.execute(
+                    runs_table.insert().values(
+                        run_id="r1",
+                        session_id="s1",
+                        run_type="agent",
+                        status=RunStatus.completed.value,
+                        run_index=0,
+                        run_data=completed.to_dict(),
                         created_at=int(_time.time()),
                     )
                 )
@@ -167,7 +205,7 @@ class TestAtomicRunPatch:
         from agno.db.postgres import PostgresDb
 
         await seed_session(db, "s1", ["r1"])
-        sync_db = PostgresDb(db_url=DB_URL, session_table=db.session_table_name)
+        sync_db = PostgresDb(db_url=DB_URL, session_table=db.session_table_name, runs_table=db.runs_table_name)
 
         def call(**kwargs):
             return sync_db.update_run_in_session(**kwargs)

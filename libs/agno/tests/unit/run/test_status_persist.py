@@ -181,11 +181,17 @@ class TestTypedOutcomeFinality:
 
         monkeypatch.setattr("agno.agent._storage.aread_or_create_session", fake_read)
         monkeypatch.setattr("agno.agent._session.asave_session", fake_save)
+
+        async def fake_save_run(component, run=None, session_id=None, user_id=None, run_index=None):
+            saves.append(("run", getattr(run, "run_id", None)))
+
+        monkeypatch.setattr("agno.agent._session.asave_run", fake_save_run)
         db = GuardedFakeDb(row=None)
         component = SimpleNamespace(db=db)
         run = SimpleNamespace(run_id="r1", status=RunStatus.error)
         await apersist_run_transition(component, "agent", "s1", run)
-        assert upserts == [run] and len(saves) == 1
+        # v3 substrate: the fallback persists the run (asave_run) AND the session row
+        assert upserts == [run] and len(saves) == 2
 
     @pytest.mark.asyncio
     async def test_older_attempt_never_reaches_fallback(self, monkeypatch):
