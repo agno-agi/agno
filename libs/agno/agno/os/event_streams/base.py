@@ -53,7 +53,7 @@ class BaseEventStream(ABC):
         """
 
     @abstractmethod
-    async def set_run_status(self, run_id: str, status: RunStatus) -> None:
+    async def set_run_status(self, run_id: str, status: RunStatus, generation: Optional[int] = None) -> None:
         """Update the status of a registered run (e.g. PENDING -> RUNNING)."""
 
     @abstractmethod
@@ -61,11 +61,17 @@ class BaseEventStream(ABC):
         """Return the run's status, or None if the run is unknown to the stream."""
 
     @abstractmethod
-    async def complete_run(self, run_id: str, status: RunStatus) -> None:
+    async def complete_run(self, run_id: str, status: RunStatus, generation: Optional[int] = None) -> None:
         """Mark a run terminal (completed/error/cancelled/paused) and wake all tails.
 
         After this call every active and future ``tail()`` for the run must
         finish once it has yielded the remaining buffered events.
+
+        ``generation``: like ``add_event`` - when given and OLDER than the
+        stream's recorded writer generation, the terminal write is refused
+        (a zombie attempt's sentinel must not close the live attempt's
+        tails). Equal or newer passes: a same-attempt late completion is the
+        finished-work-wins intent, and a newer writer self-heals forward.
         """
 
     async def reopen_run(self, run_id: str, include_error: bool = False, floor: Optional[int] = None) -> bool:
@@ -119,7 +125,7 @@ class BaseEventStream(ABC):
         """Drop all stored state for a run (called after the retention period)."""
 
     @abstractmethod
-    async def reset_run_events(self, run_id: str) -> None:
+    async def reset_run_events(self, run_id: str, generation: Optional[int] = None) -> None:
         """Drop a run's buffered events but PRESERVE its index counter and
         registration.
 
@@ -128,14 +134,33 @@ class BaseEventStream(ABC):
         across attempts - a client that saw indices 0..N on attempt 1 and
         reconnects with last_event_index=N must receive the retry's events
         (which start at N+1), not filter them all out. Index gaps across the
-        attempt boundary are covered by the not-gapless contract."""
+        attempt boundary are covered by the not-gapless contract.
+
+        ``generation``: when given and OLDER than the recorded writer
+        generation, the reset is refused - a worker that stalled before its
+        leg entry and woke after a reclaim must not delete the reclaiming
+        attempt's events."""
 
     # ------------------------------------------------------------------
     # Events
     # ------------------------------------------------------------------
 
+    async def begin_attempt(self, run_id: str, generation: int) -> None:
+        """Declare that attempt ``generation`` now owns this run's stream.
+
+        Monotonic CAS: the stored generation only moves FORWARD (a late call
+        from an older attempt never regresses it). Once a newer generation is
+        recorded, ``add_event`` calls carrying an older one are refused - the
+        zombie-writer fence. Queue attempts pass their ticket ``attempt``
+        (monotonic per run by construction); the same-generation continuation
+        legs share their attempt's generation.
+
+        Default is a no-op so implementations without multi-writer exposure
+        (or custom streams) keep working; both built-ins implement it.
+        """
+
     @abstractmethod
-    async def add_event(self, run_id: str, event: Any) -> int:
+    async def add_event(self, run_id: str, event: Any, generation: Optional[int] = None) -> int:
         """Append an event, assign its index, and publish it to live tails.
 
         The implementation owns index assignment (the SSE payload embeds the
@@ -145,12 +170,20 @@ class BaseEventStream(ABC):
         Args:
             run_id: The run the event belongs to.
             event: The structured event object.
+            generation: The writer's attempt generation from ``begin_attempt``.
+                When given and it no longer matches the stream's recorded
+                generation, the event is REFUSED and -1 returned: a zombie
+                attempt's output must not interleave into the live attempt's
+                stream. ``None`` bypasses the fence (single-writer inline
+                producers). A refusal may consume an index - gaps are covered
+                by the monotonic-not-gapless contract.
 
         Returns:
-            The monotonic event index assigned to this event. Callers that also
-            deliver the event on a local channel (e.g. the primary SSE queue)
-            format their own copy with this index — the formatter is
-            deterministic, so both copies are identical.
+            The monotonic event index assigned to this event, or -1 when the
+            generation fence refused it. Callers that also deliver the event
+            on a local channel (e.g. the primary SSE queue) format their own
+            copy with this index — the formatter is deterministic, so both
+            copies are identical.
         """
 
     @abstractmethod

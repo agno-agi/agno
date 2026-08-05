@@ -28,7 +28,36 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, List, Optional, Tupl
 
 from agno.os.event_streams.base import BaseEventStream
 from agno.run.base import RunStatus
-from agno.utils.log import log_warning
+from agno.utils.log import log_debug, log_warning
+
+# Item 5 fence scripts. The INCR script refuses when the stored generation is
+# NEWER than the writer's, establishes it when absent (first fenced writer, or
+# an expired key - fail-open restamp; the TTL hazard predates the fence), and
+# self-heals forward when the writer's is newer. The XADD script re-checks at
+# append time: index INCR and XADD are separate roundtrips (the SSE payload
+# embeds the index and is formatted client-side), and a newer attempt can
+# begin between them - a refused append leaves an index gap, covered by the
+# monotonic-not-gapless contract.
+_FENCED_INCR_LUA = """
+local gen = redis.call('GET', KEYS[1])
+if gen == false then
+  redis.call('SET', KEYS[1], ARGV[1], 'EX', tonumber(ARGV[2]))
+elseif tonumber(gen) > tonumber(ARGV[1]) then
+  return -1
+elseif tonumber(gen) < tonumber(ARGV[1]) then
+  redis.call('SET', KEYS[1], ARGV[1], 'EX', tonumber(ARGV[2]))
+end
+return redis.call('INCR', KEYS[2])
+"""
+
+_FENCED_XADD_LUA = """
+local gen = redis.call('GET', KEYS[1])
+if gen ~= false and tonumber(gen) > tonumber(ARGV[1]) then
+  return 0
+end
+redis.call('XADD', KEYS[2], 'MAXLEN', '~', ARGV[2], '*', 'idx', ARGV[3], 'sse', ARGV[4])
+return 1
+"""
 
 _redis_available = True
 _redis_import_error: Optional[str] = None
@@ -117,6 +146,15 @@ class RedisEventStream(BaseEventStream):
         # runs remain active.
         self._active_runs: set = set()
         self._refresher_task: Optional["asyncio.Task"] = None
+        # Item 5 generation fence: Lua gives gen-check + INCR (and gen-check +
+        # XADD) single-roundtrip atomicity on the hot per-event path. Scripts
+        # register lazily; a server without scripting (fakeredis, restricted
+        # managed Redis) degrades FAIL-OPEN to the unfenced legacy path with
+        # one warning - the stream is coordination, not truth.
+        self._fenced_incr_script: Optional[Any] = None
+        self._fenced_xadd_script: Optional[Any] = None
+        self._scripting_unavailable = False
+        self._fence_refusals_logged: set = set()
 
     # ------------------------------------------------------------------
     # Keys
@@ -135,6 +173,12 @@ class RedisEventStream(BaseEventStream):
     def _counter_key(self, run_id: str) -> str:
         return f"{self._prefix}{run_id}:idx"
 
+    def _gen_key(self, run_id: str) -> str:
+        # The stream's writer generation (item 5): the newest attempt that
+        # called begin_attempt. add_event calls carrying an older generation
+        # are refused atomically in Lua.
+        return f"{self._prefix}{run_id}:gen"
+
     # ------------------------------------------------------------------
     # Run lifecycle
     # ------------------------------------------------------------------
@@ -149,9 +193,49 @@ class RedisEventStream(BaseEventStream):
         # set_run_status(RUNNING) / add_event.
         await self._redis.set(self._status_key(run_id), status.value, nx=True, ex=self._ttl)
 
-    async def set_run_status(self, run_id: str, status: RunStatus) -> None:
-        await self._redis.set(self._status_key(run_id), status.value, ex=self._ttl)
-        if status == RunStatus.running:
+    async def _fenced_lifecycle(self, run_id: str, generation: Optional[int], build) -> bool:
+        """Run a lifecycle mutation atomically UNDER the generation fence.
+
+        WATCH the gen key; refuse (False) when the stored writer generation
+        is NEWER than the caller's; otherwise queue ``build(pipe)`` after
+        MULTI and execute - the WATCH aborts if a newer attempt began in
+        between. Equal generations pass (same-attempt finished-work-wins);
+        a newer caller's generation is recorded forward. generation=None
+        runs the mutation unfenced (legacy single-writer callers)."""
+        from redis.exceptions import WatchError
+
+        gen_key = self._gen_key(run_id)
+        if generation is None:
+            pipe = self._redis.pipeline()
+            build(pipe)
+            await pipe.execute()
+            return True
+        for _ in range(10):
+            try:
+                async with self._redis.pipeline(transaction=True) as pipe:
+                    await pipe.watch(gen_key)
+                    raw = _to_str(await pipe.get(gen_key))
+                    if raw is not None and int(raw) > generation:
+                        await pipe.unwatch()
+                        self._log_fence_refusal(run_id, generation)
+                        return False
+                    pipe.multi()
+                    if raw is None or int(raw) < generation:
+                        pipe.set(gen_key, generation, ex=self._ttl)
+                    build(pipe)
+                    await pipe.execute()
+                    return True
+            except WatchError:
+                continue
+        return False
+
+    async def set_run_status(self, run_id: str, status: RunStatus, generation: Optional[int] = None) -> None:
+        applied = await self._fenced_lifecycle(
+            run_id,
+            generation,
+            lambda pipe: pipe.set(self._status_key(run_id), status.value, ex=self._ttl),
+        )
+        if applied and status == RunStatus.running:
             # The transition to RUNNING happens on the executing replica: this
             # process is the producer, so it owns keeping the keys alive
             self._active_runs.add(run_id)
@@ -208,6 +292,7 @@ class RedisEventStream(BaseEventStream):
                     pipe.expire(self._stream_key(run_id), self._ttl)
                     pipe.expire(self._status_key(run_id), self._ttl)
                     pipe.expire(self._counter_key(run_id), self._ttl)
+                    pipe.expire(self._gen_key(run_id), self._ttl)
                     await pipe.execute()
                 except Exception:
                     # Fail-open on Redis faults: keep the run enrolled and let
@@ -225,10 +310,29 @@ class RedisEventStream(BaseEventStream):
                 pass
             self._refresher_task = None
 
-    async def complete_run(self, run_id: str, status: RunStatus) -> None:
+    async def complete_run(self, run_id: str, status: RunStatus, generation: Optional[int] = None) -> None:
         if status not in (RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused):
             # Contract: this call MARKS TERMINAL (see in-memory twin)
             status = RunStatus.completed
+
+        # Status first, then the sentinel: a tail woken by the sentinel must
+        # observe the terminal status. Under the generation fence: a zombie
+        # attempt's sentinel must not close the live attempt's tails (equal
+        # generations pass - same-attempt finished-work-wins).
+        def build(pipe: Any) -> None:
+            pipe.set(self._status_key(run_id), status.value, ex=self._ttl)
+            pipe.xadd(
+                self._stream_key(run_id),
+                {"terminal": status.value},
+                maxlen=self._maxlen,
+                approximate=True,
+            )
+            pipe.expire(self._stream_key(run_id), self._ttl)
+            pipe.expire(self._counter_key(run_id), self._ttl)
+
+        applied = await self._fenced_lifecycle(run_id, generation, build)
+        if not applied:
+            return
         if status == RunStatus.paused:
             # Paused is terminal-for-the-stream but resumable: keep refreshing
             # its keys so the counter/stream survive until the approval, else
@@ -241,19 +345,6 @@ class RedisEventStream(BaseEventStream):
             # Bookkeeping dies with the run: without this, per-run refresh
             # timestamps accumulate for the process lifetime
             self._last_ttl_refresh.pop(run_id, None)
-        # Status first, then the sentinel: a tail woken by the sentinel must
-        # observe the terminal status.
-        pipe = self._redis.pipeline()
-        pipe.set(self._status_key(run_id), status.value, ex=self._ttl)
-        pipe.xadd(
-            self._stream_key(run_id),
-            {"terminal": status.value},
-            maxlen=self._maxlen,
-            approximate=True,
-        )
-        pipe.expire(self._stream_key(run_id), self._ttl)
-        pipe.expire(self._counter_key(run_id), self._ttl)
-        await pipe.execute()
 
     async def reopen_run(self, run_id: str, include_error: bool = False, floor: Optional[int] = None) -> bool:
         """Atomically reopen a PAUSED run for a continuation leg.
@@ -320,26 +411,120 @@ class RedisEventStream(BaseEventStream):
     async def cleanup_run(self, run_id: str) -> None:
         self._last_ttl_refresh.pop(run_id, None)
         self._active_runs.discard(run_id)
+        self._fence_refusals_logged.discard(run_id)
         await self._redis.delete(
             self._stream_key(run_id),
             self._status_key(run_id),
             self._counter_key(run_id),
+            self._gen_key(run_id),
         )
 
-    async def reset_run_events(self, run_id: str) -> None:
+    async def reset_run_events(self, run_id: str, generation: Optional[int] = None) -> None:
         # Events go; counter and status stay - indices remain monotonic across
-        # retry attempts (see BaseEventStream.reset_run_events)
-        await self._redis.delete(self._stream_key(run_id))
+        # retry attempts (see BaseEventStream.reset_run_events). Fenced: a
+        # worker that stalled before its leg entry and woke after a reclaim
+        # must not delete the reclaiming attempt's events.
+        await self._fenced_lifecycle(run_id, generation, lambda pipe: pipe.delete(self._stream_key(run_id)))
 
     # ------------------------------------------------------------------
     # Events
     # ------------------------------------------------------------------
 
-    async def add_event(self, run_id: str, event: Any) -> int:
+    async def begin_attempt(self, run_id: str, generation: int) -> None:
+        """Record this attempt as the stream's writer generation (monotonic
+        CAS - an older attempt's late begin never regresses it)."""
+        from redis.exceptions import WatchError
+
+        gen_key = self._gen_key(run_id)
+        for _ in range(10):
+            try:
+                async with self._redis.pipeline(transaction=True) as pipe:
+                    await pipe.watch(gen_key)
+                    current_raw = _to_str(await pipe.get(gen_key))
+                    if current_raw is not None and int(current_raw) >= generation:
+                        await pipe.unwatch()
+                        with contextlib.suppress(Exception):
+                            await self._redis.expire(gen_key, self._ttl)
+                        return
+                    pipe.multi()
+                    pipe.set(gen_key, generation, ex=self._ttl)
+                    await pipe.execute()
+                    return
+            except WatchError:
+                continue
+
+    def _log_fence_refusal(self, run_id: str, generation: int) -> None:
+        # First refusal per run at WARNING; a streaming zombie can produce
+        # hundreds more - those go to DEBUG
+        if run_id not in self._fence_refusals_logged:
+            self._fence_refusals_logged.add(run_id)
+            log_warning(
+                f"Event stream: refused event for run {run_id} from stale generation "
+                f"{generation} - zombie writer fenced out (further refusals logged at DEBUG)"
+            )
+        else:
+            log_debug(f"Event stream: refused event for run {run_id} from stale generation {generation}")
+
+    async def _fenced_add_event(self, run_id: str, event: Any, generation: int) -> Optional[int]:
+        """Lua path: gen-check + INCR, then gen-check + XADD. Returns the
+        index, -1 (refused), or None when scripting is unavailable and the
+        caller must degrade to the unfenced legacy path."""
+        from redis.exceptions import ResponseError
+
+        from agno.os.utils import format_sse_event_with_index
+
+        try:
+            if self._fenced_incr_script is None:
+                self._fenced_incr_script = self._redis.register_script(_FENCED_INCR_LUA)
+                self._fenced_xadd_script = self._redis.register_script(_FENCED_XADD_LUA)
+            next_count = await self._fenced_incr_script(
+                keys=[self._gen_key(run_id), self._counter_key(run_id)],
+                args=[generation, self._ttl],
+            )
+        except ResponseError as e:
+            message = str(e).lower()
+            if "unknown command" in message or "not supported" in message or "unsupported" in message:
+                self._scripting_unavailable = True
+                log_warning(
+                    "Event stream: Redis server does not support scripting - the writer "
+                    "generation fence is DISABLED (events publish unfenced, legacy behavior)"
+                )
+                return None
+            raise
+        if int(next_count) == -1:
+            self._log_fence_refusal(run_id, generation)
+            return -1
+        event_index = int(next_count) - 1
+        with contextlib.suppress(Exception):
+            event.event_index = event_index
+        sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=run_id)
+        appended = await self._fenced_xadd_script(  # type: ignore[misc]
+            keys=[self._gen_key(run_id), self._stream_key(run_id)],
+            args=[generation, self._maxlen, event_index, sse_data],
+        )
+        if self._ttl_refresh_due(run_id):
+            pipe = self._redis.pipeline()
+            pipe.expire(self._stream_key(run_id), self._ttl)
+            pipe.expire(self._status_key(run_id), self._ttl)
+            pipe.expire(self._counter_key(run_id), self._ttl)
+            pipe.expire(self._gen_key(run_id), self._ttl)
+            await pipe.execute()
+        if int(appended) == 0:
+            self._log_fence_refusal(run_id, generation)
+            return -1
+        return event_index
+
+    async def add_event(self, run_id: str, event: Any, generation: Optional[int] = None) -> int:
         if run_id not in self._active_runs:
             self._active_runs.add(run_id)
             self._ensure_refresher()
         from agno.os.utils import format_sse_event_with_index
+
+        if generation is not None and not self._scripting_unavailable:
+            fenced = await self._fenced_add_event(run_id, event, generation)
+            if fenced is not None:
+                return fenced
+            # Scripting unavailable: fall through to the unfenced legacy path
 
         # INCR assigns the monotonic index atomically (single producer today;
         # safe for multi-attempt producers later).
