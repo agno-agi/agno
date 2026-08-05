@@ -1228,3 +1228,338 @@ def test_tool_hook_receives_messages_via_run_context():
     # Verify it's a copy (not the same reference), so hook mutations don't affect the run
     assert captured_messages is not run_context.messages
     assert captured_messages == run_context.messages
+
+
+# ----------------------------------------------------------------------
+# Framework-injected parameters: schema exclusion and the drop guard
+# ----------------------------------------------------------------------
+
+
+def _passthrough_tool_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+    return function_call(**arguments)
+
+
+def test_agno_channels_excluded_from_from_callable_schema():
+    """`_agno_` channels are never advertised to the model by from_callable."""
+
+    def fn(query: str, _agno_run_context: Optional[RunContext] = None, _agno_agent: Optional[Any] = None) -> str:
+        return query
+
+    for strict in (False, True):
+        func = Function.from_callable(fn, strict=strict)
+        properties = func.parameters["properties"]
+        assert "_agno_run_context" not in properties
+        assert "_agno_agent" not in properties
+        assert "_agno_run_context" not in func.parameters["required"]
+        assert "_agno_agent" not in func.parameters["required"]
+        assert list(properties) == ["query"]
+
+
+def test_required_agno_channel_excluded_from_required_list():
+    """A channel with no default must not land in `required` either."""
+
+    def fn(_agno_run_context, query: str) -> str:
+        return query
+
+    func = Function.from_callable(fn)
+    assert func.parameters["required"] == ["query"]
+
+    func = Function(name="fn", entrypoint=fn)
+    func.process_entrypoint()
+    assert func.parameters["required"] == ["query"]
+
+
+def test_fc_is_reserved_and_not_model_facing():
+    """`fc` is injected by name, so it is reserved rather than advertised."""
+
+    received: Dict[str, Any] = {}
+
+    def fn(fc, note: str) -> str:
+        received["fc"] = fc
+        return note
+
+    func = Function(name="fn", entrypoint=fn)
+    func.process_entrypoint()
+    assert list(func.parameters["properties"]) == ["note"]
+    assert func.parameters["required"] == ["note"]
+
+    call = FunctionCall(function=func, arguments={"note": "n"})
+    assert call.execute().status == "success"
+    assert received["fc"] is call
+
+
+def test_unrecognised_agno_prefixed_param_stays_model_facing():
+    """Only the three real channels are reserved; the prefix itself is not."""
+
+    def fn(_agno_batch_id: str, rows: int) -> str:
+        return f"{_agno_batch_id}:{rows}"
+
+    func = Function(name="fn", entrypoint=fn)
+    func.process_entrypoint()
+    assert set(func.parameters["properties"]) == {"_agno_batch_id", "rows"}
+
+    call = FunctionCall(function=func, arguments={"_agno_batch_id": "b1", "rows": 2})
+    result = call.execute()
+    assert result.status == "success"
+    assert result.result == "b1:2"
+
+
+@pytest.mark.parametrize("with_hooks", [False, True])
+def test_spoofed_agno_channel_is_dropped(with_hooks):
+    """A model-supplied `_agno_run_context` never reaches the entrypoint."""
+
+    seen: Dict[str, Any] = {}
+
+    def fn(query: str, _agno_run_context: Optional[RunContext] = None) -> str:
+        seen["user_id"] = getattr(_agno_run_context, "user_id", None)
+        return query
+
+    func = Function(name="fn", entrypoint=fn)
+    func.process_entrypoint()
+    func.tool_hooks = [_passthrough_tool_hook] if with_hooks else None
+    func._run_context = RunContext(run_id="r1", session_id="s1", user_id="real-user")
+
+    call = FunctionCall(
+        function=func,
+        arguments={"query": "q", "_agno_run_context": {"user_id": "victim", "session_id": "s9", "run_id": "r9"}},
+    )
+    result = call.execute()
+    assert result.status == "success"
+    assert seen["user_id"] == "real-user"
+    assert call.arguments == {"query": "q"}
+
+
+def test_spoofed_agno_channel_is_dropped_even_when_declared_in_the_schema():
+    """The `_agno_` channels are internal, so a hand-written schema cannot re-open them."""
+
+    seen: Dict[str, Any] = {}
+
+    def fn(query: str, _agno_run_context: Optional[RunContext] = None) -> str:
+        seen["user_id"] = getattr(_agno_run_context, "user_id", None)
+        return query
+
+    func = Function(
+        name="fn",
+        entrypoint=fn,
+        parameters={
+            "type": "object",
+            "properties": {"query": {"type": "string"}, "_agno_run_context": {"type": "object"}},
+            "required": ["query"],
+        },
+        skip_entrypoint_processing=True,
+    )
+    func._run_context = RunContext(run_id="r1", session_id="s1", user_id="real-user")
+
+    call = FunctionCall(function=func, arguments={"query": "q", "_agno_run_context": {"user_id": "victim"}})
+    assert call.execute().status == "success"
+    assert seen["user_id"] == "real-user"
+
+
+@pytest.mark.parametrize("with_hooks", [False, True])
+def test_spoofed_public_run_context_is_dropped(with_hooks):
+    """The documented `run_context` parameter is framework-owned too."""
+
+    seen: Dict[str, Any] = {}
+
+    def fn(query: str, run_context: Optional[RunContext] = None) -> str:
+        seen["user_id"] = getattr(run_context, "user_id", None)
+        return query
+
+    func = Function(name="fn", entrypoint=fn)
+    func.process_entrypoint()
+    func.tool_hooks = [_passthrough_tool_hook] if with_hooks else None
+    func._run_context = RunContext(run_id="r1", session_id="s1", user_id="real-user")
+
+    call = FunctionCall(function=func, arguments={"query": "q", "run_context": {"user_id": "victim"}})
+    assert call.execute().status == "success"
+    assert seen["user_id"] == "real-user"
+
+
+def test_spoofed_type_excluded_param_is_dropped():
+    """A param excluded by annotation is owned by the framework, whatever it is named."""
+
+    seen: Dict[str, Any] = {}
+
+    def fn(query: str, ctx: RunContext = None) -> str:  # type: ignore[assignment]
+        seen["user_id"] = getattr(ctx, "user_id", None)
+        return query
+
+    func = Function(name="fn", entrypoint=fn)
+    func.process_entrypoint()
+    assert list(func.parameters["properties"]) == ["query"]
+    assert func._framework_params is not None and "ctx" in func._framework_params
+
+    call = FunctionCall(function=func, arguments={"query": "q", "ctx": {"user_id": "victim", "session_id": "s9"}})
+    assert call.execute().status == "success"
+    assert seen["user_id"] is None
+
+
+def test_schema_declared_reserved_name_keeps_the_model_value_on_both_paths():
+    """An MCP server may expose an argument called "agent"; the schema is what says so."""
+
+    received: Dict[str, Any] = {}
+
+    def fn(agent, note: str) -> str:
+        received.update({"agent": agent, "note": note})
+        return "ok"
+
+    for hooks in ([_passthrough_tool_hook], None):
+        received.clear()
+        func = Function(
+            name="fn",
+            entrypoint=fn,
+            parameters={
+                "type": "object",
+                "properties": {"agent": {"type": "string"}, "note": {"type": "string"}},
+                "required": ["agent", "note"],
+            },
+        )
+        func.process_entrypoint()
+        func.tool_hooks = hooks
+        call = FunctionCall(function=func, arguments={"agent": "bob", "note": "n"})
+        result = call.execute()
+        assert result.status == "success"
+        assert received == {"agent": "bob", "note": "n"}
+
+
+def test_dropped_arguments_are_logged_and_the_original_dict_is_untouched():
+    """The pre-drop dict is referenced by the emitted ToolExecution, so it is rebound."""
+
+    def fn(query: str, _agno_run_context: Optional[RunContext] = None) -> str:
+        return query
+
+    func = Function(name="fn", entrypoint=fn)
+    func.process_entrypoint()
+
+    call = FunctionCall(function=func, arguments={"query": "q", "_agno_run_context": {"user_id": "victim"}})
+    # models/base.py hands this exact dict to the ToolExecution it emits on tool_call_started.
+    emitted = call.arguments
+
+    warnings: List[str] = []
+    original_log_warning = function_module.log_warning
+    function_module.log_warning = lambda message: warnings.append(str(message))
+    try:
+        assert call.execute().status == "success"
+    finally:
+        function_module.log_warning = original_log_warning
+
+    assert emitted == {"query": "q", "_agno_run_context": {"user_id": "victim"}}
+    assert call.arguments == {"query": "q"}
+    assert any("_agno_run_context" in warning for warning in warnings)
+
+
+def test_arguments_are_sanitized_before_the_pre_hook_runs():
+    """A pre-hook used as an authorization gate must not read a discarded identity."""
+
+    seen: Dict[str, Any] = {}
+
+    def pre_hook(fc: FunctionCall):
+        seen["arguments"] = dict(fc.arguments or {})
+
+    def fn(query: str, _agno_run_context: Optional[RunContext] = None) -> str:
+        return query
+
+    func = Function(name="fn", entrypoint=fn, pre_hook=pre_hook)
+    func.process_entrypoint()
+
+    call = FunctionCall(function=func, arguments={"query": "q", "_agno_run_context": {"user_id": "victim"}})
+    assert call.execute().status == "success"
+    assert seen["arguments"] == {"query": "q"}
+
+
+@pytest.mark.asyncio
+async def test_spoofed_agno_channel_is_dropped_on_the_async_path():
+    """aexecute must sanitize exactly as execute does."""
+
+    seen: Dict[str, Any] = {}
+
+    async def fn(query: str, _agno_run_context: Optional[RunContext] = None) -> str:
+        seen["user_id"] = getattr(_agno_run_context, "user_id", None)
+        return query
+
+    func = Function(name="fn", entrypoint=fn)
+    func.process_entrypoint()
+    func._run_context = RunContext(run_id="r1", session_id="s1", user_id="real-user")
+
+    call = FunctionCall(function=func, arguments={"query": "q", "_agno_run_context": {"user_id": "victim"}})
+    result = await call.aexecute()
+    assert result.status == "success"
+    assert seen["user_id"] == "real-user"
+    assert call.arguments == {"query": "q"}
+
+
+def test_session_state_propagates_through_the_agno_run_context_channel():
+    """A tool given the `_agno_` channel still reports its session_state writes."""
+
+    def fn(query: str, _agno_run_context: Optional[RunContext] = None) -> str:
+        if _agno_run_context is not None and _agno_run_context.session_state is not None:
+            _agno_run_context.session_state["touched"] = True
+        return query
+
+    func = Function(name="fn", entrypoint=fn)
+    func.process_entrypoint()
+    func._run_context = RunContext(run_id="r1", session_id="s1", session_state={"existing": 1})
+
+    result = FunctionCall(function=func, arguments={"query": "q"}).execute()
+    assert result.status == "success"
+    assert result.updated_session_state == {"existing": 1, "touched": True}
+
+
+@pytest.mark.asyncio
+async def test_session_state_propagates_through_the_agno_run_context_channel_async():
+    """The async path reports session_state writes through the `_agno_` channel too."""
+
+    async def fn(query: str, _agno_run_context: Optional[RunContext] = None) -> str:
+        if _agno_run_context is not None and _agno_run_context.session_state is not None:
+            _agno_run_context.session_state["touched"] = True
+        return query
+
+    func = Function(name="fn", entrypoint=fn)
+    func.process_entrypoint()
+    func._run_context = RunContext(run_id="r1", session_id="s1", session_state={"existing": 1})
+
+    result = await FunctionCall(function=func, arguments={"query": "q"}).aexecute()
+    assert result.status == "success"
+    assert result.updated_session_state == {"existing": 1, "touched": True}
+
+
+def test_non_dict_session_state_is_not_reported():
+    """A non-dict session_state cannot be merged, so it is reported as absent."""
+
+    def fn(query: str, _agno_run_context: Optional[Any] = None) -> str:
+        return query
+
+    class _Context:
+        user_id = "u"
+        session_id = "s"
+        session_state = "not-a-dict"
+
+    func = Function(name="fn", entrypoint=fn)
+    func.process_entrypoint()
+    func._run_context = _Context()  # type: ignore[assignment]
+
+    result = FunctionCall(function=func, arguments={"query": "q"}).execute()
+    assert result.status == "success"
+    assert result.updated_session_state is None
+
+
+def test_framework_params_survive_the_per_run_function_copy():
+    """agent/_tools.py deep-copies a @tool Function per run without reprocessing it."""
+
+    @tool()
+    def fetch(query: str, ctx: RunContext = None) -> str:  # type: ignore[assignment]
+        return f"ctx_user={getattr(ctx, 'user_id', None)}"
+
+    assert fetch._framework_params == {"ctx"}
+
+    for deep in (False, True):
+        runtime = fetch.model_copy(deep=deep)
+        assert runtime._framework_params == {"ctx"}
+        runtime._run_context = RunContext(run_id="r1", session_id="s1", user_id="real-user")
+        call = FunctionCall(
+            function=runtime,
+            arguments={"query": "q", "ctx": {"run_id": "r9", "session_id": "s9", "user_id": "victim"}},
+        )
+        result = call.execute()
+        assert result.status == "success"
+        assert result.result == "ctx_user=None"

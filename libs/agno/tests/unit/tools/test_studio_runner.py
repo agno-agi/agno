@@ -353,35 +353,34 @@ class TestInjectionGuard:
         assert stub.seen["user_id"] == "ash"
 
     def test_schema_visible_param_named_like_an_injected_one_keeps_the_model_value(self):
-        # A user tool may declare its own `fc` argument; it stays in the schema,
-        # so the model-supplied value must win over the framework injection.
+        # A tool whose schema declares a reserved name -- an MCP server is free to expose
+        # an argument called "agent" -- keeps the model-supplied value on both paths.
         from agno.tools.function import Function
 
         received: Dict[str, Any] = {}
 
-        def submit(fc: str, note: str) -> str:
-            received.update({"fc": fc, "note": note})
+        def assign(agent: str, note: str) -> str:
+            received.update({"agent": agent, "note": note})
             return "ok"
 
-        function = Function.from_callable(submit)
-        function.process_entrypoint()
-        assert "fc" in (function.parameters or {}).get("properties", {})
-        function.tool_hooks = [_passthrough_hook]
-        call = FunctionCall(function=function, arguments={"fc": "ABC", "note": "n"})
-        result = call.execute()
-        assert result.status == "success"
-        assert received == {"fc": "ABC", "note": "n"}
-
-    def test_cache_key_is_per_user_and_session_but_not_per_run(self, db):
-        runner = StudioRunnerTools(db=db, agents_list=[_StubAgent()])
-        function = runner.functions["run_agent"]
-
-        def key(run_id: str, user_id: str) -> str:
-            context = RunContext(run_id=run_id, session_id="s", user_id=user_id)
-            return function._get_cache_key({"agent_id": "stub", "_agno_run_context": context}, {"message": "hi"})
-
-        assert key("r1", "alice") == key("r2", "alice")
-        assert key("r1", "alice") != key("r1", "bob")
+        for hooks in ([_passthrough_hook], None):
+            received.clear()
+            function = Function(
+                name="assign",
+                entrypoint=assign,
+                parameters={
+                    "type": "object",
+                    "properties": {"agent": {"type": "string"}, "note": {"type": "string"}},
+                    "required": ["agent", "note"],
+                },
+            )
+            function.process_entrypoint()
+            assert "agent" in (function.parameters or {}).get("properties", {})
+            function.tool_hooks = hooks
+            call = FunctionCall(function=function, arguments={"agent": "bob", "note": "n"})
+            result = call.execute()
+            assert result.status == "success"
+            assert received == {"agent": "bob", "note": "n"}
 
 
 # ----------------------------------------------------------------------

@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from functools import lru_cache, partial, wraps
 from importlib.metadata import version
-from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Type, TypeVar, get_type_hints
+from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Set, Type, TypeVar, get_type_hints
 
 from docstring_parser import parse
 from packaging.version import Version
@@ -13,6 +13,15 @@ from agno.run import RunContext
 from agno.utils.log import log_debug, log_exception, log_warning
 
 T = TypeVar("T")
+
+# Parameter names the framework fills in itself (see FunctionCall._build_entrypoint_args).
+# They are kept out of the model-facing schema, and a model-supplied value for one of
+# them is discarded in favour of the injected object.
+FRAMEWORK_INJECTED_PARAMS = ("agent", "team", "run_context", "fc", "images", "videos", "audios", "files")
+
+# The `_agno_`-prefixed channels, used by wrappers whose tools may have arguments
+# legitimately named "agent", "team" or "run_context" (e.g. MCP tools).
+AGNO_INJECTED_PARAMS = ("_agno_agent", "_agno_team", "_agno_run_context")
 
 
 @lru_cache(maxsize=1)
@@ -212,6 +221,10 @@ class Function(BaseModel):
     # The run context that the function is associated with
     _run_context: Optional[RunContext] = None
 
+    # Parameters process_entrypoint kept out of the model-facing schema because the
+    # framework supplies them, by name or by type annotation (e.g. `ctx: RunContext`).
+    _framework_params: Optional[Set[str]] = None
+
     # Media context that the function is associated with
     _images: Optional[Sequence[Image]] = None
     _videos: Optional[Sequence[Video]] = None
@@ -281,6 +294,12 @@ class Function(BaseModel):
             # Create new instance with copied data
             new_instance = self.__class__.model_construct(**copied_data)
 
+            # model_construct does not carry private attributes. The per-run ones
+            # (_agent, _run_context, media) are reassigned by the caller, but the
+            # framework-param set describes the shared entrypoint, and a @tool-decorated
+            # Function is copied without being reprocessed -- so carry it across.
+            new_instance._framework_params = self._framework_params
+
             return new_instance
         else:
             # For shallow copy, use the default Pydantic behavior
@@ -315,30 +334,15 @@ class Function(BaseModel):
                 del type_hints["audios"]
             if "files" in sig.parameters and "files" in type_hints:
                 del type_hints["files"]
-            # `_agno_`-prefixed parameters are framework-injection channels
-            # (see FunctionCall._build_entrypoint_args) and never model-facing.
-            for param_name in list(type_hints):
-                if param_name.startswith("_agno_"):
-                    del type_hints[param_name]
             # log_info(f"Type hints for {function_name}: {type_hints}")
 
             # Filter out return type and only process parameters
             param_type_hints = {
                 name: type_hints.get(name)
                 for name in sig.parameters
-                if name != "return"
-                and not name.startswith("_agno_")
-                and name
-                not in [
-                    "agent",
-                    "team",
-                    "run_context",
-                    "self",
-                    "images",
-                    "videos",
-                    "audios",
-                    "files",
-                ]
+                if name not in ("return", "self")
+                and name not in FRAMEWORK_INJECTED_PARAMS
+                and name not in AGNO_INJECTED_PARAMS
             }
 
             # Parse docstring for parameters
@@ -367,17 +371,9 @@ class Function(BaseModel):
                 parameters["required"] = [
                     name
                     for name in parameters["properties"]
-                    if name
-                    not in [
-                        "agent",
-                        "team",
-                        "run_context",
-                        "self",
-                        "images",
-                        "videos",
-                        "audios",
-                        "files",
-                    ]
+                    if name not in ("return", "self")
+                    and name not in FRAMEWORK_INJECTED_PARAMS
+                    and name not in AGNO_INJECTED_PARAMS
                 ]
             else:
                 # Mark a field as required if it has no default value (this would include optional fields)
@@ -385,18 +381,9 @@ class Function(BaseModel):
                     name
                     for name, param in sig.parameters.items()
                     if param.default == param.empty
-                    and not name.startswith("_agno_")
-                    and name
-                    not in [
-                        "agent",
-                        "team",
-                        "run_context",
-                        "self",
-                        "images",
-                        "videos",
-                        "audios",
-                        "files",
-                    ]
+                    and name not in ("return", "self")
+                    and name not in FRAMEWORK_INJECTED_PARAMS
+                    and name not in AGNO_INJECTED_PARAMS
                 ]
 
             # log_debug(f"JSON schema for {function_name}: {parameters}")
@@ -455,25 +442,10 @@ class Function(BaseModel):
                 del type_hints["audios"]
             if "files" in sig.parameters and "files" in type_hints:
                 del type_hints["files"]
-            # `_agno_`-prefixed parameters are framework-injection channels
-            # (see FunctionCall._build_entrypoint_args) and never model-facing.
-            for param_name in list(type_hints):
-                if param_name.startswith("_agno_"):
-                    del type_hints[param_name]
 
             # Filter out return type and only process parameters
-            excluded_params = [
-                "return",
-                "agent",
-                "team",
-                "run_context",
-                "self",
-                "images",
-                "videos",
-                "audios",
-                "files",
-            ]
-            excluded_params.extend(name for name in sig.parameters if name.startswith("_agno_"))
+            excluded_params = ["return", "self", *FRAMEWORK_INJECTED_PARAMS]
+            excluded_params.extend(name for name in sig.parameters if name in AGNO_INJECTED_PARAMS)
 
             # Also exclude parameters whose types are framework-injected,
             # even if the parameter name differs (e.g. my_agent: Agent). See issue #6344.
@@ -489,10 +461,11 @@ class Function(BaseModel):
             except Exception:
                 pass
 
-            # Snapshot excluded_params before user_input_fields are added,
-            # so we can use it to filter user_input_schema later.
-            if self.requires_user_input:
-                _excluded_framework_params = list(excluded_params)
+            # Snapshot excluded_params before user_input_fields are added: it filters
+            # user_input_schema below, and FunctionCall._drop_injected_overrides reads it
+            # to discard model-supplied values for parameters the framework owns.
+            _excluded_framework_params = list(excluded_params)
+            self._framework_params = {name for name in sig.parameters if name in _excluded_framework_params}
 
             if self.requires_user_input and self.user_input_fields:
                 if len(self.user_input_fields) == 0:
@@ -730,17 +703,6 @@ class Function(BaseModel):
             del copy_entrypoint_args["audios"]
         if "files" in copy_entrypoint_args:
             del copy_entrypoint_args["files"]
-        # An injected run context must not make the key unique per run (its repr
-        # carries the run_id), but the cache must stay per-user and per-session:
-        # a result computed for one user is never served to another.
-        run_context = copy_entrypoint_args.pop("_agno_run_context", None)
-        if run_context is not None:
-            copy_entrypoint_args["_agno_run_context"] = {
-                "user_id": getattr(run_context, "user_id", None),
-                "session_id": getattr(run_context, "session_id", None),
-            }
-        for key in [k for k in copy_entrypoint_args if k.startswith("_agno_") and k != "_agno_run_context"]:
-            del copy_entrypoint_args[key]
         # Use json.dumps with sort_keys=True to ensure consistent ordering regardless of dict key order
         args_str = json.dumps(copy_entrypoint_args, sort_keys=True, default=str)
 
@@ -1010,30 +972,42 @@ class FunctionCall(BaseModel):
     def _drop_injected_overrides(self, entrypoint_args: Dict[str, Any]) -> None:
         """Drop tool-call arguments that collide with framework-injected parameters.
 
-        A parameter the framework injects and excludes from the model-facing
-        schema (run_context, agent, team, media, `_agno_`-prefixed channels)
-        can never legitimately be model-supplied -- at worst the value is an
-        attempt to override the caller's identity on an identity-threading
-        tool. Without this, the tool-hooks execution chain merges model
-        arguments over the injected ones. Parameters that DO appear in the
-        tool's schema (e.g. a user tool with its own ``fc`` argument) keep the
-        model-supplied value.
+        A parameter the framework owns and keeps out of the model-facing schema
+        (run_context, agent, team, fc, media, the `_agno_` channels, and params
+        excluded by type annotation such as ``ctx: RunContext``) can never
+        legitimately be model-supplied -- at worst the value is an attempt to
+        override the caller's identity on an identity-threading tool. Without
+        this, the tool-hooks execution chain merges model arguments over the
+        injected ones. The call still runs, carrying the injected value.
+
+        A name that does appear in the tool's schema is left alone: an MCP
+        server is free to expose an argument called "agent", and the schema is
+        what says so.
         """
         if not self.arguments:
             return
         schema_properties = (self.function.parameters or {}).get("properties") or {}
-        dropped = [
+        # `_agno_` channels are internal and unconditional. Everything else is owned by
+        # the framework only if it was kept out of this tool's schema.
+        reserved = set(self.function._framework_params or ()) | set(entrypoint_args)
+        dropped = {
             key
             for key in self.arguments
-            if key.startswith("_agno_") or (key in entrypoint_args and key not in schema_properties)
-        ]
-        for key in dropped:
-            del self.arguments[key]
+            if key in AGNO_INJECTED_PARAMS or (key in reserved and key not in schema_properties)
+        }
         if dropped:
+            # Rebind rather than mutate: the pre-drop dict is already referenced by the
+            # ToolExecution emitted on tool_call_started, which should keep what the model sent.
+            self.arguments = {key: value for key, value in self.arguments.items() if key not in dropped}
             log_warning(
-                f"{self.function.name}: dropped tool-call arguments that collide "
-                f"with framework-injected parameters: {dropped}"
+                f"{self.function.name}: ignored tool-call arguments that name framework-injected "
+                f"parameters: {sorted(dropped)}"
             )
+
+        # A name the schema does declare belongs to the model. Withdraw the injected value
+        # so the no-hooks call does not receive that parameter twice.
+        for key in set(self.arguments) & set(entrypoint_args) & set(schema_properties):
+            del entrypoint_args[key]
 
     def _build_hook_args(self, hook: Callable, name: str, func: Callable, args: Dict[str, Any]) -> Dict[str, Any]:
         """Build the arguments for the hook."""
@@ -1122,11 +1096,13 @@ class FunctionCall(BaseModel):
 
         log_debug(f"Running: {self.get_call_str()}")
 
+        entrypoint_args = self._build_entrypoint_args()
+        # Sanitize before any hook runs, so a hook used as an authorization gate cannot
+        # read an identity the call will not actually execute with.
+        self._drop_injected_overrides(entrypoint_args)
+
         # Execute pre-hook if it exists
         self._handle_pre_hook()
-
-        entrypoint_args = self._build_entrypoint_args()
-        self._drop_injected_overrides(entrypoint_args)
 
         # Check cache if enabled and not a generator function
         if self.function.cache_results and not isgeneratorfunction(self.function.entrypoint):
@@ -1337,14 +1313,16 @@ class FunctionCall(BaseModel):
 
         log_debug(f"Running: {self.get_call_str()}")
 
+        entrypoint_args = self._build_entrypoint_args()
+        # Sanitize before any hook runs, so a hook used as an authorization gate cannot
+        # read an identity the call will not actually execute with.
+        self._drop_injected_overrides(entrypoint_args)
+
         # Execute pre-hook if it exists
         if iscoroutinefunction(self.function.pre_hook):
             await self._handle_pre_hook_async()
         else:
             self._handle_pre_hook()
-
-        entrypoint_args = self._build_entrypoint_args()
-        self._drop_injected_overrides(entrypoint_args)
 
         # Check cache if enabled and not a generator function
         if self.function.cache_results and not (
