@@ -26,8 +26,12 @@ class InMemoryQueueStore:
         async with self._lock:
             # Same dedup semantics as the production stores: empty means no
             # key, and the namespace is scoped per user (cross-tenant key
-            # reuse must not attach to another tenant's job)
-            key = job.get("idempotency_key") or None
+            # reuse must not attach to another tenant's job). The STORED
+            # value normalizes too (Postgres parity: the column reads NULL,
+            # never '') so get_job consumers need no per-store knowledge.
+            if not job.get("idempotency_key"):
+                job = {**job, "idempotency_key": None}
+            key = job.get("idempotency_key")
             if key is not None:
                 user = job.get("user_id")
                 for existing in self._jobs.values():

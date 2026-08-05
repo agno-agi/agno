@@ -2276,8 +2276,12 @@ class RedisDb(BaseDb):
 
         # Falsy ("" or None) means no dedup - matching the Postgres store, which
         # treats an empty header as no key (an "" key would otherwise wedge
-        # every later empty-header submit onto one job)
-        idem = job.get("idempotency_key") or None
+        # every later empty-header submit onto one job). The STORED document
+        # normalizes too (Postgres parity: the column reads NULL, never '')
+        # so get_job consumers need no per-store knowledge.
+        if not job.get("idempotency_key"):
+            job = {**job, "idempotency_key": None}
+        idem = job.get("idempotency_key")
         # user_id scopes the dedup namespace (cross-tenant key reuse must not
         # attach to another tenant's run) - mirrors the Postgres index
         idem_key = self._q_idem_key(job.get("user_id"), idem) if idem is not None else None
