@@ -206,11 +206,19 @@ class TestIdentityThreading:
             "content": "done",
         }
 
-    def test_run_agent_without_context_keeps_component_defaults(self, db):
+    def test_sessionless_run_gets_a_fresh_session_per_call(self, db):
+        # Forwarding session_id=None would collapse every sessionless caller
+        # into the target's sticky per-instance session; the REST and MCP run
+        # planes mint a fresh session the same way.
         stub = _StubAgent()
         runner = StudioRunnerTools(db=db, agents_list=[stub])
         out = _loads(runner.run_agent("stub", "hi"))
-        assert stub.seen == {"message": "hi", "stream": False, "user_id": None, "session_id": None}
+        assert stub.seen is not None and stub.seen["user_id"] is None
+        first_session = stub.seen["session_id"]
+        runner.run_agent("stub", "hi")
+        assert stub.seen is not None
+        second_session = stub.seen["session_id"]
+        assert first_session and second_session and first_session != second_session
         assert out["status"] == "COMPLETED"
 
     def test_run_agent_resolves_code_defined_by_name(self, db):
@@ -613,6 +621,32 @@ class TestDispatchIsolation:
         assert agent.seen["session_id"] == "caller-sess--agent--shared"
         assert team.seen["session_id"] == "caller-sess--team--shared"
 
+    def test_lossy_deep_copy_falls_back_to_the_shared_instance(self, db):
+        # deep_copy rebuilds via __init__ and can blank a subclass or raise;
+        # a copy that lost its id (or failed) must not be dispatched.
+        class _LossyCopyAgent(_StubAgent):
+            def deep_copy(self):
+                blank = _StubAgent()
+                blank.id = None
+                blank.name = None
+                return blank
+
+        class _RaisingCopyAgent(_StubAgent):
+            def deep_copy(self):
+                raise TypeError("missing 1 required positional argument")
+
+        lossy = _LossyCopyAgent()
+        runner = StudioRunnerTools(db=db, agents_list=[lossy])
+        out = _loads(runner.run_agent("stub", "hi"))
+        assert out["agent_id"] == "stub"
+        assert lossy.seen is not None  # the ORIGINAL ran, not the blank copy
+
+        raising = _RaisingCopyAgent()
+        runner = StudioRunnerTools(db=db, agents_list=[raising])
+        out = _loads(runner.run_agent("stub", "hi"))
+        assert out["agent_id"] == "stub"
+        assert raising.seen is not None
+
     def test_loader_keeps_config_declared_db(self, registry, db, tmp_path, monkeypatch):
         # A db reconstructed from the component's own config (possibly carrying
         # table overrides) must not be overwritten by the catalog db.
@@ -665,6 +699,13 @@ class TestDiscovery:
         runner = StudioRunnerTools()
         out = _loads(runner.list_agents())
         assert "error" in out
+
+    def test_list_on_db_without_component_storage_reports_why(self):
+        from agno.db.in_memory import InMemoryDb
+
+        runner = StudioRunnerTools(db=InMemoryDb())
+        out = _loads(runner.list_agents())
+        assert "component storage" in out["error"]
 
 
 # ----------------------------------------------------------------------
@@ -727,6 +768,17 @@ class TestStudioEmbedding:
 
         created = _loads(studio.create_team(name="squad", instructions="i", member_ids=["support"], model_id="gpt-5.4"))
         assert created.get("member_ids") == ["support"]
+
+    def test_edit_collision_error_points_at_the_editable_component(self, registry, db):
+        studio = StudioTools(registry=registry, db=db)
+        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
+        shadow = _StubAgent()
+        shadow.id = "code-1"
+        shadow.name = "Radar Scout"
+        shadowed = StudioTools(registry=registry, db=db, agents_list=[shadow])
+        out = _loads(shadowed.edit_agent("Radar Scout", instructions="x"))
+        assert "Cannot edit code-defined agent" in out["error"]
+        assert "radar-scout" in out["error"]
 
     def test_create_team_ambiguous_member_name_errors(self, registry, db):
         studio = StudioTools(registry=registry, db=db, teams=True)

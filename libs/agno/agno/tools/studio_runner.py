@@ -55,6 +55,7 @@ from __future__ import annotations
 import asyncio
 import json
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
+from uuid import uuid4
 
 from agno.run import RunContext
 from agno.tools.toolkit import Toolkit
@@ -296,28 +297,48 @@ class StudioRunnerTools(Toolkit):
     # mutation never bleeds across callers (mirrors AgentOS's create_fresh
     # resolution). DB-loaded components are already reconstructed per call.
 
+    @staticmethod
+    def _fresh_copy(component: Any) -> Any:
+        """A deep copy for dispatch, guarded against lossy copies.
+
+        deep_copy rebuilds via the component class's __init__ signature, so a
+        subclass with a ``(custom, **kwargs)`` initializer can come back blank
+        or fail to rebuild entirely. A copy that raised or lost its id is not
+        the same component -- run the shared instance instead of silently
+        dispatching a differently-configured one.
+        """
+        copier = getattr(component, "deep_copy", None)
+        if not callable(copier):
+            return component
+        label = getattr(component, "id", None) or component.__class__.__name__
+        try:
+            fresh = copier()
+        except Exception:
+            logger.warning(
+                "StudioRunnerTools: deep_copy failed for %s; running the shared instance", label, exc_info=True
+            )
+            return component
+        if getattr(fresh, "id", None) != getattr(component, "id", None):
+            logger.warning("StudioRunnerTools: deep_copy of %s lost its identity; running the shared instance", label)
+            return component
+        return fresh
+
     def _agent_for_run(self, agent_id: str) -> Optional["Agent"]:
         agent = self._find_agent(agent_id)
         if agent is not None and any(a is agent for a in self._iter_agents()):
-            copier = getattr(agent, "deep_copy", None)
-            if callable(copier):
-                agent = copier()
+            agent = self._fresh_copy(agent)
         return agent
 
     def _team_for_run(self, team_id: str) -> Optional["Team"]:
         team = self._find_team(team_id)
         if team is not None and any(t is team for t in self._iter_teams()):
-            copier = getattr(team, "deep_copy", None)
-            if callable(copier):
-                team = copier()
+            team = self._fresh_copy(team)
         return team
 
     def _workflow_for_run(self, workflow_id: str) -> Optional["Workflow"]:
         wf = self._find_workflow(workflow_id)
         if wf is not None and any(w is wf for w in self._iter_workflows()):
-            copier = getattr(wf, "deep_copy", None)
-            if callable(copier):
-                wf = copier()
+            wf = self._fresh_copy(wf)
         return wf
 
     def _db_component_exists(self, component_type: str, component_id: str) -> bool:
@@ -520,9 +541,13 @@ class StudioRunnerTools(Toolkit):
         try:
             items, total = self._list_db_component_rows(component_type)
             return json.dumps({key: items, "count": len(items), "total": total})
+        except NotImplementedError:
+            return json.dumps(
+                {"error": "The configured db does not support component storage; cannot list components."}
+            )
         except Exception as e:
             logger.exception("Failed to list %s", key)
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
 
     # ------------------------------------------------------------------
     # Execution
@@ -564,7 +589,7 @@ class StudioRunnerTools(Toolkit):
             return self._run_payload("agent_id", component_id, response)
         except Exception as e:
             logger.exception("Failed to run agent")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
 
     def run_team(self, team_id: str, message: str, _agno_run_context: Optional[RunContext] = None) -> str:
         """Run a team and return its result.
@@ -602,7 +627,7 @@ class StudioRunnerTools(Toolkit):
             return self._run_payload("team_id", component_id, response)
         except Exception as e:
             logger.exception("Failed to run team")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
 
     def run_workflow(self, workflow_id: str, message: str, _agno_run_context: Optional[RunContext] = None) -> str:
         """Run a workflow and return its final result.
@@ -640,7 +665,7 @@ class StudioRunnerTools(Toolkit):
             return self._run_payload("workflow_id", component_id, response)
         except Exception as e:
             logger.exception("Failed to run workflow")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
 
     async def arun_agent(self, agent_id: str, message: str, _agno_run_context: Optional[RunContext] = None) -> str:
         """Async variant of run_agent.
@@ -670,7 +695,7 @@ class StudioRunnerTools(Toolkit):
             return self._run_payload("agent_id", component_id, response)
         except Exception as e:
             logger.exception("Failed to run agent")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
 
     async def arun_team(self, team_id: str, message: str, _agno_run_context: Optional[RunContext] = None) -> str:
         """Async variant of run_team.
@@ -699,7 +724,7 @@ class StudioRunnerTools(Toolkit):
             return self._run_payload("team_id", component_id, response)
         except Exception as e:
             logger.exception("Failed to run team")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
 
     async def arun_workflow(
         self, workflow_id: str, message: str, _agno_run_context: Optional[RunContext] = None
@@ -730,7 +755,7 @@ class StudioRunnerTools(Toolkit):
             return self._run_payload("workflow_id", component_id, response)
         except Exception as e:
             logger.exception("Failed to run workflow")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
 
     async def alist_agents(self) -> str:
         """Async variant of list_agents."""
@@ -749,15 +774,20 @@ class StudioRunnerTools(Toolkit):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _sub_session_id(run_context: Optional[RunContext], component_type: str, component_id: str) -> Optional[str]:
+    def _sub_session_id(run_context: Optional[RunContext], component_type: str, component_id: str) -> str:
         """One session per component per calling conversation: repeat runs from the
         same caller session continue, different conversations stay separate.
 
         The component type is part of the key: session ids are globally unique
         while ids are only unique per type, so an agent and a team sharing an id
-        must not share a session row."""
+        must not share a session row.
+
+        A caller without a session gets a fresh session per run -- the REST and
+        MCP run planes mint one the same way. Forwarding None would collapse
+        every sessionless run into the target's sticky per-instance session,
+        leaking history between unrelated callers."""
         if run_context is None or not getattr(run_context, "session_id", None):
-            return None
+            return str(uuid4())
         return f"{run_context.session_id}--{component_type}--{component_id}"
 
     @staticmethod

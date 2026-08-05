@@ -68,7 +68,7 @@ from agno.utils.log import log_debug, logger
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
-    from agno.db.base import BaseDb, ComponentType
+    from agno.db.base import BaseDb
     from agno.models.base import Model
     from agno.registry.registry import Registry
     from agno.scheduler.manager import ScheduleManager
@@ -107,6 +107,9 @@ class StudioTools(Toolkit):
             publish_component, set_current_version, delete_version). Defaults
             to False; without versioning, edits publish immediately instead of
             producing drafts.
+        list_limit: Cap on DB components returned by each list tool (default
+            100). The list payloads report 'db_total' so a capped list is
+            visible as capped.
         schedules: Expose schedule tools: Studio's own create_schedule
             (component-aware targets) plus the SchedulerTools management tools
             (list_schedules, get_schedule, get_schedule_runs, trigger_schedule,
@@ -130,6 +133,7 @@ class StudioTools(Toolkit):
         workflows: Optional[bool] = None,
         versions: bool = False,
         schedules: bool = False,
+        list_limit: int = 100,
         **kwargs: Any,
     ):
         self.registry = registry
@@ -150,6 +154,7 @@ class StudioTools(Toolkit):
             agents_list=agents_list,
             teams_list=teams_list,
             workflows_list=workflows_list,
+            list_limit=list_limit,
         )
 
         self.enable_agents, self.enable_teams, self.enable_workflows = _resolve_flags(
@@ -489,9 +494,6 @@ class StudioTools(Toolkit):
                 return a
         if self._runner_tools._db_component_exists("agent", agent_id):
             return self._load_agent_from_db(agent_id, version=self._edit_base_version(agent_id))
-        for a in self._iter_agents():
-            if getattr(a, "name", None) == agent_id:
-                return a
         resolved = self._runner_tools._resolve_db_id_by_name_or_slug("agent", agent_id)
         if resolved is None:
             return None
@@ -503,9 +505,6 @@ class StudioTools(Toolkit):
                 return t
         if self._runner_tools._db_component_exists("team", team_id):
             return self._load_team_from_db(team_id, version=self._edit_base_version(team_id))
-        for t in self._iter_teams():
-            if getattr(t, "name", None) == team_id:
-                return t
         resolved = self._runner_tools._resolve_db_id_by_name_or_slug("team", team_id)
         if resolved is None:
             return None
@@ -517,9 +516,6 @@ class StudioTools(Toolkit):
                 return w
         if self._runner_tools._db_component_exists("workflow", workflow_id):
             return self._load_workflow_from_db(workflow_id, version=self._edit_base_version(workflow_id))
-        for w in self._iter_workflows():
-            if getattr(w, "name", None) == workflow_id:
-                return w
         resolved = self._runner_tools._resolve_db_id_by_name_or_slug("workflow", workflow_id)
         if resolved is None:
             return None
@@ -568,14 +564,6 @@ class StudioTools(Toolkit):
 
     def _load_workflow_from_db(self, workflow_id: str, version: Optional[int] = None) -> Optional["Workflow"]:
         return self._runner_tools._load_workflow_from_db(workflow_id, version=version)
-
-    def _load_config_from_db(
-        self,
-        component_id: str,
-        version: Optional[int] = None,
-        component_type: Optional["ComponentType"] = None,
-    ) -> Optional[Dict[str, Any]]:
-        return self._runner_tools._load_config_from_db(component_id, version=version, component_type=component_type)
 
     # ------------------------------------------------------------------
     # Discovery tools
@@ -661,8 +649,10 @@ class StudioTools(Toolkit):
         """List all known agents: code-defined (registry / agents_list) plus DB components.
 
         Returns:
-            str: JSON object with 'agents' (each {id, name, model_id, tools, source}) and 'count'.
-                'source' is 'code' for registry/list-defined agents, 'db' for DB components.
+            str: JSON object with 'agents' (each {id, name, model_id, tools, source}), 'count', and
+                'db_total' (DB components in storage; more than the db rows shown means the list
+                is capped -- capped components still resolve by exact id). 'source' is 'code' for
+                registry/list-defined agents, 'db' for DB components.
         """
         try:
             result: List[Dict[str, Any]] = []
@@ -683,11 +673,12 @@ class StudioTools(Toolkit):
                         "source": "code",
                     }
                 )
-            for row in self._list_db_components("agent"):
+            db_rows, db_total = self._list_db_components("agent")
+            for row in db_rows:
                 if row["id"] in seen or row["name"] in seen:
                     continue
                 result.append({**row, "source": "db"})
-            return json.dumps({"agents": result, "count": len(result)})
+            return json.dumps({"agents": result, "count": len(result), "db_total": db_total})
         except Exception as e:
             logger.exception("Failed to list agents")
             return json.dumps({"error": str(e)})
@@ -696,7 +687,8 @@ class StudioTools(Toolkit):
         """List all known teams: code-defined plus DB components.
 
         Returns:
-            str: JSON object with 'teams' (each {id, name, model_id, member_ids?, source}) and 'count'.
+            str: JSON object with 'teams' (each {id, name, model_id, member_ids?, source}), 'count',
+                and 'db_total' (DB components in storage; a capped list is visible as capped).
         """
         try:
             result: List[Dict[str, Any]] = []
@@ -719,11 +711,12 @@ class StudioTools(Toolkit):
                         "source": "code",
                     }
                 )
-            for row in self._list_db_components("team"):
+            db_rows, db_total = self._list_db_components("team")
+            for row in db_rows:
                 if row["id"] in seen or row["name"] in seen:
                     continue
                 result.append({**row, "source": "db"})
-            return json.dumps({"teams": result, "count": len(result)})
+            return json.dumps({"teams": result, "count": len(result), "db_total": db_total})
         except Exception as e:
             logger.exception("Failed to list teams")
             return json.dumps({"error": str(e)})
@@ -732,7 +725,8 @@ class StudioTools(Toolkit):
         """List all known workflows: code-defined plus DB components.
 
         Returns:
-            str: JSON object with 'workflows' (each {id, name, description, steps?, source}) and 'count'.
+            str: JSON object with 'workflows' (each {id, name, description, steps?, source}), 'count',
+                and 'db_total' (DB components in storage; a capped list is visible as capped).
         """
         try:
             result: List[Dict[str, Any]] = []
@@ -754,19 +748,22 @@ class StudioTools(Toolkit):
                         "source": "code",
                     }
                 )
-            for row in self._list_db_components("workflow"):
+            db_rows, db_total = self._list_db_components("workflow")
+            for row in db_rows:
                 if row["id"] in seen or row["name"] in seen:
                     continue
                 result.append({**row, "source": "db"})
-            return json.dumps({"workflows": result, "count": len(result)})
+            return json.dumps({"workflows": result, "count": len(result), "db_total": db_total})
         except Exception as e:
             logger.exception("Failed to list workflows")
             return json.dumps({"error": str(e)})
 
-    def _list_db_components(self, component_type: str) -> List[Dict[str, Any]]:
-        """Return a thin summary of DB components of a given type: [{id, name, description}]."""
-        rows, _ = self._runner_tools._list_db_component_rows(component_type)
-        return rows
+    def _list_db_components(self, component_type: str) -> tuple[List[Dict[str, Any]], int]:
+        """Thin summaries of DB components of a given type plus the total DB count.
+
+        The total makes a capped list visible as capped: components beyond the
+        cap still resolve by exact id."""
+        return self._runner_tools._list_db_component_rows(component_type)
 
     # ------------------------------------------------------------------
     # Read one
@@ -1123,7 +1120,7 @@ class StudioTools(Toolkit):
         otherwise it is published immediately as the new current version.
 
         Args:
-            agent_id (str): The id of the agent to edit.
+            agent_id (str): The id or display name of the agent to edit.
             instructions (Optional[str]): New instructions. Omit to keep.
             model_id (Optional[str]): New model id from the registry. Omit to keep.
             tool_names (Optional[List[str]]): New tool list (replaces existing). Omit to keep.
@@ -1137,8 +1134,18 @@ class StudioTools(Toolkit):
         if self.db is None:
             return json.dumps({"error": "StudioTools has no db configured; cannot edit components."})
         if self._is_code_defined(agent_id, self._iter_agents(), "agent"):
+            hint = ""
+            try:
+                shadowed = self._runner_tools._resolve_db_id_by_name_or_slug("agent", agent_id)
+            except AmbiguousComponentNameError:
+                shadowed = None
+            if shadowed is not None:
+                hint = f" A Studio-created agent with this name exists: use its exact id '{shadowed}'."
             return json.dumps(
-                {"error": f"Cannot edit code-defined agent: {agent_id}. Only Studio-created components are editable."}
+                {
+                    "error": f"Cannot edit code-defined agent: {agent_id}. "
+                    f"Only Studio-created components are editable.{hint}"
+                }
             )
         try:
             agent = self._find_agent_for_edit(agent_id)
@@ -1202,7 +1209,7 @@ class StudioTools(Toolkit):
         otherwise it is published immediately as the new current version.
 
         Args:
-            team_id (str): The id of the team to edit.
+            team_id (str): The id or display name of the team to edit.
             instructions (Optional[str]): New instructions. Omit to keep.
             model_id (Optional[str]): New model id. Omit to keep.
             member_ids (Optional[List[str]]): New member ids (replaces existing). Omit to keep.
@@ -1216,8 +1223,18 @@ class StudioTools(Toolkit):
         if self.db is None:
             return json.dumps({"error": "StudioTools has no db configured; cannot edit components."})
         if self._is_code_defined(team_id, self._iter_teams(), "team"):
+            hint = ""
+            try:
+                shadowed = self._runner_tools._resolve_db_id_by_name_or_slug("team", team_id)
+            except AmbiguousComponentNameError:
+                shadowed = None
+            if shadowed is not None:
+                hint = f" A Studio-created team with this name exists: use its exact id '{shadowed}'."
             return json.dumps(
-                {"error": f"Cannot edit code-defined team: {team_id}. Only Studio-created components are editable."}
+                {
+                    "error": f"Cannot edit code-defined team: {team_id}. "
+                    f"Only Studio-created components are editable.{hint}"
+                }
             )
         try:
             team = self._find_team_for_edit(team_id)
@@ -1281,7 +1298,7 @@ class StudioTools(Toolkit):
         otherwise it is published immediately as the new current version.
 
         Args:
-            workflow_id (str): The id of the workflow to edit.
+            workflow_id (str): The id or display name of the workflow to edit.
             description (Optional[str]): New description. Omit to keep.
             step_specs (Optional[List[dict]]): New ordered steps (replaces existing). Omit to keep.
                 Same shape as create_workflow.step_specs.
@@ -1289,9 +1306,17 @@ class StudioTools(Toolkit):
         if self.db is None:
             return json.dumps({"error": "StudioTools has no db configured; cannot edit components."})
         if self._is_code_defined(workflow_id, self._iter_workflows(), "workflow"):
+            hint = ""
+            try:
+                shadowed = self._runner_tools._resolve_db_id_by_name_or_slug("workflow", workflow_id)
+            except AmbiguousComponentNameError:
+                shadowed = None
+            if shadowed is not None:
+                hint = f" A Studio-created workflow with this name exists: use its exact id '{shadowed}'."
             return json.dumps(
                 {
-                    "error": f"Cannot edit code-defined workflow: {workflow_id}. Only Studio-created components are editable."
+                    "error": f"Cannot edit code-defined workflow: {workflow_id}. "
+                    f"Only Studio-created components are editable.{hint}"
                 }
             )
         try:
