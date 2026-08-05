@@ -780,6 +780,10 @@ class FunctionExecutionResult(BaseModel):
     audios: Optional[List[Audio]] = None
     files: Optional[List[File]] = None
 
+    # Host-only fields from ToolResult.metadata (e.g. MCP structuredContent / _meta)
+    structured_content: Optional[Dict[str, Any]] = None
+    meta: Optional[Dict[str, Any]] = None
+
 
 class FunctionCall(BaseModel):
     """Model for Function Calls"""
