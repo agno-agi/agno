@@ -85,6 +85,24 @@ class RedisEventStream(BaseEventStream):
     ):
         if not _redis_available:
             raise ImportError(_redis_import_error)
+        # Same rejection (and reason) as the job-queue store: per-run keys are
+        # not hash-tagged, so reopen_run's WATCH/MULTI and the multi-key TTL /
+        # terminal pipelines issue cross-slot operations that fail on
+        # RedisCluster - confusingly, at runtime, mid-continuation. Reject up
+        # front instead. (The Redis cancellation manager deliberately does NOT
+        # reject cluster clients: every one of its pipelines is single-key -
+        # audited - and cluster support there is advertised.) Hash-tagging
+        # {run_id} into the keys would make this stream cluster-safe, but the
+        # queue store rejects cluster anyway, so that work is parked until
+        # cluster support is a stack-wide goal - validate with
+        # redis.crc.key_slot in tests if ever built, not fakeredis.
+        if type(async_redis_client).__name__ == "RedisCluster":
+            raise ValueError(
+                "RedisEventStream requires a standalone (non-cluster) Redis client: its per-run "
+                "keys are not hash-tagged, so multi-key transactions (reopen, TTL refresh, "
+                "terminal writes) are cross-slot and fail on RedisCluster. Use a standalone "
+                "Redis or Valkey instance for the event stream, matching the job-queue store."
+            )
         self._redis = async_redis_client
         self._prefix = key_prefix
         self._ttl = ttl_seconds

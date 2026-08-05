@@ -725,3 +725,21 @@ class TestReopenSeedsCounterFromFloor:
             assert idx == 2
         finally:
             await short.aclose()
+
+
+class TestClusterRejection:
+    """Phase-6 item 25: the stream's per-run keys are not hash-tagged, so its
+    WATCH/MULTI and multi-key pipelines are cross-slot - reject cluster
+    clients at construction like the job-queue store does, instead of
+    failing confusingly at runtime mid-continuation. The cancellation
+    manager deliberately stays cluster-tolerant (all pipelines single-key,
+    audited; cluster support advertised there)."""
+
+    def test_cluster_client_rejected_at_construction(self):
+        cluster_client = type("RedisCluster", (), {})()
+        with pytest.raises(ValueError, match="standalone"):
+            RedisEventStream(cluster_client)
+
+    def test_standalone_client_accepted(self):
+        stream = RedisEventStream(fakeredis.FakeAsyncRedis(), block_ms=100)
+        assert stream is not None
