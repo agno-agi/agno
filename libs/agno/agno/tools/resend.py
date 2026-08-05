@@ -16,9 +16,22 @@ class ResendTools(Toolkit):
         api_key: Optional[str] = None,
         from_email: Optional[str] = None,
         enable_send_email: bool = True,
+        require_send_email_confirmation: bool = True,
         all: bool = False,
         **kwargs,
     ):
+        """
+        Initialize ResendTools.
+
+        Args:
+            api_key: Resend API key. Defaults to the RESEND_API_KEY environment variable.
+            from_email: Email address to send from.
+            enable_send_email: Whether to register the send_email tool.
+            require_send_email_confirmation: Whether send_email should require user confirmation before execution.
+                Disabling this allows agents to send emails without confirmation.
+            all: Whether to enable all tools.
+            **kwargs: Additional Toolkit options.
+        """
         self.from_email = from_email
         self.api_key = api_key or getenv("RESEND_API_KEY")
         if not self.api_key:
@@ -28,7 +41,19 @@ class ResendTools(Toolkit):
         if all or enable_send_email:
             tools.append(self.send_email)
 
-        super().__init__(name="resend_tools", tools=tools, **kwargs)
+        requires_confirmation_tools = kwargs.pop("requires_confirmation_tools", None)
+        if require_send_email_confirmation and (all or enable_send_email):
+            if requires_confirmation_tools is None:
+                requires_confirmation_tools = ["send_email"]
+            elif "send_email" not in requires_confirmation_tools:
+                requires_confirmation_tools = [*requires_confirmation_tools, "send_email"]
+
+        super().__init__(
+            name="resend_tools",
+            tools=tools,
+            requires_confirmation_tools=requires_confirmation_tools,
+            **kwargs,
+        )
 
     def send_email(self, to_email: str, subject: str, body: str) -> str:
         """Send an email using the Resend API. Returns if the email was sent successfully or an error message.

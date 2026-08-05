@@ -3,6 +3,10 @@ Resend Tools
 =============================
 
 Demonstrates resend tools.
+
+The send_email tool requires user confirmation by default. Pass
+require_send_email_confirmation=False to ResendTools only if you intentionally
+want agents to send emails without confirmation.
 """
 
 from agno.agent import Agent
