@@ -63,6 +63,7 @@ class DoclingReader(Reader):
         allowed_hosts: Optional[List[str]] = None,
         preserve_images: bool = False,
         image_base_url: str = DEFAULT_IMAGE_BASE_URL,
+        images_scale: float = 2.0,
         **kwargs,
     ):
         """Initialize the DoclingReader.
@@ -86,6 +87,10 @@ class DoclingReader(Reader):
             preserve_images: When True (and ``output_format="markdown"``), extract
                 figures and insert fixed markdown links. Ignored for other formats.
             image_base_url: Public URL prefix for markdown image links.
+            images_scale: Docling render scale used when ``preserve_images=True``.
+                Docling crops page-rendered figure regions (not original embedded
+                assets); ``1.0`` is display size and often looks soft. Default
+                ``2.0`` is sharper; try ``3.0`` for higher fidelity (slower, larger).
             **kwargs: Additional arguments passed to the Reader class
         """
         if chunking_strategy is None:
@@ -100,6 +105,7 @@ class DoclingReader(Reader):
             )
 
         self.preserve_images = preserve_images
+        self.images_scale = images_scale
         images_enabled = preserve_images and self.output_format == OutputFormat.MARKDOWN
         if preserve_images and not images_enabled:
             log_warning("preserve_images only applies when output_format='markdown'; ignoring")
@@ -110,14 +116,14 @@ class DoclingReader(Reader):
         elif format_options is not None:
             self.converter = DocumentConverter(format_options=format_options)
         elif images_enabled:
-            self.converter = self._build_image_aware_converter()
+            self.converter = self._build_image_aware_converter(images_scale=images_scale)
         else:
             self.converter = DocumentConverter()
 
         self.allowed_hosts: Optional[List[str]] = validate_allowed_hosts(allowed_hosts)
 
     @staticmethod
-    def _build_image_aware_converter() -> DocumentConverter:
+    def _build_image_aware_converter(images_scale: float = 2.0) -> DocumentConverter:
         """Configure Docling to keep picture images for referenced markdown export."""
         try:
             from docling.datamodel.pipeline_options import PdfPipelineOptions
@@ -127,6 +133,7 @@ class DoclingReader(Reader):
 
         pipeline_options = PdfPipelineOptions()
         pipeline_options.generate_picture_images = True
+        pipeline_options.images_scale = images_scale
         return DocumentConverter(
             format_options={
                 InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options),

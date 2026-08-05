@@ -485,6 +485,18 @@ def test_preserve_images_flag_defaults_off(mock_converter):
     assert reader.preserve_images is False
 
 
+def test_images_scale_default_and_pipeline_option(mock_converter):
+    from docling.datamodel.base_models import InputFormat
+
+    reader = DoclingReader(converter=mock_converter, preserve_images=True)
+    assert reader.images_scale == 2.0
+
+    converter = DoclingReader._build_image_aware_converter(images_scale=3.0)
+    pdf_option = converter.format_to_options[InputFormat.PDF]
+    assert pdf_option.pipeline_options.generate_picture_images is True
+    assert pdf_option.pipeline_options.images_scale == 3.0
+
+
 def test_preserve_images_uses_markdown_export(mock_converter, mock_docling_result, tmp_path):
     from agno.knowledge.image import LocalKnowledgeImageStore, set_image_store
 
