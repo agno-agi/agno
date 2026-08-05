@@ -40,7 +40,7 @@ case "${1:-}" in
     # run=<id>, so you see which worker handled each background run in real time.
     echo "=== live worker trace (Ctrl-C to stop) ==="
     docker compose -f "$CF" logs -f replica1 replica2 2>&1 \
-      | grep --line-buffered -E "CLAIMED|COMPLETED|POST /agents|Job queue worker|PAUSED|continue" ;;
+      | grep --line-buffered -E "CLAIMED|COMPLETED|Job queue worker|PAUSED|resume|continue|cancel|POST /(agents|teams|workflows)" ;;
   phase)
     phase="${2:?phase}"; n="${3:-500}"; c="${4:-200}"
     echo "=== driving phase=$phase n=$n concurrency=$c ==="
