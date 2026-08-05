@@ -60,6 +60,11 @@ def _loads(s: str) -> Dict[str, Any]:
     return json.loads(s)
 
 
+def _tool(toolkit: StudioTools, name: str):
+    """The registered entrypoint for a tool -- what an agent actually calls."""
+    return toolkit.functions[name].entrypoint
+
+
 # ----------------------------------------------------------------------
 # Backward-compatible alias
 # ----------------------------------------------------------------------
@@ -91,6 +96,7 @@ VERSIONING_TOOLS = {
 SCHEDULE_TOOLS = {
     "create_schedule",
     "list_schedules",
+    "get_schedule",
     "get_schedule_runs",
     "trigger_schedule",
     "enable_schedule",
@@ -140,6 +146,16 @@ class TestInitialization:
         assert SCHEDULE_TOOLS.issubset(set(studio_schedules.functions.keys()))
         assert SCHEDULE_TOOLS.issubset(set(studio_schedules.async_functions.keys()))
         assert "Schedules:" in studio_schedules.instructions
+
+    def test_management_tools_are_shared_with_scheduler_toolkit(self, studio_schedules):
+        from agno.tools.scheduler import SchedulerTools
+
+        for tool_name in SCHEDULE_TOOLS - {"create_schedule"}:
+            sync_owner = studio_schedules.functions[tool_name].entrypoint.__self__
+            async_owner = studio_schedules.async_functions[tool_name].entrypoint.__self__
+            assert isinstance(sync_owner, SchedulerTools), tool_name
+            assert isinstance(async_owner, SchedulerTools), tool_name
+        assert studio_schedules.functions["create_schedule"].entrypoint.__self__ is studio_schedules
 
     def test_instructions_reflect_versioning_flag(self, studio, studio_versioned):
         assert "published immediately" in studio.instructions
@@ -1030,36 +1046,44 @@ class TestSchedules:
         assert second["id"] == first["id"]
         assert second["cron"] == "30 18 * * *"
 
-        listed = _loads(studio_schedules.list_schedules())
+        listed = _loads(_tool(studio_schedules, "list_schedules")())
         assert listed["count"] == 1
         assert listed["schedules"][0]["cron"] == "30 18 * * *"
+
+    def test_get_schedule_reports_endpoint_and_payload(self, studio_schedules):
+        self._create_target_agent(studio_schedules)
+        schedule_id = self._create_schedule(studio_schedules)["id"]
+
+        out = _loads(_tool(studio_schedules, "get_schedule")(schedule_id))
+        assert out["endpoint"] == "/agents/digest/runs"
+        assert out["payload"] == {"message": "Send the daily digest."}
 
     def test_enable_disable_delete_roundtrip(self, studio_schedules):
         self._create_target_agent(studio_schedules)
         schedule_id = self._create_schedule(studio_schedules)["id"]
 
-        disabled = _loads(studio_schedules.disable_schedule(schedule_id))
+        disabled = _loads(_tool(studio_schedules, "disable_schedule")(schedule_id))
         assert disabled["status"] == "disabled"
         assert disabled["enabled"] is False
-        assert _loads(studio_schedules.list_schedules(enabled_only=True))["count"] == 0
+        assert _loads(_tool(studio_schedules, "list_schedules")(enabled_only=True))["count"] == 0
 
-        enabled = _loads(studio_schedules.enable_schedule(schedule_id))
+        enabled = _loads(_tool(studio_schedules, "enable_schedule")(schedule_id))
         assert enabled["status"] == "enabled"
         assert enabled["enabled"] is True
-        assert _loads(studio_schedules.list_schedules(enabled_only=True))["count"] == 1
+        assert _loads(_tool(studio_schedules, "list_schedules")(enabled_only=True))["count"] == 1
 
-        deleted = _loads(studio_schedules.delete_schedule(schedule_id))
+        deleted = _loads(_tool(studio_schedules, "delete_schedule")(schedule_id))
         assert deleted["status"] == "deleted"
-        assert _loads(studio_schedules.list_schedules())["count"] == 0
+        assert _loads(_tool(studio_schedules, "list_schedules")())["count"] == 0
 
     def test_delete_unknown_schedule_returns_error(self, studio_schedules):
-        out = _loads(studio_schedules.delete_schedule("ghost"))
+        out = _loads(_tool(studio_schedules, "delete_schedule")("ghost"))
         assert "error" in out
 
     def test_get_schedule_runs_empty_for_new_schedule(self, studio_schedules):
         self._create_target_agent(studio_schedules)
         schedule_id = self._create_schedule(studio_schedules)["id"]
-        out = _loads(studio_schedules.get_schedule_runs(schedule_id))
+        out = _loads(_tool(studio_schedules, "get_schedule_runs")(schedule_id))
         assert out["runs"] == []
         assert out["count"] == 0
 
@@ -1067,7 +1091,7 @@ class TestSchedules:
         self._create_target_agent(studio_schedules)
         schedule_id = self._create_schedule(studio_schedules)["id"]
 
-        out = _loads(studio_schedules.trigger_schedule(schedule_id))
+        out = _loads(_tool(studio_schedules, "trigger_schedule")(schedule_id))
         assert out["status"] == "triggered"
         assert out["id"] == schedule_id
         assert "poll interval" in out["note"]
@@ -1080,14 +1104,14 @@ class TestSchedules:
     def test_trigger_disabled_schedule_returns_error(self, studio_schedules):
         self._create_target_agent(studio_schedules)
         schedule_id = self._create_schedule(studio_schedules)["id"]
-        studio_schedules.disable_schedule(schedule_id)
+        _tool(studio_schedules, "disable_schedule")(schedule_id)
 
-        out = _loads(studio_schedules.trigger_schedule(schedule_id))
+        out = _loads(_tool(studio_schedules, "trigger_schedule")(schedule_id))
         assert "error" in out
         assert "disabled" in out["error"]
 
     def test_trigger_unknown_schedule_returns_error(self, studio_schedules):
-        out = _loads(studio_schedules.trigger_schedule("ghost"))
+        out = _loads(_tool(studio_schedules, "trigger_schedule")("ghost"))
         assert "error" in out
         assert "Schedule not found" in out["error"]
 
