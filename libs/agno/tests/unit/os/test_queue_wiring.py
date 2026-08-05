@@ -317,3 +317,36 @@ class TestUnfencedSessionStoreWarning:
         with caplog.at_level(logging.WARNING, logger="agno"):
             warn_unfenced_session_stores(self._agent_os(None))
         assert not any("without atomic run persistence" in r.message for r in caplog.records)
+
+
+class TestQueueLifespanCleanup:
+    """Phase-7 item 27: an exception in the app body must not leak a running
+    worker or a stale active-worker registration - the inline-door admission
+    gate consults that registration, and a leaked one points at a dead
+    worker's store forever."""
+
+    @pytest.mark.asyncio
+    async def test_app_body_exception_stops_worker_and_clears_registration(self):
+        from types import SimpleNamespace
+
+        from agno.job_queue.config import QueueConfig
+        from agno.job_queue.store import InMemoryQueueStore
+        from agno.os.job_queue import get_active_queue_worker, queue_lifespan
+
+        agent_os = SimpleNamespace(
+            queue=QueueConfig(durable=True, db=InMemoryQueueStore()),
+            db=None,
+            agents=[],
+            teams=[],
+            workflows=[],
+        )
+        app = SimpleNamespace(state=SimpleNamespace())
+
+        with pytest.raises(RuntimeError, match="app body exploded"):
+            async with queue_lifespan(app, agent_os):
+                worker = get_active_queue_worker()
+                assert worker is not None and worker._running
+                raise RuntimeError("app body exploded")
+
+        assert get_active_queue_worker() is None, "the registration must be cleared on the failure path"
+        assert not app.state.queue_worker._running, "the worker must be stopped on the failure path"

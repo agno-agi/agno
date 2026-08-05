@@ -1914,9 +1914,16 @@ async def queue_lifespan(app: Any, agent_os: Any):
     worker = QueueWorker(store=store, resolve_component=resolve_component, config=config)
     app.state.queue_worker = worker
     set_active_queue_worker(worker)
-    await worker.start()
-
-    yield
-
-    set_active_queue_worker(None)
-    await worker.stop()
+    try:
+        # start() sits INSIDE the try: it registers nothing itself (both
+        # registrations happen above), but if it ever grows a failure mode,
+        # the finally is what clears the active-worker registration and
+        # stops whatever half-started. Previously an exception in the app
+        # body leaked a running worker and a stale registration - the
+        # inline-door admission gate then consulted a dead worker's store
+        # forever.
+        await worker.start()
+        yield
+    finally:
+        set_active_queue_worker(None)
+        await worker.stop()
