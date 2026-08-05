@@ -555,7 +555,7 @@ class QueueWorker:
 
         stream_generation = job.get("attempt", 1)
         with contextlib.suppress(Exception):
-            # Item 5: this attempt takes the stream's writer generation FIRST,
+            # This attempt takes the stream's writer generation FIRST,
             # before any stream mutation. A zombie attempt still publishing
             # from an older claim is refused per-mutation by the backend - its
             # events cannot interleave, its sentinel cannot close this leg's
@@ -1904,7 +1904,7 @@ async def aticket_poll_fallback(
 
 def warn_unfenced_session_stores(agent_os: Any) -> None:
     """Loud-degrade for durable queues over session stores without the atomic
-    run-persistence primitives (phase-6 item 24, option A).
+    run-persistence primitives.
 
     The fencing architecture - zombie/attempt fences, the worker's RUNNING
     and attempt stamps, the terminal-row guard's atomic path - lives in the

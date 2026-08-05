@@ -213,7 +213,7 @@ class TestInMemoryRetryIndexContinuity:
 
 
 class TestReopenSeedsCounterFromFloor:
-    """Phase-5 item 20 (in-memory twin): after a process restart the buffer
+    """In-memory twin of the Redis floor-seeding tests: after a process restart the buffer
     comes up empty under a paused run's continue - the seeded floor keeps
     indices monotonic for resuming clients."""
 

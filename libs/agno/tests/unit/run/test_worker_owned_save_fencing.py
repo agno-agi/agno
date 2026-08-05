@@ -1,4 +1,4 @@
-"""Item 4: a run's OWN saves are fenced while it executes under the queue
+"""A run's OWN saves are fenced while it executes under the queue
 worker.
 
 The per-run save helpers (agent/team/workflow, sync and async) consult the

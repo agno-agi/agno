@@ -30,7 +30,7 @@ from agno.os.event_streams.base import BaseEventStream
 from agno.run.base import RunStatus
 from agno.utils.log import log_debug, log_warning
 
-# Item 5 fence scripts. The INCR script refuses when the stored generation is
+# Writer-generation fence scripts. The INCR script refuses when the stored generation is
 # NEWER than the writer's, establishes it when absent (first fenced writer, or
 # an expired key - fail-open restamp; the TTL hazard predates the fence), and
 # self-heals forward when the writer's is newer. The XADD script re-checks at
@@ -146,7 +146,7 @@ class RedisEventStream(BaseEventStream):
         # runs remain active.
         self._active_runs: set = set()
         self._refresher_task: Optional["asyncio.Task"] = None
-        # Item 5 generation fence: Lua gives gen-check + INCR (and gen-check +
+        # Writer-generation fence: Lua gives gen-check + INCR (and gen-check +
         # XADD) single-roundtrip atomicity on the hot per-event path. Scripts
         # register lazily; a server without scripting (fakeredis, restricted
         # managed Redis) degrades FAIL-OPEN to the unfenced legacy path with
@@ -174,7 +174,7 @@ class RedisEventStream(BaseEventStream):
         return f"{self._prefix}{run_id}:idx"
 
     def _gen_key(self, run_id: str) -> str:
-        # The stream's writer generation (item 5): the newest attempt that
+        # The stream's writer generation: the newest attempt that
         # called begin_attempt. add_event calls carrying an older generation
         # are refused atomically in Lua.
         return f"{self._prefix}{run_id}:gen"

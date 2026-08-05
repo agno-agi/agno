@@ -1,9 +1,9 @@
-"""The two parked zombie acceptance repros, ported to the fenced world.
+"""Zombie-worker acceptance scenarios, end to end against the fences.
 
-Scenarios preserved verbatim from .context/pr9079-review/repros/
-(zombie_stream_demo.py, sweep_vs_live_worker_demo.py); only the assertions
-changed - they now pin the FENCED outcomes instead of demonstrating the
-corruption. Timings match the demos (lock_grace floor is 3s).
+Both scenarios reproduce a worker that stalls past lock_grace (heartbeats
+stop, execution does not - the event-loop-starvation mode) and then wakes.
+They originally demonstrated the corruption; the assertions now pin the
+fenced outcomes. Timings sit at the lock_grace floor (3s).
 
 Scenario 1 (multi-attempt reclaim): a worker stalls past lock_grace, a second
 worker reclaims at attempt 2, the first wakes and keeps publishing. Fenced:

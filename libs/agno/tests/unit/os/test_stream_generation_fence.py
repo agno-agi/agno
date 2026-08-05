@@ -1,4 +1,4 @@
-"""Item 5: per-run stream writer generations.
+"""Per-run stream writer generations.
 
 ``begin_attempt`` records the newest attempt as the stream's writer
 generation (monotonic CAS); ``add_event(generation=...)`` from an older

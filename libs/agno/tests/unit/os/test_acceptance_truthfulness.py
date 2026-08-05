@@ -1,4 +1,4 @@
-"""Behavioral tests for the acceptance invariant (phase-3 item 10).
+"""Behavioral tests for the acceptance invariant.
 
 After the queue ticket commits, every response must either ACKNOWLEDGE the
 durable acceptance (202/tail) or first make the ticket permanently
@@ -179,7 +179,7 @@ class TestHelperUnits:
 
 
 class TestBackgroundContinueRequiresDurableDoor:
-    """Phase-7 item 32: continue(background=true, stream=false) previously
+    """continue(background=true, stream=false) previously
     diverged three ways - 202 with a ticket, a silent INLINE-BLOCKING 200 on
     agents/teams without one, and a 409 on workflows. The silent inline run
     was the lie: the caller asked for background semantics and got a request

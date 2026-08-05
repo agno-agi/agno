@@ -1,4 +1,4 @@
-"""Item 4 on real Postgres: the zombie-clobber the fence exists to stop.
+"""On real Postgres: the zombie-clobber the save fence exists to stop.
 
 A worker declared dead (but still executing) writes its result AFTER a newer
 attempt has claimed and completed the run. Before the fence, that write went
@@ -122,8 +122,9 @@ class TestZombieSaveCannotClobber:
     @pytest.mark.asyncio
     async def test_stale_attempt_midrun_flush_is_dropped(self, db, cleanup):
         """Not just terminal saves: a zombie's mid-run RUNNING flush landing
-        after the newer attempt completed must also be refused (the census
-        rider - bare upsert_run overwrites status unconditionally)."""
+        after the newer attempt completed must also be refused - bare
+        upsert_run overwrites status unconditionally, so an unfenced flush
+        is the same clobber as an unfenced terminal write."""
         from agno.agent._session import asave_run
 
         session_id, run_id = f"s-{uuid.uuid4().hex[:8]}", f"r-{uuid.uuid4().hex[:8]}"

@@ -38,7 +38,7 @@ class InMemoryEventStream(BaseEventStream):
             subscriber_manager = subscriber_manager if subscriber_manager is not None else sse_subscriber_manager
         self._buffer = events_buffer
         self._subscribers = subscriber_manager
-        # Per-run writer generation (item 5): begin_attempt records the newest
+        # Per-run writer generation: begin_attempt records the newest
         # attempt; add_event calls carrying an older generation are refused.
         # Process-local like the buffer itself - single-process is this
         # backend's whole contract.
