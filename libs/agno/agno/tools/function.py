@@ -866,22 +866,49 @@ class Function(BaseModel):
             and name not in AGNO_INJECTED_PARAMS
         ]
 
+    @staticmethod
+    def _get_run_context_identity(entrypoint_args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Stable identity fields a run context contributes to the cache key.
+
+        Both injection channels ("run_context" and "_agno_run_context", the
+        latter used by internal wrappers such as the MCP entrypoints) are
+        treated identically. Only user_id and session_id are contributed:
+        run_id must stay out of the key so cached results are reusable across
+        runs. Returns None when the entrypoint takes no run context, so key
+        composition for run-context-free tools is unchanged.
+        """
+        run_context = entrypoint_args.get("run_context") or entrypoint_args.get("_agno_run_context")
+        if run_context is None:
+            return None
+        return {
+            "user_id": getattr(run_context, "user_id", None),
+            "session_id": getattr(run_context, "session_id", None),
+        }
+
     def _get_cache_key(self, entrypoint_args: Dict[str, Any], call_args: Optional[Dict[str, Any]] = None) -> str:
-        """Generate a cache key based on function name and arguments."""
+        """Generate a cache key based on function name, caller identity and arguments."""
         import json
         from hashlib import md5
 
+        identity = self._get_run_context_identity(entrypoint_args)
+
         copy_entrypoint_args = entrypoint_args.copy()
         # Injected framework objects are not part of a call's identity for caching
-        # purposes. NOTE: this means a `cache_results` tool that reads run_context serves
-        # one user's result to another -- pre-existing, tracked separately.
+        # purposes; the caller's identity is contributed separately, above.
         for param_name in FRAMEWORK_INJECTED_PARAMS:
             copy_entrypoint_args.pop(param_name, None)
         # Use json.dumps with sort_keys=True to ensure consistent ordering regardless of dict key order
         args_str = json.dumps(copy_entrypoint_args, sort_keys=True, default=str)
 
         kwargs_str = str(sorted((call_args or {}).items()))
-        key_str = f"{self.name}:{args_str}:{kwargs_str}"
+        if identity is not None:
+            # A run context contributes the caller's identity instead of being
+            # dropped: results cached for one user or session must never be
+            # served to another.
+            identity_str = json.dumps(identity, sort_keys=True, default=str)
+            key_str = f"{self.name}:{identity_str}:{args_str}:{kwargs_str}"
+        else:
+            key_str = f"{self.name}:{args_str}:{kwargs_str}"
         return md5(key_str.encode()).hexdigest()
 
     def _get_cache_file_path(self, cache_key: str) -> str:

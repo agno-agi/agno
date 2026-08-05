@@ -1619,3 +1619,41 @@ async def test_agent_refresh_does_not_call_build_tools_after_reconnect():
     # No forced reconnect; build_tools() called to refresh definitions
     assert not any(call.kwargs.get("force") for call in alive_tool.connect.await_args_list)
     alive_tool.build_tools.assert_awaited_once()
+
+
+# =============================================================================
+# Cache identity tests (_agno_run_context channel)
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_mcp_cached_results_key_per_user_and_hit_across_runs(tmp_path):
+    """MCP entrypoints receive identity via _agno_run_context; the cache must
+    key that channel exactly like run_context: per user and session, with
+    run_id kept out of the key so results are reusable across runs."""
+    from agno.run.base import RunContext
+
+    tool = _make_mcp_tool_mock("get_data")
+    session = _make_session_returning("payload")
+
+    fn = Function(
+        name="get_data",
+        entrypoint=get_entrypoint_for_tool(tool, session),
+        skip_entrypoint_processing=True,
+        cache_results=True,
+        cache_dir=str(tmp_path),
+    )
+
+    fn._run_context = RunContext(run_id="r1", session_id="s1", user_id="alice")
+    await FunctionCall(function=fn).aexecute()
+
+    # A different user must execute again, not be served alice's result
+    fn._run_context = RunContext(run_id="r2", session_id="s2", user_id="bob")
+    await FunctionCall(function=fn).aexecute()
+    assert session.call_tool.await_count == 2
+
+    # Same user and session in a new run is served from cache
+    fn._run_context = RunContext(run_id="r3", session_id="s1", user_id="alice")
+    result = await FunctionCall(function=fn).aexecute()
+    assert session.call_tool.await_count == 2
+    assert result.status == "success"

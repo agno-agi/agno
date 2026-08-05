@@ -2150,3 +2150,93 @@ def test_nested_type_alias_inside_a_union_is_still_identity():
     ).execute()
     assert result.status == "success"
     assert result.result == "RunContext:real-user"
+
+# =============================================================================
+# Cache key identity tests
+# =============================================================================
+
+
+def test_cached_results_do_not_leak_across_users(tmp_path):
+    """A cache_results tool that takes run_context must key per user: one
+    user's cached result must never be served to another user."""
+    executions = []
+
+    def whoami(run_context: RunContext) -> str:
+        executions.append(run_context.user_id)
+        return f"secret for {run_context.user_id}"
+
+    func = Function(name="whoami", entrypoint=whoami, cache_results=True, cache_dir=str(tmp_path))
+
+    func._run_context = RunContext(run_id="r1", session_id="s-alice", user_id="alice")
+    result_alice = FunctionCall(function=func).execute()
+
+    func._run_context = RunContext(run_id="r2", session_id="s-bob", user_id="bob")
+    result_bob = FunctionCall(function=func).execute()
+
+    assert result_alice.result == "secret for alice"
+    assert result_bob.result == "secret for bob"
+    assert executions == ["alice", "bob"]
+
+
+@pytest.mark.asyncio
+async def test_cached_results_do_not_leak_across_users_async(tmp_path):
+    """Async variant: per-user cache keys through aexecute."""
+    executions = []
+
+    async def whoami(run_context: RunContext) -> str:
+        executions.append(run_context.user_id)
+        return f"secret for {run_context.user_id}"
+
+    func = Function(name="whoami", entrypoint=whoami, cache_results=True, cache_dir=str(tmp_path))
+
+    func._run_context = RunContext(run_id="r1", session_id="s-alice", user_id="alice")
+    result_alice = await FunctionCall(function=func).aexecute()
+
+    func._run_context = RunContext(run_id="r2", session_id="s-bob", user_id="bob")
+    result_bob = await FunctionCall(function=func).aexecute()
+
+    assert result_alice.result == "secret for alice"
+    assert result_bob.result == "secret for bob"
+    assert executions == ["alice", "bob"]
+
+
+def test_cache_hits_across_runs_for_same_user_and_session(tmp_path):
+    """run_id must stay out of the cache key: the same user and session hit
+    the cache across runs."""
+    executions = []
+
+    def whoami(run_context: RunContext) -> str:
+        executions.append(run_context.user_id)
+        return f"secret for {run_context.user_id}"
+
+    func = Function(name="whoami", entrypoint=whoami, cache_results=True, cache_dir=str(tmp_path))
+
+    func._run_context = RunContext(run_id="r1", session_id="s1", user_id="alice")
+    FunctionCall(function=func).execute()
+
+    func._run_context = RunContext(run_id="r2", session_id="s1", user_id="alice")
+    result = FunctionCall(function=func).execute()
+
+    assert result.result == "secret for alice"
+    assert executions == ["alice"]
+
+
+@pytest.mark.asyncio
+async def test_cache_hits_across_runs_for_same_user_and_session_async(tmp_path):
+    """Async variant: run_id stays out of the cache key."""
+    executions = []
+
+    async def whoami(run_context: RunContext) -> str:
+        executions.append(run_context.user_id)
+        return f"secret for {run_context.user_id}"
+
+    func = Function(name="whoami", entrypoint=whoami, cache_results=True, cache_dir=str(tmp_path))
+
+    func._run_context = RunContext(run_id="r1", session_id="s1", user_id="alice")
+    await FunctionCall(function=func).aexecute()
+
+    func._run_context = RunContext(run_id="r2", session_id="s1", user_id="alice")
+    result = await FunctionCall(function=func).aexecute()
+
+    assert result.result == "secret for alice"
+    assert executions == ["alice"]
