@@ -899,10 +899,12 @@ class QueueWorker:
     def _continuation_kwargs(job: Dict[str, Any]) -> Dict[str, Any]:
         """Rebuild acontinue_run kwargs from the ticket's merged
         payload["continue"] block, mirroring each HTTP endpoint's own parsing:
-        agents rebuild updated_tools (ToolExecution), teams rebuild
-        requirements (RunRequirement), workflows rebuild step_requirements
-        (StepRequirement). The raw client JSON is what the seam stored, so
-        the worker reconstructs exactly what the inline path would have."""
+        agents wrap the stored updated_tools JSON into requirements
+        (RunRequirement around ToolExecution, exactly like the inline
+        endpoint), teams rebuild requirements (RunRequirement), workflows
+        rebuild step_requirements (StepRequirement). The raw client JSON is
+        what the seam stored, so the worker reconstructs exactly what the
+        inline path would have."""
         cont = (job.get("payload") or {}).get("continue") or {}
         component_type = job.get("component_type")
         kwargs: Dict[str, Any] = dict(run_id=job["id"], session_id=job["session_id"])
@@ -920,8 +922,13 @@ class QueueWorker:
             tools = cont.get("updated_tools")
             if tools:
                 from agno.models.response import ToolExecution
+                from agno.run.requirement import RunRequirement
 
-                kwargs["updated_tools"] = [ToolExecution.from_dict(t) for t in tools]
+                # v3's acontinue_run consumes only `requirements`; a bare
+                # updated_tools kwarg falls into **kwargs and the continue
+                # dead-letters as unresolved-HITL. Same conversion as the
+                # inline endpoint (agents/router.py).
+                kwargs["requirements"] = [RunRequirement(tool_execution=ToolExecution.from_dict(t)) for t in tools]
         else:  # team
             reqs = cont.get("requirements")
             if reqs:
