@@ -40,11 +40,22 @@ class Registry:
     """
     Registry is used to manage non serializable objects like tools, models, databases, vector databases,
     agents, and teams.
+
+    ``sealed=True`` marks the registry as the complete, deliberate list of building
+    blocks: AgentOS never folds OS-registered components, their wiring (models,
+    tools, dbs), managers, or discovered knowledge into it at boot or resync, so
+    Studio builders can wire exactly what the author declared and nothing else.
+    Direct mutation by the author (``registry.add_tool(...)``, appends) still
+    works -- sealing gates the runtime, not the object. Two consequences to
+    weigh before sealing: DB-built components that reference undeclared code
+    components or toolkits will not rehydrate, and ``GET /registry`` reflects
+    only the declaration rather than everything wired into the OS.
     """
 
     name: Optional[str] = None
     description: Optional[str] = None
     id: str = field(default_factory=lambda: str(uuid4()))
+    sealed: bool = False
     tools: List[Any] = field(default_factory=list)
     models: List[Model] = field(default_factory=list)
     dbs: List[BaseDb] = field(default_factory=list)

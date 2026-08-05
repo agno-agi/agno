@@ -802,10 +802,13 @@ class AgentOS:
         """Populate the registry with code-defined agents and teams.
 
         This ensures that workflows loaded from DB can rehydrate their steps
-        using code-defined agents/teams via the registry.
+        using code-defined agents/teams via the registry. A sealed registry is
+        never folded into: the author's declaration is the complete list.
         """
         if self.registry is None:
             self.registry = Registry()
+        if self.registry.sealed:
+            return
 
         if self._agents:
             existing_agents = {aid: a for a in self.registry.agents if (aid := getattr(a, "id", None)) is not None}
@@ -853,6 +856,8 @@ class AgentOS:
         """
         if self.registry is None:
             self.registry = Registry()
+        if self.registry.sealed:
+            return
 
         if self.knowledge_instances:
             existing_knowledge = {
@@ -881,6 +886,8 @@ class AgentOS:
         """
         if self.registry is None:
             self.registry = Registry()
+        if self.registry.sealed:
+            return
 
         registry = self.registry
         memory_by_id = {mid: m for m in registry.memory_managers if (mid := getattr(m, "id", None)) is not None}
@@ -949,6 +956,8 @@ class AgentOS:
         """
         if self.registry is None:
             self.registry = Registry()
+        if self.registry.sealed:
+            return
 
         try:
             collect_components_from_os(self._agents, self._teams, self._workflows, self.registry)
