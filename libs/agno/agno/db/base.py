@@ -941,7 +941,7 @@ class BaseDb(ABC):
         Args:
             component_id: The component ID.
             version: Specific version or None for current.
-            label: Optional label of the component.
+            label: Config label to resolve. Ignored if version is provided.
 
         Returns:
             Dictionary with component, config, children, and resolved_versions.

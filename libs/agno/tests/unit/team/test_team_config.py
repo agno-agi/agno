@@ -834,6 +834,45 @@ class TestTeamLoad:
         assert len(loaded.members) == 1
         assert loaded.members[0].id == "rt-agent"
 
+    def test_load_with_label_returns_labeled_version_on_real_sqlite_db(self, tmp_path):
+        """Test load(label=...) returns the labeled version, with members pinned to it."""
+        db = SqliteDb(db_file=str(tmp_path / "team_label.db"))
+        member = Agent(id="lbl-agent", name="Member One")
+        team = Team(id="lbl-team", name="Version One", members=[member])
+        team.save(db=db, label="stable")
+        team.name = "Version Two"
+        member.name = "Member Two"
+        team.save(db=db)
+
+        loaded = Team.load(id="lbl-team", db=db, label="stable")
+
+        assert loaded is not None
+        assert loaded.name == "Version One"
+        assert loaded.members[0].name == "Member One"
+
+    def test_load_with_unknown_label_returns_none_on_real_sqlite_db(self, tmp_path):
+        """Test load(label=...) returns None when no version carries the label."""
+        db = SqliteDb(db_file=str(tmp_path / "team_label_miss.db"))
+        team = Team(id="miss-team", name="Current", members=[Agent(id="miss-agent", name="Member")])
+        team.save(db=db, label="stable")
+
+        loaded = Team.load(id="miss-team", db=db, label="no-such-label")
+
+        assert loaded is None
+
+    def test_load_with_version_and_label_prefers_version_on_real_sqlite_db(self, tmp_path):
+        """Test load(version=..., label=...) resolves by version, matching get_config precedence."""
+        db = SqliteDb(db_file=str(tmp_path / "team_label_prec.db"))
+        team = Team(id="prec-team", name="Version One", members=[Agent(id="prec-agent", name="Member")])
+        team.save(db=db, label="stable")
+        team.name = "Version Two"
+        team.save(db=db)
+
+        loaded = Team.load(id="prec-team", db=db, version=2, label="stable")
+
+        assert loaded is not None
+        assert loaded.name == "Version Two"
+
 
 # =============================================================================
 # delete() Tests
