@@ -1092,7 +1092,7 @@ class QueueWorker:
             # passes vacuously (stored None) and stamps its own stale attempt.
             from agno.run.status_persist import apersist_run_status
 
-            with contextlib.suppress(Exception):
+            try:
                 await apersist_run_status(
                     component_for_stamp,
                     job.get("component_type", ""),
@@ -1101,6 +1101,13 @@ class QueueWorker:
                     fields={"queue_attempt": attempt},
                     user_id=job.get("user_id"),
                     expected_attempt=attempt,
+                )
+            except Exception as e:
+                # Best-effort by design, but never SILENT: a dead session
+                # store here previously logged nothing at all
+                log_warning(
+                    f"Job queue: attempt stamp failed for job {job_id} (worker={self.worker_id}, "
+                    f"attempt={attempt}): {e}"
                 )
         if job_type != "run":
             # Forward-compat: a newer producer enqueued a job type this worker
@@ -1150,7 +1157,7 @@ class QueueWorker:
                 from agno.run.base import RunStatus as _RS
                 from agno.run.status_persist import apersist_run_status as _aps
 
-                with contextlib.suppress(Exception):
+                try:
                     await _aps(
                         component,
                         job.get("component_type", ""),
@@ -1159,6 +1166,13 @@ class QueueWorker:
                         fields={"status": _RS.running.value},
                         user_id=job.get("user_id"),
                         expected_attempt=attempt,
+                    )
+                except Exception as e:
+                    # Best-effort by design, but never SILENT (see the
+                    # attempt stamp above)
+                    log_warning(
+                        f"Job queue: RUNNING stamp failed for job {job_id} (worker={self.worker_id}, "
+                        f"attempt={attempt}): {e}"
                     )
             if is_stream:
                 execution = self._execute_streaming(component, job)

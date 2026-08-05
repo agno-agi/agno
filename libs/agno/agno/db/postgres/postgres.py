@@ -5695,7 +5695,7 @@ class PostgresDb(BaseDb):
                 row = sess.execute(stmt).fetchone()
                 return dict(row._mapping) if row is not None else None
         except Exception as e:
-            log_debug(f"Error claiming run job: {e}")
+            log_error(f"Job queue store: claim failed for worker {worker_id} (deployment={deployment_id}): {e}")
             return None
 
     def heartbeat_jobs(self, worker_id: str, job_ids: List[str]) -> int:
@@ -5720,7 +5720,9 @@ class PostgresDb(BaseDb):
                 )
                 return result.rowcount or 0
         except Exception as e:
-            log_debug(f"Error heartbeating run jobs: {e}")
+            log_error(
+                f"Job queue store: heartbeat failed for worker {worker_id} ({len(job_ids)} jobs, e.g. {job_ids[0]}): {e}"
+            )
             return 0
 
     def complete_job(self, job_id: str, worker_id: str, attempt: int, status: str, error: Optional[str] = None) -> bool:
@@ -5751,7 +5753,9 @@ class PostgresDb(BaseDb):
                 )
                 return (result.rowcount or 0) > 0
         except Exception as e:
-            log_debug(f"Error completing run job: {e}")
+            log_error(
+                f"Job queue store: settle failed for job {job_id} (worker={worker_id}, attempt={attempt}, status={status!r}): {e}"
+            )
             return False
 
     def retry_or_fail_job(
@@ -5803,7 +5807,9 @@ class PostgresDb(BaseDb):
                 sess.execute(update(table).where(table.c.id == job_id).values(**values))
                 return new_status
         except Exception as e:
-            log_debug(f"Error retrying/failing run job: {e}")
+            log_error(
+                f"Job queue store: retry-or-fail failed for job {job_id} (worker={worker_id}, attempt={attempt}): {e}"
+            )
             return None
 
     def settle_paused_job(self, job_id: str, status: str, error: Optional[str] = None) -> bool:
@@ -5833,7 +5839,7 @@ class PostgresDb(BaseDb):
                 )
                 return (result.rowcount or 0) > 0
         except Exception as e:
-            log_debug(f"Error settling paused job: {e}")
+            log_error(f"Job queue store: paused-settle failed for job {job_id} (status={status!r}): {e}")
             return False
 
     def cancel_job(self, job_id: str) -> bool:
@@ -5856,7 +5862,7 @@ class PostgresDb(BaseDb):
                 )
                 return (result.rowcount or 0) > 0
         except Exception as e:
-            log_debug(f"Error cancelling run job: {e}")
+            log_error(f"Job queue store: cancel failed for job {job_id}: {e}")
             return False
 
     def sweep_exhausted_jobs(self, lock_grace_seconds: int = 60, limit: int = 20) -> List[Dict[str, Any]]:
@@ -5884,7 +5890,7 @@ class PostgresDb(BaseDb):
                 )
                 return [dict(row._mapping) for row in result.fetchall()]
         except Exception as e:
-            log_debug(f"Error sweeping run jobs: {e}")
+            log_warning(f"Job queue store: sweep scan failed (lock_grace={lock_grace_seconds}s): {e}")
             return []
 
     def acquire_sweep(self, job_id: str, worker_id: str, lock_grace_seconds: int = 60) -> bool:
@@ -5912,7 +5918,7 @@ class PostgresDb(BaseDb):
                 )
                 return (result.rowcount or 0) > 0
         except Exception as e:
-            log_debug(f"Error acquiring sweep lock: {e}")
+            log_error(f"Job queue store: sweep-lock acquisition failed for job {job_id} (worker={worker_id}): {e}")
             return False
 
     def fail_swept_job(self, job_id: str, worker_id: str, error: str = "worker lost") -> bool:
@@ -5944,7 +5950,7 @@ class PostgresDb(BaseDb):
                 )
                 return (result.rowcount or 0) > 0
         except Exception as e:
-            log_debug(f"Error failing swept run job: {e}")
+            log_error(f"Job queue store: swept-job terminalization failed for job {job_id} (worker={worker_id}): {e}")
             return False
 
     def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
@@ -5956,7 +5962,7 @@ class PostgresDb(BaseDb):
                 row = sess.execute(select(table).where(table.c.id == job_id)).fetchone()
                 return dict(row._mapping) if row is not None else None
         except Exception as e:
-            log_debug(f"Error getting run job: {e}")
+            log_warning(f"Job queue store: get_job failed for job {job_id}: {e}")
             return None
 
     def count_queued_jobs(self) -> int:
@@ -5968,7 +5974,7 @@ class PostgresDb(BaseDb):
                 result = sess.execute(select(func.count()).select_from(table).where(table.c.status == "queued"))
                 return result.scalar() or 0
         except Exception as e:
-            log_debug(f"Error counting queued run jobs: {e}")
+            log_warning(f"Job queue store: queued-count failed: {e}")
             return 0
 
     def list_jobs(self, status: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
@@ -5984,7 +5990,7 @@ class PostgresDb(BaseDb):
                 result = sess.execute(stmt)
                 return [dict(row._mapping) for row in result.fetchall()]
         except Exception as e:
-            log_debug(f"Error listing run jobs: {e}")
+            log_warning(f"Job queue store: list_jobs failed (status={status!r}): {e}")
             return []
 
     def requeue_job(self, job_id: str) -> bool:
@@ -6011,7 +6017,7 @@ class PostgresDb(BaseDb):
                 )
                 return (result.rowcount or 0) > 0
         except Exception as e:
-            log_debug(f"Error requeueing run job: {e}")
+            log_error(f"Job queue store: requeue failed for job {job_id}: {e}")
             return False
 
     def continue_job(self, job_id: str, continue_payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -6075,7 +6081,7 @@ class PostgresDb(BaseDb):
                 oldest_age = (now - oldest_created) if oldest_created is not None else None
                 return {"counts": counts, "oldest_queued_age_seconds": oldest_age}
         except Exception as e:
-            log_debug(f"Error getting job queue stats: {e}")
+            log_warning(f"Job queue store: stats failed: {e}")
             return {"counts": {}, "oldest_queued_age_seconds": None}
 
     def cleanup_jobs(self, older_than_seconds: int = 86400) -> int:
@@ -6098,7 +6104,7 @@ class PostgresDb(BaseDb):
                 )
                 return result.rowcount or 0
         except Exception as e:
-            log_debug(f"Error cleaning up run jobs: {e}")
+            log_warning(f"Job queue store: retention cleanup failed: {e}")
             return 0
 
     # -- Approval methods --
