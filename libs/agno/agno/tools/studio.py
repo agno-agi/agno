@@ -89,9 +89,9 @@ class StudioTools(Toolkit):
         teams_list: Same as ``agents_list`` but for teams.
         workflows_list: Same as ``agents_list`` but for workflows.
         default_model_id: Model id to use when a caller omits one.
-        default_num_history_runs: History depth for created agents when a
-            caller omits ``num_history_runs``. None lets Agent's own default
-            apply.
+        default_num_history_runs: History depth for created agents and teams
+            when a caller omits ``num_history_runs``. None lets the
+            component's own default apply.
         agents: Expose agent operations. Defaults to True.
         teams: Expose team operations. Defaults to False (see module docstring
             for auto-enable rules).
@@ -289,8 +289,8 @@ class StudioTools(Toolkit):
             "are exact and case-sensitive -- do NOT guess.",
             "Create: create_agent/create_team/create_workflow. When the user mentions specific "
             "tools, you MUST include ALL of those names in tool_names; do not silently drop any.",
-            "Created agents remember the session by default; pass add_history_to_context=False "
-            "only for stateless agents.",
+            "Created agents and teams remember the session by default; pass "
+            "add_history_to_context=False only for stateless components.",
             "Edit: ALWAYS call get_agent/get_team/get_workflow first to read the current state, "
             "then call edit_agent/edit_team/edit_workflow with only the fields that change.",
         ]
@@ -842,6 +842,9 @@ class StudioTools(Toolkit):
                 "instructions": getattr(team, "instructions", None),
                 "description": getattr(team, "description", None),
                 "member_ids": [getattr(m, "id", None) for m in members] if not callable(members) else [],
+                "add_history_to_context": getattr(team, "add_history_to_context", None),
+                "num_history_runs": getattr(team, "num_history_runs", None),
+                "add_datetime_to_context": getattr(team, "add_datetime_to_context", None),
             },
             default=str,
         )
@@ -973,6 +976,9 @@ class StudioTools(Toolkit):
         model_id: Optional[str] = None,
         db_id: Optional[str] = None,
         description: Optional[str] = None,
+        add_history_to_context: bool = True,
+        num_history_runs: Optional[int] = None,
+        add_datetime_to_context: bool = True,
     ) -> str:
         """Create a new team and persist it as a published component.
 
@@ -983,9 +989,18 @@ class StudioTools(Toolkit):
             model_id (Optional[str]): Model id for the team leader.
             db_id (Optional[str]): Database id from the registry.
             description (Optional[str]): Optional description.
+            add_history_to_context (bool): Include prior turns of the session so the
+                team remembers the conversation. Defaults to True; pass False for a
+                stateless team.
+            num_history_runs (Optional[int]): How many prior runs to include when
+                history is on. Omit for the default.
+            add_datetime_to_context (bool): Add the current date and time to the
+                team's context so it can date and time-reference reliably.
+                Defaults to True; pass False to omit.
 
         Returns:
-            str: JSON with {status, id, name, model_id, member_ids, db_version}.
+            str: JSON with {status, id, name, model_id, member_ids, add_history_to_context,
+            add_datetime_to_context, db_version}.
         """
         from agno.team.team import Team
 
@@ -1013,6 +1028,9 @@ class StudioTools(Toolkit):
                 instructions=instructions,
                 db=db,
                 description=description,
+                add_history_to_context=add_history_to_context,
+                num_history_runs=num_history_runs if num_history_runs is not None else self.default_num_history_runs,
+                add_datetime_to_context=add_datetime_to_context,
             )
 
             version = _persist_only(team, db)
@@ -1024,6 +1042,8 @@ class StudioTools(Toolkit):
                     "name": name,
                     "model_id": getattr(model, "id", None),
                     "member_ids": [getattr(m, "id", None) for m in members],
+                    "add_history_to_context": add_history_to_context,
+                    "add_datetime_to_context": add_datetime_to_context,
                     "db_version": version,
                 }
             )
@@ -1170,6 +1190,9 @@ class StudioTools(Toolkit):
         model_id: Optional[str] = None,
         member_ids: Optional[List[str]] = None,
         description: Optional[str] = None,
+        add_history_to_context: Optional[bool] = None,
+        num_history_runs: Optional[int] = None,
+        add_datetime_to_context: Optional[bool] = None,
     ) -> str:
         """Edit a team.
 
@@ -1184,6 +1207,11 @@ class StudioTools(Toolkit):
             model_id (Optional[str]): New model id. Omit to keep.
             member_ids (Optional[List[str]]): New member ids (replaces existing). Omit to keep.
             description (Optional[str]): New description. Omit to keep.
+            add_history_to_context (Optional[bool]): Whether the team sees prior turns
+                of the session. Omit to keep.
+            num_history_runs (Optional[int]): New history depth. Omit to keep.
+            add_datetime_to_context (Optional[bool]): Whether the team sees the
+                current date and time. Omit to keep.
         """
         if self.db is None:
             return json.dumps({"error": "StudioTools has no db configured; cannot edit components."})
@@ -1216,6 +1244,15 @@ class StudioTools(Toolkit):
                 if not members:
                     return json.dumps({"error": "A team must have at least one member"})
                 team.members = members
+            if add_history_to_context is not None:
+                team.add_history_to_context = add_history_to_context
+            if num_history_runs is not None:
+                team.num_history_runs = num_history_runs
+                # Mirror Team.__init__'s resolution: num_history_runs wins
+                # over num_history_messages.
+                team.num_history_messages = None
+            if add_datetime_to_context is not None:
+                team.add_datetime_to_context = add_datetime_to_context
 
             result = self._save_edit(team)
             log_debug(f"StudioTools edited team id={team_id} result={result}")
@@ -1678,6 +1715,9 @@ class StudioTools(Toolkit):
         model_id: Optional[str] = None,
         db_id: Optional[str] = None,
         description: Optional[str] = None,
+        add_history_to_context: bool = True,
+        num_history_runs: Optional[int] = None,
+        add_datetime_to_context: bool = True,
     ) -> str:
         """Async variant of create_team."""
         return await self._run_sync_tool(
@@ -1688,6 +1728,9 @@ class StudioTools(Toolkit):
             model_id=model_id,
             db_id=db_id,
             description=description,
+            add_history_to_context=add_history_to_context,
+            num_history_runs=num_history_runs,
+            add_datetime_to_context=add_datetime_to_context,
         )
 
     async def acreate_workflow(
@@ -1737,6 +1780,9 @@ class StudioTools(Toolkit):
         model_id: Optional[str] = None,
         member_ids: Optional[List[str]] = None,
         description: Optional[str] = None,
+        add_history_to_context: Optional[bool] = None,
+        num_history_runs: Optional[int] = None,
+        add_datetime_to_context: Optional[bool] = None,
     ) -> str:
         """Async variant of edit_team."""
         return await self._run_sync_tool(
@@ -1746,6 +1792,9 @@ class StudioTools(Toolkit):
             model_id=model_id,
             member_ids=member_ids,
             description=description,
+            add_history_to_context=add_history_to_context,
+            num_history_runs=num_history_runs,
+            add_datetime_to_context=add_datetime_to_context,
         )
 
     async def aedit_workflow(

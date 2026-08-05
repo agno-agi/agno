@@ -654,6 +654,72 @@ class TestCreateTeam:
         out = _loads(studio.create_team(name="squad", instructions="i", member_ids=[], model_id="gpt-5.4"))
         assert "error" in out
 
+    def test_history_and_datetime_on_by_default(self, studio, db):
+        self._make_members(studio)
+        out = _loads(studio.create_team(name="squad", instructions="i", member_ids=["a1"], model_id="gpt-5.4"))
+        assert out["add_history_to_context"] is True
+        assert out["add_datetime_to_context"] is True
+
+        config = db.get_config("squad")["config"]
+        assert config["add_history_to_context"] is True
+        assert config["num_history_runs"] == 3  # Team.__init__ normalization
+        assert config["add_datetime_to_context"] is True
+
+    def test_stateless_opt_out_omits_history_from_config(self, studio, db):
+        self._make_members(studio)
+        out = _loads(
+            studio.create_team(
+                name="squad",
+                instructions="i",
+                member_ids=["a1"],
+                model_id="gpt-5.4",
+                add_history_to_context=False,
+                add_datetime_to_context=False,
+            )
+        )
+        assert out["add_history_to_context"] is False
+        assert out["add_datetime_to_context"] is False
+
+        # to_dict omits falsy flags, so the keys are absent.
+        config = db.get_config("squad")["config"]
+        assert "add_history_to_context" not in config
+        assert "add_datetime_to_context" not in config
+
+    def test_explicit_num_history_runs_round_trips(self, studio, db):
+        self._make_members(studio)
+        studio.create_team(name="squad", instructions="i", member_ids=["a1"], model_id="gpt-5.4", num_history_runs=10)
+
+        config = db.get_config("squad")["config"]
+        assert config["num_history_runs"] == 10
+
+        team = studio._load_team_from_db("squad")
+        assert team.add_history_to_context is True
+        assert team.num_history_runs == 10
+
+    def test_toolkit_default_num_history_runs_applies(self, registry, db):
+        tool = StudioTools(registry=registry, db=db, default_num_history_runs=5)
+        tool.create_agent(name="a1", instructions="i", model_id="gpt-5.4")
+        tool.create_team(name="five", instructions="i", member_ids=["a1"], model_id="gpt-5.4")
+
+        config = db.get_config("five")["config"]
+        assert config["num_history_runs"] == 5
+
+    @pytest.mark.asyncio
+    async def test_async_create_team_stateless(self, studio, db):
+        self._make_members(studio)
+        out = _loads(
+            await studio.acreate_team(
+                name="async-squad",
+                instructions="i",
+                member_ids=["a1"],
+                model_id="gpt-5.4",
+                add_history_to_context=False,
+            )
+        )
+        assert out["add_history_to_context"] is False
+        config = db.get_config("async-squad")["config"]
+        assert "add_history_to_context" not in config
+
 
 class TestCreateWorkflow:
     def _make_agents(self, studio):
@@ -835,6 +901,40 @@ class TestEditTeam:
         self._setup(studio)
         out = _loads(studio.edit_team(team_id="squad", member_ids=["ghost"]))
         assert "error" in out
+
+    def test_edit_turns_history_off_and_keeps_other_fields(self, studio):
+        self._setup(studio)
+        out = _loads(studio.edit_team(team_id="squad", add_history_to_context=False))
+        assert out["status"] == "edited"
+
+        got = _loads(studio.get_team("squad"))
+        assert got["add_history_to_context"] is False
+        assert got["instructions"] == "orig"
+        assert got["member_ids"] == ["a1"]
+
+    def test_edit_num_history_runs_only_keeps_history_on(self, studio):
+        self._setup(studio)
+        _loads(studio.edit_team(team_id="squad", num_history_runs=7))
+
+        got = _loads(studio.get_team("squad"))
+        assert got["add_history_to_context"] is True  # untouched from create
+        assert got["num_history_runs"] == 7
+
+    def test_get_team_reports_history_and_datetime_settings(self, studio):
+        self._setup(studio)
+        got = _loads(studio.get_team("squad"))
+        assert got["add_history_to_context"] is True
+        assert got["num_history_runs"] == 3
+        assert got["add_datetime_to_context"] is True
+
+    @pytest.mark.asyncio
+    async def test_async_edit_team_datetime_off(self, studio):
+        self._setup(studio)
+        out = _loads(await studio.aedit_team(team_id="squad", add_datetime_to_context=False))
+        assert out["status"] == "edited"
+
+        got = _loads(studio.get_team("squad"))
+        assert got["add_datetime_to_context"] is False
 
 
 class TestEditWorkflow:
