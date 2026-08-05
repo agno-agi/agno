@@ -4514,8 +4514,14 @@ class AsyncPostgresDb(AsyncBaseDb):
         Exceptions PROPAGATE - a DB failure must never read as a
         fallback-permitting outcome.
         """
+        from agno.db.utils import canonical_run_status
         from agno.run.status_persist import RunPersistOutcome
 
+        if fields.get("status") is not None:
+            # Callers pass mixed conventions ("completed", RunStatus, "RUNNING");
+            # the indexed column and run_data must store the canonical uppercase
+            # RunStatus.value or case-sensitive readers miss the row
+            fields = {**fields, "status": canonical_run_status(fields["status"])}
         try:
             runs_table = await self._get_table(table_type="runs")
             if runs_table is None:

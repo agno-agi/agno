@@ -222,3 +222,59 @@ class TestAtomicRunPatch:
         assert (
             await asyncio.to_thread(call, session_id="s1", run_id="nope", fields={"status": "ERROR"})
         ) is RunPersistOutcome.MISSING
+
+
+class TestStatusCasingNormalization:
+    """The indexed status column stores the canonical uppercase
+    RunStatus.value and get_runs filters it case-sensitively. A caller
+    passing "completed" verbatim used to produce a row invisible to that
+    reader (and a run_data status RunOutput.from_dict cannot parse)."""
+
+    @pytest.mark.asyncio
+    async def test_lowercase_status_stored_canonical_async(self, db):
+        from sqlalchemy import select
+
+        from agno.run.base import RunStatus
+
+        await seed_session(db, "s1", ["r1"])
+        outcome = await db.update_run_in_session("s1", "r1", {"status": "completed"})
+        assert outcome is RunPersistOutcome.UPDATED
+
+        runs_table = await db._get_table(table_type="runs")
+        async with db.async_session_factory() as sess:
+            row = (
+                await sess.execute(
+                    select(runs_table.c.status, runs_table.c.run_data).where(runs_table.c.run_id == "r1")
+                )
+            ).fetchone()
+        assert row[0] == "COMPLETED", f"status column stored {row[0]!r} - case-sensitive readers miss it"
+        assert dict(row[1])["status"] == "COMPLETED"
+
+        rows, total = await db.get_runs(session_id="s1", status=RunStatus.completed, deserialize=False)
+        assert total == 1 and rows[0]["run_id"] == "r1", "the canonical reader path must see the write"
+
+    @pytest.mark.asyncio
+    async def test_lowercase_status_stored_canonical_sync(self, db):
+        from sqlalchemy import select
+
+        from agno.db.postgres import PostgresDb
+
+        await seed_session(db, "s1", ["r1"])
+        sync_db = PostgresDb(db_url=DB_URL, session_table=db.session_table_name, runs_table=db.runs_table_name)
+        outcome = await asyncio.to_thread(
+            sync_db.update_run_in_session, session_id="s1", run_id="r1", fields={"status": "completed"}
+        )
+        assert outcome is RunPersistOutcome.UPDATED
+
+        runs_table = await db._get_table(table_type="runs")
+        async with db.async_session_factory() as sess:
+            row = (await sess.execute(select(runs_table.c.status).where(runs_table.c.run_id == "r1"))).fetchone()
+        assert row[0] == "COMPLETED"
+
+    @pytest.mark.asyncio
+    async def test_terminal_guard_sees_through_casing(self, db):
+        """A lowercase terminal write must still arm the terminal guard for
+        the next writer: "completed" then "ERROR" refuses."""
+        await seed_session(db, "s1", ["r1"])
+        assert await db.update_run_in_session("s1", "r1", {"status": "completed"}) is RunPersistOutcome.UPDATED
+        assert await db.update_run_in_session("s1", "r1", {"status": "ERROR"}) is RunPersistOutcome.TERMINAL_REFUSED

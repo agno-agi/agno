@@ -215,6 +215,29 @@ def build_run_rows_for_session(session: "Session") -> List[Dict[str, Any]]:
     return rows
 
 
+def canonical_run_status(value: Any) -> Any:
+    """Map a run status of any casing or enum form to the stored convention:
+    ``RunStatus.value`` (uppercase, e.g. ``"COMPLETED"``).
+
+    The indexed ``status`` column is filtered case-sensitively (``get_runs``
+    compares against ``RunStatus.value``), so a writer that stores
+    ``"completed"`` verbatim produces rows invisible to those readers.
+    Unknown values pass through unchanged.
+    """
+    from agno.run.base import RunStatus
+
+    if isinstance(value, RunStatus):
+        return value.value
+    try:
+        return RunStatus(str(value)).value
+    except ValueError:
+        pass
+    try:
+        return RunStatus[str(value).lower()].value
+    except KeyError:
+        return value
+
+
 def build_single_run_row(
     run: Any,
     session_id: str,

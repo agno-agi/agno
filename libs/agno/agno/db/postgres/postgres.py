@@ -5902,8 +5902,13 @@ class PostgresDb(BaseDb):
     ) -> "RunPersistOutcome":
         """Sync twin of AsyncPostgresDb.update_run_in_session - ported to the
         denormalized runs table (v3.0); see that docstring."""
+        from agno.db.utils import canonical_run_status
         from agno.run.status_persist import RunPersistOutcome
 
+        if fields.get("status") is not None:
+            # Same normalization as the async twin: the indexed column and
+            # run_data store the canonical uppercase RunStatus.value
+            fields = {**fields, "status": canonical_run_status(fields["status"])}
         try:
             runs_table = self._get_table(table_type="runs")
             if runs_table is None:
