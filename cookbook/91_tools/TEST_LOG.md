@@ -29,6 +29,16 @@ No live API request was made for this test log.
 
 ---
 
+### smallest_tools.py (switch to Gemini for audio-input support)
+
+**Status:** PASS
+
+**Description:** Switched `audio_agent` and `pro_audio_agent` from `OpenAIResponses(id="gpt-5.5")` to `Gemini(id="gemini-pro-latest")` so the agent actually receives the audio a tool call generates, instead of it being silently dropped with an "audio input unsupported" warning.
+
+**Result:** Ran both agents end-to-end. No warning logged; each agent's response accurately described the audio it generated, confirming Gemini received the audio content.
+
+---
+
 ### file_generation_tools.py (generate_code_file)
 
 **Status:** PASS
