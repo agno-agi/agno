@@ -383,34 +383,34 @@ class TestInjectionGuard:
         assert stub.seen["user_id"] == "ash"
 
     def test_schema_visible_param_named_like_an_injected_one_keeps_the_model_value(self):
-        # A tool whose schema declares a reserved name -- an MCP server is free to expose
-        # an argument called "agent" -- keeps the model-supplied value on both paths.
+        # A tool whose schema declares a non-identity injected name -- a wrapper exposing
+        # the wrapped tool's own "files" argument -- keeps the model-supplied value.
         from agno.tools.function import Function
 
         received: Dict[str, Any] = {}
 
-        def assign(agent: str, note: str) -> str:
-            received.update({"agent": agent, "note": note})
+        def upload(files: str, note: str) -> str:
+            received.update({"files": files, "note": note})
             return "ok"
 
         for hooks in ([_passthrough_hook], None):
             received.clear()
             function = Function(
-                name="assign",
-                entrypoint=assign,
+                name="upload",
+                entrypoint=upload,
                 parameters={
                     "type": "object",
-                    "properties": {"agent": {"type": "string"}, "note": {"type": "string"}},
-                    "required": ["agent", "note"],
+                    "properties": {"files": {"type": "string"}, "note": {"type": "string"}},
+                    "required": ["files", "note"],
                 },
             )
             function.process_entrypoint()
-            assert "agent" in (function.parameters or {}).get("properties", {})
+            assert "files" in (function.parameters or {}).get("properties", {})
             function.tool_hooks = hooks
-            call = FunctionCall(function=function, arguments={"agent": "bob", "note": "n"})
+            call = FunctionCall(function=function, arguments={"files": "a.pdf", "note": "n"})
             result = call.execute()
             assert result.status == "success"
-            assert received == {"agent": "bob", "note": "n"}
+            assert received == {"files": "a.pdf", "note": "n"}
 
 
 # ----------------------------------------------------------------------

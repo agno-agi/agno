@@ -6,6 +6,7 @@ from pydantic import BaseModel, ValidationError
 import agno.tools.function as function_module
 from agno.models.message import Message
 from agno.run.base import RunContext
+from agno.tools import Toolkit
 from agno.tools.decorator import tool
 from agno.tools.function import Function, FunctionCall
 
@@ -1269,16 +1270,33 @@ def test_required_agno_channel_excluded_from_required_list():
     assert func.parameters["required"] == ["query"]
 
 
-def test_fc_is_reserved_and_not_model_facing():
-    """`fc` is injected by name, so it is reserved rather than advertised."""
+def test_a_tools_own_fc_parameter_stays_model_facing():
+    """`fc` is injected but not reserved: a tool may use the name for its own argument."""
+
+    def book_flight(fc: str, seats: int) -> str:
+        return f"{fc}/{seats}"
+
+    func = Function(name="book_flight", entrypoint=book_flight)
+    func.process_entrypoint()
+    assert set(func.parameters["properties"]) == {"fc", "seats"}
+
+    for hooks in (None, [_passthrough_tool_hook]):
+        func.tool_hooks = hooks
+        result = FunctionCall(function=func, arguments={"fc": "AA123", "seats": 2}).execute()
+        assert result.status == "success"
+        assert result.result == "AA123/2"
+
+
+def test_fc_typed_as_functioncall_is_injected_and_leaves_a_valid_schema():
+    """An `fc: FunctionCall` param has no JSON schema, so it must not be listed as required."""
 
     received: Dict[str, Any] = {}
 
-    def fn(fc, note: str) -> str:
+    def audit(fc: FunctionCall, note: str) -> str:
         received["fc"] = fc
         return note
 
-    func = Function(name="fn", entrypoint=fn)
+    func = Function(name="audit", entrypoint=audit)
     func.process_entrypoint()
     assert list(func.parameters["properties"]) == ["note"]
     assert func.parameters["required"] == ["note"]
@@ -1286,6 +1304,18 @@ def test_fc_is_reserved_and_not_model_facing():
     call = FunctionCall(function=func, arguments={"note": "n"})
     assert call.execute().status == "success"
     assert received["fc"] is call
+
+
+def test_required_never_names_a_property_the_schema_does_not_have():
+    """required must stay a subset of properties on every construction path."""
+
+    def fn(fc: FunctionCall, note: str, count: int = 1) -> str:
+        return note
+
+    for func in (Function.from_callable(fn), Function(name="fn", entrypoint=fn)):
+        if func.entrypoint is not None and not func.parameters.get("properties"):
+            func.process_entrypoint()
+        assert set(func.parameters["required"]) <= set(func.parameters["properties"])
 
 
 def test_unrecognised_agno_prefixed_param_stays_model_facing():
@@ -1392,15 +1422,42 @@ def test_spoofed_type_excluded_param_is_dropped():
     call = FunctionCall(function=func, arguments={"query": "q", "ctx": {"user_id": "victim", "session_id": "s9"}})
     assert call.execute().status == "success"
     assert seen["user_id"] is None
+    assert call.arguments == {"query": "q"}
 
 
-def test_schema_declared_reserved_name_keeps_the_model_value_on_both_paths():
-    """An MCP server may expose an argument called "agent"; the schema is what says so."""
+def test_type_excluded_spoof_is_dropped_for_a_decorated_toolkit_method():
+    """Toolkit rebuilds each @tool method as a skip_entrypoint_processing Function."""
+
+    class Kit(Toolkit):
+        def __init__(self):
+            super().__init__(name="kit", tools=[self.audit])
+
+        @tool()
+        def audit(self, note: str, ctx: RunContext = None) -> str:  # type: ignore[assignment]
+            return f"caller={getattr(ctx, 'user_id', None)}"
+
+    func = Kit().functions["audit"]
+    func.process_entrypoint()
+    assert func.skip_entrypoint_processing is True
+    assert list(func.parameters["properties"]) == ["note"]
+    func._run_context = RunContext(run_id="r1", session_id="s1", user_id="real-user")
+
+    call = FunctionCall(
+        function=func,
+        arguments={"note": "n", "ctx": {"run_id": "r9", "session_id": "s9", "user_id": "ATTACKER"}},
+    )
+    result = call.execute()
+    assert result.status == "success"
+    assert result.result == "caller=None"
+
+
+def test_schema_declared_media_name_keeps_the_model_value_on_both_paths():
+    """A wrapper may expose the wrapped tool's own `files` argument; the schema says so."""
 
     received: Dict[str, Any] = {}
 
-    def fn(agent, note: str) -> str:
-        received.update({"agent": agent, "note": note})
+    def fn(files, note: str) -> str:
+        received.update({"files": files, "note": note})
         return "ok"
 
     for hooks in ([_passthrough_tool_hook], None):
@@ -1410,16 +1467,48 @@ def test_schema_declared_reserved_name_keeps_the_model_value_on_both_paths():
             entrypoint=fn,
             parameters={
                 "type": "object",
-                "properties": {"agent": {"type": "string"}, "note": {"type": "string"}},
-                "required": ["agent", "note"],
+                "properties": {"files": {"type": "array"}, "note": {"type": "string"}},
+                "required": ["files", "note"],
             },
         )
         func.process_entrypoint()
         func.tool_hooks = hooks
-        call = FunctionCall(function=func, arguments={"agent": "bob", "note": "n"})
+        call = FunctionCall(function=func, arguments={"files": ["a.pdf"], "note": "n"})
         result = call.execute()
         assert result.status == "success"
-        assert received == {"agent": "bob", "note": "n"}
+        assert received == {"files": ["a.pdf"], "note": "n"}
+
+
+@pytest.mark.parametrize("with_hooks", [False, True])
+def test_a_schema_can_never_hand_the_model_an_identity_parameter(with_hooks):
+    """Unlike media, run_context stays framework-owned even when the schema declares it."""
+
+    seen: Dict[str, Any] = {}
+
+    def fn(run_context, note: str) -> str:
+        seen["user_id"] = getattr(run_context, "user_id", None)
+        return "ok"
+
+    func = Function(
+        name="fn",
+        entrypoint=fn,
+        parameters={
+            "type": "object",
+            "properties": {"run_context": {"type": "object"}, "note": {"type": "string"}},
+            "required": ["note"],
+        },
+    )
+    func.process_entrypoint()
+    func.tool_hooks = [_passthrough_tool_hook] if with_hooks else None
+    func._run_context = RunContext(run_id="r1", session_id="s1", user_id="real-user")
+
+    call = FunctionCall(
+        function=func,
+        arguments={"note": "n", "run_context": {"run_id": "r9", "session_id": "s9", "user_id": "victim"}},
+    )
+    result = call.execute()
+    assert result.status == "success"
+    assert seen["user_id"] == "real-user"
 
 
 def test_dropped_arguments_are_logged_and_the_original_dict_is_untouched():
@@ -1563,3 +1652,87 @@ def test_framework_params_survive_the_per_run_function_copy():
         result = call.execute()
         assert result.status == "success"
         assert result.result == "ctx_user=None"
+
+
+@pytest.mark.asyncio
+async def test_arguments_are_sanitized_before_the_pre_hook_runs_async():
+    """The async path must sanitize before its pre-hook too."""
+
+    seen: Dict[str, Any] = {}
+
+    async def pre_hook(fc: FunctionCall):
+        seen["arguments"] = dict(fc.arguments or {})
+
+    async def fn(query: str, _agno_run_context: Optional[RunContext] = None) -> str:
+        return query
+
+    func = Function(name="fn", entrypoint=fn, pre_hook=pre_hook)
+    func.process_entrypoint()
+
+    call = FunctionCall(function=func, arguments={"query": "q", "_agno_run_context": {"user_id": "victim"}})
+    assert (await call.aexecute()).status == "success"
+    assert seen["arguments"] == {"query": "q"}
+
+
+def test_media_channel_ignores_a_model_supplied_value():
+    """Media is injected by the framework; a model-supplied value is not a substitute."""
+
+    seen: Dict[str, Any] = {}
+
+    def fn(note: str, files=None) -> str:
+        seen["files"] = files
+        return note
+
+    func = Function(name="fn", entrypoint=fn)
+    func.process_entrypoint()
+    assert list(func.parameters["properties"]) == ["note"]
+
+    call = FunctionCall(function=func, arguments={"note": "n", "files": ["evil.pdf"]})
+    assert call.execute().status == "success"
+    assert seen["files"] is None
+
+
+def test_injected_name_is_dropped_even_when_process_entrypoint_never_ran():
+    """The entrypoint_args term must keep protecting skip_entrypoint_processing Functions."""
+
+    seen: Dict[str, Any] = {}
+
+    def fn(query: str, agent=None) -> str:
+        seen["agent"] = agent
+        return query
+
+    func = Function(
+        name="fn",
+        entrypoint=fn,
+        parameters={"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+        skip_entrypoint_processing=True,
+    )
+    assert func._framework_params is None
+
+    call = FunctionCall(function=func, arguments={"query": "q", "agent": "spoof"})
+    assert call.execute().status == "success"
+    assert seen["agent"] is None
+
+
+def test_strict_processing_does_not_require_an_injected_parameter():
+    """process_schema_for_strict rewrites required, so it must honour the same exclusions."""
+
+    def fn(query: str, _agno_run_context: Optional[RunContext] = None) -> str:
+        return query
+
+    func = Function(
+        name="fn",
+        entrypoint=fn,
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "_agno_run_context": {"type": "object"},
+                "agent": {"type": "string"},
+            },
+            "required": ["query"],
+        },
+        skip_entrypoint_processing=True,
+    )
+    func.process_entrypoint(strict=True)
+    assert func.parameters["required"] == ["query"]

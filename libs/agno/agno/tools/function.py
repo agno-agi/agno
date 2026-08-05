@@ -17,11 +17,24 @@ T = TypeVar("T")
 # Parameter names the framework fills in itself (see FunctionCall._build_entrypoint_args).
 # They are kept out of the model-facing schema, and a model-supplied value for one of
 # them is discarded in favour of the injected object.
-FRAMEWORK_INJECTED_PARAMS = ("agent", "team", "run_context", "fc", "images", "videos", "audios", "files")
+FRAMEWORK_INJECTED_PARAMS = ("agent", "team", "run_context", "images", "videos", "audios", "files")
 
 # The `_agno_`-prefixed channels, used by wrappers whose tools may have arguments
 # legitimately named "agent", "team" or "run_context" (e.g. MCP tools).
 AGNO_INJECTED_PARAMS = ("_agno_agent", "_agno_team", "_agno_run_context")
+
+# The subset carrying the caller's identity or a live framework object. A schema may
+# claim a media name -- a wrapper can expose the wrapped tool's own `files` argument --
+# but never these: a model-supplied value here would choose whose data the tool reads.
+IDENTITY_INJECTED_PARAMS = ("agent", "team", "run_context", *AGNO_INJECTED_PARAMS)
+
+
+def _framework_injected_types() -> tuple:
+    """Types the framework supplies by annotation rather than by parameter name."""
+    from agno.agent.agent import Agent
+    from agno.team.team import Team
+
+    return (Agent, Team, RunContext, Image, Video, Audio, File)
 
 
 @lru_cache(maxsize=1)
@@ -298,7 +311,7 @@ class Function(BaseModel):
             # (_agent, _run_context, media) are reassigned by the caller, but the
             # framework-param set describes the shared entrypoint, and a @tool-decorated
             # Function is copied without being reprocessed -- so carry it across.
-            new_instance._framework_params = self._framework_params
+            new_instance._framework_params = set(self._framework_params) if self._framework_params is not None else None
 
             return new_instance
         else:
@@ -386,6 +399,10 @@ class Function(BaseModel):
                     and name not in AGNO_INJECTED_PARAMS
                 ]
 
+            # A param whose type has no JSON schema (e.g. `fc: FunctionCall`) is skipped by
+            # get_json_schema, so requiring it would describe a property that does not exist.
+            parameters["required"] = [name for name in parameters["required"] if name in parameters["properties"]]
+
             # log_debug(f"JSON schema for {function_name}: {parameters}")
         except Exception as e:
             log_warning(f"Could not parse args for {function_name}: {str(e)}")
@@ -399,11 +416,43 @@ class Function(BaseModel):
             entrypoint=entrypoint,
         )
 
+    def _resolve_framework_params(self) -> Set[str]:
+        """Names in the entrypoint signature that the framework supplies, not the model.
+
+        Read by FunctionCall._drop_injected_overrides to reject model-supplied values for
+        them. Covers both rules process_entrypoint uses to hide a parameter from the
+        schema: the reserved names, and the framework-typed annotations of issue #6344.
+        """
+        from inspect import signature
+
+        if self.entrypoint is None:
+            return set()
+        try:
+            sig = signature(self.entrypoint)
+        except Exception:
+            return set()
+
+        reserved = {"return", "self", *FRAMEWORK_INJECTED_PARAMS, *AGNO_INJECTED_PARAMS}
+        found = {name for name in sig.parameters if name in reserved}
+        try:
+            framework_types = _framework_injected_types()
+            for param_name, hint in get_type_hints(self.entrypoint).items():
+                if param_name in sig.parameters and isinstance(hint, type) and issubclass(hint, framework_types):
+                    found.add(param_name)
+        except Exception:
+            pass
+        return found
+
     def process_entrypoint(self, strict: bool = False):
         """Process the entrypoint and make it ready for use by an agent."""
         from inspect import getdoc, signature
 
         from agno.utils.json_schema import get_json_schema
+
+        # Record which parameters the framework owns before the early returns below:
+        # Toolkit rebuilds each @tool method as a skip_entrypoint_processing Function, and
+        # registry rehydration does the same, so this has to run on those paths too.
+        self._framework_params = self._resolve_framework_params()
 
         if self.skip_entrypoint_processing:
             if strict:
@@ -450,10 +499,7 @@ class Function(BaseModel):
             # Also exclude parameters whose types are framework-injected,
             # even if the parameter name differs (e.g. my_agent: Agent). See issue #6344.
             try:
-                from agno.agent.agent import Agent
-                from agno.team.team import Team
-
-                framework_types = (Agent, Team, RunContext, Image, Video, Audio, File)
+                framework_types = _framework_injected_types()
                 for param_name, hint in list(type_hints.items()):
                     if isinstance(hint, type) and issubclass(hint, framework_types):
                         del type_hints[param_name]
@@ -461,11 +507,10 @@ class Function(BaseModel):
             except Exception:
                 pass
 
-            # Snapshot excluded_params before user_input_fields are added: it filters
-            # user_input_schema below, and FunctionCall._drop_injected_overrides reads it
-            # to discard model-supplied values for parameters the framework owns.
-            _excluded_framework_params = list(excluded_params)
-            self._framework_params = {name for name in sig.parameters if name in _excluded_framework_params}
+            # Snapshot excluded_params before user_input_fields are added,
+            # so we can use it to filter user_input_schema later.
+            if self.requires_user_input:
+                _excluded_framework_params = list(excluded_params)
 
             if self.requires_user_input and self.user_input_fields:
                 if len(self.user_input_fields) == 0:
@@ -525,6 +570,10 @@ class Function(BaseModel):
                     if param.default == param.empty and name != "self" and name not in excluded_params
                 ]
 
+            # A param whose type has no JSON schema (e.g. `fc: FunctionCall`) is skipped by
+            # get_json_schema, so requiring it would describe a property that does not exist.
+            parameters["required"] = [name for name in parameters["required"] if name in parameters["properties"]]
+
             if params_set_by_user:
                 self.parameters["additionalProperties"] = False
                 if strict:
@@ -536,7 +585,10 @@ class Function(BaseModel):
                     self.parameters["required"] = [
                         name
                         for name, param in sig.parameters.items()
-                        if param.default == param.empty and name != "self" and name not in excluded_params
+                        if param.default == param.empty
+                        and name != "self"
+                        and name not in excluded_params
+                        and name in self.parameters["properties"]
                     ]
 
             self.description = self.description or get_entrypoint_docstring(self.entrypoint)
@@ -669,17 +721,9 @@ class Function(BaseModel):
         self.parameters["required"] = [
             name
             for name in self.parameters["properties"]
-            if name
-            not in [
-                "agent",
-                "team",
-                "run_context",
-                "images",
-                "videos",
-                "audios",
-                "files",
-                "self",
-            ]
+            if name not in ("return", "self")
+            and name not in FRAMEWORK_INJECTED_PARAMS
+            and name not in AGNO_INJECTED_PARAMS
         ]
 
     def _get_cache_key(self, entrypoint_args: Dict[str, Any], call_args: Optional[Dict[str, Any]] = None) -> str:
@@ -688,21 +732,11 @@ class Function(BaseModel):
         from hashlib import md5
 
         copy_entrypoint_args = entrypoint_args.copy()
-        # Remove agent from entrypoint_args
-        if "agent" in copy_entrypoint_args:
-            del copy_entrypoint_args["agent"]
-        if "team" in copy_entrypoint_args:
-            del copy_entrypoint_args["team"]
-        if "run_context" in copy_entrypoint_args:
-            del copy_entrypoint_args["run_context"]
-        if "images" in copy_entrypoint_args:
-            del copy_entrypoint_args["images"]
-        if "videos" in copy_entrypoint_args:
-            del copy_entrypoint_args["videos"]
-        if "audios" in copy_entrypoint_args:
-            del copy_entrypoint_args["audios"]
-        if "files" in copy_entrypoint_args:
-            del copy_entrypoint_args["files"]
+        # Injected framework objects are not part of a call's identity for caching
+        # purposes. NOTE: this means a `cache_results` tool that reads run_context serves
+        # one user's result to another -- pre-existing, tracked separately.
+        for param_name in FRAMEWORK_INJECTED_PARAMS:
+            copy_entrypoint_args.pop(param_name, None)
         # Use json.dumps with sort_keys=True to ensure consistent ordering regardless of dict key order
         args_str = json.dumps(copy_entrypoint_args, sort_keys=True, default=str)
 
@@ -973,27 +1007,30 @@ class FunctionCall(BaseModel):
         """Drop tool-call arguments that collide with framework-injected parameters.
 
         A parameter the framework owns and keeps out of the model-facing schema
-        (run_context, agent, team, fc, media, the `_agno_` channels, and params
+        (run_context, agent, team, media, the `_agno_` channels, and params
         excluded by type annotation such as ``ctx: RunContext``) can never
         legitimately be model-supplied -- at worst the value is an attempt to
         override the caller's identity on an identity-threading tool. Without
         this, the tool-hooks execution chain merges model arguments over the
-        injected ones. The call still runs, carrying the injected value.
+        injected ones. The call still runs: the parameter gets the injected
+        object, or its own default where the framework injects nothing.
 
         A name that does appear in the tool's schema is left alone: an MCP
-        server is free to expose an argument called "agent", and the schema is
-        what says so.
+        server is free to expose an argument called "files", and the schema is
+        what says so. The identity names are the exception -- no schema can hand
+        the model a say over whose data a tool reads.
         """
         if not self.arguments:
             return
         schema_properties = (self.function.parameters or {}).get("properties") or {}
-        # `_agno_` channels are internal and unconditional. Everything else is owned by
-        # the framework only if it was kept out of this tool's schema.
+        # A name is framework-owned if this entrypoint declares it as one, or if we injected
+        # it. Being in the schema releases it back to the model, except for identity.
         reserved = set(self.function._framework_params or ()) | set(entrypoint_args)
         dropped = {
             key
             for key in self.arguments
-            if key in AGNO_INJECTED_PARAMS or (key in reserved and key not in schema_properties)
+            if key in AGNO_INJECTED_PARAMS
+            or (key in reserved and (key not in schema_properties or key in IDENTITY_INJECTED_PARAMS))
         }
         if dropped:
             # Rebind rather than mutate: the pre-drop dict is already referenced by the
