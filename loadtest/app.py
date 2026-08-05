@@ -20,7 +20,7 @@ from agno.db.postgres import PostgresDb
 from agno.job_queue.config import QueueConfig
 from agno.os import AgentOS
 from agno.team import Team
-from agno.workflow import Step, Workflow
+from agno.workflow import HumanReview, Step, Workflow
 
 PG_URL = os.environ.get("PG_URL", "postgresql+psycopg://ai:ai@localhost:5532/ai")
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379")
@@ -140,8 +140,10 @@ hitl_workflow = Workflow(
         Step(
             name="approve",
             agent=Agent(id="hw-b", model=make_model(), instructions=_TERSE, db=db),
-            requires_confirmation=True,
-            confirmation_message="Approve the draft before finalizing?",
+            human_review=HumanReview(
+                requires_confirmation=True,
+                confirmation_message="Approve the draft before finalizing?",
+            ),
         ),
     ],
 )
@@ -185,6 +187,9 @@ agent_os = AgentOS(
             max_concurrency=_int("MAX_CONCURRENCY", 8),
             max_queue_depth=_int("MAX_QUEUE_DEPTH", 1000),
             max_attempts=_int("MAX_ATTEMPTS", 1),
+            # The new base gates max_attempts>1 behind an experimental opt-in;
+            # the retry/timeout scenarios set MAX_ATTEMPTS=2, so enable it when needed.
+            allow_multi_attempt_experimental=_int("MAX_ATTEMPTS", 1) > 1,
             lock_grace_seconds=_int("LOCK_GRACE", 60),
             timeout_seconds=_int("TIMEOUT_SECONDS", 3600),
         )

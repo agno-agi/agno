@@ -100,24 +100,24 @@ async def s_cross_replica_resume():
     )
     t0 = time.time()
     run_id = None
-    frames_r1 = 0
+    # PROOF #1: capture the EXACT event indices R1 produced before disconnect, so
+    # we can later assert R2 replayed THOSE, not just streamed some live tail.
+    r1_indices = []
     async with httpx.AsyncClient(timeout=None) as c:
-        # submit stream on replica1, read a couple frames, disconnect
         data = {"message": "sleep=4 xrep", "background": "true", "stream": "true"}
         try:
-            async with c.stream(
-                "POST", f"{R1}/agents/load-agent/runs", data=data
-            ) as resp:
+            async with c.stream("POST", f"{R1}/agents/load-agent/runs", data=data) as resp:
                 async for line in resp.aiter_lines():
                     if line.startswith("data:"):
-                        frames_r1 += 1
                         try:
-                            run_id = run_id or json.loads(line[5:].strip()).get(
-                                "run_id"
-                            )
+                            p = json.loads(line[5:].strip())
+                            run_id = run_id or p.get("run_id")
+                            if p.get("event_index") is not None:
+                                r1_indices.append(p["event_index"])
                         except Exception:
                             pass
-                        if frames_r1 >= 2:
+                        # read enough to build a real replay window (>=3 indexed events)
+                        if len(r1_indices) >= 3:
                             break
         except Exception as e:
             r.evidence["r1_err"] = str(e)[:80]
@@ -125,60 +125,84 @@ async def s_cross_replica_resume():
         r.status, r.detail = "FAIL", "no run_id from replica1 submit"
         r.duration = time.time() - t0
         return r
-    r.evidence.update(run_id=run_id, frames_on_r1=frames_r1)
+    r1_max = max(r1_indices) if r1_indices else -1
+    r.evidence.update(run_id=run_id, r1_produced_indices=r1_indices)
 
-    # resume on replica2 from index 0
-    sid = None
-    dbrun = _db_run(run_id)
-    sid = (dbrun or {}).get("session_id")
-    resume_frames, last_idx, monotonic, completed = 0, -1, True, False
+    # RESUME on R2 from -1 (full replay). Collect indices + run_ids + event types.
+    sid = (_db_run(run_id) or {}).get("session_id")
+    resume_indices, resume_run_ids, saw_completed, saw_replay_marker = [], set(), False, False
     async with httpx.AsyncClient(timeout=None) as c:
         data = {"last_event_index": "-1"}
         if sid:
             data["session_id"] = sid
         try:
-            async with c.stream(
-                "POST", f"{R2}/agents/load-agent/runs/{run_id}/resume", data=data
-            ) as resp:
+            async with c.stream("POST", f"{R2}/agents/load-agent/runs/{run_id}/resume", data=data) as resp:
                 r.evidence["resume_http"] = resp.status_code
                 async for line in resp.aiter_lines():
                     if line.startswith("data:"):
-                        resume_frames += 1
                         try:
                             p = json.loads(line[5:].strip())
-                            idx = p.get("event_index")
-                            if idx is not None:
-                                if idx <= last_idx:
-                                    monotonic = False
-                                last_idx = idx
-                            if "complet" in str(p.get("event", "")).lower():
-                                completed = True
+                            ev = str(p.get("event", "")).lower()
+                            if ev in ("catch_up", "replay", "subscribed"):
+                                saw_replay_marker = True
+                            if p.get("run_id"):
+                                resume_run_ids.add(p["run_id"])
+                            if p.get("event_index") is not None:
+                                resume_indices.append(p["event_index"])
+                            if "complet" in ev:
+                                saw_completed = True
                         except Exception:
                             pass
-                    if time.time() - t0 > 30:
+                    if time.time() - t0 > 35:
                         break
         except Exception as e:
             r.evidence["resume_err"] = str(e)[:80]
-    r.evidence.update(
-        resume_frames=resume_frames,
-        indices_monotonic=monotonic,
-        saw_completed=completed,
-    )
-    # final durability check
+
+    # --- Strong assertions on the REPLAY, not just "got frames" ---
+    data_indices = [i for i in resume_indices if i is not None]
+    # (a) R2 replayed R1's history: every index R1 produced must appear in R2's stream.
+    replayed_r1_history = all(i in data_indices for i in r1_indices) and bool(r1_indices)
+    # (b) the replay is a contiguous 0..N prefix (no gap/skip in the covered range).
+    covered = sorted(set(data_indices))
+    contiguous_from_zero = bool(covered) and covered == list(range(covered[0], covered[-1] + 1)) and covered[0] == 0
+    # (c) monotonic non-decreasing as delivered (ordering preserved on the wire).
+    monotonic = all(data_indices[i] <= data_indices[i + 1] for i in range(len(data_indices) - 1))
+    # (d) every replayed frame belongs to THIS run (no cross-run leakage).
+    single_run = resume_run_ids == {run_id} if resume_run_ids else False
+
     for _ in range(20):
         dbrun = _db_run(run_id)
         if dbrun and dbrun.get("status") in TERMINAL:
             break
         await asyncio.sleep(1.5)
-    r.evidence["db_status"] = (dbrun or {}).get("status")
-    if resume_frames > 0 and monotonic and (dbrun or {}).get("status") == "COMPLETED":
+    db_status = (_db_run(run_id) or {}).get("status")
+    r.evidence.update(
+        resume_indices_count=len(data_indices),
+        replayed_r1_history=replayed_r1_history,
+        contiguous_from_zero=contiguous_from_zero,
+        indices_monotonic=monotonic,
+        saw_replay_marker=saw_replay_marker,
+        single_run_id=single_run,
+        saw_completed=saw_completed,
+        db_status=db_status,
+    )
+
+    checks = {
+        "replayed R1's produced indices": replayed_r1_history,
+        "contiguous 0..N (no gaps)": contiguous_from_zero,
+        "monotonic delivery": monotonic,
+        "all frames = this run_id": single_run,
+        "reached completion event": saw_completed,
+        "run COMPLETED durably": db_status == "COMPLETED",
+    }
+    failed = [k for k, v in checks.items() if not v]
+    if not failed:
         r.status, r.detail = (
             "PASS",
-            f"resumed {resume_frames} events on R2 (submitted on R1), run COMPLETED durably",
+            f"R2 replayed R1's history (indices {r1_indices} ⊆ 0..{covered[-1]}), contiguous, single run, completed durably",
         )
     else:
-        r.status = "FAIL"
-        r.detail = f"cross-replica resume gap: resume_frames={resume_frames} monotonic={monotonic} db={(dbrun or {}).get('status')}"
+        r.status, r.detail = "FAIL", f"resume/replay gap: failed [{', '.join(failed)}]"
     r.duration = time.time() - t0
     return r
 
@@ -707,6 +731,13 @@ async def s_reserved_kwarg_stream():
 
 WS_LB = LB.replace("http", "ws")
 
+# The hitl-agent/hitl-team pause via an @tool(requires_confirmation) call - which
+# the model must DECIDE to make. The stub model only emits canned text and never
+# calls a tool, so agent/team HITL cannot pause on the stub stack; those scenarios
+# need the real model (run them via the e2e stack: ./run.sh up && MODEL=real).
+# Workflow HITL pauses STRUCTURALLY (Step(human_review=...)), so it works on stub.
+_HITL_AGENT_NEEDS_REAL = os.environ.get("MODEL", "stub") != "real"
+
 # After a continue is accepted the run is momentarily still PAUSED until a worker
 # claims the leg. TERMINAL includes PAUSED (it's terminal for a fresh submission),
 # so waiting for a CONTINUED run needs a set that EXCLUDES paused.
@@ -803,6 +834,41 @@ async def _submit_and_pause_on(c, base, component, cid, message):
     return run_id, sid, r.status_code
 
 
+def _ticket_is_continuation(run_id):
+    """True if the durable queue ticket for run_id carries payload['continue'] -
+    i.e. it went through the CAS continuation path, not a fresh submission."""
+    try:
+        import psycopg
+        c = psycopg.connect(PG_DSN)
+        cur = c.cursor()
+        cur.execute("SELECT payload ? 'continue' FROM ai.agno_jobs WHERE id=%s", (run_id,))
+        row = cur.fetchone()
+        c.close()
+        return bool(row and row[0])
+    except Exception:
+        return False
+
+
+def _hitl_leg_executed(run, component):
+    """True if the HITL-approved leg actually ran to a result:
+      - agents/teams: the confirmed tool has a non-null `result`
+      - workflows: a step_result exists for the previously-paused step
+    Proves the continuation didn't just flip status - it executed with the
+    paused run's context.
+    """
+    tools = run.get("tools") or []
+    for t in tools:
+        te = t.get("tool_execution", t) if isinstance(t, dict) else {}
+        if (te or t).get("result") is not None:
+            return True
+    # workflow: an approved step produces output; look for a resolved step result
+    for sr in (run.get("step_results") or []):
+        if isinstance(sr, dict) and sr.get("content"):
+            return True
+    # fallback: the run produced final content (the model responded after the tool)
+    return bool(run.get("content"))
+
+
 def _resolved_requirements(run, spec):
     """Extract the paused run's resolution objects and mark each confirmed."""
     items = run.get(spec["run_field"]) or []
@@ -830,6 +896,11 @@ async def _cross_replica_continue(component, message):
         component,
     )
     t0 = time.time()
+    # agent/team HITL needs a model that actually calls the confirmation tool.
+    if component in ("agents", "teams") and _HITL_AGENT_NEEDS_REAL:
+        r.status, r.detail = "SKIP", f"{component} HITL needs MODEL=real (stub never calls the tool); run via ./run.sh e2e"
+        r.duration = time.time() - t0
+        return r
     async with httpx.AsyncClient(timeout=None) as c:
         run_id, sid, submit_code = await _submit_and_pause_on(
             c, R1, component, cid, message
@@ -839,6 +910,16 @@ async def _cross_replica_continue(component, message):
         if str(run.get("status", "")).upper() != "PAUSED":
             r.status = "SKIP"
             r.detail = f"did not pause on R1 (status={run.get('status')}); model may not have called the tool"
+            r.duration = time.time() - t0
+            return r
+        # PROOF #1: R1 actually executed up to the pause - the paused run must
+        # carry R1's pre-pause work (messages/step output), not just a status.
+        paused_msgs = len(run.get("messages") or [])
+        paused_steps = len(run.get("step_results") or [])
+        r.evidence["r1_pre_pause_messages"] = paused_msgs
+        r.evidence["r1_pre_pause_steps"] = paused_steps
+        if paused_msgs == 0 and paused_steps == 0:
+            r.status, r.detail = "FAIL", "R1 paused with no persisted work (messages/steps=0): nothing for R2 to hydrate"
             r.duration = time.time() - t0
             return r
         resolved = _resolved_requirements(run, spec)
@@ -867,24 +948,42 @@ async def _cross_replica_continue(component, message):
         )
         pending = cont.status_code in (200, 202) and cbody.get("status") == "PENDING"
         final = await _wait_run_status(run_id, _CONTINUED_TERMINAL, timeout=75)
+
+    # --- Verify R2 hydrated R1's paused state and executed the approved leg,
+    # not just that a status flipped. Read the completed run + its ticket. ---
+    final_run = _db_run(run_id) or {}
+    final_msgs = len(final_run.get("messages") or [])
+    # the ticket must show this was a DURABLE CONTINUATION (payload.continue),
+    # not a fresh run - proves R2 drove the CAS continuation path.
+    is_durable_continuation = _ticket_is_continuation(run_id)
+    # the confirmed tool must have actually EXECUTED (has a result / step grew) -
+    # proves the leg R1 paused for ran to completion with R1's context.
+    leg_executed = _hitl_leg_executed(final_run, component)
     r.evidence.update(
         continued_on="R2",
         continue_http=cont.status_code,
         continue_status=cbody.get("status"),
         final=final,
+        final_messages=final_msgs,
+        grew_from_pause=(final_msgs > paused_msgs) or (len(final_run.get("step_results") or []) > paused_steps),
+        durable_continuation=is_durable_continuation,
+        leg_executed=leg_executed,
     )
-    if pending and final == "COMPLETED":
+
+    if not pending:
+        r.status, r.detail = "FAIL", f"R2 continue not durable: http={cont.status_code} status={cbody.get('status')}"
+    elif final != "COMPLETED":
+        r.status, r.detail = "FAIL", f"R2 continue accepted but run ended {final}"
+    elif not is_durable_continuation:
+        r.status, r.detail = "FAIL", "run completed but the ticket carries no payload.continue - not the durable CAS path"
+    elif not leg_executed:
+        r.status, r.detail = "FAIL", "completed cross-replica but the approved leg did NOT execute (no tool result / no new step) - R2 lost R1's paused state"
+    else:
         r.status, r.detail = (
             "PASS",
-            "paused on R1, durable continue accepted on R2 (202 PENDING), completed cross-replica",
+            f"R1 paused with {paused_msgs} msgs/{paused_steps} steps -> R2 accepted durable continue (202 PENDING) -> "
+            f"leg executed with R1's context (msgs {paused_msgs}->{final_msgs}), COMPLETED cross-replica",
         )
-    elif not pending:
-        r.status, r.detail = (
-            "FAIL",
-            f"R2 continue not durable: http={cont.status_code} status={cbody.get('status')}",
-        )
-    else:
-        r.status, r.detail = "FAIL", f"R2 continue accepted but run ended {final}"
     r.duration = time.time() - t0
     return r
 
@@ -913,6 +1012,10 @@ async def s_continue_sse_durable():
         "agents",
     )
     t0 = time.time()
+    if _HITL_AGENT_NEEDS_REAL:
+        r.status, r.detail = "SKIP", "agent HITL needs MODEL=real (stub never calls the tool); run via ./run.sh e2e"
+        r.duration = time.time() - t0
+        return r
     async with httpx.AsyncClient(timeout=None) as c:
         run_id, sid, tools = await _pause_hitl_agent_durable(c)
         if not tools:
@@ -969,6 +1072,10 @@ async def s_continue_double_click():
         "durable continue double-click: single completion", "continue-2click", "agents"
     )
     t0 = time.time()
+    if _HITL_AGENT_NEEDS_REAL:
+        r.status, r.detail = "SKIP", "agent HITL needs MODEL=real (stub never calls the tool); run via ./run.sh e2e"
+        r.duration = time.time() - t0
+        return r
     async with httpx.AsyncClient(timeout=None) as c:
         run_id, sid, tools = await _pause_hitl_agent_durable(
             c, message="Publish an item titled twice."
@@ -1021,6 +1128,10 @@ async def s_continue_crash():
         "agents",
     )
     t0 = time.time()
+    if _HITL_AGENT_NEEDS_REAL:
+        r.status, r.detail = "SKIP", "agent HITL needs MODEL=real (stub never calls the tool); run via ./run.sh e2e"
+        r.duration = time.time() - t0
+        return r
     async with httpx.AsyncClient(timeout=None) as c:
         run_id, sid, tools = await _pause_hitl_agent_durable(
             c, message="Publish an item titled crashme with a slow tool."

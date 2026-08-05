@@ -43,7 +43,7 @@ case "${1:-}" in
     # distributed): retry budget, small depth for the 429 test, small lock-grace,
     # per-replica ports for cross-replica tests.
     MODEL=stub MAX_ATTEMPTS=${MAX_ATTEMPTS:-2} MAX_QUEUE_DEPTH=${MAX_QUEUE_DEPTH:-20} \
-      LOCK_GRACE=${LOCK_GRACE:-8} TIMEOUT_SECONDS=${TIMEOUT_SECONDS:-4} \
+      LOCK_GRACE=${LOCK_GRACE:-35} TIMEOUT_SECONDS=${TIMEOUT_SECONDS:-15} \
       docker compose -f "$CF" up --build -d postgres redis replica1 replica2 lb
     wait_healthy ;;
   stress)

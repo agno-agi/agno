@@ -87,30 +87,48 @@ async def _poll(client, component, cid, run_id, session_id, timeout=90):
 
 
 def _db_run(run_id):
-    """Return the persisted run dict for run_id, or None."""
+    """Return the persisted run dict for run_id, or None.
+
+    feat/v3.0 (#8350) denormalized runs out of the sessions.runs JSON blob into
+    the agno_runs table. The run body lives in run_data (jsonb); the row's status
+    column is the indexed source of truth, so overlay it onto the dict (run_data's
+    embedded status can lag a status-only update).
+    """
     try:
         c = psycopg.connect(PG_DSN)
         cur = c.cursor()
-        cur.execute("SELECT runs FROM ai.agno_sessions WHERE runs IS NOT NULL AND jsonb_typeof(runs)='array'")
-        for (runs,) in cur.fetchall():
-            for r in runs or []:
-                if r.get("run_id") == run_id:
-                    c.close()
-                    return r
+        cur.execute("SELECT run_data, status FROM ai.agno_runs WHERE run_id=%s", (run_id,))
+        row = cur.fetchone()
         c.close()
+        if row is None:
+            return None
+        run = dict(row[0] or {})
+        if row[1] is not None:
+            run["status"] = row[1]
+        return run
     except Exception:
         pass
     return None
 
 
 def _db_session_runs(session_id):
+    """All runs for a session, ordered by run_index (denormalized agno_runs)."""
     try:
         c = psycopg.connect(PG_DSN)
         cur = c.cursor()
-        cur.execute("SELECT runs FROM ai.agno_sessions WHERE session_id=%s", (session_id,))
-        row = cur.fetchone()
+        cur.execute(
+            "SELECT run_data, status FROM ai.agno_runs WHERE session_id=%s ORDER BY run_index ASC",
+            (session_id,),
+        )
+        rows = cur.fetchall()
         c.close()
-        return (row[0] if row else []) or []
+        out = []
+        for run_data, status in rows:
+            run = dict(run_data or {})
+            if status is not None:
+                run["status"] = status
+            out.append(run)
+        return out
     except Exception:
         return []
 

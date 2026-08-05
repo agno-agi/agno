@@ -36,17 +36,17 @@ def load_ledger():
 
 
 def db_run_statuses(conn) -> dict:
-    """run_id -> status, from every session's runs blob (ai schema)."""
+    """run_id -> status, from the denormalized agno_runs table (ai schema).
+
+    feat/v3.0 (#8350) moved runs out of the sessions.runs JSON blob into
+    agno_runs; the status column is the indexed source of truth.
+    """
     out = {}
     cur = conn.cursor()
-    cur.execute(
-        "SELECT runs FROM ai.agno_sessions WHERE runs IS NOT NULL AND jsonb_typeof(runs)='array'"
-    )
-    for (runs,) in cur.fetchall():
-        for r in runs or []:
-            rid = r.get("run_id")
-            if rid:
-                out[rid] = r.get("status")
+    cur.execute("SELECT run_id, status FROM ai.agno_runs")
+    for run_id, status in cur.fetchall():
+        if run_id:
+            out[run_id] = status
     return out
 
 
