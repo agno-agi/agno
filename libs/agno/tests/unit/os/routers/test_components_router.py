@@ -216,6 +216,92 @@ class TestCreateComponent:
 
         assert response.status_code == 400
 
+    def test_create_team_persists_links_for_db_members(self, client, mock_db):
+        """Test create_component builds component links for DB-persisted members."""
+        mock_db.get_component.return_value = {"component_id": "member-agent", "current_version": 3}
+        mock_db.create_component_with_config.return_value = (
+            {"component_id": "my-team", "name": "My Team", "component_type": "team", "created_at": 1},
+            {"version": 1},
+        )
+
+        response = client.post(
+            "/components",
+            json={
+                "name": "My Team",
+                "component_type": "team",
+                "component_id": "my-team",
+                "config": {"id": "my-team", "members": [{"type": "agent", "agent_id": "member-agent"}]},
+            },
+        )
+
+        assert response.status_code == 201
+        links = mock_db.create_component_with_config.call_args.kwargs["links"]
+        assert links == [
+            {
+                "link_kind": "member",
+                "link_key": "member_0",
+                "child_component_id": "member-agent",
+                "child_version": 3,
+                "position": 0,
+                "meta": {"type": "agent"},
+            }
+        ]
+
+    def test_create_team_with_registry_member_succeeds_without_link(self, mock_db, settings):
+        """Test create_component allows a code-defined (registry) member with no link."""
+        from agno.agent.agent import Agent
+        from agno.registry import Registry
+
+        # Not a DB component, but registered with the AgentOS instance
+        mock_db.get_component.return_value = None
+        mock_db.create_component_with_config.return_value = (
+            {"component_id": "my-team", "name": "My Team", "component_type": "team", "created_at": 1},
+            {"version": 1},
+        )
+        registry = Registry(agents=[Agent(id="member-agent", name="Member Agent")])
+
+        app = FastAPI()
+        app.include_router(get_components_router(os_db=mock_db, settings=settings, registry=registry))
+        client = TestClient(app)
+
+        response = client.post(
+            "/components",
+            json={
+                "name": "My Team",
+                "component_type": "team",
+                "component_id": "my-team",
+                "config": {"id": "my-team", "members": [{"type": "agent", "agent_id": "member-agent"}]},
+            },
+        )
+
+        assert response.status_code == 201
+        assert mock_db.create_component_with_config.call_args.kwargs["links"] is None
+
+    def test_create_team_with_unresolved_member_returns_400(self, mock_db, settings):
+        """Test create_component surfaces members that resolve to neither db nor registry."""
+        from agno.registry import Registry
+
+        mock_db.get_component.return_value = None
+        registry = Registry(agents=[])
+
+        app = FastAPI()
+        app.include_router(get_components_router(os_db=mock_db, settings=settings, registry=registry))
+        client = TestClient(app)
+
+        response = client.post(
+            "/components",
+            json={
+                "name": "My Team",
+                "component_type": "team",
+                "component_id": "my-team",
+                "config": {"id": "my-team", "members": [{"type": "agent", "agent_id": "ghost-agent"}]},
+            },
+        )
+
+        assert response.status_code == 400
+        assert "ghost-agent" in response.json()["detail"]
+        mock_db.create_component_with_config.assert_not_called()
+
 
 # =============================================================================
 # Get Component Tests
@@ -560,3 +646,123 @@ class TestSetCurrentConfig:
         response = client.post("/components/agent-1/configs/1/set-current")
 
         assert response.status_code == 400
+
+
+# =============================================================================
+# _resolve_db_in_config Tests
+# =============================================================================
+#
+# These cover the components-router-specific merge behavior when a payload
+# references a db by id: only whitelisted table-name fields are accepted from
+# the caller; connection-defining fields (type / db_url / db_file / db_schema /
+# id) always come from the resolved db so a caller cannot redirect a
+# referenced db to a different backend through this path.
+
+
+class TestResolveDbInConfig:
+    """Tests for the _resolve_db_in_config helper in the components router."""
+
+    def _make_os_db(self, tmp_path):
+        from agno.db.sqlite.sqlite import SqliteDb
+
+        return SqliteDb(db_file=str(tmp_path / "os.db"))
+
+    def test_no_db_in_config_is_noop(self, tmp_path):
+        from agno.os.routers.components.components import _resolve_db_in_config
+
+        os_db = self._make_os_db(tmp_path)
+        config = {"name": "agent"}
+
+        out = _resolve_db_in_config(dict(config), os_db, None)
+
+        assert out == config
+
+    def test_db_none_is_removed(self, tmp_path):
+        from agno.os.routers.components.components import _resolve_db_in_config
+
+        os_db = self._make_os_db(tmp_path)
+
+        out = _resolve_db_in_config({"name": "agent", "db": None}, os_db, None)
+
+        assert "db" not in out
+
+    def test_db_without_id_is_passed_through(self, tmp_path):
+        from agno.os.routers.components.components import _resolve_db_in_config
+
+        os_db = self._make_os_db(tmp_path)
+        payload = {"db": {"type": "sqlite", "session_table": "custom"}}
+
+        out = _resolve_db_in_config(dict(payload), os_db, None)
+
+        assert out["db"] == payload["db"]
+
+    def test_matching_id_merges_table_overrides_onto_resolved_db(self, tmp_path):
+        """The reported bug: table-name overrides in the payload were being
+        replaced with the resolved db's defaults."""
+        from agno.os.routers.components.components import _resolve_db_in_config
+
+        os_db = self._make_os_db(tmp_path)
+        payload = {
+            "db": {
+                "id": os_db.id,
+                "session_table": "custom_sessions",
+                "memory_table": "custom_memories",
+            },
+        }
+
+        out = _resolve_db_in_config(dict(payload), os_db, None)
+
+        assert out["db"]["session_table"] == "custom_sessions"
+        assert out["db"]["memory_table"] == "custom_memories"
+        # Connection metadata is filled in from the resolved db.
+        assert out["db"]["type"] == "sqlite"
+        assert out["db"]["db_file"] == os_db.db_file
+        # Fields the caller didn't override inherit os_db's values.
+        assert out["db"]["knowledge_table"] == os_db.knowledge_table_name
+
+    def test_matching_id_rejects_caller_override_of_connection_fields(self, tmp_path):
+        """Whitelist: a caller cannot redirect a referenced db by
+        supplying type / db_url / db_file / db_schema."""
+        from agno.os.routers.components.components import _resolve_db_in_config
+
+        os_db = self._make_os_db(tmp_path)
+        payload = {
+            "db": {
+                "id": os_db.id,
+                "type": "postgres",
+                "db_url": "postgresql://attacker/evil",
+                "db_file": "/evil.db",
+                "db_schema": "public",
+                "session_table": "custom_sessions",
+            },
+        }
+
+        out = _resolve_db_in_config(dict(payload), os_db, None)
+
+        resolved_db_dict = out["db"]
+        # Connection fields MUST come from os_db, never from the caller.
+        assert resolved_db_dict["type"] == "sqlite"
+        assert resolved_db_dict["db_file"] == os_db.db_file
+        assert resolved_db_dict.get("db_url") == os_db.db_url
+        assert resolved_db_dict["id"] == os_db.id
+        # The only caller-provided field that is allowed through is the
+        # whitelisted table-name override.
+        assert resolved_db_dict["session_table"] == "custom_sessions"
+
+    def test_matching_id_ignores_non_whitelisted_keys(self, tmp_path):
+        """Unknown keys in the payload must not leak into the stored config."""
+        from agno.os.routers.components.components import _resolve_db_in_config
+
+        os_db = self._make_os_db(tmp_path)
+        payload = {
+            "db": {
+                "id": os_db.id,
+                "session_table": "custom_sessions",
+                "arbitrary_extension": "something",
+            },
+        }
+
+        out = _resolve_db_in_config(dict(payload), os_db, None)
+
+        assert "arbitrary_extension" not in out["db"]
+        assert out["db"]["session_table"] == "custom_sessions"

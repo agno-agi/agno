@@ -48,6 +48,7 @@ class WhatsAppTools(Toolkit):
         enable_send_location: bool = False,
         enable_send_reaction: bool = False,
         all: bool = False,
+        timeout: int = 30,
         **kwargs,
     ):
         self.access_token = access_token or getenv("WHATSAPP_ACCESS_TOKEN")
@@ -84,7 +85,7 @@ class WhatsAppTools(Toolkit):
         if enable_send_reaction or all:
             tools.append(self.send_reaction)
 
-        super().__init__(name="whatsapp", tools=tools, **kwargs)
+        super().__init__(name="whatsapp", tools=tools, timeout=timeout, **kwargs)
 
     def _get_headers(self) -> Dict[str, str]:
         return {"Authorization": f"Bearer {self.access_token}", "Content-Type": "application/json"}
@@ -101,7 +102,7 @@ class WhatsAppTools(Toolkit):
 
     def _send_message(self, data: Dict[str, Any]) -> Dict[str, Any]:
         # Raise on 4xx/5xx with parsed error body for better diagnostics
-        response = httpx.post(self._get_messages_url(), headers=self._get_headers(), json=data)
+        response = httpx.post(self._get_messages_url(), headers=self._get_headers(), json=data, timeout=self.timeout)
         if response.status_code >= 400:
             error_body = (
                 response.json()
@@ -146,8 +147,8 @@ class WhatsAppTools(Toolkit):
             response = self._send_message(data)
             message_id = response.get("messages", [{}])[0].get("id", "unknown")
             return json.dumps({"ok": True, "message_id": message_id})
-        except Exception as e:
-            logger.error(f"Error sending text message: {e}")
+        except Exception:
+            logger.exception("Error sending text message")
             raise
 
     def send_template_message(
@@ -186,8 +187,8 @@ class WhatsAppTools(Toolkit):
             response = self._send_message(data)
             message_id = response.get("messages", [{}])[0].get("id", "unknown")
             return json.dumps({"ok": True, "message_id": message_id})
-        except Exception as e:
-            logger.error(f"Error sending template message: {e}")
+        except Exception:
+            logger.exception("Error sending template message")
             raise
 
     def send_reply_buttons(
@@ -239,8 +240,8 @@ class WhatsAppTools(Toolkit):
             response = self._send_message(data)
             message_id = response.get("messages", [{}])[0].get("id", "unknown")
             return json.dumps({"ok": True, "message_id": message_id})
-        except Exception as e:
-            logger.error(f"Error sending reply buttons: {e}")
+        except Exception:
+            logger.exception("Error sending reply buttons")
             raise
 
     def send_list_message(
@@ -314,8 +315,8 @@ class WhatsAppTools(Toolkit):
             response = self._send_message(data)
             message_id = response.get("messages", [{}])[0].get("id", "unknown")
             return json.dumps({"ok": True, "message_id": message_id})
-        except Exception as e:
-            logger.error(f"Error sending list message: {e}")
+        except Exception:
+            logger.exception("Error sending list message")
             raise
 
     def send_image(
@@ -361,8 +362,8 @@ class WhatsAppTools(Toolkit):
             response = self._send_message(data)
             message_id = response.get("messages", [{}])[0].get("id", "unknown")
             return json.dumps({"ok": True, "message_id": message_id})
-        except Exception as e:
-            logger.error(f"Error sending image: {e}")
+        except Exception:
+            logger.exception("Error sending image")
             raise
 
     def send_document(
@@ -412,8 +413,8 @@ class WhatsAppTools(Toolkit):
             response = self._send_message(data)
             message_id = response.get("messages", [{}])[0].get("id", "unknown")
             return json.dumps({"ok": True, "message_id": message_id})
-        except Exception as e:
-            logger.error(f"Error sending document: {e}")
+        except Exception:
+            logger.exception("Error sending document")
             raise
 
     def send_location(
@@ -459,8 +460,8 @@ class WhatsAppTools(Toolkit):
             response = self._send_message(data)
             message_id = response.get("messages", [{}])[0].get("id", "unknown")
             return json.dumps({"ok": True, "message_id": message_id})
-        except Exception as e:
-            logger.error(f"Error sending location: {e}")
+        except Exception:
+            logger.exception("Error sending location")
             raise
 
     def send_reaction(
@@ -496,6 +497,6 @@ class WhatsAppTools(Toolkit):
             response = self._send_message(data)
             resp_message_id = response.get("messages", [{}])[0].get("id", "unknown")
             return json.dumps({"ok": True, "message_id": resp_message_id})
-        except Exception as e:
-            logger.error(f"Error sending reaction: {e}")
+        except Exception:
+            logger.exception("Error sending reaction")
             raise

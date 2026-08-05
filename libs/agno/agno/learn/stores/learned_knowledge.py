@@ -41,6 +41,7 @@ from agno.utils.log import (
     set_log_level_to_debug,
     set_log_level_to_info,
 )
+from agno.utils.message import get_conversation_text
 
 if TYPE_CHECKING:
     from agno.metrics import RunMetrics
@@ -228,7 +229,11 @@ class LearnedKnowledgeStore(LearningStore):
         )
 
     def build_context(self, data: Any) -> str:
-        """Build context for the agent.
+        """Build the DATA context for the agent.
+
+        Data only (the relevant learnings) - the mode-specific how-to-use
+        guidance lives in instructions(); the automatic path concatenates the
+        two at the injection site.
 
         Args:
             data: List of learning objects from recall() (may be None).
@@ -236,14 +241,19 @@ class LearnedKnowledgeStore(LearningStore):
         Returns:
             Context string to inject into the agent's system prompt.
         """
-        mode = self.config.mode
+        return self._build_always_mode_context(data=data)
 
+    def instructions(self) -> str:
+        """Agent-facing guidance for this store, mode-aware.
+
+        Guidance only - the recalled learnings live in build_context().
+        """
+        mode = self.config.mode
         if mode == LearningMode.PROPOSE:
-            return self._build_propose_mode_context(data=data)
-        elif mode == LearningMode.AGENTIC:
-            return self._build_agentic_mode_context(data=data)
-        else:
-            return self._build_background_mode_context(data=data)
+            return self._build_propose_mode_context(data=None)
+        if mode == LearningMode.AGENTIC:
+            return self._build_agentic_mode_context(data=None)
+        return ""
 
     def _build_agentic_mode_context(self, data: Any) -> str:
         """Build context for AGENTIC mode."""
@@ -253,10 +263,13 @@ class LearnedKnowledgeStore(LearningStore):
 
             ## CRITICAL RULES - ALWAYS FOLLOW
 
-            **RULE 1: ALWAYS search before answering substantive questions.**
-            When the user asks for advice, recommendations, how-to guidance, or best practices:
+            **RULE 1: Search before answering knowledge-dependent questions.**
+            When the user asks for advice, recommendations, how-to guidance, best practices,
+            or questions about conventions and preferences:
             → First call `search_learnings` with relevant keywords
             → Then incorporate any relevant findings into your response
+            Skip searching for straightforward operational tasks (fetching data, running tools,
+            executing actions) where prior learnings are unlikely to be relevant.
 
             **RULE 2: ALWAYS search before saving.**
             Before saving anything, first call `search_learnings` to check if similar knowledge exists.
@@ -318,10 +331,13 @@ class LearnedKnowledgeStore(LearningStore):
 
             ## CRITICAL RULES - ALWAYS FOLLOW
 
-            **RULE 1: ALWAYS search before answering substantive questions.**
-            When the user asks for advice, recommendations, how-to guidance, or best practices:
+            **RULE 1: Search before answering knowledge-dependent questions.**
+            When the user asks for advice, recommendations, how-to guidance, best practices,
+            or questions about conventions and preferences:
             → First call `search_learnings` with relevant keywords
             → Then incorporate any relevant findings into your response
+            Skip searching for straightforward operational tasks (fetching data, running tools,
+            executing actions) where prior learnings are unlikely to be relevant.
 
             **RULE 2: Propose learnings, don't save directly.**
             If you discover something worth preserving, propose it at the end of your response:
@@ -366,7 +382,7 @@ class LearnedKnowledgeStore(LearningStore):
 
         return instructions
 
-    def _build_background_mode_context(self, data: Any) -> str:
+    def _build_always_mode_context(self, data: Any) -> str:
         """Build context for ALWAYS mode (just show relevant learnings)."""
         if not data:
             return ""
@@ -376,16 +392,16 @@ class LearnedKnowledgeStore(LearningStore):
             return ""
 
         formatted = self._format_learnings_for_context(learnings=learnings)
-        return dedent(f"""\
-            <relevant_learnings>
-            Prior insights that may help with this task:
-
-            {formatted}
-
-            Apply these naturally if they're relevant to the current request.
-            Your current analysis and the user's specific context take precedence.
-            </relevant_learnings>\
-        """)
+        # Assembled by concatenation, not dedent: the interpolated learnings are
+        # flush-left and multi-line, which would defeat dedent's common prefix.
+        return (
+            "<relevant_learnings>\n"
+            "Prior insights that may help with this task:\n\n"
+            f"{formatted}\n\n"
+            "Apply these naturally if they're relevant to the current request.\n"
+            "Your current analysis and the user's specific context take precedence.\n"
+            "</relevant_learnings>"
+        )
 
     def _format_learnings_for_context(self, learnings: List[Any]) -> str:
         """Format learnings for inclusion in context."""
@@ -774,7 +790,7 @@ class LearnedKnowledgeStore(LearningStore):
             return learnings[:limit]
 
         except Exception as e:
-            log_warning(f"LearnedKnowledgeStore.search failed: {e}")
+            log_warning(f"LearnedKnowledgeStore.search failed: {str(e)}")
             return []
 
     async def asearch(
@@ -817,7 +833,7 @@ class LearnedKnowledgeStore(LearningStore):
             return learnings[:limit]
 
         except Exception as e:
-            log_warning(f"LearnedKnowledgeStore.asearch failed: {e}")
+            log_warning(f"LearnedKnowledgeStore.asearch failed: {str(e)}")
             return []
 
     def _build_search_filters(
@@ -943,7 +959,7 @@ class LearnedKnowledgeStore(LearningStore):
             return True
 
         except Exception as e:
-            log_warning(f"LearnedKnowledgeStore.save failed: {e}")
+            log_warning(f"LearnedKnowledgeStore.save failed: {str(e)}")
             return False
 
     async def asave(
@@ -1022,7 +1038,7 @@ class LearnedKnowledgeStore(LearningStore):
             return True
 
         except Exception as e:
-            log_warning(f"LearnedKnowledgeStore.asave failed: {e}")
+            log_warning(f"LearnedKnowledgeStore.asave failed: {str(e)}")
             return False
 
     # =========================================================================
@@ -1052,7 +1068,7 @@ class LearnedKnowledgeStore(LearningStore):
                 return False
 
         except Exception as e:
-            log_warning(f"LearnedKnowledgeStore.delete failed: {e}")
+            log_warning(f"LearnedKnowledgeStore.delete failed: {str(e)}")
             return False
 
     async def adelete(self, title: str) -> bool:
@@ -1074,7 +1090,7 @@ class LearnedKnowledgeStore(LearningStore):
             return True
 
         except Exception as e:
-            log_warning(f"LearnedKnowledgeStore.adelete failed: {e}")
+            log_warning(f"LearnedKnowledgeStore.adelete failed: {str(e)}")
             return False
 
     # =========================================================================
@@ -1095,7 +1111,7 @@ class LearnedKnowledgeStore(LearningStore):
             return
 
         try:
-            conversation_text = self._messages_to_text(messages=messages)
+            conversation_text = get_conversation_text(messages)
 
             # Search for existing learnings to avoid duplicates
             existing = self.search(query=conversation_text[:500], limit=5)
@@ -1118,6 +1134,7 @@ class LearnedKnowledgeStore(LearningStore):
             response = model_copy.response(
                 messages=extraction_messages,
                 tools=functions,
+                tool_call_limit=self.config.max_updates_per_run,
             )
 
             if run_metrics is not None and response.response_usage is not None:
@@ -1130,7 +1147,7 @@ class LearnedKnowledgeStore(LearningStore):
                 log_debug("LearnedKnowledgeStore: Extraction saved new learning(s)")
 
         except Exception as e:
-            log_warning(f"LearnedKnowledgeStore.extract_and_save failed: {e}")
+            log_warning(f"LearnedKnowledgeStore.extract_and_save failed: {str(e)}")
 
     async def aextract_and_save(
         self,
@@ -1146,7 +1163,7 @@ class LearnedKnowledgeStore(LearningStore):
             return
 
         try:
-            conversation_text = self._messages_to_text(messages=messages)
+            conversation_text = get_conversation_text(messages)
 
             # Search for existing learnings to avoid duplicates
             existing = await self.asearch(query=conversation_text[:500], limit=5)
@@ -1169,6 +1186,7 @@ class LearnedKnowledgeStore(LearningStore):
             response = await model_copy.aresponse(
                 messages=extraction_messages,
                 tools=functions,
+                tool_call_limit=self.config.max_updates_per_run,
             )
 
             if run_metrics is not None and response.response_usage is not None:
@@ -1181,7 +1199,7 @@ class LearnedKnowledgeStore(LearningStore):
                 log_debug("LearnedKnowledgeStore: Extraction saved new learning(s)")
 
         except Exception as e:
-            log_warning(f"LearnedKnowledgeStore.aextract_and_save failed: {e}")
+            log_warning(f"LearnedKnowledgeStore.aextract_and_save failed: {str(e)}")
 
     def _build_extraction_messages(
         self,
@@ -1364,23 +1382,9 @@ These insights are already in the knowledge base. Do not save variations of thes
                 func.strict = True
                 functions.append(func)
             except Exception as e:
-                log_warning(f"Could not add function {tool}: {e}")
+                log_warning(f"Could not add function {tool}: {str(e)}")
 
         return functions
-
-    def _messages_to_text(self, messages: List[Any]) -> str:
-        """Convert messages to text for extraction."""
-        parts = []
-        for msg in messages:
-            if msg.role == "user":
-                content = msg.get_content_string() if hasattr(msg, "get_content_string") else str(msg.content)
-                if content and content.strip():
-                    parts.append(f"User: {content}")
-            elif msg.role in ["assistant", "model"]:
-                content = msg.get_content_string() if hasattr(msg, "get_content_string") else str(msg.content)
-                if content and content.strip():
-                    parts.append(f"Assistant: {content}")
-        return "\n".join(parts)
 
     def _summarize_existing(self, learnings: List[Any]) -> str:
         """Summarize existing learnings to help avoid duplicates."""
@@ -1432,7 +1436,7 @@ These insights are already in the knowledge base. Do not save variations of thes
             return None
 
         except Exception as e:
-            log_warning(f"LearnedKnowledgeStore._parse_result failed: {e}")
+            log_warning(f"LearnedKnowledgeStore._parse_result failed: {str(e)}")
             return None
 
     def _to_text_content(self, learning: Any) -> str:

@@ -76,7 +76,7 @@ def is_table_available(session: Session, table_name: str, db_schema: Optional[st
             log_debug(f"Table {table_name} {'exists' if exists else 'does not exist'}")
         return exists
     except Exception as e:
-        log_error(f"Error checking if table exists: {e}")
+        log_error(f"Error checking if table exists: {str(e)}")
         return False
 
 
@@ -95,7 +95,7 @@ async def ais_table_available(session: AsyncSession, table_name: str, db_schema:
             log_debug(f"Table {table_name} {'exists' if exists else 'does not exist'}")
         return exists
     except Exception as e:
-        log_error(f"Error checking if table exists: {e}")
+        log_error(f"Error checking if table exists: {str(e)}")
         return False
 
 
@@ -128,7 +128,7 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str) -> bool:
 
         return True
     except Exception as e:
-        log_error(f"Error validating table schema for {table_name}: {e}")
+        log_error(f"Error validating table schema for {table_name}: {str(e)}")
         return False
 
 
@@ -160,7 +160,7 @@ async def ais_valid_table(db_engine: AsyncEngine, table_name: str, table_type: s
         return True
 
     except Exception as e:
-        log_error(f"Error validating table schema for {table_name}: {e}")
+        log_error(f"Error validating table schema for {table_name}: {str(e)}")
         return False
 
 
@@ -299,10 +299,10 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
                         )
 
             # Parse session_data from JSON string
-            session_data = session.get("session_data", {})
+            session_data = session.get("session_data") or {}
             if isinstance(session_data, str):
                 session_data = json.loads(session_data)
-            session_metrics = session_data.get("session_metrics", {})
+            session_metrics = session_data.get("session_metrics") or {}
             for field in token_metrics:
                 token_metrics[field] += session_metrics.get(field, 0)
 

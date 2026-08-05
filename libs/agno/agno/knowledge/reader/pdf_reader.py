@@ -137,8 +137,9 @@ def _clean_page_numbers(
         return None
 
     page_numbers = [find_page_number(content) for content in page_content_list]
-    if all(x is None or x > 5 for x in page_numbers):
-        # This approach won't work reliably for higher page numbers.
+    if all(x is None or x > 5 for x in page_numbers) or sum(x is not None for x in page_numbers) < 2:
+        # This approach won't work reliably for higher page numbers, and a single candidate page
+        # number is not enough evidence of a sequence (e.g. a one-page PDF starting with "2 Fast facts").
         page_content_list = [
             f"\n{page_content_list[i]}\n{extra_content[i]}" if extra_content else page_content_list[i]
             for i in range(len(page_content_list))
@@ -206,9 +207,13 @@ class BasePDFReader(Reader):
         page_end_numbering_format: Optional[str] = None,
         password: Optional[str] = None,
         sanitize_content: bool = True,
-        chunking_strategy: Optional[ChunkingStrategy] = DocumentChunking(chunk_size=5000),
+        chunking_strategy: Optional[ChunkingStrategy] = None,
         **kwargs,
     ):
+        if chunking_strategy is None:
+            chunk_size = kwargs.get("chunk_size", 5000)
+            chunking_strategy = DocumentChunking(chunk_size=chunk_size)
+
         if page_start_numbering_format is None:
             page_start_numbering_format = PAGE_START_NUMBERING_FORMAT_DEFAULT
         if page_end_numbering_format is None:
@@ -257,20 +262,30 @@ class BasePDFReader(Reader):
         # Use provided password or fall back to instance password
         # Note: Empty string "" is a valid password for PDFs with blank user password
         pdf_password = self.password if password is None else password
+
+        # If no password provided, try blank password first
+        # Many PDFs are "encrypted" with empty user password (for edit/print restrictions only)
         if pdf_password is None:
+            try:
+                if doc_reader.decrypt(""):
+                    log_debug(f'Successfully decrypted PDF file "{doc_name}"')
+                    return True
+            except Exception:
+                pass
             log_error(f'PDF file "{doc_name}" is password protected but no password provided')
             return False
 
+        # Try the provided password
         try:
             decrypted_pdf = doc_reader.decrypt(pdf_password)
             if decrypted_pdf:
-                log_debug(f'Successfully decrypted PDF file "{doc_name}" with user password')
+                log_debug(f'Successfully decrypted PDF file "{doc_name}" with provided password')
                 return True
             else:
                 log_error(f'Failed to decrypt PDF file "{doc_name}": incorrect password')
                 return False
         except Exception as e:
-            log_error(f'Error decrypting PDF file "{doc_name}": {e}')
+            log_error(f'Error decrypting PDF file "{doc_name}": {str(e)}')
             return False
 
     def _create_documents(self, pdf_content: List[str], doc_name: str, use_uuid_for_id: bool, page_number_shift):
@@ -386,7 +401,7 @@ class PDFReader(BasePDFReader):
         try:
             pdf_reader = DocumentReader(pdf)
         except PdfStreamError as e:
-            log_error(f"Error reading PDF: {e}")
+            log_error(f"Error reading PDF: {str(e)}")
             return []
         # Handle PDF decryption
         if not self._decrypt_pdf(pdf_reader, doc_name, password):
@@ -410,7 +425,7 @@ class PDFReader(BasePDFReader):
         try:
             pdf_reader = DocumentReader(pdf)
         except PdfStreamError as e:
-            log_error(f"Error reading PDF: {e}")
+            log_error(f"Error reading PDF: {str(e)}")
             return []
 
         # Handle PDF decryption
@@ -435,7 +450,7 @@ class PDFImageReader(BasePDFReader):
         try:
             pdf_reader = DocumentReader(pdf)
         except PdfStreamError as e:
-            log_error(f"Error reading PDF: {e}")
+            log_error(f"Error reading PDF: {str(e)}")
             return []
 
         # Handle PDF decryption
@@ -457,7 +472,7 @@ class PDFImageReader(BasePDFReader):
         try:
             pdf_reader = DocumentReader(pdf)
         except PdfStreamError as e:
-            log_error(f"Error reading PDF: {e}")
+            log_error(f"Error reading PDF: {str(e)}")
             return []
 
         # Handle PDF decryption

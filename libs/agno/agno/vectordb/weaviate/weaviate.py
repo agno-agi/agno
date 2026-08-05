@@ -22,7 +22,7 @@ from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
-from agno.utils.log import log_debug, log_info, log_warning, logger
+from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.search import SearchType
 from agno.vectordb.weaviate.index import Distance, VectorIndex
@@ -243,7 +243,7 @@ class Weaviate(VectorDb):
         for document in documents:
             document.embed(embedder=self.embedder)
             if document.embedding is None:
-                logger.error(f"Document embedding is None: {document.name}")
+                log_error(f"Document embedding is None: {document.name}")
                 continue
 
             cleaned_content = document.content.replace("\x00", "\ufffd")
@@ -303,8 +303,8 @@ class Weaviate(VectorDb):
                         if j < len(embeddings):
                             doc.embedding = embeddings[j]
                             doc.usage = usages[j] if j < len(usages) else None
-                    except Exception as e:
-                        logger.error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+                    except Exception:
+                        logger.exception(f"Error assigning batch embedding to document '{doc.name}'")
 
             except Exception as e:
                 # Check if this is a rate limit error - don't fall back as it would make things worse
@@ -315,10 +315,10 @@ class Weaviate(VectorDb):
                 )
 
                 if is_rate_limit:
-                    logger.error(f"Rate limit detected during batch embedding. {e}")
+                    logger.exception("Rate limit detected during batch embedding.")
                     raise e
                 else:
-                    logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    log_warning(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
@@ -335,7 +335,7 @@ class Weaviate(VectorDb):
             for document in documents:
                 try:
                     if document.embedding is None:
-                        logger.error(f"Document embedding is None: {document.name}")
+                        log_error(f"Document embedding is None: {document.name}")
                         continue
 
                     # Clean content and generate UUID
@@ -363,7 +363,7 @@ class Weaviate(VectorDb):
                     log_debug(f"Inserted document asynchronously: {document.name}")
 
                 except Exception as e:
-                    logger.error(f"Error inserting document {document.name}: {str(e)}")
+                    log_error(f"Error inserting document {document.name}: {str(e)}: {str(e)}")
         finally:
             await client.close()
 
@@ -421,7 +421,7 @@ class Weaviate(VectorDb):
         elif self.search_type == SearchType.hybrid:
             return self.hybrid_search(query, limit, filters)
         else:
-            logger.error(f"Invalid search type '{self.search_type}'.")
+            log_error(f"Invalid search type '{self.search_type}'.")
             return []
 
     async def async_search(
@@ -448,7 +448,7 @@ class Weaviate(VectorDb):
         elif self.search_type == SearchType.hybrid:
             return await self.async_hybrid_search(query, limit, filters)
         else:
-            logger.error(f"Invalid search type '{self.search_type}'.")
+            log_error(f"Invalid search type '{self.search_type}'.")
             return []
 
     def vector_search(
@@ -457,7 +457,7 @@ class Weaviate(VectorDb):
         try:
             query_embedding = self.embedder.get_embedding(query)
             if query_embedding is None:
-                logger.error(f"Error getting embedding for query: {query}")
+                log_error(f"Error getting embedding for query: {query}")
                 return []
 
             collection = self.get_client().collections.get(self.collection)
@@ -480,8 +480,8 @@ class Weaviate(VectorDb):
 
             return search_results
 
-        except Exception as e:
-            logger.error(f"Error searching for documents: {e}")
+        except Exception:
+            logger.exception("Error searching for documents")
             return []
 
         finally:
@@ -502,7 +502,7 @@ class Weaviate(VectorDb):
         """
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
-            logger.error(f"Error getting embedding for query: {query}")
+            log_error(f"Error getting embedding for query: {query}")
             return []
 
         search_results = []
@@ -529,8 +529,8 @@ class Weaviate(VectorDb):
             await client.close()
             return search_results
 
-        except Exception as e:
-            logger.error(f"Error searching for documents: {e}")
+        except Exception:
+            logger.exception("Error searching for documents")
             return []
 
     def keyword_search(
@@ -558,8 +558,8 @@ class Weaviate(VectorDb):
 
             return search_results
 
-        except Exception as e:
-            logger.error(f"Error searching for documents: {e}")
+        except Exception:
+            logger.exception("Error searching for documents")
             return []
 
         finally:
@@ -603,8 +603,8 @@ class Weaviate(VectorDb):
             await client.close()
             return search_results
 
-        except Exception as e:
-            logger.error(f"Error searching for documents: {e}")
+        except Exception:
+            logger.exception("Error searching for documents")
             return []
 
     def hybrid_search(
@@ -613,7 +613,7 @@ class Weaviate(VectorDb):
         try:
             query_embedding = self.embedder.get_embedding(query)
             if query_embedding is None:
-                logger.error(f"Error getting embedding for query: {query}")
+                log_error(f"Error getting embedding for query: {query}")
                 return []
 
             collection = self.get_client().collections.get(self.collection)
@@ -639,8 +639,8 @@ class Weaviate(VectorDb):
 
             return search_results
 
-        except Exception as e:
-            logger.error(f"Error searching for documents: {e}")
+        except Exception:
+            logger.exception("Error searching for documents")
             return []
 
         finally:
@@ -661,7 +661,7 @@ class Weaviate(VectorDb):
         """
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
-            logger.error(f"Error getting embedding for query: {query}")
+            log_error(f"Error getting embedding for query: {query}")
             return []
 
         search_results = []
@@ -691,8 +691,8 @@ class Weaviate(VectorDb):
             await client.close()
             return search_results
 
-        except Exception as e:
-            logger.error(f"Error searching for documents: {e}")
+        except Exception:
+            logger.exception("Error searching for documents")
             return []
 
     def exists(self) -> bool:
@@ -750,8 +750,8 @@ class Weaviate(VectorDb):
             collection.data.delete_by_id(doc_uuid)
             log_info(f"Deleted document with ID '{id}' from collection '{self.collection}'.")
             return True
-        except Exception as e:
-            logger.error(f"Error deleting document by ID '{id}': {e}")
+        except Exception:
+            logger.exception(f"Error deleting document by ID '{id}'")
             return False
 
     def delete_by_name(self, name: str) -> bool:
@@ -764,8 +764,8 @@ class Weaviate(VectorDb):
             log_info(f"Deleted documents with name '{name}' from collection '{self.collection}'.")
             return True
 
-        except Exception as e:
-            logger.error(f"Error deleting documents by name '{name}': {e}")
+        except Exception:
+            logger.exception(f"Error deleting documents by name '{name}'")
             return False
 
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
@@ -784,8 +784,8 @@ class Weaviate(VectorDb):
             log_info(f"Deleted documents with metadata '{metadata}' from collection '{self.collection}'.")
             return True
 
-        except Exception as e:
-            logger.error(f"Error deleting documents by metadata '{metadata}': {e}")
+        except Exception:
+            logger.exception(f"Error deleting documents by metadata '{metadata}'")
             return False
 
     def delete_by_content_id(self, content_id: str) -> bool:
@@ -798,8 +798,8 @@ class Weaviate(VectorDb):
             log_info(f"Deleted documents with content_id '{content_id}' from collection '{self.collection}'.")
             return True
 
-        except Exception as e:
-            logger.error(f"Error deleting documents by content_id '{content_id}': {e}")
+        except Exception:
+            logger.exception(f"Error deleting documents by content_id '{content_id}'")
             return False
 
     def delete_by_content_hash(self, content_hash: str) -> bool:
@@ -808,8 +808,8 @@ class Weaviate(VectorDb):
             collection = self.get_client().collections.get(self.collection)
             collection.data.delete_many(where=Filter.by_property("content_hash").equal(content_hash))
             return True
-        except Exception as e:
-            logger.error(f"Error deleting documents by content_hash '{content_hash}': {e}")
+        except Exception:
+            logger.exception(f"Error deleting documents by content_hash '{content_hash}'")
             return False
 
     def get_vector_index_config(self, index_type: VectorIndex, distance_metric: Distance):
@@ -908,8 +908,8 @@ class Weaviate(VectorDb):
             elif filter_conditions:
                 return filter_conditions[0]
 
-        except Exception as e:
-            logger.error(f"Error building filter expression: {e}")
+        except Exception:
+            logger.exception("Error building filter expression")
             return None
 
         return None
@@ -930,8 +930,8 @@ class Weaviate(VectorDb):
         except ValueError:
             log_info(f"Invalid UUID format for ID '{id}' - treating as non-existent")
             return False
-        except Exception as e:
-            logger.error(f"Error checking if ID '{id}' exists: {e}")
+        except Exception:
+            logger.exception(f"Error checking if ID '{id}' exists")
             return False
 
     def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
@@ -983,8 +983,8 @@ class Weaviate(VectorDb):
 
             logger.debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")
 
-        except Exception as e:
-            logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
+        except Exception:
+            logger.exception(f"Error updating metadata for content_id '{content_id}'")
             raise
 
     def _delete_by_content_hash(self, content_hash: str) -> bool:
@@ -1000,8 +1000,8 @@ class Weaviate(VectorDb):
             log_info(f"Deleted documents with content_hash '{content_hash}' from collection '{self.collection}'.")
             return True
 
-        except Exception as e:
-            logger.error(f"Error deleting documents by content_hash '{content_hash}': {e}")
+        except Exception:
+            logger.exception(f"Error deleting documents by content_hash '{content_hash}'")
             return False
 
     def get_supported_search_types(self) -> List[str]:

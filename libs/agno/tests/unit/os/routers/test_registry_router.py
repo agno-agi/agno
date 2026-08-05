@@ -563,3 +563,199 @@ class TestListRegistryMixed:
         # db comes before tool alphabetically
         types = [c["type"] for c in data["data"]]
         assert types == sorted(types)
+
+
+# =============================================================================
+# List Registry Tests - With Knowledge
+# =============================================================================
+
+
+class TestListRegistryWithKnowledge:
+    """Tests for GET /registry endpoint with knowledge instances."""
+
+    def test_list_registry_with_knowledge(self, settings):
+        """Test list_registry includes knowledge instances."""
+        kb = MagicMock()
+        kb.name = "Docs KB"
+        kb.description = "Documentation knowledge base"
+        kb.max_results = 7
+        kb.readers = {"pdf": MagicMock(), "text": MagicMock()}
+        kb.vector_db = MagicMock()
+        kb.contents_db = MagicMock()
+
+        registry = Registry(knowledge=[kb])
+
+        app = FastAPI()
+        router = get_registry_router(registry=registry, settings=settings)
+        app.include_router(router)
+        client = TestClient(app)
+
+        response = client.get("/registry")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        knowledge = [c for c in data["data"] if c["type"] == "knowledge"]
+        assert len(knowledge) == 1
+        assert knowledge[0]["name"] == "Docs KB"
+        assert knowledge[0]["description"] == "Documentation knowledge base"
+        assert knowledge[0]["metadata"]["max_results"] == 7
+        assert knowledge[0]["metadata"]["num_readers"] == 2
+
+    def test_list_registry_filter_by_knowledge(self, settings):
+        """Test filtering registry by knowledge resource type."""
+        kb = MagicMock()
+        kb.name = "Docs KB"
+        kb.description = None
+        kb.readers = None
+        kb.vector_db = None
+        kb.contents_db = None
+
+        def my_tool():
+            pass
+
+        registry = Registry(knowledge=[kb], tools=[my_tool])
+
+        app = FastAPI()
+        router = get_registry_router(registry=registry, settings=settings)
+        app.include_router(router)
+        client = TestClient(app)
+
+        response = client.get("/registry?resource_type=knowledge")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert all(c["type"] == "knowledge" for c in data["data"])
+        assert data["meta"]["total_count"] == 1
+
+    def test_num_readers_counts_list_readers(self, settings):
+        """num_readers is computed when readers is a list (not only a dict)."""
+        kb = MagicMock()
+        kb.name = "List Readers KB"
+        kb.description = None
+        kb.readers = [MagicMock(), MagicMock(), MagicMock()]
+        kb.vector_db = None
+        kb.contents_db = None
+        kb.max_results = None
+
+        registry = Registry(knowledge=[kb])
+
+        app = FastAPI()
+        router = get_registry_router(registry=registry, settings=settings)
+        app.include_router(router)
+        client = TestClient(app)
+
+        response = client.get("/registry?resource_type=knowledge")
+
+        assert response.status_code == 200
+        data = response.json()
+        knowledge = [c for c in data["data"] if c["type"] == "knowledge"]
+        assert len(knowledge) == 1
+        assert knowledge[0]["metadata"]["num_readers"] == 3
+
+    def test_num_readers_unexpected_type_does_not_crash(self, settings):
+        """An unexpected non-sized readers value yields no num_readers (no crash)."""
+        kb = MagicMock()
+        kb.name = "Weird Readers KB"
+        kb.description = None
+        kb.readers = 42  # not a dict or list, and not sized
+        kb.vector_db = None
+        kb.contents_db = None
+        kb.max_results = None
+
+        registry = Registry(knowledge=[kb])
+
+        app = FastAPI()
+        router = get_registry_router(registry=registry, settings=settings)
+        app.include_router(router)
+        client = TestClient(app)
+
+        response = client.get("/registry?resource_type=knowledge")
+
+        assert response.status_code == 200
+        data = response.json()
+        knowledge = [c for c in data["data"] if c["type"] == "knowledge"]
+        assert len(knowledge) == 1
+        # num_readers omitted (None excluded by model_dump(exclude_none=True))
+        assert "num_readers" not in knowledge[0]["metadata"]
+
+
+# =============================================================================
+# List Registry Tests - With Managers
+# =============================================================================
+
+
+class TestListRegistryWithManagers:
+    """Tests for GET /registry endpoint with memory/session summary managers."""
+
+    def test_list_registry_with_memory_manager(self, settings):
+        """Test list_registry includes memory managers with metadata."""
+        from agno.memory.manager import MemoryManager
+
+        mm = MemoryManager(id="mm-1", name="My Memory", add_memories=True)
+
+        registry = Registry(memory_managers=[mm])
+
+        app = FastAPI()
+        router = get_registry_router(registry=registry, settings=settings)
+        app.include_router(router)
+        client = TestClient(app)
+
+        response = client.get("/registry")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        managers = [c for c in data["data"] if c["type"] == "memory_manager"]
+        assert len(managers) == 1
+        assert managers[0]["id"] == "mm-1"
+        assert managers[0]["name"] == "My Memory"
+        assert managers[0]["metadata"]["add_memories"] is True
+
+    def test_list_registry_with_session_summary_manager(self, settings):
+        """Test list_registry includes session summary managers with metadata."""
+        from agno.session.summary import SessionSummaryManager
+
+        sm = SessionSummaryManager(id="sm-1", name="Concise", last_n_runs=10)
+
+        registry = Registry(session_summary_managers=[sm])
+
+        app = FastAPI()
+        router = get_registry_router(registry=registry, settings=settings)
+        app.include_router(router)
+        client = TestClient(app)
+
+        response = client.get("/registry")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        managers = [c for c in data["data"] if c["type"] == "session_summary_manager"]
+        assert len(managers) == 1
+        assert managers[0]["id"] == "sm-1"
+        assert managers[0]["name"] == "Concise"
+        assert managers[0]["metadata"]["last_n_runs"] == 10
+
+    def test_two_session_summary_managers_have_distinct_ids(self, settings):
+        """Test that two managers without explicit id are not collapsed (duplicate-id fix)."""
+        from agno.session.summary import SessionSummaryManager
+
+        sm1 = SessionSummaryManager(last_n_runs=10)
+        sm2 = SessionSummaryManager(conversation_limit=50)
+
+        registry = Registry(session_summary_managers=[sm1, sm2])
+
+        app = FastAPI()
+        router = get_registry_router(registry=registry, settings=settings)
+        app.include_router(router)
+        client = TestClient(app)
+
+        response = client.get("/registry?resource_type=session_summary_manager")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        managers = [c for c in data["data"] if c["type"] == "session_summary_manager"]
+        assert len(managers) == 2
+        ids = {m["id"] for m in managers}
+        assert len(ids) == 2

@@ -1,9 +1,14 @@
 """Unit tests for Toolkit class."""
 
+import sys
+import tempfile
+from pathlib import Path
+
 import pytest
 
+from agno.agent import Agent
 from agno.tools import Toolkit, tool
-from agno.tools.function import Function
+from agno.tools.function import Function, FunctionCall
 
 
 def example_func(a: int, b: int) -> int:
@@ -153,6 +158,49 @@ def test_caching_parameters():
     assert toolkit.cache_dir == "/tmp/cache"
 
 
+def test_timeout_defaults_to_none():
+    """Timeout is opt-in — the base default is None so subclasses can decide
+    whether to expose it and what value to use."""
+    toolkit = Toolkit(name="notimeout", tools=[example_func])
+    assert toolkit.timeout is None
+
+
+def test_timeout_is_stored_on_instance():
+    """A user-supplied timeout is stored on the toolkit for subclasses to consume."""
+    toolkit = Toolkit(name="withtimeout", tools=[example_func], timeout=45)
+    assert toolkit.timeout == 45
+
+
+def test_subclass_forwards_timeout_via_super():
+    """Regression: subclasses that accept their own ``timeout`` and forward it via
+    ``super().__init__(timeout=...)`` end up with the value on ``self.timeout``.
+    This is the pattern documented in the Toolkit docstring and the calcom /
+    hackernews tools rely on it.
+    """
+
+    class _HttpToolkit(Toolkit):
+        def __init__(self, timeout: int = 30):
+            super().__init__(name="http", tools=[example_func], timeout=timeout)
+
+    assert _HttpToolkit().timeout == 30
+    assert _HttpToolkit(timeout=5).timeout == 5
+
+
+def test_subclass_setting_timeout_before_super_is_preserved():
+    """Regression: many existing toolkits assign ``self.timeout = timeout`` in
+    their own ``__init__`` before calling ``super().__init__(**kwargs)``. The
+    base class must not clobber that pre-existing value with its default None.
+    """
+
+    class _LegacyToolkit(Toolkit):
+        def __init__(self, timeout: int = 42, **kwargs):
+            self.timeout = timeout
+            super().__init__(name="legacy", tools=[example_func], **kwargs)
+
+    assert _LegacyToolkit().timeout == 42
+    assert _LegacyToolkit(timeout=7).timeout == 7
+
+
 def test_toolkit_repr(multi_func_toolkit):
     """Test the string representation of a toolkit."""
     repr_str = repr(multi_func_toolkit)
@@ -252,11 +300,6 @@ def test_toolkit_with_none_instructions():
 
     assert toolkit.instructions is None
     assert toolkit.add_instructions is True
-
-
-# =============================================================================
-# Tests for @tool decorator on class methods
-# =============================================================================
 
 
 class TestToolDecoratorOnClassMethods:
@@ -384,6 +427,31 @@ class TestToolDecoratorOnClassMethods:
         assert "key" in func.parameters.get("properties", {})
         assert "value" in func.parameters.get("properties", {})
 
+    def test_tool_decorator_injects_agent_by_type_with_stringized_annotation(self):
+        """A stringized type annotation (as produced by `from __future__ import annotations`)
+        must resolve so the agent is still injected by type."""
+
+        class MyToolkit(Toolkit):
+            def __init__(self):
+                self.captured_agent = None
+                super().__init__(name="test_toolkit", tools=[self.note])
+
+            @tool(name="note")
+            def note(self, text: str, my_agent: "Agent") -> str:
+                """Save a note."""
+                self.captured_agent = my_agent
+                return f"noted:{text}"
+
+        toolkit = MyToolkit()
+        func = toolkit.functions["note"]
+        agent = Agent(name="tester")
+        func._agent = agent
+
+        result = FunctionCall(function=func, arguments={"text": "hi"}).execute()
+
+        assert result.status == "success"
+        assert toolkit.captured_agent is agent
+
     def test_tool_decorator_multiple_methods(self):
         """Test multiple @tool decorated methods in same toolkit."""
 
@@ -468,11 +536,6 @@ class TestToolDecoratorOnClassMethods:
         assert toolkit._get_tool_name(standalone_func) == "custom_name"
         # Test with regular callable
         assert toolkit._get_tool_name(example_func) == "example_func"
-
-
-# =============================================================================
-# Tests for sync/async tool registration
-# =============================================================================
 
 
 async def async_example_func(a: int, b: int) -> int:
@@ -701,7 +764,7 @@ def test_async_function_execution():
 
     # Test async execution
     async_func = toolkit.async_functions["example_func"]
-    async_result = asyncio.get_event_loop().run_until_complete(async_func.entrypoint(1, 2))
+    async_result = asyncio.run(async_func.entrypoint(1, 2))
     assert async_result == 103  # 1 + 2 + 100
 
 
@@ -795,3 +858,110 @@ def test_partial_async_get_async_functions():
     assert async_funcs["tool_a"].entrypoint == toolkit.atool_a
     # tool_b should still be sync version (no async variant)
     assert async_funcs["tool_b"].entrypoint == toolkit.tool_b
+
+
+def test_check_path_simple_filename_returns_true(basic_toolkit):
+    """Plain filename inside base_dir returns (True, resolved_path)."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir)
+        ok, path = basic_toolkit._check_path("report.json", base)
+        assert ok is True
+        assert path == (base / "report.json").resolve()
+
+
+def test_check_path_multi_segment_subdir_returns_resolved_path(basic_toolkit):
+    """Multi-segment subdir/file path is preserved (regression for test_agent_skills.py:449)."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir)
+        ok, path = basic_toolkit._check_path("subdir/file.txt", base)
+        assert ok is True
+        assert path == (base / "subdir" / "file.txt").resolve()
+
+
+def test_check_path_subdir_traversal_returns_false_with_base_dir(basic_toolkit):
+    """Subdir traversal escape returns (False, base_dir) — regression for test_python_tools.py:179."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir)
+        ok, path = basic_toolkit._check_path("subdir/../../escape.py", base)
+        assert ok is False
+        assert path == base
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlinks require admin on Windows")
+def test_check_path_symlinked_base_containment_enforced(basic_toolkit):
+    """Symlinked base_dir does not bypass containment (resolves both paths)."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        outside = Path(tmp_dir) / "outside"
+        outside.mkdir()
+        inside = Path(tmp_dir) / "inside"
+        inside.mkdir()
+        try:
+            (inside / "escape").symlink_to(outside)
+        except OSError:
+            pytest.skip("Symlink creation not permitted on this platform")
+        ok, path = basic_toolkit._check_path("escape", inside)
+        assert ok is False
+        assert path == inside
+
+
+def test_check_path_restrict_false_returns_resolved_outside(basic_toolkit):
+    """restrict_to_base_dir=False escape-hatch returns (True, resolved) without containment check."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir)
+        ok, path = basic_toolkit._check_path("../../somewhere.txt", base, restrict_to_base_dir=False)
+        assert ok is True
+        assert path.is_absolute()
+        assert path.name == "somewhere.txt"
+        # Use is_relative_to (the same primitive safe_join_relative_path uses internally)
+        # so sibling-prefix names like base="/tmp/foo" vs "/tmp/foobar/..." don't
+        # produce a false-positive containment.
+        assert not path.is_relative_to(base.resolve())
+
+
+def test_check_path_restrict_false_returns_false_on_nul_byte(basic_toolkit):
+    """Escape-hatch must honor the (bool, Path) contract, not raise on NUL."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir)
+        ok, path = basic_toolkit._check_path("name\x00", base, restrict_to_base_dir=False)
+        assert ok is False
+        assert path == base
+
+
+def test_default_tools_not_shared_between_instances():
+    """The default `tools` must not be a shared mutable object across instances."""
+    first = Toolkit(name="first")
+    second = Toolkit(name="second")
+
+    assert first.tools is not second.tools
+    assert first.tools == []
+    assert second.tools == []
+
+
+def test_subclass_mutating_self_tools_does_not_leak():
+    """A subclass that appends to self.tools must not leak into other instances or
+    poison the default for future constructions."""
+
+    class MutatingToolkit(Toolkit):
+        def __init__(self, name: str):
+            super().__init__(name=name)
+            self.tools.append(self.extra_tool)
+
+        def extra_tool(self) -> str:
+            return "ok"
+
+    first = MutatingToolkit(name="first")
+    second = MutatingToolkit(name="second")
+
+    assert len(first.tools) == 1
+    assert len(second.tools) == 1
+
+    # A plain Toolkit built afterwards must still start empty.
+    assert Toolkit(name="plain").tools == []
+
+
+def test_explicit_tools_argument_preserved():
+    """Passing an explicit tools list must still register normally."""
+    toolkit = Toolkit(name="explicit", tools=[example_func])
+
+    assert example_func in toolkit.tools
+    assert "example_func" in toolkit.functions

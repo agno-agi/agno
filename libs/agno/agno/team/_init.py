@@ -35,6 +35,7 @@ from agno.knowledge.protocol import KnowledgeProtocol
 from agno.learn.machine import LearningMachine
 from agno.memory import MemoryManager
 from agno.models.base import Model
+from agno.models.fallback import FallbackConfig
 from agno.models.message import Message
 from agno.models.utils import get_model
 from agno.run.agent import RunEvent
@@ -42,6 +43,7 @@ from agno.run.team import (
     TeamRunEvent,
 )
 from agno.session import SessionSummaryManager, TeamSession
+from agno.skills import Skills
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.log import (
@@ -63,6 +65,8 @@ def __init__(
     members: Union[List[Union[Agent, "Team"]], Callable[..., List]],
     id: Optional[str] = None,
     model: Optional[Union[Model, str]] = None,
+    fallback_config: Optional[FallbackConfig] = None,
+    fallback_models: Optional[List[Union[Model, str]]] = None,
     name: Optional[str] = None,
     role: Optional[str] = None,
     mode: Optional["TeamMode"] = None,
@@ -124,6 +128,7 @@ def __init__(
     num_history_runs: Optional[int] = None,
     num_history_messages: Optional[int] = None,
     max_tool_calls_from_history: Optional[int] = None,
+    skills: Optional[Skills] = None,
     tools: Optional[Union[List[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]] = None,
     tool_call_limit: Optional[int] = None,
     tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
@@ -139,6 +144,7 @@ def __init__(
     use_json_mode: bool = False,
     parse_response: bool = True,
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+    checkpoint: Optional[Literal["runs", "tool-batch", "tools"]] = None,
     enable_agentic_memory: bool = False,
     update_memory_on_run: bool = False,
     enable_user_memories: Optional[bool] = None,  # Soon to be deprecated. Use update_memory_on_run
@@ -183,6 +189,14 @@ def __init__(
     team.members = members
 
     team.model = model  # type: ignore[assignment]
+    if fallback_config is not None:
+        if fallback_models:
+            log_warning("Both fallback_config and fallback_models provided. Using fallback_config.")
+        team.fallback_config = fallback_config
+    elif fallback_models:
+        team.fallback_config = FallbackConfig(on_error=fallback_models)
+    else:
+        team.fallback_config = None
 
     team.name = name
     team.id = id
@@ -288,6 +302,8 @@ def __init__(
     team.store_history_messages = store_history_messages
     team.send_media_to_model = send_media_to_model
 
+    team.skills = skills
+
     if tools is None:
         team.tools = None
     elif is_callable_factory(tools, excluded_types=(Toolkit, Function)):
@@ -312,6 +328,7 @@ def __init__(
     team.parse_response = parse_response
 
     team.db = db
+    team.checkpoint = checkpoint
 
     team.enable_agentic_memory = enable_agentic_memory
 
@@ -358,6 +375,7 @@ def __init__(
         team.events_to_skip = [
             RunEvent.run_content,
             TeamRunEvent.run_content,
+            TeamRunEvent.run_intermediate_content,
         ]
     team.stream_member_events = stream_member_events
 
@@ -527,7 +545,7 @@ def _set_default_model(team: "Team") -> None:
     # Set the default model
     if team.model is None:
         try:
-            from agno.models.openai import OpenAIChat
+            from agno.models.openai import OpenAIResponses
         except ModuleNotFoundError as e:
             log_exception(e)
             log_error(
@@ -535,8 +553,8 @@ def _set_default_model(team: "Team") -> None:
             )
             exit(1)
 
-        log_info("Setting default model to OpenAI Chat")
-        team.model = OpenAIChat(id="gpt-4o")
+        log_info("Setting default model to OpenAI Responses")
+        team.model = OpenAIResponses(id="gpt-5.4")
 
 
 def _set_memory_manager(team: "Team") -> None:
@@ -615,7 +633,17 @@ def _set_learning_machine(team: "Team") -> None:
             team.learning.db = team.db
         if team.learning.model is None:
             team.learning.model = team.model
+        if (
+            team.learning.learned_knowledge
+            and team.learning.knowledge is None
+            and getattr(team, "knowledge", None) is not None
+        ):
+            team.learning.knowledge = team.knowledge
         team._learning = team.learning
+
+        # PROPOSE/HITL modes need chat history for multi-turn confirmation
+        if team._learning.requires_history and not team.add_history_to_context:
+            team.add_history_to_context = True
 
 
 def _initialize_session(
@@ -675,6 +703,30 @@ def _resolve_models(team: "Team") -> None:
     if team.output_model is not None:
         team.output_model = get_model(team.output_model)
 
+    if team.fallback_config is not None:
+        team.fallback_config.resolve_models()
+
+
+def set_checkpoint(team: "Team") -> None:
+    """Resolve the team's checkpoint setting. Mirrors agent.set_checkpoint.
+
+    Constructor default is None so that OS-level inheritance can fill it. If
+    still None at first run, fall back to "runs" (today's terminal-only
+    behavior).
+
+    "tools" is reserved for 3.0 (see ADR-006) and raises NotImplementedError.
+    """
+    if team.checkpoint is None:
+        team.checkpoint = "runs"
+    elif team.checkpoint == "tools":
+        raise NotImplementedError(
+            'checkpoint="tools" is reserved for the 3.0 runs-table split and not available yet. Use "tool-batch" or "runs".'
+        )
+    elif team.checkpoint not in ("runs", "tool-batch"):
+        raise ValueError(
+            f'Invalid checkpoint level: {team.checkpoint!r}. Expected one of: "runs", "tool-batch", "tools".'
+        )
+
 
 def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:
     # Make sure for the team, we are using the team logger
@@ -685,6 +737,8 @@ def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:
             "`delegate_to_all_members` and `respond_directly` are both enabled. The task will be delegated to all members, but `respond_directly` will be disabled."
         )
         team.respond_directly = False
+
+    set_checkpoint(team)
 
     _set_default_model(team)
 

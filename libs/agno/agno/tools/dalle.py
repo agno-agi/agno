@@ -1,11 +1,11 @@
 from os import getenv
-from typing import Any, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 from uuid import uuid4
 
 from agno.media import Image
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
-from agno.utils.log import log_debug, logger
+from agno.utils.log import log_debug, log_error, logger
 
 try:
     from openai import OpenAI
@@ -21,7 +21,7 @@ class DalleTools(Toolkit):
         n: int = 1,
         size: Optional[Literal["256x256", "512x512", "1024x1024", "1792x1024", "1024x1792"]] = "1024x1024",
         quality: Literal["standard", "hd"] = "standard",
-        style: Literal["vivid", "natural"] = "vivid",
+        style: Optional[Literal["vivid", "natural"]] = None,
         api_key: Optional[str] = None,
         enable_create_image: bool = True,
         all: bool = False,
@@ -49,7 +49,7 @@ class DalleTools(Toolkit):
             raise ValueError("Dall-e-3 only supports a single image generation.")
 
         if not self.api_key:
-            logger.error("OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.")
+            log_error("OPENAI_API_KEY not set. Please set the OPENAI_API_KEY environment variable.")
 
         tools: List[Any] = []
         if all or enable_create_image:
@@ -77,14 +77,18 @@ class DalleTools(Toolkit):
         try:
             client = OpenAI(api_key=self.api_key)
             log_debug(f"Generating image using prompt: {prompt}")
-            response: ImagesResponse = client.images.generate(
-                prompt=prompt,
-                model=self.model,
-                n=self.n,
-                quality=self.quality,
-                size=self.size,
-                style=self.style,
-            )
+            request_params: Dict[str, Any] = {
+                "prompt": prompt,
+                "model": self.model,
+                "n": self.n,
+                "quality": self.quality,
+                "size": self.size,
+            }
+            # OpenAI removed the dall-e-3 'style' parameter from the images API
+            # (400 "Unknown parameter"); only forward it when explicitly set.
+            if self.style is not None:
+                request_params["style"] = self.style
+            response: ImagesResponse = client.images.generate(**request_params)
             log_debug("Image generated successfully")
 
             generated_images = []
@@ -106,5 +110,5 @@ class DalleTools(Toolkit):
                 images=generated_images if generated_images else None,
             )
         except Exception as e:
-            logger.error(f"Failed to generate image: {e}")
+            logger.exception("Failed to generate image")
             return ToolResult(content=f"Error: {e}")

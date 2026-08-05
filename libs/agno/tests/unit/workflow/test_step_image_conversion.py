@@ -69,3 +69,20 @@ class TestConvertImageArtifactsToImages:
         images = step._convert_image_artifacts_to_images([Image(content=raw_png, mime_type="image/png")])
         assert len(images) == 1
         assert images[0].content == raw_png
+
+    def test_filepath_image_passes_through(self, step, tmp_path):
+        """Filepath-based images should pass through unchanged."""
+        img_file = tmp_path / "test.jpg"
+        img_file.write_bytes(b"\xff\xd8\xff\xe0\x00\x10JFIF")
+        images = step._convert_image_artifacts_to_images([Image(filepath=str(img_file))])
+        assert len(images) == 1
+        assert str(images[0].filepath) == str(img_file)
+
+    def test_filepath_image_with_mime_type_sets_format(self, step, tmp_path):
+        """Filepath image with mime_type should have format extracted."""
+        img_file = tmp_path / "test.png"
+        img_file.write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00")
+        images = step._convert_image_artifacts_to_images([Image(filepath=str(img_file), mime_type="image/png")])
+        assert len(images) == 1
+        assert str(images[0].filepath) == str(img_file)
+        assert images[0].format == "png"

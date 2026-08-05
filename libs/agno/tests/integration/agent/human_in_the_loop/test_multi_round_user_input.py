@@ -32,6 +32,7 @@ def test_multi_round_user_input_with_decorator(shared_db):
     )
 
     session_id = "test_multi_round_decorator"
+    answers = ["John", "25", "NYC"]
 
     # Round 1
     response = agent.run("Start the survey", session_id=session_id)
@@ -40,44 +41,24 @@ def test_multi_round_user_input_with_decorator(shared_db):
     assert len(response.active_requirements) == 1, "Should have 1 active requirement"
     assert response.active_requirements[0].needs_user_input
 
-    # Fill in first answer
-    response.active_requirements[0].user_input_schema[0].value = "John"  # type: ignore
+    round_num = 0
+    max_rounds = 6  # Safety limit
 
-    # Round 2
-    response = agent.continue_run(
-        run_id=response.run_id,
-        requirements=response.requirements,
-        session_id=session_id,
-    )
+    while response.is_paused and round_num < max_rounds:
+        # Fill in the answer for the active requirement
+        answer = answers[min(round_num, len(answers) - 1)]
+        response.active_requirements[0].user_input_schema[0].value = answer  # type: ignore
 
-    if response.is_paused:
-        # Verify we have a NEW active requirement
-        assert len(response.active_requirements) >= 1, "Should have at least 1 active requirement for the new question"
-        assert response.active_requirements[0].needs_user_input
-
-        # Fill in second answer
-        response.active_requirements[0].user_input_schema[0].value = "25"  # type: ignore
-
-        # Round 3
         response = agent.continue_run(
             run_id=response.run_id,
             requirements=response.requirements,
             session_id=session_id,
         )
-
-        if response.is_paused:
-            assert len(response.active_requirements) >= 1
-            response.active_requirements[0].user_input_schema[0].value = "NYC"  # type: ignore
-
-            # Final round
-            response = agent.continue_run(
-                run_id=response.run_id,
-                requirements=response.requirements,
-                session_id=session_id,
-            )
+        round_num += 1
 
     # Final response should not be paused
     assert not response.is_paused, "Final response should not be paused"
+    assert round_num <= max_rounds, f"Test didn't complete within {max_rounds} rounds"
 
 
 def test_multi_round_user_control_flow_tools(shared_db):

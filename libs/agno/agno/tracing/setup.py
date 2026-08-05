@@ -7,7 +7,7 @@ from typing import Union
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.remote.base import RemoteDb
 from agno.tracing.exporter import DatabaseSpanExporter
-from agno.utils.log import logger
+from agno.utils.log import log_debug, log_error, log_info
 
 try:
     from openinference.instrumentation.agno import AgnoInstrumentor  # type: ignore
@@ -90,13 +90,13 @@ def setup_tracing(
                 max_export_batch_size=max_export_batch_size,
                 schedule_delay_millis=schedule_delay_millis,
             )
-            logger.debug(
+            log_debug(
                 f"Tracing configured with BatchSpanProcessor "
                 f"(queue_size={max_queue_size}, batch_size={max_export_batch_size})"
             )
         else:
             processor = SimpleSpanProcessor(exporter)
-            logger.debug("Tracing configured with SimpleSpanProcessor")
+            log_debug("Tracing configured with SimpleSpanProcessor")
 
         tracer_provider.add_span_processor(processor)
 
@@ -106,7 +106,7 @@ def setup_tracing(
         # Instrument Agno with OpenInference
         AgnoInstrumentor().instrument(tracer_provider=tracer_provider)
 
-        logger.info("Agno tracing successfully set up with database storage")
+        log_info("Agno tracing successfully set up with database storage")
     except Exception as e:
-        logger.error(f"Failed to set up tracing: {e}", exc_info=True)
+        log_error(f"Failed to set up tracing: {str(e)}")
         raise

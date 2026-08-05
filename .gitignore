@@ -19,6 +19,7 @@
 
 # Ignore .env files
 .env
+.env.production
 
 # Ignore .envrc files (used by direnv: https://direnv.net/)
 .envrc
@@ -60,8 +61,10 @@ audio_generations
 
 *.db
 
-# Google OAuth token
-token.json
+# Google OAuth tokens
+gmail_token.json
+calendar_token.json
+gdrive_token.json
 
 .composio.lock
 
@@ -71,6 +74,12 @@ coverage_report
 
 # JSON files used as testing DB
 agno_json_data/
+
+# Wiki cookbook artifacts
+cookbook/12_context/demo-wiki/
+cookbook/12_context/demo-wiki-web/
+cookbook/12_context/demo-wiki-dual/
+cookbook/12_context/demo-wiki-git/
 
 # AI
 .claude/
@@ -93,3 +102,9 @@ CLAUDE_PRIVATE.md
 pyrightconfig.json
 .python-version
 CLAUDE_PRIVATE.md
+
+# generated synthetic-data outputs from data_labeling cookbooks (never committed)
+cookbook/data_labeling/*/data/generated/
+
+# cookbook rollout exports and baselines are run artifacts, never source
+data/generated/

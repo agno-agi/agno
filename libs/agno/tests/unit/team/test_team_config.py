@@ -18,6 +18,7 @@ import pytest
 
 from agno.agent.agent import Agent
 from agno.db.base import BaseDb, ComponentType
+from agno.db.sqlite import SqliteDb
 from agno.registry import Registry
 from agno.session import TeamSession
 from agno.team.team import Team, get_team_by_id, get_teams
@@ -311,7 +312,7 @@ class TestTeamFromDict:
 
     def test_from_dict_with_model(self):
         """Test from_dict reconstructs model from config."""
-        from agno.models.openai import OpenAIChat
+        from agno.models.openai import OpenAIResponses
 
         config = {
             "id": "model-team",
@@ -322,7 +323,7 @@ class TestTeamFromDict:
         team = Team.from_dict(config)
 
         assert team.model is not None
-        assert isinstance(team.model, OpenAIChat)
+        assert isinstance(team.model, OpenAIResponses)
         assert team.model.id == "gpt-4o-mini"
 
     def test_from_dict_preserves_settings(self):
@@ -421,6 +422,56 @@ class TestTeamFromDict:
 
             mock_get_agent.assert_called_once_with(id="agent-1", db=mock_db, registry=None)
             assert team.members == [mock_agent]
+
+    def test_from_dict_falls_back_to_registry_for_member_agent(self, mock_db, member_agent):
+        """Test from_dict resolves a code-defined member agent via the registry.
+
+        Regression test for teams created via the AgentOS UI whose members are
+        code-defined agents (not persisted as DB components). The DB lookup
+        returns None, so the registry fallback must find the agent instead of
+        silently dropping it.
+        """
+        config = {
+            "id": "members-team",
+            "members": [{"type": "agent", "agent_id": "member-agent"}],
+        }
+        registry = Registry(agents=[member_agent])
+
+        # DB has no such component -> get_agent_by_id returns None
+        with patch("agno.agent.get_agent_by_id", return_value=None):
+            team = Team.from_dict(config, db=mock_db, registry=registry)
+
+        assert len(team.members) == 1
+        assert team.members[0].id == "member-agent"
+        # A deep copy is used so the shared registry singleton is not mutated on run
+        assert team.members[0] is not member_agent
+
+    def test_from_dict_member_registry_fallback_without_db(self, member_agent):
+        """Test from_dict resolves a registry member even when db is None."""
+        config = {
+            "id": "members-team",
+            "members": [{"type": "agent", "agent_id": "member-agent"}],
+        }
+        registry = Registry(agents=[member_agent])
+
+        team = Team.from_dict(config, db=None, registry=registry)
+
+        assert len(team.members) == 1
+        assert team.members[0].id == "member-agent"
+        assert team.members[0] is not member_agent
+
+    def test_from_dict_unknown_member_is_dropped(self, mock_db):
+        """Test from_dict drops a member that is in neither db nor registry."""
+        config = {
+            "id": "members-team",
+            "members": [{"type": "agent", "agent_id": "ghost-agent"}],
+        }
+        registry = Registry(agents=[])
+
+        with patch("agno.agent.get_agent_by_id", return_value=None):
+            team = Team.from_dict(config, db=mock_db, registry=registry)
+
+        assert team.members == []
 
     def test_from_dict_roundtrip(self, team_with_settings):
         """Test that to_dict -> from_dict preserves team configuration."""
@@ -662,6 +713,75 @@ class TestTeamLoad:
         assert len(team.members) == 1
         assert team.members[0].id == "agent-1"
 
+    def test_load_preserves_registry_members_without_graph_children(self, mock_db, member_agent):
+        """Test load keeps registry-resolved members when the graph has no children.
+
+        Code-defined member agents are not DB components, so the loaded graph has
+        no children for them. _hydrate_from_graph must not clobber the members
+        that from_dict resolved via the registry.
+        """
+        mock_db.load_component_graph.return_value = {
+            "component": {"component_id": "team-with-registry-member"},
+            "config": {
+                "config": {
+                    "id": "team-with-registry-member",
+                    "name": "Team",
+                    "members": [{"type": "agent", "agent_id": "member-agent"}],
+                }
+            },
+            "children": [],
+        }
+        registry = Registry(agents=[member_agent])
+
+        with patch("agno.agent.get_agent_by_id", return_value=None):
+            team = Team.load(id="team-with-registry-member", db=mock_db, registry=registry)
+
+        assert team is not None
+        assert len(team.members) == 1
+        assert team.members[0].id == "member-agent"
+
+    def test_load_merges_graph_and_registry_members(self, mock_db, member_agent):
+        """Test load merges DB-persisted graph children with registry members."""
+        mock_db.load_component_graph.return_value = {
+            "component": {"component_id": "mixed-team"},
+            "config": {
+                "config": {
+                    "id": "mixed-team",
+                    "name": "Mixed Team",
+                    "members": [
+                        {"type": "agent", "agent_id": "member-agent"},
+                        {"type": "agent", "agent_id": "db-agent"},
+                    ],
+                }
+            },
+            "children": [
+                {
+                    "link": {"meta": {"type": "agent"}},
+                    "graph": {
+                        "component": {"component_id": "db-agent"},
+                        "config": {"config": {"id": "db-agent", "name": "DB Agent"}},
+                    },
+                }
+            ],
+        }
+        registry = Registry(agents=[member_agent])
+
+        # DB lookup only resolves the graph-backed member; registry resolves the other
+        def fake_get_agent(id, db, registry):  # noqa: A002
+            if id == "db-agent":
+                agent = Agent(id="db-agent", name="DB Agent")
+                return agent
+            return None
+
+        with patch("agno.agent.get_agent_by_id", side_effect=fake_get_agent):
+            team = Team.load(id="mixed-team", db=mock_db, registry=registry)
+
+        assert team is not None
+        member_ids = [m.id for m in team.members]
+        assert "member-agent" in member_ids
+        assert "db-agent" in member_ids
+        assert len(team.members) == 2
+
     def test_load_returns_none_when_not_found(self, mock_db):
         """Test load returns None when team not found."""
         mock_db.load_component_graph.return_value = None
@@ -694,6 +814,25 @@ class TestTeamLoad:
 
         assert team is not None
         assert team.db == mock_db
+
+    def test_load_round_trips_on_real_sqlite_db(self, tmp_path):
+        """Test save/load round-trips on a real SqliteDb.
+
+        The mock_db fixture accepts any call signature, so only a real backend
+        catches an override whose signature diverges from BaseDb (SqliteDb's
+        load_component_graph rejected the label kwarg that load() always passes).
+        """
+        db = SqliteDb(db_file=str(tmp_path / "team_load.db"))
+        team = Team(id="rt-team", name="Round Trip Team", members=[Agent(id="rt-agent", name="Round Trip Agent")])
+        team.save(db=db)
+
+        loaded = Team.load(id="rt-team", db=db)
+
+        assert loaded is not None
+        assert loaded.id == "rt-team"
+        assert loaded.name == "Round Trip Team"
+        assert len(loaded.members) == 1
+        assert loaded.members[0].id == "rt-agent"
 
 
 # =============================================================================

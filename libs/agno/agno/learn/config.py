@@ -13,6 +13,10 @@ Configurations:
 - SessionContextConfig: Config for session context learning
 - LearnedKnowledgeConfig: Config for learned knowledge
 - EntityMemoryConfig: Config for entity memory
+
+Custom `schema` classes serialize by import path; define them in an
+importable module, not `__main__`, or they will not survive a
+to_dict/from_dict round-trip across processes.
 """
 
 from dataclasses import dataclass
@@ -34,8 +38,8 @@ class LearningMode(Enum):
 
     ALWAYS: Automatic extraction after each response.
     AGENTIC: Agent decides when to learn via tools.
-    PROPOSE: Agent proposes, human confirms.
-    HITL (Human-in-the-Loop): Reserved for future use.
+    PROPOSE: Agent proposes, human confirms (learned_knowledge only).
+    HITL: Deprecated, unsupported by every store; removed in 3.0.
     """
 
     ALWAYS = "always"
@@ -70,6 +74,9 @@ class UserProfileConfig:
         # Extraction operations
         enable_update_profile: Allow updating profile fields (name, etc).
 
+        # Limits
+        max_updates_per_run: Max updates per extraction run. Default: 10.
+
         # Agent tools
         enable_agent_tools: Expose tools to the agent.
         agent_can_update_profile: If agent_tools enabled, provide update_user_profile tool.
@@ -90,6 +97,9 @@ class UserProfileConfig:
 
     # Extraction operations
     enable_update_profile: bool = True  # Allow updating profile fields
+
+    # Limits
+    max_updates_per_run: Optional[int] = None
 
     # Agent tools
     enable_agent_tools: bool = False
@@ -126,6 +136,10 @@ class UserMemoryConfig:
         enable_delete_memory: Allow deleting memories.
         enable_clear_memories: Allow clearing all memories (dangerous).
 
+        # Limits
+        max_updates_per_run: Max updates per extraction run. Default: 10.
+            Memory extraction often needs multiple updates (add, update, delete).
+
         # Agent tools
         enable_agent_tools: Expose tools to the agent.
         agent_can_update_memories: If agent_tools enabled, provide update_user_memory tool.
@@ -149,6 +163,9 @@ class UserMemoryConfig:
     enable_update_memory: bool = True
     enable_delete_memory: bool = True
     enable_clear_memories: bool = False  # Dangerous - disabled by default
+
+    # Limits
+    max_updates_per_run: Optional[int] = None
 
     # Agent tools
     enable_agent_tools: bool = False
@@ -193,6 +210,9 @@ class SessionContextConfig:
         enable_delete_context: Allow deleting context.
         enable_clear_context: Allow clearing context.
 
+        # Limits
+        max_updates_per_run: Max updates per extraction run. Default: 10.
+
         # Prompt customization
         instructions: Custom instructions for extraction.
         additional_instructions: Extra instructions appended to default.
@@ -214,6 +234,9 @@ class SessionContextConfig:
     enable_update_context: bool = True
     enable_delete_context: bool = True
     enable_clear_context: bool = False
+
+    # Limits
+    max_updates_per_run: Optional[int] = None
 
     # Prompt customization
     instructions: Optional[str] = None
@@ -249,6 +272,9 @@ class LearnedKnowledgeConfig:
         # Sharing boundary
         namespace: Sharing boundary ("user", "global", or custom).
 
+        # Limits
+        max_updates_per_run: Max updates per extraction run. Default: 10.
+
         # Agent tools
         enable_agent_tools: Expose tools to the agent.
         agent_can_save: If agent_tools enabled, provide save_learning tool.
@@ -270,6 +296,9 @@ class LearnedKnowledgeConfig:
 
     # Sharing boundary
     namespace: str = "global"
+
+    # Limits
+    max_updates_per_run: Optional[int] = None
 
     # Agent tools
     enable_agent_tools: bool = True
@@ -305,73 +334,81 @@ class EntityMemoryConfig:
     - "global": Shared with everyone (default)
     - Custom string: Explicit grouping (e.g., "sales_west")
 
+    Mode: AGENTIC only. The agent records entities through its four tools
+    (remember_about, link_entities, search_entities, forget); there is no
+    extraction pass.
+
     Attributes:
         db: Database backend for storage.
-        model: Model for extraction (required for ALWAYS mode).
-        mode: How learning is extracted. Default: ALWAYS.
+        model: Model for the fact-supersession judgment on writes.
+        mode: AGENTIC (the only supported mode).
         schema: Custom schema for entity memory data. Default: EntityMemory.
 
         # Sharing boundary
         namespace: Sharing boundary ("user", "global", or custom).
 
-        # Extraction operations
-        enable_create_entity: Allow creating new entities.
-        enable_update_entity: Allow updating entity properties.
-        enable_add_fact: Allow adding facts to entities.
-        enable_update_fact: Allow updating existing facts.
-        enable_delete_fact: Allow deleting facts.
-        enable_add_event: Allow adding events to entities.
-        enable_add_relationship: Allow adding relationships.
-
-        # Agent tools
-        enable_agent_tools: Expose tools to the agent.
-        agent_can_create_entity: If agent_tools enabled, provide create_entity tool.
-        agent_can_update_entity: If agent_tools enabled, provide update_entity tool.
-        agent_can_search_entities: If agent_tools enabled, provide search_entities tool.
+        # Limits
+        max_updates_per_run: Retained for LearningMachine limit propagation.
 
         # Prompt customization
-        instructions: Custom instructions for entity extraction.
+        instructions: Custom instructions for the supersession judgment.
         additional_instructions: Extra instructions appended to default.
-        system_message: Full override for extraction system message.
+        system_message: Full override for the supersession system message.
     """
 
     # Required fields
     db: Optional[Union["BaseDb", "AsyncBaseDb"]] = None
     model: Optional["Model"] = None
 
-    # Mode and extraction
-    mode: LearningMode = LearningMode.ALWAYS
+    # Mode (AGENTIC only)
+    mode: LearningMode = LearningMode.AGENTIC
     schema: Optional[Type[Any]] = None
 
     # Sharing boundary
     namespace: str = "global"
 
-    # Extraction operations
-    enable_create_entity: bool = True
-    enable_update_entity: bool = True
-    enable_add_fact: bool = True
-    enable_update_fact: bool = True
-    enable_delete_fact: bool = True
-    enable_add_event: bool = True
-    enable_add_relationship: bool = True
+    # Limits
+    max_updates_per_run: Optional[int] = None
+
+    # Fact supersession: a new fact retires a contradicted live fact when the
+    # judge's confidence is at or above this threshold. Conservative by design -
+    # a wrong supersession hides information the user gave us.
+    supersession_threshold: float = 0.8
+
+    # Rendering bounds. The injected block always starts with a one-line-per-
+    # entity directory (name + type, newest first, archived excluded), followed
+    # by at most max_entities_in_context expanded entities, each rendering at
+    # most max_facts_per_entity live facts (with as-of dates) and the last
+    # max_events_per_entity events - with visible truncation markers.
+    max_entities_in_context: int = 5
+    max_entities_in_directory: int = 50
+    max_facts_per_entity: int = 10
+    max_events_per_entity: int = 5
 
     # Agent tools
-    enable_agent_tools: bool = False
-    agent_can_create_entity: bool = True
-    agent_can_update_entity: bool = True
-    agent_can_search_entities: bool = True
+    enable_agent_tools: bool = True
 
     # Prompt customization
     instructions: Optional[str] = None
     additional_instructions: Optional[str] = None
     system_message: Optional[str] = None
 
+    def __post_init__(self) -> None:
+        # Fail where the mistake is made: a store built from this config would
+        # raise the same error, but only on first use inside a run.
+        if self.mode != LearningMode.AGENTIC:
+            raise ValueError(
+                f"Entity memory is AGENTIC-only: the agent records entities through its tools "
+                f"and there is no extraction pass. Remove mode={self.mode.value!r} or set "
+                f"LearningMode.AGENTIC."
+            )
+
     def __repr__(self) -> str:
         return f"EntityMemoryConfig(mode={self.mode.value}, namespace={self.namespace}, enable_agent_tools={self.enable_agent_tools})"
 
 
 # =============================================================================
-# Phase 2 Configurations (Placeholders)
+# Decision Log Configuration
 # =============================================================================
 
 
@@ -382,18 +419,21 @@ class DecisionLogConfig:
     Decision Logs record decisions made by the agent with reasoning
     and context. Useful for auditing and learning from past decisions.
 
-    Scope: AGENT (fixed) - Stored and retrieved by agent_id.
+    Mode: AGENTIC only - the agent logs decisions via tools.
 
-    Note: Deferred to Phase 2.
+    Scope: AGENT (fixed) - Stored and retrieved by agent_id.
     """
 
     # Required fields
     db: Optional[Union["BaseDb", "AsyncBaseDb"]] = None
     model: Optional["Model"] = None
 
-    # Mode and extraction
-    mode: LearningMode = LearningMode.ALWAYS
+    # Mode (AGENTIC only)
+    mode: LearningMode = LearningMode.AGENTIC
     schema: Optional[Type[Any]] = None
+
+    # Extraction limits
+    max_updates_per_run: Optional[int] = None
 
     # Agent tools
     enable_agent_tools: bool = True
@@ -407,57 +447,3 @@ class DecisionLogConfig:
 
     def __repr__(self) -> str:
         return f"DecisionLogConfig(mode={self.mode.value})"
-
-
-@dataclass
-class FeedbackConfig:
-    """Configuration for Behavioral Feedback learning type.
-
-    Behavioral Feedback captures signals about what worked and what
-    didn't: thumbs up/down, corrections, regeneration requests.
-
-    Scope: AGENT (fixed) - Stored and retrieved by agent_id.
-
-    Note: Deferred to Phase 2.
-    """
-
-    # Required fields
-    db: Optional[Union["BaseDb", "AsyncBaseDb"]] = None
-    model: Optional["Model"] = None
-
-    # Mode and extraction
-    mode: LearningMode = LearningMode.ALWAYS
-    schema: Optional[Type[Any]] = None
-
-    # Prompt customization
-    instructions: Optional[str] = None
-
-    def __repr__(self) -> str:
-        return "FeedbackConfig(mode=ALWAYS)"
-
-
-@dataclass
-class SelfImprovementConfig:
-    """Configuration for Self-Improvement learning type.
-
-    Self-Improvement proposes updates to agent instructions based
-    on feedback patterns and successful interactions.
-
-    Scope: AGENT (fixed) - Stored and retrieved by agent_id.
-
-    Note: Deferred to Phase 3.
-    """
-
-    # Required fields
-    db: Optional[Union["BaseDb", "AsyncBaseDb"]] = None
-    model: Optional["Model"] = None
-
-    # Mode and extraction
-    mode: LearningMode = LearningMode.HITL
-    schema: Optional[Type[Any]] = None
-
-    # Prompt customization
-    instructions: Optional[str] = None
-
-    def __repr__(self) -> str:
-        return "SelfImprovementConfig(mode=HITL)"

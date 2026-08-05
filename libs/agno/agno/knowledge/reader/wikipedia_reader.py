@@ -17,9 +17,10 @@ except ImportError:
 class WikipediaReader(Reader):
     auto_suggest: bool = True
 
-    def __init__(
-        self, chunking_strategy: Optional[ChunkingStrategy] = FixedSizeChunking(), auto_suggest: bool = True, **kwargs
-    ):
+    def __init__(self, chunking_strategy: Optional[ChunkingStrategy] = None, auto_suggest: bool = True, **kwargs):
+        if chunking_strategy is None:
+            chunk_size = kwargs.get("chunk_size", 5000)
+            chunking_strategy = FixedSizeChunking(chunk_size=chunk_size)
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
         self.auto_suggest = auto_suggest
 
@@ -51,13 +52,14 @@ class WikipediaReader(Reader):
 
         # Only create Document if we successfully got a summary
         if summary:
-            return [
-                Document(
-                    name=topic,
-                    meta_data={"topic": topic},
-                    content=summary,
-                )
-            ]
+            document = Document(
+                name=topic,
+                meta_data={"topic": topic},
+                content=summary,
+            )
+            if self.chunk:
+                return self.chunk_document(document)
+            return [document]
         return []
 
     async def async_read(self, topic: str) -> List[Document]:
@@ -82,11 +84,12 @@ class WikipediaReader(Reader):
 
         # Only create Document if we successfully got a summary
         if summary:
-            return [
-                Document(
-                    name=topic,
-                    meta_data={"topic": topic},
-                    content=summary,
-                )
-            ]
+            document = Document(
+                name=topic,
+                meta_data={"topic": topic},
+                content=summary,
+            )
+            if self.chunk:
+                return self.chunk_document(document)
+            return [document]
         return []

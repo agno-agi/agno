@@ -35,11 +35,15 @@ def get_function_call(
 
                 _arguments = ast.literal_eval(arguments)
         except Exception as e:
-            log_error(f"Unable to decode function arguments:\n{arguments}\nError: {e}")
+            log_error(f"Unable to decode function arguments:\n{arguments}\nError: {str(e)}")
             function_call.error = (
                 f"Error while decoding function arguments: {e}\n\n"
                 f"Please make sure we can json.loads() the arguments and retry."
             )
+            return function_call
+
+        # Handle empty array as no arguments (models may pass [] for no-param tools)
+        if isinstance(_arguments, list) and len(_arguments) == 0:
             return function_call
 
         if not isinstance(_arguments, dict):
@@ -59,13 +63,13 @@ def get_function_call(
                     elif _v == "false":
                         clean_arguments[k] = False
                     else:
-                        clean_arguments[k] = v.strip()
+                        clean_arguments[k] = v
                 else:
                     clean_arguments[k] = v
 
             function_call.arguments = clean_arguments
         except Exception as e:
-            log_error(f"Unable to parsing function arguments:\n{arguments}\nError: {e}")
+            log_error(f"Unable to parsing function arguments:\n{arguments}\nError: {str(e)}")
             function_call.error = f"Error while parsing function arguments: {e}\n\n Please fix and retry."
             return function_call
     return function_call
@@ -128,7 +132,7 @@ def cache_result(enable_cache: bool = True, cache_dir: Optional[str] = None, cac
             # Check for cached result
             if os.path.exists(cache_file):
                 try:
-                    with open(cache_file, "r") as f:
+                    with open(cache_file, "r", encoding="utf-8") as f:
                         cache_data = json.load(f)
 
                     timestamp = cache_data.get("timestamp", 0)
@@ -146,17 +150,17 @@ def cache_result(enable_cache: bool = True, cache_dir: Optional[str] = None, cac
                     # Remove expired entry
                     os.remove(cache_file)
                 except Exception as e:
-                    log_error(f"Error reading cache: {e}")
+                    log_error(f"Error reading cache: {str(e)}")
                     # Continue with function execution if cache read fails
 
             # Execute the function and cache the result
             result = func(*args, **kwargs)
 
             try:
-                with open(cache_file, "w") as f:
+                with open(cache_file, "w", encoding="utf-8") as f:
                     json.dump({"timestamp": time.time(), "result": result}, f)
             except Exception as e:
-                log_error(f"Error writing cache: {e}")
+                log_error(f"Error writing cache: {str(e)}")
                 # Continue even if cache write fails
 
             return result

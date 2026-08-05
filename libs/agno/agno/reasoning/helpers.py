@@ -5,7 +5,7 @@ from agno.models.message import Message
 from agno.reasoning.step import NextAction, ReasoningStep
 from agno.run.base import RunContext
 from agno.run.messages import RunMessages
-from agno.utils.log import logger
+from agno.utils.log import log_warning
 
 
 def get_reasoning_agent(
@@ -33,8 +33,8 @@ def get_next_action(reasoning_step: ReasoningStep) -> NextAction:
     if isinstance(next_action, str):
         try:
             return NextAction(next_action)
-        except ValueError:
-            logger.warning(f"Reasoning error. Invalid next action: {next_action}")
+        except ValueError as e:
+            log_warning(f"Reasoning error. Invalid next action: {next_action}: {str(e)}")
             return NextAction.FINAL_ANSWER
     return next_action
 

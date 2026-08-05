@@ -1,11 +1,12 @@
 import logging
 import time
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.base import ComponentType as DbComponentType
+from agno.db.utils import DB_TABLE_NAME_KEYS
 from agno.os.auth import get_authentication_dependency
 from agno.os.schema import (
     BadRequestResponse,
@@ -42,7 +43,11 @@ def _resolve_db_in_config(
     If config contains a db dict with an id, this function will:
     1. Check if the id matches the OS db
     2. Check if the id exists in the registry
-    3. Convert the found db to a dict for serialization
+    3. Merge the resolved db's connection details with the caller-provided
+       fields, with caller-provided fields (e.g. custom table names) taking
+       precedence. This preserves user-specified overrides like
+       ``session_table`` / ``memory_table`` while still reusing the resolved
+       db's connection configuration.
 
     Args:
         config: The config dict that may contain a db reference
@@ -64,9 +69,15 @@ def _resolve_db_in_config(
             elif registry is not None:
                 resolved_db = registry.get_db(component_db_id)
 
-            # Store the full db dict for serialization
+            # Merge resolved db with caller-provided table-name overrides.
+            # Connection-defining fields (type, db_url, db_file, db_schema,
+            # id, ...) always come from the resolved db so the caller can't
+            # redirect a referenced db to a different backend. Only the
+            # whitelisted table-name keys are taken from the caller.
             if resolved_db is not None:
-                config["db"] = resolved_db.to_dict()
+                resolved_dict = resolved_db.to_dict()
+                table_overrides = {key: component_db[key] for key in DB_TABLE_NAME_KEYS if key in component_db}
+                config["db"] = {**resolved_dict, **table_overrides}
             else:
                 log_error(f"Could not resolve db with id: {component_db_id}")
     elif component_db is None and "db" in config:
@@ -74,6 +85,77 @@ def _resolve_db_in_config(
         config.pop("db", None)
 
     return config
+
+
+def _resolve_member_links(
+    config: Dict[str, Any],
+    db: BaseDb,
+    registry: Optional[Registry] = None,
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Build ``component_links`` rows for a team config's ``members``.
+
+    A team config references its members as
+    ``{"type": "agent", "agent_id": "..."}`` / ``{"type": "team", "team_id": "..."}``.
+    This resolves each reference and returns the links that should be persisted
+    alongside the config, plus any references that could not be resolved.
+
+    - Members that are persisted DB components get a link row (with the child's
+      current version) so the component graph reflects the team structure.
+    - Members that are code-defined components (registered with the AgentOS
+      instance but not persisted as DB components) are resolved from the
+      registry at load time and therefore do not get a link row.
+    - Members that resolve to neither are returned as unresolved so the caller
+      can surface an error instead of silently creating a team with no members.
+
+    Returns:
+        A tuple of (links, unresolved_member_ids).
+    """
+    links: List[Dict[str, Any]] = []
+    unresolved: List[str] = []
+
+    members = config.get("members") or []
+    for position, member in enumerate(members):
+        if not isinstance(member, dict):
+            continue
+
+        member_type = member.get("type")
+        if member_type == "agent":
+            child_id = member.get("agent_id")
+            in_registry = bool(registry and child_id and registry.get_agent(child_id) is not None)
+        elif member_type == "team":
+            child_id = member.get("team_id")
+            in_registry = bool(registry and child_id and registry.get_team(child_id) is not None)
+        else:
+            continue
+
+        if not child_id:
+            continue
+
+        # Prefer a persisted DB component: create a link so the graph is complete.
+        child_component = db.get_component(child_id)
+        if child_component is not None:
+            child_version = child_component.get("current_version")
+            if child_version is not None:
+                links.append(
+                    {
+                        "link_kind": "member",
+                        "link_key": f"member_{position}",
+                        "child_component_id": child_id,
+                        "child_version": child_version,
+                        "position": position,
+                        "meta": {"type": member_type},
+                    }
+                )
+            # A draft-only component (no current_version) still exists; leave it
+            # to be resolved at load time rather than flagging it as unresolved.
+            continue
+
+        # Not a DB component. If it is a code-defined component it will be
+        # resolved from the registry at load time; otherwise it is unresolved.
+        if not in_registry:
+            unresolved.append(child_id)
+
+    return links, unresolved
 
 
 def get_components_router(
@@ -145,7 +227,7 @@ def attach_routes(
                 ),
             )
         except Exception as e:
-            log_error(f"Error listing components: {e}")
+            log_error(f"Error listing components: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.post(
@@ -165,13 +247,13 @@ def attach_routes(
             if component_id is None:
                 component_id = generate_id_from_name(body.name)
 
-            # TODO: Create links from config
-
             # Prepare config - ensure it's a dict and resolve db reference
             config = body.config or {}
             config = _resolve_db_in_config(config, db, registry)
 
-            # Warn if creating a team without members
+            # Resolve member references into component links so the component
+            # graph reflects the team structure (implements the members TODO).
+            links: Optional[List[Dict[str, Any]]] = None
             if body.component_type == ComponentType.TEAM:
                 members = config.get("members")
                 if not members or len(members) == 0:
@@ -179,6 +261,20 @@ def attach_routes(
                         f"Creating team '{body.name}' without members. "
                         "If this is unintended, add members to the config."
                     )
+                else:
+                    member_links, unresolved = _resolve_member_links(config, db, registry)
+                    # Surface unresolved members instead of silently creating a
+                    # team whose members render as "unknown" in the UI.
+                    if unresolved:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=(
+                                f"Cannot create team '{body.name}': the following members could not be "
+                                f"resolved: {', '.join(unresolved)}. Referenced agents/teams must exist "
+                                "as components or be registered with the AgentOS instance."
+                            ),
+                        )
+                    links = member_links or None
 
             component, _config = db.create_component_with_config(
                 component_id=component_id,
@@ -190,13 +286,16 @@ def attach_routes(
                 label=body.label,
                 stage=body.stage or "draft",
                 notes=body.notes,
+                links=links,
             )
 
             return ComponentResponse(**component)
+        except HTTPException:
+            raise
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
-            log_error(f"Error creating component: {e}")
+            log_error(f"Error creating component: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.get(
@@ -219,7 +318,7 @@ def attach_routes(
         except HTTPException:
             raise
         except Exception as e:
-            log_error(f"Error getting component: {e}")
+            log_error(f"Error getting component: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.patch(
@@ -259,7 +358,7 @@ def attach_routes(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
-            log_error(f"Error updating component: {e}")
+            log_error(f"Error updating component: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.delete(
@@ -279,7 +378,7 @@ def attach_routes(
         except HTTPException:
             raise
         except Exception as e:
-            log_error(f"Error deleting component: {e}")
+            log_error(f"Error deleting component: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.get(
@@ -299,7 +398,7 @@ def attach_routes(
             configs = db.list_configs(component_id, include_config=include_config)
             return [ComponentConfigResponse(**c) for c in configs]
         except Exception as e:
-            log_error(f"Error listing configs: {e}")
+            log_error(f"Error listing configs: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.post(
@@ -333,7 +432,7 @@ def attach_routes(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
-            log_error(f"Error creating config: {e}")
+            log_error(f"Error creating config: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.patch(
@@ -369,7 +468,7 @@ def attach_routes(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
-            log_error(f"Error updating config: {e}")
+            log_error(f"Error updating config: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.get(
@@ -392,7 +491,7 @@ def attach_routes(
         except HTTPException:
             raise
         except Exception as e:
-            log_error(f"Error getting config: {e}")
+            log_error(f"Error getting config: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.get(
@@ -417,7 +516,7 @@ def attach_routes(
         except HTTPException:
             raise
         except Exception as e:
-            log_error(f"Error getting config: {e}")
+            log_error(f"Error getting config: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.delete(
@@ -441,7 +540,7 @@ def attach_routes(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
-            log_error(f"Error deleting config: {e}")
+            log_error(f"Error deleting config: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.post(
@@ -475,7 +574,7 @@ def attach_routes(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
-            log_error(f"Error setting current config: {e}")
+            log_error(f"Error setting current config: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     return router

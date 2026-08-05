@@ -226,7 +226,7 @@ class AzureAIFoundry(Model):
             return model_response
 
         except HttpResponseError as e:
-            log_error(f"Azure AI API error: {e}")
+            log_error(f"Azure AI API error: {str(e)}")
             raise ModelProviderError(
                 message=e.reason or "Azure AI API error",
                 status_code=e.status_code or 502,
@@ -234,7 +234,7 @@ class AzureAIFoundry(Model):
                 model_id=self.id,
             ) from e
         except Exception as e:
-            log_error(f"Error from Azure AI API: {e}")
+            log_error(f"Error from Azure AI API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(
@@ -264,7 +264,7 @@ class AzureAIFoundry(Model):
             return model_response
 
         except HttpResponseError as e:
-            log_error(f"Azure AI API error: {e}")
+            log_error(f"Azure AI API error: {str(e)}")
             raise ModelProviderError(
                 message=e.reason or "Azure AI API error",
                 status_code=e.status_code or 502,
@@ -272,7 +272,7 @@ class AzureAIFoundry(Model):
                 model_id=self.id,
             ) from e
         except Exception as e:
-            log_error(f"Error from Azure AI API: {e}")
+            log_error(f"Error from Azure AI API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(
@@ -301,7 +301,7 @@ class AzureAIFoundry(Model):
             assistant_message.metrics.stop_timer()
 
         except HttpResponseError as e:
-            log_error(f"Azure AI API error: {e}")
+            log_error(f"Azure AI API error: {str(e)}")
             raise ModelProviderError(
                 message=e.reason or "Azure AI API error",
                 status_code=e.status_code or 502,
@@ -309,7 +309,7 @@ class AzureAIFoundry(Model):
                 model_id=self.id,
             ) from e
         except Exception as e:
-            log_error(f"Error from Azure AI API: {e}")
+            log_error(f"Error from Azure AI API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(
@@ -339,7 +339,7 @@ class AzureAIFoundry(Model):
             assistant_message.metrics.stop_timer()
 
         except HttpResponseError as e:
-            log_error(f"Azure AI API error: {e}")
+            log_error(f"Azure AI API error: {str(e)}")
             raise ModelProviderError(
                 message=e.reason or "Azure AI API error",
                 status_code=e.status_code or 502,
@@ -347,7 +347,7 @@ class AzureAIFoundry(Model):
                 model_id=self.id,
             ) from e
         except Exception as e:
-            log_error(f"Error from Azure AI API: {e}")
+            log_error(f"Error from Azure AI API: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
     def _parse_provider_response(self, response: ChatCompletions, **kwargs) -> ModelResponse:
@@ -393,7 +393,7 @@ class AzureAIFoundry(Model):
                 model_response.response_usage = self._get_metrics(response.usage)
 
         except Exception as e:
-            log_error(f"Error parsing Azure AI response: {e}")
+            log_error(f"Error parsing Azure AI response: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
         return model_response
@@ -460,7 +460,7 @@ class AzureAIFoundry(Model):
                 model_response.response_usage = self._get_metrics(response_delta.usage)
 
         except Exception as e:
-            log_error(f"Error parsing Azure AI response delta: {e}")
+            log_error(f"Error parsing Azure AI response delta: {str(e)}")
             raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
 
         return model_response

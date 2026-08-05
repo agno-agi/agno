@@ -14,9 +14,10 @@ except ImportError:
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
-from agno.utils.log import log_debug, log_info, log_warning, logger
+from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
+from agno.vectordb.search import SearchType
 
 
 class Clickhouse(VectorDb):
@@ -112,8 +113,8 @@ class Clickhouse(VectorDb):
                     parameters=parameters,
                 )
             )
-        except Exception as e:
-            logger.error(e)
+        except Exception:
+            logger.exception("Error checking if table exists")
             return False
 
     async def async_table_exists(self) -> bool:
@@ -128,8 +129,8 @@ class Clickhouse(VectorDb):
                 parameters=parameters,
             )
             return bool(result)
-        except Exception as e:
-            logger.error(f"Async error checking if table exists: {e}")
+        except Exception:
+            logger.exception("Async error checking if table exists")
             return False
 
     def create(self) -> None:
@@ -329,8 +330,8 @@ class Clickhouse(VectorDb):
                         if j < len(embeddings):
                             doc.embedding = embeddings[j]
                             doc.usage = usages[j] if j < len(usages) else None
-                    except Exception as e:
-                        logger.error(f"Error assigning batch embedding to document '{doc.name}': {e}")
+                    except Exception:
+                        logger.exception(f"Error assigning batch embedding to document '{doc.name}'")
 
             except Exception as e:
                 # Check if this is a rate limit error - don't fall back as it would make things worse
@@ -341,10 +342,10 @@ class Clickhouse(VectorDb):
                 )
 
                 if is_rate_limit:
-                    logger.error(f"Rate limit detected during batch embedding. {e}")
+                    logger.exception("Rate limit detected during batch embedding.")
                     raise e
                 else:
-                    logger.warning(f"Async batch embedding failed, falling back to individual embeddings: {e}")
+                    log_warning(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     await asyncio.gather(*embed_tasks, return_exceptions=True)
@@ -456,7 +457,7 @@ class Clickhouse(VectorDb):
             log_warning("Filters are not yet supported in Clickhouse. No filters will be applied.")
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
-            logger.error(f"Error getting embedding for Query: {query}")
+            log_error(f"Error getting embedding for Query: {query}")
             return []
 
         parameters = self._get_base_parameters()
@@ -484,8 +485,8 @@ class Clickhouse(VectorDb):
                 parameters=parameters,
             )
         except Exception as e:
-            logger.error(f"Error searching for documents: {e}")
-            logger.error("Table might not exist, creating for future use")
+            logger.exception("Error searching for documents")
+            log_error(f"Table might not exist, creating for future use: {str(e)}")
             self.create()
             return []
 
@@ -517,7 +518,7 @@ class Clickhouse(VectorDb):
 
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
-            logger.error(f"Error getting embedding for Query: {query}")
+            log_error(f"Error getting embedding for Query: {query}")
             return []
 
         parameters = self._get_base_parameters()
@@ -545,8 +546,8 @@ class Clickhouse(VectorDb):
                 parameters=parameters,
             )
         except Exception as e:
-            logger.error(f"Async error searching for documents: {e}")
-            logger.error("Table might not exist, creating for future use")
+            logger.exception("Async error searching for documents")
+            log_error(f"Table might not exist, creating for future use: {str(e)}")
             await self.async_create()
             return []
 
@@ -683,15 +684,31 @@ class Clickhouse(VectorDb):
             log_debug(f"ClickHouse VectorDB : Deleting documents with metadata {metadata}")
             parameters = self._get_base_parameters()
 
-            # Build WHERE clause for metadata matching using proper ClickHouse JSON syntax
+            # Build a parameterised WHERE clause so that user-supplied metadata
+            # keys and values are never interpolated directly into SQL.
+            # Each key/value pair gets its own named ClickHouse parameter
+            # ({meta_key_N:String} / {meta_val_N:String|Float64|Bool}) so the
+            # client driver handles escaping, eliminating the SQL-injection path.
             where_conditions = []
-            for key, value in metadata.items():
+            for i, (key, value) in enumerate(metadata.items()):
+                param_key = f"meta_key_{i}"
+                param_val = f"meta_val_{i}"
+                parameters[param_key] = key
                 if isinstance(value, bool):
-                    where_conditions.append(f"JSONExtractBool(toString(filters), '{key}') = {str(value).lower()}")
+                    parameters[param_val] = value
+                    where_conditions.append(
+                        f"JSONExtractBool(toString(filters), {{{param_key}:String}}) = {{{param_val}:Bool}}"
+                    )
                 elif isinstance(value, (int, float)):
-                    where_conditions.append(f"JSONExtractFloat(toString(filters), '{key}') = {value}")
+                    parameters[param_val] = float(value)
+                    where_conditions.append(
+                        f"JSONExtractFloat(toString(filters), {{{param_key}:String}}) = {{{param_val}:Float64}}"
+                    )
                 else:
-                    where_conditions.append(f"JSONExtractString(toString(filters), '{key}') = '{value}'")
+                    parameters[param_val] = str(value)
+                    where_conditions.append(
+                        f"JSONExtractString(toString(filters), {{{param_key}:String}}) = {{{param_val}:String}}"
+                    )
 
             if not where_conditions:
                 return False
@@ -826,10 +843,10 @@ class Clickhouse(VectorDb):
 
             logger.debug(f"Updated metadata for {updated_count} documents with content_id: {content_id}")
 
-        except Exception as e:
-            logger.error(f"Error updating metadata for content_id '{content_id}': {e}")
+        except Exception:
+            logger.exception(f"Error updating metadata for content_id '{content_id}'")
             raise
 
     def get_supported_search_types(self) -> List[str]:
         """Get the supported search types for this vector database."""
-        return []  # Clickhouse doesn't use SearchType enum
+        return [SearchType.vector]

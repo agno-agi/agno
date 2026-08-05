@@ -67,7 +67,7 @@ if __name__ == "__main__":
                 print("-" * 70)
 
     print("=" * 50)
-    print("AGGREGATED TEAM METRICS")
+    print("TEAM LEADER RUN METRICS")
     print("=" * 50)
     pprint(run_output.metrics)
 
