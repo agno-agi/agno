@@ -699,9 +699,7 @@ class QueueWorker:
         # newer attempt fences this close out entirely.
         terminal = RunStatus.cancelled if status == "cancelled" else RunStatus.error
         with contextlib.suppress(Exception):
-            await asyncio.shield(
-                get_event_stream().complete_run(job["id"], terminal, generation=job.get("attempt"))
-            )
+            await asyncio.shield(get_event_stream().complete_run(job["id"], terminal, generation=job.get("attempt")))
 
     async def _persist_run_error(self, job: Dict[str, Any], error: str, status: str = "error") -> bool:
         """Persist a terminal status on the run row so pollers see it, never a

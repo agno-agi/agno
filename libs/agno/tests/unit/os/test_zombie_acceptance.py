@@ -153,13 +153,7 @@ class TestZombieReclaimAcceptance:
                         yield Out(RUN_ID)
 
             comp = Component()
-            cfg = QueueConfig(
-                durable=True,
-                max_attempts=2,
-                lock_grace_seconds=3,
-                retry_delay_seconds=0,
-                allow_multi_attempt_experimental=True,
-            )
+            cfg = QueueConfig(durable=True, max_attempts=2, lock_grace_seconds=3, retry_delay_seconds=0)
             worker_a = QueueWorker(
                 store=store, resolve_component=lambda t, i: comp, config=cfg, worker_id="A", stop_timeout=0.2
             )

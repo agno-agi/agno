@@ -1015,17 +1015,16 @@ class TestConfigValidation:
             with pytest.raises(ValueError):
                 QueueConfig(durable=True, **{k: v for k, v in kwargs.items() if k != "durable"})
 
-    def test_multi_attempt_requires_experimental_opt_in(self):
-        """The interim two-producer guard, config half: re-execution reaches
-        the unfenced happy-path-save and stream-write races (P1 items), so
-        max_attempts > 1 is an explicit experimental opt-in - a log warning
-        is not a control."""
+    def test_multi_attempt_is_first_class(self):
+        """The interim experimental opt-in is GONE: items 4+5 fenced the
+        two-producer races (run-row saves and stream writes), so
+        max_attempts > 1 constructs plainly. The at-most-once default is
+        untouched - retries are a choice, not a surprise."""
         from agno.job_queue.config import QueueConfig
 
-        with pytest.raises(ValueError, match="allow_multi_attempt_experimental"):
-            QueueConfig(durable=True, max_attempts=3)
-        config = QueueConfig(durable=True, max_attempts=3, allow_multi_attempt_experimental=True)
+        config = QueueConfig(durable=True, max_attempts=3)
         assert config.max_attempts == 3
+        assert not hasattr(config, "allow_multi_attempt_experimental"), "the flag must be fully deleted"
         assert QueueConfig(durable=True).max_attempts == 1  # default untouched
 
 
