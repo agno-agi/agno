@@ -4589,7 +4589,7 @@ class PostgresDb(BaseDb):
         Args:
             component_id: The component ID.
             version: Specific version or None for current.
-            label: Optional label of the component.
+            label: Config label to resolve. Ignored if version is provided.
             _visited: Internal cycle tracking (do not pass).
             _max_depth: Internal depth limit (do not pass).
 
@@ -4605,7 +4605,14 @@ class PostgresDb(BaseDb):
             if component is None:
                 return None
 
-            resolved_version = self._resolve_version(component_id, version)
+            # Resolve version (a label resolves through its config row; version wins over label)
+            if version is None and label is not None:
+                labeled_config = self.get_config(component_id, label=label)
+                if labeled_config is None:
+                    return None
+                resolved_version = labeled_config["version"]
+            else:
+                resolved_version = self._resolve_version(component_id, version)
             if resolved_version is None:
                 return None
 

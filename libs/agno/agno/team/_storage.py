@@ -1188,7 +1188,7 @@ def load(
     Args:
         id: The id of the team to load.
         db: The database to load the team from.
-        label: The label of the team to load.
+        label: The label of the team version to load. Ignored if version is provided.
 
     Returns:
         The team loaded from the database with hydrated members, or None if not found.

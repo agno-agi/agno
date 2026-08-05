@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from sqlalchemy import text
 
+from agno.db.base import ComponentType
 from agno.db.postgres.postgres import PostgresDb
 
 
@@ -151,3 +152,22 @@ def test_full_workflow(postgres_db_real):
 
         assert result is not None
         assert result.session_type == "agent"
+
+
+def test_load_component_graph_honors_label(postgres_db_real):
+    """load_component_graph(label=...) resolves the labeled version, not current."""
+    postgres_db_real.upsert_component("lbl-comp", component_type=ComponentType.TEAM, name="Labeled")
+    postgres_db_real.upsert_config("lbl-comp", config={"name": "Version One"}, label="stable", stage="published")
+    postgres_db_real.upsert_config("lbl-comp", config={"name": "Version Two"}, stage="published")
+
+    labeled = postgres_db_real.load_component_graph("lbl-comp", label="stable")
+    assert labeled is not None
+    assert labeled["config"]["version"] == 1
+    assert labeled["config"]["config"]["name"] == "Version One"
+
+    missing = postgres_db_real.load_component_graph("lbl-comp", label="no-such-label")
+    assert missing is None
+
+    version_wins = postgres_db_real.load_component_graph("lbl-comp", version=2, label="stable")
+    assert version_wins is not None
+    assert version_wins["config"]["version"] == 2
