@@ -6,7 +6,7 @@ from agno.os.interfaces.agui.input import (
     extract_tool_messages,
     parse_client_tools,
 )
-from agno.os.interfaces.agui.resume import apply_tool_results_to_requirements
+from agno.os.interfaces.agui.resume import resolve_requirements_from_tool_messages
 from agno.os.interfaces.agui.utils import to_json_str
 from agno.run.requirement import RunRequirement
 from agno.tools.function import Function
@@ -236,7 +236,7 @@ def test_to_json_str_empty_list():
     assert to_json_str("[]") == "[]"
 
 
-# apply_tool_results_to_requirements tests
+# resolve_requirements_from_tool_messages tests
 
 
 def test_apply_tool_results_basic():
@@ -253,7 +253,7 @@ def test_apply_tool_results_basic():
     ]
     tool_messages = [ToolMessage(id="t1", tool_call_id="call_1", content="Background changed to blue")]
 
-    result = apply_tool_results_to_requirements(stored_requirements, tool_messages)
+    result = resolve_requirements_from_tool_messages(stored_requirements, tool_messages)
 
     assert len(result) == 1
     assert result[0].tool_execution.result == "Background changed to blue"
@@ -285,7 +285,7 @@ def test_apply_tool_results_multiple():
         ToolMessage(id="t2", tool_call_id="call_2", content="result_b"),
     ]
 
-    result = apply_tool_results_to_requirements(stored_requirements, tool_messages)
+    result = resolve_requirements_from_tool_messages(stored_requirements, tool_messages)
 
     assert result[0].tool_execution.result == "result_a"
     assert result[1].tool_execution.result == "result_b"
@@ -305,7 +305,7 @@ def test_apply_tool_results_with_error():
     ]
     tool_messages = [ToolMessage(id="t1", tool_call_id="call_1", content="", error="Something went wrong")]
 
-    result = apply_tool_results_to_requirements(stored_requirements, tool_messages)
+    result = resolve_requirements_from_tool_messages(stored_requirements, tool_messages)
 
     assert result[0].tool_execution.tool_call_error is True
     assert result[0].tool_execution.result == "Something went wrong"
@@ -325,14 +325,14 @@ def test_apply_tool_results_no_match():
     ]
     tool_messages = [ToolMessage(id="t1", tool_call_id="call_other", content="result")]
 
-    result = apply_tool_results_to_requirements(stored_requirements, tool_messages)
+    result = resolve_requirements_from_tool_messages(stored_requirements, tool_messages)
 
     assert result[0].tool_execution.result is None
 
 
 def test_apply_tool_results_empty_inputs():
     """Test with empty inputs."""
-    assert apply_tool_results_to_requirements([], []) == []
+    assert resolve_requirements_from_tool_messages([], []) == []
 
     stored = [
         RunRequirement(
@@ -343,5 +343,5 @@ def test_apply_tool_results_empty_inputs():
             )
         )
     ]
-    result = apply_tool_results_to_requirements(stored, [])
+    result = resolve_requirements_from_tool_messages(stored, [])
     assert result[0].tool_execution.result is None

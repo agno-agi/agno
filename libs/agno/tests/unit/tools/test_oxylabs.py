@@ -242,8 +242,8 @@ class TestSearchAmazonProducts:
 class TestScrapeWebsite:
     """Test cases for scrape_website method."""
 
-    def test_scrape_website_success(self, mock_oxylabs_client, mock_environment_variables):
-        """Test successful website scraping."""
+    def test_scrape_website_default_parse_mode(self, mock_oxylabs_client, mock_environment_variables):
+        """Test website scraping defaults to parse mode (backward compatible)."""
         # Arrange
         mock_response = create_mock_response(
             results=[{"content": "<html><body>Test Content</body></html>", "status_code": 200}]
@@ -263,7 +263,71 @@ class TestScrapeWebsite:
         result_data = json.loads(result)
         assert result_data["tool"] == "scrape_website"
         assert result_data["url"] == "https://example.com"
-        assert "content_info" in result_data
+        assert result_data["content_info"]["markdown"] is False
+        assert "content" in result_data["content_info"]
+
+    def test_scrape_website_markdown_mode_via_constructor(self, mock_oxylabs_client, mock_environment_variables):
+        """Test website scraping with markdown enabled via constructor."""
+        # Arrange
+        mock_response = create_mock_response(
+            results=[{"content": "# Test Heading\n\nTest content", "status_code": 200}]
+        )
+        mock_oxylabs_client.universal.scrape_url.return_value = mock_response
+
+        tools = OxylabsTools(markdown=True)
+
+        # Act
+        result = tools.scrape_website(url="https://example.com")
+
+        # Assert
+        mock_oxylabs_client.universal.scrape_url.assert_called_once_with(
+            url="https://example.com", render=None, markdown=True
+        )
+
+        result_data = json.loads(result)
+        assert result_data["content_info"]["markdown"] is True
+
+    def test_scrape_website_markdown_mode_via_param(self, mock_oxylabs_client, mock_environment_variables):
+        """Test website scraping with markdown enabled via method parameter."""
+        # Arrange
+        mock_response = create_mock_response(
+            results=[{"content": "# Test Heading\n\nTest content", "status_code": 200}]
+        )
+        mock_oxylabs_client.universal.scrape_url.return_value = mock_response
+
+        tools = OxylabsTools()
+
+        # Act
+        result = tools.scrape_website(url="https://example.com", markdown=True)
+
+        # Assert
+        mock_oxylabs_client.universal.scrape_url.assert_called_once_with(
+            url="https://example.com", render=None, markdown=True
+        )
+
+        result_data = json.loads(result)
+        assert result_data["content_info"]["markdown"] is True
+
+    def test_scrape_website_param_overrides_constructor(self, mock_oxylabs_client, mock_environment_variables):
+        """Test that method parameter overrides constructor setting."""
+        # Arrange
+        mock_response = create_mock_response(
+            results=[{"content": "<html><body>Test</body></html>", "status_code": 200}]
+        )
+        mock_oxylabs_client.universal.scrape_url.return_value = mock_response
+
+        tools = OxylabsTools(markdown=True)
+
+        # Act
+        result = tools.scrape_website(url="https://example.com", markdown=False)
+
+        # Assert
+        mock_oxylabs_client.universal.scrape_url.assert_called_once_with(
+            url="https://example.com", render=None, parse=True
+        )
+
+        result_data = json.loads(result)
+        assert result_data["content_info"]["markdown"] is False
 
     def test_scrape_website_invalid_url(self, mock_oxylabs_client, mock_environment_variables):
         """Test website scraping with invalid URL."""

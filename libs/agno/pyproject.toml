@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.7.2"
+version = "2.8.6"
 description = "The programming language for agentic software."
 requires-python = ">=3.9,<4"
 readme = "README.md"
@@ -71,7 +71,7 @@ dev = [
 
 # AgentOS server bundle
 os = ["fastapi", "python-multipart>=0.0.18", "uvicorn", "websockets", "sqlalchemy", "PyJWT", "opentelemetry-sdk", "openinference-instrumentation-agno", "agno[scheduler]"]
-mcp = ["mcp>=1.9.2", "fastmcp>=3.4.3,<4"]
+mcp = ["mcp>=1.9.2,<2", "fastmcp>=3.4.3,<4"]
 scheduler = ["croniter>=1.3", "pytz>=2023.3"]
 
 # Dependencies for Telemetry
@@ -138,14 +138,17 @@ notion = ["notion-client"]
 opencv = ["opencv-python"]
 oxylabs = ["oxylabs"]
 parallel = ["parallel-web>=1.0"]
+plivo = ["plivo"]
 psycopg = ["psycopg-binary", "psycopg"]
+redmine = ["python-redmine"]
 redshift = ["redshift-connector"]
 reportlab = ["reportlab"]
 salesforce = ["simple-salesforce"]
-scavio = ["scavio"]
+scavio = ["scavio>=0.4.0"]
 scrapegraph = ["scrapegraph-py>=2.0.0"]
 seltz = ["seltz>=0.2.0"]
-tavily = ["tavily-python"]
+superserve = ["superserve"]
+tavily = ["tavily-python>=0.7.9"]
 telegram = ["pyTelegramBotAPI>=4.32.0", "aiohttp"]
 todoist = ["todoist-api-python"]
 trafilatura = ["trafilatura"]
@@ -168,6 +171,7 @@ postgres = ["psycopg-binary"]
 redis = ["redis", "redisvl>=0.12.1"]
 sql = ["sqlalchemy"]
 sqlite = ["sqlalchemy", "aiosqlite"]
+valkey = ["valkey-glide-sync>=2.1.0"]
 
 # Dependencies for Vector databases
 cassandra = ["cassio"]
@@ -177,6 +181,7 @@ couchbase = ["couchbase"]
 lancedb = ["lancedb>=0.26.0"]
 milvusdb = ["pymilvus>=2.5.10"]
 mongodb = ["pymongo[srv]"]
+opensearch = ["opensearch-py"]
 pgvector = ["pgvector"]
 pinecone = ["pinecone==5.4.2"]
 pylance = ["pylance"]
@@ -193,7 +198,9 @@ chonkie = [
 csv = ["aiofiles"]
 docx = ["python-docx"]
 excel = ["openpyxl", "xlrd"]
-markdown = ["unstructured<0.18.31", "markdown", "aiofiles"]
+# nltk!=3.10.1: its inisec import hook falsely blocks site-packages imports when
+# the venv lives inside the CWD, breaking the unstructured import chain.
+markdown = ["unstructured<0.18.31", "nltk!=3.10.1", "markdown", "aiofiles"]
 pdf = ["pypdf", "rapidocr_onnxruntime"]
 pptx = ["python-pptx"]
 text = ["aiofiles"]
@@ -282,13 +289,16 @@ tools = [
   "agno[opencv]",
   "agno[oxylabs]",
   "agno[parallel]",
+  "agno[plivo]",
   "agno[psycopg]",
+  "agno[redmine]",
   "agno[redshift]",
   "agno[reportlab]",
   "agno[salesforce]",
   "agno[scavio]",
   "agno[scrapegraph]",
   "agno[seltz]",
+  "agno[superserve]",
   "agno[tavily]",
   "agno[telegram]",
   "agno[todoist]",
@@ -314,6 +324,7 @@ storage = [
   "agno[redis]",  # also listed under vectordbs (redis serves both roles)
   "agno[sql]",
   "agno[sqlite]",
+  "agno[valkey]",  # also listed under vectordbs (valkey serves both roles)
 ]
 
 # All vector databases
@@ -325,6 +336,7 @@ vectordbs = [
   "agno[lancedb]",
   "agno[milvusdb]",
   "agno[mongodb]",
+  "agno[opensearch]",
   "agno[pgvector]",
   "agno[pinecone]",
   "agno[pylance]",
@@ -333,6 +345,7 @@ vectordbs = [
   "agno[singlestore]",
   "agno[surrealdb]",
   "agno[upstash]",
+  "agno[valkey]",  # also listed under storage (valkey serves both roles)
   "agno[weaviate]",
 ]
 
@@ -500,6 +513,7 @@ module = [
   "crawl4ai.*",
   "daytona.*",
   "daytona_api_client.*",
+  "superserve.*",
   "discord.*",
   "docker.*",
   "docling.*",
@@ -558,6 +572,7 @@ module = [
   "ollama.*",
   "openpyxl.*",
   "openai.*",
+  "opensearchpy.*",
   "cv2.*",
   "openbb.*",
   "pandas.*",
@@ -567,6 +582,7 @@ module = [
   "pinecone.*",
   "portkey_ai.*",
   "playwright.sync_api.*",
+  "plivo.*",
   "psycopg.*",
   "pyarrow.*",
   "pycountry.*",
@@ -620,11 +636,13 @@ module = [
   "zep_cloud.*",
   "oxylabs.*",
   "parallel.*",
+  "redminelib.*",
   "redshift_connector.*",
   "reportlab.*",
   "surrealdb.*",
   "trafilatura.*",
   "xlrd.*",
-  "celpy.*"
+  "celpy.*",
+  "glide_sync.*"
 ]
 ignore_missing_imports = true

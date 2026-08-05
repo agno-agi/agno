@@ -30,6 +30,7 @@ from agno.run.base import RunStatus
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
 from agno.run.team import TeamRunOutput
 from agno.run.workflow import WorkflowErrorEvent
+from agno.scorer.base import Score, Scorer
 from agno.team.team import Team
 
 if TYPE_CHECKING:
@@ -95,6 +96,17 @@ class Case:
     setup: Optional[Callable[[], Any]] = None
     teardown: Optional[Callable[[Any, "CaseResult"], Any]] = None
 
+    # Scorer check - set `scorer` to score the run in-process (agno.scorer protocol:
+    # anything with `async ascore(run, expected)`). Runs only on gradeable runs,
+    # inside the case timeout, and receives (result.response, case.expected) -- for a
+    # team case that is the TeamRunOutput, so a scorer written against agent content
+    # sees the leader's synthesis. `expected` is the value handed to the scorer.
+    # Field order is load-bearing: these dataclasses are not kw_only, so new fields
+    # must be appended last -- inserting mid-class would silently reassign positional
+    # callers.
+    scorer: Optional[Scorer] = None
+    expected: Optional[Any] = None
+
     def __post_init__(self) -> None:
         # Exactly one of agent/team: neither has anything to run, both is ambiguous.
         if self.agent is None and self.team is None:
@@ -103,9 +115,9 @@ class Case:
             raise ValueError(f"case {self.name!r}: provide only one of 'agent' or 'team'")
         # Truthiness, not `is None`: criteria="" or expected_tool_calls=() would
         # otherwise construct a case whose checks pass vacuously - a green CI gate
-        # that verified nothing.
-        if not self.criteria and not self.expected_tool_calls:
-            raise ValueError(f"case {self.name!r} has no checks: set criteria and/or expected_tool_calls")
+        # that verified nothing. A scorer instance is always truthy, so `is None`.
+        if not self.criteria and not self.expected_tool_calls and self.scorer is None:
+            raise ValueError(f"case {self.name!r} has no checks: set criteria, expected_tool_calls, and/or scorer")
         # A raw string bypasses the JudgeMode type, so reject an unknown mode and, for NUMERIC, a
         # judge_threshold outside 1-10. Membership accepts the enum members and their equal strings.
         if self.judge_mode not in (JudgeMode.BINARY, JudgeMode.NUMERIC):
@@ -142,12 +154,17 @@ class CaseResult:
     # Raw run output - full programmatic access to content, tool calls, metrics.
     # Excluded from to_dict(). A team case stores its TeamRunOutput.
     response: Optional[Union[RunOutput, TeamRunOutput]] = None
+    # Scorer verdict; None = check not configured. Must stay the last field: not
+    # kw_only, so positional construction depends on field order.
+    score: Optional[Score] = None
 
     @property
     def passed(self) -> bool:
         if self.error:
             return False
         checks = [c for c in (self.judge_passed, self.reliability_passed) if c is not None]
+        if self.score is not None:
+            checks.append(self.score.passed)
         return bool(checks) and all(checks)
 
 
@@ -204,6 +221,11 @@ class SuiteResult:
                     "skipped": result.skipped,
                     "passed": result.passed,
                     "error": result.error,
+                    # Appended at the end of the case payload (2.8.0): purely additive
+                    # for CI consumers -- all three are null when no scorer is set.
+                    "score_value": result.score.value if result.score is not None else None,
+                    "score_passed": result.score.passed if result.score is not None else None,
+                    "score_reason": result.score.reason if result.score is not None else None,
                 }
                 for result in self.results
             ],
@@ -426,6 +448,14 @@ async def _run_case_body(
                 _append_error(result, "reliability: returned no result")
             else:
                 result.reliability_passed = reliability.eval_status == "PASSED"
+
+    if case.scorer is not None and response is not None:
+        # Same placement as the judge: inside the case timeout, gradeable runs only
+        # (non-gradeable runs returned above -- the scorer is skipped, not failed).
+        try:
+            result.score = await case.scorer.ascore(response, case.expected)
+        except Exception as exc:
+            _append_error(result, f"scorer: {type(exc).__name__}: {exc}")
 
 
 async def _arun_case(

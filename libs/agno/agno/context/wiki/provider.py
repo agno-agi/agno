@@ -54,8 +54,17 @@ class WikiContextProvider(ContextProvider):
         read: bool = True,
         write: bool = True,
         web: ContextBackend | None = None,
+        stream_sub_agent_events: bool = True,
     ) -> None:
-        super().__init__(id=id, name=name, mode=mode, model=model, read=read, write=write)
+        super().__init__(
+            id=id,
+            name=name,
+            mode=mode,
+            model=model,
+            read=read,
+            write=write,
+            stream_sub_agent_events=stream_sub_agent_events,
+        )
         self.backend: WikiBackend = backend
         # Optional web backend for ingestion. When set, the write
         # sub-agent gets the backend's tools (typically web_search +
