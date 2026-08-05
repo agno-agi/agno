@@ -552,7 +552,13 @@ def to_dict(team: "Team") -> Dict[str, Any]:
                     serialized_tools.append(tool.to_dict())
                 elif isinstance(tool, Toolkit):
                     for func in tool.functions.values():
-                        serialized_tools.append(func.to_dict())
+                        func_dict = func.to_dict()
+                        # Record the owning toolkit so rehydration can re-bind
+                        # same-named functions to the right toolkit (see
+                        # Registry.rehydrate_function).
+                        if tool.name:
+                            func_dict["toolkit"] = tool.name
+                        serialized_tools.append(func_dict)
                 elif callable(tool):
                     func = Function.from_callable(tool)
                     serialized_tools.append(func.to_dict())

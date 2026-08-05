@@ -218,6 +218,39 @@ class TestAgentToDict:
         assert config["user_id"] == "user-123"
         assert config["session_id"] == "session-456"
 
+    def test_to_dict_records_owning_toolkit(self):
+        """Functions flattened from a toolkit carry the toolkit's name so
+        rehydration can re-bind same-named functions to the right toolkit
+        (see Registry.rehydrate_function). Plain tools stay unqualified."""
+        from agno.models.openai import OpenAIChat
+        from agno.tools.toolkit import Toolkit
+
+        def read_file(path: str) -> str:
+            """Read a file."""
+            return path
+
+        def write_file(path: str, content: str) -> str:
+            """Write a file."""
+            return path
+
+        def plain_tool(x: int) -> int:
+            """A plain callable tool."""
+            return x
+
+        toolkit = Toolkit(name="agent_files", tools=[read_file, write_file])
+        agent = Agent(
+            id="toolkit-agent",
+            model=OpenAIChat(id="gpt-4o-mini"),
+            tools=[toolkit, plain_tool],
+        )
+
+        config = agent.to_dict()
+
+        tools_by_name = {t["name"]: t for t in config["tools"]}
+        assert tools_by_name["read_file"]["toolkit"] == "agent_files"
+        assert tools_by_name["write_file"]["toolkit"] == "agent_files"
+        assert "toolkit" not in tools_by_name["plain_tool"]
+
 
 # =============================================================================
 # from_dict() Tests

@@ -113,6 +113,9 @@ def function_tool():
 def mock_toolkit():
     """Create a mock Toolkit with functions."""
     toolkit = MagicMock(spec=Toolkit)
+    # Toolkit.name is an instance attribute, so spec=Toolkit doesn't provide it
+    # (and the MagicMock constructor reserves the "name" kwarg).
+    toolkit.name = "mock_toolkit"
 
     func1 = MagicMock(spec=Function)
     func1.name = "toolkit_func_1"
@@ -313,6 +316,30 @@ class TestEntrypointLookup:
         # Should return the same cached object
         assert lookup1 is lookup2
 
+    def test_entrypoint_lookup_indexes_toolkit_qualified_keys(self):
+        """Toolkit functions are also indexed under '<toolkit>.<function>' so
+        serialized dicts carrying their owning toolkit's name can resolve to
+        the right toolkit when two toolkits share member names."""
+
+        def shared_read(path: str) -> str:
+            return f"shared:{path}"
+
+        def agent_read(path: str) -> str:
+            return f"agent:{path}"
+
+        shared = Toolkit(name="filesystem")
+        shared.functions["read_file"] = Function(name="read_file", entrypoint=shared_read)
+        agent_files = Toolkit(name="agent_files")
+        agent_files.functions["read_file"] = Function(name="read_file", entrypoint=agent_read)
+        reg = Registry(tools=[shared, agent_files])
+
+        lookup = reg._entrypoint_lookup
+
+        assert lookup["filesystem.read_file"].entrypoint is shared_read
+        assert lookup["agent_files.read_file"].entrypoint is agent_read
+        # The flat slot still exists (last registration wins) for legacy configs
+        assert lookup["read_file"].entrypoint is agent_read
+
 
 # =============================================================================
 # rehydrate_function() Tests
@@ -446,6 +473,93 @@ class TestRehydrateFunction:
 
         assert rehydrated.entrypoint is call_proxy
         assert rehydrated.skip_entrypoint_processing is True
+
+
+class TestToolkitQualifiedRehydration:
+    """Tests for toolkit-qualified entrypoint resolution.
+
+    A DB-persisted function dict carries no toolkit attribution beyond the
+    optional "toolkit" key, so when two registry toolkits share member names
+    the flat name lookup alone would silently bind the wrong toolkit's
+    entrypoint (e.g. two FileSystem toolkits both exposing read_file).
+    """
+
+    @staticmethod
+    def _shared_read(path: str) -> str:
+        return f"shared:{path}"
+
+    @staticmethod
+    def _agent_read(path: str) -> str:
+        return f"agent:{path}"
+
+    def _registry_with_shared_names(self):
+        shared = Toolkit(name="filesystem")
+        shared.functions["read_file"] = Function(name="read_file", entrypoint=self._shared_read)
+        agent_files = Toolkit(name="agent_files")
+        agent_files.functions["read_file"] = Function(name="read_file", entrypoint=self._agent_read)
+        return Registry(tools=[shared, agent_files]), shared, agent_files
+
+    def test_qualified_dict_binds_to_its_own_toolkit(self):
+        """A dict qualified with its toolkit's name binds to that toolkit's
+        entrypoint even when another toolkit's member shares the name."""
+        reg, shared, agent_files = self._registry_with_shared_names()
+
+        func_dict = agent_files.functions["read_file"].to_dict()
+        func_dict["toolkit"] = "agent_files"
+        rehydrated = reg.rehydrate_function(func_dict)
+        assert rehydrated.entrypoint is self._agent_read
+
+        # And the first toolkit's dict binds to the first toolkit -- even
+        # though the flat slot holds the last-registered entrypoint.
+        func_dict = shared.functions["read_file"].to_dict()
+        func_dict["toolkit"] = "filesystem"
+        rehydrated = reg.rehydrate_function(func_dict)
+        assert rehydrated.entrypoint is self._shared_read
+
+    def test_unqualified_dict_resolves_via_flat_name(self):
+        """A legacy dict without the "toolkit" key resolves via the flat name
+        exactly as before qualification existed (last registration wins)."""
+        reg, shared, _ = self._registry_with_shared_names()
+
+        func_dict = shared.functions["read_file"].to_dict()
+        assert "toolkit" not in func_dict
+
+        rehydrated = reg.rehydrate_function(func_dict)
+
+        assert rehydrated.entrypoint is self._agent_read
+
+    def test_qualified_dict_with_missing_toolkit_falls_back_to_flat(self):
+        """A dict whose toolkit has left the registry falls back to the flat
+        name so the function still gets an entrypoint."""
+        reg, _, agent_files = self._registry_with_shared_names()
+
+        func_dict = agent_files.functions["read_file"].to_dict()
+        func_dict["toolkit"] = "gone_files"
+
+        rehydrated = reg.rehydrate_function(func_dict)
+
+        assert rehydrated.entrypoint is self._agent_read
+
+    def test_qualified_lookup_rebuilds_stale_cache(self):
+        """A qualified miss rebuilds the cached lookup before falling back to
+        the flat name: the flat slot may hold a same-named function from a
+        different toolkit while the right toolkit (e.g. an MCP toolkit that
+        connects late) simply hasn't populated the cache yet."""
+        shared = Toolkit(name="filesystem")
+        shared.functions["read_file"] = Function(name="read_file", entrypoint=self._shared_read)
+        agent_files = Toolkit(name="agent_files")
+        reg = Registry(tools=[shared, agent_files])
+
+        # Prime the cache while agent_files is still "unconnected"
+        assert "agent_files.read_file" not in reg._entrypoint_lookup
+
+        agent_files.functions["read_file"] = Function(name="read_file", entrypoint=self._agent_read)
+        func_dict = agent_files.functions["read_file"].to_dict()
+        func_dict["toolkit"] = "agent_files"
+
+        rehydrated = reg.rehydrate_function(func_dict)
+
+        assert rehydrated.entrypoint is self._agent_read
 
 
 # =============================================================================

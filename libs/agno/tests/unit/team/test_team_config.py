@@ -291,6 +291,33 @@ class TestTeamToDict:
         assert config["mode"] == "coordinate"
         assert "max_iterations" not in config  # default=10 should not be serialized
 
+    def test_to_dict_records_owning_toolkit(self):
+        """Functions flattened from a toolkit carry the toolkit's name so
+        rehydration can re-bind same-named functions to the right toolkit
+        (see Registry.rehydrate_function). Plain tools stay unqualified."""
+        from agno.tools.toolkit import Toolkit
+
+        def read_file(path: str) -> str:
+            """Read a file."""
+            return path
+
+        def plain_tool(x: int) -> int:
+            """A plain callable tool."""
+            return x
+
+        toolkit = Toolkit(name="agent_files", tools=[read_file])
+        team = Team(
+            id="toolkit-team",
+            members=[],
+            tools=[toolkit, plain_tool],
+        )
+
+        config = team.to_dict()
+
+        tools_by_name = {t["name"]: t for t in config["tools"]}
+        assert tools_by_name["read_file"]["toolkit"] == "agent_files"
+        assert "toolkit" not in tools_by_name["plain_tool"]
+
 
 # =============================================================================
 # from_dict() Tests
