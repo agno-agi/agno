@@ -61,7 +61,7 @@ class AdvisorTools(Toolkit):
         system_message: Optional[str] = DEFAULT_SYSTEM_MESSAGE,
         instructions: Optional[str] = None,
         add_instructions: bool = True,
-        enable_ask_all_advisors: bool = True,
+        ask_all_advisors: bool = True,
         **kwargs,
     ):
         """
@@ -74,7 +74,7 @@ class AdvisorTools(Toolkit):
                 the question without a system message.
             instructions: Override the default toolkit instructions.
             add_instructions: Whether to add the toolkit instructions to the agent.
-            enable_ask_all_advisors: Whether to register the `ask_all_advisors` tool.
+            ask_all_advisors: Whether to register the `ask_all_advisors` tool.
         """
         if not advisors:
             raise ValueError("AdvisorTools requires at least one advisor model")
@@ -103,7 +103,7 @@ class AdvisorTools(Toolkit):
 
         tools: List = [self.ask_advisor]
         async_tools: List = [(self.aask_advisor, "ask_advisor")]
-        if enable_ask_all_advisors:
+        if ask_all_advisors:
             tools.append(self.ask_all_advisors)
             async_tools.append((self.aask_all_advisors, "ask_all_advisors"))
 

@@ -61,7 +61,7 @@ agent.print_response("Explain how DNS works")
 | `system_message` | `str` | Built-in advisor prompt | System message sent to advisors. Set to `None` to send none |
 | `instructions` | `str` | Built-in instructions | Override the toolkit instructions shown to the agent |
 | `add_instructions` | `bool` | `True` | Whether to add the toolkit instructions to the agent |
-| `enable_ask_all_advisors` | `bool` | `True` | Whether to register the `ask_all_advisors` tool |
+| `ask_all_advisors` | `bool` | `True` | Whether to register the `ask_all_advisors` tool |
 
 ## Advisor Ids
 

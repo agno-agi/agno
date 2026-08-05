@@ -36,7 +36,7 @@ def test_init_registers_expected_tools():
 
 
 def test_init_without_ask_all_advisors():
-    tools = AdvisorTools(advisors=[_mock_model("model-a")], enable_ask_all_advisors=False)
+    tools = AdvisorTools(advisors=[_mock_model("model-a")], ask_all_advisors=False)
     assert set(tools.functions.keys()) == {"ask_advisor"}
     assert set(tools.async_functions.keys()) == {"ask_advisor"}
 
