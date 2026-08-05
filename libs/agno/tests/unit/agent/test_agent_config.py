@@ -218,6 +218,106 @@ class TestAgentToDict:
         assert config["user_id"] == "user-123"
         assert config["session_id"] == "session-456"
 
+    def test_to_dict_records_owning_toolkit(self):
+        """Functions flattened from a toolkit carry the toolkit's name so
+        rehydration can re-bind same-named functions to the right toolkit
+        (see Registry.rehydrate_function). Plain tools stay unqualified."""
+        from agno.models.openai import OpenAIChat
+        from agno.tools.toolkit import Toolkit
+
+        def read_file(path: str) -> str:
+            """Read a file."""
+            return path
+
+        def write_file(path: str, content: str) -> str:
+            """Write a file."""
+            return path
+
+        def plain_tool(x: int) -> int:
+            """A plain callable tool."""
+            return x
+
+        toolkit = Toolkit(name="agent_files", tools=[read_file, write_file])
+        agent = Agent(
+            id="toolkit-agent",
+            model=OpenAIChat(id="gpt-4o-mini"),
+            tools=[toolkit, plain_tool],
+        )
+
+        config = agent.to_dict()
+
+        tools_by_name = {t["name"]: t for t in config["tools"]}
+        assert tools_by_name["read_file"]["toolkit"] == "agent_files"
+        assert tools_by_name["write_file"]["toolkit"] == "agent_files"
+        assert "toolkit" not in tools_by_name["plain_tool"]
+
+    def test_to_dict_round_trip_preserves_toolkit(self):
+        """A rehydrated agent holds bare Functions, not Toolkits; their
+        owning_toolkit re-stamps the "toolkit" key so the attribution
+        survives load -> save (e.g. a Studio edit)."""
+        from agno.models.openai import OpenAIChat
+        from agno.registry import Registry
+        from agno.tools.toolkit import Toolkit
+
+        def read_file(path: str) -> str:
+            """Read a file."""
+            return path
+
+        toolkit = Toolkit(name="agent_files", tools=[read_file])
+        agent = Agent(
+            id="round-trip-agent",
+            model=OpenAIChat(id="gpt-4o-mini"),
+            tools=[toolkit],
+        )
+        registry = Registry(tools=[toolkit])
+
+        config = agent.to_dict()
+        assert config["tools"][0]["toolkit"] == "agent_files"
+
+        loaded = Agent.from_dict(config, registry=registry)
+        assert loaded.tools[0].entrypoint is read_file
+
+        config_resaved = loaded.to_dict()
+
+        tools_by_name = {t["name"]: t for t in config_resaved["tools"]}
+        assert tools_by_name["read_file"]["toolkit"] == "agent_files"
+
+    def test_to_dict_stamps_toolkit_per_get_functions(self):
+        """The stamping walk reads get_functions() -- what parse_tools
+        actually serializes -- so a toolkit subclass exposing a subset never
+        claims a name it hides."""
+        from agno.models.openai import OpenAIChat
+        from agno.tools.toolkit import Toolkit
+
+        def only_a(x: str) -> str:
+            """Tool a."""
+            return x
+
+        def _make_search(tag):
+            def search(q: str) -> str:
+                """Search."""
+                return f"{tag}:{q}"
+
+            return search
+
+        class GatedToolkit(Toolkit):
+            def get_functions(self):
+                return {name: f for name, f in self.functions.items() if name != "search"}
+
+        alpha = GatedToolkit(name="alpha", tools=[only_a, _make_search("alpha")])
+        beta = Toolkit(name="beta", tools=[_make_search("beta")])
+        agent = Agent(
+            id="gated-agent",
+            model=OpenAIChat(id="gpt-4o-mini"),
+            tools=[alpha, beta],
+        )
+
+        config = agent.to_dict()
+
+        tools_by_name = {t["name"]: t for t in config["tools"]}
+        assert tools_by_name["only_a"]["toolkit"] == "alpha"
+        assert tools_by_name["search"]["toolkit"] == "beta"
+
 
 # =============================================================================
 # from_dict() Tests
@@ -314,20 +414,23 @@ class TestAgentFromDict:
             assert agent.db == mock_db
 
     def test_from_dict_with_registry_tools(self):
-        """Test from_dict uses registry to rehydrate tools."""
-        config = {
-            "id": "tools-agent",
-            "tools": [{"name": "search", "description": "Search the web"}],
-        }
+        """from_dict rehydrates the whole tools list in ONE batch call, so a
+        component load shares a single lookup-rebuild budget."""
+        tool_dicts = [
+            {"name": "search", "description": "Search the web"},
+            {"name": "read_file", "description": "Read a file"},
+            {"name": "write_file", "description": "Write a file"},
+        ]
+        config = {"id": "tools-agent", "tools": list(tool_dicts)}
 
         mock_registry = MagicMock()
-        mock_tool = MagicMock()
-        mock_registry.rehydrate_function.return_value = mock_tool
+        mock_tools = [MagicMock(), MagicMock(), MagicMock()]
+        mock_registry.rehydrate_functions.return_value = mock_tools
 
         agent = Agent.from_dict(config, registry=mock_registry)
 
-        mock_registry.rehydrate_function.assert_called_once()
-        assert agent.tools == [mock_tool]
+        mock_registry.rehydrate_functions.assert_called_once_with(tool_dicts)
+        assert agent.tools == mock_tools
 
     def test_from_dict_without_registry_removes_tools(self):
         """Test from_dict removes tools when no registry is provided."""
@@ -583,12 +686,12 @@ class TestAgentLoad:
         mock_db.get_config.return_value = {"config": {"id": "registry-agent", "tools": [{"name": "search"}]}}
 
         mock_registry = MagicMock()
-        mock_registry.rehydrate_function.return_value = MagicMock()
+        mock_registry.rehydrate_functions.return_value = [MagicMock()]
 
         agent = Agent.load(id="registry-agent", db=mock_db, registry=mock_registry)
 
         assert agent is not None
-        mock_registry.rehydrate_function.assert_called()
+        mock_registry.rehydrate_functions.assert_called()
 
     def test_load_returns_none_when_not_found(self, mock_db):
         """Test load returns None when agent not found."""
@@ -730,7 +833,7 @@ class TestGetAgentById:
         mock_db.get_config.return_value = {"config": {"id": "registry-agent", "tools": [{"name": "calc"}]}}
 
         mock_registry = MagicMock()
-        mock_registry.rehydrate_function.return_value = MagicMock()
+        mock_registry.rehydrate_functions.return_value = [MagicMock()]
 
         agent = get_agent_by_id(db=mock_db, id="registry-agent", registry=mock_registry)
 
@@ -818,7 +921,7 @@ class TestGetAgents:
         mock_db.get_config.return_value = {"config": {"id": "tools-agent", "tools": [{"name": "search"}]}}
 
         mock_registry = MagicMock()
-        mock_registry.rehydrate_function.return_value = MagicMock()
+        mock_registry.rehydrate_functions.return_value = [MagicMock()]
 
         agents = get_agents(db=mock_db, registry=mock_registry)
 

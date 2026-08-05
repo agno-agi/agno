@@ -8,6 +8,7 @@ from typing import (
     Dict,
     List,
     Optional,
+    Set,
     Type,
     Union,
     cast,
@@ -27,6 +28,7 @@ from agno.registry.registry import Registry
 from agno.run.agent import RunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.tools.function import Function
+from agno.tools.toolkit import Toolkit
 from agno.utils.agent import (
     aget_last_run_output_util,
     aget_run_output_util,
@@ -550,18 +552,45 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     # --- Tools ---
     # Serialize tools to their dictionary representations (skip callable factories)
     _tools: List[Union[Function, dict]] = []
+    # Which toolkit each flattened function came from, so rehydration can
+    # re-bind same-named functions to the right toolkit (see
+    # Registry.rehydrate_function). Mirrors the parse_tools walk: tools are
+    # processed in declaration order and the first one to claim a name wins.
+    _owning_toolkit: Dict[str, str] = {}
     if agent.model is not None and agent.tools and isinstance(agent.tools, list):
         _tools = parse_tools(
             agent,
             model=agent.model,
             tools=agent.tools,
         )
+        _claimed_names: Set[str] = set()
+        for _tool in agent.tools:
+            if isinstance(_tool, Toolkit):
+                # get_functions() is what parse_tools serializes. Names are claimed
+                # by Function.name, which is what the serialized dict carries.
+                for _func in _tool.get_functions().values():
+                    if _func.name in _claimed_names:
+                        continue
+                    _claimed_names.add(_func.name)
+                    if isinstance(_tool.name, str) and _tool.name:
+                        _owning_toolkit[_func.name] = _tool.name
+            elif isinstance(_tool, Function):
+                if _tool.name not in _claimed_names:
+                    _claimed_names.add(_tool.name)
+                    if _tool.owning_toolkit:
+                        _owning_toolkit[_tool.name] = _tool.owning_toolkit
+            elif callable(_tool) and getattr(_tool, "__name__", None) is not None:
+                _claimed_names.add(_tool.__name__)
     if _tools:
         serialized_tools = []
         for tool in _tools:
             try:
                 if isinstance(tool, Function):
-                    serialized_tools.append(tool.to_dict())
+                    tool_dict = tool.to_dict()
+                    _toolkit_name = _owning_toolkit.get(tool.name)
+                    if _toolkit_name is not None:
+                        tool_dict["toolkit"] = _toolkit_name
+                    serialized_tools.append(tool_dict)
                 else:
                     serialized_tools.append(tool)
             except Exception as e:
@@ -792,7 +821,7 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
     # --- Handle tools reconstruction ---
     if "tools" in config and config["tools"]:
         if registry:
-            config["tools"] = [registry.rehydrate_function(t) for t in config["tools"]]
+            config["tools"] = registry.rehydrate_functions(config["tools"])
         else:
             log_warning("No registry provided, tools will not be rehydrated.")
             del config["tools"]
