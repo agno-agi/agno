@@ -63,6 +63,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 from agno.run import RunContext
+from agno.run.utils import run_status_string, serialized_paused_requirements
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import logger
 
@@ -117,34 +118,6 @@ def _references_executors(value: Any) -> bool:
     if isinstance(value, list):
         return any(_references_executors(v) for v in value)
     return False
-
-
-# The two helpers below mirror agno/os/mcp_results.py so toolkit results and MCP
-# results speak one vocabulary for run status and paused requirements.
-# (mcp_results imports mcp.types, a server extra, so it cannot be imported here.)
-
-
-def _run_status(run_output: Any) -> str:
-    status = getattr(run_output, "status", None)
-    value = getattr(status, "value", status)
-    return str(value) if value is not None else "COMPLETED"
-
-
-def _paused_requirements(run_output: Any) -> Optional[List[Dict[str, Any]]]:
-    """Serialized unresolved requirements when the run is paused, else None."""
-    if not getattr(run_output, "is_paused", False):
-        return None
-    # Agents/teams expose active_requirements; workflows expose active_step_requirements.
-    requirements = (
-        getattr(run_output, "active_requirements", None) or getattr(run_output, "active_step_requirements", None) or []
-    )
-    serialized: List[Dict[str, Any]] = []
-    for requirement in requirements:
-        if hasattr(requirement, "to_dict"):
-            serialized.append(requirement.to_dict())
-        elif isinstance(requirement, dict):
-            serialized.append(requirement)
-    return serialized or None
 
 
 class StudioRunnerTools(Toolkit):
@@ -871,10 +844,10 @@ class StudioRunnerTools(Toolkit):
             id_key: component_id,
             "run_id": getattr(run_output, "run_id", None),
             "session_id": getattr(run_output, "session_id", None),
-            "status": _run_status(run_output),
+            "status": run_status_string(run_output),
             "content": content,
         }
-        requirements = _paused_requirements(run_output)
+        requirements = serialized_paused_requirements(run_output)
         if requirements is not None:
             payload["requirements"] = requirements
         # Media artifacts cannot travel in a JSON tool result; count them so the
