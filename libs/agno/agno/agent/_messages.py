@@ -1258,11 +1258,6 @@ def get_run_messages(
         run_messages.system_message = system_message
         run_messages.messages.append(system_message)
 
-    # 1.1 Inject stored compaction summary right after system message
-    if session.compaction and session.compaction.summary:
-        run_messages.messages.append(session.compaction.get_summary_message())
-        log_debug(f"Injected compaction summary ({len(session.compaction.summary)} chars)")
-
     # 2. Add extra messages to run_messages if provided
     if agent.additional_input is not None:
         messages_to_add_to_run_response: List[Message] = []
@@ -1294,6 +1289,9 @@ def get_run_messages(
     if add_history_to_context:
         from copy import deepcopy
 
+        # Inject compaction summary before history (replaces compacted messages)
+        if session.compaction and session.compaction.summary:
+            run_messages.messages.append(session.compaction.get_summary_message())
         # Only skip messages from history when system_message_role is NOT a standard conversation role.
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered
         # to preserve conversation continuity.
@@ -1306,27 +1304,23 @@ def get_run_messages(
             limit=agent.num_history_messages,
             skip_roles=[skip_role] if skip_role else None,
             agent_id=agent.id if agent.team_id is not None else None,
+            skip_compacted_messages=True,
         )
 
         if len(history) > 0:
-            # Build compacted IDs set once — survives deepcopy/reload cycle
-            compacted_ids = session.compaction.compacted_message_ids if session.compaction else set()
+            # Create a deep copy of the history messages to avoid modifying the original messages
+            history_copy = [deepcopy(msg) for msg in history]
 
-            # Deepcopy, tag, and filter compacted in one pass
-            history_copy = []
-            for msg in history:
-                # Filter by ID — skip messages that were compacted into the summary
-                if msg.id and msg.id in compacted_ids:
-                    continue
-                msg_copy = deepcopy(msg)
-                msg_copy.from_history = True
-                history_copy.append(msg_copy)
+            # Tag each message as coming from history
+            for _msg in history_copy:
+                _msg.from_history = True
 
-            # Filter tool calls from history if limit is set
+            # Filter tool calls from history if limit is set (before adding to run_messages)
             if agent.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
 
             log_debug(f"Adding {len(history_copy)} messages from history")
+
             run_messages.messages += history_copy
 
     # 4. Add user message to run_messages
@@ -1474,11 +1468,6 @@ async def aget_run_messages(
         run_messages.system_message = system_message
         run_messages.messages.append(system_message)
 
-    # 1.1 Inject stored compaction summary right after system message
-    if session.compaction and session.compaction.summary:
-        run_messages.messages.append(session.compaction.get_summary_message())
-        log_debug(f"Injected compaction summary ({len(session.compaction.summary)} chars)")
-
     # 2. Add extra messages to run_messages if provided
     if agent.additional_input is not None:
         messages_to_add_to_run_response: List[Message] = []
@@ -1510,6 +1499,10 @@ async def aget_run_messages(
     if add_history_to_context:
         from copy import deepcopy
 
+        # Inject compaction summary before history (replaces compacted messages)
+        if session.compaction and session.compaction.summary:
+            run_messages.messages.append(session.compaction.get_summary_message())
+
         # Only skip messages from history when system_message_role is NOT a standard conversation role.
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered
         # to preserve conversation continuity.
@@ -1522,21 +1515,16 @@ async def aget_run_messages(
             limit=agent.num_history_messages,
             skip_roles=[skip_role] if skip_role else None,
             agent_id=agent.id if agent.team_id is not None else None,
+            skip_compacted_messages=True,
         )
 
         if len(history) > 0:
-            # Build compacted IDs set once — survives deepcopy/reload cycle
-            compacted_ids = session.compaction.compacted_message_ids if session.compaction else set()
+            # Create a deep copy of the history messages to avoid modifying the original messages
+            history_copy = [deepcopy(msg) for msg in history]
 
-            # Deepcopy, tag, and filter compacted in one pass
-            history_copy = []
-            for msg in history:
-                # Filter by ID — skip messages that were compacted into the summary
-                if msg.id and msg.id in compacted_ids:
-                    continue
-                msg_copy = deepcopy(msg)
-                msg_copy.from_history = True
-                history_copy.append(msg_copy)
+            # Tag each message as coming from history
+            for _msg in history_copy:
+                _msg.from_history = True
 
             # Filter tool calls from history if limit is set (before adding to run_messages)
             if agent.max_tool_calls_from_history is not None:
@@ -1684,30 +1672,13 @@ def get_continue_run_messages(
     if system_message is not None:
         run_messages.messages.append(system_message)
 
-    # 1.1 Inject stored compaction summary right after system message
-    # Skip injection if:
-    # - input already has history (from_history=True on some messages)
-    # - continuing a run whose messages were compacted (time travel prevention)
-    should_inject_summary = (
-        session is not None and session.compaction and session.compaction.summary and not input_has_history
-    )
-    if should_inject_summary:
-        # Time travel check: if ANY of this run's message IDs are in the compacted set,
-        # this run existed when compaction happened and we're going back in time.
-        # The summary would contain info from runs AFTER this one — don't inject.
-        input_ids = {msg.id for msg in input if msg.id}
-        compacted_ids = session.compaction.compacted_message_ids
-        run_was_compacted = bool(input_ids.intersection(compacted_ids))
-
-        if run_was_compacted:
-            log_debug("Skipped compaction summary (continuing pre-compaction run to avoid time travel)")
-        else:
-            run_messages.messages.append(session.compaction.get_summary_message())
-            log_debug(f"Injected compaction summary ({len(session.compaction.summary)} chars)")
-
     # 2. Add history messages if not already present in input
     if add_history_to_context and session is not None and not input_has_history:
         from copy import deepcopy
+
+        # Inject compaction summary before history (replaces compacted messages)
+        if session.compaction and session.compaction.summary:
+            run_messages.messages.append(session.compaction.get_summary_message())
 
         # Only skip messages from history when system_message_role is NOT a standard conversation role.
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered
@@ -1721,21 +1692,16 @@ def get_continue_run_messages(
             limit=agent.num_history_messages,
             skip_roles=[skip_role] if skip_role else None,
             agent_id=agent.id if agent.team_id is not None else None,
+            skip_compacted_messages=True,
         )
 
         if len(history) > 0:
-            # Build compacted IDs set once — survives deepcopy/reload cycle
-            compacted_ids = session.compaction.compacted_message_ids if session.compaction else set()
+            # Create a deep copy of the history messages to avoid modifying the original messages
+            history_copy = [deepcopy(msg) for msg in history]
 
-            # Deepcopy, tag, and filter compacted in one pass
-            history_copy = []
-            for msg in history:
-                # Filter by ID — skip messages that were compacted into the summary
-                if msg.id and msg.id in compacted_ids:
-                    continue
-                msg_copy = deepcopy(msg)
-                msg_copy.from_history = True
-                history_copy.append(msg_copy)
+            # Tag each message as coming from history
+            for _msg in history_copy:
+                _msg.from_history = True
 
             # Filter tool calls from history if limit is set (before adding to run_messages)
             if agent.max_tool_calls_from_history is not None:

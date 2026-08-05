@@ -143,6 +143,7 @@ class AgentSession:
         skip_roles: Optional[List[str]] = None,
         skip_statuses: Optional[List[RunStatus]] = None,
         skip_history_messages: bool = True,
+        skip_compacted_messages: bool = False,
     ) -> List[Message]:
         """Returns the messages belonging to the session that fit the given criteria.
 
@@ -154,10 +155,15 @@ class AgentSession:
             skip_roles: Skip messages with these roles.
             skip_statuses: Skip messages with these statuses.
             skip_history_messages: Skip messages that were tagged as history in previous runs.
+            skip_compacted_messages: Skip messages that were compacted into a summary (for model context).
 
         Returns:
             A list of Messages belonging to the session.
         """
+        # Build compacted IDs set if filtering is enabled
+        compacted_ids: set = set()
+        if skip_compacted_messages and self.compaction:
+            compacted_ids = self.compaction.compacted_message_ids
 
         def _should_skip_message(
             message: Message,
@@ -171,6 +177,10 @@ class AgentSession:
 
             # Skip messages with specified role
             if skip_roles and message.role in skip_roles:
+                return True
+
+            # Skip compacted messages (their content is in the summary)
+            if compacted_ids and message.id and message.id in compacted_ids:
                 return True
 
             return False

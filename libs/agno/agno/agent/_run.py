@@ -1739,10 +1739,6 @@ async def _arun(
                     run_context=run_context,
                 )
 
-                # 12. Commit compaction (mark messages, store summary) after model success
-                if compaction_result is not None and compaction_result.summary:
-                    compaction_result.commit(agent_session)
-
                 # We should break out of the run function
                 if any(tool_call.is_paused for tool_call in run_response.tools or []):
                     await await_for_open_threads(
@@ -6102,7 +6098,6 @@ def build_after_tool_results_callback(
             )
             if result.summary:
                 run_messages.messages[:] = result.view  # In-place swap for loop to continue
-                result.commit(session)
 
         if needs_checkpoint:
             _sync_run_response_with_model_response(run_response, run_messages, model_response)
@@ -6135,7 +6130,6 @@ def abuild_after_tool_results_callback(
             )
             if result.summary:
                 run_messages.messages[:] = result.view  # In-place swap for loop to continue
-                result.commit(session)
 
         if needs_checkpoint:
             _sync_run_response_with_model_response(run_response, run_messages, model_response)
