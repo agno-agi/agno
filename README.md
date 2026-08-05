@@ -78,7 +78,7 @@ See the [contributing guide](https://github.com/agno-agi/agno/blob/main/CONTRIBU
 
 ## License
 
-Agno is distributed under the [Apache-2.0 license](LICENSE).
+Agno is distributed under the [Apache-2.0 license](LICENSE). 
 
 ## Telemetry
 
