@@ -358,23 +358,14 @@ class DoclingReader(Reader):
             return result.document.export_to_markdown()
 
         try:
-            markdown = result.document.export_to_markdown(image_mode=ImageRefMode.REFERENCED)
+            return result.document.export_to_markdown(image_mode=ImageRefMode.REFERENCED)
         except TypeError:
+            # Older docling versions may not accept image_mode on export_to_markdown.
             log_warning("Docling export_to_markdown does not accept image_mode; exporting without it")
-            markdown = result.document.export_to_markdown()
+            return result.document.export_to_markdown()
         except Exception as e:
             log_warning(f"Docling referenced markdown export failed: {e}")
-            markdown = result.document.export_to_markdown()
-
-        if any(url in markdown for url in image_urls):
-            return markdown
-
-        # Fallback when URI rewrite did not stick (e.g. older Docling / Windows Path).
-        for url in image_urls:
-            if "<!-- image -->" not in markdown:
-                break
-            markdown = markdown.replace("<!-- image -->", f"![]({url})", 1)
-        return markdown
+            return result.document.export_to_markdown()
 
     async def async_read(
         self, file: Union[Path, str, IO[Any]], name: Optional[str] = None, content_id: Optional[str] = None
