@@ -2690,3 +2690,21 @@ async def test_framework_return_annotation_does_not_break_execution_async():
 
     assert result.status == "success", f"Expected success, got: {result.error}"
     assert isinstance(result.result, Team)
+
+
+def test_framework_return_annotation_keeps_argument_validation():
+    """A framework RETURN type must not disable validate_call: only framework
+    parameter types opt a tool out of Pydantic argument coercion."""
+    from agno.agent.agent import Agent
+
+    def spawn(count: int) -> Agent:
+        """Spawn an agent numbered by count."""
+        return Agent(name=f"agent-{count}")
+
+    func = Function(name="spawn", entrypoint=spawn)
+    func.process_entrypoint()
+
+    # String input is coerced to int by the validate_call wrapper
+    result = FunctionCall(function=func, arguments={"count": "3"}).execute()
+    assert result.status == "success", f"Expected success, got: {result.error}"
+    assert result.result.name == "agent-3"
