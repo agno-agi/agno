@@ -3461,7 +3461,6 @@ async def _arun_background(
             # Persist ERROR status
             try:
                 run_response.status = RunStatus.error
-                flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
                 await apersist_run_transition(team, "team", session_id, run_response, user_id=user_id, full_run=True)
             except Exception as e:
                 log_error(f"Failed to persist error state for background run {run_response.run_id}: {str(e)}")
@@ -3617,7 +3616,6 @@ async def _arun_background_stream(
             # Persist ERROR status
             try:
                 run_response.status = RunStatus.error
-                flush_in_flight_messages_on_error_team(run_response, locals().get("run_messages"))
                 await apersist_run_transition(team, "team", session_id, run_response, user_id=user_id, full_run=True)
             except Exception:
                 log_error(f"Failed to persist error state for background stream run {run_id}", exc_info=True)
@@ -4661,6 +4659,11 @@ def flush_in_flight_messages_on_error_team(
 
     Only sets ``run_response.messages`` when empty — preserves anything a
     mid-run hook captured.
+
+    KNOWN GAP (tombstone): see the agent twin - the detached background
+    wrappers never had run_messages in scope, their locals().get calls were
+    no-ops and are deleted; wrapper-level errors persist without in-flight
+    conversation (item-33 test target).
     """
     if run_messages is None:
         return

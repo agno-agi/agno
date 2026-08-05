@@ -2031,7 +2031,6 @@ async def _arun_background(
             # Persist ERROR status
             try:
                 run_response.status = RunStatus.error
-                flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
                 await apersist_run_transition(agent, "agent", session_id, run_response, user_id=user_id, full_run=True)
             except Exception as e:
                 log_error(f"Failed to persist error state for background run {run_response.run_id}: {str(e)}")
@@ -2193,7 +2192,6 @@ async def _arun_background_stream(
             # Persist ERROR status
             try:
                 run_response.status = RunStatus.error
-                flush_in_flight_messages_on_error(run_response, locals().get("run_messages"))
                 await apersist_run_transition(agent, "agent", session_id, run_response, user_id=user_id, full_run=True)
             except Exception:
                 log_error(f"Failed to persist error state for background stream run {run_id}", exc_info=True)
@@ -6032,6 +6030,15 @@ def flush_in_flight_messages_on_error(
     The filter ``m.add_to_agent_memory`` mirrors what the checkpoint hook
     does, so the persisted shape is consistent regardless of which path
     captured it.
+
+    KNOWN GAP (tombstone): the detached background wrappers
+    (_background_task / _background_producer) do NOT flush - run_messages
+    lives inside _arun*/_acontinue_run*, never in the wrappers' locals, so
+    their old locals().get("run_messages") calls were unconditional no-ops
+    and were deleted rather than left implying coverage. A background run
+    that errors at the WRAPPER level (outside the inner run's own error
+    handling) persists without its in-flight conversation. Threading the
+    real flush out to the wrappers is the item-33 test target.
     """
     if run_messages is None:
         return
