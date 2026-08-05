@@ -79,6 +79,7 @@ class TestSchedulerToolsInitialization:
             "delete_schedule",
             "enable_schedule",
             "disable_schedule",
+            "trigger_schedule",
             "get_schedule_runs",
         ]
         for name in expected:
@@ -93,14 +94,15 @@ class TestSchedulerToolsInitialization:
             "delete_schedule",
             "enable_schedule",
             "disable_schedule",
+            "trigger_schedule",
             "get_schedule_runs",
         ]
         for name in expected:
             assert name in async_names, f"Missing async tool: {name}"
 
     def test_tool_count(self, tools):
-        assert len(tools.functions) == 7
-        assert len(tools.async_functions) == 7
+        assert len(tools.functions) == 8
+        assert len(tools.async_functions) == 8
 
     def test_default_config(self, tools):
         assert tools.default_endpoint == "/agents/test-agent/runs"
@@ -335,6 +337,36 @@ class TestEnableDisableSchedule:
         assert "error" in result
 
 
+class TestTriggerSchedule:
+    def test_trigger_success(self, tools):
+        tools.manager.get.return_value = _make_schedule()
+
+        result = json.loads(tools.trigger_schedule("sched-001"))
+
+        assert result["status"] == "triggered"
+        assert result["id"] == "sched-001"
+        args, kwargs = tools.manager.update.call_args
+        assert args == ("sched-001",)
+        assert isinstance(kwargs["next_run_at"], int)
+
+    def test_trigger_not_found(self, tools):
+        tools.manager.get.return_value = None
+
+        result = json.loads(tools.trigger_schedule("ghost"))
+
+        assert "error" in result
+        assert "not found" in result["error"].lower()
+
+    def test_trigger_disabled(self, tools):
+        tools.manager.get.return_value = _make_schedule(enabled=False)
+
+        result = json.loads(tools.trigger_schedule("sched-001"))
+
+        assert "error" in result
+        assert "disabled" in result["error"]
+        tools.manager.update.assert_not_called()
+
+
 class TestGetScheduleRuns:
     def test_get_runs(self, tools):
         tools.manager.get_runs.return_value = [
@@ -424,3 +456,28 @@ class TestAsyncCreateSchedule:
             )
         )
         assert result["status"] == "created"
+
+
+@pytest.mark.asyncio
+class TestAsyncTriggerSchedule:
+    async def test_atrigger_success(self, tools):
+        tools.manager.aget = AsyncMock(return_value=_make_schedule())
+        tools.manager.aupdate = AsyncMock()
+
+        result = json.loads(await tools.atrigger_schedule("sched-001"))
+
+        assert result["status"] == "triggered"
+        assert result["id"] == "sched-001"
+        args, kwargs = tools.manager.aupdate.call_args
+        assert args == ("sched-001",)
+        assert isinstance(kwargs["next_run_at"], int)
+
+    async def test_atrigger_disabled(self, tools):
+        tools.manager.aget = AsyncMock(return_value=_make_schedule(enabled=False))
+        tools.manager.aupdate = AsyncMock()
+
+        result = json.loads(await tools.atrigger_schedule("sched-001"))
+
+        assert "error" in result
+        assert "disabled" in result["error"]
+        tools.manager.aupdate.assert_not_called()

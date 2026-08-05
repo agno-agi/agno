@@ -5,7 +5,9 @@ config persistence path is exercised, not mocked.
 """
 
 import json
+import time
 from datetime import datetime
+from importlib.util import find_spec
 from typing import Any, Dict
 
 import pytest
@@ -50,8 +52,18 @@ def studio_versioned(registry, db):
     return StudioTools(registry=registry, db=db, versions=True)
 
 
+@pytest.fixture
+def studio_schedules(registry, db):
+    return StudioTools(registry=registry, db=db, schedules=True)
+
+
 def _loads(s: str) -> Dict[str, Any]:
     return json.loads(s)
+
+
+def _tool(toolkit: StudioTools, name: str):
+    """The registered entrypoint for a tool -- what an agent actually calls."""
+    return toolkit.functions[name].entrypoint
 
 
 # ----------------------------------------------------------------------
@@ -80,6 +92,17 @@ VERSIONING_TOOLS = {
     "publish_component",
     "set_current_version",
     "delete_version",
+}
+
+SCHEDULE_TOOLS = {
+    "create_schedule",
+    "list_schedules",
+    "get_schedule",
+    "get_schedule_runs",
+    "trigger_schedule",
+    "enable_schedule",
+    "disable_schedule",
+    "delete_schedule",
 }
 
 
@@ -112,6 +135,28 @@ class TestInitialization:
         assert studio_versioned.enable_versions is True
         assert VERSIONING_TOOLS.issubset(set(studio_versioned.functions.keys()))
         assert VERSIONING_TOOLS.issubset(set(studio_versioned.async_functions.keys()))
+
+    def test_schedule_tools_not_registered_by_default(self, studio):
+        assert studio.enable_schedules is False
+        assert not SCHEDULE_TOOLS & set(studio.functions.keys())
+        assert not SCHEDULE_TOOLS & set(studio.async_functions.keys())
+        assert "Schedules:" not in studio.instructions
+
+    def test_schedules_flag_registers_schedule_tools(self, studio_schedules):
+        assert studio_schedules.enable_schedules is True
+        assert SCHEDULE_TOOLS.issubset(set(studio_schedules.functions.keys()))
+        assert SCHEDULE_TOOLS.issubset(set(studio_schedules.async_functions.keys()))
+        assert "Schedules:" in studio_schedules.instructions
+
+    def test_management_tools_are_shared_with_scheduler_toolkit(self, studio_schedules):
+        from agno.tools.scheduler import SchedulerTools
+
+        for tool_name in SCHEDULE_TOOLS - {"create_schedule"}:
+            sync_owner = studio_schedules.functions[tool_name].entrypoint.__self__
+            async_owner = studio_schedules.async_functions[tool_name].entrypoint.__self__
+            assert isinstance(sync_owner, SchedulerTools), tool_name
+            assert isinstance(async_owner, SchedulerTools), tool_name
+        assert studio_schedules.functions["create_schedule"].entrypoint.__self__ is studio_schedules
 
     def test_instructions_reflect_versioning_flag(self, studio, studio_versioned):
         assert "published immediately" in studio.instructions
@@ -325,6 +370,80 @@ class TestCreateAgent:
         assert out["status"] == "created"
         assert db.get_component("async-agent") is not None
 
+    def test_history_on_by_default(self, studio, db):
+        out = _loads(studio.create_agent(name="mem", instructions="i", model_id="gpt-5.4"))
+        assert out["add_history_to_context"] is True
+
+        config = db.get_config("mem")["config"]
+        assert config["add_history_to_context"] is True
+        assert config["num_history_runs"] == 3  # Agent.__init__ normalization
+
+    def test_stateless_opt_out_omits_history_from_config(self, studio, db):
+        out = _loads(
+            studio.create_agent(name="stateless", instructions="i", model_id="gpt-5.4", add_history_to_context=False)
+        )
+        assert out["add_history_to_context"] is False
+
+        # to_dict omits falsy add_history_to_context, so the key is absent.
+        config = db.get_config("stateless")["config"]
+        assert "add_history_to_context" not in config
+
+    def test_explicit_num_history_runs_round_trips(self, studio, db):
+        studio.create_agent(name="deep", instructions="i", model_id="gpt-5.4", num_history_runs=10)
+
+        config = db.get_config("deep")["config"]
+        assert config["num_history_runs"] == 10
+
+        agent = studio._load_agent_from_db("deep")
+        assert agent.add_history_to_context is True
+        assert agent.num_history_runs == 10
+
+    def test_toolkit_default_num_history_runs_applies(self, registry, db):
+        tool = StudioTools(registry=registry, db=db, default_num_history_runs=5)
+        tool.create_agent(name="five", instructions="i", model_id="gpt-5.4")
+
+        config = db.get_config("five")["config"]
+        assert config["num_history_runs"] == 5
+
+    @pytest.mark.asyncio
+    async def test_async_create_agent_stateless(self, studio, db):
+        out = _loads(
+            await studio.acreate_agent(
+                name="async-stateless", instructions="i", model_id="gpt-5.4", add_history_to_context=False
+            )
+        )
+        assert out["add_history_to_context"] is False
+        config = db.get_config("async-stateless")["config"]
+        assert "add_history_to_context" not in config
+
+    def test_datetime_on_by_default(self, studio, db):
+        out = _loads(studio.create_agent(name="dated", instructions="i", model_id="gpt-5.4"))
+        assert out["add_datetime_to_context"] is True
+
+        config = db.get_config("dated")["config"]
+        assert config["add_datetime_to_context"] is True
+
+    def test_datetime_opt_out_omits_key_from_config(self, studio, db):
+        out = _loads(
+            studio.create_agent(name="undated", instructions="i", model_id="gpt-5.4", add_datetime_to_context=False)
+        )
+        assert out["add_datetime_to_context"] is False
+
+        # to_dict omits falsy add_datetime_to_context, so the key is absent.
+        config = db.get_config("undated")["config"]
+        assert "add_datetime_to_context" not in config
+
+    @pytest.mark.asyncio
+    async def test_async_create_agent_datetime_opt_out(self, studio, db):
+        out = _loads(
+            await studio.acreate_agent(
+                name="async-undated", instructions="i", model_id="gpt-5.4", add_datetime_to_context=False
+            )
+        )
+        assert out["add_datetime_to_context"] is False
+        config = db.get_config("async-undated")["config"]
+        assert "add_datetime_to_context" not in config
+
 
 class TestToolNameResolution:
     """Multiple MCP servers in one registry must stay independently addressable."""
@@ -536,6 +655,72 @@ class TestCreateTeam:
         out = _loads(studio.create_team(name="squad", instructions="i", member_ids=[], model_id="gpt-5.4"))
         assert "error" in out
 
+    def test_history_and_datetime_on_by_default(self, studio, db):
+        self._make_members(studio)
+        out = _loads(studio.create_team(name="squad", instructions="i", member_ids=["a1"], model_id="gpt-5.4"))
+        assert out["add_history_to_context"] is True
+        assert out["add_datetime_to_context"] is True
+
+        config = db.get_config("squad")["config"]
+        assert config["add_history_to_context"] is True
+        assert config["num_history_runs"] == 3  # Team.__init__ normalization
+        assert config["add_datetime_to_context"] is True
+
+    def test_stateless_opt_out_omits_history_from_config(self, studio, db):
+        self._make_members(studio)
+        out = _loads(
+            studio.create_team(
+                name="squad",
+                instructions="i",
+                member_ids=["a1"],
+                model_id="gpt-5.4",
+                add_history_to_context=False,
+                add_datetime_to_context=False,
+            )
+        )
+        assert out["add_history_to_context"] is False
+        assert out["add_datetime_to_context"] is False
+
+        # to_dict omits falsy flags, so the keys are absent.
+        config = db.get_config("squad")["config"]
+        assert "add_history_to_context" not in config
+        assert "add_datetime_to_context" not in config
+
+    def test_explicit_num_history_runs_round_trips(self, studio, db):
+        self._make_members(studio)
+        studio.create_team(name="squad", instructions="i", member_ids=["a1"], model_id="gpt-5.4", num_history_runs=10)
+
+        config = db.get_config("squad")["config"]
+        assert config["num_history_runs"] == 10
+
+        team = studio._load_team_from_db("squad")
+        assert team.add_history_to_context is True
+        assert team.num_history_runs == 10
+
+    def test_toolkit_default_num_history_runs_applies(self, registry, db):
+        tool = StudioTools(registry=registry, db=db, default_num_history_runs=5)
+        tool.create_agent(name="a1", instructions="i", model_id="gpt-5.4")
+        tool.create_team(name="five", instructions="i", member_ids=["a1"], model_id="gpt-5.4")
+
+        config = db.get_config("five")["config"]
+        assert config["num_history_runs"] == 5
+
+    @pytest.mark.asyncio
+    async def test_async_create_team_stateless(self, studio, db):
+        self._make_members(studio)
+        out = _loads(
+            await studio.acreate_team(
+                name="async-squad",
+                instructions="i",
+                member_ids=["a1"],
+                model_id="gpt-5.4",
+                add_history_to_context=False,
+            )
+        )
+        assert out["add_history_to_context"] is False
+        config = db.get_config("async-squad")["config"]
+        assert "add_history_to_context" not in config
+
 
 class TestCreateWorkflow:
     def _make_agents(self, studio):
@@ -614,6 +799,54 @@ class TestEditAgent:
         assert draft["config"]["instructions"] == "new instructions"
         assert draft["config"]["description"] == "new description"
 
+    def test_edit_turns_history_off_and_keeps_other_fields(self, studio):
+        self._create(studio)
+        out = _loads(studio.edit_agent(agent_id="tutor", add_history_to_context=False))
+        assert out["status"] == "edited"
+
+        got = _loads(studio.get_agent("tutor"))
+        assert got["add_history_to_context"] is False
+        assert got["instructions"] == "orig"
+        assert got["tools"] == ["calculator"]
+
+    def test_edit_num_history_runs_only_keeps_history_on(self, studio):
+        self._create(studio)
+        _loads(studio.edit_agent(agent_id="tutor", num_history_runs=7))
+
+        got = _loads(studio.get_agent("tutor"))
+        assert got["add_history_to_context"] is True  # untouched from create
+        assert got["num_history_runs"] == 7
+
+    def test_history_edit_accumulates_in_same_draft(self, studio_versioned):
+        self._create(studio_versioned)
+        studio_versioned.edit_agent(agent_id="tutor", add_history_to_context=False)
+        out = _loads(studio_versioned.edit_agent(agent_id="tutor", description="new description"))
+
+        draft = _loads(studio_versioned.get_version("tutor", version=out["draft_version"]))
+        assert "add_history_to_context" not in draft["config"]  # history off survives edit 2
+        assert draft["config"]["description"] == "new description"
+
+    def test_get_agent_reports_history_settings(self, studio):
+        self._create(studio)
+        got = _loads(studio.get_agent("tutor"))
+        assert got["add_history_to_context"] is True
+        assert got["num_history_runs"] == 3
+
+    def test_edit_turns_datetime_off_and_keeps_other_fields(self, studio):
+        self._create(studio)
+        out = _loads(studio.edit_agent(agent_id="tutor", add_datetime_to_context=False))
+        assert out["status"] == "edited"
+
+        got = _loads(studio.get_agent("tutor"))
+        assert got["add_datetime_to_context"] is False
+        assert got["instructions"] == "orig"
+        assert got["tools"] == ["calculator"]
+
+    def test_get_agent_reports_datetime_setting(self, studio):
+        self._create(studio)
+        got = _loads(studio.get_agent("tutor"))
+        assert got["add_datetime_to_context"] is True
+
     def test_edit_unknown_agent_returns_error(self, studio):
         out = _loads(studio.edit_agent(agent_id="ghost", instructions="x"))
         assert "error" in out
@@ -669,6 +902,40 @@ class TestEditTeam:
         self._setup(studio)
         out = _loads(studio.edit_team(team_id="squad", member_ids=["ghost"]))
         assert "error" in out
+
+    def test_edit_turns_history_off_and_keeps_other_fields(self, studio):
+        self._setup(studio)
+        out = _loads(studio.edit_team(team_id="squad", add_history_to_context=False))
+        assert out["status"] == "edited"
+
+        got = _loads(studio.get_team("squad"))
+        assert got["add_history_to_context"] is False
+        assert got["instructions"] == "orig"
+        assert got["member_ids"] == ["a1"]
+
+    def test_edit_num_history_runs_only_keeps_history_on(self, studio):
+        self._setup(studio)
+        _loads(studio.edit_team(team_id="squad", num_history_runs=7))
+
+        got = _loads(studio.get_team("squad"))
+        assert got["add_history_to_context"] is True  # untouched from create
+        assert got["num_history_runs"] == 7
+
+    def test_get_team_reports_history_and_datetime_settings(self, studio):
+        self._setup(studio)
+        got = _loads(studio.get_team("squad"))
+        assert got["add_history_to_context"] is True
+        assert got["num_history_runs"] == 3
+        assert got["add_datetime_to_context"] is True
+
+    @pytest.mark.asyncio
+    async def test_async_edit_team_datetime_off(self, studio):
+        self._setup(studio)
+        out = _loads(await studio.aedit_team(team_id="squad", add_datetime_to_context=False))
+        assert out["status"] == "edited"
+
+        got = _loads(studio.get_team("squad"))
+        assert got["add_datetime_to_context"] is False
 
 
 class TestEditWorkflow:
@@ -796,6 +1063,177 @@ class TestVersioning:
         # v1 is published+current — DB should refuse to delete it
         out = _loads(studio_versioned.delete_version("tutor", 1))
         assert "error" in out
+
+
+# ----------------------------------------------------------------------
+# Schedules: component-aware schedule tools with schedules=True
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.skipif(
+    find_spec("croniter") is None or find_spec("pytz") is None,
+    reason="scheduler extras not installed (pip install agno[scheduler])",
+)
+class TestSchedules:
+    def _create_target_agent(self, studio, name="digest"):
+        return _loads(studio.create_agent(name=name, instructions="i", model_id="gpt-5.4"))
+
+    def _create_schedule(self, studio, **overrides):
+        params = {
+            "name": "daily-digest",
+            "cron": "0 9 * * *",
+            "target_type": "agent",
+            "target_id": "digest",
+            "message": "Send the daily digest.",
+        }
+        params.update(overrides)
+        return _loads(studio.create_schedule(**params))
+
+    def test_create_schedule_for_created_agent_persists_endpoint_and_payload(self, studio_schedules):
+        self._create_target_agent(studio_schedules)
+        out = self._create_schedule(studio_schedules)
+
+        assert out["status"] == "created"
+        assert out["target_type"] == "agent"
+        assert out["target_id"] == "digest"
+        assert out["endpoint"] == "/agents/digest/runs"
+        assert out["enabled"] is True
+
+        schedule = studio_schedules._get_schedule_manager().get(out["id"])
+        assert schedule is not None
+        assert schedule.endpoint == "/agents/digest/runs"
+        assert schedule.method == "POST"
+        assert schedule.payload == {"message": "Send the daily digest."}
+
+    def test_name_based_target_resolves_to_real_component_id(self, registry, db):
+        live = Agent(id="live-agent", name="Live Agent", model=OpenAIResponses(id="gpt-5.4"))
+        tool = StudioTools(registry=registry, db=db, agents_list=[live], schedules=True)
+
+        out = self._create_schedule(tool, target_id="Live Agent")
+        assert out["status"] == "created"
+        assert out["target_id"] == "live-agent"
+        assert out["endpoint"] == "/agents/live-agent/runs"
+
+    def test_unknown_target_returns_error(self, studio_schedules):
+        out = self._create_schedule(studio_schedules, target_id="ghost")
+        assert "error" in out
+        assert "Agent not found: ghost" in out["error"]
+
+    def test_bad_target_type_returns_error(self, studio_schedules):
+        self._create_target_agent(studio_schedules)
+        out = self._create_schedule(studio_schedules, target_type="cron-job")
+        assert "error" in out
+        assert "Invalid target_type" in out["error"]
+
+    def test_invalid_cron_returns_error(self, studio_schedules):
+        self._create_target_agent(studio_schedules)
+        out = self._create_schedule(studio_schedules, cron="not-a-cron")
+        assert "error" in out
+        assert "Invalid cron expression" in out["error"]
+
+    def test_invalid_timezone_returns_error(self, studio_schedules):
+        self._create_target_agent(studio_schedules)
+        out = self._create_schedule(studio_schedules, timezone="Mars/Olympus")
+        assert "error" in out
+        assert "Invalid timezone" in out["error"]
+
+    def test_empty_message_returns_error(self, studio_schedules):
+        self._create_target_agent(studio_schedules)
+        out = self._create_schedule(studio_schedules, message="   ")
+        assert "error" in out
+        assert "message" in out["error"]
+
+    def test_same_name_create_updates_in_place(self, studio_schedules):
+        self._create_target_agent(studio_schedules)
+        first = self._create_schedule(studio_schedules)
+        second = self._create_schedule(studio_schedules, cron="30 18 * * *")
+
+        assert second["id"] == first["id"]
+        assert second["cron"] == "30 18 * * *"
+
+        listed = _loads(_tool(studio_schedules, "list_schedules")())
+        assert listed["count"] == 1
+        assert listed["schedules"][0]["cron"] == "30 18 * * *"
+
+    def test_get_schedule_reports_endpoint_and_payload(self, studio_schedules):
+        self._create_target_agent(studio_schedules)
+        schedule_id = self._create_schedule(studio_schedules)["id"]
+
+        out = _loads(_tool(studio_schedules, "get_schedule")(schedule_id))
+        assert out["endpoint"] == "/agents/digest/runs"
+        assert out["payload"] == {"message": "Send the daily digest."}
+
+    def test_enable_disable_delete_roundtrip(self, studio_schedules):
+        self._create_target_agent(studio_schedules)
+        schedule_id = self._create_schedule(studio_schedules)["id"]
+
+        disabled = _loads(_tool(studio_schedules, "disable_schedule")(schedule_id))
+        assert disabled["status"] == "disabled"
+        assert disabled["enabled"] is False
+        assert _loads(_tool(studio_schedules, "list_schedules")(enabled_only=True))["count"] == 0
+
+        enabled = _loads(_tool(studio_schedules, "enable_schedule")(schedule_id))
+        assert enabled["status"] == "enabled"
+        assert enabled["enabled"] is True
+        assert _loads(_tool(studio_schedules, "list_schedules")(enabled_only=True))["count"] == 1
+
+        deleted = _loads(_tool(studio_schedules, "delete_schedule")(schedule_id))
+        assert deleted["status"] == "deleted"
+        assert _loads(_tool(studio_schedules, "list_schedules")())["count"] == 0
+
+    def test_delete_unknown_schedule_returns_error(self, studio_schedules):
+        out = _loads(_tool(studio_schedules, "delete_schedule")("ghost"))
+        assert "error" in out
+
+    def test_get_schedule_runs_empty_for_new_schedule(self, studio_schedules):
+        self._create_target_agent(studio_schedules)
+        schedule_id = self._create_schedule(studio_schedules)["id"]
+        out = _loads(_tool(studio_schedules, "get_schedule_runs")(schedule_id))
+        assert out["runs"] == []
+        assert out["count"] == 0
+
+    def test_trigger_sets_next_run_at_to_now(self, studio_schedules):
+        self._create_target_agent(studio_schedules)
+        schedule_id = self._create_schedule(studio_schedules)["id"]
+
+        out = _loads(_tool(studio_schedules, "trigger_schedule")(schedule_id))
+        assert out["status"] == "triggered"
+        assert out["id"] == schedule_id
+        assert "poll interval" in out["note"]
+
+        # The poller claims schedules with next_run_at <= now, so the trigger
+        # must have moved next_run_at into the claimable window.
+        schedule = studio_schedules._get_schedule_manager().get(schedule_id)
+        assert schedule.next_run_at <= int(time.time())
+
+    def test_trigger_disabled_schedule_returns_error(self, studio_schedules):
+        self._create_target_agent(studio_schedules)
+        schedule_id = self._create_schedule(studio_schedules)["id"]
+        _tool(studio_schedules, "disable_schedule")(schedule_id)
+
+        out = _loads(_tool(studio_schedules, "trigger_schedule")(schedule_id))
+        assert "error" in out
+        assert "disabled" in out["error"]
+
+    def test_trigger_unknown_schedule_returns_error(self, studio_schedules):
+        out = _loads(_tool(studio_schedules, "trigger_schedule")("ghost"))
+        assert "error" in out
+        assert "Schedule not found" in out["error"]
+
+    @pytest.mark.asyncio
+    async def test_async_create_schedule(self, studio_schedules):
+        self._create_target_agent(studio_schedules)
+        out = _loads(
+            await studio_schedules.acreate_schedule(
+                name="async-digest",
+                cron="0 9 * * *",
+                target_type="agent",
+                target_id="digest",
+                message="Send it.",
+            )
+        )
+        assert out["status"] == "created"
+        assert out["endpoint"] == "/agents/digest/runs"
 
 
 # ----------------------------------------------------------------------
