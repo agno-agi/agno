@@ -34,7 +34,11 @@ pytestmark = pytest.mark.skipif(not _pg_available(), reason="Postgres not availa
 
 @pytest.fixture()
 def db() -> AsyncPostgresDb:
-    return AsyncPostgresDb(db_url=DB_URL, session_table=f"test_prep_{uuid.uuid4().hex[:8]}")
+    # Unique RUNS table too: its FK binds to the session table name at
+    # creation time, so a shared default runs table would reference a
+    # previous test's dropped session table
+    suffix = uuid.uuid4().hex[:8]
+    return AsyncPostgresDb(db_url=DB_URL, session_table=f"test_prep_{suffix}", runs_table=f"test_prep_runs_{suffix}")
 
 
 @pytest.fixture(autouse=True)
@@ -44,6 +48,8 @@ def cleanup_table(db):
 
     engine = sqlalchemy.create_engine(DB_URL)
     with engine.begin() as conn:
+        # Runs first: it FKs the session table
+        conn.execute(sqlalchemy.text(f'DROP TABLE IF EXISTS {db.db_schema}."{db.runs_table_name}"'))
         conn.execute(sqlalchemy.text(f'DROP TABLE IF EXISTS {db.db_schema}."{db.session_table_name}"'))
     engine.dispose()
 
@@ -51,17 +57,26 @@ def cleanup_table(db):
 async def read_runs(db: AsyncPostgresDb, session_id: str):
     from sqlalchemy import select
 
-    table = await db._get_table(table_type="sessions")
+    runs_table = await db._get_table(table_type="runs")
     async with db.async_session_factory() as sess:
-        row = (await sess.execute(select(table.c.runs).where(table.c.session_id == session_id))).fetchone()
-        return list(row[0]) if row is not None and row[0] else []
+        rows = (
+            await sess.execute(
+                select(runs_table.c.run_data)
+                .where(runs_table.c.session_id == session_id)
+                .order_by(runs_table.c.run_index)
+            )
+        ).fetchall()
+        return [dict(r[0]) for r in rows]
 
 
 async def worker_completes_run(db: AsyncPostgresDb, session_id: str, run_id: str) -> None:
-    """Simulate the racing worker: session row created with the run already
-    COMPLETED (claim + execute + terminal save, all inside the accepting
-    request's read-save window)."""
+    """Simulate the racing worker on the v3 substrate: session row plus a
+    COMPLETED run in the runs table (claim + execute + terminal save, all
+    inside the accepting request's read window)."""
+    import time as _time
+
     table = await db._get_table(table_type="sessions", create_table_if_not_found=True)
+    runs_table = await db._get_table(table_type="runs", create_table_if_not_found=True)
     async with db.async_session_factory() as sess:
         async with sess.begin():
             await sess.execute(
@@ -69,8 +84,19 @@ async def worker_completes_run(db: AsyncPostgresDb, session_id: str, run_id: str
                     session_id=session_id,
                     session_type="agent",
                     agent_id="prep-agent",
-                    runs=[{"run_id": run_id, "status": "COMPLETED", "content": "done"}],
-                    created_at=int(time.time()),
+                    created_at=int(_time.time()),
+                )
+            )
+            await sess.execute(
+                runs_table.insert().values(
+                    run_id=run_id,
+                    session_id=session_id,
+                    run_type="agent",
+                    agent_id="prep-agent",
+                    status="COMPLETED",
+                    run_index=0,
+                    run_data={"run_id": run_id, "status": "COMPLETED", "content": "done"},
+                    created_at=int(_time.time()),
                 )
             )
 
@@ -145,8 +171,70 @@ class TestInsertSessionIfAbsentContract:
     def test_insert_then_decline_sync(self, db):
         from agno.session import AgentSession
 
-        sync_db = PostgresDb(db_url=DB_URL, session_table=db.session_table_name)
+        sync_db = PostgresDb(db_url=DB_URL, session_table=db.session_table_name, runs_table=db.runs_table_name)
         sid = f"s-{uuid.uuid4().hex[:8]}"
         session = AgentSession(session_id=sid, agent_id="a1", runs=[], created_at=int(time.time()))
         assert sync_db.insert_session_if_absent(session) is True
         assert sync_db.insert_session_if_absent(session) is False
+
+
+class TestLegacyFallbackOrdersSessionBeforeRun:
+    """Adapters WITHOUT the atomic primitives (hidden here via monkeypatch)
+    take the legacy create-and-save path. On the FK-backed v3 runs table the
+    run insert is rejected until its session row exists - and the per-run
+    save helpers only LOG that failure, so the old run-first order left the
+    202'd run unpollable while the response claimed acceptance."""
+
+    def _hide_primitives(self, monkeypatch, db):
+        monkeypatch.setattr(db, "append_run_to_session_if_absent", None)
+        monkeypatch.setattr(db, "insert_session_if_absent", None)
+
+    @pytest.mark.asyncio
+    async def test_agent_fallback_lands_pending_run_row(self, db, monkeypatch):
+        from agno.os.job_queue import aprepare_queued_run
+
+        self._hide_primitives(monkeypatch, db)
+        session_id = f"s-{uuid.uuid4().hex[:8]}"
+        run_id = f"r-{uuid.uuid4().hex[:8]}"
+        agent = Agent(id="prep-agent", name="Prep Agent", db=db)
+
+        await aprepare_queued_run(agent, "agent", run_id, session_id, None, "hello")
+
+        runs = await read_runs(db, session_id)
+        assert len(runs) == 1 and runs[0]["run_id"] == run_id, (
+            "legacy fallback must save the session row BEFORE the run row - "
+            "run-first FK-fails silently and the accepted run is unpollable"
+        )
+        assert str(runs[0]["status"]).upper() == "PENDING"
+
+    @pytest.mark.asyncio
+    async def test_team_fallback_lands_pending_run_row(self, db, monkeypatch):
+        from agno.os.job_queue import aprepare_queued_run
+        from agno.team import Team
+
+        self._hide_primitives(monkeypatch, db)
+        session_id = f"s-{uuid.uuid4().hex[:8]}"
+        run_id = f"r-{uuid.uuid4().hex[:8]}"
+        team = Team(id="prep-team", name="Prep Team", members=[], db=db)
+
+        await aprepare_queued_run(team, "team", run_id, session_id, None, "hello")
+
+        runs = await read_runs(db, session_id)
+        assert len(runs) == 1 and runs[0]["run_id"] == run_id
+        assert str(runs[0]["status"]).upper() == "PENDING"
+
+    @pytest.mark.asyncio
+    async def test_workflow_fallback_lands_pending_run_row(self, db, monkeypatch):
+        from agno.os.job_queue import aprepare_queued_run
+        from agno.workflow import Workflow
+
+        self._hide_primitives(monkeypatch, db)
+        session_id = f"s-{uuid.uuid4().hex[:8]}"
+        run_id = f"r-{uuid.uuid4().hex[:8]}"
+        workflow = Workflow(id="prep-wf", name="Prep Workflow", db=db, steps=[])
+
+        await aprepare_queued_run(workflow, "workflow", run_id, session_id, None, "hello")
+
+        runs = await read_runs(db, session_id)
+        assert len(runs) == 1 and runs[0]["run_id"] == run_id
+        assert str(runs[0]["status"]).upper() == "PENDING"

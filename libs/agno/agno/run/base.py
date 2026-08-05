@@ -353,3 +353,16 @@ class RunStatus(str, Enum):
     # history-builders can skip it when rebuilding context. Pass replace_original=false
     # to keep the original COMPLETED and visible instead.
     regenerated = "REGENERATED"
+
+
+# Canonical set of run statuses excluded when rebuilding message history/context.
+# Single source of truth: session.get_messages (agent + team) and the DB-level
+# bounded-history read (agno.db.utils.HISTORY_SKIP_STATUSES) both derive from this,
+# so the full-load and "most recent N" read paths can never return different
+# history windows for the same session.
+HISTORY_SKIP_STATUSES: list["RunStatus"] = [
+    RunStatus.paused,
+    RunStatus.cancelled,
+    RunStatus.error,
+    RunStatus.regenerated,
+]

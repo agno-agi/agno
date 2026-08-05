@@ -22,11 +22,49 @@ SESSION_TABLE_SCHEMA = {
     "team_data": {"type": JSONB, "nullable": True},
     "workflow_data": {"type": JSONB, "nullable": True},
     "metadata": {"type": JSONB, "nullable": True},
-    "runs": {"type": JSONB, "nullable": True},
     "summary": {"type": JSONB, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
 }
+
+
+def _get_run_table_schema(session_table_name: str = "agno_sessions") -> dict[str, Any]:
+    """Runs table schema; ``session_id`` foreign-keyed to sessions with
+    ON DELETE CASCADE.
+
+    Factory (not module-level dict) so the FK reference binds to the
+    caller-configured ``session_table`` name at build time. Matches the
+    pattern used by ``_get_schedule_runs_table_schema``.
+    """
+    return {
+        "run_id": {"type": String, "primary_key": True, "nullable": False},
+        "session_id": {
+            "type": String,
+            "nullable": False,
+            "index": True,
+            # Use the concrete table name so the FK reference works uniformly
+            # across adapters (some have a logical-name resolver, some don't).
+            "foreign_key": f"{session_table_name}.session_id",
+            "ondelete": "CASCADE",
+        },
+        "run_type": {"type": String, "nullable": False, "index": True},
+        "agent_id": {"type": String, "nullable": True, "index": True},
+        "team_id": {"type": String, "nullable": True, "index": True},
+        "workflow_id": {"type": String, "nullable": True, "index": True},
+        "user_id": {"type": String, "nullable": True, "index": True},
+        "parent_run_id": {"type": String, "nullable": True},
+        "status": {"type": String, "nullable": True, "index": True},
+        "run_index": {"type": BigInteger, "nullable": True},
+        "run_data": {"type": JSONB, "nullable": False},
+        "created_at": {"type": BigInteger, "nullable": False, "index": True},
+        "updated_at": {"type": BigInteger, "nullable": True},
+        # Composite index so "most recent N runs of a session"
+        # (WHERE session_id=? ORDER BY run_index DESC LIMIT N) is index-served.
+        "__composite_indexes__": [
+            {"name": "agno_runs_session_id_run_index", "columns": ["session_id", "run_index"]},
+        ],
+    }
+
 
 MEMORY_TABLE_SCHEMA = {
     "memory_id": {"type": String, "primary_key": True, "nullable": False},
@@ -53,6 +91,7 @@ EVAL_TABLE_SCHEMA = {
     "model_id": {"type": String, "nullable": True},
     "model_provider": {"type": String, "nullable": True},
     "evaluated_component_name": {"type": String, "nullable": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
 }
@@ -401,6 +440,7 @@ def get_table_schema_definition(
     traces_table_name: str = "agno_traces",
     db_schema: str = "agno",
     schedules_table_name: str = "agno_schedules",
+    session_table_name: str = "agno_sessions",
 ) -> dict[str, Any]:
     """
     Get the expected schema definition for the given table.
@@ -409,6 +449,8 @@ def get_table_schema_definition(
         table_type (str): The type of table to get the schema for.
         traces_table_name (str): The name of the traces table (used for spans foreign key).
         db_schema (str): The database schema name (used for spans foreign key).
+        session_table_name (str): The name of the sessions table (used for the
+            runs table's ``session_id`` foreign key).
 
     Returns:
         Dict[str, Any]: Dictionary containing column definitions for the table
@@ -418,9 +460,12 @@ def get_table_schema_definition(
         return _get_span_table_schema(traces_table_name, db_schema)
     if table_type == "schedule_runs":
         return _get_schedule_runs_table_schema(schedules_table_name, db_schema)
+    if table_type == "runs":
+        return _get_run_table_schema(session_table_name)
 
     schemas = {
         "sessions": SESSION_TABLE_SCHEMA,
+        # "runs" is handled by _get_run_table_schema above (needs session_table_name)
         "evals": EVAL_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
         "memories": MEMORY_TABLE_SCHEMA,

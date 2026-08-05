@@ -29,6 +29,7 @@ def make_workflow_agent_workflow(monkeypatch, executed: dict, mode: str = "persi
     class FakeSession:
         def __init__(self, session_id):
             self.session_id = session_id
+            self.user_id = None  # v3 helpers read session.user_id
             self.runs = []
 
         def upsert_run(self, run=None, **kw):

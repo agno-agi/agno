@@ -19,11 +19,39 @@ SESSION_TABLE_SCHEMA = {
     "team_data": {"type": JSON, "nullable": True},
     "workflow_data": {"type": JSON, "nullable": True},
     "metadata": {"type": JSON, "nullable": True},
-    "runs": {"type": JSON, "nullable": True},
     "summary": {"type": JSON, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
 }
+
+
+def _get_run_table_schema(session_table_name: str = "agno_sessions") -> dict[str, Any]:
+    """Runs table schema with ``session_id`` FK → sessions ON DELETE CASCADE."""
+    return {
+        "run_id": {"type": lambda: String(128), "primary_key": True, "nullable": False},
+        "session_id": {
+            "type": lambda: String(128),
+            "nullable": False,
+            "index": True,
+            "foreign_key": f"{session_table_name}.session_id",
+            "ondelete": "CASCADE",
+        },
+        "run_type": {"type": lambda: String(20), "nullable": False, "index": True},
+        "agent_id": {"type": lambda: String(128), "nullable": True, "index": True},
+        "team_id": {"type": lambda: String(128), "nullable": True, "index": True},
+        "workflow_id": {"type": lambda: String(128), "nullable": True, "index": True},
+        "user_id": {"type": lambda: String(128), "nullable": True, "index": True},
+        "parent_run_id": {"type": lambda: String(128), "nullable": True},
+        "status": {"type": lambda: String(50), "nullable": True, "index": True},
+        "run_index": {"type": BigInteger, "nullable": True},
+        "run_data": {"type": JSON, "nullable": False},
+        "created_at": {"type": BigInteger, "nullable": False, "index": True},
+        "updated_at": {"type": BigInteger, "nullable": True},
+        "_composite_indexes": [
+            {"name": "runs_session_id_run_index", "columns": ["session_id", "run_index"]},
+        ],
+    }
+
 
 USER_MEMORY_TABLE_SCHEMA = {
     "memory_id": {"type": lambda: String(128), "primary_key": True, "nullable": False},
@@ -52,6 +80,7 @@ EVAL_TABLE_SCHEMA = {
     "evaluated_component_name": {"type": lambda: String(255), "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
+    "user_id": {"type": lambda: String(128), "nullable": True, "index": True},
 }
 
 KNOWLEDGE_TABLE_SCHEMA = {
@@ -163,7 +192,10 @@ def _get_span_table_schema(traces_table_name: str = "agno_traces", db_schema: st
 
 
 def get_table_schema_definition(
-    table_type: str, traces_table_name: str = "agno_traces", db_schema: str = "agno"
+    table_type: str,
+    traces_table_name: str = "agno_traces",
+    db_schema: str = "agno",
+    session_table_name: str = "agno_sessions",
 ) -> dict[str, Any]:
     """
     Get the expected schema definition for the given table.
@@ -172,6 +204,8 @@ def get_table_schema_definition(
         table_type (str): The type of table to get the schema for.
         traces_table_name (str): The name of the traces table (used for spans foreign key).
         db_schema (str): The database schema name (used for spans foreign key).
+        session_table_name (str): The name of the sessions table (used for the
+            runs table's ``session_id`` foreign key).
 
     Returns:
         Dict[str, Any]: Dictionary containing column definitions for the table
@@ -179,9 +213,12 @@ def get_table_schema_definition(
     # Handle spans table specially to resolve the foreign key reference
     if table_type == "spans":
         return _get_span_table_schema(traces_table_name, db_schema)
+    if table_type == "runs":
+        return _get_run_table_schema(session_table_name)
 
     schemas = {
         "sessions": SESSION_TABLE_SCHEMA,
+        # "runs" is handled by _get_run_table_schema above (needs session_table_name)
         "evals": EVAL_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
         "memories": USER_MEMORY_TABLE_SCHEMA,

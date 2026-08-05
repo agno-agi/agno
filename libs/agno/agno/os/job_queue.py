@@ -740,7 +740,7 @@ class QueueWorker:
 
         component_type = job["component_type"]
         if component_type == "agent":
-            from agno.agent._session import asave_session
+            from agno.agent._session import asave_run, asave_session
             from agno.agent._storage import aread_or_create_session
             from agno.run.agent import RunOutput
 
@@ -750,10 +750,14 @@ class QueueWorker:
                 run.status = RunStatus.cancelled if status == "cancelled" else RunStatus.error
                 run.content = run.content or error
                 session.upsert_run(run=run)
+                # v3 substrate: the run persists via the O(1) per-run save;
+                # asave_session writes only the session row
+                await asave_run(component, run=run, session_id=job["session_id"], user_id=job.get("user_id"))
                 await asave_session(component, session=session)
             # No row (nothing to orphan) or already terminal: not stuck
         elif component_type == "team":
             from agno.run.team import TeamRunOutput
+            from agno.team._session import asave_run as team_asave_run
             from agno.team._session import asave_session as team_asave_session
             from agno.team._storage import _aread_or_create_session
 
@@ -768,6 +772,7 @@ class QueueWorker:
                 team_run.status = RunStatus.cancelled if status == "cancelled" else RunStatus.error
                 team_run.content = team_run.content or error
                 team_session.upsert_run(run_response=team_run)
+                await team_asave_run(component, run=team_run, session_id=job["session_id"], user_id=job.get("user_id"))
                 await team_asave_session(component, session=team_session)
         elif component_type == "workflow":
             # Read-only load first: _aload_or_create_session(session_state=None)
@@ -783,8 +788,12 @@ class QueueWorker:
                 workflow_run.content = workflow_run.content or error
                 workflow_session.upsert_run(run=workflow_run)
                 if component._has_async_db():
+                    await component.asave_run(
+                        run=workflow_run, session_id=job["session_id"], user_id=job.get("user_id")
+                    )
                     await component.asave_session(session=workflow_session)
                 else:
+                    component.save_run(run=workflow_run, session_id=job["session_id"], user_id=job.get("user_id"))
                     component.save_session(session=workflow_session)
         return True
 
@@ -877,9 +886,11 @@ class QueueWorker:
                 workflow_run.status = RunStatus.paused
                 workflow_session.upsert_run(run=workflow_run)
                 if component._has_async_db():
-                    await component.asave_session(session=workflow_session)
+                    await component.asave_run(
+                        run=workflow_run, session_id=job["session_id"], user_id=job.get("user_id")
+                    )
                 else:
-                    component.save_session(session=workflow_session)
+                    component.save_run(run=workflow_run, session_id=job["session_id"], user_id=job.get("user_id"))
                 log_info(f"Job queue: restored run row {job['id']} ERROR -> PAUSED for continuation re-drive")
         except Exception as e:
             log_warning(f"Job queue: could not restore paused run row for continuation {job.get('id')}: {e}")
@@ -888,10 +899,12 @@ class QueueWorker:
     def _continuation_kwargs(job: Dict[str, Any]) -> Dict[str, Any]:
         """Rebuild acontinue_run kwargs from the ticket's merged
         payload["continue"] block, mirroring each HTTP endpoint's own parsing:
-        agents rebuild updated_tools (ToolExecution), teams rebuild
-        requirements (RunRequirement), workflows rebuild step_requirements
-        (StepRequirement). The raw client JSON is what the seam stored, so
-        the worker reconstructs exactly what the inline path would have."""
+        agents wrap the stored updated_tools JSON into requirements
+        (RunRequirement around ToolExecution, exactly like the inline
+        endpoint), teams rebuild requirements (RunRequirement), workflows
+        rebuild step_requirements (StepRequirement). The raw client JSON is
+        what the seam stored, so the worker reconstructs exactly what the
+        inline path would have."""
         cont = (job.get("payload") or {}).get("continue") or {}
         component_type = job.get("component_type")
         kwargs: Dict[str, Any] = dict(run_id=job["id"], session_id=job["session_id"])
@@ -909,8 +922,13 @@ class QueueWorker:
             tools = cont.get("updated_tools")
             if tools:
                 from agno.models.response import ToolExecution
+                from agno.run.requirement import RunRequirement
 
-                kwargs["updated_tools"] = [ToolExecution.from_dict(t) for t in tools]
+                # v3's acontinue_run consumes only `requirements`; a bare
+                # updated_tools kwarg falls into **kwargs and the continue
+                # dead-letters as unresolved-HITL. Same conversion as the
+                # inline endpoint (agents/router.py).
+                kwargs["requirements"] = [RunRequirement(tool_execution=ToolExecution.from_dict(t)) for t in tools]
         else:  # team
             reqs = cont.get("requirements")
             if reqs:
@@ -1630,7 +1648,7 @@ async def aprepare_queued_run(
     from agno.run.base import RunStatus
 
     if component_type == "agent":
-        from agno.agent._session import asave_session
+        from agno.agent._session import asave_run, asave_session
         from agno.agent._storage import aread_or_create_session, update_metadata
         from agno.run.agent import RunInput, RunOutput
 
@@ -1661,10 +1679,19 @@ async def aprepare_queued_run(
         # Legacy create-and-save: adapters without the atomic primitives only
         if session.get_run(run_id) is not None:
             return
+        from agno.session._utils import resolve_run_index
+
         session.upsert_run(run=run_response_early)
+        # Session row FIRST: on FK-backed runs tables (v3) the run insert is
+        # rejected until its session row exists, and asave_run only logs the
+        # failure - the 202'd run would be unpollable. Same order as the
+        # normal producer flow (asave_session, then asave_run with index).
+        run_index = resolve_run_index(session, run_response_early)
         await asave_session(component, session=session)
+        await asave_run(component, run=run_response_early, session_id=session_id, user_id=user_id, run_index=run_index)
     elif component_type == "team":
         from agno.run.team import TeamRunInput, TeamRunOutput
+        from agno.team._session import asave_run as team_asave_run
         from agno.team._session import asave_session as team_asave_session
         from agno.team._storage import _aread_or_create_session, _update_metadata
 
@@ -1688,8 +1715,15 @@ async def aprepare_queued_run(
                 return
         if team_session.get_run(run_id) is not None:
             return
+        from agno.session._utils import resolve_run_index
+
         team_session.upsert_run(run_response=team_run_early)
+        # Session row first - see the agent branch for the FK rationale
+        team_run_index = resolve_run_index(team_session, team_run_early)
         await team_asave_session(component, session=team_session)
+        await team_asave_run(
+            component, run=team_run_early, session_id=session_id, user_id=user_id, run_index=team_run_index
+        )
     elif component_type == "workflow":
         from datetime import datetime
 
@@ -1718,10 +1752,13 @@ async def aprepare_queued_run(
         if workflow_session.get_run(run_id) is not None:
             return
         workflow_session.upsert_run(run=workflow_run_early)
+        # Session row first, then the run row with its resolved index: the
+        # workflow's own combined persist helper (FK-safe on v3 - a bare
+        # asave_run against a missing session row is rejected and only logged)
         if component._has_async_db():
-            await component.asave_session(session=workflow_session)
+            await component._apersist_session_and_run(workflow_session, workflow_run_early)
         else:
-            component.save_session(session=workflow_session)
+            component._persist_session_and_run(workflow_session, workflow_run_early)
     else:
         raise ValueError(f"Unknown component type: {component_type}")
 

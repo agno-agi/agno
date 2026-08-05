@@ -18,7 +18,7 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.os.app import AgentOS
 from agno.team import Team
-from agno.workflow import Workflow
+from agno.workflow import HumanReview, Workflow
 from agno.workflow.step import Step
 
 
@@ -1603,7 +1603,7 @@ class TestCustomExecutorWithInternalAgentTeam:
             name="continue-step-id-workflow",
             id="continue-step-id-workflow-id",
             db=db,
-            steps=[Step(name="gated", executor=my_func, requires_confirmation=True)],
+            steps=[Step(name="gated", executor=my_func, human_review=HumanReview(requires_confirmation=True))],
         )
 
         # The OS run route deep-copies per request
