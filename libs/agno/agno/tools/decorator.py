@@ -75,6 +75,7 @@ def tool(
     pre_hook: Optional[Callable] = None,
     post_hook: Optional[Callable] = None,
     tool_hooks: Optional[List[Callable]] = None,
+    max_calls: Optional[int] = None,
     cache_results: bool = False,
     cache_dir: Optional[str] = None,
     cache_ttl: int = 3600,
@@ -104,6 +105,7 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
         pre_hook: Optional[Callable] - Hook that runs before the function is executed.
         post_hook: Optional[Callable] - Hook that runs after the function is executed.
         tool_hooks: Optional[List[Callable]] - List of hooks that run before and after the function is executed.
+        max_calls: Optional[int] - Maximum number of calls allowed per run. Set to 0 to disable the tool for the run.
         cache_results: bool - If True, enable caching of function results
         cache_dir: Optional[str] - Directory to store cache files
         cache_ttl: int - Time-to-live for cached results in seconds
@@ -142,6 +144,7 @@ def tool(*args, **kwargs) -> Union[Function, Callable[[F], Function]]:
             "pre_hook",
             "post_hook",
             "tool_hooks",
+            "max_calls",
             "cache_results",
             "cache_dir",
             "cache_ttl",

@@ -693,6 +693,7 @@ class Model(ABC):
         model_response = ModelResponse()
 
         function_call_count = 0
+        per_tool_call_counts: Dict[str, int] = {}
 
         _tool_dicts = self._format_tools(tools) if tools is not None else []
         _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
@@ -753,6 +754,7 @@ class Model(ABC):
                     function_call_results=function_call_results,
                     current_function_call_count=function_call_count,
                     function_call_limit=tool_call_limit,
+                    per_tool_call_counts=per_tool_call_counts,
                 ):
                     if isinstance(function_call_response, ModelResponse):
                         # The session state is updated by the function call
@@ -921,6 +923,7 @@ class Model(ABC):
         _compression_manager = compression_manager if _compress_tool_results else None
 
         function_call_count = 0
+        per_tool_call_counts: Dict[str, int] = {}
 
         while True:
             # Compress existing tool results BEFORE making API call to avoid context overflow
@@ -975,6 +978,7 @@ class Model(ABC):
                     function_call_results=function_call_results,
                     current_function_call_count=function_call_count,
                     function_call_limit=tool_call_limit,
+                    per_tool_call_counts=per_tool_call_counts,
                 ):
                     if isinstance(function_call_response, ModelResponse):
                         # The session state is updated by the function call
@@ -1410,6 +1414,7 @@ class Model(ABC):
         _compression_manager = compression_manager if _compress_tool_results else None
 
         function_call_count = 0
+        per_tool_call_counts: Dict[str, int] = {}
 
         while True:
             # Compress existing tool results BEFORE invoke
@@ -1518,6 +1523,7 @@ class Model(ABC):
                     function_call_results=function_call_results,
                     current_function_call_count=function_call_count,
                     function_call_limit=tool_call_limit,
+                    per_tool_call_counts=per_tool_call_counts,
                 ):
                     if self.cache_response and isinstance(function_call_response, ModelResponse):
                         streaming_responses.append(function_call_response)
@@ -1689,6 +1695,7 @@ class Model(ABC):
         _compression_manager = compression_manager if _compress_tool_results else None
 
         function_call_count = 0
+        per_tool_call_counts: Dict[str, int] = {}
 
         while True:
             # Compress existing tool results BEFORE making API call to avoid context overflow
@@ -1797,6 +1804,7 @@ class Model(ABC):
                     function_call_results=function_call_results,
                     current_function_call_count=function_call_count,
                     function_call_limit=tool_call_limit,
+                    per_tool_call_counts=per_tool_call_counts,
                 ):
                     if self.cache_response and isinstance(function_call_response, ModelResponse):
                         streaming_responses.append(function_call_response)
@@ -2130,6 +2138,37 @@ class Model(ABC):
             tool_call_error=True,
         )
 
+    def create_per_tool_call_limit_error_result(self, function_call: FunctionCall, max_calls: int) -> Message:
+        return Message(
+            role=self.tool_message_role,
+            content=(
+                f"Per-tool call limit reached for {function_call.function.name} "
+                f"(max_calls={max_calls}). Tool call not executed. Don't try to execute it again."
+            ),
+            tool_call_id=function_call.call_id,
+            tool_name=function_call.function.name,
+            tool_args=function_call.arguments,
+            tool_call_error=True,
+        )
+
+    def _reserve_tool_call(
+        self,
+        function_call: FunctionCall,
+        per_tool_call_counts: Dict[str, int],
+    ) -> Optional[Message]:
+        """Reserve one call for a tool, returning an error result when its limit is exhausted."""
+        max_calls = function_call.function.max_calls
+        if max_calls is None:
+            return None
+
+        tool_name = function_call.function.name
+        current_call_count = per_tool_call_counts.get(tool_name, 0)
+        if current_call_count >= max_calls:
+            return self.create_per_tool_call_limit_error_result(function_call, max_calls)
+
+        per_tool_call_counts[tool_name] = current_call_count + 1
+        return None
+
     def run_function_call(
         self,
         function_call: FunctionCall,
@@ -2317,10 +2356,13 @@ class Model(ABC):
         additional_input: Optional[List[Message]] = None,
         current_function_call_count: int = 0,
         function_call_limit: Optional[int] = None,
+        per_tool_call_counts: Optional[Dict[str, int]] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         # Additional messages from function calls that will be added to the function call results
         if additional_input is None:
             additional_input = []
+        if per_tool_call_counts is None:
+            per_tool_call_counts = {}
 
         for fc in function_calls:
             if function_call_limit is not None:
@@ -2333,6 +2375,11 @@ class Model(ABC):
                     )
                     function_call_results.append(self.create_tool_call_limit_error_result(fc))
                     continue
+
+            per_tool_limit_error = self._reserve_tool_call(fc, per_tool_call_counts)
+            if per_tool_limit_error is not None:
+                function_call_results.append(per_tool_limit_error)
+                continue
 
             paused_tool_executions = []
 
@@ -2514,11 +2561,14 @@ class Model(ABC):
         additional_input: Optional[List[Message]] = None,
         current_function_call_count: int = 0,
         function_call_limit: Optional[int] = None,
+        per_tool_call_counts: Optional[Dict[str, int]] = None,
         skip_pause_check: bool = False,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         # Additional messages from function calls that will be added to the function call results
         if additional_input is None:
             additional_input = []
+        if per_tool_call_counts is None:
+            per_tool_call_counts = {}
 
         function_calls_to_run = []
         for fc in function_calls:
@@ -2533,6 +2583,11 @@ class Model(ABC):
                     function_call_results.append(self.create_tool_call_limit_error_result(fc))
                     # Skip this function call
                     continue
+
+            per_tool_limit_error = self._reserve_tool_call(fc, per_tool_call_counts)
+            if per_tool_limit_error is not None:
+                function_call_results.append(per_tool_limit_error)
+                continue
             function_calls_to_run.append(fc)
 
         # Yield tool_call_started events for all function calls or pause them

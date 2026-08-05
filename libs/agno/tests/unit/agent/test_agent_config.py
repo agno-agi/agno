@@ -218,6 +218,29 @@ class TestAgentToDict:
         assert config["user_id"] == "user-123"
         assert config["session_id"] == "session-456"
 
+    def test_tool_max_calls_roundtrip(self):
+        """Agent config serialization should persist per-tool max_calls."""
+        from agno.models.openai import OpenAIChat
+        from agno.tools.function import Function
+
+        def search_tool(query: str) -> str:
+            return query
+
+        function = Function.from_callable(search_tool, max_calls=2)
+        agent = Agent(
+            id="tool-limit-agent",
+            model=OpenAIChat(id="gpt-4o-mini"),
+            tools=[function],
+        )
+
+        config = agent.to_dict()
+        reconstructed = Agent.from_dict(config, registry=Registry(tools=[function]))
+
+        assert config["tools"][0]["name"] == "search_tool"
+        assert config["tools"][0]["max_calls"] == 2
+        assert reconstructed.tools is not None
+        assert reconstructed.tools[0].max_calls == 2
+
 
 # =============================================================================
 # from_dict() Tests

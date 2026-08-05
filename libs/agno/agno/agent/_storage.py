@@ -561,7 +561,7 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         for tool in _tools:
             try:
                 if isinstance(tool, Function):
-                    serialized_tools.append(tool.to_dict())
+                    serialized_tools.append(tool.to_dict(include_max_calls=True))
                 else:
                     serialized_tools.append(tool)
             except Exception as e:

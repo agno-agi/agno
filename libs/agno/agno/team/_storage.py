@@ -549,10 +549,10 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         for tool in team.tools:
             try:
                 if isinstance(tool, Function):
-                    serialized_tools.append(tool.to_dict())
+                    serialized_tools.append(tool.to_dict(include_max_calls=True))
                 elif isinstance(tool, Toolkit):
                     for func in tool.functions.values():
-                        serialized_tools.append(func.to_dict())
+                        serialized_tools.append(func.to_dict(include_max_calls=True))
                 elif callable(tool):
                     func = Function.from_callable(tool)
                     serialized_tools.append(func.to_dict())

@@ -381,6 +381,15 @@ class TestRehydrateFunction:
         assert rehydrated.name == function_tool.name
         assert rehydrated.description == function_tool.description
 
+    def test_rehydrate_function_preserves_max_calls(self, function_tool):
+        """Execution config serialization should preserve per-tool max_calls."""
+        reg = Registry(tools=[function_tool])
+
+        function_tool.max_calls = 3
+        rehydrated = reg.rehydrate_function(function_tool.to_dict(include_max_calls=True))
+
+        assert rehydrated.max_calls == 3
+
     def test_rehydrate_multiple_functions(self):
         """Test rehydrating multiple functions."""
         reg = Registry(tools=[sample_function, another_function, search_function])

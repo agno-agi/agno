@@ -185,6 +185,13 @@ class Function(BaseModel):
     # If True, the function will be executed outside the agent's control.
     external_execution: Optional[bool] = None
 
+    # Maximum number of times this tool can be called during a single run.
+    max_calls: Optional[int] = Field(
+        default=None,
+        ge=0,
+        description="Maximum number of calls allowed per run. Set to 0 to disable the tool for the run.",
+    )
+
     # If True (and external_execution=True), the function will not produce verbose paused messages (e.g., "I have tools to execute...")
     external_execution_silent: Optional[bool] = None
 
@@ -211,18 +218,23 @@ class Function(BaseModel):
     _audios: Optional[Sequence[Audio]] = None
     _files: Optional[Sequence[File]] = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, include_max_calls: bool = False) -> Dict[str, Any]:
+        include_fields = {
+            "name",
+            "description",
+            "parameters",
+            "strict",
+            "requires_confirmation",
+            "external_execution",
+            "approval_type",
+        }
+        # max_calls is Agno execution config and must not be sent in provider tool schemas.
+        if include_max_calls:
+            include_fields.add("max_calls")
+
         return self.model_dump(
             exclude_none=True,
-            include={
-                "name",
-                "description",
-                "parameters",
-                "strict",
-                "requires_confirmation",
-                "external_execution",
-                "approval_type",
-            },
+            include=include_fields,
         )
 
     @classmethod
@@ -237,6 +249,7 @@ class Function(BaseModel):
             requires_confirmation=data.get("requires_confirmation", False),
             external_execution=data.get("external_execution", False),
             approval_type=data.get("approval_type"),
+            max_calls=data.get("max_calls"),
         )
 
     def model_copy(self, *, deep: bool = False) -> "Function":
@@ -280,7 +293,9 @@ class Function(BaseModel):
             return super().model_copy(deep=False)
 
     @classmethod
-    def from_callable(cls, c: Callable, name: Optional[str] = None, strict: bool = False) -> "Function":
+    def from_callable(
+        cls, c: Callable, name: Optional[str] = None, strict: bool = False, max_calls: Optional[int] = None
+    ) -> "Function":
         from inspect import getdoc, signature
 
         from agno.utils.json_schema import get_json_schema
@@ -396,6 +411,7 @@ class Function(BaseModel):
             description=get_entrypoint_docstring(entrypoint=c),
             parameters=parameters,
             entrypoint=entrypoint,
+            max_calls=max_calls,
         )
 
     def process_entrypoint(self, strict: bool = False):

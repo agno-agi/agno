@@ -281,6 +281,25 @@ class TestTeamToDict:
         assert config["mode"] == "tasks"
         assert config["max_iterations"] == 20
 
+    def test_toolkit_max_calls_roundtrip(self):
+        """Team config serialization should persist max_calls on toolkit functions."""
+        from agno.tools import Toolkit, tool
+
+        @tool(max_calls=2)
+        def search_tool(query: str) -> str:
+            return query
+
+        toolkit = Toolkit(name="search", tools=[search_tool])
+        team = Team(id="tool-limit-team", members=[], tools=[toolkit])
+
+        config = team.to_dict()
+        reconstructed = Team.from_dict(config, registry=Registry(tools=[toolkit]))
+
+        assert config["tools"][0]["name"] == "search_tool"
+        assert config["tools"][0]["max_calls"] == 2
+        assert reconstructed.tools is not None
+        assert reconstructed.tools[0].max_calls == 2
+
     def test_to_dict_mode_default_not_serialized(self):
         """Test that default max_iterations is not serialized."""
         from agno.team.mode import TeamMode
