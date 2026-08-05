@@ -556,9 +556,8 @@ def to_dict(team: "Team") -> Dict[str, Any]:
                         func_dict["toolkit"] = tool.owning_toolkit
                     serialized_tools.append(func_dict)
                 elif isinstance(tool, Toolkit):
-                    # get_functions() rather than .functions: subclasses may
-                    # expose a subset, and the team runtime only ever calls
-                    # what get_functions() returns.
+                    # get_functions() is the exposed subset -- the only functions
+                    # the team runtime ever calls.
                     for func in tool.get_functions().values():
                         func_dict = func.to_dict()
                         # Record the owning toolkit so rehydration can re-bind

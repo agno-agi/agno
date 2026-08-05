@@ -191,8 +191,8 @@ class FileSystemTools(Toolkit):
         async_tools = [(getattr(self, "a" + name), name) for name in registered]
 
         super().__init__(
-            # Overridable so multiple file toolkits (a shared store and a
-            # per-agent one, say) can coexist in a registry without colliding.
+            # A registry resolves a persisted tool by its toolkit name, so two file
+            # toolkits in one registry need distinct names to rebind correctly.
             name=kwargs.pop("name", "filesystem"),
             tools=sync_tools,
             async_tools=async_tools,

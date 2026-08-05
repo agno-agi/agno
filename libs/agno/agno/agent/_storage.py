@@ -566,10 +566,8 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         _claimed_names: Set[str] = set()
         for _tool in agent.tools:
             if isinstance(_tool, Toolkit):
-                # get_functions() rather than .functions: subclasses may expose
-                # a subset, and parse_tools serializes what get_functions()
-                # returns. Claimed by Function.name, not dict key: the two can
-                # differ, and the serialized dict carries the Function's name.
+                # get_functions() is what parse_tools serializes. Names are claimed
+                # by Function.name, which is what the serialized dict carries.
                 for _func in _tool.get_functions().values():
                     if _func.name in _claimed_names:
                         continue
