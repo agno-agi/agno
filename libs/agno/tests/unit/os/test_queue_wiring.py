@@ -268,3 +268,52 @@ class TestQueueAdminGate:
         from agno.os.routers.job_queue.router import _require_queue_admin
 
         await _require_queue_admin(self._request())
+
+
+class TestUnfencedSessionStoreWarning:
+    """Phase-6 item 24-as-A: a durable queue over a session store without the
+    atomic run-persistence primitives must degrade LOUDLY - the fencing
+    architecture silently does not exist there. Option B (implement the
+    primitive family per adapter) is parked, evidence-gated."""
+
+    def _agent_os(self, db):
+        from types import SimpleNamespace
+
+        agent = SimpleNamespace(db=db)
+        return SimpleNamespace(agents=[agent], teams=None, workflows=None)
+
+    def test_warns_for_store_without_primitive(self, caplog):
+        import logging
+
+        from agno.os.job_queue import warn_unfenced_session_stores
+
+        class BareDb:
+            pass
+
+        with caplog.at_level(logging.WARNING, logger="agno"):
+            warn_unfenced_session_stores(self._agent_os(BareDb()))
+        assert any("without atomic run persistence" in r.message and "BareDb" in r.message for r in caplog.records), (
+            f"expected the unfenced-session-store warning, got: {[r.message for r in caplog.records]}"
+        )
+
+    def test_silent_for_store_with_primitive(self, caplog):
+        import logging
+
+        from agno.os.job_queue import warn_unfenced_session_stores
+
+        class FencedDb:
+            def update_run_in_session(self, **kwargs):
+                pass
+
+        with caplog.at_level(logging.WARNING, logger="agno"):
+            warn_unfenced_session_stores(self._agent_os(FencedDb()))
+        assert not any("without atomic run persistence" in r.message for r in caplog.records)
+
+    def test_silent_for_dbless_components(self, caplog):
+        import logging
+
+        from agno.os.job_queue import warn_unfenced_session_stores
+
+        with caplog.at_level(logging.WARNING, logger="agno"):
+            warn_unfenced_session_stores(self._agent_os(None))
+        assert not any("without atomic run persistence" in r.message for r in caplog.records)

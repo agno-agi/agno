@@ -1812,6 +1812,36 @@ async def aticket_poll_fallback(
     return body
 
 
+def warn_unfenced_session_stores(agent_os: Any) -> None:
+    """Loud-degrade for durable queues over session stores without the atomic
+    run-persistence primitives (phase-6 item 24, option A).
+
+    The fencing architecture - zombie/attempt fences, the worker's RUNNING
+    and attempt stamps, the terminal-row guard's atomic path - lives in the
+    session store's ``update_run_in_session``. Only the Postgres adapters
+    implement it; on any other store the stamps are silently skipped and the
+    transitions fall back to unfenced whole-session saves. That must never
+    be silent. (Implementing the primitive family per adapter - option B -
+    is parked, evidence-gated: it becomes cheap after the runs/sessions
+    denormalization, and Redis-as-session-store is not currently a launch
+    configuration. See the reliability ledger.)"""
+    unfenced = set()
+    for registry in (agent_os.agents, agent_os.teams, agent_os.workflows):
+        for component in registry or []:
+            component_db = getattr(component, "db", None)
+            if component_db is not None and not callable(getattr(component_db, "update_run_in_session", None)):
+                unfenced.add(type(component_db).__name__)
+    if unfenced:
+        log_warning(
+            f"Durable queue over session store(s) without atomic run persistence: {', '.join(sorted(unfenced))}. "
+            "On these components' runs, status transitions are UNFENCED (no zombie/attempt fencing - a swept "
+            "worker's late writes can collide with a retry's) and the worker's RUNNING and attempt stamps are "
+            "SKIPPED (queued runs poll PENDING while executing). Acceptance and terminal error persistence "
+            "still work via the whole-session fallback. Use a Postgres session store for production "
+            "deployments of the durable queue."
+        )
+
+
 @contextlib.asynccontextmanager
 async def queue_lifespan(app: Any, agent_os: Any):
     """Start and stop the durable job queue worker (one per replica)."""
@@ -1819,6 +1849,7 @@ async def queue_lifespan(app: Any, agent_os: Any):
 
     config: QueueConfig = agent_os.queue
     store = resolve_queue_store(config, agent_os.db)
+    warn_unfenced_session_stores(agent_os)
 
     if isinstance(get_event_stream(), InMemoryEventStream):
         log_warning(
