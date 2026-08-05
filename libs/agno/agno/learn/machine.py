@@ -535,22 +535,39 @@ class LearningMachine:
         return self._instructions_text()
 
     def _warn_if_user_id_missing(self, user_id: Optional[str]) -> None:
-        """Per-user stores silently drop their tools and capture without a
-        user_id (an unauthenticated /mcp run is the common way to get here).
-        Make the degradation visible, once per machine."""
+        """Per-user stores degrade without a user_id (an unauthenticated /mcp run
+        is the common way to get here). Make the degradation visible, once per
+        machine.
+
+        The two shapes of degradation differ and the warning names both:
+        user_profile/user_memory return no tools at all, while entity memory
+        under namespace="user" keeps its four tools exposed and answers each
+        call with a refusal.
+        """
         if user_id or self._missing_user_id_warned:
             return
-        per_user = [name for name in ("user_profile", "user_memory") if self.stores.get(name) is not None]
+        toolless = [name for name in ("user_profile", "user_memory") if self.stores.get(name) is not None]
         entity_store = self.stores.get("entity_memory")
-        if entity_store is not None and getattr(getattr(entity_store, "config", None), "namespace", None) == "user":
-            per_user.append('entity_memory (namespace="user")')
-        if per_user:
-            self._missing_user_id_warned = True
-            log_warning(
-                f"This run has no user_id, but per-user learning stores are configured "
-                f"({', '.join(per_user)}). Their tools and capture are disabled for this run. "
-                f"Pin Agent(user_id=...) or authenticate the request so a user id reaches the stores."
+        entity_user_scoped = (
+            entity_store is not None and getattr(getattr(entity_store, "config", None), "namespace", None) == "user"
+        )
+        if not toolless and not entity_user_scoped:
+            return
+
+        self._missing_user_id_warned = True
+        consequences: List[str] = []
+        if toolless:
+            consequences.append(f"the tools and capture of {', '.join(toolless)} are disabled for this run")
+        if entity_user_scoped:
+            consequences.append(
+                'entity_memory (namespace="user") keeps its tools exposed but refuses every call, '
+                "recording and returning nothing"
             )
+        log_warning(
+            "This run has no user_id, but per-user learning stores are configured: "
+            + "; ".join(consequences)
+            + ". Pin Agent(user_id=...) or authenticate the request so a user id reaches the stores."
+        )
 
     def _warn_if_model_missing(self) -> None:
         """Capture is a model call, and the manual door injects nothing.

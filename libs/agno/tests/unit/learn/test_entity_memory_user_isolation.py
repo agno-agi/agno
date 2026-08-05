@@ -255,11 +255,15 @@ class TestLegacyRowSelfHeal:
         assert await store.adelete(entity_id="acme", entity_type="company", user_id=ALICE) is True
         assert len(db.rows) == 0
 
-    def test_unmerged_legacy_row_is_not_deleted(self, store: EntityMemoryStore, db: RecordingLearningDb) -> None:
-        # Both a user-scoped row and a legacy row exist (a migration conflict, or
-        # a rolling deploy). The column-filtered resolution read is not guaranteed
-        # to pick the legacy row -- here the fake returns the user-scoped one --
-        # so the write must not delete legacy content it never merged.
+    def test_coexisting_rows_merge_without_losing_either_side(
+        self, store: EntityMemoryStore, db: RecordingLearningDb
+    ) -> None:
+        # Both a user-scoped row and a legacy row exist (a migration conflict,
+        # or a rolling deploy). The write path reads BOTH by primary key and
+        # merges, so no matter which row the backend's unordered column read
+        # would have returned, a write loses neither the user-scoped row's
+        # newer facts nor the legacy row's - and the merged save carries the
+        # legacy content, so the legacy row is retired.
         new_id = _user_key("acme", "company", ALICE)
         db.upsert_learning(
             id=new_id,
@@ -272,7 +276,7 @@ class TestLegacyRowSelfHeal:
                 "entity_id": "acme",
                 "entity_type": "company",
                 "name": "Acme",
-                "facts": [{"id": "n1", "content": "kept fact"}],
+                "facts": [{"id": "n1", "content": "post-upgrade fact worth money"}],
                 "namespace": "user",
                 "user_id": ALICE,
             },
@@ -281,8 +285,117 @@ class TestLegacyRowSelfHeal:
 
         store.remember_about(entity="Acme", entity_type="company", facts=["today's note"], user_id=ALICE)
 
-        assert legacy_id in db.rows
-        assert "legacy fact worth money" in str(db.rows[legacy_id].get("content"))
+        assert legacy_id not in db.rows
+        content = str(db.rows[new_id].get("content"))
+        assert "post-upgrade fact worth money" in content
+        assert "legacy fact worth money" in content
+        assert "today's note" in content
+
+    def test_coexisting_rows_merge_when_the_column_read_prefers_the_legacy_row(self, db: RecordingLearningDb) -> None:
+        # Same pair, but the fake resolves column-filtered single-row reads to
+        # the OLDEST insertion (the direction real backends take: the legacy
+        # row predates the user-scoped one, so an unordered fetchone returns
+        # it). The keyed pair read must make the outcome identical.
+        legacy_id = self._seed_legacy_row(db, ALICE, "legacy fact worth money")
+        new_id = _user_key("acme", "company", ALICE)
+        db.upsert_learning(
+            id=new_id,
+            learning_type="entity_memory",
+            entity_id="acme",
+            entity_type="company",
+            namespace="user",
+            user_id=ALICE,
+            content={
+                "entity_id": "acme",
+                "entity_type": "company",
+                "name": "Acme",
+                "facts": [{"id": "n1", "content": "post-upgrade fact worth money"}],
+                "namespace": "user",
+                "user_id": ALICE,
+            },
+        )
+        store = EntityMemoryStore(config=EntityMemoryConfig(namespace="user", db=db))
+
+        store.remember_about(entity="Acme", entity_type="company", facts=["today's note"], user_id=ALICE)
+
+        assert legacy_id not in db.rows
+        content = str(db.rows[new_id].get("content"))
+        assert "post-upgrade fact worth money" in content
+        assert "legacy fact worth money" in content
+        assert "today's note" in content
+
+    def test_legacy_description_note_and_aliases_survive_the_merge(
+        self, store: EntityMemoryStore, db: RecordingLearningDb
+    ) -> None:
+        # A legacy row whose whole value lives outside facts/events/
+        # relationships: description, the note pointer and aliases must be
+        # carried into the user-scoped row, not destroyed with the legacy row.
+        legacy_id = legacy_entity_learning_id("acme", "company", "user")
+        db.upsert_learning(
+            id=legacy_id,
+            learning_type="entity_memory",
+            entity_id="acme",
+            entity_type="company",
+            namespace="user",
+            user_id=ALICE,
+            content={
+                "entity_id": "acme",
+                "entity_type": "company",
+                "name": "Acme",
+                "description": "Enterprise customer since 2024",
+                "properties": {"note": "notes/acme.md"},
+                "aliases": ["Acme Inc"],
+                "facts": [],
+                "namespace": "user",
+                "user_id": ALICE,
+            },
+        )
+
+        store.remember_about(entity="Acme", entity_type="company", facts=["renewal in Q3"], user_id=ALICE)
+
+        assert legacy_id not in db.rows
+        new_row = db.rows[_user_key("acme", "company", ALICE)]
+        content = str(new_row.get("content"))
+        assert "Enterprise customer since 2024" in content
+        assert "notes/acme.md" in content
+        assert "Acme Inc" in content
+
+    def test_forget_is_not_reversed_by_the_legacy_row(self, store: EntityMemoryStore, db: RecordingLearningDb) -> None:
+        # forget physically removes events, which makes the saved row a strict
+        # subset of the legacy row. The write's own resolution read merged that
+        # row, so the removal is intentional and the legacy row must go with
+        # it - otherwise the forgotten event keeps rendering and the next
+        # write resurrects it.
+        legacy_id = legacy_entity_learning_id("acme", "company", "user")
+        db.upsert_learning(
+            id=legacy_id,
+            learning_type="entity_memory",
+            entity_id="acme",
+            entity_type="company",
+            namespace="user",
+            user_id=ALICE,
+            content={
+                "entity_id": "acme",
+                "entity_type": "company",
+                "name": "Acme",
+                "facts": [],
+                "events": [{"content": "signed the pilot", "date": "2026-05-01"}],
+                "namespace": "user",
+                "user_id": ALICE,
+            },
+        )
+
+        result = store.forget(entity="Acme", fact="signed the pilot", user_id=ALICE)
+
+        assert "signed the pilot" in result
+        assert legacy_id not in db.rows
+        remaining = [str(row.get("content")) for row in db.rows.values()]
+        assert all("signed the pilot" not in content for content in remaining)
+
+        followup = store.remember_about(entity="Acme", entity_type="company", facts=["stayed on"], user_id=ALICE)
+        assert "Updated" in followup or "Created" in followup
+        remaining = [str(row.get("content")) for row in db.rows.values()]
+        assert all("signed the pilot" not in content for content in remaining)
 
     def test_contaminated_legacy_row_is_left_for_the_migration(
         self, store: EntityMemoryStore, db: RecordingLearningDb
@@ -312,6 +425,77 @@ class TestLegacyRowSelfHeal:
 
         assert legacy_id in db.rows
         assert BOB_FACT in str(db.rows[legacy_id].get("content"))
+        # The write must not have absorbed the other user's data either: the
+        # contaminated row is excluded from the merge, not just from deletion.
+        assert BOB_FACT not in str(db.rows[_user_key("acme", "company", ALICE)].get("content"))
+
+    def test_contaminated_legacy_row_is_invisible_to_the_owners_reads(
+        self, store: EntityMemoryStore, db: RecordingLearningDb
+    ) -> None:
+        # Until the migration runs, a collided row (column owner Alice, content
+        # recorded for Bob) sits in Alice's column-filtered result sets. Every
+        # read surface must refuse to render it - this is the leak the PR
+        # exists to close, and it must be closed for pre-fix rows too.
+        legacy_id = legacy_entity_learning_id("acme", "company", "user")
+        db.upsert_learning(
+            id=legacy_id,
+            learning_type="entity_memory",
+            entity_id="acme",
+            entity_type="company",
+            namespace="user",
+            user_id=ALICE,
+            content={
+                "entity_id": "acme",
+                "entity_type": "company",
+                "name": "Acme",
+                "facts": [{"id": "f1", "content": BOB_FACT}],
+                "namespace": "user",
+                "user_id": BOB,
+            },
+        )
+
+        assert store.get(entity_id="acme", entity_type="company", user_id=ALICE) is None
+        assert store.list_entities(user_id=ALICE) == []
+        assert store.search(query="acme", user_id=ALICE) == []
+        context = store.build_context(store.recall(message="what do we know about Acme?", user_id=ALICE))
+        assert BOB_FACT not in str(context)
+        # The row itself is untouched: it is the migration's evidence.
+        assert legacy_id in db.rows
+
+    def test_pre_fix_unknown_placeholder_is_retired_on_type_upgrade(
+        self, store: EntityMemoryStore, db: RecordingLearningDb
+    ) -> None:
+        # link_entities on any pre-fix release minted placeholder rows keyed
+        # entity_user_unknown_<id>. When a later write supplies the real type,
+        # the placeholder must be retired like any other legacy row - not left
+        # to double the directory and make the name ambiguous forever.
+        placeholder_id = legacy_entity_learning_id("radar", "unknown", "user")
+        db.upsert_learning(
+            id=placeholder_id,
+            learning_type="entity_memory",
+            entity_id="radar",
+            entity_type="unknown",
+            namespace="user",
+            user_id=ALICE,
+            content={
+                "entity_id": "radar",
+                "entity_type": "unknown",
+                "name": "Radar",
+                "facts": [{"id": "f1", "content": "queue prototype"}],
+                "namespace": "user",
+                "user_id": ALICE,
+            },
+        )
+
+        store.remember_about(entity="Radar", entity_type="project", facts=["ships weekly"], user_id=ALICE)
+
+        assert placeholder_id not in db.rows
+        entities = store.list_entities(user_id=ALICE)
+        assert [(e.entity_type, e.entity_id) for e in entities] == [("project", "radar")]
+        content = str(db.rows[_user_key("radar", "project", ALICE)].get("content"))
+        assert "queue prototype" in content
+        assert "ships weekly" in content
+        assert "matches more than one entity" not in store.forget(entity="Radar", user_id=ALICE)
 
     def test_digest_shaped_entity_type_cannot_delete_a_user_scoped_row(
         self, store: EntityMemoryStore, db: RecordingLearningDb
