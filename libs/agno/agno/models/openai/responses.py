@@ -1,7 +1,7 @@
 import asyncio
 import time
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Type, Union
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Set, Tuple, Type, Union
 
 import httpx
 from pydantic import BaseModel
@@ -633,6 +633,19 @@ class OpenAIResponses(Model):
 
         fc_id_to_call_id = self._build_fc_id_to_call_id_map(messages)
 
+        # The Responses API rejects any function_call that has no function_call_output with a
+        # matching call_id. Sessions can hold runs whose tool result was never recorded
+        # and replaying them would poison every subsequent run. Collect the call_ids that will
+        # actually be emitted as output, using the same conditions as the tool branch below, so an
+        # unpairable function_call can be dropped instead of sent.
+        pairable_call_ids: Set[str] = set()
+        for message in messages_to_format:
+            if message.role != "tool" or not message.tool_call_id:
+                continue
+            if message.get_content(use_compressed_content=compress_tool_results) is None:
+                continue
+            pairable_call_ids.add(fc_id_to_call_id.get(message.tool_call_id, message.tool_call_id))
+
         for message in messages_to_format:
             if message.role in ["user", "system"]:
                 message_dict: Dict[str, Any] = {
@@ -691,11 +704,21 @@ class OpenAIResponses(Model):
                     continue
 
                 for tool_call in message.tool_calls:
+                    call_id = tool_call.get("call_id", tool_call.get("id"))
+                    # Skip calls whose output was never recorded or is not formattable. Sending
+                    # them makes the API reject the entire request.
+                    if call_id not in pairable_call_ids:
+                        log_warning(
+                            f"Skipping tool call {call_id} with no matching tool result. "
+                            "The model will not see this call in its history."
+                        )
+                        continue
+
                     formatted_messages.append(
                         {
                             "type": "function_call",
                             "id": tool_call.get("id"),
-                            "call_id": tool_call.get("call_id", tool_call.get("id")),
+                            "call_id": call_id,
                             "name": tool_call["function"]["name"],
                             "arguments": tool_call["function"]["arguments"],
                             "status": "completed",
