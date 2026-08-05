@@ -18,6 +18,7 @@ import pytest
 
 from agno.agent.agent import Agent
 from agno.db.base import BaseDb, ComponentType
+from agno.db.sqlite import SqliteDb
 from agno.registry import Registry
 from agno.session import TeamSession
 from agno.team.team import Team, get_team_by_id, get_teams
@@ -813,6 +814,25 @@ class TestTeamLoad:
 
         assert team is not None
         assert team.db == mock_db
+
+    def test_load_round_trips_on_real_sqlite_db(self, tmp_path):
+        """Test save/load round-trips on a real SqliteDb.
+
+        The mock_db fixture accepts any call signature, so only a real backend
+        catches an override whose signature diverges from BaseDb (SqliteDb's
+        load_component_graph rejected the label kwarg that load() always passes).
+        """
+        db = SqliteDb(db_file=str(tmp_path / "team_load.db"))
+        team = Team(id="rt-team", name="Round Trip Team", members=[Agent(id="rt-agent", name="Round Trip Agent")])
+        team.save(db=db)
+
+        loaded = Team.load(id="rt-team", db=db)
+
+        assert loaded is not None
+        assert loaded.id == "rt-team"
+        assert loaded.name == "Round Trip Team"
+        assert len(loaded.members) == 1
+        assert loaded.members[0].id == "rt-agent"
 
 
 # =============================================================================
