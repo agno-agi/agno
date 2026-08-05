@@ -11,7 +11,10 @@ from agno.db.schemas import UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
+from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
+from agno.run.team import TeamRunOutput
+from agno.run.workflow import WorkflowRunOutput
 from agno.session import Session
 
 
@@ -36,6 +39,7 @@ class BaseDb(ABC):
     def __init__(
         self,
         session_table: Optional[str] = None,
+        runs_table: Optional[str] = None,
         culture_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
@@ -63,6 +67,7 @@ class BaseDb(ABC):
     ):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
+        self.runs_table_name = runs_table or "agno_runs"
         self.culture_table_name = culture_table or "agno_culture"
         self.memory_table_name = memory_table or "agno_memories"
         self.metrics_table_name = metrics_table or "agno_metrics"
@@ -96,6 +101,7 @@ class BaseDb(ABC):
             "id": self.id,
             "session_table": self.session_table_name,
             "job_table": self.job_table_name,
+            "runs_table": self.runs_table_name,
             "culture_table": self.culture_table_name,
             "memory_table": self.memory_table_name,
             "metrics_table": self.metrics_table_name,
@@ -127,6 +133,7 @@ class BaseDb(ABC):
         """
         return cls(
             session_table=data.get("session_table"),
+            runs_table=data.get("runs_table"),
             culture_table=data.get("culture_table"),
             memory_table=data.get("memory_table"),
             metrics_table=data.get("metrics_table"),
@@ -179,6 +186,24 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     # --- Sessions ---
+    #
+    # Referential-integrity contract for ``session_id`` → runs:
+    #
+    # SQL adapters (Postgres, MySQL, SQLite) enforce this at the DB layer
+    # via ``ON DELETE CASCADE`` on ``agno_runs.session_id`` — deleting a
+    # session automatically deletes its runs, atomically and race-free.
+    # SQLite additionally requires ``PRAGMA foreign_keys = ON`` which the
+    # adapter sets on every connection.
+    #
+    # SingleStore parses FK syntax but does NOT enforce it at runtime — the
+    # constraint is emitted for schema documentation only; ``delete_session``
+    # performs an application-level cascade.
+    #
+    # NoSQL adapters (Mongo, Firestore, Redis, DynamoDB, GCS-JSON, SurrealDB)
+    # have no FK primitive; each ``delete_session`` implementation deletes
+    # the session's runs explicitly before/after removing the session doc.
+    # Best-effort — a crash between the two writes can leave orphan runs;
+    # partial-migration cleanup and admin tooling should tolerate this.
     @abstractmethod
     def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         raise NotImplementedError
@@ -194,7 +219,11 @@ class BaseDb(ABC):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
+        # runs_limit: attach only the most recent N context-relevant runs. Adapters
+        # that don't optimize this MUST still accept it and load the full history
+        # (a safe, unbounded superset); adapters that can push it to the DB do so.
         raise NotImplementedError
 
     @abstractmethod
@@ -211,6 +240,7 @@ class BaseDb(ABC):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
 
@@ -240,6 +270,75 @@ class BaseDb(ABC):
     ) -> List[Union[Session, Dict[str, Any]]]:
         """Bulk upsert multiple sessions for improved performance on large datasets."""
         raise NotImplementedError
+
+    # --- Runs ---
+    def get_run(
+        self, run_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]]]:
+        """Read a single run from the runs storage.
+
+        Adapters that store runs in a dedicated table/collection override this.
+        Adapters that have not been ported to v3 storage return ``None``.
+        """
+        return None
+
+    def get_runs(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[RunStatus] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
+        """Get runs matching the given filters.
+
+        Adapters that store runs in a dedicated table/collection override this.
+        Adapters that have not been ported return an empty list (or empty tuple).
+        """
+        if deserialize:
+            return []
+        return [], 0
+
+    def upsert_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> None:
+        """Upsert a single run to the runs storage.
+
+        Adapters that store runs in a dedicated table/collection override this.
+        Adapters that have not been ported raise ``NotImplementedError`` — callers
+        should check ``hasattr(db, "upsert_run")`` is insufficient now that the
+        method is on the base class; check ``type(db).upsert_run is not BaseDb.upsert_run``
+        instead, or simply let the NotImplementedError bubble up.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement upsert_run yet. Use upsert_session() to persist runs inline."
+        )
+
+    def delete_run(self, run_id: str) -> bool:
+        """Delete a single run from the runs storage.
+
+        Adapters that store runs in a dedicated table/collection override this.
+        Adapters that have not been ported return ``False``.
+        """
+        return False
+
+    def delete_runs(self, run_ids: List[str]) -> None:
+        """Bulk-delete runs from the runs storage.
+
+        Adapters that store runs in a dedicated table/collection override this.
+        No-op on adapters that have not been ported.
+        """
+        return None
 
     # --- Memory ---
     @abstractmethod
@@ -387,12 +486,12 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+    def delete_eval_runs(self, eval_run_ids: List[str], user_id: Optional[str] = None) -> None:
         raise NotImplementedError
 
     @abstractmethod
     def get_eval_run(
-        self, eval_run_id: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         raise NotImplementedError
 
@@ -410,13 +509,17 @@ class BaseDb(ABC):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
 
     @abstractmethod
     def rename_eval_run(
-        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
+        raise NotImplementedError
+
+    def update_eval_run_user_id(self, eval_run_id: str, user_id: str) -> None:
         raise NotImplementedError
 
     # --- Traces ---
@@ -1493,6 +1596,7 @@ class AsyncBaseDb(ABC):
         self,
         id: Optional[str] = None,
         session_table: Optional[str] = None,
+        runs_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
@@ -1511,6 +1615,7 @@ class AsyncBaseDb(ABC):
     ):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
+        self.runs_table_name = runs_table or "agno_runs"
         self.memory_table_name = memory_table or "agno_memories"
         self.metrics_table_name = metrics_table or "agno_metrics"
         self.eval_table_name = eval_table or "agno_eval_runs"
@@ -1579,7 +1684,9 @@ class AsyncBaseDb(ABC):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
+        # See BaseDb.get_session for the runs_limit contract.
         raise NotImplementedError
 
     @abstractmethod
@@ -1596,6 +1703,7 @@ class AsyncBaseDb(ABC):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
 
@@ -1615,6 +1723,52 @@ class AsyncBaseDb(ABC):
         self, session: Session, deserialize: Optional[bool] = True
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         raise NotImplementedError
+
+    # --- Runs ---
+    async def get_run(
+        self, run_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]]]:
+        """Async read of a single run. Adapters ported to v3 storage override this."""
+        return None
+
+    async def get_runs(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[RunStatus] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
+        """Async list of runs. Adapters ported to v3 storage override this."""
+        if deserialize:
+            return []
+        return [], 0
+
+    async def upsert_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> None:
+        """Async upsert of a single run. Adapters ported to v3 storage override this."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement upsert_run yet. Use upsert_session() to persist runs inline."
+        )
+
+    async def delete_run(self, run_id: str) -> bool:
+        """Async delete of a single run. Adapters ported to v3 storage override this."""
+        return False
+
+    async def delete_runs(self, run_ids: List[str]) -> None:
+        """Async bulk-delete of runs. Adapters ported to v3 storage override this."""
+        return None
 
     # --- Memory ---
     @abstractmethod
@@ -1750,12 +1904,12 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+    async def delete_eval_runs(self, eval_run_ids: List[str], user_id: Optional[str] = None) -> None:
         raise NotImplementedError
 
     @abstractmethod
     async def get_eval_run(
-        self, eval_run_id: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         raise NotImplementedError
 
@@ -1773,13 +1927,17 @@ class AsyncBaseDb(ABC):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
 
     @abstractmethod
     async def rename_eval_run(
-        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
+        raise NotImplementedError
+
+    async def update_eval_run_user_id(self, eval_run_id: str, user_id: str) -> None:
         raise NotImplementedError
 
     # --- Traces ---

@@ -130,7 +130,10 @@ class TestSyncStoreAdapter:
             def sweep_exhausted_jobs(self, lock_grace_seconds=60, limit=20):
                 return []
 
-            def fail_swept_job(self, job_id, lock_grace_seconds=60, error="worker lost"):
+            def acquire_sweep(self, job_id, worker_id, lock_grace_seconds=60):
+                return False
+
+            def fail_swept_job(self, job_id, worker_id, error="worker lost"):
                 return True
 
             def get_job(self, job_id):
@@ -167,6 +170,27 @@ class TestSyncStoreAdapter:
             resolve_queue_store(QueueConfig(durable=True), NotAQueueStore())
 
 
+class TestPermanentFailureScoping:
+    def test_bare_valueerror_is_permanent_only_for_workflow_continuations(self):
+        """kausmeows review: ValueError is ordinary tool/model-code failure
+        for agents and teams - only the workflow continue path uses a bare
+        ValueError as its cannot-continue signal. Over-classifying would
+        DLQ retryable agent/team legs on sight."""
+        from agno.os.job_queue import QueueWorker
+
+        assert QueueWorker._is_permanent_failure(ValueError("not paused"), "workflow") is True
+        assert QueueWorker._is_permanent_failure(ValueError("tool blew up"), "agent") is False
+        assert QueueWorker._is_permanent_failure(ValueError("tool blew up"), "team") is False
+        assert QueueWorker._is_permanent_failure(ValueError("tool blew up"), None) is False
+
+    def test_typed_continuation_errors_always_permanent(self):
+        from agno.exceptions import RunNotContinuableError, RunNotFoundError
+        from agno.os.job_queue import QueueWorker
+
+        assert QueueWorker._is_permanent_failure(RunNotContinuableError("x"), "agent") is True
+        assert QueueWorker._is_permanent_failure(RunNotFoundError("x"), None) is True
+
+
 class TestRedisClusterRejected:
     def test_cluster_client_rejected_at_resolve(self):
         """RedisCluster pipelines are non-transactional; the CAS-based store
@@ -189,7 +213,8 @@ class TestRedisClusterRejected:
             def continue_job(self, job_id, continue_payload): ...
             def settle_paused_job(self, job_id, status, error=None): ...
             def sweep_exhausted_jobs(self, lock_grace_seconds=60, limit=20): ...
-            def fail_swept_job(self, job_id, lock_grace_seconds=60, error="worker lost"): ...
+            def acquire_sweep(self, job_id, worker_id, lock_grace_seconds=60): ...
+            def fail_swept_job(self, job_id, worker_id, error="worker lost"): ...
             def get_job(self, job_id): ...
             def count_queued_jobs(self): ...
 
@@ -243,3 +268,85 @@ class TestQueueAdminGate:
         from agno.os.routers.job_queue.router import _require_queue_admin
 
         await _require_queue_admin(self._request())
+
+
+class TestUnfencedSessionStoreWarning:
+    """Phase-6 item 24-as-A: a durable queue over a session store without the
+    atomic run-persistence primitives must degrade LOUDLY - the fencing
+    architecture silently does not exist there. Option B (implement the
+    primitive family per adapter) is parked, evidence-gated."""
+
+    def _agent_os(self, db):
+        from types import SimpleNamespace
+
+        agent = SimpleNamespace(db=db)
+        return SimpleNamespace(agents=[agent], teams=None, workflows=None)
+
+    def test_warns_for_store_without_primitive(self, caplog):
+        import logging
+
+        from agno.os.job_queue import warn_unfenced_session_stores
+
+        class BareDb:
+            pass
+
+        with caplog.at_level(logging.WARNING, logger="agno"):
+            warn_unfenced_session_stores(self._agent_os(BareDb()))
+        assert any("without atomic run persistence" in r.message and "BareDb" in r.message for r in caplog.records), (
+            f"expected the unfenced-session-store warning, got: {[r.message for r in caplog.records]}"
+        )
+
+    def test_silent_for_store_with_primitive(self, caplog):
+        import logging
+
+        from agno.os.job_queue import warn_unfenced_session_stores
+
+        class FencedDb:
+            def update_run_in_session(self, **kwargs):
+                pass
+
+        with caplog.at_level(logging.WARNING, logger="agno"):
+            warn_unfenced_session_stores(self._agent_os(FencedDb()))
+        assert not any("without atomic run persistence" in r.message for r in caplog.records)
+
+    def test_silent_for_dbless_components(self, caplog):
+        import logging
+
+        from agno.os.job_queue import warn_unfenced_session_stores
+
+        with caplog.at_level(logging.WARNING, logger="agno"):
+            warn_unfenced_session_stores(self._agent_os(None))
+        assert not any("without atomic run persistence" in r.message for r in caplog.records)
+
+
+class TestQueueLifespanCleanup:
+    """Phase-7 item 27: an exception in the app body must not leak a running
+    worker or a stale active-worker registration - the inline-door admission
+    gate consults that registration, and a leaked one points at a dead
+    worker's store forever."""
+
+    @pytest.mark.asyncio
+    async def test_app_body_exception_stops_worker_and_clears_registration(self):
+        from types import SimpleNamespace
+
+        from agno.job_queue.config import QueueConfig
+        from agno.job_queue.store import InMemoryQueueStore
+        from agno.os.job_queue import get_active_queue_worker, queue_lifespan
+
+        agent_os = SimpleNamespace(
+            queue=QueueConfig(durable=True, db=InMemoryQueueStore()),
+            db=None,
+            agents=[],
+            teams=[],
+            workflows=[],
+        )
+        app = SimpleNamespace(state=SimpleNamespace())
+
+        with pytest.raises(RuntimeError, match="app body exploded"):
+            async with queue_lifespan(app, agent_os):
+                worker = get_active_queue_worker()
+                assert worker is not None and worker._running
+                raise RuntimeError("app body exploded")
+
+        assert get_active_queue_worker() is None, "the registration must be cleared on the failure path"
+        assert not app.state.queue_worker._running, "the worker must be stopped on the failure path"

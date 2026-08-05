@@ -46,14 +46,6 @@ class RedisCoordination:
     # per-deployment value when multiple AgentOS deployments share one Redis -
     # with the default, they would read each other's runs by run_id.
     key_prefix: Optional[str] = None
-    # Token-scoped cancellation cleanup (stale-intent clearing on durable
-    # continue/requeue). OFF by default: replicas from releases that predate
-    # sidecar tokens rewrite only the legacy intent key on cancel, and a
-    # token-scoped cleanup could then erase their newer cancel. Enable ONLY
-    # once every replica sharing this Redis is token-aware; until then stale
-    # intent is skipped (it expires via its TTL, or cancels a continuation
-    # leg visibly - operator requeue remedies).
-    enable_cancellation_token_cleanup: bool = False
 
     def __post_init__(self) -> None:
         if self.url is None and (self.sync_client is None or self.async_client is None):
@@ -100,6 +92,13 @@ class QueueConfig:
     # At most this many executions ever, under any failure mode (reclaim
     # included). 1 = a crashed run is failed visibly, never silently re-run.
     max_attempts: int = 1
+    # EXPERIMENTAL gate for max_attempts > 1. Re-execution is where the
+    # two-live-producer races live: the happy-path completion save and the
+    # stream writes are not yet generation-fenced (the P1 program's items),
+    # so a swept-but-alive attempt and its retry can interleave writes on
+    # the same run row and stream. Until that fencing lands, multi-attempt
+    # is opt-in with this flag - a warning is not a control.
+    allow_multi_attempt_experimental: bool = False
     # BASE retry delay: attempt N waits up to base * 2**(N-1) with full
     # jitter (capped at 10x base) - see QueueWorker._retry_delay
     retry_delay_seconds: int = 30
@@ -135,6 +134,13 @@ class QueueConfig:
         # not as mysterious runtime behavior
         if self.max_attempts < 1:
             raise ValueError("QueueConfig.max_attempts must be >= 1 (every run needs at least one attempt)")
+        if self.max_attempts > 1 and not self.allow_multi_attempt_experimental:
+            raise ValueError(
+                "QueueConfig.max_attempts > 1 requires allow_multi_attempt_experimental=True: "
+                "re-execution can race a swept-but-alive attempt's writes on the same run row "
+                "and event stream (their generation fencing is still on the roadmap). Until "
+                "then, multi-attempt is an explicit experimental opt-in."
+            )
         if self.poll_interval <= 0:
             raise ValueError("QueueConfig.poll_interval must be > 0 seconds")
         if self.lock_grace_seconds < 3:

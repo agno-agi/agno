@@ -85,6 +85,24 @@ class RedisEventStream(BaseEventStream):
     ):
         if not _redis_available:
             raise ImportError(_redis_import_error)
+        # Same rejection (and reason) as the job-queue store: per-run keys are
+        # not hash-tagged, so reopen_run's WATCH/MULTI and the multi-key TTL /
+        # terminal pipelines issue cross-slot operations that fail on
+        # RedisCluster - confusingly, at runtime, mid-continuation. Reject up
+        # front instead. (The Redis cancellation manager deliberately does NOT
+        # reject cluster clients: every one of its pipelines is single-key -
+        # audited - and cluster support there is advertised.) Hash-tagging
+        # {run_id} into the keys would make this stream cluster-safe, but the
+        # queue store rejects cluster anyway, so that work is parked until
+        # cluster support is a stack-wide goal - validate with
+        # redis.crc.key_slot in tests if ever built, not fakeredis.
+        if type(async_redis_client).__name__ == "RedisCluster":
+            raise ValueError(
+                "RedisEventStream requires a standalone (non-cluster) Redis client: its per-run "
+                "keys are not hash-tagged, so multi-key transactions (reopen, TTL refresh, "
+                "terminal writes) are cross-slot and fail on RedisCluster. Use a standalone "
+                "Redis or Valkey instance for the event stream, matching the job-queue store."
+            )
         self._redis = async_redis_client
         self._prefix = key_prefix
         self._ttl = ttl_seconds
@@ -237,7 +255,7 @@ class RedisEventStream(BaseEventStream):
         pipe.expire(self._counter_key(run_id), self._ttl)
         await pipe.execute()
 
-    async def reopen_run(self, run_id: str, include_error: bool = False) -> bool:
+    async def reopen_run(self, run_id: str, include_error: bool = False, floor: Optional[int] = None) -> bool:
         """Atomically reopen a PAUSED run for a continuation leg.
 
         WATCH/MULTI CAS on the status key: the flip to PENDING only lands if
@@ -252,7 +270,16 @@ class RedisEventStream(BaseEventStream):
         """
         from redis.exceptions import WatchError
 
-        reopenable = (RunStatus.paused.value, RunStatus.error.value) if include_error else (RunStatus.paused.value,)
+        # PENDING is reopenable alongside PAUSED (and missing keys, handled
+        # below): the guard protects NEWER states - RUNNING and terminals -
+        # and PENDING is pre-execution, where the flip is idempotent. The
+        # expired-state path depends on it: register_run re-creates PENDING
+        # before the reopen, and declining there would drop the counter seed.
+        reopenable = (
+            (RunStatus.paused.value, RunStatus.error.value, RunStatus.pending.value)
+            if include_error
+            else (RunStatus.paused.value, RunStatus.pending.value)
+        )
         status_key = self._status_key(run_id)
         stream_key = self._stream_key(run_id)
         for _ in range(10):
@@ -263,8 +290,24 @@ class RedisEventStream(BaseEventStream):
                     if current is not None and current not in reopenable:
                         await pipe.unwatch()
                         return False
+                    seed_target: Optional[int] = None
+                    if floor is not None:
+                        # Seed the counter to at least floor+1 (the durable
+                        # floor comes from the run row's stored event_index):
+                        # a paused run outliving the TTL across a deploy lost
+                        # its counter, and INCR restarting at 0 makes resuming
+                        # clients dedup away every post-approval event. A live
+                        # counter is never regressed - the run is PAUSED
+                        # (settled, no producer), and the WATCH on the status
+                        # key aborts this whole CAS if anything raced.
+                        raw_counter = await pipe.get(self._counter_key(run_id))
+                        current_counter = int(raw_counter) if raw_counter is not None else 0
+                        if floor + 1 > current_counter:
+                            seed_target = floor + 1
                     pipe.multi()
                     pipe.set(status_key, RunStatus.pending.value, ex=self._ttl)
+                    if seed_target is not None:
+                        pipe.set(self._counter_key(run_id), seed_target, ex=self._ttl)
                     pipe.xadd(stream_key, {"reopen": "1"}, maxlen=self._maxlen, approximate=True)
                     pipe.expire(stream_key, self._ttl)
                     pipe.expire(self._counter_key(run_id), self._ttl)
@@ -302,6 +345,13 @@ class RedisEventStream(BaseEventStream):
         # safe for multi-attempt producers later).
         next_count = await self._redis.incr(self._counter_key(run_id))
         event_index = int(next_count) - 1
+        # Stamp the index onto the event OBJECT: the component accumulates
+        # these same references into run_response.events, so its session save
+        # persists the real index - the durable substrate the DB replay
+        # fallback and post-expiry reopen seeding rely on. Fail-open: an
+        # exotic event object must not kill the publish.
+        with contextlib.suppress(Exception):
+            event.event_index = event_index
         sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=run_id)
 
         pipe = self._redis.pipeline()
@@ -355,16 +405,24 @@ class RedisEventStream(BaseEventStream):
         return int(value) - 1 if value is not None else -1
 
     async def get_event_count(self, run_id: str) -> int:
-        count = int(await self._redis.xlen(self._stream_key(run_id)))
-        if count == 0:
-            return 0
-        # The terminal sentinel is a stream entry but not a client-facing
-        # event: exclude it so counts match the in-memory implementation
-        last = await self._redis.xrevrange(self._stream_key(run_id), count=1)
-        if last:
-            _entry_id, fields = last[0]
-            if fields is not None and fields.get(b"terminal", fields.get("terminal")) is not None:
-                return count - 1
+        # Count only idx-bearing entries (the discriminator replay uses):
+        # coordination markers - pause/terminal sentinels and reopen markers,
+        # including STALE mid-stream ones a pause/continue cycle leaves behind
+        # - are stream entries but not client-facing events. The old
+        # XLEN-minus-trailing-sentinel arithmetic counted every mid-stream
+        # marker, inflating the number by 2+ per pause cycle. O(stream) like
+        # replay, MAXLEN-bounded; the count feeds display metadata, and no
+        # O(1) primitive can discriminate (XLEN cannot see fields; the INCR
+        # counter survives resets/trims so it diverges from buffer contents
+        # exactly when the number matters). Restores in-memory parity - that
+        # buffer never holds markers, so its counts were already right.
+        count = 0
+        entries = await self._redis.xrange(self._stream_key(run_id)) or []
+        for _entry_id, fields in entries:
+            if fields is None:
+                continue
+            if fields.get(b"idx", fields.get("idx")) is not None:
+                count += 1
         return count
 
     # ------------------------------------------------------------------
@@ -409,40 +467,79 @@ class RedisEventStream(BaseEventStream):
         from redis.exceptions import ConnectionError as RedisConnectionError
         from redis.exceptions import TimeoutError as RedisTimeoutError
 
+        # ONE consecutive-failure counter shared by the XREAD and the status
+        # probe: they are the same outage, and pacing must cover the pair.
+        # When the connection fails FAST, block_ms never paces the loop - so
+        # the backoff below is what keeps a Redis outage from turning every
+        # tail into a busy loop. Capped, and reset on the first success.
+        consecutive_failures = 0
         while True:
             try:
                 # redis-py types the XREAD response too loosely to destructure cleanly
                 response: Any = await self._redis.xread({stream_key: from_id}, block=self._block_ms, count=100)
+                consecutive_failures = 0
             except (RedisTimeoutError, RedisConnectionError):
                 # A client-level socket_timeout below block_ms (redis-py >= 8
                 # defaults Redis(...) to 5s) or a transient outage must not
                 # kill the tail: treat as an idle pass and re-check status.
                 response = None
+                consecutive_failures += 1
             if not response:
                 # Idle: producer may have died without a sentinel, or the run
                 # may be unknown/terminal. Never block forever.
-                status = await self.get_run_status(run_id)
+                try:
+                    status = await self.get_run_status(run_id)
+                    consecutive_failures = 0
+                except (RedisTimeoutError, RedisConnectionError):
+                    # The SAME outage the XREAD guard above absorbs - it must
+                    # not escape the loop here, and it must not read as
+                    # "unknown run" either (status None closes a live tail).
+                    # Skip the terminal decision entirely this pass.
+                    consecutive_failures += 1
+                    await asyncio.sleep(min(0.1 * (2 ** min(consecutive_failures, 6)), 5.0))
+                    continue
+                if consecutive_failures:
+                    await asyncio.sleep(min(0.1 * (2 ** min(consecutive_failures, 6)), 5.0))
                 if status is None or status in _TERMINAL_STATUSES:
                     return
                 # Dead-producer bound: only the producing process refreshes the
                 # status key TTL (every ttl/3 via its refresher). A remaining
                 # TTL below one refresh window means at least two windows were
                 # missed - the producer is gone; do not wait for full expiry.
-                with contextlib.suppress(Exception):
-                    ttl_remaining = int(await self._redis.ttl(self._status_key(run_id)))
-                    if 0 <= ttl_remaining < self._ttl // _TTL_REFRESH_FRACTION:
-                        log_warning(f"Run {run_id}: status key TTL not refreshed (producer presumed dead); ending tail")
-                        return
+                # RUNNING-only: a PENDING run has no producer yet by design
+                # (accept-side registration deliberately does not refresh), so
+                # a long queue wait must not be read as a dead producer.
+                if status == RunStatus.running:
+                    with contextlib.suppress(Exception):
+                        ttl_remaining = int(await self._redis.ttl(self._status_key(run_id)))
+                        if 0 <= ttl_remaining < self._ttl // _TTL_REFRESH_FRACTION:
+                            log_warning(
+                                f"Run {run_id}: status key TTL not refreshed (producer presumed dead); ending tail"
+                            )
+                            return
                 continue
             for _stream, batch in response:
                 for batch_position, (entry_id, fields) in enumerate(batch):
                     from_id = _to_str(entry_id) or from_id
                     if fields.get(b"terminal", fields.get("terminal")) is not None:
-                        # Same positional rule as replay: only a batch-final
-                        # sentinel ends the tail (an instant continue can put
-                        # events behind a paused sentinel within one batch)
+                        # A sentinel ends the tail only when NOTHING follows it
+                        # in the STREAM - not merely in this batch. XREAD reads
+                        # count-bounded batches, so a lagging tail's batch can
+                        # end exactly on a stale pause sentinel while the
+                        # reopen marker and continuation events sit in the next
+                        # batch; the old batch-position rule closed the tail
+                        # mid-continuation for any consumer lagging >= one
+                        # batch across a pause/resume. Peek one entry past the
+                        # sentinel before honoring it. (The replay path keeps
+                        # the positional rule: its XRANGE is unbounded, so
+                        # list-final there genuinely means stream-final.)
                         if batch_position == len(batch) - 1:
-                            return
+                            sentinel_id = _to_str(entry_id) or "0-0"
+                            ms, _, seq = sentinel_id.partition("-")
+                            after_sentinel = f"{ms}-{int(seq or 0) + 1}"
+                            following = await self._redis.xrange(stream_key, min=after_sentinel, max="+", count=1)
+                            if not following:
+                                return
                         continue
                     idx_raw = fields.get(b"idx", fields.get("idx"))
                     if idx_raw is None:

@@ -9,6 +9,7 @@ Requires: PostgreSQL at postgresql+psycopg://ai:ai@localhost:5532/ai
 """
 
 import asyncio
+import time
 import uuid
 
 import pytest
@@ -151,7 +152,7 @@ class TestPostgresQueueContract:
         assert await db.retry_or_fail_job("r1", "w1", claimed["attempt"], "boom") == "failed"
 
     @pytest.mark.asyncio
-    async def test_sweep_heartbeat_race(self, db):
+    async def test_sweep_acquire_heartbeat_race(self, db):
         await db.enqueue_job(make_job("r1"))
         await db.claim_job("w1")
         await make_stale(db, "r1")
@@ -159,12 +160,54 @@ class TestPostgresQueueContract:
         swept = await db.sweep_exhausted_jobs(lock_grace_seconds=60)
         assert [j["id"] for j in swept] == ["r1"]
 
-        # A heartbeat between sweep and write must win
+        # A heartbeat between the sweep's select and the acquisition must win
+        # - with the run row still untouched (the acquisition IS the fence)
         assert await db.heartbeat_jobs("w1", ["r1"]) == 1
-        assert not await db.fail_swept_job("r1", lock_grace_seconds=60)
+        assert not await db.acquire_sweep("r1", "sweeper", lock_grace_seconds=60)
 
         await make_stale(db, "r1")
-        assert await db.fail_swept_job("r1", lock_grace_seconds=60, error="worker lost")
+        assert await db.acquire_sweep("r1", "sweeper", lock_grace_seconds=60)
+        assert (await db.get_job("r1"))["locked_by"] == "sweeper"
+        assert not await db.fail_swept_job("r1", "someone-else"), "fail is ownership-keyed"
+        assert await db.fail_swept_job("r1", "sweeper", error="worker lost")
+        assert (await db.get_job("r1"))["status"] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_lease_math_survives_a_fast_replica_clock(self, db, monkeypatch):
+        """Lease decisions are anchored to DB time, so a replica whose clock
+        runs minutes fast cannot see healthy leases as expired. Under
+        app-clock math this replica sweeps and steals a live run's lock, and
+        the victim's completion is then fenced out - the run is reported
+        failed despite completing."""
+        await db.enqueue_job(make_job("r1"))
+        claimed = await db.claim_job("w1", lock_grace_seconds=60)
+        assert claimed is not None
+
+        real_time = time.time
+        monkeypatch.setattr(time, "time", lambda: real_time() + 3600)  # this replica is an hour fast
+
+        assert await db.sweep_exhausted_jobs(lock_grace_seconds=60) == [], "a fast clock must not age other leases"
+        assert not await db.acquire_sweep("r1", "fast-replica", lock_grace_seconds=60)
+        assert await db.claim_job("fast-replica", lock_grace_seconds=60) is None, "must not steal a live claim"
+        # The true owner still holds it and can still settle
+        assert await db.heartbeat_jobs("w1", ["r1"]) == 1
+        assert await db.complete_job("r1", "w1", claimed["attempt"], "completed")
+
+    @pytest.mark.asyncio
+    async def test_interrupted_sweep_resumable(self, db):
+        """A sweeper crashing mid-protocol leaves the job running under its
+        refreshed lock; once that lock goes stale the sweep re-selects it and
+        another sweeper resumes."""
+        await db.enqueue_job(make_job("r1"))
+        await db.claim_job("w1")
+        await make_stale(db, "r1")
+        assert await db.acquire_sweep("r1", "sweeper-a", lock_grace_seconds=60)
+        assert await db.sweep_exhausted_jobs(lock_grace_seconds=60) == []  # fresh sweep lock
+        await make_stale(db, "r1")  # sweeper-a died
+        swept = await db.sweep_exhausted_jobs(lock_grace_seconds=60)
+        assert [j["id"] for j in swept] == ["r1"]
+        assert await db.acquire_sweep("r1", "sweeper-b", lock_grace_seconds=60)
+        assert await db.fail_swept_job("r1", "sweeper-b")
         assert (await db.get_job("r1"))["status"] == "failed"
 
     @pytest.mark.asyncio
@@ -261,7 +304,8 @@ class TestContinuationCAS:
         assert await db.claim_job("w2", lock_grace_seconds=60) is None  # budget spent
         swept = await db.sweep_exhausted_jobs(lock_grace_seconds=60)
         assert [j["id"] for j in swept] == ["r1"]
-        assert await db.fail_swept_job("r1", lock_grace_seconds=60)
+        assert await db.acquire_sweep("r1", "sweeper", lock_grace_seconds=60)
+        assert await db.fail_swept_job("r1", "sweeper")
 
         assert await db.requeue_job("r1")
         redriven = await db.claim_job("w2")
@@ -343,3 +387,39 @@ class TestAnonymousIdempotency:
         second = await db.enqueue_job(make_job(str(_uuid.uuid4()), idempotency_key=key, user_id=None))
         assert second["accepted"] is False and second["reason"] == "duplicate"
         assert second["job"]["id"] == first["job"]["id"]
+
+    @pytest.mark.asyncio
+    async def test_null_user_concurrent_race_accepts_exactly_one(self, db):
+        """The CONCURRENT anonymous race: both submits pass the pre-check
+        before either row is visible, so only a unique index can arbitrate -
+        and the composite (idempotency_key, user_id) index treats every NULL
+        user_id as distinct, letting both INSERTs land. The anon partial index
+        must make the loser block, hit IntegrityError, and resolve to the
+        winner via the duplicate-recovery path.
+
+        Deterministic repro: the winner's row is inserted in an UNCOMMITTED
+        transaction, so the loser's pre-check cannot see it (READ COMMITTED)
+        and proceeds to its INSERT - exactly the race-window state."""
+        import uuid as _uuid
+
+        key = f"anon-{_uuid.uuid4().hex[:8]}"
+        table = await db._get_table(table_type="jobs", create_table_if_not_found=True)
+        winner = make_job(str(_uuid.uuid4()), idempotency_key=key, user_id=None)
+        loser = make_job(str(_uuid.uuid4()), idempotency_key=key, user_id=None)
+
+        async with db.async_session_factory() as sess_a:
+            async with sess_a.begin():
+                await sess_a.execute(table.insert().values(**winner))
+                # Winner uncommitted: the loser's pre-check sees nothing and
+                # reaches its INSERT, which must block on the anon index until
+                # the winner's transaction resolves
+                loser_task = asyncio.create_task(db.enqueue_job(dict(loser)))
+                await asyncio.sleep(0.5)
+                assert not loser_task.done(), (
+                    "the racing anonymous enqueue did not block on the unique index - both submits would be accepted"
+                )
+            # Exiting begin() commits the winner; the loser's INSERT now
+            # raises IntegrityError and recovers to the committed winner
+        result = await loser_task
+        assert result["accepted"] is False and result["reason"] == "duplicate"
+        assert result["job"]["id"] == winner["id"]

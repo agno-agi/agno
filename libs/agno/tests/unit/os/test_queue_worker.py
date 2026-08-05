@@ -51,8 +51,13 @@ def _stub_run_row_persist(monkeypatch: pytest.MonkeyPatch):
     async def fake_save(component, session=None):
         pass
 
+    async def fake_save_run(component, run=None, session_id=None, user_id=None, run_index=None):
+        pass
+
     monkeypatch.setattr("agno.agent._storage.aread_or_create_session", fake_read)
     monkeypatch.setattr("agno.agent._session.asave_session", fake_save)
+    # v3 substrate: the fallbacks persist the run via asave_run too
+    monkeypatch.setattr("agno.agent._session.asave_run", fake_save_run)
 
 
 def make_config(**overrides: Any) -> QueueConfig:
@@ -272,16 +277,25 @@ class TestCrashRecovery:
         worker = make_worker(store, agent, make_config())
         await worker.start()
         try:
-            # Let several sweep ticks fail the persist: the ticket must stay
-            # running (swept-eligible), and the sweep must keep retrying
+            # The sweep acquires the ticket, the persist fails, and the ticket
+            # must stay running rather than terminalize over a stuck run row
             deadline = asyncio.get_event_loop().time() + 3.0
-            while len(read_attempts) < 2 and asyncio.get_event_loop().time() < deadline:
+            while not read_attempts and asyncio.get_event_loop().time() < deadline:
                 await asyncio.sleep(0.02)
-            assert len(read_attempts) >= 2, "sweep must retry the persist on later ticks"
+            assert read_attempts, "sweep must attempt the persist"
             job = await store.get_job("r1")
             assert job["status"] == "running", "ticket must not terminalize while the run row is stuck"
 
+            # Retry backoff: the sweeper refreshed locked_at when it acquired
+            # the ticket, so a persistently failing write is retried once per
+            # lock_grace instead of on every poll tick
+            await asyncio.sleep(0.2)
+            assert len(read_attempts) == 1, "re-swept before the sweep lock went stale"
+
+            # Once the sweeper's own lock goes stale the job is re-swept, and
+            # with the store back up the persist lands and gates the terminal
             db_down = False
+            store._jobs["r1"]["locked_at"] -= 1000
             job = await wait_for_status(store, "r1", "failed")
             assert run_row.status == RunStatus.error, "the retried persist must land before the terminal write"
             assert "worker lost" in job["error"].lower()
@@ -328,6 +342,9 @@ class TestCrashRecovery:
             assert run_row.status == RunStatus.running
 
             components["agent-1"] = agent  # redeploy restores it
+            # The sweeper holds a fresh lock from its failed attempt; the job
+            # becomes re-sweepable once that lock goes stale (retry backoff)
+            store._jobs["r1"]["locked_at"] -= 1000
             job = await wait_for_status(store, "r1", "failed")
             assert run_row.status == RunStatus.error
         finally:
@@ -761,6 +778,228 @@ class TestCancelQueued:
             es_mod._event_stream = original
 
 
+class TestSweepOwnership:
+    @pytest.mark.asyncio
+    async def test_lost_acquisition_never_touches_run_row(self):
+        """The heartbeat-vs-sweep race, decided BEFORE any run-row write: the
+        old order stamped ERROR on the row and only then lost the ticket race
+        via fail_swept_job's staleness recheck - a healthy run's row defaced
+        by a sweeper that never owned it."""
+        store, agent = InMemoryQueueStore(), FakeAgent()
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(make_job("r1"))
+        await store.claim_job("live-but-slow-worker")
+        store._jobs["r1"]["locked_at"] -= 1000  # looks dead...
+
+        real_sweep = store.sweep_exhausted_jobs
+
+        async def racing_sweep(lock_grace_seconds=60, limit=20):
+            stale_view = await real_sweep(lock_grace_seconds, limit)
+            # ...but a heartbeat lands between the select and the acquisition
+            await store.heartbeat_jobs("live-but-slow-worker", ["r1"])
+            return stale_view
+
+        store.sweep_exhausted_jobs = racing_sweep  # type: ignore[method-assign]
+        row_writes: list = []
+
+        async def spy_persist(job, error, status="error"):
+            row_writes.append((job["id"], status, error))
+            return True
+
+        worker._persist_run_error = spy_persist  # type: ignore[method-assign]
+        await worker._sweep_exhausted()
+        assert row_writes == [], "a sweeper that lost the acquisition must never write the run row"
+        assert (await store.get_job("r1"))["status"] == "running"
+        assert (await store.get_job("r1"))["locked_by"] == "live-but-slow-worker"
+
+    @pytest.mark.parametrize("boundary", ["before_acquire", "after_acquire", "after_row"])
+    @pytest.mark.asyncio
+    async def test_heartbeat_at_every_boundary_leaves_a_consistent_pair(self, boundary):
+        """A heartbeat landing at ANY step of the sweep protocol must leave
+        the pair consistent: either fully-RUNNING (the sweeper lost) or
+        fully-failed (it won) - never run=ERROR with ticket=RUNNING.
+
+        The acquisition is what makes this hold: it steals locked_by, so
+        every later heartbeat from the presumed-dead worker is a no-op."""
+        store, agent = InMemoryQueueStore(), FakeAgent()
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(make_job("r1"))
+        await store.claim_job("presumed-dead")
+        store._jobs["r1"]["locked_at"] -= 1000
+
+        run_state = {"status": "running"}
+
+        async def spy_persist(job, error, status="error"):
+            if boundary == "after_row":
+                await store.heartbeat_jobs("presumed-dead", ["r1"])
+            run_state["status"] = status
+            return True
+
+        worker._persist_run_error = spy_persist  # type: ignore[method-assign]
+
+        real_acquire = store.acquire_sweep
+
+        async def acquire_with_race(job_id, worker_id, lock_grace_seconds=60):
+            if boundary == "before_acquire":
+                await store.heartbeat_jobs("presumed-dead", ["r1"])
+            acquired = await real_acquire(job_id, worker_id, lock_grace_seconds)
+            if boundary == "after_acquire":
+                await store.heartbeat_jobs("presumed-dead", ["r1"])
+            return acquired
+
+        store.acquire_sweep = acquire_with_race  # type: ignore[method-assign]
+        await worker._sweep_exhausted()
+
+        ticket = (await store.get_job("r1"))["status"]
+        if boundary == "before_acquire":
+            # The heartbeat refreshed the lease first: the sweeper never
+            # acquired, so nothing anywhere was touched
+            assert (run_state["status"], ticket) == ("running", "running")
+        else:
+            # Acquisition already stole locked_by, so the heartbeat was a
+            # no-op and the protocol ran to completion
+            assert (run_state["status"], ticket) == ("error", "failed")
+        assert not (run_state["status"] == "error" and ticket == "running"), "run=ERROR over ticket=RUNNING"
+
+    @pytest.mark.asyncio
+    async def test_failed_row_persist_keeps_ticket_and_retries_after_lock_stale(self):
+        """Crash-mid-protocol resumability: a failing run-row persist leaves
+        the ticket running under the sweep lock; once that lock goes stale
+        the next sweep re-acquires and finishes."""
+        store, agent = InMemoryQueueStore(), FakeAgent()
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(make_job("r1"))
+        await store.claim_job("dead-worker")
+        store._jobs["r1"]["locked_at"] -= 1000
+
+        persists = {"fail": True, "calls": 0}
+
+        async def flaky_persist(job, error, status="error"):
+            persists["calls"] += 1
+            return not persists["fail"]
+
+        worker._persist_run_error = flaky_persist  # type: ignore[method-assign]
+        await worker._sweep_exhausted()
+        assert persists["calls"] == 1
+        assert (await store.get_job("r1"))["status"] == "running", "ticket must not terminalize past a stuck row"
+
+        # Retry backoff: freshly acquired, so the next tick skips it
+        await worker._sweep_exhausted()
+        assert persists["calls"] == 1, "re-swept before the sweep lock went stale"
+
+        # The sweeper's own lock goes stale; the persist now works
+        persists["fail"] = False
+        store._jobs["r1"]["locked_at"] -= 1000
+        await worker._sweep_exhausted()
+        assert persists["calls"] == 2
+        assert (await store.get_job("r1"))["status"] == "failed"
+
+
+class TestSettlementResults:
+    """A discarded settlement result is how a ticket silently stays RUNNING
+    while the worker believes it finished."""
+
+    @pytest.mark.asyncio
+    async def test_failed_settlement_is_loud_and_sweep_recoverable(self, caplog):
+        store, agent = InMemoryQueueStore(), FakeAgent()
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(make_job("r1"))
+        claimed = await store.claim_job(worker.worker_id)
+
+        async def declining_complete(job_id, worker_id, attempt, status, error=None):
+            return False  # e.g. the claim was reclaimed under us
+
+        store.complete_job = declining_complete  # type: ignore[method-assign]
+        with caplog.at_level("ERROR"):
+            await worker._execute_claimed(claimed)
+        assert any("could not settle ticket" in r.message for r in caplog.records), (
+            "an unsettled ticket must be loud, never silent"
+        )
+        # The backstop: we stopped refreshing the lease, so the sweep collects it
+        job = await store.get_job("r1")
+        assert job["status"] == "running"
+        store._jobs["r1"]["locked_at"] -= 1000
+        assert [j["id"] for j in await store.sweep_exhausted_jobs(lock_grace_seconds=60)] == ["r1"]
+
+    @pytest.mark.asyncio
+    async def test_settlement_exception_does_not_escape(self):
+        store, agent = InMemoryQueueStore(), FakeAgent()
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(make_job("r1"))
+        claimed = await store.claim_job(worker.worker_id)
+
+        async def raising_complete(job_id, worker_id, attempt, status, error=None):
+            raise RuntimeError("store down")
+
+        store.complete_job = raising_complete  # type: ignore[method-assign]
+        await worker._execute_claimed(claimed)  # must not raise into the poll loop
+        assert (await store.get_job("r1"))["status"] == "running"
+
+
+class TestCancelReorder:
+    @pytest.mark.asyncio
+    async def test_row_persisted_before_ticket_tombstone(self):
+        """The write order IS the contract: run row first, ticket second."""
+        store, agent = InMemoryQueueStore(), FakeAgent()
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(make_job("r1"))
+        order: list = []
+
+        async def spy_persist(job, error, status="error"):
+            order.append("row")
+            return True
+
+        real_cancel = store.cancel_job
+
+        async def spy_cancel(job_id):
+            order.append("ticket")
+            return await real_cancel(job_id)
+
+        worker._persist_run_error = spy_persist  # type: ignore[method-assign]
+        store.cancel_job = spy_cancel  # type: ignore[method-assign]
+        assert await worker.acancel_queued("r1") is True
+        assert order == ["row", "ticket"]
+        assert (await store.get_job("r1"))["status"] == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_failed_row_persist_leaves_ticket_untombstoned(self):
+        """The old order left a cancelled ticket over a live-looking row -
+        a PERMANENT divergence (the sweep only sees stale RUNNING). Row-first
+        inverts it: the ticket stays waiting and the caller's cancellation
+        intent kills the eventual leg at its first checkpoint, visibly."""
+        store, agent = InMemoryQueueStore(), FakeAgent()
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(make_job("r1"))
+
+        async def failing_persist(job, error, status="error"):
+            return False
+
+        worker._persist_run_error = failing_persist  # type: ignore[method-assign]
+        assert await worker.acancel_queued("r1") is False
+        assert (await store.get_job("r1"))["status"] == "queued", "no tombstone over a row that could not be written"
+        # "Recoverable" concretely: the ticket can still be claimed and run,
+        # and the caller's cancellation intent (registered right after this
+        # call by every cancel route) kills that leg at its first checkpoint
+        assert await store.claim_job("w1") is not None, "the ticket must stay recoverable, not stranded"
+
+    @pytest.mark.asyncio
+    async def test_paused_ticket_stays_continuable_when_row_persist_fails(self):
+        store, agent = InMemoryQueueStore(), FakeAgent()
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(make_job("p1"))
+        claimed = await store.claim_job("w1")
+        assert await store.complete_job("p1", "w1", claimed["attempt"], "paused")
+
+        async def failing_persist(job, error, status="error"):
+            return False
+
+        worker._persist_run_error = failing_persist  # type: ignore[method-assign]
+        assert await worker.acancel_queued("p1") is False
+        assert (await store.get_job("p1"))["status"] == "paused", (
+            "cancel degrades to the documented stale-intent contract, not a divergent tombstone"
+        )
+
+
 class TestConfigValidation:
     def test_broken_configs_rejected(self):
         from agno.job_queue.config import QueueConfig
@@ -775,6 +1014,19 @@ class TestConfigValidation:
         ):
             with pytest.raises(ValueError):
                 QueueConfig(durable=True, **{k: v for k, v in kwargs.items() if k != "durable"})
+
+    def test_multi_attempt_requires_experimental_opt_in(self):
+        """The interim two-producer guard, config half: re-execution reaches
+        the unfenced happy-path-save and stream-write races (P1 items), so
+        max_attempts > 1 is an explicit experimental opt-in - a log warning
+        is not a control."""
+        from agno.job_queue.config import QueueConfig
+
+        with pytest.raises(ValueError, match="allow_multi_attempt_experimental"):
+            QueueConfig(durable=True, max_attempts=3)
+        config = QueueConfig(durable=True, max_attempts=3, allow_multi_attempt_experimental=True)
+        assert config.max_attempts == 3
+        assert QueueConfig(durable=True).max_attempts == 1  # default untouched
 
 
 class TestReservedKwargsParity:
@@ -871,7 +1123,10 @@ class TestContinuationExecution:
     @pytest.mark.asyncio
     async def test_continuation_calls_acontinue_run_with_rebuilt_tools(self):
         """A ticket with payload['continue'] re-enters via acontinue_run (not
-        arun), with ToolExecution objects rebuilt from the stored JSON."""
+        arun), with the stored updated_tools JSON wrapped into RunRequirement
+        objects - the ONLY kwarg v3's continue dispatch consumes. Passing a
+        bare updated_tools kwarg instead would be swallowed by **kwargs and
+        the run would dead-letter as unresolved-HITL."""
         store, agent = InMemoryQueueStore(), ContinuableFakeAgent()
         await _park_paused(store)
         result = await store.continue_job(
@@ -889,9 +1144,12 @@ class TestContinuationExecution:
             assert call["session_id"] == "s1"
             assert call["stream"] is False
             from agno.models.response import ToolExecution
+            from agno.run.requirement import RunRequirement
 
-            assert isinstance(call["updated_tools"][0], ToolExecution)
-            assert call["updated_tools"][0].tool_call_id == "t1"
+            assert "updated_tools" not in call, "the dispatch ignores updated_tools - it must not be sent"
+            assert isinstance(call["requirements"][0], RunRequirement)
+            assert isinstance(call["requirements"][0].tool_execution, ToolExecution)
+            assert call["requirements"][0].tool_execution.tool_call_id == "t1"
         finally:
             await worker.stop()
 
@@ -1001,6 +1259,13 @@ class RecoverableFakeWorkflow:
     async def asave_session(self, session: Any = None) -> None:
         self.saves.append(session)
 
+    async def asave_run(self, run: Any = None, session_id: Any = None, user_id: Any = None) -> None:
+        # v3 substrate: the fallbacks persist the run via the per-run save
+        self.saves.append(run)
+
+    def save_run(self, run: Any = None, session_id: Any = None, user_id: Any = None) -> None:
+        self.saves.append(run)
+
     async def acontinue_run(self, **kwargs: Any) -> SimpleNamespace:
         self.continue_calls.append(kwargs)
         if self.run.status != RunStatus.paused:
@@ -1080,6 +1345,85 @@ class TestContinuationRedrive:
             job_row = await wait_for_status(store, "r1", "failed")
             assert "permanent" in (job_row["error"] or "")
             assert workflow.run.status == RunStatus.cancelled, "a cancelled run row must never be resurrected"
+        finally:
+            await worker.stop()
+
+
+class DbBackedFakeWorkflow:
+    """Workflow double whose run row lives behind a db primitive, modeling
+    Postgres: the worker's fenced status stamps LAND on the row, and
+    acontinue_run reloads and validates it exactly like Workflow.acontinue_run.
+    (RecoverableFakeWorkflow has no db, so pre-dispatch stamps no-op there -
+    which is how the RUNNING-stamp regression slipped past those tests.)"""
+
+    id = "wf-1"
+
+    def __init__(self):
+        self.run = SimpleNamespace(run_id="r1", status=RunStatus.paused, content=None)
+        self.continue_calls: list = []
+        self.db_writes: list = []
+        fake = self
+
+        class _Db:
+            async def update_run_in_session(
+                self, session_id, run_id, fields, expected_attempt=None, user_id=None, content_if_absent=None
+            ):
+                fake.db_writes.append(dict(fields))
+                if run_id != fake.run.run_id:
+                    return False
+                if "status" in fields:
+                    fake.run.status = RunStatus(fields["status"])
+                return True
+
+        self.db = _Db()
+
+    async def aget_run_output(self, run_id: str, session_id: str, user_id: Any = None) -> SimpleNamespace:
+        return self.run
+
+    async def acontinue_run(self, **kwargs: Any) -> SimpleNamespace:
+        # Reload-and-validate, like the real Workflow.acontinue_run
+        self.continue_calls.append(kwargs)
+        if self.run.status != RunStatus.paused:
+            raise ValueError(f"Cannot continue a run that is not paused. Current status: {self.run.status}")
+        self.run.status = RunStatus.completed
+        return SimpleNamespace(status=RunStatus.completed, content="continued")
+
+
+class TestContinuationRunRowStamp:
+    @pytest.mark.asyncio
+    async def test_no_running_stamp_before_continuation_dispatch(self):
+        """The worker's pre-dispatch RUNNING stamp (F3) must skip continuation
+        legs: with a db-backed run row the stamp lands before acontinue_run
+        reloads and validates PAUSED, the not-paused ValueError is classified
+        permanent, and every durable workflow continue dead-letters."""
+        workflow = DbBackedFakeWorkflow()
+        store = InMemoryQueueStore()
+        job = make_job("r1")
+        job["component_type"] = "workflow"
+        job["component_id"] = "wf-1"
+        await store.enqueue_job(job)
+        claimed = await store.claim_job("old-worker")
+        assert await store.complete_job("r1", "old-worker", claimed["attempt"], "paused")
+        assert (await store.continue_job("r1", {"step_requirements": []}))["outcome"] == "queued"
+
+        worker = QueueWorker(
+            store=store,
+            resolve_component=lambda t, i: workflow if (t, i) == ("workflow", "wf-1") else None,
+            config=make_config(),
+            worker_id="live-worker",
+        )
+        await worker.start()
+        try:
+            job_row = await wait_for_status(store, "r1", "completed")
+            assert job_row["error"] is None
+            assert len(workflow.continue_calls) == 1
+            assert workflow.run.status == RunStatus.completed
+            # The attempt-generation stamp must still land (the fence is not
+            # optional for continuation legs); only the status write is exempt
+            assert any(w.get("queue_attempt") == 2 and "status" not in w for w in workflow.db_writes)
+            assert not any(w.get("status") == RunStatus.running.value for w in workflow.db_writes), (
+                "no RUNNING write may land on a continuation leg's run row before dispatch"
+            )
         finally:
             await worker.stop()
 
@@ -1164,3 +1508,701 @@ class TestStreamingContinuation:
             assert isinstance(continue_calls[0]["step_requirements"][0], StepRequirement)
         finally:
             es_mod._event_stream = original
+
+
+class CauseProbeAgent:
+    """Records worker ownership state as observed INSIDE the cancellation
+    unwinding - the moment the foreground persist guards consult it."""
+
+    id = "agent-1"
+
+    def __init__(self):
+        self.observed: dict = {}
+
+    async def arun(self, run_id=None, **kwargs):
+        from agno.run.concurrency import get_worker_ownership
+
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            ownership = get_worker_ownership(run_id)
+            self.observed["managed"] = ownership is not None
+            self.observed["cause"] = getattr(ownership, "cancellation_cause", None)
+            raise
+        return SimpleNamespace(status=RunStatus.completed, content="done")
+
+
+class TestWorkerOwnership:
+    """The ownership registry must span exactly the execution: no marker may
+    survive any exit path, and cancellation causes must be attributed BEFORE
+    the cancellation is delivered."""
+
+    @pytest.mark.asyncio
+    async def test_no_marker_after_unsupported_job_type(self):
+        from agno.run.concurrency import is_worker_managed
+
+        store, agent = InMemoryQueueStore(), FakeAgent()
+        worker = make_worker(store, agent, make_config())
+        job = make_job("r1")
+        job["job_type"] = "ingest"
+        await store.enqueue_job(job)
+        claimed = await store.claim_job(worker.worker_id)
+        await worker._execute_claimed(claimed)
+        assert not is_worker_managed("r1"), "marker leaked on the unsupported-job-type return"
+        assert (await store.get_job("r1"))["status"] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_no_marker_after_missing_component(self):
+        from agno.run.concurrency import is_worker_managed
+
+        store = InMemoryQueueStore()
+        worker = make_worker(store, None, make_config())  # resolves nothing
+        await store.enqueue_job(make_job("r1"))
+        claimed = await store.claim_job(worker.worker_id)
+        await worker._execute_claimed(claimed)
+        assert not is_worker_managed("r1"), "marker leaked on the missing-component return"
+        assert (await store.get_job("r1"))["status"] == "running", "claim left to go stale"
+
+    @pytest.mark.asyncio
+    async def test_no_marker_after_pre_slot_exception(self):
+        from agno.run.concurrency import is_worker_managed
+
+        store, agent = InMemoryQueueStore(), FakeAgent()
+        calls = {"n": 0}
+
+        def exploding_resolver(ctype, cid):
+            calls["n"] += 1
+            if calls["n"] >= 2:  # the pre-slot component resolve
+                raise RuntimeError("registry exploded")
+            return agent
+
+        worker = QueueWorker(
+            store=store, resolve_component=exploding_resolver, config=make_config(), worker_id="live-worker"
+        )
+        await store.enqueue_job(make_job("r1"))
+        claimed = await store.claim_job(worker.worker_id)
+        with pytest.raises(RuntimeError, match="registry exploded"):
+            await worker._execute_claimed(claimed)
+        assert not is_worker_managed("r1"), "marker leaked on a pre-slot exception"
+
+    @pytest.mark.asyncio
+    async def test_timeout_cause_attributed_before_cancellation(self):
+        agent = CauseProbeAgent()
+        store = InMemoryQueueStore()
+        worker = make_worker(store, agent, make_config(timeout_seconds=1))  # type: ignore[arg-type]
+        worker.config.timeout_seconds = 0.05  # type: ignore[assignment]
+        await store.enqueue_job(make_job("r1"))
+        await worker.start()
+        try:
+            job = await wait_for_status(store, "r1", "failed")
+            assert "timeout" in job["error"].lower()
+            assert agent.observed == {"managed": True, "cause": "timeout"}, (
+                "the handler must see cause=timeout DURING unwinding, not after"
+            )
+        finally:
+            await worker.stop()
+
+    @pytest.mark.asyncio
+    async def test_drain_cause_attributed_before_cancellation(self):
+        agent = CauseProbeAgent()
+        store = InMemoryQueueStore()
+        worker = make_worker(store, agent, make_config())  # type: ignore[arg-type]
+        worker.stop_timeout = 0  # cancel stragglers immediately
+        await store.enqueue_job(make_job("r1"))
+        await worker.start()
+        await wait_for_status(store, "r1", "running")
+        await asyncio.sleep(0.05)  # let the execution enter its sleep
+        await worker.stop()
+        job = await store.get_job("r1")
+        assert job["status"] == "failed" and "shutdown" in job["error"]
+        assert agent.observed == {"managed": True, "cause": "drain"}
+
+
+class TestForegroundCancelPersistGuard:
+    """The worker drives the FOREGROUND arun/acontinue_run, so a wait_for
+    timeout (or shutdown drain) cancels the foreground handlers - whose
+    disconnect branch persisted an unfenced CANCELLED that raced the worker's
+    fenced terminal: run row CANCELLED (wrong cause) vs ticket failed-timeout.
+    The F2 is_worker_managed guards sat only in the detached wrappers, which
+    the worker never invokes; the guard must live in the foreground
+    cancellation-persist helpers (agent, team, workflow)."""
+
+    @pytest.mark.asyncio
+    async def test_timeout_does_not_trigger_foreground_cancel_persist(self, monkeypatch):
+        from agno.session import AgentSession
+
+        persists: list = []
+
+        async def record_store(agent, run_response=None, session=None, run_context=None, user_id=None):
+            persists.append(getattr(run_response, "status", None))
+
+        monkeypatch.setattr("agno.agent._run.acleanup_and_store", record_store)
+
+        class ForegroundCancelAgent:
+            """arun mimics foreground _arun's disconnect branch: on task
+            cancellation it schedules the detached CANCELLED persist via the
+            real helper, then re-raises - the exact write the worker's
+            wait_for timeout used to race."""
+
+            id = "agent-1"
+
+            async def arun(self, run_id=None, session_id=None, **kwargs):
+                from agno.agent._run import _persist_cancelled_run_in_background
+                from agno.run.agent import RunOutput
+
+                try:
+                    await asyncio.sleep(10)
+                except asyncio.CancelledError:
+                    _persist_cancelled_run_in_background(
+                        self,  # type: ignore[arg-type]
+                        run_response=RunOutput(run_id=run_id, session_id=session_id, status=RunStatus.cancelled),
+                        session=AgentSession(session_id=session_id or "s1", runs=[]),
+                    )
+                    raise
+
+        store = InMemoryQueueStore()
+        worker = make_worker(store, ForegroundCancelAgent(), make_config(timeout_seconds=1))  # type: ignore[arg-type]
+        # Sub-second timeout is not configurable; patch after construction
+        worker.config.timeout_seconds = 0.05  # type: ignore[assignment]
+        await store.enqueue_job(make_job())
+        await worker.start()
+        try:
+            job = await wait_for_status(store, "r1", "failed")
+            assert "timeout" in job["error"].lower()
+            await asyncio.sleep(0.05)  # let any (wrongly) scheduled persist task run
+            assert persists == [], "worker-managed timeout must not schedule the foreground CANCELLED persist"
+        finally:
+            await worker.stop()
+
+    @pytest.mark.asyncio
+    async def test_guard_covers_all_three_helpers(self, monkeypatch):
+        """Worker-managed runs skip the detached CANCELLED persist in every
+        component's foreground helper; unmanaged runs (real client
+        disconnects) still persist."""
+        from agno.run.concurrency import mark_worker_managed, unmark_worker_managed
+        from agno.run.team import TeamRunOutput
+        from agno.run.workflow import WorkflowRunOutput
+        from agno.session import AgentSession
+        from agno.team._run import _persist_cancelled_team_run_in_background
+        from agno.workflow.workflow import Workflow
+
+        # Agent
+        agent_persists: list = []
+
+        async def agent_store(agent, run_response=None, session=None, run_context=None, user_id=None):
+            agent_persists.append(run_response.run_id)
+
+        monkeypatch.setattr("agno.agent._run.acleanup_and_store", agent_store)
+        from agno.agent._run import _persist_cancelled_run_in_background
+        from agno.run.agent import RunOutput
+
+        session = AgentSession(session_id="s1", runs=[])
+        mark_worker_managed("wm-a")
+        try:
+            _persist_cancelled_run_in_background(
+                SimpleNamespace(), run_response=RunOutput(run_id="wm-a"), session=session
+            )  # type: ignore[arg-type]
+            await asyncio.sleep(0.02)
+            assert agent_persists == []
+        finally:
+            unmark_worker_managed("wm-a")
+        _persist_cancelled_run_in_background(
+            SimpleNamespace(), run_response=RunOutput(run_id="free-a"), session=session
+        )  # type: ignore[arg-type]
+        await asyncio.sleep(0.02)
+        assert agent_persists == ["free-a"]
+
+        # Team
+        team_persists: list = []
+
+        async def team_store(team, run_response=None, session=None, run_context=None):
+            team_persists.append(run_response.run_id)
+
+        monkeypatch.setattr("agno.team._run._acleanup_and_store", team_store)
+        mark_worker_managed("wm-t")
+        try:
+            _persist_cancelled_team_run_in_background(
+                SimpleNamespace(), TeamRunOutput(run_id="wm-t"), SimpleNamespace()
+            )  # type: ignore[arg-type]
+            await asyncio.sleep(0.02)
+            assert team_persists == []
+        finally:
+            unmark_worker_managed("wm-t")
+        _persist_cancelled_team_run_in_background(SimpleNamespace(), TeamRunOutput(run_id="free-t"), SimpleNamespace())  # type: ignore[arg-type]
+        await asyncio.sleep(0.02)
+        assert team_persists == ["free-t"]
+
+        # Workflow (bound method invoked with a duck-typed self)
+        wf_saves: list = []
+
+        async def wf_apersist(session=None, run=None):
+            wf_saves.append(run)
+
+        # v3 substrate: the workflow helper persists via
+        # _apersist_session_and_run (session + run in one call), no longer
+        # asave_session - the guard semantics under test are unchanged
+        wf_self = SimpleNamespace(
+            _update_session_metrics=lambda session=None, workflow_run_response=None: None,
+            _has_async_db=lambda: True,
+            _apersist_session_and_run=wf_apersist,
+        )
+        wf_session = SimpleNamespace(upsert_run=lambda run=None: None)
+        helper = Workflow._persist_cancelled_run_in_background
+        mark_worker_managed("wm-w")
+        try:
+            helper(wf_self, WorkflowRunOutput(run_id="wm-w"), wf_session)  # type: ignore[arg-type]
+            await asyncio.sleep(0.02)
+            assert wf_saves == []
+        finally:
+            unmark_worker_managed("wm-w")
+        helper(wf_self, WorkflowRunOutput(run_id="free-w"), wf_session)  # type: ignore[arg-type]
+        await asyncio.sleep(0.02)
+        assert len(wf_saves) == 1
+
+
+class TestWorkerEnsuresRunRow:
+    """Phase-3 item 9 (lean): a claimed run's row is guaranteed durable BEFORE
+    execution - the accepting request's prepare can fail or die after the
+    ticket committed, and the old worker executed rowless (pollers 404ed a
+    real run until its terminal save; the accept grace only narrowed the
+    window, it never covered a dead router)."""
+
+    class _RecordingDb:
+        """Db double exposing only the atomic append primitive: aprepare's
+        agent branch goes append-first, so a True return keeps the whole
+        prepare inside the primitive and records the ensured row."""
+
+        def __init__(self):
+            self.appended: list = []
+
+        async def append_run_to_session_if_absent(self, session_id=None, run_dict=None, user_id=None):
+            self.appended.append(dict(run_dict))
+            return True
+
+    @pytest.mark.asyncio
+    async def test_run_row_ensured_before_execution(self):
+        store = InMemoryQueueStore()
+        agent = FakeAgent()
+        agent.db = self._RecordingDb()
+        order: list = []
+        real_arun = agent.arun
+
+        async def tracking_arun(**kwargs):
+            order.append("arun")
+            return await real_arun(**kwargs)
+
+        agent.arun = tracking_arun
+        real_append = agent.db.append_run_to_session_if_absent
+
+        async def tracking_append(**kwargs):
+            order.append("ensure")
+            return await real_append(**kwargs)
+
+        agent.db.append_run_to_session_if_absent = tracking_append
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(make_job("row1"))
+        job = await store.claim_job(worker.worker_id)
+        await worker._execute_claimed(job)
+
+        assert len(agent.db.appended) == 1, "worker must ensure the run row before executing"
+        row = agent.db.appended[0]
+        assert row["run_id"] == "row1" and str(row["status"]).upper() == "PENDING"
+        assert order == ["ensure", "arun"], "the row ensure must land before execution starts"
+        assert (await store.get_job("row1"))["status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_ensure_failure_leaves_claim_stale_and_run_unexecuted(self, monkeypatch):
+        class _BrokenDb:
+            async def append_run_to_session_if_absent(self, **kwargs):
+                raise RuntimeError("session store down")
+
+            async def insert_session_if_absent(self, session=None):
+                raise RuntimeError("session store down")
+
+        store = InMemoryQueueStore()
+        agent = FakeAgent()
+        agent.db = _BrokenDb()
+        worker = make_worker(store, agent, make_config())
+        await store.enqueue_job(make_job("row2"))
+        job = await store.claim_job(worker.worker_id)
+
+        # The broken primitives fall through to the legacy path, which needs
+        # real agent machinery the fixture stubs benignly - make the stubbed
+        # read fail too so the ensure itself raises
+        async def broken_read(component, session_id=None, user_id=None):
+            raise RuntimeError("session store down")
+
+        monkeypatch.setattr("agno.agent._storage.aread_or_create_session", broken_read)
+        await worker._execute_claimed(job)
+
+        assert agent.calls == [], "a run whose row cannot be guaranteed must not execute"
+        ticket = await store.get_job("row2")
+        assert ticket["status"] == "running", "claim is left to go stale for retry, never terminalized"
+
+    @pytest.mark.asyncio
+    async def test_continuation_leg_skips_ensure(self):
+        """A continuation's run row is PAUSED by definition; the ensure must
+        not touch it (a fresh PENDING append would be declined anyway, but
+        the prepare must not even run - workflow continues read the session
+        before acontinue_run)."""
+        store = InMemoryQueueStore()
+        agent = ContinuableFakeAgent()
+        agent.db = self._RecordingDb()
+        await _park_paused(store, job_id="cont1")
+        result = await store.continue_job("cont1", {"updated_tools": []})
+        assert result["outcome"] == "queued"
+        worker = make_worker(store, agent, make_config())
+        claimed = await store.claim_job(worker.worker_id)
+        await worker._execute_claimed(claimed)
+        assert agent.db.appended == [], "continuation legs must not run the row ensure"
+        assert agent.continue_calls, "the continuation itself must still execute"
+
+
+class TestClosingLedger:
+    @pytest.mark.asyncio
+    async def test_worker_managed_lifecycle(self):
+        """F2: claimed jobs are marked worker-managed for exactly the span of
+        execution, so detached shutdown handlers stand down."""
+        from agno.job_queue.config import QueueConfig
+        from agno.job_queue.store import InMemoryQueueStore
+        from agno.os.job_queue import QueueWorker
+        from agno.run.concurrency import is_worker_managed
+
+        observed = {}
+
+        class A:
+            id = "a1"
+            db = None
+
+            async def arun(self, **kwargs):
+                observed["managed_during"] = is_worker_managed(kwargs["run_id"])
+                from types import SimpleNamespace
+
+                from agno.run.base import RunStatus
+
+                return SimpleNamespace(run_id=kwargs["run_id"], status=RunStatus.completed)
+
+        store = InMemoryQueueStore()
+        await store.enqueue_job(
+            {
+                "id": "wm1",
+                "component_type": "agent",
+                "component_id": "a1",
+                "session_id": "s1",
+                "job_type": "run",
+                "payload": {"input": "x", "kwargs": {}},
+                "status": "queued",
+                "attempt": 0,
+                "max_attempts": 1,
+                "available_at": 0,
+                "created_at": 0,
+            }
+        )
+        worker = QueueWorker(store=store, resolve_component=lambda t, i: A(), config=QueueConfig(durable=True))
+        claimed = await store.claim_job(worker.worker_id)
+        await worker._execute_claimed(claimed)
+        assert observed["managed_during"] is True
+        assert is_worker_managed("wm1") is False, "must unmark after execution"
+
+    @pytest.mark.asyncio
+    async def test_running_transition_after_slot(self):
+        """F3: pollers must see RUNNING during durable execution, fenced."""
+        from agno.job_queue.config import QueueConfig
+        from agno.job_queue.store import InMemoryQueueStore
+        from agno.os.job_queue import QueueWorker
+
+        writes = []
+
+        class Db:
+            async def update_run_in_session(self, session_id, run_id, fields, expected_attempt=None, **kw):
+                writes.append(dict(fields))
+                return True
+
+        class A:
+            id = "a1"
+            db = Db()
+
+            async def arun(self, **kwargs):
+                from types import SimpleNamespace
+
+                from agno.run.base import RunStatus
+
+                return SimpleNamespace(run_id=kwargs["run_id"], status=RunStatus.completed)
+
+        store = InMemoryQueueStore()
+        await store.enqueue_job(
+            {
+                "id": "rt1",
+                "component_type": "agent",
+                "component_id": "a1",
+                "session_id": "s1",
+                "job_type": "run",
+                "payload": {"input": "x", "kwargs": {}},
+                "status": "queued",
+                "attempt": 0,
+                "max_attempts": 1,
+                "available_at": 0,
+                "created_at": 0,
+            }
+        )
+        worker = QueueWorker(store=store, resolve_component=lambda t, i: A(), config=QueueConfig(durable=True))
+        claimed = await store.claim_job(worker.worker_id)
+        await worker._execute_claimed(claimed)
+        statuses = [str(w.get("status", "")).lower() for w in writes]
+        assert "running" in statuses, f"expected a fenced RUNNING write, got {writes}"
+
+
+class TestWorkerPathIndexStamp:
+    """Phase-5 item 21 tripwire: the DB-fallback substrate assumes the events
+    the worker PUBLISHES are the same objects the component ACCUMULATES for
+    its session save. If that shared-reference assumption ever breaks (a
+    copy, a reconstruction), indices silently stop reaching storage and the
+    DB replay fallback quietly regresses to positional renumbering - no
+    error anywhere. This test drives the REAL worker streaming path and
+    asserts the component-held objects carry the stream-assigned indices."""
+
+    @pytest.mark.asyncio
+    async def test_component_accumulated_events_carry_stream_indices(self):
+        import agno.os.event_streams as es_mod
+        from agno.os.event_streams import InMemoryEventStream, set_event_stream
+        from agno.os.managers import EventsBuffer, SSESubscriberManager
+        from agno.run.agent import RunContentEvent
+
+        original = es_mod._event_stream
+        stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+        set_event_stream(stream)
+        try:
+            store = InMemoryQueueStore()
+            job = QueuedJob(
+                id="idx1",
+                component_type="agent",
+                component_id="a1",
+                session_id="s1",
+                payload={"input": "hi", "stream": True},
+            ).to_dict()
+            await store.enqueue_job(job)
+
+            accumulated: list = []
+
+            class FakeOutput:
+                run_id = "idx1"
+                status = RunStatus.completed
+
+            class StreamingAgent:
+                id = "a1"
+                db = None
+
+                async def arun(self, **kwargs):
+                    # Accumulate the SAME objects it yields, as the real
+                    # component machinery does into run_response.events
+                    for content in ("a", "b", "c"):
+                        event = RunContentEvent(content=content, run_id="idx1")
+                        accumulated.append(event)
+                        yield event
+                    yield FakeOutput()
+
+            worker = QueueWorker(
+                store=store,
+                resolve_component=lambda t, i: StreamingAgent(),
+                config=make_config(),
+            )
+            claimed = await store.claim_job(worker.worker_id)
+            await worker._execute_claimed(claimed)
+
+            assert (await store.get_job("idx1"))["status"] == "completed"
+            assert [e.event_index for e in accumulated] == [0, 1, 2], (
+                "the component-held event objects must carry the stream-assigned indices - "
+                f"got {[e.event_index for e in accumulated]}; the shared-reference stamp is broken "
+                "and the DB replay fallback will silently renumber"
+            )
+            assert all("event_index" in e.to_dict() for e in accumulated), (
+                "stamped indices must survive serialization into the stored run"
+            )
+        finally:
+            es_mod._event_stream = original
+
+
+class TestWorkerRedriveSeedsExpiredCounter:
+    """Phase-5 item 20, durable door: the worker's continuation reopen seeds
+    an EXPIRED counter from the run row before the leg's first event - the
+    seam's accept-time reopen is deliberately floorless (nothing publishes
+    before the worker's reopen), so this is the one seat that must seed."""
+
+    @pytest.mark.asyncio
+    async def test_streaming_continuation_after_expiry_continues_indices(self):
+        from types import SimpleNamespace
+
+        import agno.os.event_streams as es_mod
+        from agno.os.event_streams import InMemoryEventStream, set_event_stream
+        from agno.os.managers import EventsBuffer, SSESubscriberManager
+        from agno.run.agent import RunContentEvent
+
+        original = es_mod._event_stream
+        stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+        set_event_stream(stream)
+        try:
+            store = InMemoryQueueStore()
+            job = QueuedJob(
+                id="seed1",
+                component_type="agent",
+                component_id="a1",
+                session_id="s1",
+                payload={"input": "hi", "stream": True},
+            ).to_dict()
+            await store.enqueue_job(job)
+            claimed = await store.claim_job("old-worker")
+            assert await store.complete_job("seed1", "old-worker", claimed["attempt"], "paused")
+            assert (await store.continue_job("seed1", {"updated_tools": []}))["outcome"] == "queued"
+            # Stream state expired while paused (deploy): nothing survives
+            await stream.cleanup_run("seed1")
+
+            published: list = []
+
+            class FakeOutput:
+                run_id = "seed1"
+                status = RunStatus.completed
+
+            class SeedAgent:
+                id = "a1"
+                db = None
+
+                async def aget_run_output(self, run_id=None, session_id=None, user_id=None):
+                    # The paused leg stored events 0..2 with stamped indices
+                    stored = [RunContentEvent(content=f"c{i}", run_id="seed1") for i in range(3)]
+                    for i, e in enumerate(stored):
+                        e.event_index = i
+                    return SimpleNamespace(events=stored)
+
+                async def acontinue_run(self, **kwargs):
+                    event = RunContentEvent(content="after-approval", run_id="seed1")
+                    published.append(event)
+                    yield event
+                    yield FakeOutput()
+
+            worker = make_worker(store, None, make_config())
+            worker.resolve_component = lambda t, i: SeedAgent()
+            claimed = await store.claim_job(worker.worker_id)
+            await worker._execute_claimed(claimed)
+
+            assert (await store.get_job("seed1"))["status"] == "completed"
+            assert [e.event_index for e in published] == [3], (
+                f"post-expiry continuation must continue at floor+1, got {[e.event_index for e in published]}"
+            )
+        finally:
+            es_mod._event_stream = original
+
+
+class TestDrainLifecycle:
+    """Phase-7 item 29: the drain's three defects - heartbeat dying at drain
+    start (peer sweeps a healthily-draining run as dead), the double-cancel
+    (a second cancel landing inside except CancelledError interrupts the
+    drain's own shielded persist-before-requeue), and the warned-not-enforced
+    stop_timeout < lock_grace invariant whose violation guarantees the
+    drain-sweep race."""
+
+    def test_stop_timeout_must_be_below_lock_grace(self):
+        from agno.job_queue.config import QueueConfig
+
+        config = QueueConfig(durable=True, lock_grace_seconds=30)
+        with pytest.raises(ValueError, match="strictly below"):
+            QueueWorker(store=InMemoryQueueStore(), resolve_component=lambda t, i: None, config=config, stop_timeout=30)
+        worker = QueueWorker(
+            store=InMemoryQueueStore(), resolve_component=lambda t, i: None, config=config, stop_timeout=29
+        )
+        assert worker.stop_timeout == 29
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_continues_through_drain(self):
+        """In-flight jobs during a slow drain must keep their leases fresh -
+        the old `while self._running` killed the heartbeat the moment stop()
+        began, contradicting stop()'s own comment."""
+        import time as _time
+
+        store = InMemoryQueueStore()
+        beats: list = []
+        real_heartbeat = store.heartbeat_jobs
+
+        async def recording_heartbeat(worker_id, job_ids):
+            beats.append(_time.monotonic())
+            return await real_heartbeat(worker_id, job_ids)
+
+        store.heartbeat_jobs = recording_heartbeat  # type: ignore[method-assign]
+        agent = FakeAgent(delay=2.2)  # outlives two 1s heartbeat intervals
+        # stop_timeout at CONSTRUCTION now: the enforced invariant rejects a
+        # post-hoc default-30 worker against lock_grace=3
+        worker = QueueWorker(
+            store=store,
+            resolve_component=lambda ctype, cid: agent if (ctype, cid) == ("agent", "agent-1") else None,
+            config=make_config(lock_grace_seconds=3),  # beat interval = 1s
+            worker_id="live-worker",
+            stop_timeout=2.9,  # long enough for the run to finish draining
+        )
+        await store.enqueue_job(make_job())
+        await worker.start()
+        await wait_for_status(store, "r1", "running")
+
+        stop_started = _time.monotonic()
+        await worker.stop()
+
+        assert (await store.get_job("r1"))["status"] == "completed", "the drained run must finish healthily"
+        beats_during_drain = [b for b in beats if b > stop_started]
+        # >= 2 is the discriminator: even the old while-self._running loop
+        # let ONE already-sleeping beat's body fire after stop() - sustained
+        # beating through a multi-interval drain is what the fix guarantees
+        assert len(beats_during_drain) >= 2, (
+            f"only {len(beats_during_drain)} heartbeat(s) during a 2+ interval drain - the loop died at "
+            "drain start and a peer replica would sweep this healthy run as dead"
+        )
+
+    @pytest.mark.asyncio
+    async def test_straggler_cancel_is_single_and_shielded_persist_completes(self, monkeypatch):
+        """The rider's exact window: the drain-timeout cancel arrives, the
+        handler enters its shielded persist-before-requeue - and no SECOND
+        cancel may interrupt it. On the old wait_for(gather) shape the
+        straggler loop delivered that second cancel; the persist was lost and
+        the ticket stayed RUNNING. Fixed: the persist completes and the
+        ticket settles failed."""
+        store = InMemoryQueueStore()
+        agent = FakeAgent(delay=3600)  # never finishes: guaranteed straggler
+        worker = make_worker(store, agent, make_config(lock_grace_seconds=60))
+        worker.stop_timeout = 0.2
+
+        persist_done: list = []
+
+        async def slow_persist(self_worker, job, error, status="error"):
+            await asyncio.sleep(0.3)  # the second cancel used to land in here
+            persist_done.append(job["id"])
+            return True
+
+        monkeypatch.setattr(QueueWorker, "_persist_run_error", slow_persist)
+        await store.enqueue_job(make_job())  # max_attempts=1 -> drain will fail it
+        await worker.start()
+        await wait_for_status(store, "r1", "running")
+
+        # The deterministic discriminator: count cancel DELIVERIES to the
+        # in-flight task. The old wait_for(gather) shape delivered two (the
+        # gather's implicit child-cancel on timeout, then the straggler
+        # loop); whether the second one interrupts the shielded persist is a
+        # scheduling race - the count is not. asyncio.wait never cancels, so
+        # the straggler loop must be the sole source.
+        task = worker._in_flight["r1"]
+        cancel_calls: list = []
+        real_cancel = task.cancel
+
+        def counting_cancel(*args, **kwargs):
+            cancel_calls.append(1)
+            return real_cancel(*args, **kwargs)
+
+        task.cancel = counting_cancel  # type: ignore[method-assign]
+
+        await worker.stop()
+
+        assert len(cancel_calls) == 1, (
+            f"stop() delivered {len(cancel_calls)} cancels to the draining task - the second one can land "
+            "inside the except CancelledError handler and interrupt the shielded persist-before-requeue"
+        )
+        assert persist_done == ["r1"], "the shielded persist must complete despite the straggler cancel"
+        assert (await store.get_job("r1"))["status"] == "failed", (
+            f"ticket must settle failed after the persisted drain, got {(await store.get_job('r1'))['status']} - "
+            "RUNNING here means the second cancel interrupted the persist and the drain guarantee broke"
+        )

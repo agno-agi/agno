@@ -22,11 +22,47 @@ SESSION_TABLE_SCHEMA = {
     "team_data": {"type": JSON, "nullable": True},
     "workflow_data": {"type": JSON, "nullable": True},
     "metadata": {"type": JSON, "nullable": True},
-    "runs": {"type": JSON, "nullable": True},
     "summary": {"type": JSON, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
 }
+
+
+def _get_run_table_schema(session_table_name: str = "agno_sessions") -> dict[str, Any]:
+    """Runs table schema with ``session_id`` FK → sessions ON DELETE CASCADE.
+
+    SQLite requires ``PRAGMA foreign_keys = ON`` on the connection for the
+    constraint to actually enforce — the adapter enables this in its
+    connection init hook.
+    """
+    return {
+        "run_id": {"type": String, "primary_key": True, "nullable": False},
+        "session_id": {
+            "type": String,
+            "nullable": False,
+            "index": True,
+            # Concrete table name (see postgres schemas.py for rationale).
+            "foreign_key": f"{session_table_name}.session_id",
+            "ondelete": "CASCADE",
+        },
+        "run_type": {"type": String, "nullable": False, "index": True},
+        "agent_id": {"type": String, "nullable": True, "index": True},
+        "team_id": {"type": String, "nullable": True, "index": True},
+        "workflow_id": {"type": String, "nullable": True, "index": True},
+        "user_id": {"type": String, "nullable": True, "index": True},
+        "parent_run_id": {"type": String, "nullable": True},
+        "status": {"type": String, "nullable": True, "index": True},
+        "run_index": {"type": BigInteger, "nullable": True},
+        "run_data": {"type": JSON, "nullable": False},
+        "created_at": {"type": BigInteger, "nullable": False, "index": True},
+        "updated_at": {"type": BigInteger, "nullable": True},
+        # Composite index so "most recent N runs of a session"
+        # (WHERE session_id=? ORDER BY run_index DESC LIMIT N) is index-served.
+        "__composite_indexes__": [
+            {"name": "agno_runs_session_id_run_index", "columns": ["session_id", "run_index"]},
+        ],
+    }
+
 
 USER_MEMORY_TABLE_SCHEMA = {
     "memory_id": {"type": String, "primary_key": True, "nullable": False},
@@ -53,6 +89,7 @@ EVAL_TABLE_SCHEMA = {
     "model_id": {"type": String, "nullable": True},
     "model_provider": {"type": String, "nullable": True},
     "evaluated_component_name": {"type": String, "nullable": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
 }
@@ -336,6 +373,7 @@ def get_table_schema_definition(
     table_type: str,
     traces_table_name: str = "agno_traces",
     schedules_table_name: str = "agno_schedules",
+    session_table_name: str = "agno_sessions",
 ) -> dict[str, Any]:
     """
     Get the expected schema definition for the given table.
@@ -344,6 +382,8 @@ def get_table_schema_definition(
         table_type (str): The type of table to get the schema for.
         traces_table_name (str): The name of the traces table (used for spans foreign key).
         schedules_table_name (str): The name of the schedules table (used for schedule_runs foreign key).
+        session_table_name (str): The name of the sessions table (used for the
+            runs table's ``session_id`` foreign key).
 
     Returns:
         Dict[str, Any]: Dictionary containing column definitions for the table
@@ -353,9 +393,12 @@ def get_table_schema_definition(
         return _get_span_table_schema(traces_table_name)
     if table_type == "schedule_runs":
         return _get_schedule_runs_table_schema(schedules_table_name)
+    if table_type == "runs":
+        return _get_run_table_schema(session_table_name)
 
     schemas = {
         "sessions": SESSION_TABLE_SCHEMA,
+        # "runs" is handled by _get_run_table_schema above (needs session_table_name)
         "evals": EVAL_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
         "memories": USER_MEMORY_TABLE_SCHEMA,

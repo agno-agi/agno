@@ -158,20 +158,51 @@ class TestRetryAndSweep:
         assert [j["id"] for j in swept] == ["r1"]  # r2 still has budget -> reclaim, not sweep
 
     @pytest.mark.asyncio
-    async def test_fail_swept_rechecks_staleness(self, store):
+    async def test_acquire_sweep_loses_to_live_heartbeat(self, store):
+        """Ownership acquisition is the race arbiter now - and it happens
+        BEFORE any run-row write, so a live worker winning means its run's
+        row was never touched."""
         await store.enqueue_job(make_job("r1"))
         await store.claim_job("w1")
         store._jobs["r1"]["locked_at"] -= 1000
 
-        # A heartbeat lands between sweep and write: the write must lose
+        # A heartbeat lands between the sweep's select and the acquisition
         await store.heartbeat_jobs("w1", ["r1"])
-        assert not await store.fail_swept_job("r1", lock_grace_seconds=60)
+        assert not await store.acquire_sweep("r1", "sweeper", lock_grace_seconds=60)
 
         store._jobs["r1"]["locked_at"] -= 1000
-        assert await store.fail_swept_job("r1", lock_grace_seconds=60, error="worker lost")
+        assert await store.acquire_sweep("r1", "sweeper", lock_grace_seconds=60)
+        assert await store.fail_swept_job("r1", "sweeper", error="worker lost")
         job = await store.get_job("r1")
         assert job["status"] == "failed"
         assert job["error"] == "worker lost"
+
+    @pytest.mark.asyncio
+    async def test_acquire_sweep_requires_exhausted_budget(self, store):
+        """Budget-remaining stale jobs belong to reclaim (re-execution), not
+        the sweep."""
+        await store.enqueue_job(make_job("r1", max_attempts=2))
+        await store.claim_job("w1")
+        store._jobs["r1"]["locked_at"] -= 1000
+        assert not await store.acquire_sweep("r1", "sweeper", lock_grace_seconds=60)
+
+    @pytest.mark.asyncio
+    async def test_fail_swept_is_ownership_keyed(self, store):
+        """Only the sweeper that acquired the lock may fail the job; the
+        acquisition refreshes locked_at, so an interrupted sweep is re-swept
+        only once its own lock goes stale (retry backoff)."""
+        await store.enqueue_job(make_job("r1"))
+        await store.claim_job("w1")
+        store._jobs["r1"]["locked_at"] -= 1000
+        assert await store.acquire_sweep("r1", "sweeper-a", lock_grace_seconds=60)
+        assert not await store.fail_swept_job("r1", "sweeper-b"), "foreign sweeper must not fail an owned job"
+        # Freshly acquired: not re-sweepable until the sweep lock goes stale
+        assert await store.sweep_exhausted_jobs(lock_grace_seconds=60) == []
+        store._jobs["r1"]["locked_at"] -= 1000  # sweeper-a crashed mid-protocol
+        swept = await store.sweep_exhausted_jobs(lock_grace_seconds=60)
+        assert [j["id"] for j in swept] == ["r1"], "interrupted sweep must be resumable"
+        assert await store.acquire_sweep("r1", "sweeper-b", lock_grace_seconds=60)
+        assert await store.fail_swept_job("r1", "sweeper-b")
 
 
 class TestCancelAndCounts:
@@ -332,7 +363,8 @@ class TestContinueJob:
         assert await store.claim_job("w2", lock_grace_seconds=60) is None  # budget spent
         swept = await store.sweep_exhausted_jobs(lock_grace_seconds=60)
         assert [j["id"] for j in swept] == ["r1"]
-        assert await store.fail_swept_job("r1", lock_grace_seconds=60)
+        assert await store.acquire_sweep("r1", "sweeper", lock_grace_seconds=60)
+        assert await store.fail_swept_job("r1", "sweeper")
         assert await store.requeue_job("r1")
         redriven = await store.claim_job("w2")
         assert redriven["payload"]["continue"]["updated_tools"][0]["tool_call_id"] == "t1"

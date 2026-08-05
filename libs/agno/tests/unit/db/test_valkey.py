@@ -51,6 +51,12 @@ def _ensure_glide_sync_stub():
         def sadd(self, key, members):
             return 0
 
+        def zrange(self, key, range_query, reverse=False):
+            return []
+
+        def zrem(self, key, members):
+            return 0
+
         def exec(self, pipeline, raise_on_error=False):
             return []
 
@@ -75,6 +81,12 @@ def _ensure_glide_sync_stub():
 
         def sadd(self, key, members):
             self.commands.append(("sadd", key, members))
+
+        def zadd(self, key, members_scores):
+            self.commands.append(("zadd", key, members_scores))
+
+        def expire(self, key, seconds):
+            self.commands.append(("expire", key, seconds))
 
     class _ClusterBatch:
         def __init__(self, is_atomic=False):
@@ -112,9 +124,15 @@ def _ensure_glide_sync_stub():
     class _ExpiryType:
         SEC = "SEC"
 
+    class _RangeByIndex:
+        def __init__(self, start, end):
+            self.start = start
+            self.end = end
+
     class _RequestError(Exception):
         pass
 
+    glide_mod.RangeByIndex = _RangeByIndex
     glide_mod.RequestError = _RequestError
     glide_mod.GlideClient = _GlideClient
     glide_mod.GlideClusterClient = _GlideClusterClient
@@ -163,6 +181,7 @@ def _patch_missing_attrs(glide_mod):
         "GlideClientConfiguration",
         "GlideClusterClient",
         "NodeAddress",
+        "RangeByIndex",
         "RequestError",
         "ServerCredentials",
         "DistanceMetricType",

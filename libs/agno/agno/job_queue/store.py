@@ -2,8 +2,8 @@
 
 Implements the same contract as the Postgres queue methods (enqueue_job,
 claim_job, heartbeat_jobs, complete_job, retry_or_fail_job,
-cancel_job, continue_job, sweep_exhausted_jobs, fail_swept_job, get_job,
-count_queued_jobs) against process memory.
+cancel_job, continue_job, sweep_exhausted_jobs, acquire_sweep,
+fail_swept_job, get_job, count_queued_jobs) against process memory.
 
 This is the contract-test fixture and the single-process dev fallback - it is
 NOT durable (a restart loses the queue) and is never a substitute for the
@@ -26,8 +26,12 @@ class InMemoryQueueStore:
         async with self._lock:
             # Same dedup semantics as the production stores: empty means no
             # key, and the namespace is scoped per user (cross-tenant key
-            # reuse must not attach to another tenant's job)
-            key = job.get("idempotency_key") or None
+            # reuse must not attach to another tenant's job). The STORED
+            # value normalizes too (Postgres parity: the column reads NULL,
+            # never '') so get_job consumers need no per-store knowledge.
+            if not job.get("idempotency_key"):
+                job = {**job, "idempotency_key": None}
+            key = job.get("idempotency_key")
             if key is not None:
                 user = job.get("user_id")
                 for existing in self._jobs.values():
@@ -174,12 +178,39 @@ class InMemoryQueueStore:
             exhausted.sort(key=lambda j: j["locked_at"])
             return exhausted[:limit]
 
-    async def fail_swept_job(self, job_id: str, lock_grace_seconds: int = 60, error: str = "worker lost") -> bool:
+    async def acquire_sweep(self, job_id: str, worker_id: str, lock_grace_seconds: int = 60) -> bool:
+        """Take ownership of a stale, budget-exhausted running job BEFORE any
+        run-row write. The sweep must never touch a run row whose ticket it
+        does not own: the old order wrote the row first and only then
+        discovered - via fail_swept_job's staleness recheck - that a live
+        heartbeat owned the ticket, after already defacing a healthy run's
+        row. Refreshing locked_at here also doubles as the retry backoff for
+        a failing terminalization: the job becomes re-sweepable once the
+        sweeper's own lock goes stale."""
         async with self._lock:
             now = int(time.time())
             stale = now - lock_grace_seconds
             job = self._jobs.get(job_id)
-            if job is None or job["status"] != "running" or job.get("locked_at") is None or job["locked_at"] > stale:
+            if (
+                job is None
+                or job["status"] != "running"
+                or job.get("locked_at") is None
+                or job["locked_at"] > stale
+                or job["attempt"] < job["max_attempts"]
+            ):
+                return False
+            job.update(locked_by=worker_id, locked_at=now, updated_at=now)
+            return True
+
+    async def fail_swept_job(self, job_id: str, worker_id: str, error: str = "worker lost") -> bool:
+        """Ownership-keyed terminal write: only the sweeper holding the lock
+        (via acquire_sweep) may fail the job. Replaces the old staleness
+        recheck - after acquire_sweep refreshed locked_at, staleness can no
+        longer serve as the fence."""
+        async with self._lock:
+            now = int(time.time())
+            job = self._jobs.get(job_id)
+            if job is None or job["status"] != "running" or job.get("locked_by") != worker_id:
                 return False
             job.update(status="failed", error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now)
             return True

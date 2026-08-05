@@ -1,12 +1,14 @@
 """Unit tests for the shared durable-continue seam helper.
 
 acontinue_via_queue is the one path all four seams (HTTP agents/teams/
-workflows + WS continue-workflow) go through: outcome mapping, cancellation-
-intent clearing, and the PAUSED -> PENDING stream-status flip live here, so
-the seams cannot diverge on them.
+workflows + WS continue-workflow) go through: outcome mapping, component-
+identity verification, and the PAUSED -> PENDING stream reopen live here, so
+the seams cannot diverge on them. Cancellation intent is deliberately NEVER
+cleared by the seam (see TestAcceptSideEffects).
 """
 
 import pytest
+import pytest_asyncio
 
 from agno.db.schemas.jobs import QueuedJob
 from agno.job_queue.config import QueueConfig
@@ -25,6 +27,18 @@ def make_job(job_id: str = "r1", stream: bool = False) -> dict:
         session_id="s1",
         payload=payload,
     ).to_dict()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _clean_cancellation_intent():
+    """The seam contract deliberately leaves cancellation intent in place
+    (nothing auto-cleans anymore), and the process-global manager outlives
+    each test - without this, intent for the shared 'r1' run id leaks into
+    other suites and cancels their runs."""
+    yield
+    from agno.run.cancel import acleanup_run
+
+    await acleanup_run("r1")
 
 
 def make_worker(store: InMemoryQueueStore) -> QueueWorker:
@@ -101,11 +115,186 @@ class TestOutcomeMapping:
         assert await acontinue_via_queue(make_worker(store), "r1", {}) is None
 
 
+class TestInlineDoorGate:
+    """araise_if_ticket_owns_continue: the single-door contract. A durable
+    ticket in paused/queued/running owns its run's continuation - non-queue
+    doors refuse (409), and a failed lookup fails CLOSED (503). Rejecting
+    paused too is what kills the cross-door TOCTOU: gating only on
+    queued/running would let an inline read of 'paused' race a durable CAS
+    and double-execute an approved tool."""
+
+    @pytest.mark.asyncio
+    async def test_no_worker_or_no_ticket_allows_inline(self):
+        from agno.os.job_queue import araise_if_ticket_owns_continue
+
+        await araise_if_ticket_owns_continue(None, "r1")  # no queue at all
+        store = InMemoryQueueStore()
+        await araise_if_ticket_owns_continue(make_worker(store), "r1")  # no ticket
+
+    @pytest.mark.asyncio
+    async def test_paused_ticket_rejects_inline(self):
+        from fastapi import HTTPException
+
+        from agno.os.job_queue import araise_if_ticket_owns_continue
+
+        store = InMemoryQueueStore()
+        await _pause(store)
+        with pytest.raises(HTTPException) as exc:
+            await araise_if_ticket_owns_continue(make_worker(store), "r1")
+        assert exc.value.status_code == 409
+        assert "background=true" in exc.value.detail
+
+    @pytest.mark.asyncio
+    async def test_queued_and_running_tickets_reject_inline(self):
+        from fastapi import HTTPException
+
+        from agno.os.job_queue import araise_if_ticket_owns_continue
+
+        store = InMemoryQueueStore()
+        await _pause(store)
+        worker = make_worker(store)
+        assert (await acontinue_via_queue(worker, "r1", {"a": 1}))["outcome"] == "queued"
+        with pytest.raises(HTTPException) as exc:
+            await araise_if_ticket_owns_continue(worker, "r1")
+        assert exc.value.status_code == 409
+
+        await store.claim_job("w2")  # continuation leg claimed -> running
+        with pytest.raises(HTTPException) as exc:
+            await araise_if_ticket_owns_continue(worker, "r1")
+        assert exc.value.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_terminal_ticket_and_foreign_component_allow_inline(self):
+        from agno.os.job_queue import araise_if_ticket_owns_continue
+
+        store = InMemoryQueueStore()
+        await store.enqueue_job(make_job("r1"))
+        claimed = await store.claim_job("w1")
+        await store.complete_job("r1", "w1", claimed["attempt"], "completed")
+        worker = make_worker(store)
+        await araise_if_ticket_owns_continue(worker, "r1")  # terminal: queue is done
+
+        await _pause(store, "r2")
+        # A DIFFERENT component's ticket does not own this caller's continue:
+        # the caller's own run lookup 404s honestly downstream
+        await araise_if_ticket_owns_continue(worker, "r2", component_type="team", component_id="wf-1")
+
+    @pytest.mark.asyncio
+    async def test_lookup_failure_fails_closed(self):
+        from fastapi import HTTPException
+
+        from agno.os.job_queue import araise_if_ticket_owns_continue
+
+        store = InMemoryQueueStore()
+        await _pause(store)
+        worker = make_worker(store)
+
+        async def broken_get_job(job_id):
+            raise RuntimeError("store down")
+
+        store.get_job = broken_get_job  # type: ignore[method-assign]
+        with pytest.raises(HTTPException) as exc:
+            await araise_if_ticket_owns_continue(worker, "r1")
+        assert exc.value.status_code == 503, "cannot verify ownership -> must not execute"
+
+
+class TestSideEntranceGate:
+    """Round-9 review: MCP (via the shared run service), AG-UI, and Slack
+    HITL reach acontinue_run outside the routers - the gate must hold there
+    too, via the process-level active queue worker."""
+
+    @pytest.mark.asyncio
+    async def test_shared_run_service_respects_the_gate(self):
+        from fastapi import HTTPException
+
+        from agno.os.job_queue import set_active_queue_worker
+        from agno.os.services import runs as run_service
+
+        store = InMemoryQueueStore()
+        ticket = make_job("r1")
+        ticket["component_type"] = "agent"
+        ticket["component_id"] = "a1"
+        await store.enqueue_job(ticket)
+        claimed = await store.claim_job("w1")
+        assert await store.complete_job("r1", "w1", claimed["attempt"], "paused")
+
+        calls: list = []
+
+        class StubAgent:
+            id = "a1"
+            db = object()
+
+            async def acontinue_run(self, **kwargs):
+                calls.append(kwargs)
+
+        set_active_queue_worker(make_worker(store))
+        try:
+            with pytest.raises(HTTPException) as exc:
+                await run_service.continue_paused_run(StubAgent(), run_id="r1", session_id="s1")  # type: ignore[arg-type]
+            assert exc.value.status_code == 409
+            assert calls == [], "acontinue_run must never be called for a ticket-owned run"
+        finally:
+            set_active_queue_worker(None)
+
+    @pytest.mark.asyncio
+    async def test_service_executes_when_no_ticket_or_no_worker(self):
+        from agno.os.job_queue import set_active_queue_worker
+        from agno.os.services import runs as run_service
+
+        calls: list = []
+
+        class StubAgent:
+            id = "a1"
+            db = object()
+
+            async def acontinue_run(self, **kwargs):
+                calls.append(kwargs)
+                return "run-output"
+
+        # No active worker registered (GA / queue-off deployments)
+        set_active_queue_worker(None)
+        assert await run_service.continue_paused_run(StubAgent(), run_id="r1", session_id="s1") == "run-output"  # type: ignore[arg-type]
+        # Worker active but the run is ticketless
+        set_active_queue_worker(make_worker(InMemoryQueueStore()))
+        try:
+            assert await run_service.continue_paused_run(StubAgent(), run_id="r2", session_id="s1") == "run-output"  # type: ignore[arg-type]
+        finally:
+            set_active_queue_worker(None)
+        assert len(calls) == 2
+
+
+class TestComponentIdentity:
+    @pytest.mark.asyncio
+    async def test_cross_component_continue_declines_the_durable_path(self):
+        """harshsinha03 review: an agent's paused ticket continued through
+        the TEAMS endpoint reached the CAS - the ticket got a team-shaped
+        requirements block and the worker resolved the pending approval as
+        rejected while the caller got a 202. The helper must verify the
+        ticket belongs to the component the caller is continuing through;
+        mismatches fall to the detached path, whose own run lookup reports
+        not-found honestly."""
+        store = InMemoryQueueStore()
+        await _pause(store)  # ticket: component_type=workflow, component_id=wf-1
+        worker = make_worker(store)
+
+        wrong_type = await acontinue_via_queue(worker, "r1", {"a": 1}, component_type="team", component_id="wf-1")
+        assert wrong_type is None
+        wrong_id = await acontinue_via_queue(worker, "r1", {"a": 1}, component_type="workflow", component_id="other")
+        assert wrong_id is None
+        assert (await store.get_job("r1"))["status"] == "paused", "no CAS may fire on a mismatched ticket"
+
+        matching = await acontinue_via_queue(worker, "r1", {"a": 1}, component_type="workflow", component_id="wf-1")
+        assert matching is not None and matching["outcome"] == "queued"
+
+
 class TestAcceptSideEffects:
     @pytest.mark.asyncio
-    async def test_stale_cancellation_intent_cleared_on_accept(self):
-        """The requeue-endpoint fix, mirrored: intent registered during the
-        paused stretch must not kill the new leg at its first checkpoint."""
+    async def test_accept_never_touches_cancellation_intent(self):
+        """The seam does NOT clear cancellation intent - every automatic
+        deletion scheme had a delayed-cleanup window that could erase a
+        newer legitimate cancel. Stale intent survives the accept: the leg
+        will cancel visibly at its first checkpoint, and the operator
+        remedy is requeue with clear_cancellation=true."""
         from agno.run.cancel import acancel_run, ais_cancelled, aregister_run
 
         store = InMemoryQueueStore()
@@ -115,7 +304,7 @@ class TestAcceptSideEffects:
         assert await ais_cancelled("r1")
         result = await acontinue_via_queue(make_worker(store), "r1", {})
         assert result["outcome"] == "queued"
-        assert not await ais_cancelled("r1"), "stale intent must be cleared on accept"
+        assert await ais_cancelled("r1"), "the seam must never delete cancellation intent"
 
     @pytest.mark.asyncio
     async def test_stream_status_flipped_to_pending_on_accept(self):
@@ -245,37 +434,11 @@ class TestAcceptSideEffects:
             es_mod._event_stream = original
 
     @pytest.mark.asyncio
-    async def test_winner_clears_stale_intent_token_scoped(self):
-        """The cleanup is token-scoped: the winner reads the intent's token
-        pre-CAS and conditionally deletes it post-CAS. Stale intent from the
-        paused stretch is cleared; the CAS itself still sees it."""
-        from agno.run.cancel import acancel_run, ais_cancelled, aregister_run
-
-        store = InMemoryQueueStore()
-        await _pause(store)
-        await aregister_run("r1")
-        await acancel_run("r1")
-
-        order: list = []
-        original_continue = store.continue_job
-
-        async def recording_continue(job_id, continue_payload):
-            order.append(("cas", await ais_cancelled(job_id)))
-            return await original_continue(job_id, continue_payload)
-
-        store.continue_job = recording_continue  # type: ignore[method-assign]
-        result = await acontinue_via_queue(make_worker(store), "r1", {})
-        assert result["outcome"] == "queued"
-        assert order == [("cas", True)], "intent must still exist at CAS time (cleanup is post-CAS)"
-        assert not await ais_cancelled("r1"), "the winner must have cleared the stale intent after the CAS"
-
-    @pytest.mark.asyncio
     async def test_delayed_cleanup_cannot_erase_a_newer_cancel(self):
-        """Review-round-4 P1, the exact race: the accepting request's cleanup
-        is arbitrarily delayed; meanwhile the leg is claimed and a LEGITIMATE
-        cancel lands. The delayed cleanup holds the OLD intent's token and
-        must decline - the newer cancel provably survives, no timing
-        assumption involved."""
+        """Review-round-4 P1, the exact race - now closed STRUCTURALLY: the
+        seam performs no cleanup at all, so however delayed the accepting
+        request is, a legitimate cancel landing after the claim always
+        survives."""
         from agno.run.cancel import acancel_run, ais_cancelled, aregister_run
 
         store = InMemoryQueueStore()
@@ -302,8 +465,8 @@ class TestAcceptSideEffects:
 
     @pytest.mark.asyncio
     async def test_no_pre_cas_intent_means_no_cleanup_at_all(self):
-        """token=None (no intent before the CAS) skips cleanup entirely: any
-        intent that appears later is legitimate by definition."""
+        """A cancel arriving right after acceptance is legitimate by
+        definition and must survive untouched (the seam never cleans)."""
         from agno.run.cancel import acancel_run, ais_cancelled, aregister_run
 
         store = InMemoryQueueStore()
@@ -401,10 +564,11 @@ class TestAcceptSideEffects:
         return endpoint, request
 
     @pytest.mark.asyncio
-    async def test_requeue_clears_stale_intent_token_scoped_after_success(self):
-        """Review-round-3 P1: the winner clears AFTER requeue_job succeeds,
-        inside the accept grace - so nothing can claim before the cleanup,
-        and only the transition winner ever touches intent."""
+    async def test_requeue_preserves_intent_unless_operator_clears(self):
+        """Intent clearing is an EXPLICIT operator action, never automatic:
+        a plain requeue leaves recorded intent alone (the re-driven attempt
+        re-cancels visibly); clear_cancellation=true is the deliberate
+        human override for requeueing a previously cancelled job."""
         from agno.run.cancel import acancel_run, ais_cancelled, aregister_run
 
         store = InMemoryQueueStore()
@@ -415,14 +579,28 @@ class TestAcceptSideEffects:
         await acancel_run("r1")
 
         endpoint, request = self._requeue_endpoint(store)
-        result = await endpoint(request, "r1")
+        # force=True: the job JUST failed, and the zombie gate (phase-7
+        # guard) refuses fresh failures without it - orthogonal to the
+        # intent semantics this test pins
+        result = await endpoint(request, "r1", force=True)
         assert result["status"] == "queued"
-        assert not await ais_cancelled("r1"), "stale intent cleared after the successful requeue"
+        assert await ais_cancelled("r1"), "a plain requeue must not touch recorded intent"
+
+        # Re-drive once more, this time with the explicit override
+        reclaimed = await store.claim_job("w1")
+        await store.retry_or_fail_job("r1", "w1", reclaimed["attempt"], "boom again")
+        result = await endpoint(request, "r1", clear_cancellation=True, force=True)
+        assert result["status"] == "queued"
+        assert not await ais_cancelled("r1"), "clear_cancellation=true is the operator's explicit clear"
 
     @pytest.mark.asyncio
     async def test_rejected_requeue_never_touches_intent(self):
         """Review-round-3 P1 regression: requeueing a RUNNING (non-requeueable)
-        job must not erase the cancellation intent aimed at that attempt."""
+        job must not erase the cancellation intent aimed at that attempt -
+        WITH OR WITHOUT the explicit override flag. The flagged variant is
+        the round-7 P1: the clear ran before the requeueable check, so a
+        rejected explicit requeue erased a live attempt's cancel and then
+        400ed. The state gate must reject BEFORE touching intent."""
         from fastapi import HTTPException
 
         from agno.run.cancel import acancel_run, ais_cancelled, aregister_run
@@ -438,6 +616,42 @@ class TestAcceptSideEffects:
             await endpoint(request, "r1")
         assert exc.value.status_code == 400
         assert await ais_cancelled("r1"), "a rejected requeue must leave the running attempt's cancel intact"
+
+        # The dangerous variant: the override flag on a non-requeueable job
+        with pytest.raises(HTTPException) as exc:
+            await endpoint(request, "r1", clear_cancellation=True)
+        assert exc.value.status_code == 400
+        assert await ais_cancelled("r1"), "a rejected EXPLICIT requeue must not erase the running attempt's cancel"
+        assert (await store.get_job("r1"))["status"] == "running", "the job must be untouched"
+
+    @pytest.mark.asyncio
+    async def test_clear_failure_aborts_without_requeueing(self):
+        """Round-7 review: the operator asked for clear+requeue and must get
+        both or neither. A failed clear that still requeues would insta-cancel
+        the re-driven attempt while reporting the override succeeded - so a
+        clear failure aborts with 503 and the job stays terminal."""
+        from unittest.mock import patch
+
+        from fastapi import HTTPException
+
+        from agno.run.cancel import acancel_run, ais_cancelled, aregister_run
+
+        store = InMemoryQueueStore()
+        await store.enqueue_job(make_job("r1"))
+        claimed = await store.claim_job("w1")
+        await store.retry_or_fail_job("r1", "w1", claimed["attempt"], "boom")  # -> failed
+        await aregister_run("r1")
+        await acancel_run("r1")
+
+        endpoint, request = self._requeue_endpoint(store)
+        # force=True: fresh failure, zombie gate refused otherwise (phase-7
+        # guard) - orthogonal to the clear-failure semantics under test
+        with patch("agno.run.cancel.acleanup_run", side_effect=RuntimeError("redis down")):
+            with pytest.raises(HTTPException) as exc:
+                await endpoint(request, "r1", clear_cancellation=True, force=True)
+        assert exc.value.status_code == 503
+        assert (await store.get_job("r1"))["status"] == "failed", "nothing may be requeued on a failed clear"
+        assert await ais_cancelled("r1"), "intent must survive the failed clear attempt"
 
     @pytest.mark.asyncio
     async def test_post_cas_attach_uses_winners_persisted_boundary(self):
@@ -506,3 +720,145 @@ class TestContinueStreamEventsPrecedence:
         assert result["outcome"] == "queued"
         stored = (await store.get_job("r1"))["payload"]["continue"]
         assert stored["stream_events"] is True
+
+
+class TestInlineContinueReopensStream:
+    """Phase-4 item 15: the INLINE continue path (amark_continue_stream_running)
+    must invalidate the settled pause the same way the durable path does.
+    PAUSED is tail-terminal in the stream twice over - the status key AND a
+    sentinel event - and the old helper only rewrote the status: a client
+    resuming its tail before the continuation leg's first event read the
+    stale pause sentinel as the last stream entry and closed empty."""
+
+    @pytest.mark.asyncio
+    async def test_resumed_tail_survives_inline_continue_start_redis(self, monkeypatch):
+        import asyncio
+
+        fakeredis = pytest.importorskip("fakeredis", reason="fakeredis not installed")
+        from agno.os.event_streams.redis import RedisEventStream
+        from agno.os.utils import amark_continue_stream_running
+        from agno.run.agent import RunContentEvent
+        from agno.run.base import RunStatus
+
+        stream = RedisEventStream(fakeredis.FakeAsyncRedis(), block_ms=100)
+        try:
+            monkeypatch.setattr("agno.os.event_streams.get_event_stream", lambda: stream)
+
+            # The paused history: one event, then the leg settled PAUSED
+            await stream.register_run("r1", RunStatus.running)
+            await stream.add_event("r1", RunContentEvent(content="before-pause", run_id="r1"))
+            await stream.complete_run("r1", RunStatus.paused)
+
+            # Inline continue accepted; leg has not emitted anything yet
+            await amark_continue_stream_running("r1")
+
+            received: list = []
+            done = asyncio.Event()
+
+            async def consume():
+                async for idx, _sse in stream.tail("r1", last_event_index=0):
+                    received.append(idx)
+                done.set()
+
+            consumer = asyncio.create_task(consume())
+            await asyncio.sleep(0.4)
+            assert not done.is_set(), (
+                "tail closed on the stale pause sentinel before the continuation leg produced anything"
+            )
+
+            # The leg's first event arrives; the tail must deliver it
+            await stream.add_event("r1", RunContentEvent(content="after-approval", run_id="r1"))
+            await asyncio.sleep(0.2)
+            await stream.complete_run("r1", RunStatus.completed)
+            await asyncio.wait_for(done.wait(), timeout=5)
+            assert received == [1], f"expected the continuation's event, got {received}"
+            await consumer
+        finally:
+            await stream.aclose()
+
+    @pytest.mark.asyncio
+    async def test_inline_continue_clears_pause_completed_at_in_memory(self, monkeypatch):
+        from agno.os.event_streams.in_memory import InMemoryEventStream
+        from agno.os.managers import EventsBuffer, SSESubscriberManager
+        from agno.os.utils import amark_continue_stream_running
+        from agno.run.base import RunStatus
+
+        buffer = EventsBuffer()
+        stream = InMemoryEventStream(events_buffer=buffer, subscriber_manager=SSESubscriberManager())
+        monkeypatch.setattr("agno.os.event_streams.get_event_stream", lambda: stream)
+
+        await stream.register_run("r1", RunStatus.running)
+        await stream.complete_run("r1", RunStatus.paused)
+        assert "completed_at" in buffer.run_metadata["r1"]
+
+        await amark_continue_stream_running("r1")
+
+        assert await stream.get_run_status("r1") == RunStatus.running
+        assert "completed_at" not in buffer.run_metadata["r1"], (
+            "the pause's completed_at survived the inline continue - the reopened run "
+            "would be eligible for reaping mid-continuation"
+        )
+
+
+class TestInlineContinueSeedsExpiredCounter:
+    """Phase-5 item 20, inline door: an inline continue of a paused run whose
+    stream state expired (deploy/restart) must seed the counter from the run
+    row's stored indices - the floor read happens ONLY when the counter is
+    gone, never on the hot path."""
+
+    @pytest.mark.asyncio
+    async def test_amark_seeds_from_run_row_when_counter_expired(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from agno.os.event_streams.in_memory import InMemoryEventStream
+        from agno.os.managers import EventsBuffer, SSESubscriberManager
+        from agno.os.utils import amark_continue_stream_running
+        from agno.run.agent import RunContentEvent
+        from agno.run.base import RunStatus
+
+        stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+        monkeypatch.setattr("agno.os.event_streams.get_event_stream", lambda: stream)
+
+        stored = [RunContentEvent(content=f"c{i}", run_id="r1") for i in range(3)]
+        for i, e in enumerate(stored):
+            e.event_index = i
+
+        reads: list = []
+
+        class FloorComponent:
+            async def aget_run_output(self, run_id=None, session_id=None, user_id=None):
+                reads.append(run_id)
+                return SimpleNamespace(events=stored)
+
+        # Fresh (expired) stream state: nothing registered, counter gone
+        await amark_continue_stream_running("r1", component=FloorComponent(), session_id="s1")
+
+        assert reads == ["r1"], "the floor read must happen exactly once when the counter is gone"
+        idx = await stream.add_event("r1", RunContentEvent(content="after", run_id="r1"))
+        assert idx == 3, f"inline continuation must resume at floor+1, got {idx}"
+        assert await stream.get_run_status("r1") == RunStatus.running
+
+    @pytest.mark.asyncio
+    async def test_amark_skips_floor_read_when_counter_live(self, monkeypatch):
+        from agno.os.event_streams.in_memory import InMemoryEventStream
+        from agno.os.managers import EventsBuffer, SSESubscriberManager
+        from agno.os.utils import amark_continue_stream_running
+        from agno.run.agent import RunContentEvent
+        from agno.run.base import RunStatus
+
+        stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+        monkeypatch.setattr("agno.os.event_streams.get_event_stream", lambda: stream)
+        await stream.register_run("r1", RunStatus.running)
+        await stream.add_event("r1", RunContentEvent(content="a", run_id="r1"))
+        await stream.complete_run("r1", RunStatus.paused)
+
+        reads: list = []
+
+        class FloorComponent:
+            async def aget_run_output(self, **kwargs):
+                reads.append(1)
+
+        await amark_continue_stream_running("r1", component=FloorComponent(), session_id="s1")
+        assert reads == [], "a live counter must not cost a session read"
+        idx = await stream.add_event("r1", RunContentEvent(content="b", run_id="r1"))
+        assert idx == 1

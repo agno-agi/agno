@@ -273,12 +273,180 @@ def format_sse_event_with_index(
         return f"event: message\ndata: {clean_json}\n\n"
 
 
-async def amark_continue_stream_running(run_id: str) -> None:
+async def queued_run_tail_streamer(run_id: str, from_index: Optional[int] = None) -> Any:
+    """SSE response for a durably queued STREAMING run: tail the event stream.
+
+    ONE implementation for all three routers. The run executes on whichever
+    replica's worker claims it; this connection just observes. Keepalives
+    cover the queued wait and silent stretches; a disconnect is harmless
+    (resume replays); the complete output is guaranteed via the run row even
+    if this stream is never watched.
+
+    Honest close (the ticket-consulting wrapper LOOP is parked,
+    evidence-gated - see the ledger): when the tail ends WITHOUT the run
+    having reached a terminal stream state - the status key expired while
+    the job sat queued past the TTL, or a producer died - and the durable
+    ticket still vouches for the run, emit an explicit ``stream_expired``
+    event instead of a silent, terminal-looking close. A real SSE event
+    type, not a comment: it must reach client handlers (unknown types are
+    ignored by standard consumers). Under the deployment-affinity
+    misconfiguration (jobs queued forever) clients will reconnect hourly -
+    expected and diagnostic, not a bug.
+    """
+    import asyncio
+    import contextlib
+
+    from agno.os.event_streams import get_event_stream
+    from agno.run.base import RunStatus
+    from agno.utils.log import log_error
+
+    event_stream = get_event_stream()
+    tail_queue: asyncio.Queue = asyncio.Queue()
+
+    async def _pump() -> None:
+        try:
+            async for tail_item in event_stream.tail(run_id, last_event_index=from_index):
+                await tail_queue.put(tail_item)
+        except Exception as e:
+            # A tail that DIES must not look like a tail that FINISHED: emit an
+            # error frame so the client can distinguish and reconnect
+            log_error(f"Queued stream tail failed for run {run_id}: {e}")
+            with contextlib.suppress(Exception):
+                await tail_queue.put(
+                    (-1, f'event: error\ndata: {{"event": "error", "error": "stream tail failed: {str(e)[:200]}"}}\n\n')
+                )
+        finally:
+            await tail_queue.put(None)
+
+    pump_task = asyncio.create_task(_pump())
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(tail_queue.get(), timeout=30.0)
+            except asyncio.TimeoutError:
+                yield ": keepalive\n\n"
+                continue
+            if item is None:
+                break
+            _ev_index, sse_data = item
+            yield sse_data
+        # The tail ended. If the run's stream state is gone or non-terminal
+        # while its durable ticket still says queued/running, the close is a
+        # lie - tell the client the truth, once, and end.
+        expired_frame: Optional[str] = None
+        with contextlib.suppress(Exception):
+            status = await event_stream.get_run_status(run_id)
+            if status is None or status in (RunStatus.pending, RunStatus.running):
+                from agno.os.job_queue import get_active_queue_worker
+
+                worker = get_active_queue_worker()
+                job = await worker.store.get_job(run_id) if worker is not None else None
+                if (
+                    job is not None
+                    and job.get("job_type", "run") == "run"
+                    and job.get("status")
+                    in (
+                        "queued",
+                        "running",
+                    )
+                ):
+                    payload = {
+                        "event": "stream_expired",
+                        "run_id": run_id,
+                        "status": "PENDING" if job["status"] == "queued" else "RUNNING",
+                        "message": "Stream state expired while the run is still accepted; "
+                        "reconnect (or poll the run) to resume.",
+                    }
+                    expired_frame = f"event: stream_expired\ndata: {json.dumps(payload)}\n\n"
+        if expired_frame is not None:
+            yield expired_frame
+    finally:
+        pump_task.cancel()
+        # Suppress everything: an exception re-raised here reaches the ASGI
+        # layer on a response whose headers are already sent
+        with contextlib.suppress(BaseException):
+            await pump_task
+
+
+def stored_event_replay_frames(run_output: Any, run_id: str, last_event_index: Optional[int] = None) -> List[str]:
+    """PATH-3 (DB fallback) replay frames, honoring the client's floor.
+
+    ONE implementation for all three routers - the old triplicated loop
+    ignored last_event_index and renumbered every stored event from zero:
+    duplicates for partially-caught-up clients, and destroyed index
+    continuity (stream indices are NOT gapless - retries and continuation
+    legs leave real gaps that positional renumbering compacted away).
+
+    Events stamped at publish carry their real stream index (event_index);
+    those are floor-filtered and replayed under their stored index.
+    Unstamped legacy events keep the positional fallback and are never
+    floor-filtered: a floor from live-stream indices does not speak their
+    numbering. The meta frame's total reflects what is actually replayed.
+    """
+    from agno.utils.serialize import json_serializer
+
+    floor = last_event_index if last_event_index is not None else -1
+    frames: List[str] = []
+    for position, event in enumerate(getattr(run_output, "events", None) or []):
+        event_dict = event.to_dict()
+        stored_index = event_dict.get("event_index")
+        if stored_index is not None and int(stored_index) <= floor:
+            continue
+        event_dict["event_index"] = int(stored_index) if stored_index is not None else position
+        if "run_id" not in event_dict:
+            event_dict["run_id"] = run_id
+        event_type = event_dict.get("event", "message")
+        frames.append(
+            f"event: {event_type}\n"
+            f"data: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+        )
+    status = run_output.status.value if hasattr(run_output.status, "value") else (run_output.status or "unknown")
+    meta = {
+        "event": "replay",
+        "run_id": run_id,
+        "status": status,
+        "total_events": len(frames),
+        "message": "Run completed. Replaying stored events from database.",
+    }
+    frames.insert(0, f"event: replay\ndata: {json.dumps(meta)}\n\n")
+    return frames
+
+
+async def astream_index_floor(
+    component: Any, run_id: str, session_id: Optional[str], user_id: Optional[str] = None
+) -> Optional[int]:
+    """Durable index floor for a reopen: max stored event_index on the run
+    row (stamped at publish - see BaseRunOutputEvent.event_index). Read this
+    ONLY when the stream's counter is actually gone (get_last_index < 0):
+    it costs a session read, and a live counter never needs it. Fail-open:
+    None means no seed, which is exactly today's behavior."""
+    import contextlib
+
+    with contextlib.suppress(Exception):
+        run_output = await component.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)
+        indices = [
+            e.event_index
+            for e in (getattr(run_output, "events", None) or [])
+            if getattr(e, "event_index", None) is not None
+        ]
+        if indices:
+            return max(indices)
+    return None
+
+
+async def amark_continue_stream_running(
+    run_id: str, component: Any = None, session_id: Optional[str] = None, user_id: Optional[str] = None
+) -> None:
     """Sync the event stream at the START of a continue: re-register the run
     (idempotent - a cross-replica continue lands on a replica whose stream has
     never seen it) and mark it RUNNING so /resume and reconnects stop treating
     it as PAUSED while the post-approval leg executes. Fail-open: coordination
-    writes must never kill the continue."""
+    writes must never kill the continue.
+
+    When the caller passes its component, an EXPIRED index counter (paused
+    run outliving the TTL across a deploy/restart) is re-seeded from the run
+    row's stored indices - without that, the continuation restarts at index 0
+    and resuming clients dedup away every post-approval event."""
     import contextlib
 
     from agno.os.event_streams import get_event_stream
@@ -287,6 +455,19 @@ async def amark_continue_stream_running(run_id: str) -> None:
     with contextlib.suppress(Exception):
         event_stream = get_event_stream()
         await event_stream.register_run(run_id, RunStatus.pending)
+        floor = None
+        if component is not None and await event_stream.get_last_index(run_id) < 0:
+            floor = await astream_index_floor(component, run_id, session_id, user_id)
+        # Invalidate the settled pause the way the durable path does: PAUSED
+        # is tail-terminal in the stream (status AND a sentinel event), and
+        # the status write below only covers the first half - a tail attached
+        # before this leg's first event would read the stale pause sentinel
+        # and close empty. reopen_run is atomic per implementation and
+        # declines if a racing writer already moved the status past PAUSED;
+        # it also clears the pause's completed_at so the reopened run cannot
+        # be reaped mid-continuation, and seeds the index counter from the
+        # durable floor when the stream's own counter expired.
+        await event_stream.reopen_run(run_id, floor=floor)
         await event_stream.set_run_status(run_id, RunStatus.running)
 
 

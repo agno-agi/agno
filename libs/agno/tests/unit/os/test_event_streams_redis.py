@@ -1,6 +1,7 @@
 """Unit tests for the Redis Streams event stream (via fakeredis)."""
 
 import asyncio
+import contextlib
 
 import pytest
 
@@ -562,3 +563,260 @@ class TestCancellationFailOpen:
         mgr = RedisRunCancellationManager(redis_client=BoomClient(), async_redis_client=ABoomClient())
         assert mgr.is_cancelled("r1") is False
         assert await mgr.ais_cancelled("r1") is False
+
+
+class TestDeadProducerGate:
+    @pytest.mark.asyncio
+    async def test_pending_run_with_decayed_ttl_keeps_tail_alive(self):
+        """F4: a long-queued (PENDING) run has no producer by design - TTL
+        decay must not be read as producer death."""
+        s = RedisEventStream(fakeredis.FakeAsyncRedis(), ttl_seconds=30, block_ms=50)
+        try:
+            await s.register_run("dp1", RunStatus.pending)
+            # Decay the status key TTL into the dead-producer window (below
+            # ttl//3 = 10) but well above actual expiry, so only the heuristic
+            # - not real key death - could end the tail
+            await s._redis.expire(s._status_key("dp1"), 5)
+            agen = s.tail("dp1")
+            task = asyncio.create_task(agen.__anext__())
+            done, _ = await asyncio.wait([task], timeout=1.5)
+            assert not done, "PENDING tail must keep waiting, not die on TTL decay"
+            task.cancel()
+            with contextlib.suppress(BaseException):
+                await task
+        finally:
+            await s.aclose()
+
+
+class TestEventCountExcludesMarkers:
+    """Phase-5 item 23: coordination markers - pause/terminal sentinels and
+    reopen markers, including stale mid-stream ones - are stream entries but
+    not client-facing events. The old XLEN-minus-trailing-sentinel count
+    inflated by 2+ per pause/continue cycle; anything consuming the count for
+    progress got fictional numbers."""
+
+    @pytest.mark.asyncio
+    async def test_pause_reopen_continue_cycle_counts_real_events_only(self, stream: RedisEventStream):
+        await stream.register_run("r1", RunStatus.running)
+        await stream.add_event("r1", make_event("r1", "a"))
+        await stream.add_event("r1", make_event("r1", "b"))
+        await stream.complete_run("r1", RunStatus.paused)  # sentinel entry
+        await stream.reopen_run("r1")  # reopen marker entry
+        await stream.add_event("r1", make_event("r1", "c"))
+        await stream.complete_run("r1", RunStatus.completed)  # terminal entry
+
+        assert await stream.get_event_count("r1") == 3, (
+            "count must include only client-facing events, never pause/reopen/terminal markers"
+        )
+
+    @pytest.mark.asyncio
+    async def test_two_pause_cycles_stay_accurate(self, stream: RedisEventStream):
+        await stream.register_run("r1", RunStatus.running)
+        for cycle in range(2):
+            await stream.add_event("r1", make_event("r1", f"e{cycle}"))
+            await stream.complete_run("r1", RunStatus.paused)
+            await stream.reopen_run("r1")
+        assert await stream.get_event_count("r1") == 2
+
+
+class TestBatchBoundarySentinel:
+    """Phase-5 item 22: XREAD reads count-bounded batches (100), and the old
+    tail honored a sentinel that was merely BATCH-final - a lagging consumer
+    whose batch happened to end exactly on a stale pause sentinel was closed
+    even though the reopen marker and continuation events sat in the very
+    next batch. Tail-side read bug: item 5's producer generation fencing
+    would not have fixed it."""
+
+    @pytest.mark.asyncio
+    async def test_lagging_tail_survives_sentinel_at_exact_batch_boundary(self, stream: RedisEventStream):
+        await stream.register_run("r1", RunStatus.running)
+
+        # One-shot filler: bulk-load the stream between the tail's replay
+        # phase (empty stream) and its first XREAD, so the first live batch
+        # holds exactly 100 entries - 99 events + the pause sentinel as the
+        # batch-final entry - with the reopen marker and the continuation
+        # event stranded in batch two.
+        orig_xread = stream._redis.xread
+        filled = {}
+
+        async def fill_then_read(streams, block=None, count=None):
+            if not filled:
+                filled["done"] = True
+                for i in range(99):
+                    await stream.add_event("r1", make_event("r1", f"e{i}"))
+                await stream.complete_run("r1", RunStatus.paused)
+                await stream.reopen_run("r1")
+                await stream.add_event("r1", make_event("r1", "after-approval"))
+            return await orig_xread(streams, block=block, count=count)
+
+        stream._redis.xread = fill_then_read
+
+        received: list = []
+        done = asyncio.Event()
+
+        async def consume():
+            async for idx, _sse in stream.tail("r1"):
+                received.append(idx)
+            done.set()
+
+        consumer = asyncio.create_task(consume())
+        await asyncio.sleep(0.5)
+
+        assert not done.is_set(), (
+            f"tail closed on the batch-final stale sentinel with {len(received)} events - "
+            "the continuation behind the batch boundary was never delivered"
+        )
+        assert received == list(range(100)), f"expected all 100 events including the continuation, got {len(received)}"
+
+        await stream.complete_run("r1", RunStatus.completed)
+        await asyncio.wait_for(done.wait(), timeout=5)
+        await consumer
+
+
+class TestReopenSeedsCounterFromFloor:
+    """Phase-5 item 20: a paused run outliving the TTL (HITL across a
+    deploy) loses its counter; reopen_run accepted the missing state and
+    INCR restarted indices at 0 - resuming clients, which dedup by index,
+    silently discarded every post-approval event."""
+
+    @pytest.mark.asyncio
+    async def test_reopen_after_key_loss_seeds_next_index(self, stream: RedisEventStream):
+        await stream.register_run("r1", RunStatus.running)
+        for content in ("a", "b", "c"):
+            await stream.add_event("r1", make_event("r1", content))  # indices 0..2
+        await stream.complete_run("r1", RunStatus.paused)
+        await stream.cleanup_run("r1")  # deterministic stand-in for TTL expiry
+
+        assert await stream.reopen_run("r1", floor=2) is True
+        idx = await stream.add_event("r1", make_event("r1", "after-approval"))
+        assert idx == 3, (
+            f"post-expiry continuation must continue at floor+1, got {idx} - "
+            "index 0 is deduped away by clients holding the pause-event index"
+        )
+
+    @pytest.mark.asyncio
+    async def test_live_counter_never_regressed(self, stream: RedisEventStream):
+        await stream.register_run("r1", RunStatus.running)
+        for content in ("a", "b", "c", "d", "e"):
+            await stream.add_event("r1", make_event("r1", content))  # counter = 5
+        await stream.complete_run("r1", RunStatus.paused)
+
+        assert await stream.reopen_run("r1", floor=2) is True  # stale floor
+        idx = await stream.add_event("r1", make_event("r1", "next"))
+        assert idx == 5, f"a live counter must win over a stale floor, got {idx}"
+
+    @pytest.mark.asyncio
+    async def test_true_ttl_expiry_reseeds(self):
+        """Real-clock expiry: 1s TTL, keys genuinely expire, reopen with the
+        durable floor continues the numbering."""
+        import asyncio
+
+        short = RedisEventStream(fakeredis.FakeAsyncRedis(), ttl_seconds=1, block_ms=100)
+        try:
+            await short.register_run("r1", RunStatus.running)
+            await short.add_event("r1", make_event("r1", "a"))
+            await short.add_event("r1", make_event("r1", "b"))
+            await short.complete_run("r1", RunStatus.paused)
+            await asyncio.sleep(1.2)
+            assert await short.get_last_index("r1") == -1, "keys should have expired"
+
+            assert await short.reopen_run("r1", floor=1) is True
+            idx = await short.add_event("r1", make_event("r1", "after"))
+            assert idx == 2
+        finally:
+            await short.aclose()
+
+
+class TestClusterRejection:
+    """Phase-6 item 25: the stream's per-run keys are not hash-tagged, so its
+    WATCH/MULTI and multi-key pipelines are cross-slot - reject cluster
+    clients at construction like the job-queue store does, instead of
+    failing confusingly at runtime mid-continuation. The cancellation
+    manager deliberately stays cluster-tolerant (all pipelines single-key,
+    audited; cluster support advertised there)."""
+
+    def test_cluster_client_rejected_at_construction(self):
+        cluster_client = type("RedisCluster", (), {})()
+        with pytest.raises(ValueError, match="standalone"):
+            RedisEventStream(cluster_client)
+
+    def test_standalone_client_accepted(self):
+        stream = RedisEventStream(fakeredis.FakeAsyncRedis(), block_ms=100)
+        assert stream is not None
+
+
+class TestIdleProbeResilience:
+    """Phase-7 item 28: the status probe on the idle path was the one
+    unguarded call in the tail loop - a Redis blip there escaped the loop
+    (client sees an error close) instead of riding through like the same
+    outage one line earlier at the XREAD. And when a connection fails FAST,
+    block_ms never paces the loop, so the shared-counter backoff is what
+    keeps an outage from becoming a busy loop."""
+
+    @pytest.mark.asyncio
+    async def test_probe_blip_does_not_kill_the_tail(self, stream: RedisEventStream):
+        await stream.register_run("r1", RunStatus.running)
+        await stream.add_event("r1", make_event("r1", "a"))
+
+        real_get = stream._redis.get
+        blips = {"left": 2}
+
+        async def blipping_get(key):
+            if blips["left"] > 0:
+                blips["left"] -= 1
+                from redis.exceptions import ConnectionError as RedisConnectionError
+
+                raise RedisConnectionError("blip")
+            return await real_get(key)
+
+        stream._redis.get = blipping_get
+
+        received: list = []
+        done = asyncio.Event()
+
+        async def consume():
+            async for idx, _sse in stream.tail("r1"):
+                received.append(idx)
+            done.set()
+
+        consumer = asyncio.create_task(consume())
+        await asyncio.sleep(0.8)  # several idle passes hit the blipping probe
+        assert not done.is_set(), "a transient probe failure must not close the tail"
+
+        await stream.add_event("r1", make_event("r1", "b"))
+        await asyncio.sleep(0.3)
+        await stream.complete_run("r1", RunStatus.completed)
+        await asyncio.wait_for(done.wait(), timeout=5)
+        assert received == [0, 1], f"the tail must survive the blip and deliver later events, got {received}"
+        await consumer
+
+    @pytest.mark.asyncio
+    async def test_full_outage_is_paced_not_busy_looped(self, stream: RedisEventStream):
+        from redis.exceptions import ConnectionError as RedisConnectionError
+
+        await stream.register_run("r1", RunStatus.running)
+        calls = {"xread": 0}
+
+        async def dead_xread(*args, **kwargs):
+            calls["xread"] += 1
+            raise RedisConnectionError("redis down")
+
+        async def dead_get(*args, **kwargs):
+            raise RedisConnectionError("redis down")
+
+        stream._redis.xread = dead_xread
+        stream._redis.get = dead_get
+
+        async def consume():
+            async for _ in stream.tail("r1"):
+                pass
+
+        consumer = asyncio.create_task(consume())
+        await asyncio.sleep(1.0)
+        consumer.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await consumer
+        assert calls["xread"] <= 12, (
+            f"{calls['xread']} XREAD attempts in 1s of full outage - the fast-failing connection "
+            "bypassed block_ms pacing and the loop is spinning hot"
+        )

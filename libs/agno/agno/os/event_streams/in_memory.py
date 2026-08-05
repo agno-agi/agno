@@ -60,12 +60,14 @@ class InMemoryEventStream(BaseEventStream):
         self._buffer.set_run_completed(run_id, status)
         await self._subscribers.complete(run_id)
 
-    async def reopen_run(self, run_id: str, include_error: bool = False) -> bool:
+    async def reopen_run(self, run_id: str, include_error: bool = False, floor: Optional[int] = None) -> bool:
         # Single synchronous buffer call: atomic per event loop, so a racing
         # worker's terminal write can never be overwritten with PENDING. No
         # sentinel work needed in-memory - tails consult the buffer status,
-        # which this flip updates.
-        return bool(self._buffer.reopen_run(run_id, include_error=include_error))
+        # which this flip updates. floor seeds the index counter (see
+        # BaseEventStream.reopen_run) - covers the process-restart case where
+        # the buffer came up empty under a paused run's continue.
+        return bool(self._buffer.reopen_run(run_id, include_error=include_error, floor=floor))
 
     async def cleanup_run(self, run_id: str) -> None:
         self._buffer.cleanup_run(run_id)
@@ -82,9 +84,16 @@ class InMemoryEventStream(BaseEventStream):
     # ------------------------------------------------------------------
 
     async def add_event(self, run_id: str, event: Any) -> int:
+        import contextlib
+
         from agno.os.utils import format_sse_event_with_index
 
         event_index: int = self._buffer.add_event(run_id, event)
+        # Stamp the index onto the event OBJECT (see the Redis twin): the
+        # component's session save persists the real index with the stored
+        # event, so the DB replay fallback can honor a client's floor.
+        with contextlib.suppress(Exception):
+            event.event_index = event_index
         sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=run_id)
         await self._subscribers.publish(run_id, event_index, sse_data)
         return event_index

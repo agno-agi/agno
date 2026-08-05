@@ -210,3 +210,41 @@ class TestInMemoryRetryIndexContinuity:
             assert idx == 3, "indices must not rewind across attempts"
         finally:
             es_mod._event_stream = original
+
+
+class TestReopenSeedsCounterFromFloor:
+    """Phase-5 item 20 (in-memory twin): after a process restart the buffer
+    comes up empty under a paused run's continue - the seeded floor keeps
+    indices monotonic for resuming clients."""
+
+    @pytest.mark.asyncio
+    async def test_reopen_on_fresh_buffer_seeds_next_index(self):
+        from agno.os.event_streams.in_memory import InMemoryEventStream
+        from agno.os.managers import EventsBuffer, SSESubscriberManager
+        from agno.run.base import RunStatus
+
+        stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+        # Fresh buffer (post-restart): register PAUSED as the pre-continue
+        # state, then reopen with the durable floor
+        await stream.register_run("r1", RunStatus.paused)
+        assert await stream.reopen_run("r1", floor=4) is True
+        from agno.run.agent import RunContentEvent
+
+        idx = await stream.add_event("r1", RunContentEvent(content="after", run_id="r1"))
+        assert idx == 5, f"post-restart continuation must continue at floor+1, got {idx}"
+
+    @pytest.mark.asyncio
+    async def test_live_counter_never_regressed(self):
+        from agno.os.event_streams.in_memory import InMemoryEventStream
+        from agno.os.managers import EventsBuffer, SSESubscriberManager
+        from agno.run.agent import RunContentEvent
+        from agno.run.base import RunStatus
+
+        stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+        await stream.register_run("r1", RunStatus.running)
+        for c in ("a", "b", "c"):
+            await stream.add_event("r1", RunContentEvent(content=c, run_id="r1"))
+        await stream.complete_run("r1", RunStatus.paused)
+        assert await stream.reopen_run("r1", floor=0) is True
+        idx = await stream.add_event("r1", RunContentEvent(content="d", run_id="r1"))
+        assert idx == 3

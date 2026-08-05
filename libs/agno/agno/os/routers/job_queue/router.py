@@ -19,7 +19,6 @@ from agno.os.schema import (
     UnauthenticatedResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.utils.log import log_warning
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
@@ -102,37 +101,91 @@ def get_queue_router(os: "AgentOS", settings: AgnoAPISettings = AgnoAPISettings(
         description=(
             "Requeue a terminally failed or cancelled job for one more execution "
             "(raises its attempt budget by one). The operator remedy for crashed runs "
-            "under the no-silent-re-execution default."
+            "under the no-silent-re-execution default. Requeueing a CANCELLED job "
+            "whose cancellation intent is still live requires clear_cancellation=true "
+            "- an explicit override of the recorded cancel; without it the re-driven "
+            "attempt is re-cancelled at its first checkpoint. Requeueing a job that "
+            "FAILED within the last lock_grace seconds requires force=true: its worker "
+            "may still be executing (swept-but-alive), and a second producer would race "
+            "unfenced writes."
         ),
     )
-    async def requeue_job(request: Request, job_id: str):
-        import contextlib
-
+    async def requeue_job(request: Request, job_id: str, clear_cancellation: bool = False, force: bool = False):
         store = _get_store(request)
-        # A cancelled job's cancellation intent outlives the tombstone (nothing
-        # executed, so nothing cleaned it up). Clear it, or the requeued
-        # attempt is instantly re-cancelled at its first checkpoint. The
-        # cleanup is TOKEN-SCOPED (see acontinue_via_queue): the intent's
-        # token is read BEFORE the transition, and the post-success cleanup
-        # deletes intent ONLY if that exact token is still stored - so a
-        # rejected requeue touches nothing (no successful transition), a
-        # concurrent losing requeue clears nothing, and however delayed this
-        # request gets, it can never erase a NEWER cancel aimed at the
-        # requeued attempt (that cancel minted a different token).
-        cancel_token = None
-        with contextlib.suppress(Exception):
-            from agno.run.cancel import aget_cancellation_token
+        # Live-zombie gate (the other half of the multi-attempt experimental
+        # gate): a job FAILED within the last lock_grace was, in the worst
+        # case, swept while its worker was actually alive - the sweep only
+        # proves heartbeats stopped, not that execution did (the documented
+        # event-loop-starvation mode). Requeueing inside that window can put
+        # a second live producer on the same run row and event stream, whose
+        # writes are not yet generation-fenced. Refuse with 409 until the
+        # grace elapses, unless the operator explicitly forces. Heuristic by
+        # construction: completed_at is DB time on Postgres and this compares
+        # against app time, so clock skew shifts the refusal window - never
+        # ownership, which does not depend on this gate. Cancelled jobs skip
+        # the gate: cancellation only tombstones waiting tickets, so no
+        # zombie attempt can exist.
+        gate_job = await store.get_job(job_id)
+        if gate_job is not None and gate_job.get("status") == "failed" and not force:
+            import time as _time
 
-            cancel_token = await aget_cancellation_token(job_id)
+            worker = getattr(request.app.state, "queue_worker", None)
+            lock_grace = worker.config.lock_grace_seconds if worker is not None else 60
+            completed_at = gate_job.get("completed_at")
+            if completed_at is not None and (_time.time() - completed_at) < lock_grace:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Job {job_id} failed within the last {lock_grace}s and its worker may "
+                    "still be executing (a sweep proves lost heartbeats, not stopped execution). "
+                    "Retry after the lock grace elapses, or pass force=true to override.",
+                )
+        # Cancellation intent is never cleared AUTOMATICALLY: every silent
+        # scheme reviewed had a window where a delayed cleanup could erase a
+        # newer, legitimate cancel. Instead the OPERATOR opts in with
+        # clear_cancellation=true - an explicit, human-initiated override of
+        # a recorded cancel (intent outlives a cancelled-while-queued
+        # tombstone: nothing executed, so nothing cleaned it up; TTL bounds
+        # it at ~24h). Without the flag the re-driven attempt is re-cancelled
+        # at its first checkpoint, visibly - annoying but never wrong.
+        #
+        # The override is STATE-GATED and coupled to the transition:
+        # 1) Gate: only a currently-requeueable (failed/cancelled) job may
+        #    have intent cleared. Intent can only target a LIVE attempt, and
+        #    live attempts exist only on running/queued/paused tickets - so
+        #    rejecting those up front, WITHOUT touching intent, makes the
+        #    dangerous class (erasing a running attempt's cancel and then
+        #    400ing) unreachable.
+        # 2) Clear BEFORE the requeue CAS: cleared after it, the clear could
+        #    be delayed past a worker's claim and a fresh cancel of the
+        #    re-driven attempt - the erase-a-newer-cancel window again.
+        #    Cleared first, the ticket only becomes claimable once the
+        #    override already happened.
+        # 3) Clear failure ABORTS (503, nothing requeued): the operator asked
+        #    for clear+requeue and must get both or neither - a silent
+        #    requeue-without-clear would insta-cancel the re-driven attempt
+        #    while reporting the override succeeded.
+        # Residual (documented, accepted): between the gate read and the
+        # clear, a CONCURRENT requeue + claim + fresh cancel could interleave
+        # and be erased - cross-store atomicity between the job store and the
+        # cancellation manager does not exist (same constraint as the sweep).
+        # That needs two operators acting on one job simultaneously on an
+        # admin-only surface; attempt-scoped intent (roadmap) closes it.
+        if clear_cancellation:
+            job = await store.get_job(job_id)
+            if job is None or job.get("status") not in ("failed", "cancelled"):
+                raise HTTPException(status_code=400, detail=f"Job {job_id} not found or not in a requeueable state")
+            try:
+                from agno.run.cancel import acleanup_run
+
+                await acleanup_run(job_id)
+            except Exception:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Could not clear cancellation intent for job {job_id}; "
+                    "the job was NOT requeued - retry the request",
+                )
         if not await store.requeue_job(job_id):
             raise HTTPException(status_code=400, detail=f"Job {job_id} not found or not in a requeueable state")
-        if cancel_token is not None:
-            try:
-                from agno.run.cancel import acleanup_run_if_token
-
-                await acleanup_run_if_token(job_id, cancel_token)
-            except Exception:
-                log_warning(f"Could not clear stale cancellation intent for requeued job {job_id}")
         return await store.get_job(job_id)
 
     @router.get(

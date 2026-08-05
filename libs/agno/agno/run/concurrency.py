@@ -18,8 +18,9 @@ changing it only affects runs that start waiting after the change.
 
 import asyncio
 import os
-from contextlib import asynccontextmanager, suppress
-from typing import AsyncIterator, Optional, Tuple
+from contextlib import asynccontextmanager, contextmanager, suppress
+from dataclasses import dataclass
+from typing import AsyncIterator, Dict, Iterator, Optional, Tuple
 from weakref import WeakKeyDictionary
 
 from agno.exceptions import RunCancelledException
@@ -138,3 +139,76 @@ async def background_run_slot(
         yield
     finally:
         semaphore.release()
+
+
+# ---------------------------------------------------------------------------
+# Worker-managed runs: claimed durable jobs whose lifecycle (timeout, shutdown
+# drain, sweep) is owned by the QueueWorker. The cancellation-persist handlers
+# (foreground and detached) consult this registry to SKIP their persist - a
+# worker cancellation is indistinguishable from a client disconnect or loop
+# shutdown at the handler, and their CANCELLED write would collide with the
+# worker's fenced terminal (the terminal-row guard then rejects it, leaving
+# ticket/run permanently split).
+#
+# A module-level registry keyed by run_id, NOT a ContextVar: the consumers
+# look ownership up from arbitrary tasks (detached persist tasks, producers
+# spawned by HTTP routes), and ContextVars are task-lineage-scoped. The
+# absence of a record IS the "not worker-managed" case (client disconnect,
+# inline execution).
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class WorkerOwnership:
+    """Who owns a claimed run's execution, and - once the worker decides to
+    cancel it - why. ``cancellation_cause`` is stamped BEFORE the cancellation
+    is delivered (the handlers that consult it run while unwinding):
+    "timeout" (per-run timeout), "drain" (worker shutdown), "user_cancel"
+    (cancellation manager). None while executing normally."""
+
+    worker_id: str
+    attempt: int
+    cancellation_cause: Optional[str] = None
+
+
+_worker_managed_runs: Dict[str, WorkerOwnership] = {}
+
+
+@contextmanager
+def worker_managed_execution(run_id: str, worker_id: str, attempt: int) -> Iterator[WorkerOwnership]:
+    """Register worker ownership for exactly the span of the with-block.
+
+    Exception-safe by construction: early returns and pre-slot exceptions
+    unwind through the finally, so a marker can never outlive the execution
+    it described (the bare mark/unmark pair leaked on both)."""
+    ownership = WorkerOwnership(worker_id=worker_id, attempt=attempt)
+    _worker_managed_runs[run_id] = ownership
+    try:
+        yield ownership
+    finally:
+        _worker_managed_runs.pop(run_id, None)
+
+
+def mark_worker_managed(run_id: str, worker_id: str = "", attempt: int = 0) -> None:
+    """Low-level registration (tests / non-worker callers). The worker itself
+    uses worker_managed_execution for exception safety."""
+    _worker_managed_runs[run_id] = WorkerOwnership(worker_id=worker_id, attempt=attempt)
+
+
+def unmark_worker_managed(run_id: str) -> None:
+    _worker_managed_runs.pop(run_id, None)
+
+
+def is_worker_managed(run_id: str) -> bool:
+    return run_id in _worker_managed_runs
+
+
+def get_worker_ownership(run_id: str) -> Optional[WorkerOwnership]:
+    return _worker_managed_runs.get(run_id)
+
+
+def set_cancellation_cause(run_id: str, cause: str) -> None:
+    """Stamp the cancellation cause on a managed run (no-op if unmanaged)."""
+    ownership = _worker_managed_runs.get(run_id)
+    if ownership is not None:
+        ownership.cancellation_cause = cause
