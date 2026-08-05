@@ -176,3 +176,65 @@ class TestInsertSessionIfAbsentContract:
         session = AgentSession(session_id=sid, agent_id="a1", runs=[], created_at=int(time.time()))
         assert sync_db.insert_session_if_absent(session) is True
         assert sync_db.insert_session_if_absent(session) is False
+
+
+class TestLegacyFallbackOrdersSessionBeforeRun:
+    """Adapters WITHOUT the atomic primitives (hidden here via monkeypatch)
+    take the legacy create-and-save path. On the FK-backed v3 runs table the
+    run insert is rejected until its session row exists - and the per-run
+    save helpers only LOG that failure, so the old run-first order left the
+    202'd run unpollable while the response claimed acceptance."""
+
+    def _hide_primitives(self, monkeypatch, db):
+        monkeypatch.setattr(db, "append_run_to_session_if_absent", None)
+        monkeypatch.setattr(db, "insert_session_if_absent", None)
+
+    @pytest.mark.asyncio
+    async def test_agent_fallback_lands_pending_run_row(self, db, monkeypatch):
+        from agno.os.job_queue import aprepare_queued_run
+
+        self._hide_primitives(monkeypatch, db)
+        session_id = f"s-{uuid.uuid4().hex[:8]}"
+        run_id = f"r-{uuid.uuid4().hex[:8]}"
+        agent = Agent(id="prep-agent", name="Prep Agent", db=db)
+
+        await aprepare_queued_run(agent, "agent", run_id, session_id, None, "hello")
+
+        runs = await read_runs(db, session_id)
+        assert len(runs) == 1 and runs[0]["run_id"] == run_id, (
+            "legacy fallback must save the session row BEFORE the run row - "
+            "run-first FK-fails silently and the accepted run is unpollable"
+        )
+        assert str(runs[0]["status"]).upper() == "PENDING"
+
+    @pytest.mark.asyncio
+    async def test_team_fallback_lands_pending_run_row(self, db, monkeypatch):
+        from agno.os.job_queue import aprepare_queued_run
+        from agno.team import Team
+
+        self._hide_primitives(monkeypatch, db)
+        session_id = f"s-{uuid.uuid4().hex[:8]}"
+        run_id = f"r-{uuid.uuid4().hex[:8]}"
+        team = Team(id="prep-team", name="Prep Team", members=[], db=db)
+
+        await aprepare_queued_run(team, "team", run_id, session_id, None, "hello")
+
+        runs = await read_runs(db, session_id)
+        assert len(runs) == 1 and runs[0]["run_id"] == run_id
+        assert str(runs[0]["status"]).upper() == "PENDING"
+
+    @pytest.mark.asyncio
+    async def test_workflow_fallback_lands_pending_run_row(self, db, monkeypatch):
+        from agno.os.job_queue import aprepare_queued_run
+        from agno.workflow import Workflow
+
+        self._hide_primitives(monkeypatch, db)
+        session_id = f"s-{uuid.uuid4().hex[:8]}"
+        run_id = f"r-{uuid.uuid4().hex[:8]}"
+        workflow = Workflow(id="prep-wf", name="Prep Workflow", db=db, steps=[])
+
+        await aprepare_queued_run(workflow, "workflow", run_id, session_id, None, "hello")
+
+        runs = await read_runs(db, session_id)
+        assert len(runs) == 1 and runs[0]["run_id"] == run_id
+        assert str(runs[0]["status"]).upper() == "PENDING"
