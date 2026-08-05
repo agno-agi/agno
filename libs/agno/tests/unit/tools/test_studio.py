@@ -399,6 +399,34 @@ class TestCreateAgent:
         config = db.get_config("async-stateless")["config"]
         assert "add_history_to_context" not in config
 
+    def test_datetime_on_by_default(self, studio, db):
+        out = _loads(studio.create_agent(name="dated", instructions="i", model_id="gpt-5.4"))
+        assert out["add_datetime_to_context"] is True
+
+        config = db.get_config("dated")["config"]
+        assert config["add_datetime_to_context"] is True
+
+    def test_datetime_opt_out_omits_key_from_config(self, studio, db):
+        out = _loads(
+            studio.create_agent(name="undated", instructions="i", model_id="gpt-5.4", add_datetime_to_context=False)
+        )
+        assert out["add_datetime_to_context"] is False
+
+        # to_dict omits falsy add_datetime_to_context, so the key is absent.
+        config = db.get_config("undated")["config"]
+        assert "add_datetime_to_context" not in config
+
+    @pytest.mark.asyncio
+    async def test_async_create_agent_datetime_opt_out(self, studio, db):
+        out = _loads(
+            await studio.acreate_agent(
+                name="async-undated", instructions="i", model_id="gpt-5.4", add_datetime_to_context=False
+            )
+        )
+        assert out["add_datetime_to_context"] is False
+        config = db.get_config("async-undated")["config"]
+        assert "add_datetime_to_context" not in config
+
 
 class TestToolNameResolution:
     """Multiple MCP servers in one registry must stay independently addressable."""
@@ -720,6 +748,21 @@ class TestEditAgent:
         got = _loads(studio.get_agent("tutor"))
         assert got["add_history_to_context"] is True
         assert got["num_history_runs"] == 3
+
+    def test_edit_turns_datetime_off_and_keeps_other_fields(self, studio):
+        self._create(studio)
+        out = _loads(studio.edit_agent(agent_id="tutor", add_datetime_to_context=False))
+        assert out["status"] == "edited"
+
+        got = _loads(studio.get_agent("tutor"))
+        assert got["add_datetime_to_context"] is False
+        assert got["instructions"] == "orig"
+        assert got["tools"] == ["calculator"]
+
+    def test_get_agent_reports_datetime_setting(self, studio):
+        self._create(studio)
+        got = _loads(studio.get_agent("tutor"))
+        assert got["add_datetime_to_context"] is True
 
     def test_edit_unknown_agent_returns_error(self, studio):
         out = _loads(studio.edit_agent(agent_id="ghost", instructions="x"))

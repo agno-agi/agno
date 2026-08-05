@@ -806,6 +806,7 @@ class StudioTools(Toolkit):
                 "tools": self._normalize_tool_names(_summarize_tools(getattr(agent, "tools", None))),
                 "add_history_to_context": getattr(agent, "add_history_to_context", None),
                 "num_history_runs": getattr(agent, "num_history_runs", None),
+                "add_datetime_to_context": getattr(agent, "add_datetime_to_context", None),
             },
             default=str,
         )
@@ -884,6 +885,7 @@ class StudioTools(Toolkit):
         description: Optional[str] = None,
         add_history_to_context: bool = True,
         num_history_runs: Optional[int] = None,
+        add_datetime_to_context: bool = True,
     ) -> str:
         """Create a new agent and persist it as a published component.
 
@@ -900,9 +902,13 @@ class StudioTools(Toolkit):
                 stateless agent.
             num_history_runs (Optional[int]): How many prior runs to include when
                 history is on. Omit for the default.
+            add_datetime_to_context (bool): Add the current date and time to the
+                agent's context so it can date and time-reference reliably.
+                Defaults to True; pass False to omit.
 
         Returns:
-            str: JSON with {status, id, name, model_id, tools, add_history_to_context, db_version}.
+            str: JSON with {status, id, name, model_id, tools, add_history_to_context,
+            add_datetime_to_context, db_version}.
         """
         from agno.agent.agent import Agent
 
@@ -927,6 +933,7 @@ class StudioTools(Toolkit):
                 description=description,
                 add_history_to_context=add_history_to_context,
                 num_history_runs=num_history_runs if num_history_runs is not None else self.default_num_history_runs,
+                add_datetime_to_context=add_datetime_to_context,
             )
 
             version = _persist_only(agent, db)
@@ -939,6 +946,7 @@ class StudioTools(Toolkit):
                     "model_id": getattr(model, "id", None),
                     "tools": _summarize_tools(tools),
                     "add_history_to_context": add_history_to_context,
+                    "add_datetime_to_context": add_datetime_to_context,
                     "db_version": version,
                 }
             )
@@ -1080,6 +1088,7 @@ class StudioTools(Toolkit):
         description: Optional[str] = None,
         add_history_to_context: Optional[bool] = None,
         num_history_runs: Optional[int] = None,
+        add_datetime_to_context: Optional[bool] = None,
     ) -> str:
         """Edit an agent.
 
@@ -1097,6 +1106,8 @@ class StudioTools(Toolkit):
             add_history_to_context (Optional[bool]): Whether the agent sees prior turns
                 of the session. Omit to keep.
             num_history_runs (Optional[int]): New history depth. Omit to keep.
+            add_datetime_to_context (Optional[bool]): Whether the agent sees the
+                current date and time. Omit to keep.
         """
         if self.db is None:
             return json.dumps({"error": "StudioTools has no db configured; cannot edit components."})
@@ -1131,6 +1142,8 @@ class StudioTools(Toolkit):
                 # Mirror Agent.__init__'s resolution: num_history_runs wins
                 # over num_history_messages.
                 agent.num_history_messages = None
+            if add_datetime_to_context is not None:
+                agent.add_datetime_to_context = add_datetime_to_context
 
             result = self._save_edit(agent)
             log_debug(f"StudioTools edited agent id={agent_id} result={result}")
@@ -1788,6 +1801,7 @@ class StudioTools(Toolkit):
         description: Optional[str] = None,
         add_history_to_context: bool = True,
         num_history_runs: Optional[int] = None,
+        add_datetime_to_context: bool = True,
     ) -> str:
         """Async variant of create_agent."""
         return await self._run_sync_tool(
@@ -1800,6 +1814,7 @@ class StudioTools(Toolkit):
             description=description,
             add_history_to_context=add_history_to_context,
             num_history_runs=num_history_runs,
+            add_datetime_to_context=add_datetime_to_context,
         )
 
     async def acreate_team(
@@ -1847,6 +1862,7 @@ class StudioTools(Toolkit):
         description: Optional[str] = None,
         add_history_to_context: Optional[bool] = None,
         num_history_runs: Optional[int] = None,
+        add_datetime_to_context: Optional[bool] = None,
     ) -> str:
         """Async variant of edit_agent."""
         return await self._run_sync_tool(
@@ -1858,6 +1874,7 @@ class StudioTools(Toolkit):
             description=description,
             add_history_to_context=add_history_to_context,
             num_history_runs=num_history_runs,
+            add_datetime_to_context=add_datetime_to_context,
         )
 
     async def aedit_team(
