@@ -51,6 +51,11 @@ services:
       LOCK_GRACE: ${LOCK_GRACE:-60}
       MAX_ATTEMPTS: ${MAX_ATTEMPTS:-1}
       TIMEOUT_SECONDS: ${TIMEOUT_SECONDS:-3600}
+      # APP_MODULE=durable_ui serves the single durable-agent for the AgentOS UI
+      # (default 'app' = full load-test surface). WORKER_LABEL tags this replica's
+      # CLAIM/COMPLETE trace lines so you can see which worker ran each job.
+      APP_MODULE: ${APP_MODULE:-app}
+      WORKER_LABEL: replica1
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -61,6 +66,18 @@ services:
 
   replica2:
     <<: *replica
+    environment:
+      PG_URL: postgresql+psycopg://ai:ai@postgres:5432/ai
+      REDIS_URL: redis://redis:6379
+      MODEL: ${MODEL:-real}
+      MODEL_ID: ${MODEL_ID:-gpt-5.5}
+      MAX_CONCURRENCY: ${MAX_CONCURRENCY:-8}
+      MAX_QUEUE_DEPTH: ${MAX_QUEUE_DEPTH:-1000}
+      LOCK_GRACE: ${LOCK_GRACE:-60}
+      MAX_ATTEMPTS: ${MAX_ATTEMPTS:-1}
+      TIMEOUT_SECONDS: ${TIMEOUT_SECONDS:-3600}
+      APP_MODULE: ${APP_MODULE:-app}
+      WORKER_LABEL: replica2
     ports: ["7802:7777"]
 
   lb:

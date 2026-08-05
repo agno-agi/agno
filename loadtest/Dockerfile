@@ -13,7 +13,10 @@ RUN pip install --no-cache-dir -e "/agno_src/libs/agno[os,openai]" \
     && pip install --no-cache-dir "psycopg[binary]" redis "uvicorn[standard]"
 
 # App + stub model
-COPY loadtest/app.py loadtest/stub_model.py /app/
+COPY loadtest/app.py loadtest/stub_model.py loadtest/durable_ui.py /app/
 
 EXPOSE 7777
-CMD ["python", "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "7777"]
+# APP_MODULE selects which app to serve: 'app' (the full load-test surface,
+# default) or 'durable_ui' (the single durable-agent for the AgentOS UI + tracing).
+ENV APP_MODULE=app
+CMD ["sh", "-c", "python -m uvicorn ${APP_MODULE}:app --host 0.0.0.0 --port 7777"]
