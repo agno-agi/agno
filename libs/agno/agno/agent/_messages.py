@@ -1309,10 +1309,14 @@ def get_run_messages(
         )
 
         if len(history) > 0:
-            # Deepcopy, tag, and filter compacted in one pass (skip deepcopy for compacted)
+            # Build compacted IDs set once — survives deepcopy/reload cycle
+            compacted_ids = session.compaction.compacted_message_ids if session.compaction else set()
+
+            # Deepcopy, tag, and filter compacted in one pass
             history_copy = []
             for msg in history:
-                if getattr(msg, "is_compacted", False):
+                # Filter by ID — skip messages that were compacted into the summary
+                if msg.id and msg.id in compacted_ids:
                     continue
                 msg_copy = deepcopy(msg)
                 msg_copy.from_history = True
@@ -1521,19 +1525,22 @@ async def aget_run_messages(
         )
 
         if len(history) > 0:
-            # Create a deep copy of the history messages to avoid modifying the original messages
-            history_copy = [deepcopy(msg) for msg in history]
+            # Build compacted IDs set once — survives deepcopy/reload cycle
+            compacted_ids = session.compaction.compacted_message_ids if session.compaction else set()
 
-            # Tag each message as coming from history
-            for _msg in history_copy:
-                _msg.from_history = True
+            # Deepcopy, tag, and filter compacted in one pass
+            history_copy = []
+            for msg in history:
+                # Filter by ID — skip messages that were compacted into the summary
+                if msg.id and msg.id in compacted_ids:
+                    continue
+                msg_copy = deepcopy(msg)
+                msg_copy.from_history = True
+                history_copy.append(msg_copy)
 
             # Filter tool calls from history if limit is set (before adding to run_messages)
             if agent.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
-
-            # Filter out compacted messages (their content is in the summary)
-            history_copy = [m for m in history_copy if not getattr(m, "is_compacted", False)]
 
             log_debug(f"Adding {len(history_copy)} messages from history")
 
@@ -1678,10 +1685,25 @@ def get_continue_run_messages(
         run_messages.messages.append(system_message)
 
     # 1.1 Inject stored compaction summary right after system message
-    # Skip injection if input already has history - the stored run already contains its own summary
-    if session is not None and session.compaction and session.compaction.summary and not input_has_history:
-        run_messages.messages.append(session.compaction.get_summary_message())
-        log_debug(f"Injected compaction summary ({len(session.compaction.summary)} chars)")
+    # Skip injection if:
+    # - input already has history (from_history=True on some messages)
+    # - continuing a run whose messages were compacted (time travel prevention)
+    should_inject_summary = (
+        session is not None and session.compaction and session.compaction.summary and not input_has_history
+    )
+    if should_inject_summary:
+        # Time travel check: if ANY of this run's message IDs are in the compacted set,
+        # this run existed when compaction happened and we're going back in time.
+        # The summary would contain info from runs AFTER this one — don't inject.
+        input_ids = {msg.id for msg in input if msg.id}
+        compacted_ids = session.compaction.compacted_message_ids
+        run_was_compacted = bool(input_ids.intersection(compacted_ids))
+
+        if run_was_compacted:
+            log_debug("Skipped compaction summary (continuing pre-compaction run to avoid time travel)")
+        else:
+            run_messages.messages.append(session.compaction.get_summary_message())
+            log_debug(f"Injected compaction summary ({len(session.compaction.summary)} chars)")
 
     # 2. Add history messages if not already present in input
     if add_history_to_context and session is not None and not input_has_history:
@@ -1702,19 +1724,22 @@ def get_continue_run_messages(
         )
 
         if len(history) > 0:
-            # Create a deep copy of the history messages to avoid modifying the original messages
-            history_copy = [deepcopy(msg) for msg in history]
+            # Build compacted IDs set once — survives deepcopy/reload cycle
+            compacted_ids = session.compaction.compacted_message_ids if session.compaction else set()
 
-            # Tag each message as coming from history
-            for _msg in history_copy:
-                _msg.from_history = True
+            # Deepcopy, tag, and filter compacted in one pass
+            history_copy = []
+            for msg in history:
+                # Filter by ID — skip messages that were compacted into the summary
+                if msg.id and msg.id in compacted_ids:
+                    continue
+                msg_copy = deepcopy(msg)
+                msg_copy.from_history = True
+                history_copy.append(msg_copy)
 
             # Filter tool calls from history if limit is set (before adding to run_messages)
             if agent.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
-
-            # Filter out compacted messages (their content is in the summary)
-            history_copy = [m for m in history_copy if not getattr(m, "is_compacted", False)]
 
             log_debug(f"Adding {len(history_copy)} messages from history")
             run_messages.messages += history_copy

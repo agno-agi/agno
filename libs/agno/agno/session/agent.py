@@ -143,7 +143,6 @@ class AgentSession:
         skip_roles: Optional[List[str]] = None,
         skip_statuses: Optional[List[RunStatus]] = None,
         skip_history_messages: bool = True,
-        skip_compacted: bool = False,
     ) -> List[Message]:
         """Returns the messages belonging to the session that fit the given criteria.
 
@@ -155,7 +154,6 @@ class AgentSession:
             skip_roles: Skip messages with these roles.
             skip_statuses: Skip messages with these statuses.
             skip_history_messages: Skip messages that were tagged as history in previous runs.
-            skip_compacted: Skip messages marked is_compacted (only when compaction summary is available).
 
         Returns:
             A list of Messages belonging to the session.
@@ -165,13 +163,8 @@ class AgentSession:
             message: Message,
             skip_roles: Optional[List[str]] = None,
             skip_history_messages: bool = True,
-            skip_compacted: bool = False,
         ) -> bool:
             """Logic to determine if a message should be skipped"""
-            # Skip compacted messages (only if compaction is enabled — otherwise no summary replaces them)
-            if skip_compacted and getattr(message, "is_compacted", False):
-                return True
-
             # Skip messages that were tagged as history in previous runs
             if hasattr(message, "from_history") and message.from_history and skip_history_messages:
                 return True

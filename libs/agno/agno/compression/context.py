@@ -1,11 +1,9 @@
-"""Context compaction — summarizes old conversation history to reduce token usage."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
 
 from agno.models.base import Model
 from agno.models.message import Message
@@ -50,9 +48,16 @@ SUMMARY_PREFIX = dedent("""\
 
 @dataclass
 class CompactionState:
-    """Tracks context compaction state for a session."""
+    """Tracks context compaction state for a session.
 
-    summary: str
+    The compacted_message_ids field stores IDs of all messages that have been summarized.
+    This solves the "marks on copies" problem: history messages are deepcopy'd at load time,
+    so marking them with is_compacted=True doesn't persist. By storing IDs centrally in
+    session.compaction (which IS persisted), we can filter by ID on next load.
+    """
+
+    summary: str = ""
+    compacted_message_ids: Set[str] = field(default_factory=set)
     compacted_count: int = 0
     total_compactions: int = 0
     updated_at: Optional[datetime] = None
@@ -64,6 +69,7 @@ class CompactionState:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "summary": self.summary,
+            "compacted_message_ids": list(self.compacted_message_ids),
             "compacted_count": self.compacted_count,
             "total_compactions": self.total_compactions,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
@@ -76,6 +82,7 @@ class CompactionState:
             updated_at = datetime.fromisoformat(updated_at)
         return cls(
             summary=data.get("summary", ""),
+            compacted_message_ids=set(data.get("compacted_message_ids", [])),
             compacted_count=data.get("compacted_count", 0),
             total_compactions=data.get("total_compactions", 0),
             updated_at=updated_at,
@@ -84,32 +91,10 @@ class CompactionState:
 
 @dataclass
 class CompactionResult:
-    """Result of context compaction. Side-effect-free until commit() is called."""
+    """Result of context compaction."""
 
     view: List[Message]
-    to_compact: List[Message] = field(default_factory=list)
     summary: Optional[str] = None
-
-    def commit(self, session: Optional["AgentSession"], stats: Optional[Dict[str, Any]] = None) -> None:
-        """Mark messages as compacted and store summary. Call only after model success."""
-        if not self.to_compact or not self.summary:
-            return
-
-        for msg in self.to_compact:
-            msg.is_compacted = True
-
-        if session is not None:
-            prev = getattr(session, "compaction", None)
-            session.compaction = CompactionState(
-                summary=self.summary,
-                compacted_count=(prev.compacted_count if prev else 0) + len(self.to_compact),
-                total_compactions=(prev.total_compactions if prev else 0) + 1,
-                updated_at=datetime.now(),
-            )
-
-        if stats is not None:
-            stats["compactions"] = stats.get("compactions", 0) + 1
-            stats["messages_compacted"] = stats.get("messages_compacted", 0) + len(self.to_compact)
 
 
 @dataclass
@@ -143,7 +128,8 @@ class ContextCompactionManager:
         if self.model is None:
             return CompactionResult(view=messages)
 
-        active = [m for m in messages if not getattr(m, "is_compacted", False)]
+        compacted_ids = session.compaction.compacted_message_ids if session and session.compaction else set()
+        active = [m for m in messages if not (m.id and m.id in compacted_ids)]
         stored_summary = self._get_stored_summary(session)
 
         # No compaction needed — return messages as-is (summary already injected by _messages.py)
@@ -165,7 +151,21 @@ class ContextCompactionManager:
         view = system_msgs + [self._make_summary_msg(summary)] + preserved_user + keep_verbatim
         log_info(f"[COMPACTION] Compacted {len(to_compact)} messages ({len(summary)} chars)")
 
-        return CompactionResult(view=view, to_compact=to_compact, summary=summary)
+        # Store compaction state on session (persisted when session is saved)
+        if session is not None:
+            prev = session.compaction
+            new_ids = {msg.id for msg in to_compact if msg.id}
+            all_ids = new_ids.union(prev.compacted_message_ids if prev else set())
+
+            session.compaction = CompactionState(
+                summary=summary,
+                compacted_message_ids=all_ids,
+                compacted_count=(prev.compacted_count if prev else 0) + len(to_compact),
+                total_compactions=(prev.total_compactions if prev else 0) + 1,
+                updated_at=datetime.now(),
+            )
+
+        return CompactionResult(view=view, summary=summary)
 
     async def acompact(
         self,
@@ -177,7 +177,8 @@ class ContextCompactionManager:
         if self.model is None:
             return CompactionResult(view=messages)
 
-        active = [m for m in messages if not getattr(m, "is_compacted", False)]
+        compacted_ids = session.compaction.compacted_message_ids if session and session.compaction else set()
+        active = [m for m in messages if not (m.id and m.id in compacted_ids)]
         stored_summary = self._get_stored_summary(session)
 
         # No compaction needed — return messages as-is (summary already injected by _messages.py)
@@ -199,7 +200,21 @@ class ContextCompactionManager:
         view = system_msgs + [self._make_summary_msg(summary)] + preserved_user + keep_verbatim
         log_info(f"[COMPACTION] Compacted {len(to_compact)} messages ({len(summary)} chars)")
 
-        return CompactionResult(view=view, to_compact=to_compact, summary=summary)
+        # Store compaction state on session (persisted when session is saved)
+        if session is not None:
+            prev = session.compaction
+            new_ids = {msg.id for msg in to_compact if msg.id}
+            all_ids = new_ids.union(prev.compacted_message_ids if prev else set())
+
+            session.compaction = CompactionState(
+                summary=summary,
+                compacted_message_ids=all_ids,
+                compacted_count=(prev.compacted_count if prev else 0) + len(to_compact),
+                total_compactions=(prev.total_compactions if prev else 0) + 1,
+                updated_at=datetime.now(),
+            )
+
+        return CompactionResult(view=view, summary=summary)
 
     # --- Private ---
 
@@ -287,8 +302,6 @@ class ContextCompactionManager:
             parts.append(f"[PREVIOUS SUMMARY]\n{prev_summary}\n\n[NEW MESSAGES]")
 
         for msg in to_compact:
-            if getattr(msg, "is_compacted", False):
-                continue
             content = msg.compressed_content or msg.content or ""
             if isinstance(content, list):
                 content = str(content)

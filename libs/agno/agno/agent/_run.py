@@ -581,10 +581,6 @@ def _run(
                     run_context=run_context,
                 )
 
-                # 9. Commit compaction (mark messages, store summary) after model success
-                if compaction_result is not None and compaction_result.summary:
-                    compaction_result.commit(agent_session)
-
                 # We should break out of the run function
                 if any(tool_call.is_paused for tool_call in run_response.tools or []):
                     wait_for_open_threads(
