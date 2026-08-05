@@ -969,9 +969,17 @@ class Knowledge(RemoteKnowledge):
         return self.readers.get(reader_type)
 
     def _select_reader(self, extension: str) -> Reader:
-        """Select the appropriate reader for a file extension."""
+        """Select the appropriate reader for a file extension or MIME type.
+
+        Prefers ``Knowledge.readers`` (via ``_get_reader``), falling back to
+        ``ReaderFactory`` when the key is not already configured.
+        """
         log_info(f"Selecting reader for extension: {extension}")
-        return ReaderFactory.get_reader_for_extension(extension)
+        key = ReaderFactory.get_reader_key_for_extension(extension)
+        reader = self._get_reader(key)
+        if reader is None:
+            raise ValueError(f"No reader for extension: {extension}")
+        return reader
 
     def _should_include_file(self, file_path: str, include: Optional[List[str]], exclude: Optional[List[str]]) -> bool:
         """
@@ -1184,22 +1192,10 @@ class Knowledge(RemoteKnowledge):
             return provided_reader, ""
 
         file_extension = file_extension.lower()
-        if file_extension == ".csv":
-            return self.csv_reader, "data.csv"
-        elif file_extension == ".pdf":
-            return self.pdf_reader, ""
-        elif file_extension == ".docx":
-            return self.docx_reader, ""
-        elif file_extension == ".pptx":
-            return self.pptx_reader, ""
-        elif file_extension == ".json":
-            return self.json_reader, ""
-        elif file_extension == ".markdown":
-            return self.markdown_reader, ""
-        elif file_extension in [".xlsx", ".xls"]:
-            return self.excel_reader, ""
-        else:
-            return self.text_reader, ""
+        key = ReaderFactory.get_reader_key_for_extension(file_extension)
+        # Preserve historical default name for CSV uploads without an explicit name.
+        name = "data.csv" if key == "csv" else ""
+        return self._get_reader(key), name
 
     def _select_reader_by_uri(self, uri: str, provided_reader: Optional[Reader] = None) -> Optional[Reader]:
         """
@@ -1215,23 +1211,12 @@ class Knowledge(RemoteKnowledge):
         if provided_reader:
             return provided_reader
 
-        uri_lower = uri.lower()
-        if uri_lower.endswith(".pdf"):
-            return self.pdf_reader
-        elif uri_lower.endswith(".csv"):
-            return self.csv_reader
-        elif uri_lower.endswith(".docx"):
-            return self.docx_reader
-        elif uri_lower.endswith(".pptx"):
-            return self.pptx_reader
-        elif uri_lower.endswith(".json"):
-            return self.json_reader
-        elif uri_lower.endswith(".markdown"):
-            return self.markdown_reader
-        elif uri_lower.endswith(".xlsx") or uri_lower.endswith(".xls"):
-            return self.excel_reader
-        else:
-            return self.text_reader
+        # Strip query/fragment so Path.suffix sees the real extension.
+        path_part = uri.split("?", 1)[0].split("#", 1)[0]
+        extension = Path(path_part).suffix.lower()
+        if not extension:
+            return self._get_reader("text")
+        return self._get_reader(ReaderFactory.get_reader_key_for_extension(extension))
 
     def _delete_content_images(self, content_id: str) -> None:
         if not content_id:
@@ -1403,7 +1388,7 @@ class Knowledge(RemoteKnowledge):
                 if content.reader:
                     reader = content.reader
                 else:
-                    reader = ReaderFactory.get_reader_for_extension(path.suffix)
+                    reader = self._select_reader(path.suffix)
                     log_debug(f"Using Reader: {reader.__class__.__name__}")
 
                 if reader:
@@ -1492,7 +1477,7 @@ class Knowledge(RemoteKnowledge):
                 if content.reader:
                     reader = content.reader
                 else:
-                    reader = ReaderFactory.get_reader_for_extension(path.suffix)
+                    reader = self._select_reader(path.suffix)
                     log_debug(f"Using Reader: {reader.__class__.__name__}")
 
                 if reader:
