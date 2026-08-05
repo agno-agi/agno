@@ -408,6 +408,19 @@ class FirestoreDb(BaseDb):
                 if "run_index" in existing:
                     row["run_index"] = existing["run_index"]
 
+            # Backfill run_index for new runs: query max run_index for this session
+            if row.get("run_index") is None:
+                from google.cloud.firestore_v1.base_query import FieldFilter
+
+                query = (
+                    runs_collection_ref.where(filter=FieldFilter("session_id", "==", session_id))
+                    .order_by("run_index", direction="DESCENDING")
+                    .limit(1)
+                )
+                docs = list(query.stream())
+                current_max = docs[0].to_dict().get("run_index") if docs else None
+                row["run_index"] = (current_max + 1) if current_max is not None else 0
+
             doc_ref.set(row)
         except Exception as e:
             log_error(f"Exception upserting run into runs collection: {str(e)}")

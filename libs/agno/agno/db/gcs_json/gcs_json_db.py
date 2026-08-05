@@ -267,6 +267,12 @@ class GcsJsonDb(BaseDb):
                     replaced = True
                     break
             if not replaced:
+                # Backfill run_index for new runs: find max in this session
+                if row.get("run_index") is None:
+                    session_runs = [r for r in existing if r.get("session_id") == session_id]
+                    valid_indices: list[int] = [r["run_index"] for r in session_runs if r.get("run_index") is not None]
+                    current_max = max(valid_indices) if valid_indices else None
+                    row["run_index"] = (current_max + 1) if current_max is not None else 0
                 existing.append(row)
             self._write_runs_file(existing)
         except Exception as e:

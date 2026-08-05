@@ -324,6 +324,36 @@ class DynamoDb(BaseDb):
             except self.client.exceptions.ResourceNotFoundException:
                 pass
 
+            # Backfill run_index for new runs: query session runs and find max client-side
+            # DynamoDB has no MAX aggregation; query with projection to minimize data transfer
+            if row.get("run_index") is None:
+                try:
+                    response = self.client.query(
+                        TableName=table_name,
+                        IndexName="session_id-created_at-index",
+                        KeyConditionExpression="session_id = :sid",
+                        ExpressionAttributeValues={":sid": {"S": session_id}},
+                        ProjectionExpression="run_index",
+                    )
+                    items = response.get("Items", [])
+                    while "LastEvaluatedKey" in response:
+                        response = self.client.query(
+                            TableName=table_name,
+                            IndexName="session_id-created_at-index",
+                            KeyConditionExpression="session_id = :sid",
+                            ExpressionAttributeValues={":sid": {"S": session_id}},
+                            ProjectionExpression="run_index",
+                            ExclusiveStartKey=response["LastEvaluatedKey"],
+                        )
+                        items.extend(response.get("Items", []))
+                    valid_indices: list[int] = [
+                        int(it["run_index"]["N"]) for it in items if "run_index" in it and "N" in it["run_index"]
+                    ]
+                    current_max = max(valid_indices) if valid_indices else None
+                except self.client.exceptions.ResourceNotFoundException:
+                    current_max = None
+                row["run_index"] = (current_max + 1) if current_max is not None else 0
+
             payload = {k: v for k, v in row.items() if v is not None}
             if "run_data" in payload and isinstance(payload["run_data"], (dict, list)):
                 payload["run_data"] = json.dumps(payload["run_data"])

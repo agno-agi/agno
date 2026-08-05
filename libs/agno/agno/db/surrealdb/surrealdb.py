@@ -354,6 +354,16 @@ class SurrealDb(BaseDb):
             if existing is not None and "run_index" in existing:
                 row["run_index"] = existing["run_index"]
 
+            # Backfill run_index for new runs: query max run_index for this session
+            if row.get("run_index") is None:
+                max_row = self._query_one(
+                    f"SELECT math::max(run_index) AS max_idx FROM {runs_table} WHERE session_id = $sid AND run_index != NONE",
+                    {"sid": session_id},
+                    dict,
+                )
+                current_max = max_row.get("max_idx") if max_row else None
+                row["run_index"] = (current_max + 1) if current_max is not None else 0
+
             content = serialize_run_row(row, runs_table)
             self._query_one(
                 "UPSERT ONLY $record CONTENT $content",
