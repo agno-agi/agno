@@ -432,14 +432,38 @@ class TestAgentFromDict:
         mock_registry.rehydrate_functions.assert_called_once_with(tool_dicts)
         assert agent.tools == mock_tools
 
-    def test_from_dict_without_registry_removes_tools(self):
-        """Test from_dict removes tools when no registry is provided."""
+    def test_from_dict_without_registry_raises_for_tools(self):
+        """Test from_dict fails loudly when tools cannot be rehydrated."""
+        from agno.exceptions import ComponentRehydrationError
+
         config = {
             "id": "no-registry-agent",
             "tools": [{"name": "search"}],
         }
 
-        agent = Agent.from_dict(config)
+        with pytest.raises(ComponentRehydrationError, match="no registry"):
+            Agent.from_dict(config)
+
+    def test_from_dict_missing_tool_in_registry_raises(self):
+        """Test from_dict fails loudly when the registry lacks a referenced tool."""
+        from agno.exceptions import ComponentRehydrationError
+
+        config = {
+            "id": "missing-tool-agent",
+            "tools": [{"name": "search", "parameters": {"type": "object", "properties": {}}}],
+        }
+
+        with pytest.raises(ComponentRehydrationError, match="search"):
+            Agent.from_dict(config, registry=Registry())
+
+    def test_from_dict_without_registry_removes_tools_when_lenient(self):
+        """Test strict=False preserves the old drop-and-warn behavior."""
+        config = {
+            "id": "no-registry-agent",
+            "tools": [{"name": "search"}],
+        }
+
+        agent = Agent.from_dict(config, strict=False)
 
         # Tools should be None/empty since no registry was provided
         assert agent.tools is None or agent.tools == []
@@ -518,24 +542,35 @@ class TestAgentKnowledgeRoundtrip:
         assert reconstructed.knowledge is kb
         assert reconstructed.search_knowledge is True
 
-    def test_from_dict_without_registry_drops_knowledge(self):
-        """Without a registry, the knowledge reference is dropped (no crash)."""
+    def test_from_dict_without_registry_raises_for_knowledge(self):
+        """Without a registry, an unresolvable knowledge reference fails loudly."""
+        from agno.exceptions import ComponentRehydrationError
+
         kb = self._make_knowledge("Docs KB")
         agent = Agent(id="kb-agent", knowledge=kb)
         config = agent.to_dict()
 
-        reconstructed = Agent.from_dict(config, registry=None)
+        with pytest.raises(ComponentRehydrationError, match="Docs KB"):
+            Agent.from_dict(config, registry=None)
+
+    def test_from_dict_without_registry_drops_knowledge_when_lenient(self):
+        """strict=False preserves the old drop-and-warn behavior."""
+        kb = self._make_knowledge("Docs KB")
+        agent = Agent(id="kb-agent", knowledge=kb)
+        config = agent.to_dict()
+
+        reconstructed = Agent.from_dict(config, registry=None, strict=False)
 
         assert reconstructed.knowledge is None
 
-    def test_from_dict_unresolved_knowledge_drops_gracefully(self):
-        """A reference not present in the registry is dropped (no crash)."""
+    def test_from_dict_unresolved_knowledge_drops_gracefully_when_lenient(self):
+        """A reference not present in the registry is dropped with strict=False."""
         kb = self._make_knowledge("Docs KB")
         agent = Agent(id="kb-agent", knowledge=kb)
         config = agent.to_dict()
 
         # Registry without the referenced knowledge
-        reconstructed = Agent.from_dict(config, registry=Registry())
+        reconstructed = Agent.from_dict(config, registry=Registry(), strict=False)
 
         assert reconstructed.knowledge is None
 
@@ -734,9 +769,11 @@ class TestAgentLoad:
 
         assert saved_config.get("store_history_messages") is True
 
-        # Simulate load returning the saved config
+        # Simulate load returning the saved config. The mock db serializes a
+        # config that cannot be rebuilt standalone, so resolve it via registry.
         mock_db.get_config.return_value = {"config": saved_config}
-        loaded = Agent.load(id="persist-agent", db=mock_db)
+        mock_db.id = "test-db"
+        loaded = Agent.load(id="persist-agent", db=mock_db, registry=Registry(dbs=[mock_db]))
 
         assert loaded is not None
         assert loaded.store_history_messages is True

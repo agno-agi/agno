@@ -934,6 +934,7 @@ class Workflow:
         db: Optional["BaseDb"] = None,
         links: Optional[List[Dict[str, Any]]] = None,
         registry: Optional[Registry] = None,
+        strict: bool = True,
     ) -> "Workflow":
         """
         Create a Workflow from a dictionary.
@@ -943,17 +944,34 @@ class Workflow:
             db: Optional database for loading agents/teams in steps
             links: Optional links for this workflow version
             registry: Optional registry for rehydrating executors
+            strict: If True (the default), unresolvable registry references
+                (input schema, db) raise ComponentRehydrationError instead of
+                being silently dropped. Step-level references already fail
+                loudly regardless of this flag.
 
         Returns:
             Workflow: Reconstructed workflow instance
+
+        Raises:
+            ComponentRehydrationError: If strict and a registry reference cannot be resolved.
         """
+        from agno.exceptions import ComponentRehydrationError
+
         config = data.copy()
+
+        component_label = f"Workflow '{config.get('id') or config.get('name') or '<unknown>'}'"
 
         # --- Handle DB reconstruction ---
         if "db" in config and isinstance(config["db"], dict):
             resolved = resolve_db_from_config(config["db"], registry=registry)
             if resolved is not None:
                 config["db"] = resolved
+            elif strict:
+                raise ComponentRehydrationError(
+                    f"{component_label} has a serialized db config that could not be resolved from "
+                    "the registry or rebuilt. Register the db, or pass strict=False to load the "
+                    "component without persistence."
+                )
             else:
                 del config["db"]
 
@@ -962,6 +980,12 @@ class Workflow:
             schema_cls = registry.get_schema(config["input_schema"]) if registry else None
             if schema_cls:
                 config["input_schema"] = schema_cls
+            elif strict:
+                raise ComponentRehydrationError(
+                    f"{component_label} references input schema '{config['input_schema']}' which was "
+                    "not found in the registry. Register the schema, or pass strict=False to load "
+                    "the component without it."
+                )
             else:
                 log_warning(f"Input schema {config['input_schema']} not found in registry, skipping.")
                 del config["input_schema"]
@@ -1119,6 +1143,7 @@ class Workflow:
         registry: Optional["Registry"] = None,
         label: Optional[str] = None,
         version: Optional[int] = None,
+        strict: bool = True,
     ) -> Optional["Workflow"]:
         """
         Load a workflow by id.
@@ -1127,6 +1152,8 @@ class Workflow:
             id: The id of the workflow to load.
             db: The database to load the workflow from.
             label: The label of the workflow to load.
+            strict: If True (the default), unresolvable registry references
+                raise ComponentRehydrationError instead of being silently dropped.
 
         Returns:
             The workflow loaded from the database or None if not found.
@@ -1140,7 +1167,7 @@ class Workflow:
         if config is None:
             return None
 
-        workflow = cls.from_dict(config, db=db, registry=registry)
+        workflow = cls.from_dict(config, db=db, registry=registry, strict=strict)
 
         workflow.id = id
         # Only fall back to the caller-provided db if the config didn't
@@ -10751,6 +10778,7 @@ def get_workflow_by_id(
     version: Optional[int] = None,
     label: Optional[str] = None,
     registry: Optional["Registry"] = None,
+    strict: bool = True,
 ) -> Optional["Workflow"]:
     """
     Get a Workflow by id from the database (new entities/configs schema).
@@ -10766,10 +10794,17 @@ def get_workflow_by_id(
         version: Optional integer config version.
         label: Optional version_label.
         registry: Optional Registry for reconstructing unserializable components.
+        strict: If True (the default), unresolvable registry references raise
+            ComponentRehydrationError; None strictly means the workflow was not found.
 
     Returns:
         Workflow instance or None.
+
+    Raises:
+        ComponentRehydrationError: If strict and a registry reference cannot be resolved.
     """
+    from agno.exceptions import ComponentRehydrationError
+
     try:
         row = db.get_config(component_id=id, version=version, label=label)
         if row is None:
@@ -10784,13 +10819,17 @@ def get_workflow_by_id(
         # Get links for this workflow version
         links = db.get_links(component_id=id, version=resolved_version) if resolved_version else []
 
-        workflow = Workflow.from_dict(cfg, db=db, links=links, registry=registry)
+        workflow = Workflow.from_dict(cfg, db=db, links=links, registry=registry, strict=strict)
 
         # Ensure workflow.id is set to the component_id
         workflow.id = id
 
         return workflow
 
+    except ComponentRehydrationError:
+        # A rehydration failure is not "workflow not found"; let the caller
+        # decide instead of degrading it to None.
+        raise
     except Exception as e:
         log_error(f"Error loading Workflow {id} from database: {str(e)}")
         return None
@@ -10817,7 +10856,9 @@ def get_workflows(
                         component_id = component["component_id"]
                         if "id" not in workflow_config:
                             workflow_config["id"] = component_id
-                        workflow = Workflow.from_dict(workflow_config, db=db, registry=registry)
+                        # Lenient on purpose: listings must show degraded
+                        # components so they stay visible and fixable.
+                        workflow = Workflow.from_dict(workflow_config, db=db, registry=registry, strict=False)
                         workflow.id = component_id
                         workflow._version = component.get("current_version")
                         workflow._stage = config.get("stage")

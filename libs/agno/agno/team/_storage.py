@@ -22,6 +22,7 @@ from pydantic import BaseModel
 from agno.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
 from agno.db.utils import resolve_db_from_config
+from agno.exceptions import ComponentRehydrationError
 from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
@@ -746,6 +747,8 @@ def from_dict(
     data: Dict[str, Any],
     db: Optional["BaseDb"] = None,
     registry: Optional["Registry"] = None,
+    links: Optional[List[Dict[str, Any]]] = None,
+    strict: bool = True,
 ) -> "Team":
     """
     Create a Team from a dictionary.
@@ -754,11 +757,24 @@ def from_dict(
         data: Dictionary containing team configuration
         db: Optional database for loading agents in members
         registry: Optional registry for rehydrating tools
+        links: Optional component links for this team version. Member links
+            carry the member version pinned at save time; when provided,
+            members load at their pinned version instead of the current one,
+            matching the component-graph loader's semantics.
+        strict: If True (the default), unresolvable members and registry
+            references raise ComponentRehydrationError instead of being
+            silently dropped. Pass False to reconstruct as much as possible,
+            e.g. for listings that must show degraded components.
 
     Returns:
         Team: Reconstructed team instance
+
+    Raises:
+        ComponentRehydrationError: If strict and a member or registry reference cannot be resolved.
     """
     config = data.copy()
+
+    component_label = f"Team '{config.get('id') or config.get('name') or '<unknown>'}'"
 
     # --- Handle Model reconstruction ---
     if "model" in config:
@@ -769,14 +785,29 @@ def from_dict(
     from agno.agent import get_agent_by_id
     from agno.team import get_team_by_id
 
+    # Member versions pinned by this team version's links (written by save()).
+    pinned_versions: Dict[str, Optional[int]] = {}
+    for link in links or []:
+        if link.get("link_kind") == "member" and link.get("child_component_id"):
+            pinned_versions[link["child_component_id"]] = link.get("child_version")
+
     if "members" in config and config["members"]:
         members = []
         for member_data in config["members"]:
             member_type = member_data.get("type")
             if member_type == "agent":
                 agent_id = member_data["agent_id"]
-                # TODO: Make sure to pass the correct version to get_agent_by_id. Right now its returning the latest version.
-                agent = get_agent_by_id(id=agent_id, db=db, registry=registry) if db is not None else None
+                agent = (
+                    get_agent_by_id(
+                        id=agent_id,
+                        db=db,
+                        version=pinned_versions.get(agent_id),
+                        registry=registry,
+                        strict=strict,
+                    )
+                    if db is not None
+                    else None
+                )
                 # Fall back to a code-defined agent registered in the registry.
                 # These are legitimately not persisted as DB components (e.g. agents
                 # passed to AgentOS(agents=[...])), so a DB lookup returns nothing.
@@ -787,12 +818,28 @@ def from_dict(
                     agent = registered_agent.deep_copy() if registered_agent is not None else None
                 if agent is not None:
                     members.append(agent)
+                elif strict:
+                    raise ComponentRehydrationError(
+                        f"{component_label} member agent '{agent_id}' was not found in the db or "
+                        "registry. Restore the member, or pass strict=False to load the team "
+                        "without it."
+                    )
                 else:
                     log_warning(f"Team member agent not found in db or registry: {agent_id}")
             elif member_type == "team":
                 # Handle nested teams as members
                 team_id = member_data["team_id"]
-                nested_team = get_team_by_id(id=team_id, db=db, registry=registry) if db is not None else None
+                nested_team = (
+                    get_team_by_id(
+                        id=team_id,
+                        db=db,
+                        version=pinned_versions.get(team_id),
+                        registry=registry,
+                        strict=strict,
+                    )
+                    if db is not None
+                    else None
+                )
                 # Fall back to a code-defined team registered in the registry.
                 # Deep copy so the shared registry singleton isn't mutated on run.
                 if nested_team is None and registry is not None:
@@ -800,6 +847,12 @@ def from_dict(
                     nested_team = registered_team.deep_copy() if registered_team is not None else None
                 if nested_team is not None:
                     members.append(nested_team)
+                elif strict:
+                    raise ComponentRehydrationError(
+                        f"{component_label} member team '{team_id}' was not found in the db or "
+                        "registry. Restore the member, or pass strict=False to load the team "
+                        "without it."
+                    )
                 else:
                     log_warning(f"Team member team not found in db or registry: {team_id}")
 
@@ -833,7 +886,20 @@ def from_dict(
     # --- Handle tools reconstruction ---
     if "tools" in config and config["tools"]:
         if registry:
-            config["tools"] = registry.rehydrate_functions(config["tools"])
+            rehydrated_tools = registry.rehydrate_functions(config["tools"])
+            unresolved_tools = [f.name for f in rehydrated_tools if f.entrypoint is None]
+            if unresolved_tools and strict:
+                raise ComponentRehydrationError(
+                    f"{component_label} references tools not resolvable from the registry: "
+                    f"{unresolved_tools}. Add the tools to the registry (and connect MCP toolkits "
+                    "before loading), or pass strict=False to load the component without them."
+                )
+            config["tools"] = rehydrated_tools
+        elif strict:
+            raise ComponentRehydrationError(
+                f"{component_label} has serialized tools but no registry was provided to rehydrate "
+                "them. Provide a registry, or pass strict=False to load the component without tools."
+            )
         else:
             log_warning("No registry provided, tools will not be rehydrated.")
             del config["tools"]
@@ -843,6 +909,12 @@ def from_dict(
         resolved = resolve_db_from_config(config["db"], registry=registry)
         if resolved is not None:
             config["db"] = resolved
+        elif strict:
+            raise ComponentRehydrationError(
+                f"{component_label} has a serialized db config that could not be resolved from the "
+                "registry or rebuilt. Register the db, or pass strict=False to load the component "
+                "without persistence."
+            )
         else:
             del config["db"]
 
@@ -851,6 +923,12 @@ def from_dict(
         schema_cls = registry.get_schema(config["input_schema"]) if registry else None
         if schema_cls:
             config["input_schema"] = schema_cls
+        elif strict:
+            raise ComponentRehydrationError(
+                f"{component_label} references input schema '{config['input_schema']}' which was not "
+                "found in the registry. Register the schema, or pass strict=False to load the "
+                "component without it."
+            )
         else:
             log_warning(f"Input schema {config['input_schema']} not found in registry, skipping.")
             del config["input_schema"]
@@ -859,6 +937,12 @@ def from_dict(
         schema_cls = registry.get_schema(config["output_schema"]) if registry else None
         if schema_cls:
             config["output_schema"] = schema_cls
+        elif strict:
+            raise ComponentRehydrationError(
+                f"{component_label} references output schema '{config['output_schema']}' which was not "
+                "found in the registry. Register the schema, or pass strict=False to load the "
+                "component without it."
+            )
         else:
             log_warning(f"Output schema {config['output_schema']} not found in registry, skipping.")
             del config["output_schema"]
@@ -883,6 +967,12 @@ def from_dict(
         resolved_knowledge = registry.get_knowledge(knowledge_name) if (registry and knowledge_name) else None
         if resolved_knowledge is not None:
             config["knowledge"] = resolved_knowledge
+        elif strict:
+            raise ComponentRehydrationError(
+                f"{component_label} references knowledge '{knowledge_name}' which was not found in "
+                "the registry. Register the knowledge, or pass strict=False to load the component "
+                "without it."
+            )
         else:
             log_warning(f"Knowledge '{knowledge_name}' not found in registry, skipping.")
             del config["knowledge"]
@@ -1111,6 +1201,7 @@ def _hydrate_from_graph(
     *,
     db: "BaseDb",
     registry: Optional["Registry"] = None,
+    strict: bool = True,
 ) -> Optional["Team"]:
     """
     Hydrate a team and its members from an already-loaded component graph.
@@ -1123,7 +1214,7 @@ def _hydrate_from_graph(
     if config is None:
         return None
 
-    team = cls.from_dict(config, db=db, registry=registry)
+    team = cls.from_dict(config, db=db, registry=registry, strict=strict)
     team.id = graph["component"]["component_id"]
     # Only fall back to the caller-provided db if the config didn't
     # reconstruct one. Otherwise we'd clobber any custom table names
@@ -1148,14 +1239,16 @@ def _hydrate_from_graph(
         member_type = link_meta.get("type")
 
         if member_type == "agent":
-            agent = Agent.from_dict(child_config)
+            # The registry must flow into graph-hydrated members too, otherwise
+            # every member agent loses its tools/schemas on load.
+            agent = Agent.from_dict(child_config, registry=registry, strict=strict)
             agent.id = child_graph["component"]["component_id"]
             if agent.db is None:
                 agent.db = db
             graph_members[agent.id] = agent
         elif member_type == "team":
             # Recursively hydrate nested teams from the already-loaded child graph
-            nested_team = _hydrate_from_graph(cls, child_graph, db=db, registry=registry)
+            nested_team = _hydrate_from_graph(cls, child_graph, db=db, registry=registry, strict=strict)
             if nested_team is not None and nested_team.id is not None:
                 graph_members[nested_team.id] = nested_team
 
@@ -1194,6 +1287,7 @@ def load(
     registry: Optional["Registry"] = None,
     label: Optional[str] = None,
     version: Optional[int] = None,
+    strict: bool = True,
 ) -> Optional["Team"]:
     """
     Load a team by id, with hydrated members.
@@ -1202,6 +1296,9 @@ def load(
         id: The id of the team to load.
         db: The database to load the team from.
         label: The label of the team to load.
+        strict: If True (the default), unresolvable members and registry
+            references raise ComponentRehydrationError instead of being
+            silently dropped.
 
     Returns:
         The team loaded from the database with hydrated members, or None if not found.
@@ -1211,7 +1308,7 @@ def load(
     if graph is None:
         return None
 
-    return _hydrate_from_graph(cls, graph, db=db, registry=registry)
+    return _hydrate_from_graph(cls, graph, db=db, registry=registry, strict=strict)
 
 
 def delete(
