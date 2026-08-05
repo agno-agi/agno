@@ -63,6 +63,9 @@ class ToolExecution:
     # ID of the approval record created for this tool (set when the run pauses).
     approval_id: Optional[str] = None
 
+    # User-defined metadata copied from the registered tool (Function.metadata).
+    tool_metadata: Optional[Dict[str, Any]] = None
+
     @property
     def is_paused(self) -> bool:
         return bool(self.requires_confirmation or self.requires_user_input or self.external_execution_required)
@@ -105,6 +108,7 @@ class ToolExecution:
             external_execution_silent=data.get("external_execution_silent"),
             approval_type=data.get("approval_type"),
             approval_id=data.get("approval_id"),
+            tool_metadata=data.get("tool_metadata"),
             metrics=ToolCallMetrics.from_dict(data["metrics"]) if data.get("metrics") else None,
             **{"created_at": data["created_at"]} if "created_at" in data else {},
         )

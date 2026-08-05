@@ -2296,6 +2296,7 @@ class Model(ABC):
                     result=str(function_call_result.content),
                     stop_after_tool_call=function_call_result.stop_after_tool_call,
                     metrics=tool_metrics,
+                    tool_metadata=function_call.function.metadata,
                 )
             ],
             event=ModelResponseEvent.tool_call_completed.value,
@@ -2977,6 +2978,7 @@ class Model(ABC):
                         result=str(function_call_result.content),
                         stop_after_tool_call=function_call_result.stop_after_tool_call,
                         metrics=tool_metrics,
+                        tool_metadata=function_call.function.metadata,
                     )
                 ],
                 event=ModelResponseEvent.tool_call_completed.value,
