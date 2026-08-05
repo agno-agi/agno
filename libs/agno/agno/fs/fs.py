@@ -19,12 +19,13 @@ Attach the tools, and compose its instructions into your own:
 """
 
 import asyncio
-from typing import TYPE_CHECKING, Any, List, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 from agno.fs._paths import (
     build_chunk,
     normalize_check_lines,
     normalize_directory,
+    normalize_mount_name,
     normalize_namespace,
     normalize_path,
     normalize_template_value,
@@ -33,7 +34,7 @@ from agno.fs._paths import (
 )
 from agno.fs.base import BaseFS
 from agno.fs.errors import InvalidPathError, QuotaExceededError
-from agno.fs.types import ContainsResult, FileMeta, NamespaceUsage, SearchMatch
+from agno.fs.types import ContainsResult, FileMeta, Mount, NamespaceUsage, SearchMatch
 
 if TYPE_CHECKING:
     from agno.tools.toolkit import Toolkit
@@ -76,6 +77,41 @@ files - you have no tool to write, append, move, or delete.
 Conventions:
   - Paths are relative, like notes/decisions.md.
   - Use search_content to find where something is recorded, then read_file to read it."""
+
+
+def normalize_mounts(mounts: Optional[Mapping[str, Union["FileSystem", Mount]]]) -> Dict[str, Mount]:
+    """Validate and canonicalize a mounts declaration.
+
+    Keys become lowercase single-segment names (the mount-name grammar in
+    ``_paths.normalize_mount_name``); bare ``FileSystem`` values coerce to
+    read-only ``Mount``s. Mounts are developer-declared only: nothing about them
+    is model-suppliable, and no tool schema changes when they are present.
+    Raises ``InvalidPathError`` for a bad or duplicate name, ``TypeError`` for a
+    value that is neither a ``FileSystem`` nor a ``Mount``, and ``ValueError``
+    for a mode other than ``"ro"``/``"rw"``. Idempotent on its own output.
+    """
+    if not mounts:
+        return {}
+    normalized: Dict[str, Mount] = {}
+    for name, value in mounts.items():
+        key = normalize_mount_name(name)
+        if key in normalized:
+            raise InvalidPathError(f"duplicate mount name {name!r}: {key!r} is already mounted")
+        if isinstance(value, Mount):
+            mount = value
+        elif isinstance(value, FileSystem):
+            mount = Mount(fs=value, mode="ro")
+        else:
+            raise TypeError(
+                f"mount {name!r} must be a FileSystem or a Mount, got {type(value).__name__}. "
+                'Pass a bare FileSystem for read-only access, or Mount(fs, mode="rw") to allow writes.'
+            )
+        if not isinstance(mount.fs, FileSystem):
+            raise TypeError(f"mount {name!r}: Mount.fs must be a FileSystem, got {type(mount.fs).__name__}")
+        if mount.mode not in ("ro", "rw"):
+            raise ValueError(f"mount {name!r}: mode must be 'ro' or 'rw', got {mount.mode!r}")
+        normalized[key] = mount
+    return normalized
 
 
 def _as_backend(source: Any) -> BaseFS:
@@ -440,7 +476,14 @@ class FileSystem:
     # Agent surface
     # ------------------------------------------------------------------
 
-    def tools(self, *, read_only: bool = False, allow_delete: bool = False, **kwargs) -> "Toolkit":
+    def tools(
+        self,
+        *,
+        read_only: bool = False,
+        allow_delete: bool = False,
+        mounts: Optional[Mapping[str, Union["FileSystem", Mount]]] = None,
+        **kwargs,
+    ) -> "Toolkit":
         """Build the toolkit for this file store.
 
         ``Agent(tools=[fs.tools()], instructions=[..., fs.instructions()])`` is the
@@ -459,21 +502,53 @@ class FileSystem:
         ``read_only=True`` registers only ``read_file``, ``list_files`` and
         ``search_content``; pair it with ``instructions(read_only=True)``. That
         is the surface for a consumer agent that consults another agent's
-        namespace by shared name. ``**kwargs`` forwards to ``Toolkit`` (e.g.
-        ``include_tools``, ``requires_confirmation_tools``).
+        namespace by shared name.
+
+        ``mounts`` grafts other file stores into this one tool surface:
+        ``fs.tools(mounts={"shared": other_fs})`` makes paths under ``shared/``
+        route to ``other_fs`` while every other path stays on this store — one
+        agent, several namespaces, no tool-name collisions and no new tool
+        parameters. A bare ``FileSystem`` value mounts read-only; wrap it in
+        ``Mount(fs, mode="rw")`` to allow writes. Pair it with
+        ``instructions(mounts=...)`` so the agent knows the mounts exist.
+        ``**kwargs`` forwards to ``Toolkit`` (e.g. ``include_tools``,
+        ``requires_confirmation_tools``).
         """
         from agno.fs.toolkit import FileSystemTools
 
-        return FileSystemTools(fs=self, read_only=read_only, allow_delete=allow_delete, **kwargs)
+        return FileSystemTools(fs=self, read_only=read_only, allow_delete=allow_delete, mounts=mounts, **kwargs)
 
     @staticmethod
-    def instructions(read_only: bool = False) -> str:
+    def instructions(
+        read_only: bool = False,
+        mounts: Optional[Mapping[str, Union["FileSystem", Mount]]] = None,
+    ) -> str:
         """Usage guidance for these tools, to compose into the agent's instructions.
 
         Namespace-independent, so it is equally callable on an instance
         (``fs.instructions()``) and on the class, which is what a per-user tool
         factory needs when no instance exists at module scope.
+
+        Pass the same ``mounts`` you gave ``tools()`` to append a convention
+        naming each mount and whether it is read-only; without it the agent has
+        no way to know the mounted directories exist. The text never names a
+        namespace, only the mount names the developer chose.
         """
-        if read_only:
-            return _READ_ONLY_INSTRUCTIONS
-        return _DEFAULT_INSTRUCTIONS
+        base = _READ_ONLY_INSTRUCTIONS if read_only else _DEFAULT_INSTRUCTIONS
+        normalized_mounts = normalize_mounts(mounts)
+        if not normalized_mounts:
+            return base
+        labels = ", ".join(
+            f"{name}/ ({'read-only' if mount.mode == 'ro' else 'read-write'})"
+            for name, mount in sorted(normalized_mounts.items())
+        )
+        lines = [
+            f"  - Some top-level directories are shared mounts maintained outside your own files: {labels}. "
+            "Read and search them like your own files; their contents are shared, not private."
+        ]
+        if not read_only and any(mount.mode == "ro" for mount in normalized_mounts.values()):
+            lines.append(
+                "  - You cannot write, move or delete inside a read-only mount. Record anything of your own "
+                "in your own files instead."
+            )
+        return base + "\n" + "\n".join(lines)

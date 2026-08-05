@@ -23,6 +23,14 @@ class QuotaExceededError(FileSystemError):
         self.limit = limit
 
 
+class ReadOnlyMountError(FileSystemError):
+    """Raised when a write-family operation targets a read-only mount.
+
+    The tool layer converts it to the standard ``"Error: ..."`` string, so the
+    model sees an instructive refusal, never an exception.
+    """
+
+
 class VersionConflictError(FileSystemError):
     """Raised when a compare-and-swap write finds a version other than ``expected``.
 

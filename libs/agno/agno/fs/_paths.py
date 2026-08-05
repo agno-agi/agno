@@ -162,6 +162,31 @@ def normalize_template_value(placeholder: str, value: object) -> str:
     return normalized
 
 
+_MOUNT_NAME_RE = re.compile(r"^[a-z0-9._\-]+$")
+
+
+def normalize_mount_name(name: object) -> str:
+    """Validate and canonicalize a mount name: one lowercase, URL-safe path segment.
+
+    A mount name is what the model sees as a top-level directory, so it follows
+    the namespace segment grammar rather than the file-path grammar: lowercased
+    (``Shared`` and ``shared`` are one mount) and restricted to ``a-z``, ``0-9``,
+    ``.``, ``-`` and ``_``. ``/``, braces, whitespace, control characters, ``.``
+    and ``..`` are rejected. Raises ``InvalidPathError`` on any violation.
+    """
+    if not isinstance(name, str) or not name:
+        raise InvalidPathError(f"invalid mount name {name!r}: must be a non-empty string")
+    value = unicodedata.normalize("NFC", name).lower()
+    if value in (".", "..") or not _MOUNT_NAME_RE.match(value):
+        raise InvalidPathError(
+            f"invalid mount name {name!r}: use one lowercase path segment of a-z, 0-9, '.', '-' or '_' "
+            "(no '/', no braces, not '.' or '..')"
+        )
+    if len(value) > MAX_SEGMENT_CHARS:
+        raise InvalidPathError(f"invalid mount name {name!r}: longer than {MAX_SEGMENT_CHARS} characters")
+    return value
+
+
 def normalize_directory(directory: str) -> str:
     """Validate a directory parameter. ``""`` and ``"."`` both mean the namespace root."""
     if not isinstance(directory, str):

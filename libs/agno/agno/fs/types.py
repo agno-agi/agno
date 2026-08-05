@@ -1,5 +1,24 @@
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Literal, Optional
+
+if TYPE_CHECKING:
+    from agno.fs.fs import FileSystem
+
+
+@dataclass
+class Mount:
+    """One FileSystem mounted into another's tool surface under a top-level name.
+
+    Declared by the developer via ``fs.tools(mounts={"shared": Mount(other_fs)})``
+    (a bare ``FileSystem`` value coerces to a read-only Mount). The mount name
+    becomes a top-level directory in the agent's view: paths whose first segment
+    matches it route to ``fs`` instead of the primary store. ``mode`` is ``"ro"``
+    (the default: reads only, writes return an error to the model) or ``"rw"``.
+    ``fs`` may be templated; it resolves per tool call exactly like the primary.
+    """
+
+    fs: "FileSystem"
+    mode: Literal["ro", "rw"] = "ro"
 
 
 @dataclass

@@ -19,6 +19,11 @@ These names deliberately collide with the rest of the file-toolkit family
 keeps the first registration per name and drops later duplicates with a logged
 warning, so attach at most one file-like toolkit per agent; when an agent
 genuinely needs both FileSystem and a local workspace, wrap one in a sub-agent.
+When one agent needs several FileSystem namespaces (its own plus a shared one),
+do not attach two toolkits - mount the second store into the first:
+``fs.tools(mounts={"shared": other_fs})`` routes paths under ``shared/`` to the
+mounted FileSystem (read-only unless the developer passes ``Mount(fs, "rw")``)
+while keeping one toolkit and one set of tool names.
 """
 
 import asyncio
@@ -26,16 +31,17 @@ import json
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime, timezone
 from fnmatch import fnmatch
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 from weakref import WeakKeyDictionary
 
 # Real module-level imports, never TYPE_CHECKING-only: with postponed annotations a
 # deferred import does not fail loudly. get_type_hints raises during schema
 # building, the warning is downgraded, and the tool ships an empty JSON schema.
 from agno.agent.agent import Agent
-from agno.fs._paths import build_chunk, normalize_directory, path_sort_key
-from agno.fs.errors import InvalidPathError, QuotaExceededError
-from agno.fs.fs import FileSystem
+from agno.fs._paths import build_chunk, normalize_directory, normalize_path, path_sort_key
+from agno.fs.errors import InvalidPathError, QuotaExceededError, ReadOnlyMountError
+from agno.fs.fs import FileSystem, normalize_mounts
+from agno.fs.types import Mount
 from agno.run import RunContext
 from agno.team.team import Team
 from agno.tools.toolkit import Toolkit
@@ -110,6 +116,15 @@ class FileSystemTools(Toolkit):
     Agno's resolver keeps the first registration per name and drops later duplicates
     with a logged warning, so attach at most one file-like toolkit per agent; if an
     agent genuinely needs both, wrap one in a sub-agent.
+
+    ``mounts`` is how one agent sees several FileSystem namespaces through this
+    single surface: each mount is a developer-declared top-level directory name
+    routing to another FileSystem (read-only by default). Routing is by a path's
+    first segment, so no tool gains a parameter, the word "namespace" still
+    appears in no schema, and the model can never name a store the developer did
+    not mount. A mount name shadows the same-named top level of the primary
+    namespace; shadowed primary paths are dropped from listings and search
+    results because the tools cannot reach them.
     """
 
     # The whole surface, exported for callers that want everything explicitly.
@@ -147,10 +162,16 @@ class FileSystemTools(Toolkit):
         allow_delete: bool = False,
         instructions: Optional[str] = None,
         add_instructions: bool = False,
+        mounts: Optional[Mapping[str, Union[FileSystem, Mount]]] = None,
         **kwargs,
     ):
         self.fs = fs
         self.read_only = read_only
+        # Developer-declared mounts: other FileSystems grafted in as top-level
+        # directory names. Routing is by a path's first segment, so the model
+        # addresses "shared/notes.md" like any other path; no tool schema or
+        # tool name changes, and no model argument can name a namespace.
+        self.mounts: Dict[str, Mount] = normalize_mounts(mounts)
         # Every mutating tool is a read-modify-write over one row, and a model's
         # tool calls for one turn are gathered concurrently (models/base.py) -
         # the path AgentOS REST and /mcp take. Two replace_lines on one note
@@ -161,7 +182,7 @@ class FileSystemTools(Toolkit):
         if read_only and allow_delete:
             raise ValueError("allow_delete=True contradicts read_only=True; pick one.")
         if instructions is None:
-            instructions = FileSystem.instructions(read_only=read_only)
+            instructions = FileSystem.instructions(read_only=read_only, mounts=self.mounts or None)
 
         if kwargs.get("include_tools") is not None:
             # include_tools is a fully explicit whitelist over the whole
@@ -212,6 +233,82 @@ class FileSystemTools(Toolkit):
         """Resolve a templated namespace from injected context. Fails closed."""
         return self.fs._resolve_from_context(run_context=run_context, agent=agent, team=team)
 
+    def _check_writable(self, mount_name: str, mount: Mount) -> None:
+        if mount.mode != "rw":
+            raise ReadOnlyMountError(
+                f"{mount_name}/ is read-only: files in this shared mount can be read but not changed."
+            )
+
+    def _route_path(
+        self,
+        path: str,
+        run_context: Optional[RunContext],
+        agent: Optional[Agent],
+        team: Optional[Team],
+        *,
+        write: bool = False,
+    ) -> Tuple[FileSystem, str, Optional[str]]:
+        """Route a file path to ``(resolved_fs, inner_path, mount_name)``.
+
+        A path whose first segment names a mount (matched case-insensitively,
+        since mount names are lowercase identifiers) targets that mount's
+        FileSystem with the segment stripped; every other path targets the
+        primary store, so mounts add zero cost to the common case. Both sides
+        resolve templated namespaces from the same injected context, fail
+        closed. ``write=True`` raises ``ReadOnlyMountError`` for an ``"ro"``
+        mount before anything touches storage.
+        """
+        normalized = normalize_path(path)
+        first, _, rest = normalized.partition("/")
+        mount = self.mounts.get(first.lower()) if self.mounts else None
+        if mount is None:
+            return self._resolved(run_context, agent, team), normalized, None
+        name = first.lower()
+        if write:
+            self._check_writable(name, mount)
+        if not rest:
+            raise InvalidPathError(
+                f"{name}/ is a shared mount, not a file. Give a path inside it, like {name}/notes/topic.md, "
+                f'or list it with list_files(directory="{name}").'
+            )
+        return mount.fs._resolve_from_context(run_context=run_context, agent=agent, team=team), rest, name
+
+    def _route_directory(
+        self,
+        directory: str,
+        run_context: Optional[RunContext],
+        agent: Optional[Agent],
+        team: Optional[Team],
+    ) -> Tuple[FileSystem, str, Optional[str]]:
+        """Route a directory parameter to ``(resolved_fs, inner_directory, mount_name)``.
+
+        The root (``""``/``"."``) always means the primary store; a directory
+        whose first segment names a mount scopes into that mount (the mount name
+        alone means the mount's root). Directory-taking tools are all reads, so
+        there is no ``write`` flag here.
+        """
+        normalized = normalize_directory(directory)
+        if normalized and self.mounts:
+            first, _, rest = normalized.partition("/")
+            mount = self.mounts.get(first.lower())
+            if mount is not None:
+                resolved = mount.fs._resolve_from_context(run_context=run_context, agent=agent, team=team)
+                return resolved, rest, first.lower()
+        return self._resolved(run_context, agent, team), normalized, None
+
+    def _shadowed(self, path: str) -> bool:
+        """Whether a primary-store path is hidden behind a mount name.
+
+        A mount shadows the same-named top level of the primary namespace: the
+        router sends every ``<mount>/...`` path to the mount, so a primary file
+        under that segment is unreachable through the tools. Listings and search
+        results drop such paths rather than advertise files the model cannot
+        actually read back.
+        """
+        if not self.mounts:
+            return False
+        return path.split("/", 1)[0].lower() in self.mounts
+
     @staticmethod
     def _quota_error(e: QuotaExceededError, path: str) -> str:
         if e.scope == "file":
@@ -254,8 +351,8 @@ class FileSystemTools(Toolkit):
         """
         try:
             log_debug(f"read_file: {path}")
-            fs = self._resolved(run_context, agent, team)
-            contents = fs.read(path)
+            fs, inner_path, _ = self._route_path(path, run_context, agent, team)
+            contents = fs.read(inner_path)
             if contents is None:
                 return f"Error: file not found: {path}"
             total = _line_count(contents)
@@ -311,7 +408,10 @@ class FileSystemTools(Toolkit):
         "dir", ``size`` is human-readable for files and null for dirs, and ``updated``
         is when the file last changed (UTC). Use ``updated`` to tell current working
         state from state you left behind long ago. The result also reports total usage
-        against your storage limit.
+        against the storage limit of the directory you listed. If shared mounts are
+        configured, each appears at the top level as a "dir" entry with a ``mount`` key
+        ("ro" or "rw"); a listing never crosses into a mount unless you scope into it
+        (e.g. directory "shared" or "shared/notes").
 
         :param directory: Directory to list (default "." = top level), e.g. "seen".
         :param pattern: Optional glob to filter names, e.g. "*.md".
@@ -320,10 +420,17 @@ class FileSystemTools(Toolkit):
         :return: JSON with keys ``directory``, ``pattern``, ``recursive``, ``files``, ``usage``.
         """
         try:
-            fs = self._resolved(run_context, agent, team)
-            metas = fs.list(directory)
-            normalized_directory = normalize_directory(directory)
-            prefix_len = 0 if not normalized_directory else len(normalized_directory.split("/"))
+            fs, inner_directory, mount_name = self._route_directory(directory, run_context, agent, team)
+            metas = fs.list(inner_directory)
+            if mount_name is None:
+                # A primary path hidden behind a mount name is unreachable through
+                # the tools (the router sends that prefix to the mount), so a
+                # listing must not advertise it.
+                metas = [meta for meta in metas if not self._shadowed(meta.path)]
+            # Returned paths must be readable back verbatim, so entries inside a
+            # mount carry the mount prefix the model used to get here.
+            display_prefix = f"{mount_name}/" if mount_name else ""
+            prefix_len = 0 if not inner_directory else len(inner_directory.split("/"))
             # Entries appear down to max_depth levels of nesting below `directory`;
             # the boundary directory is itself enumerated, so paths carry up to
             # max_depth + 1 segments below it.
@@ -340,7 +447,7 @@ class FileSystemTools(Toolkit):
                     if not pattern or fnmatch(segments[-1], pattern):
                         file_entries.append(
                             {
-                                "path": meta.path,
+                                "path": display_prefix + meta.path,
                                 "type": "file",
                                 "size": _format_size(meta.size_bytes),
                                 "updated": _format_time(meta.updated_at),
@@ -357,8 +464,18 @@ class FileSystemTools(Toolkit):
                 truncated_dirs = len(sorted_dirs) - _MAX_DIR_ENTRIES
                 sorted_dirs = sorted_dirs[:_MAX_DIR_ENTRIES]
             dir_entries: List[Dict[str, Union[str, None]]] = [
-                {"path": dir_path, "type": "dir", "size": None, "updated": None} for dir_path in sorted_dirs
+                {"path": display_prefix + dir_path, "type": "dir", "size": None, "updated": None}
+                for dir_path in sorted_dirs
             ]
+            if mount_name is None and not inner_directory:
+                # Mounts surface as top-level directories so the model can
+                # discover them; they are developer-declared and few, so they
+                # ride outside the dir-entry cap.
+                for name, mount in sorted(self.mounts.items()):
+                    if not pattern or fnmatch(name, pattern):
+                        dir_entries.append(
+                            {"path": name, "type": "dir", "size": None, "updated": None, "mount": mount.mode}
+                        )
 
             # Cap files as well as dirs. The namespace quota bounds total BYTES, not
             # entry count, so a namespace of many tiny files would otherwise dump an
@@ -413,7 +530,9 @@ class FileSystemTools(Toolkit):
         Each result gives the line number of the first match, so you can follow up with
         read_file(path, start_line=..., end_line=...) instead of reading the whole file.
         ``matches`` counts every occurrence in that file, while ``snippet`` shows only
-        the first.
+        the first. If shared mounts are configured, a search covers only your own files
+        unless you scope into a mount with ``directory`` (e.g. directory "shared"); it
+        never crosses between file stores in one call.
 
         :param query: Substring to search for.
         :param directory: Directory to scope the search (default "." = everything).
@@ -424,11 +543,16 @@ class FileSystemTools(Toolkit):
         try:
             if not query or not query.strip():
                 return "Error: query cannot be empty"
-            fs = self._resolved(run_context, agent, team)
-            matches = fs.search(query, directory=directory, limit=limit)
+            fs, inner_directory, mount_name = self._route_directory(directory, run_context, agent, team)
+            matches = fs.search(query, directory=inner_directory, limit=limit)
+            if mount_name is None:
+                # Same rule as list_files: never report a primary path the router
+                # would resolve into a mount on the read back.
+                matches = [match for match in matches if not self._shadowed(match.path)]
+            display_prefix = f"{mount_name}/" if mount_name else ""
             files = [
                 {
-                    "file": match.path,
+                    "file": display_prefix + match.path,
                     "line": match.line,
                     "matches": match.match_count,
                     "size": _format_size(match.size_bytes),
@@ -456,7 +580,9 @@ class FileSystemTools(Toolkit):
 
         Exact whole-line matching: a line counts as found only if some file contains
         it as a complete line. Use this before acting on items so you never repeat
-        work, then record the new ones with append_file (one per line).
+        work, then record the new ones with append_file (one per line). If shared
+        mounts are configured, the check covers only your own files unless you scope
+        into a mount with ``directory``.
 
         :param lines: The records to check, e.g. a list of URLs or IDs. Max 200. Pass
             each record in exactly the form you will store it. Matching is literal,
@@ -466,8 +592,8 @@ class FileSystemTools(Toolkit):
         :return: JSON: {"found": [...], "missing": [...]}.
         """
         try:
-            fs = self._resolved(run_context, agent, team)
-            result = fs.contains(lines, directory=directory)
+            fs, inner_directory, _ = self._route_directory(directory, run_context, agent, team)
+            result = fs.contains(lines, directory=inner_directory)
             return json.dumps({"found": result.found, "missing": result.missing}, indent=2)
         except InvalidPathError as e:
             return f"Error: {e}"
@@ -498,8 +624,8 @@ class FileSystemTools(Toolkit):
         :return: Success message with the byte count, or an error message.
         """
         try:
-            fs = self._resolved(run_context, agent, team)
-            meta = fs.write(path, content, overwrite=overwrite)
+            fs, inner_path, _ = self._route_path(path, run_context, agent, team, write=True)
+            meta = fs.write(inner_path, content, overwrite=overwrite)
             return f"Wrote {meta.size_bytes} bytes to {path}"
         except FileExistsError:
             if not overwrite:
@@ -510,7 +636,7 @@ class FileSystemTools(Toolkit):
             return f"Error: cannot write {path}: a parent path segment is an existing file."
         except QuotaExceededError as e:
             return self._quota_error(e, path)
-        except InvalidPathError as e:
+        except (InvalidPathError, ReadOnlyMountError) as e:
             return f"Error: {e}"
         except Exception as e:
             log_error(f"write_file failed: {e}")
@@ -539,24 +665,24 @@ class FileSystemTools(Toolkit):
         :return: Success message with the file's new size, or an error message.
         """
         try:
-            fs = self._resolved(run_context, agent, team)
+            fs, inner_path, _ = self._route_path(path, run_context, agent, team, write=True)
             if unique:
                 # Size delta rather than a second copy of the filter: whatever the
                 # dedupe kept is exactly what the file grew by.
-                previous = fs.read(path)
+                previous = fs.read(inner_path)
                 before_bytes = len(previous.encode("utf-8")) if previous else 0
-                meta = fs.append(path, content, unique=True)
+                meta = fs.append(inner_path, content, unique=True)
                 added = meta.size_bytes - before_bytes
                 if added <= 0:
                     return f"Appended nothing to {path}: every line was already present (still {meta.size_bytes} bytes)"
                 return f"Appended {added} bytes to {path}, skipping lines already present (now {meta.size_bytes} bytes)"
-            meta = fs.append(path, content)
+            meta = fs.append(inner_path, content)
             chunk = build_chunk(content)
             appended_bytes = len(chunk.encode("utf-8")) if chunk else 0
             return f"Appended {appended_bytes} bytes to {path} (now {meta.size_bytes} bytes)"
         except QuotaExceededError as e:
             return self._quota_error(e, path)
-        except InvalidPathError as e:
+        except (InvalidPathError, ReadOnlyMountError) as e:
             return f"Error: {e}"
         except Exception as e:
             log_error(f"append_file failed: {e}")
@@ -588,8 +714,8 @@ class FileSystemTools(Toolkit):
         :return: Success message with the file's new size, or an error message.
         """
         try:
-            fs = self._resolved(run_context, agent, team)
-            meta = fs.replace_lines(path, start_line, end_line, content)
+            fs, inner_path, _ = self._route_path(path, run_context, agent, team, write=True)
+            meta = fs.replace_lines(inner_path, start_line, end_line, content)
             action = "Deleted" if not content else "Replaced"
             return f"{action} lines {start_line}-{end_line} in {path} (now {meta.size_bytes} bytes)"
         except FileNotFoundError:
@@ -598,7 +724,7 @@ class FileSystemTools(Toolkit):
             return f"Error: {e}"
         except QuotaExceededError as e:
             return self._quota_error(e, path)
-        except InvalidPathError as e:
+        except (InvalidPathError, ReadOnlyMountError) as e:
             return f"Error: {e}"
         except Exception as e:
             log_error(f"replace_lines failed: {e}")
@@ -614,7 +740,8 @@ class FileSystemTools(Toolkit):
         agent: Optional[Agent] = None,
         team: Optional[Team] = None,
     ) -> str:
-        """Move or rename a file.
+        """Move or rename a file. Both paths must be in the same file store: a move
+        cannot cross between your own files and a shared mount, or between two mounts.
 
         :param src: Source file path.
         :param dst: Destination path. Parent folders are implicit.
@@ -622,8 +749,20 @@ class FileSystemTools(Toolkit):
         :return: Success message, or an error message.
         """
         try:
-            fs = self._resolved(run_context, agent, team)
-            fs.move(src, dst, overwrite=overwrite)
+            fs, inner_src, src_mount = self._route_path(src, run_context, agent, team, write=True)
+            _, inner_dst, dst_mount = self._route_path(dst, run_context, agent, team, write=True)
+            if src_mount != dst_mount:
+                # A cross-store move would be an unatomic read+write+delete spanning
+                # two backends - exactly the race the DB backend's single-statement
+                # move exists to avoid. Refused in v1; copying is explicit instead.
+                src_store = f"{src_mount}/" if src_mount else "your own files"
+                dst_store = f"{dst_mount}/" if dst_mount else "your own files"
+                return (
+                    f"Error: cannot move between file stores: {src} is in {src_store} and {dst} is in "
+                    f"{dst_store}. Copy it instead with read_file + write_file, then delete the original "
+                    "if you can."
+                )
+            fs.move(inner_src, inner_dst, overwrite=overwrite)
             return f"Moved {src} -> {dst}"
         except FileNotFoundError:
             return f"Error: file not found: {src}"
@@ -633,7 +772,7 @@ class FileSystemTools(Toolkit):
             # overwrite=True still surfaced a collision: on the DB backend two runs may
             # have moved onto {dst} at once; on local disk a parent segment may be a file.
             return f"Error: could not move to {dst}; it may have changed concurrently. Retry or use another name."
-        except InvalidPathError as e:
+        except (InvalidPathError, ReadOnlyMountError) as e:
             return f"Error: {e}"
         except Exception as e:
             log_error(f"move_file failed: {e}")
@@ -653,11 +792,11 @@ class FileSystemTools(Toolkit):
         :return: Success message, or an error if the file does not exist.
         """
         try:
-            fs = self._resolved(run_context, agent, team)
-            if not fs.delete(path):
+            fs, inner_path, _ = self._route_path(path, run_context, agent, team, write=True)
+            if not fs.delete(inner_path):
                 return f"Error: file not found: {path}"
             return f"Deleted {path}"
-        except InvalidPathError as e:
+        except (InvalidPathError, ReadOnlyMountError) as e:
             return f"Error: {e}"
         except Exception as e:
             log_error(f"delete_file failed: {e}")
@@ -755,7 +894,12 @@ class FileSystemTools(Toolkit):
         """Hold the write lock for each named file, acquired in a stable order.
 
         Sorted so two tool calls naming the same pair (move_file src/dst) cannot
-        deadlock by taking them in opposite orders.
+        deadlock by taking them in opposite orders. Keys use the model-facing
+        path, which identifies one file per toolkit even with mounts: a mounted
+        path carries its mount prefix. The one gap is two mounts aliasing the
+        SAME store - "a/x.md" and "b/x.md" would not contend - which matches the
+        lock's existing honesty: it serializes one toolkit instance, not the
+        world.
         """
         namespace = getattr(self.fs, "namespace", "")
         async with AsyncExitStack() as stack:
