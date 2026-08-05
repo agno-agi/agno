@@ -2069,3 +2069,119 @@ class TestWorkerRedriveSeedsExpiredCounter:
             )
         finally:
             es_mod._event_stream = original
+
+
+class TestDrainLifecycle:
+    """Phase-7 item 29: the drain's three defects - heartbeat dying at drain
+    start (peer sweeps a healthily-draining run as dead), the double-cancel
+    (a second cancel landing inside except CancelledError interrupts the
+    drain's own shielded persist-before-requeue), and the warned-not-enforced
+    stop_timeout < lock_grace invariant whose violation guarantees the
+    drain-sweep race."""
+
+    def test_stop_timeout_must_be_below_lock_grace(self):
+        from agno.job_queue.config import QueueConfig
+
+        config = QueueConfig(durable=True, lock_grace_seconds=30)
+        with pytest.raises(ValueError, match="strictly below"):
+            QueueWorker(store=InMemoryQueueStore(), resolve_component=lambda t, i: None, config=config, stop_timeout=30)
+        worker = QueueWorker(
+            store=InMemoryQueueStore(), resolve_component=lambda t, i: None, config=config, stop_timeout=29
+        )
+        assert worker.stop_timeout == 29
+
+    @pytest.mark.asyncio
+    async def test_heartbeat_continues_through_drain(self):
+        """In-flight jobs during a slow drain must keep their leases fresh -
+        the old `while self._running` killed the heartbeat the moment stop()
+        began, contradicting stop()'s own comment."""
+        import time as _time
+
+        store = InMemoryQueueStore()
+        beats: list = []
+        real_heartbeat = store.heartbeat_jobs
+
+        async def recording_heartbeat(worker_id, job_ids):
+            beats.append(_time.monotonic())
+            return await real_heartbeat(worker_id, job_ids)
+
+        store.heartbeat_jobs = recording_heartbeat  # type: ignore[method-assign]
+        agent = FakeAgent(delay=2.2)  # outlives two 1s heartbeat intervals
+        # stop_timeout at CONSTRUCTION now: the enforced invariant rejects a
+        # post-hoc default-30 worker against lock_grace=3
+        worker = QueueWorker(
+            store=store,
+            resolve_component=lambda ctype, cid: agent if (ctype, cid) == ("agent", "agent-1") else None,
+            config=make_config(lock_grace_seconds=3),  # beat interval = 1s
+            worker_id="live-worker",
+            stop_timeout=2.9,  # long enough for the run to finish draining
+        )
+        await store.enqueue_job(make_job())
+        await worker.start()
+        await wait_for_status(store, "r1", "running")
+
+        stop_started = _time.monotonic()
+        await worker.stop()
+
+        assert (await store.get_job("r1"))["status"] == "completed", "the drained run must finish healthily"
+        beats_during_drain = [b for b in beats if b > stop_started]
+        # >= 2 is the discriminator: even the old while-self._running loop
+        # let ONE already-sleeping beat's body fire after stop() - sustained
+        # beating through a multi-interval drain is what the fix guarantees
+        assert len(beats_during_drain) >= 2, (
+            f"only {len(beats_during_drain)} heartbeat(s) during a 2+ interval drain - the loop died at "
+            "drain start and a peer replica would sweep this healthy run as dead"
+        )
+
+    @pytest.mark.asyncio
+    async def test_straggler_cancel_is_single_and_shielded_persist_completes(self, monkeypatch):
+        """The rider's exact window: the drain-timeout cancel arrives, the
+        handler enters its shielded persist-before-requeue - and no SECOND
+        cancel may interrupt it. On the old wait_for(gather) shape the
+        straggler loop delivered that second cancel; the persist was lost and
+        the ticket stayed RUNNING. Fixed: the persist completes and the
+        ticket settles failed."""
+        store = InMemoryQueueStore()
+        agent = FakeAgent(delay=3600)  # never finishes: guaranteed straggler
+        worker = make_worker(store, agent, make_config(lock_grace_seconds=60))
+        worker.stop_timeout = 0.2
+
+        persist_done: list = []
+
+        async def slow_persist(self_worker, job, error, status="error"):
+            await asyncio.sleep(0.3)  # the second cancel used to land in here
+            persist_done.append(job["id"])
+            return True
+
+        monkeypatch.setattr(QueueWorker, "_persist_run_error", slow_persist)
+        await store.enqueue_job(make_job())  # max_attempts=1 -> drain will fail it
+        await worker.start()
+        await wait_for_status(store, "r1", "running")
+
+        # The deterministic discriminator: count cancel DELIVERIES to the
+        # in-flight task. The old wait_for(gather) shape delivered two (the
+        # gather's implicit child-cancel on timeout, then the straggler
+        # loop); whether the second one interrupts the shielded persist is a
+        # scheduling race - the count is not. asyncio.wait never cancels, so
+        # the straggler loop must be the sole source.
+        task = worker._in_flight["r1"]
+        cancel_calls: list = []
+        real_cancel = task.cancel
+
+        def counting_cancel(*args, **kwargs):
+            cancel_calls.append(1)
+            return real_cancel(*args, **kwargs)
+
+        task.cancel = counting_cancel  # type: ignore[method-assign]
+
+        await worker.stop()
+
+        assert len(cancel_calls) == 1, (
+            f"stop() delivered {len(cancel_calls)} cancels to the draining task - the second one can land "
+            "inside the except CancelledError handler and interrupt the shielded persist-before-requeue"
+        )
+        assert persist_done == ["r1"], "the shielded persist must complete despite the straggler cancel"
+        assert (await store.get_job("r1"))["status"] == "failed", (
+            f"ticket must settle failed after the persisted drain, got {(await store.get_job('r1'))['status']} - "
+            "RUNNING here means the second cancel interrupted the persist and the drain guarantee broke"
+        )

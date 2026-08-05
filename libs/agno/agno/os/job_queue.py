@@ -280,10 +280,17 @@ class QueueWorker:
         self.worker_id = worker_id or f"worker-{uuid4().hex[:8]}"
         self.stop_timeout = stop_timeout
         if stop_timeout >= config.lock_grace_seconds:
-            log_warning(
-                f"QueueWorker stop_timeout ({stop_timeout}s) >= lock_grace_seconds "
-                f"({config.lock_grace_seconds}s): a draining run can be reclaimed by another "
-                "replica mid-drain. Keep stop_timeout below lock_grace_seconds."
+            # Hard validation, not a warning: violating this GUARANTEES the
+            # drain-sweep race - a draining run's lease can expire mid-drain
+            # and a peer reclaims a run that is still healthily finishing
+            # here. Fail-fast at construction (resolve_queue_store
+            # precedent); the practical constraint is lock_grace_seconds >
+            # stop_timeout (default 30).
+            raise ValueError(
+                f"QueueWorker stop_timeout ({stop_timeout}s) must be strictly below "
+                f"lock_grace_seconds ({config.lock_grace_seconds}s): a drain that can outlive "
+                "the lease guarantees a peer reclaims a still-draining run mid-drain. "
+                "Raise lock_grace_seconds or lower stop_timeout."
             )
         self._running = False
         self._task: Optional[asyncio.Task] = None
@@ -322,23 +329,32 @@ class QueueWorker:
         for draining_id in list(self._in_flight.keys()):
             set_cancellation_cause(draining_id, "drain")
         if self._in_flight:
-            with contextlib.suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(
-                    asyncio.gather(*self._in_flight.values(), return_exceptions=True),
-                    timeout=self.stop_timeout,
-                )
-        # Cancel stragglers; their jobs go back through the fenced retry path
-        # Drain finished (or timed out): heartbeat may stop now
+            # asyncio.wait, NOT wait_for(gather(...)): wait never cancels its
+            # awaitables on timeout, which makes the straggler loop below the
+            # SINGLE point of cancellation. The old shape delivered a SECOND
+            # cancel (wait_for cancelled the gather, propagating into the
+            # tasks; the straggler loop then cancelled them again) - and a
+            # second cancel landing inside a task's except CancelledError
+            # block interrupts the drain handler's own shielded
+            # persist-before-requeue, losing the run-row write the drain
+            # path exists to guarantee.
+            await asyncio.wait(set(self._in_flight.values()), timeout=self.stop_timeout)
+        # Cancel stragglers exactly once; their jobs go back through the
+        # fenced retry path
+        for task in list(self._in_flight.values()):
+            if not task.done():
+                task.cancel()
+        if self._in_flight:
+            await asyncio.gather(*self._in_flight.values(), return_exceptions=True)
+        self._in_flight.clear()
+        # The heartbeat exits on its own once nothing is in flight (its loop
+        # condition covers the drain and the straggler window); the cancel is
+        # a backstop for a loop parked mid-sleep
         if self._heartbeat_task is not None:
             self._heartbeat_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
                 await asyncio.wait_for(self._heartbeat_task, timeout=5)
         self._heartbeat_task = None
-        for task in list(self._in_flight.values()):
-            task.cancel()
-        if self._in_flight:
-            await asyncio.gather(*self._in_flight.values(), return_exceptions=True)
-        self._in_flight.clear()
         log_info("Job queue worker stopped")
 
     async def _poll_loop(self) -> None:
@@ -364,7 +380,14 @@ class QueueWorker:
 
     async def _heartbeat_loop(self) -> None:
         interval = max(1.0, self.config.lock_grace_seconds / 3)
-        while self._running:
+        # Runs while claiming OR draining: stop() flips _running BEFORE the
+        # drain, and the old `while self._running` condition killed the
+        # heartbeat at drain start - contradicting stop()'s own comment and
+        # letting a peer sweep in-flight jobs as dead during a slow drain.
+        # The in-flight check keeps leases fresh exactly as long as anything
+        # is still executing here, and ends the loop naturally once the
+        # drain (or straggler cleanup) empties it.
+        while self._running or self._in_flight:
             try:
                 await asyncio.sleep(interval)
                 job_ids = list(self._in_flight.keys())
