@@ -64,3 +64,17 @@ def test_tracing_uses_default_db(mock_setup_tracing, default_db):
     AgentOS(agents=[agent], db=default_db, tracing=True)
 
     mock_setup_tracing.assert_called_once_with(db=default_db)
+
+
+def test_image_store_registers_global_store(default_db, tmp_path):
+    """Test that AgentOS(image_store=...) registers the global knowledge image store."""
+    from agno.knowledge.image import LocalKnowledgeImageStore, get_image_store, set_image_store
+
+    store = LocalKnowledgeImageStore(base_dir=str(tmp_path / "images"))
+    agent = Agent(name="test-agent", id="test-agent-id")
+    try:
+        agent_os = AgentOS(agents=[agent], db=default_db, image_store=store)
+        assert agent_os.image_store is store
+        assert get_image_store() is store
+    finally:
+        set_image_store(None)

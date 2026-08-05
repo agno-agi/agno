@@ -8,14 +8,18 @@ from uuid import uuid4
 from agno.knowledge.chunking.document import DocumentChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
+from agno.knowledge.image import (
+    DEFAULT_IMAGE_BASE_URL,
+    save_image_url,
+)
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.reader.utils.url_validation import is_host_allowed, validate_allowed_hosts
 from agno.knowledge.types import ContentType
-from agno.utils.log import log_debug, log_error
+from agno.utils.log import log_debug, log_error, log_warning
 
 try:
-    from docling.datamodel.base_models import DocumentStream, OutputFormat
-    from docling.document_converter import DocumentConverter
+    from docling.datamodel.base_models import DocumentStream, InputFormat, OutputFormat
+    from docling.document_converter import DocumentConverter, PdfFormatOption
 except ImportError:
     raise ImportError("The `docling` package is not installed. Please install it via `pip install docling`.")
 
@@ -45,6 +49,9 @@ class DoclingReader(Reader):
 
     Converts all formats into a unified DoclingDocument representation,
     then exports to markdown, text, json, html, doctags, etc.
+
+    Set ``preserve_images=True`` to extract figures, persist them via
+    the global image store, and keep fixed markdown image links in reading order.
     """
 
     def __init__(
@@ -54,6 +61,8 @@ class DoclingReader(Reader):
         converter: Optional[DocumentConverter] = None,
         format_options: Optional[Dict[Any, Any]] = None,
         allowed_hosts: Optional[List[str]] = None,
+        preserve_images: bool = False,
+        image_base_url: str = DEFAULT_IMAGE_BASE_URL,
         **kwargs,
     ):
         """Initialize the DoclingReader.
@@ -74,6 +83,9 @@ class DoclingReader(Reader):
             allowed_hosts: Optional hostname allowlist for URL inputs. When set, only URLs
                 whose hostname is in the list are converted; others are refused. When None
                 (default), all hosts are allowed (backwards compatible).
+            preserve_images: When True (and ``output_format="markdown"``), extract
+                figures and insert fixed markdown links. Ignored for other formats.
+            image_base_url: Public URL prefix for markdown image links.
             **kwargs: Additional arguments passed to the Reader class
         """
         if chunking_strategy is None:
@@ -87,14 +99,39 @@ class DoclingReader(Reader):
                 f"Invalid output format: '{output_format}'. Valid options: {list(OUTPUT_FORMAT_MAP.keys())}"
             )
 
+        self.preserve_images = preserve_images
+        images_enabled = preserve_images and self.output_format == OutputFormat.MARKDOWN
+        if preserve_images and not images_enabled:
+            log_warning("preserve_images only applies when output_format='markdown'; ignoring")
+        self.image_base_url = image_base_url
+
         if converter is not None:
             self.converter = converter
         elif format_options is not None:
             self.converter = DocumentConverter(format_options=format_options)
+        elif images_enabled:
+            self.converter = self._build_image_aware_converter()
         else:
             self.converter = DocumentConverter()
 
         self.allowed_hosts: Optional[List[str]] = validate_allowed_hosts(allowed_hosts)
+
+    @staticmethod
+    def _build_image_aware_converter() -> DocumentConverter:
+        """Configure Docling to keep picture images for referenced markdown export."""
+        try:
+            from docling.datamodel.pipeline_options import PdfPipelineOptions
+        except ImportError:
+            log_warning("PdfPipelineOptions unavailable; Docling may not preserve picture images")
+            return DocumentConverter()
+
+        pipeline_options = PdfPipelineOptions()
+        pipeline_options.generate_picture_images = True
+        return DocumentConverter(
+            format_options={
+                InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options),
+            }
+        )
 
     @classmethod
     def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
@@ -174,13 +211,17 @@ class DoclingReader(Reader):
             ContentType.VIDEO_MOV,
         ]
 
-    def read(self, file: Union[Path, str, IO[Any]], name: Optional[str] = None) -> List[Document]:
+    def read(
+        self, file: Union[Path, str, IO[Any]], name: Optional[str] = None, content_id: Optional[str] = None
+    ) -> List[Document]:
         """Reads document using Docling.
 
         Args:
             file: Path to file, file path string, URL, or file-like object.
                  URLs starting with http:// or https:// are supported.
             name: Optional name for the document
+            content_id: Knowledge content id for image storage paths. Required when
+                ``preserve_images=True`` (passed by Knowledge on each insert).
 
         Returns:
             List of Document objects
@@ -228,7 +269,9 @@ class DoclingReader(Reader):
 
             result = self.converter.convert(source)
 
-            if self.output_format == OutputFormat.TEXT:
+            if self.preserve_images and self.output_format == OutputFormat.MARKDOWN:
+                doc_content = self._export_markdown_with_images(result, content_id=content_id)
+            elif self.output_format == OutputFormat.TEXT:
                 doc_content = result.document.export_to_text()
             elif self.output_format == OutputFormat.JSON:
                 doc_content = json.dumps(result.document.export_to_dict(), ensure_ascii=False)
@@ -271,10 +314,74 @@ class DoclingReader(Reader):
             log_error(f"Error converting document: {file}: {str(e)}")
             return []
 
-    async def async_read(self, file: Union[Path, str, IO[Any]], name: Optional[str] = None) -> List[Document]:
+    def _export_markdown_with_images(self, result: Any, *, content_id: Optional[str]) -> str:
+        """Export markdown with figures saved through KnowledgeImageStore."""
+        try:
+            from docling_core.types.doc import ImageRefMode, PictureItem
+        except ImportError:
+            log_warning("docling_core ImageRefMode unavailable; falling back to plain markdown")
+            return result.document.export_to_markdown()
+
+        if not content_id:
+            raise ValueError("content_id is required when preserve_images=True")
+
+        image_urls: List[str] = []
+        try:
+            for element, _level in result.document.iterate_items():
+                if not isinstance(element, PictureItem):
+                    continue
+                image = element.get_image(result.document)
+                if image is None:
+                    continue
+                buffer = BytesIO()
+                image.save(buffer, format="PNG")
+                url = save_image_url(
+                    content_id=content_id,
+                    data=buffer.getvalue(),
+                    media_type="image/png",
+                    image_base_url=self.image_base_url,
+                )
+                image_urls.append(url)
+                # Docling's ImageRef.uri is Union[AnyUrl, Path]. Absolute app paths
+                # like ``/knowledge/images/...`` are not valid AnyUrl values, but Path
+                # round-trips correctly into REFERENCED markdown.
+                image_ref = getattr(element, "image", None)
+                if image_ref is not None and hasattr(image_ref, "uri"):
+                    try:
+                        image_ref.uri = Path(url)
+                    except Exception as e:
+                        log_debug(f"Could not rewrite Docling picture URI to Path: {e}")
+        except Exception as e:
+            log_warning(f"Failed while extracting Docling pictures: {e}")
+
+        if not image_urls:
+            return result.document.export_to_markdown()
+
+        try:
+            markdown = result.document.export_to_markdown(image_mode=ImageRefMode.REFERENCED)
+        except TypeError:
+            log_warning("Docling export_to_markdown does not accept image_mode; exporting without it")
+            markdown = result.document.export_to_markdown()
+        except Exception as e:
+            log_warning(f"Docling referenced markdown export failed: {e}")
+            markdown = result.document.export_to_markdown()
+
+        if any(url in markdown for url in image_urls):
+            return markdown
+
+        # Fallback when URI rewrite did not stick (e.g. older Docling / Windows Path).
+        for url in image_urls:
+            if "<!-- image -->" not in markdown:
+                break
+            markdown = markdown.replace("<!-- image -->", f"![]({url})", 1)
+        return markdown
+
+    async def async_read(
+        self, file: Union[Path, str, IO[Any]], name: Optional[str] = None, content_id: Optional[str] = None
+    ) -> List[Document]:
         """Asynchronously read a docling file and return a list of documents."""
         try:
-            return await asyncio.to_thread(self.read, file, name)
+            return await asyncio.to_thread(self.read, file, name=name, content_id=content_id)
         except (FileNotFoundError, ValueError):
             raise
         except Exception as e:

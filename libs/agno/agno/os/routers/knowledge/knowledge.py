@@ -1471,6 +1471,46 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             ),
         )
 
+    @router.get(
+        "/knowledge/images/{content_id}/{image_id}",
+        operation_id="get_knowledge_image",
+        summary="Get Knowledge Image",
+        description=(
+            "Return a document image preserved during knowledge ingestion. "
+            "Uses the global knowledge image store; custom stores may authorize via user_id from JWT."
+        ),
+        responses={
+            200: {"description": "Image bytes"},
+            404: {"description": "Image or knowledge store not found", "model": NotFoundResponse},
+        },
+    )
+    async def get_knowledge_image(
+        request: Request,
+        content_id: str = Path(..., description="Knowledge content id"),
+        image_id: str = Path(..., description="Knowledge image id"),
+    ):
+        from fastapi.responses import Response
+
+        from agno.exceptions import PathSecurityError
+        from agno.knowledge.image import KnowledgeImageRef, get_image_store
+
+        user_id = getattr(request.state, "user_id", None)
+        ref = KnowledgeImageRef(image_id=image_id, content_id=content_id)
+        image_store = get_image_store()
+        try:
+            data = await image_store.aopen(ref, user_id=user_id)
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="Image not found")
+        except PathSecurityError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except PermissionError as e:
+            raise HTTPException(status_code=403, detail=str(e))
+        except Exception as e:
+            log_error(f"Failed to load knowledge image {content_id}/{image_id}: {e}")
+            raise HTTPException(status_code=500, detail="Failed to load image")
+
+        return Response(content=data, media_type=ref.media_type or "image/png")
+
     return router
 
 
