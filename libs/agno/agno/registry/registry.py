@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Type
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple, Type, Union
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -17,6 +17,11 @@ from agno.vectordb.base import VectorDb
 if TYPE_CHECKING:
     from agno.agent import Agent
     from agno.team import Team
+
+# A flat function name, or a (toolkit name, function name) qualified pair.
+EntrypointKey = Union[str, Tuple[str, str]]
+# The Function that owns the entrypoint, or the registered plain callable itself.
+EntrypointSource = Union[Function, Callable]
 
 
 def _model_identity(model: Model) -> tuple:
@@ -54,7 +59,7 @@ class Registry:
     teams: List[Team] = field(default_factory=list)
 
     @cached_property
-    def _entrypoint_lookup(self) -> Dict[Any, Any]:
+    def _entrypoint_lookup(self) -> Dict[EntrypointKey, EntrypointSource]:
         # Maps function name -> source: the Function that owns the entrypoint
         # (for Toolkit and Function tools) or the plain callable itself.
         # Toolkit functions are additionally indexed under a toolkit-qualified
@@ -64,12 +69,12 @@ class Registry:
         # toolkits share member names. A tuple never equals a string, so
         # qualified keys cannot collide with flat names -- including function
         # names that contain characters like dots.
-        lookup: Dict[Any, Any] = {}
+        lookup: Dict[EntrypointKey, EntrypointSource] = {}
 
-        def _entrypoint(source: Any) -> Optional[Callable]:
+        def _entrypoint(source: EntrypointSource) -> Optional[Callable]:
             return source.entrypoint if isinstance(source, Function) else source
 
-        def register(name: str, source: Any) -> None:
+        def register(name: str, source: EntrypointSource) -> None:
             # The flat slot is keyed by name only, so two genuinely different
             # tools that share a name collapse to one slot (last wins). Dicts
             # qualified with their toolkit's name still resolve correctly, but
@@ -136,7 +141,7 @@ class Registry:
             # bare Functions instead of Toolkits.
             func.owning_toolkit = toolkit_name
 
-        def lookup(key: Any) -> Optional[Any]:
+        def lookup(key: EntrypointKey) -> Optional[EntrypointSource]:
             # Toolkits can gain functions after the lookup is first built -- MCP
             # toolkits only register their functions once connected -- so a miss
             # may just mean the cache is stale. Rebuild once and retry.
@@ -147,7 +152,7 @@ class Registry:
                 found = self._entrypoint_lookup.get(key)
             return found
 
-        source: Optional[Any] = None
+        source: Optional[EntrypointSource] = None
         if func.owning_toolkit is not None:
             # A qualified miss rebuilds before falling back to the flat name:
             # the flat slot may hold a same-named function from a *different*
