@@ -40,6 +40,11 @@ Semantics:
       name's slug). Exact ids always win over display names. A display name
       matching several components of the type returns an error listing the
       matching ids instead of silently picking one.
+    * Persisted components rebuild from their stored config. Registry-backed
+      references (tools, function steps, schemas, code-defined members)
+      require the registry: without it the runner refuses to run a silently
+      degraded component. Member references resolve at their current
+      published version.
     * list_* read the database only (id, name, description, newest first):
       code-defined components are the wielding platform's own and are not
       re-listed. 'total' reports the full DB count, so a capped list is
@@ -93,6 +98,25 @@ class AmbiguousComponentNameError(ValueError):
         super().__init__(
             f"Ambiguous {component_type} name: '{name}' matches ids {', '.join(self.matches)}. Use the exact id."
         )
+
+
+class ComponentNeedsRegistryError(RuntimeError):
+    """The stored config references registry-backed pieces that cannot be
+    reconstructed without the registry.
+
+    Raised instead of running a silently degraded component (tools dropped,
+    function steps missing, code-defined members lost)."""
+
+
+def _references_executors(value: Any) -> bool:
+    """True when a stored workflow config references a registry function step."""
+    if isinstance(value, dict):
+        if value.get("executor_ref"):
+            return True
+        return any(_references_executors(v) for v in value.values())
+    if isinstance(value, list):
+        return any(_references_executors(v) for v in value)
+    return False
 
 
 # The two helpers below mirror agno/os/mcp_results.py so toolkit results and MCP
@@ -394,14 +418,47 @@ class StudioRunnerTools(Toolkit):
             return slug
         return None
 
+    def _require_registry_for(self, component_type: str, component_id: str, config: Dict[str, Any]) -> None:
+        """Refuse to rebuild a component whose config needs the absent registry.
+
+        from_dict silently drops registry-backed references when no registry is
+        given; a dispatch surface must refuse rather than run the degraded
+        result."""
+        if self.registry is not None:
+            return
+        needs: List[str] = []
+        if config.get("tools"):
+            needs.append("tools")
+        if isinstance(config.get("input_schema"), str) or isinstance(config.get("output_schema"), str):
+            needs.append("schemas")
+        if component_type == "workflow" and _references_executors(config.get("steps")):
+            needs.append("function steps")
+        if component_type == "team":
+            for member in config.get("members") or []:
+                if not isinstance(member, dict):
+                    continue
+                member_type = "team" if member.get("team_id") else "agent"
+                member_id = member.get("team_id") or member.get("agent_id")
+                if member_id and not self._db_component_exists(member_type, str(member_id)):
+                    needs.append(f"code-defined member '{member_id}'")
+        if needs:
+            raise ComponentNeedsRegistryError(
+                f"{component_type.capitalize()} '{component_id}' references registry-backed "
+                f"{', '.join(needs)}; construct StudioRunnerTools with the registry to run it."
+            )
+
     def _load_agent_from_db(self, agent_id: str, version: Optional[int] = None) -> Optional["Agent"]:
-        """Load an agent from DB via config + from_dict. Bypasses Agent.load() to
-        avoid Agno's load_component_graph signature mismatch."""
+        """Load an agent from DB via config + from_dict.
+
+        Registry-backed references resolve at their current published version;
+        converging on the version-snapshotting graph loader is follow-up work
+        tracked with the rehydration hardening."""
         from agno.db.base import ComponentType
 
         config = self._load_config_from_db(agent_id, version=version, component_type=ComponentType.AGENT)
         if config is None:
             return None
+        self._require_registry_for("agent", agent_id, config)
         from agno.agent.agent import Agent
 
         try:
@@ -422,6 +479,7 @@ class StudioRunnerTools(Toolkit):
         config = self._load_config_from_db(team_id, version=version, component_type=ComponentType.TEAM)
         if config is None:
             return None
+        self._require_registry_for("team", team_id, config)
         from agno.team.team import Team
 
         try:
@@ -441,6 +499,7 @@ class StudioRunnerTools(Toolkit):
         config = self._load_config_from_db(workflow_id, version=version, component_type=ComponentType.WORKFLOW)
         if config is None:
             return None
+        self._require_registry_for("workflow", workflow_id, config)
         from agno.workflow.workflow import Workflow
 
         try:

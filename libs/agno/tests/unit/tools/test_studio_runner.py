@@ -790,6 +790,45 @@ class TestStudioEmbedding:
         assert "Cannot edit code-defined agent" in out["error"]
         assert "radar-scout" in out["error"]
 
+    def test_cross_type_member_id_collision_errors(self, registry, db):
+        # An agent and team may legally share an id (uniqueness is per type);
+        # member resolution must refuse rather than silently pick the agent.
+        studio = StudioTools(registry=registry, db=db, teams=True)
+        studio.create_agent(name="helper", instructions="i", model_id="gpt-5.4")
+        studio.create_team(name="shared", instructions="i", member_ids=["helper"], model_id="gpt-5.4")
+        code_agent = _StubAgent()
+        code_agent.id = "shared"
+        code_agent.name = "Shared Agent"
+        shadowed = StudioTools(registry=registry, db=db, teams=True, agents_list=[code_agent])
+        out = _loads(shadowed.create_team(name="squad", instructions="i", member_ids=["shared"], model_id="gpt-5.4"))
+        assert "matches both an agent and a team" in out.get("error", "")
+
+    def test_cross_type_member_name_collision_errors(self, registry, db):
+        studio = StudioTools(registry=registry, db=db, teams=True)
+        studio.create_agent(name="Ops", instructions="i", model_id="gpt-5.4")
+        studio.create_agent(name="helper", instructions="i", model_id="gpt-5.4")
+        studio.create_team(name="Ops", instructions="i", member_ids=["helper"], model_id="gpt-5.4")
+        out = _loads(studio.create_team(name="squad", instructions="i", member_ids=["Ops"], model_id="gpt-5.4"))
+        assert "matches both an agent and a team" in out.get("error", "")
+
+    def test_registry_less_runner_refuses_tool_bearing_component(self, db):
+        from agno.tools.calculator import CalculatorTools
+
+        armed_registry = Registry(
+            name="Armed Registry",
+            models=[OpenAIResponses(id="gpt-5.4")],
+            tools=[CalculatorTools()],
+            dbs=[db],
+        )
+        studio = StudioTools(registry=armed_registry, db=db)
+        studio.create_agent(name="Armed", instructions="i", model_id="gpt-5.4", tool_names=["calculator"])
+        runner = StudioRunnerTools(db=db)
+        out = _loads(runner.run_agent("armed", "hi"))
+        assert "registry" in out.get("error", "")
+        # With the registry the same component resolves.
+        with_registry = StudioRunnerTools(registry=armed_registry, db=db)
+        assert with_registry._find_agent("armed") is not None
+
     def test_create_team_ambiguous_member_name_errors(self, registry, db):
         studio = StudioTools(registry=registry, db=db, teams=True)
         studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")

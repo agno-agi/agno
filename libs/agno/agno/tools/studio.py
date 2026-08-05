@@ -1963,11 +1963,26 @@ class StudioTools(Toolkit):
         members: List[TeamMember] = []
         missing: List[str] = []
         for mid in member_ids:
-            member: Optional[TeamMember] = runner._find_agent_by_exact_id(mid) or runner._find_team_by_exact_id(mid)
+            agent_match = runner._find_agent_by_exact_id(mid)
+            team_match = runner._find_team_by_exact_id(mid)
+            if agent_match is not None and team_match is not None:
+                # Ids are only unique per type, so an agent and a team may
+                # legally share one; member_ids cannot disambiguate.
+                raise ValueError(
+                    f"Ambiguous member id: '{mid}' matches both an agent and a team. "
+                    "Give the components distinct ids to reference them as members."
+                )
+            member: Optional[TeamMember] = agent_match or team_match
             if member is None and not (
                 runner._db_component_exists("agent", mid) or runner._db_component_exists("team", mid)
             ):
-                member = runner._find_agent_by_name(mid) or runner._find_team_by_name(mid)
+                agent_named = runner._find_agent_by_name(mid)
+                team_named = runner._find_team_by_name(mid)
+                if agent_named is not None and team_named is not None:
+                    raise ValueError(
+                        f"Ambiguous member name: '{mid}' matches both an agent and a team. Use an exact id."
+                    )
+                member = agent_named or team_named
             if member is None:
                 missing.append(mid)
             else:
