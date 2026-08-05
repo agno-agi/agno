@@ -326,9 +326,27 @@ class Function(BaseModel):
 
         function_name = name or c.__name__
         parameters = {"type": "object", "properties": {}, "required": []}
+        resolved_framework_params: Set[str] = set()
         try:
             sig = signature(c)
             type_hints = get_type_hints(c)
+
+            # Params the framework injects by TYPE, not just by reserved name (e.g.
+            # ctx: RunContext, my_agent: Agent). from_callable does not run
+            # process_entrypoint, so record them here too: they are excluded from the
+            # model schema below and stored on the Function so FunctionCall's injection
+            # guard rejects a model-supplied value for them on this path too. See #6344.
+            framework_typed_params: Set[str] = set()
+            try:
+                _fw_types = _framework_injected_types()
+                for _pname in sig.parameters:
+                    _hint = type_hints.get(_pname)
+                    if isinstance(_hint, type) and issubclass(_hint, _fw_types):
+                        framework_typed_params.add(_pname)
+            except Exception:
+                pass
+            _reserved_names = {"return", "self", *FRAMEWORK_INJECTED_PARAMS, *AGNO_INJECTED_PARAMS}
+            resolved_framework_params = {n for n in sig.parameters if n in _reserved_names} | framework_typed_params
 
             # If function has an the agent argument, remove the agent parameter from the type hints
             if "agent" in sig.parameters and "agent" in type_hints:
@@ -356,6 +374,7 @@ class Function(BaseModel):
                 if name not in ("return", "self")
                 and name not in FRAMEWORK_INJECTED_PARAMS
                 and name not in AGNO_INJECTED_PARAMS
+                and name not in framework_typed_params
             }
 
             # Parse docstring for parameters
@@ -409,12 +428,16 @@ class Function(BaseModel):
 
         entrypoint = cls._wrap_callable(c)
 
-        return cls(
+        func = cls(
             name=function_name,
             description=get_entrypoint_docstring(entrypoint=c),
             parameters=parameters,
             entrypoint=entrypoint,
         )
+        # process_entrypoint sets this on the paths that run it; from_callable does not,
+        # so set it here or the injection guard is inert for framework-typed params.
+        func._framework_params = resolved_framework_params
+        return func
 
     def _resolve_framework_params(self) -> Set[str]:
         """Names in the entrypoint signature that the framework supplies, not the model.
@@ -576,10 +599,13 @@ class Function(BaseModel):
 
             if params_set_by_user:
                 self.parameters["additionalProperties"] = False
+                # `parameters` is user-supplied here and may omit "properties"; read it
+                # defensively so a required-list rebuild degrades to empty rather than
+                # raising a KeyError that the broad except would swallow (dropping the
+                # description with it).
+                user_properties = self.parameters.get("properties") or {}
                 if strict:
-                    self.parameters["required"] = [
-                        name for name in self.parameters["properties"] if name not in excluded_params
-                    ]
+                    self.parameters["required"] = [name for name in user_properties if name not in excluded_params]
                 else:
                     # Mark a field as required if it has no default value
                     self.parameters["required"] = [
@@ -588,7 +614,7 @@ class Function(BaseModel):
                         if param.default == param.empty
                         and name != "self"
                         and name not in excluded_params
-                        and name in self.parameters["properties"]
+                        and name in user_properties
                     ]
 
             self.description = self.description or get_entrypoint_docstring(self.entrypoint)
@@ -1022,7 +1048,14 @@ class FunctionCall(BaseModel):
         """
         if not self.arguments:
             return
-        schema_properties = (self.function.parameters or {}).get("properties") or {}
+        # A tool's schema is not always framework-built: an MCP server can hand over an
+        # arbitrary (even JSON-Schema-invalid) parameters dict verbatim. Coerce a
+        # non-dict `properties` to empty so the membership/`set()` uses below cannot
+        # raise -- this method runs before execute()'s try block, so a raise here would
+        # abort the whole run instead of failing just the tool call.
+        schema_properties = (self.function.parameters or {}).get("properties")
+        if not isinstance(schema_properties, dict):
+            schema_properties = {}
         # A name is framework-owned if this entrypoint declares it as one, or if we injected
         # it. Being in the schema releases it back to the model, except for identity.
         reserved = set(self.function._framework_params or ()) | set(entrypoint_args)

@@ -492,10 +492,16 @@ class StudioRunnerTools(Toolkit):
             return [], 0
         from agno.db.base import ComponentType
 
-        rows, total = self.db.list_components(
-            component_type=ComponentType(component_type),
-            limit=limit if limit is not None else self.list_limit,
-        )
+        try:
+            rows, total = self.db.list_components(
+                component_type=ComponentType(component_type),
+                limit=limit if limit is not None else self.list_limit,
+            )
+        except NotImplementedError:
+            # Not every db adapter implements component storage; degrade to an empty
+            # listing like the other db helpers here, rather than surfacing an
+            # argument-less NotImplementedError as {"error": ""}.
+            return [], 0
         return (
             [{"id": r.get("component_id"), "name": r.get("name"), "description": r.get("description")} for r in rows],
             total,
@@ -816,7 +822,7 @@ class StudioRunnerTools(Toolkit):
         # caller knows they exist (retrievable from the run via the platform).
         media = {
             kind: len(artifacts)
-            for kind in ("images", "videos", "audio")
+            for kind in ("images", "videos", "audio", "files")
             if (artifacts := getattr(run_output, kind, None))
         }
         if media:

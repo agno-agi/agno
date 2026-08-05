@@ -306,6 +306,14 @@ class TestPausedRuns:
         out = _loads(runner.run_agent("stub", "hi"))
         assert out["media"] == {"images": 2}
 
+    def test_file_artifacts_are_counted(self, db):
+        # RunOutput carries produced file artifacts on `files`; they must be counted too.
+        output = _StubRunOutput()
+        output.files = [object(), object(), object()]  # type: ignore[attr-defined]
+        runner = StudioRunnerTools(db=db, agents_list=[_StubAgent(output=output)])
+        out = _loads(runner.run_agent("stub", "hi"))
+        assert out["media"] == {"files": 3}
+
     def test_structured_content_serializes_as_json_not_repr(self, db):
         runner = StudioRunnerTools(db=db, agents_list=[_StubAgent(output=_StructuredRunOutput())])
         out = _loads(runner.run_agent("stub", "hi"))
@@ -700,12 +708,14 @@ class TestDiscovery:
         out = _loads(runner.list_agents())
         assert "error" in out
 
-    def test_list_on_db_without_component_storage_reports_why(self):
+    def test_list_on_db_without_component_support_returns_empty_not_error(self):
+        # A db adapter that does not implement component storage must degrade to an empty
+        # listing, not surface an argument-less NotImplementedError as {"error": ""}.
         from agno.db.in_memory import InMemoryDb
 
         runner = StudioRunnerTools(db=InMemoryDb())
         out = _loads(runner.list_agents())
-        assert "component storage" in out["error"]
+        assert out == {"agents": [], "count": 0, "total": 0}
 
 
 # ----------------------------------------------------------------------

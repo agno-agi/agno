@@ -1736,3 +1736,76 @@ def test_strict_processing_does_not_require_an_injected_parameter():
     )
     func.process_entrypoint(strict=True)
     assert func.parameters["required"] == ["query"]
+
+
+# ----------------------------------------------------------------------
+# Regression: the guard must also engage on the from_callable path
+# (Agent(tools=[fn]) registers plain callables without process_entrypoint)
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("with_hooks", [False, True])
+def test_type_excluded_identity_is_protected_on_the_from_callable_path(with_hooks):
+    """`Agent(tools=[fn])` builds the Function via from_callable and never runs
+    process_entrypoint. A RunContext-typed param must still be kept out of the model
+    schema and have a model-supplied value dropped -- otherwise the injection guard is
+    inert exactly on the most common registration path."""
+
+    seen: Dict[str, Any] = {}
+
+    def fetch(query: str, ctx: RunContext = None) -> str:  # type: ignore[assignment]
+        seen["user_id"] = getattr(ctx, "user_id", None)
+        return query
+
+    func = Function.from_callable(fetch)
+    # The typed identity param is neither advertised to the model nor left unguarded.
+    assert list(func.parameters["properties"]) == ["query"]
+    assert func._framework_params is not None and "ctx" in func._framework_params
+
+    func = func.model_copy(deep=True)  # mirrors _tools.py's per-registration copy
+    func.tool_hooks = [_passthrough_tool_hook] if with_hooks else None
+    func._run_context = RunContext(run_id="r1", session_id="s1", user_id="real-user")
+
+    call = FunctionCall(
+        function=func,
+        arguments={"query": "q", "ctx": {"run_id": "r9", "session_id": "s9", "user_id": "ATTACKER"}},
+    )
+    result = call.execute()
+    assert result.status == "success"
+    # Framework never injects RunContext by type, so the spoof is dropped and ctx defaults.
+    assert seen["user_id"] is None
+    assert call.arguments == {"query": "q"}
+
+
+@pytest.mark.parametrize("bad_properties", [[{"q": {"type": "string"}}], 5, "nope"])
+def test_malformed_schema_properties_does_not_abort_the_run(bad_properties):
+    """A remote/hand-written schema whose `properties` is not a dict (an MCP server can
+    hand one over verbatim) must fail gracefully to a normal call, not raise out of
+    execute() -- the guard runs before execute()'s try, so a raise would kill the run."""
+
+    def fn(q: str) -> str:
+        return q
+
+    func = Function(
+        name="fn",
+        entrypoint=fn,
+        parameters={"type": "object", "properties": bad_properties, "required": ["q"]},
+        skip_entrypoint_processing=True,
+    )
+    result = FunctionCall(function=func, arguments={"q": "hello"}).execute()
+    assert result.status == "success"
+    assert result.result == "hello"
+
+
+def test_user_parameters_without_properties_key_keeps_description():
+    """process_entrypoint on a user-supplied parameters dict lacking `properties` must not
+    KeyError (which the broad except swallows) and silently drop the description."""
+
+    def tool_b(x: str) -> str:
+        """Tool b docstring."""
+        return x
+
+    func = Function(name="tool_b", entrypoint=tool_b, parameters={"type": "object", "required": ["x"]})
+    func.process_entrypoint()
+    assert func.description and "docstring" in func.description.lower()
+    assert func.parameters.get("required") == []

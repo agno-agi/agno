@@ -656,13 +656,13 @@ class StudioTools(Toolkit):
         """
         try:
             result: List[Dict[str, Any]] = []
-            seen: set[str] = set()
+            seen: set[str] = set()  # code ids, plus the names of code components that have no id
             for a in self._iter_agents():
                 aid = getattr(a, "id", None)
                 name = getattr(a, "name", None)
                 if aid is not None:
                     seen.add(aid)
-                if name is not None:
+                elif name is not None:
                     seen.add(name)
                 result.append(
                     {
@@ -674,6 +674,10 @@ class StudioTools(Toolkit):
                     }
                 )
             db_rows, db_total = self._list_db_components("agent")
+            # A DB component duplicates a code one when they share an id, or -- for a
+            # code component with no id -- when they share a name. A name collision with
+            # a code component that HAS its own id is a genuinely distinct component and
+            # must stay listed (it is what get_/run_/edit_ resolve to).
             for row in db_rows:
                 if row["id"] in seen or row["name"] in seen:
                     continue
@@ -692,13 +696,13 @@ class StudioTools(Toolkit):
         """
         try:
             result: List[Dict[str, Any]] = []
-            seen: set[str] = set()
+            seen: set[str] = set()  # code ids, plus the names of code components that have no id
             for team in self._iter_teams():
                 tid = getattr(team, "id", None)
                 name = getattr(team, "name", None)
                 if tid is not None:
                     seen.add(tid)
-                if name is not None:
+                elif name is not None:
                     seen.add(name)
                 members = getattr(team, "members", None) or []
                 member_ids = [getattr(m, "id", None) for m in members] if not callable(members) else []
@@ -712,6 +716,10 @@ class StudioTools(Toolkit):
                     }
                 )
             db_rows, db_total = self._list_db_components("team")
+            # A DB component duplicates a code one when they share an id, or -- for a
+            # code component with no id -- when they share a name. A name collision with
+            # a code component that HAS its own id is a genuinely distinct component and
+            # must stay listed (it is what get_/run_/edit_ resolve to).
             for row in db_rows:
                 if row["id"] in seen or row["name"] in seen:
                     continue
@@ -730,13 +738,13 @@ class StudioTools(Toolkit):
         """
         try:
             result: List[Dict[str, Any]] = []
-            seen: set[str] = set()
+            seen: set[str] = set()  # code ids, plus the names of code components that have no id
             for wf in self._iter_workflows():
                 wid = getattr(wf, "id", None)
                 name = getattr(wf, "name", None)
                 if wid is not None:
                     seen.add(wid)
-                if name is not None:
+                elif name is not None:
                     seen.add(name)
                 steps = getattr(wf, "steps", None) or []
                 result.append(
@@ -749,6 +757,10 @@ class StudioTools(Toolkit):
                     }
                 )
             db_rows, db_total = self._list_db_components("workflow")
+            # A DB component duplicates a code one when they share an id, or -- for a
+            # code component with no id -- when they share a name. A name collision with
+            # a code component that HAS its own id is a genuinely distinct component and
+            # must stay listed (it is what get_/run_/edit_ resolve to).
             for row in db_rows:
                 if row["id"] in seen or row["name"] in seen:
                     continue
@@ -1133,21 +1145,23 @@ class StudioTools(Toolkit):
         """
         if self.db is None:
             return json.dumps({"error": "StudioTools has no db configured; cannot edit components."})
-        if self._is_code_defined(agent_id, self._iter_agents(), "agent"):
-            hint = ""
-            try:
-                shadowed = self._runner_tools._resolve_db_id_by_name_or_slug("agent", agent_id)
-            except AmbiguousComponentNameError:
-                shadowed = None
-            if shadowed is not None:
-                hint = f" A Studio-created agent with this name exists: use its exact id '{shadowed}'."
-            return json.dumps(
-                {
-                    "error": f"Cannot edit code-defined agent: {agent_id}. "
-                    f"Only Studio-created components are editable.{hint}"
-                }
-            )
         try:
+            # _is_code_defined does DB I/O; keep it inside the try so a db failure here
+            # returns a structured error like every other resolve path, not an unhandled raise.
+            if self._is_code_defined(agent_id, self._iter_agents(), "agent"):
+                hint = ""
+                try:
+                    shadowed = self._runner_tools._resolve_db_id_by_name_or_slug("agent", agent_id)
+                    if shadowed is not None:
+                        hint = f" A Studio-created agent with this name exists: use its exact id '{shadowed}'."
+                except AmbiguousComponentNameError:
+                    pass
+                return json.dumps(
+                    {
+                        "error": f"Cannot edit code-defined agent: {agent_id}. "
+                        f"Only Studio-created components are editable.{hint}"
+                    }
+                )
             agent = self._find_agent_for_edit(agent_id)
         except AmbiguousComponentNameError as e:
             return json.dumps({"error": str(e)})
@@ -1222,21 +1236,23 @@ class StudioTools(Toolkit):
         """
         if self.db is None:
             return json.dumps({"error": "StudioTools has no db configured; cannot edit components."})
-        if self._is_code_defined(team_id, self._iter_teams(), "team"):
-            hint = ""
-            try:
-                shadowed = self._runner_tools._resolve_db_id_by_name_or_slug("team", team_id)
-            except AmbiguousComponentNameError:
-                shadowed = None
-            if shadowed is not None:
-                hint = f" A Studio-created team with this name exists: use its exact id '{shadowed}'."
-            return json.dumps(
-                {
-                    "error": f"Cannot edit code-defined team: {team_id}. "
-                    f"Only Studio-created components are editable.{hint}"
-                }
-            )
         try:
+            # _is_code_defined does DB I/O; keep it inside the try so a db failure here
+            # returns a structured error like every other resolve path, not an unhandled raise.
+            if self._is_code_defined(team_id, self._iter_teams(), "team"):
+                hint = ""
+                try:
+                    shadowed = self._runner_tools._resolve_db_id_by_name_or_slug("team", team_id)
+                    if shadowed is not None:
+                        hint = f" A Studio-created team with this name exists: use its exact id '{shadowed}'."
+                except AmbiguousComponentNameError:
+                    pass
+                return json.dumps(
+                    {
+                        "error": f"Cannot edit code-defined team: {team_id}. "
+                        f"Only Studio-created components are editable.{hint}"
+                    }
+                )
             team = self._find_team_for_edit(team_id)
         except AmbiguousComponentNameError as e:
             return json.dumps({"error": str(e)})
@@ -1305,21 +1321,23 @@ class StudioTools(Toolkit):
         """
         if self.db is None:
             return json.dumps({"error": "StudioTools has no db configured; cannot edit components."})
-        if self._is_code_defined(workflow_id, self._iter_workflows(), "workflow"):
-            hint = ""
-            try:
-                shadowed = self._runner_tools._resolve_db_id_by_name_or_slug("workflow", workflow_id)
-            except AmbiguousComponentNameError:
-                shadowed = None
-            if shadowed is not None:
-                hint = f" A Studio-created workflow with this name exists: use its exact id '{shadowed}'."
-            return json.dumps(
-                {
-                    "error": f"Cannot edit code-defined workflow: {workflow_id}. "
-                    f"Only Studio-created components are editable.{hint}"
-                }
-            )
         try:
+            # _is_code_defined does DB I/O; keep it inside the try so a db failure here
+            # returns a structured error like every other resolve path, not an unhandled raise.
+            if self._is_code_defined(workflow_id, self._iter_workflows(), "workflow"):
+                hint = ""
+                try:
+                    shadowed = self._runner_tools._resolve_db_id_by_name_or_slug("workflow", workflow_id)
+                    if shadowed is not None:
+                        hint = f" A Studio-created workflow with this name exists: use its exact id '{shadowed}'."
+                except AmbiguousComponentNameError:
+                    pass
+                return json.dumps(
+                    {
+                        "error": f"Cannot edit code-defined workflow: {workflow_id}. "
+                        f"Only Studio-created components are editable.{hint}"
+                    }
+                )
             wf = self._find_workflow_for_edit(workflow_id)
         except AmbiguousComponentNameError as e:
             return json.dumps({"error": str(e)})

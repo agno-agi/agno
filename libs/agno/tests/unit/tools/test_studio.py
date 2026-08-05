@@ -276,6 +276,20 @@ class TestDiscovery:
         assert len(shared_entries) == 1
         assert shared_entries[0]["source"] == "code"
 
+    def test_list_agents_keeps_db_component_whose_id_equals_a_code_name(self, registry, db):
+        # A code agent id="code-1" is *named* "support"; a distinct DB agent has id "support".
+        # get_/run_/edit_ all resolve "support" to the DB component (exact id wins), so the
+        # listing must not hide it behind the code agent's name.
+        seed = StudioTools(registry=registry, db=db)
+        seed.create_agent(name="support", instructions="i", model_id="gpt-5.4")  # DB id "support"
+
+        code_agent = Agent(id="code-1", name="support", model=OpenAIResponses(id="gpt-5.4"))
+        studio = StudioTools(registry=registry, db=db, agents_list=[code_agent])
+        out = _loads(studio.list_agents())
+        ids = {a["id"] for a in out["agents"]}
+        assert "code-1" in ids
+        assert "support" in ids  # DB component stays discoverable, not shadowed by the code name
+
     def test_list_teams_includes_db_components(self, registry, db):
         tool = StudioTools(registry=registry, db=db, teams=True)
         tool.create_agent(name="a1", instructions="i", model_id="gpt-5.4")
