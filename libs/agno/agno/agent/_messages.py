@@ -1260,14 +1260,7 @@ def get_run_messages(
 
     # 1.1 Inject stored compaction summary right after system message
     if session.compaction and session.compaction.summary:
-        from agno.compression.context import SUMMARY_PREFIX
-
-        summary_msg = Message(
-            role="user",
-            content=SUMMARY_PREFIX + session.compaction.summary,
-            from_history=True,
-        )
-        run_messages.messages.append(summary_msg)
+        run_messages.messages.append(session.compaction.get_summary_message())
         log_debug(f"Injected compaction summary ({len(session.compaction.summary)} chars)")
 
     # 2. Add extra messages to run_messages if provided
@@ -1479,14 +1472,7 @@ async def aget_run_messages(
 
     # 1.1 Inject stored compaction summary right after system message
     if session.compaction and session.compaction.summary:
-        from agno.compression.context import SUMMARY_PREFIX
-
-        summary_msg = Message(
-            role="user",
-            content=SUMMARY_PREFIX + session.compaction.summary,
-            from_history=True,
-        )
-        run_messages.messages.append(summary_msg)
+        run_messages.messages.append(session.compaction.get_summary_message())
         log_debug(f"Injected compaction summary ({len(session.compaction.summary)} chars)")
 
     # 2. Add extra messages to run_messages if provided
@@ -1692,15 +1678,9 @@ def get_continue_run_messages(
         run_messages.messages.append(system_message)
 
     # 1.1 Inject stored compaction summary right after system message
-    if session is not None and session.compaction and session.compaction.summary:
-        from agno.compression.context import SUMMARY_PREFIX
-
-        summary_msg = Message(
-            role="user",
-            content=SUMMARY_PREFIX + session.compaction.summary,
-            from_history=True,
-        )
-        run_messages.messages.append(summary_msg)
+    # Skip injection if input already has history - the stored run already contains its own summary
+    if session is not None and session.compaction and session.compaction.summary and not input_has_history:
+        run_messages.messages.append(session.compaction.get_summary_message())
         log_debug(f"Injected compaction summary ({len(session.compaction.summary)} chars)")
 
     # 2. Add history messages if not already present in input

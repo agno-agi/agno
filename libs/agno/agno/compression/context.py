@@ -57,6 +57,10 @@ class CompactionState:
     total_compactions: int = 0
     updated_at: Optional[datetime] = None
 
+    def get_summary_message(self) -> Message:
+        """Create the summary message to inject into conversation."""
+        return Message(role="user", content=SUMMARY_PREFIX + self.summary, from_history=True)
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "summary": self.summary,
