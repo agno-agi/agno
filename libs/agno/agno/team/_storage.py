@@ -1214,7 +1214,12 @@ def _hydrate_from_graph(
     if config is None:
         return None
 
-    team = cls.from_dict(config, db=db, registry=registry, strict=strict)
+    # Resolve members at the versions pinned by the graph's links. Without
+    # this, from_dict loads each member at its current version before the
+    # graph children overwrite it - and a current version that fails strict
+    # resolution would abort the load even though the pinned version is fine.
+    member_links = [child["link"] for child in graph.get("children", []) if child.get("link")]
+    team = cls.from_dict(config, db=db, registry=registry, links=member_links, strict=strict)
     team.id = graph["component"]["component_id"]
     # Only fall back to the caller-provided db if the config didn't
     # reconstruct one. Otherwise we'd clobber any custom table names

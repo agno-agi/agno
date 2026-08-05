@@ -691,3 +691,62 @@ class TestGetWorkflows:
 
         assert len(workflows) == 1
         assert workflows[0].db == mock_db
+
+
+# =============================================================================
+# strict threading through steps
+# =============================================================================
+
+
+class TestWorkflowStrictThreading:
+    """strict must flow from Workflow.from_dict into step-level member loads."""
+
+    def _save_agent_with_tools(self, db):
+        from agno.agent.agent import Agent
+        from agno.models.openai import OpenAIChat
+
+        def search(query: str) -> str:
+            """Search for a query."""
+            return f"results for {query}"
+
+        agent = Agent(id="step-agent", name="Step Agent", model=OpenAIChat(id="gpt-4o-mini"), tools=[search])
+        agent.save(db=db)
+        return agent
+
+    def test_strict_from_dict_raises_for_step_agent_with_broken_refs(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+        from agno.exceptions import ComponentRehydrationError
+
+        db = SqliteDb(db_file=str(tmp_path / "wf_strict.db"))
+        self._save_agent_with_tools(db)
+        config = {"id": "wf1", "name": "WF", "steps": [{"type": "Step", "name": "s1", "agent_id": "step-agent"}]}
+
+        # The step agent exists but its tools cannot be rehydrated without a registry
+        with pytest.raises(ComponentRehydrationError):
+            Workflow.from_dict(config, db=db)
+
+    def test_lenient_from_dict_degrades_step_agent_instead_of_raising(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+
+        db = SqliteDb(db_file=str(tmp_path / "wf_lenient.db"))
+        self._save_agent_with_tools(db)
+        config = {"id": "wf1", "name": "WF", "steps": [{"type": "Step", "name": "s1", "agent_id": "step-agent"}]}
+
+        workflow = Workflow.from_dict(config, db=db, strict=False)
+
+        assert workflow.steps[0].agent is not None
+        assert workflow.steps[0].agent.id == "step-agent"
+
+    def test_listing_still_shows_workflow_with_degraded_step_agent(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import get_workflows
+
+        db = SqliteDb(db_file=str(tmp_path / "wf_listing.db"))
+        agent = self._save_agent_with_tools(db)
+        workflow = Workflow(id="wf1", name="WF", steps=[Step(name="s1", agent=agent)], db=db)
+        workflow.save(db=db)
+
+        listed = get_workflows(db=db)
+
+        assert [w.id for w in listed] == ["wf1"]

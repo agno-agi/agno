@@ -1237,3 +1237,30 @@ class TestGetTeams:
 
         assert len(teams) == 1
         assert teams[0].db == mock_db
+
+
+def test_team_load_survives_broken_current_member_version(tmp_path):
+    """Team.load resolves members at the versions pinned by the graph links,
+    so a later member version with unresolvable references must not abort the
+    load of a team pinned to a clean version."""
+    from agno.models.openai import OpenAIChat
+
+    db = SqliteDb(db_file=str(tmp_path / "team_pin_broken.db"))
+
+    member = Agent(id="m1", name="M1")
+    team = Team(id="t1", name="T1", members=[member])
+    team.save(db=db)
+
+    def search(query: str) -> str:
+        """Search for a query."""
+        return f"results for {query}"
+
+    # Publish a v2 of the member that needs a registry to rehydrate
+    member.model = OpenAIChat(id="gpt-4o-mini")
+    member.tools = [search]
+    member.save(db=db)
+
+    loaded = Team.load(id="t1", db=db)
+
+    assert loaded is not None
+    assert [m.id for m in loaded.members] == ["m1"]

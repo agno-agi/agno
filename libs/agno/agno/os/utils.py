@@ -11,6 +11,7 @@ from starlette.middleware.cors import CORSMiddleware
 from agno.agent import Agent, AgentFactory, RemoteAgent
 from agno.agent.protocol import AgentProtocol
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.exceptions import ComponentRehydrationError
 from agno.factory import (
     FactoryContextRequired,
     FactoryError,
@@ -898,6 +899,9 @@ def get_agent_by_id(
         try:
             db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry)
             return db_agent
+        except ComponentRehydrationError:
+            # Broken is not "not found": let the app-level handler surface it.
+            raise
         except Exception:
             logger.exception(f"Error getting agent {agent_id} from database")
             return None
@@ -944,6 +948,9 @@ async def get_agent_by_id_async(
         try:
             db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry)
             return db_agent
+        except ComponentRehydrationError:
+            # Broken is not "not found": let the app-level handler surface it.
+            raise
         except Exception:
             logger.exception(f"Error getting agent {agent_id} from database")
             return None
@@ -1000,6 +1007,9 @@ def get_team_by_id(
         try:
             db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry)
             return db_team
+        except ComponentRehydrationError:
+            # Broken is not "not found": let the app-level handler surface it.
+            raise
         except Exception:
             logger.exception(f"Error getting team {team_id} from database")
             return None
@@ -1040,6 +1050,9 @@ async def get_team_by_id_async(
         try:
             db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry)
             return db_team
+        except ComponentRehydrationError:
+            # Broken is not "not found": let the app-level handler surface it.
+            raise
         except Exception:
             logger.exception(f"Error getting team {team_id} from database")
             return None
@@ -1101,6 +1114,9 @@ def get_workflow_by_id(
         try:
             db_workflow = get_workflow_by_id_db(db=db, id=workflow_id, version=version, registry=registry)
             return db_workflow
+        except ComponentRehydrationError:
+            # Broken is not "not found": let the app-level handler surface it.
+            raise
         except Exception:
             logger.exception(f"Error getting workflow {workflow_id} from database")
             return None
@@ -1143,6 +1159,9 @@ async def get_workflow_by_id_async(
         try:
             db_workflow = get_workflow_by_id_db(db=db, id=workflow_id, version=version, registry=registry)
             return db_workflow
+        except ComponentRehydrationError:
+            # Broken is not "not found": let the app-level handler surface it.
+            raise
         except Exception:
             logger.exception(f"Error getting workflow {workflow_id} from database")
             return None
@@ -2008,6 +2027,8 @@ async def resolve_agent(
     else:
         try:
             agent = get_agent_by_id(agent_id, agents, db, registry, version=version, create_fresh=True)
+        except ComponentRehydrationError:
+            raise
         except Exception as e:
             logger.error(f"Error resolving agent '{agent_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -2051,6 +2072,8 @@ async def resolve_team(
     else:
         try:
             team = get_team_by_id(team_id, teams, db=db, version=version, registry=registry, create_fresh=True)
+        except ComponentRehydrationError:
+            raise
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -2096,6 +2119,8 @@ async def resolve_workflow(
             workflow = get_workflow_by_id(
                 workflow_id, workflows, db=db, version=version, registry=registry, create_fresh=True
             )
+        except ComponentRehydrationError:
+            raise
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")

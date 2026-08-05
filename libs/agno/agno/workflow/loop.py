@@ -236,6 +236,7 @@ class Loop:
         registry: Optional["Registry"] = None,
         db: Optional[Any] = None,
         links: Optional[List[Dict[str, Any]]] = None,
+        strict: bool = True,
     ) -> "Loop":
         from agno.workflow.condition import Condition
         from agno.workflow.parallel import Parallel
@@ -245,17 +246,17 @@ class Loop:
         def deserialize_step(step_data: Dict[str, Any]) -> Any:
             step_type = step_data.get("type", "Step")
             if step_type == "Loop":
-                return cls.from_dict(step_data, registry=registry, db=db, links=links)
+                return cls.from_dict(step_data, registry=registry, db=db, links=links, strict=strict)
             elif step_type == "Parallel":
-                return Parallel.from_dict(step_data, registry=registry, db=db, links=links)
+                return Parallel.from_dict(step_data, registry=registry, db=db, links=links, strict=strict)
             elif step_type == "Steps":
-                return Steps.from_dict(step_data, registry=registry, db=db, links=links)
+                return Steps.from_dict(step_data, registry=registry, db=db, links=links, strict=strict)
             elif step_type == "Condition":
-                return Condition.from_dict(step_data, registry=registry, db=db, links=links)
+                return Condition.from_dict(step_data, registry=registry, db=db, links=links, strict=strict)
             elif step_type == "Router":
-                return Router.from_dict(step_data, registry=registry, db=db, links=links)
+                return Router.from_dict(step_data, registry=registry, db=db, links=links, strict=strict)
             else:
-                return Step.from_dict(step_data, registry=registry, db=db, links=links)
+                return Step.from_dict(step_data, registry=registry, db=db, links=links, strict=strict)
 
         # Deserialize end_condition
         end_condition_data = data.get("end_condition")

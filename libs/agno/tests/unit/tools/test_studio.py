@@ -1593,3 +1593,28 @@ class TestLifecycle:
         # Delete
         _loads(studio_versioned.delete_agent("lc"))
         assert db.get_component("lc") is None
+
+
+def test_studio_loads_component_with_broken_refs_for_repair(tmp_path):
+    """StudioTools read/edit paths load leniently: a component whose registry
+    references are broken must still load so an edit can repair it."""
+    from agno.db.sqlite import SqliteDb
+    from agno.models.openai import OpenAIChat
+    from agno.registry import Registry
+    from agno.tools.studio import StudioTools
+
+    db = SqliteDb(db_file=str(tmp_path / "studio_repair.db"))
+
+    def search(query: str) -> str:
+        """Search for a query."""
+        return f"results for {query}"
+
+    agent = Agent(id="repair-agent", name="Repair Agent", model=OpenAIChat(id="gpt-4o-mini"), tools=[search])
+    agent.save(db=db)
+
+    # Registry lacks the tool the saved agent references
+    studio = StudioTools(registry=Registry(), db=db)
+    loaded = studio._load_agent_from_db("repair-agent")
+
+    assert loaded is not None
+    assert loaded.id == "repair-agent"

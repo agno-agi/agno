@@ -307,6 +307,7 @@ class Step:
         registry: Optional[Registry] = None,
         db: Optional["BaseDb"] = None,
         links: Optional[List[Dict[str, Any]]] = None,
+        strict: bool = True,
     ) -> "Step":
         """
         Create a Step from a dictionary.
@@ -349,9 +350,17 @@ class Step:
             if agent is None and db is not None and agent_id is not None:
                 from agno.agent.agent import get_agent_by_id
 
-                agent = get_agent_by_id(db=db, id=agent_id, registry=registry)
+                agent = get_agent_by_id(db=db, id=agent_id, registry=registry, strict=strict)
 
             if agent is None and agent_id:
+                if strict:
+                    from agno.exceptions import ComponentRehydrationError
+
+                    raise ComponentRehydrationError(
+                        f"Step '{config.get('name')}' references agent '{agent_id}' which was not "
+                        "found in the registry or db. Restore the agent, or pass strict=False to "
+                        "load the workflow without it."
+                    )
                 log_warning(
                     f"Could not resolve agent_id='{agent_id}' from registry or DB for step '{config.get('name')}'"
                 )
@@ -378,9 +387,17 @@ class Step:
             if team is None and db is not None and team_id is not None:
                 from agno.team.team import get_team_by_id
 
-                team = get_team_by_id(db=db, id=team_id, registry=registry)
+                team = get_team_by_id(db=db, id=team_id, registry=registry, strict=strict)
 
             if team is None and team_id:
+                if strict:
+                    from agno.exceptions import ComponentRehydrationError
+
+                    raise ComponentRehydrationError(
+                        f"Step '{config.get('name')}' references team '{team_id}' which was not "
+                        "found in the registry or db. Restore the team, or pass strict=False to "
+                        "load the workflow without it."
+                    )
                 log_warning(
                     f"Could not resolve team_id='{team_id}' from registry or DB for step '{config.get('name')}'"
                 )

@@ -235,7 +235,7 @@ class TestStepFromDict:
             mock_db = MagicMock()
             step = Step.from_dict(data, registry=registry, db=mock_db)
 
-            mock_get_agent.assert_called_once_with(db=mock_db, id="db-agent", registry=registry)
+            mock_get_agent.assert_called_once_with(db=mock_db, id="db-agent", registry=registry, strict=True)
             assert step.agent is mock_db_agent
 
     def test_from_dict_team_resolved_from_registry(self):
@@ -262,7 +262,20 @@ class TestStepFromDict:
             mock_team.deep_copy.assert_called_once()
 
     def test_from_dict_unresolvable_agent_raises(self):
-        """Test from_dict raises ValueError when agent can't be resolved."""
+        """Test from_dict fails loudly when the agent can't be resolved."""
+        from agno.exceptions import ComponentRehydrationError
+
+        data = {
+            "type": "Step",
+            "name": "broken-step",
+            "agent_id": "nonexistent-agent",
+        }
+
+        with pytest.raises(ComponentRehydrationError, match="nonexistent-agent"):
+            Step.from_dict(data)
+
+    def test_from_dict_unresolvable_agent_raises_when_lenient(self):
+        """With strict=False the step still fails executor validation, as before."""
         data = {
             "type": "Step",
             "name": "broken-step",
@@ -270,10 +283,23 @@ class TestStepFromDict:
         }
 
         with pytest.raises(ValueError, match="must have one executor"):
-            Step.from_dict(data)
+            Step.from_dict(data, strict=False)
 
     def test_from_dict_unresolvable_team_raises(self):
-        """Test from_dict raises ValueError when team can't be resolved."""
+        """Test from_dict fails loudly when the team can't be resolved."""
+        from agno.exceptions import ComponentRehydrationError
+
+        data = {
+            "type": "Step",
+            "name": "broken-step",
+            "team_id": "nonexistent-team",
+        }
+
+        with pytest.raises(ComponentRehydrationError, match="nonexistent-team"):
+            Step.from_dict(data)
+
+    def test_from_dict_unresolvable_team_raises_when_lenient(self):
+        """With strict=False the step still fails executor validation, as before."""
         data = {
             "type": "Step",
             "name": "broken-step",
@@ -281,7 +307,7 @@ class TestStepFromDict:
         }
 
         with pytest.raises(ValueError, match="must have one executor"):
-            Step.from_dict(data)
+            Step.from_dict(data, strict=False)
 
     def test_from_dict_with_executor(self, registry_with_functions):
         """Test from_dict reconstructs step with executor function."""

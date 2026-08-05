@@ -325,6 +325,7 @@ def _step_from_dict(
     registry: Optional["Registry"] = None,
     db: Optional["BaseDb"] = None,
     links: Optional[List[Dict[str, Any]]] = None,
+    strict: bool = True,
 ) -> Union[Step, Steps, Loop, Parallel, Condition, Router]:
     """
     Deserialize a step from a dictionary based on its type.
@@ -341,17 +342,17 @@ def _step_from_dict(
     step_type = data.get("type", "Step")
 
     if step_type == "Loop":
-        return Loop.from_dict(data, registry=registry, db=db, links=links)
+        return Loop.from_dict(data, registry=registry, db=db, links=links, strict=strict)
     elif step_type == "Parallel":
-        return Parallel.from_dict(data, registry=registry, db=db, links=links)
+        return Parallel.from_dict(data, registry=registry, db=db, links=links, strict=strict)
     elif step_type == "Steps":
-        return Steps.from_dict(data, registry=registry, db=db, links=links)
+        return Steps.from_dict(data, registry=registry, db=db, links=links, strict=strict)
     elif step_type == "Condition":
-        return Condition.from_dict(data, registry=registry, db=db, links=links)
+        return Condition.from_dict(data, registry=registry, db=db, links=links, strict=strict)
     elif step_type == "Router":
-        return Router.from_dict(data, registry=registry, db=db, links=links)
+        return Router.from_dict(data, registry=registry, db=db, links=links, strict=strict)
     elif step_type == "Step":
-        return Step.from_dict(data, registry=registry, db=db, links=links)
+        return Step.from_dict(data, registry=registry, db=db, links=links, strict=strict)
     else:
         raise ValueError(f"Unknown step type: {step_type}")
 
@@ -993,7 +994,10 @@ class Workflow:
         # --- Handle steps reconstruction ---
         steps: Optional[WorkflowSteps] = None
         if "steps" in config and config["steps"]:
-            steps = [_step_from_dict(step_data, db=db, links=links, registry=registry) for step_data in config["steps"]]
+            steps = [
+                _step_from_dict(step_data, db=db, links=links, registry=registry, strict=strict)
+                for step_data in config["steps"]
+            ]
             del config["steps"]
 
         return cls(
