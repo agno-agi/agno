@@ -104,11 +104,41 @@ def get_queue_router(os: "AgentOS", settings: AgnoAPISettings = AgnoAPISettings(
             "under the no-silent-re-execution default. Requeueing a CANCELLED job "
             "whose cancellation intent is still live requires clear_cancellation=true "
             "- an explicit override of the recorded cancel; without it the re-driven "
-            "attempt is re-cancelled at its first checkpoint."
+            "attempt is re-cancelled at its first checkpoint. Requeueing a job that "
+            "FAILED within the last lock_grace seconds requires force=true: its worker "
+            "may still be executing (swept-but-alive), and a second producer would race "
+            "unfenced writes."
         ),
     )
-    async def requeue_job(request: Request, job_id: str, clear_cancellation: bool = False):
+    async def requeue_job(request: Request, job_id: str, clear_cancellation: bool = False, force: bool = False):
         store = _get_store(request)
+        # Live-zombie gate (the other half of the multi-attempt experimental
+        # gate): a job FAILED within the last lock_grace was, in the worst
+        # case, swept while its worker was actually alive - the sweep only
+        # proves heartbeats stopped, not that execution did (the documented
+        # event-loop-starvation mode). Requeueing inside that window can put
+        # a second live producer on the same run row and event stream, whose
+        # writes are not yet generation-fenced. Refuse with 409 until the
+        # grace elapses, unless the operator explicitly forces. Heuristic by
+        # construction: completed_at is DB time on Postgres and this compares
+        # against app time, so clock skew shifts the refusal window - never
+        # ownership, which does not depend on this gate. Cancelled jobs skip
+        # the gate: cancellation only tombstones waiting tickets, so no
+        # zombie attempt can exist.
+        gate_job = await store.get_job(job_id)
+        if gate_job is not None and gate_job.get("status") == "failed" and not force:
+            import time as _time
+
+            worker = getattr(request.app.state, "queue_worker", None)
+            lock_grace = worker.config.lock_grace_seconds if worker is not None else 60
+            completed_at = gate_job.get("completed_at")
+            if completed_at is not None and (_time.time() - completed_at) < lock_grace:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Job {job_id} failed within the last {lock_grace}s and its worker may "
+                    "still be executing (a sweep proves lost heartbeats, not stopped execution). "
+                    "Retry after the lock grace elapses, or pass force=true to override.",
+                )
         # Cancellation intent is never cleared AUTOMATICALLY: every silent
         # scheme reviewed had a window where a delayed cleanup could erase a
         # newer, legitimate cancel. Instead the OPERATOR opts in with

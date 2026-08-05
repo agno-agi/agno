@@ -1010,6 +1010,19 @@ class TestConfigValidation:
             with pytest.raises(ValueError):
                 QueueConfig(durable=True, **{k: v for k, v in kwargs.items() if k != "durable"})
 
+    def test_multi_attempt_requires_experimental_opt_in(self):
+        """The interim two-producer guard, config half: re-execution reaches
+        the unfenced happy-path-save and stream-write races (P1 items), so
+        max_attempts > 1 is an explicit experimental opt-in - a log warning
+        is not a control."""
+        from agno.job_queue.config import QueueConfig
+
+        with pytest.raises(ValueError, match="allow_multi_attempt_experimental"):
+            QueueConfig(durable=True, max_attempts=3)
+        config = QueueConfig(durable=True, max_attempts=3, allow_multi_attempt_experimental=True)
+        assert config.max_attempts == 3
+        assert QueueConfig(durable=True).max_attempts == 1  # default untouched
+
 
 class TestReservedKwargsParity:
     @pytest.mark.asyncio

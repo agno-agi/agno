@@ -579,14 +579,17 @@ class TestAcceptSideEffects:
         await acancel_run("r1")
 
         endpoint, request = self._requeue_endpoint(store)
-        result = await endpoint(request, "r1")
+        # force=True: the job JUST failed, and the zombie gate (phase-7
+        # guard) refuses fresh failures without it - orthogonal to the
+        # intent semantics this test pins
+        result = await endpoint(request, "r1", force=True)
         assert result["status"] == "queued"
         assert await ais_cancelled("r1"), "a plain requeue must not touch recorded intent"
 
         # Re-drive once more, this time with the explicit override
         reclaimed = await store.claim_job("w1")
         await store.retry_or_fail_job("r1", "w1", reclaimed["attempt"], "boom again")
-        result = await endpoint(request, "r1", clear_cancellation=True)
+        result = await endpoint(request, "r1", clear_cancellation=True, force=True)
         assert result["status"] == "queued"
         assert not await ais_cancelled("r1"), "clear_cancellation=true is the operator's explicit clear"
 
@@ -641,9 +644,11 @@ class TestAcceptSideEffects:
         await acancel_run("r1")
 
         endpoint, request = self._requeue_endpoint(store)
+        # force=True: fresh failure, zombie gate refused otherwise (phase-7
+        # guard) - orthogonal to the clear-failure semantics under test
         with patch("agno.run.cancel.acleanup_run", side_effect=RuntimeError("redis down")):
             with pytest.raises(HTTPException) as exc:
-                await endpoint(request, "r1", clear_cancellation=True)
+                await endpoint(request, "r1", clear_cancellation=True, force=True)
         assert exc.value.status_code == 503
         assert (await store.get_job("r1"))["status"] == "failed", "nothing may be requeued on a failed clear"
         assert await ais_cancelled("r1"), "intent must survive the failed clear attempt"
