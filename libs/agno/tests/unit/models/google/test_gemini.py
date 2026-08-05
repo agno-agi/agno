@@ -535,20 +535,24 @@ def test_parallel_search_with_other_builtin_tools():
     assert "parallel_ai_search" in tool_types
 
 
-def test_parallel_search_with_external_tools_logs_warning():
-    """Test that parallel_search with external tools logs the builtin tools info."""
+def test_builtin_tools_combined_with_external_tools():
+    """Test that built-in tools and custom functions are combined successfully."""
     model = Gemini(
-        vertexai=True,
-        project_id="test-project",
-        location="test-location",
-        parallel_search=True,
-        parallel_api_key="test-key",
+        api_key="test-key",
+        search=True,
     )
 
+    custom_tools = [{"type": "function", "function": {"name": "test_custom_fn"}}]
+
     with patch("agno.models.google.gemini.genai.Client"):
-        with patch("agno.models.google.gemini.log_info") as mock_info:
-            model.get_request_params(tools=[{"type": "function", "function": {"name": "test_fn"}}])
-            mock_info.assert_called_once_with("Built-in tools enabled. External tools will be disabled.")
+        request_params = model.get_request_params(tools=custom_tools)
+
+    config = request_params["config"]
+
+    assert config.tools is not None
+    assert len(config.tools) == 2
+    assert config.tool_config is not None
+    assert getattr(config.tool_config, "include_server_side_tool_invocations", False) is True
 
 
 # ---------------------------------------------------------------------------
