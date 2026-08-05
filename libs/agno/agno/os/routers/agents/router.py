@@ -1443,6 +1443,22 @@ def get_agent_router(
                 media_type="text/event-stream",
             )
         else:
+            if background:
+                # background=true + stream=false reached the NON-durable path
+                # (no paused ticket - or fork/regenerate/remote/factory). The
+                # old fallthrough silently ran the continuation INLINE,
+                # blocking the request for the entire leg while the caller
+                # asked for background semantics - a lie that only held until
+                # a proxy or client timeout killed the connection mid-leg.
+                # Workflow-door parity: background non-stream continues are
+                # the durable door, full stop (the background param is new in
+                # this PR - no back-compat cost).
+                raise HTTPException(
+                    status_code=409,
+                    detail="background=true continuation is only available for durably-submitted "
+                    "runs (no paused ticket for this run). Continue without background, or "
+                    "submit with background=true and a durable queue.",
+                )
             # Build extra kwargs for remote agent auth
             extra_kwargs: dict = {}
             if auth_token and isinstance(agent, RemoteAgent):

@@ -1443,6 +1443,16 @@ def get_team_router(
                 media_type="text/event-stream",
             )
         else:
+            if background:
+                # background=true + stream=false reached the NON-durable path
+                # - see the agent twin. Workflow-door parity: background
+                # non-stream continues are the durable door, full stop.
+                raise HTTPException(
+                    status_code=409,
+                    detail="background=true continuation is only available for durably-submitted "
+                    "runs (no paused ticket for this run). Continue without background, or "
+                    "submit with background=true and a durable queue.",
+                )
             # Build extra kwargs for remote team auth
             extra_kwargs: dict = {}
             if auth_token and isinstance(team, RemoteTeam):

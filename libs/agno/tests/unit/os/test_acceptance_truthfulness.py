@@ -176,3 +176,57 @@ class TestHelperUnits:
         worker = SimpleNamespace(store=store)
         assert await aticket_poll_fallback(worker, "r1", "s1", "agent", "a1", "alice") is not None
         assert await aticket_poll_fallback(worker, "r1", "s1", "agent", "a1", "bob") is None
+
+
+class TestBackgroundContinueRequiresDurableDoor:
+    """Phase-7 item 32: continue(background=true, stream=false) previously
+    diverged three ways - 202 with a ticket, a silent INLINE-BLOCKING 200 on
+    agents/teams without one, and a 409 on workflows. The silent inline run
+    was the lie: the caller asked for background semantics and got a request
+    that blocked for the whole continuation leg. Now all three components
+    refuse identically without a ticket; the durable 202 body was already
+    uniform (cbeb8e8)."""
+
+    @pytest.fixture()
+    def continue_harness(self, tmp_path):
+        from fastapi.testclient import TestClient
+
+        from agno.agent import Agent
+        from agno.db.sqlite import SqliteDb
+        from agno.os import AgentOS
+        from agno.team import Team
+
+        db = SqliteDb(db_file=str(tmp_path / "t.db"))
+        agent = Agent(id="qa-agent", name="QA Agent", db=db)
+        team = Team(id="qa-team", name="QA Team", members=[], db=db)
+        app = AgentOS(agents=[agent], teams=[team], telemetry=False).get_app()
+        return TestClient(app, raise_server_exceptions=False)
+
+    def test_agent_background_continue_without_ticket_409s(self, continue_harness):
+        resp = continue_harness.post(
+            "/agents/qa-agent/runs/r-nope/continue",
+            data={"background": "true", "stream": "false", "session_id": "s1"},
+        )
+        assert resp.status_code == 409, (
+            f"got {resp.status_code} - the old fallthrough ran the continuation inline while "
+            "claiming background semantics"
+        )
+        assert "durably-submitted" in resp.json()["detail"]
+
+    def test_team_background_continue_without_ticket_409s(self, continue_harness):
+        resp = continue_harness.post(
+            "/teams/qa-team/runs/r-nope/continue",
+            data={"background": "true", "stream": "false", "session_id": "s1"},
+        )
+        assert resp.status_code == 409
+        assert "durably-submitted" in resp.json()["detail"]
+
+    def test_inline_continue_without_background_is_not_refused(self, continue_harness):
+        """background=false continues keep the inline path: whatever the
+        inline machinery does with this run, the durable-door refusal must
+        not fire - it is scoped strictly to the background flag."""
+        resp = continue_harness.post(
+            "/agents/qa-agent/runs/r-nope/continue",
+            data={"background": "false", "stream": "false", "session_id": "s1"},
+        )
+        assert resp.status_code != 409, f"the 409 must key on background=true only: {resp.json()}"
