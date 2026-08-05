@@ -939,8 +939,11 @@ class Function(BaseModel):
             result = cache_data.get("result")
 
             if time() - timestamp <= self.cache_ttl:
-                if cache_data.get("result_type") == "ToolResult":
+                result_type = cache_data.get("result_type")
+                if result_type == "ToolResult":
                     return ToolResult.model_validate(result)
+                if result_type == "BaseModel":
+                    return self._revalidate_cached_model(result)
                 return result
 
             # Remove expired entry
@@ -949,6 +952,24 @@ class Function(BaseModel):
             log_exception("Error reading cache")
 
         return None
+
+    def _revalidate_cached_model(self, result: Any) -> Any:
+        """Validate a cached BaseModel dump against the entrypoint's declared return type.
+
+        The class comes from the code's return annotation, never from the cache
+        file, so a tampered cache entry cannot choose which class gets
+        instantiated. Falls back to the plain dict when the return annotation
+        is missing, is not a BaseModel subclass, or the payload no longer
+        validates against it.
+        """
+        try:
+            if self.entrypoint is not None:
+                return_type = get_type_hints(self.entrypoint).get("return")
+                if isinstance(return_type, type) and issubclass(return_type, BaseModel):
+                    return return_type.model_validate(result)
+        except Exception:
+            log_debug(f"Cached result for {self.name} no longer validates against the declared return type")
+        return result
 
     def _save_to_cache(self, cache_file: str, result: Any):
         """Save result to cache."""
@@ -969,7 +990,10 @@ class Function(BaseModel):
                 cache_data["result"] = result.model_dump()
                 cache_data["result_type"] = "ToolResult"
             elif isinstance(result, BaseModel):
+                # Restored on read against the entrypoint's declared return
+                # type; see _revalidate_cached_model.
                 cache_data["result"] = result.model_dump()
+                cache_data["result_type"] = "BaseModel"
             else:
                 cache_data["result"] = result
             with open(cache_file, "w", encoding="utf-8") as f:
@@ -1286,13 +1310,21 @@ class FunctionCall(BaseModel):
             hook_args["arguments"] = args
         return hook_args
 
-    def _build_nested_execution_chain(self, entrypoint_args: Dict[str, Any], cached_result: Optional[Any] = None):
+    def _build_nested_execution_chain(
+        self,
+        entrypoint_args: Dict[str, Any],
+        cached_result: Optional[Any] = None,
+        raw_results: Optional[List[Any]] = None,
+    ):
         """Build a nested chain of hook executions with the entrypoint at the center.
 
         This creates a chain where each hook wraps the next one, with the function call
         at the innermost level. Returns bubble back up through each hook. When
         cached_result is provided, it is substituted for the entrypoint call so
-        hooks still run on cache hits.
+        hooks still run on cache hits. Raw entrypoint returns are appended to
+        raw_results so the caller can cache the pre-hook value: hooks run again
+        on a hit, so caching their output would apply result-transforming hooks
+        twice.
         """
         from functools import reduce
         from inspect import iscoroutinefunction
@@ -1304,7 +1336,10 @@ class FunctionCall(BaseModel):
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
                 arguments.update(self.arguments)
-            return self.function.entrypoint(**arguments)  # type: ignore
+            result = self.function.entrypoint(**arguments)  # type: ignore
+            if raw_results is not None:
+                raw_results.append(result)
+            return result
 
         # If no hooks, just return the entrypoint execution function
         if not self.function.tool_hooks:
@@ -1371,11 +1406,12 @@ class FunctionCall(BaseModel):
         execution_result: FunctionExecutionResult
         exception_to_raise = None
 
+        raw_results: List[Any] = []
         try:
             # Build and execute the nested chain of hooks
             if self.function.tool_hooks is not None:
                 execution_chain = self._build_nested_execution_chain(
-                    entrypoint_args=entrypoint_args, cached_result=cached_result
+                    entrypoint_args=entrypoint_args, cached_result=cached_result, raw_results=raw_results
                 )
                 result = execution_chain(self.function.name, self.function.entrypoint, self.arguments or {})
             elif from_cache:
@@ -1399,11 +1435,14 @@ class FunctionCall(BaseModel):
             else:
                 self.result = result
                 # Only cache non-generator results, and never re-save a result
-                # that was just served from cache
+                # that was just served from cache. The raw entrypoint return is
+                # cached, not the hook-chain output: hooks run again on a hit.
                 if self.function.cache_results and not from_cache:
-                    cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
-                    cache_file = self.function._get_cache_file_path(cache_key)
-                    self.function._save_to_cache(cache_file, self.result)
+                    result_to_cache = raw_results[-1] if raw_results else self.result
+                    if not isgenerator(result_to_cache):
+                        cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
+                        cache_file = self.function._get_cache_file_path(cache_key)
+                        self.function._save_to_cache(cache_file, result_to_cache)
 
                 updated_session_state = None
                 run_context = entrypoint_args.get("run_context") or entrypoint_args.get("_agno_run_context")
@@ -1499,13 +1538,19 @@ class FunctionCall(BaseModel):
                 log_exception(e)
 
     async def _build_nested_execution_chain_async(
-        self, entrypoint_args: Dict[str, Any], cached_result: Optional[Any] = None
+        self,
+        entrypoint_args: Dict[str, Any],
+        cached_result: Optional[Any] = None,
+        raw_results: Optional[List[Any]] = None,
     ):
         """Build a nested chain of async hook executions with the entrypoint at the center.
 
         Similar to _build_nested_execution_chain but for async execution. When
         cached_result is provided, it is substituted for the entrypoint call so
-        hooks still run on cache hits.
+        hooks still run on cache hits. Raw entrypoint returns are appended to
+        raw_results so the caller can cache the pre-hook value: hooks run again
+        on a hit, so caching their output would apply result-transforming hooks
+        twice.
         """
         from functools import reduce
         from inspect import isasyncgenfunction, iscoroutinefunction
@@ -1521,6 +1566,8 @@ class FunctionCall(BaseModel):
             result = self.function.entrypoint(**arguments)  # type: ignore
             if iscoroutinefunction(self.function.entrypoint) and not isasyncgenfunction(self.function.entrypoint):
                 result = await result
+            if raw_results is not None:
+                raw_results.append(result)
             return result
 
         def execute_entrypoint(name, func, args):
@@ -1530,7 +1577,10 @@ class FunctionCall(BaseModel):
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
                 arguments.update(self.arguments)
-            return self.function.entrypoint(**arguments)  # type: ignore
+            result = self.function.entrypoint(**arguments)  # type: ignore
+            if raw_results is not None:
+                raw_results.append(result)
+            return result
 
         # If no hooks, just return the async entrypoint execution function
         if not self.function.tool_hooks:
@@ -1607,11 +1657,12 @@ class FunctionCall(BaseModel):
         execution_result: FunctionExecutionResult
         exception_to_raise = None
 
+        raw_results: List[Any] = []
         try:
             # Build and execute the nested chain of hooks
             if self.function.tool_hooks is not None:
                 execution_chain = await self._build_nested_execution_chain_async(
-                    entrypoint_args, cached_result=cached_result
+                    entrypoint_args, cached_result=cached_result, raw_results=raw_results
                 )
                 self.result = await execution_chain(self.function.name, self.function.entrypoint, self.arguments or {})
             elif from_cache:
@@ -1633,15 +1684,14 @@ class FunctionCall(BaseModel):
                     self.result = result  # Sync function, result is already computed
 
             # Only cache if not a generator, and never re-save a result that
-            # was just served from cache
-            if (
-                self.function.cache_results
-                and not from_cache
-                and not (isgenerator(self.result) or isasyncgen(self.result))
-            ):
-                cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
-                cache_file = self.function._get_cache_file_path(cache_key)
-                self.function._save_to_cache(cache_file, self.result)
+            # was just served from cache. The raw entrypoint return is cached,
+            # not the hook-chain output: hooks run again on a hit.
+            if self.function.cache_results and not from_cache:
+                result_to_cache = raw_results[-1] if raw_results else self.result
+                if not (isgenerator(result_to_cache) or isasyncgen(result_to_cache)):
+                    cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
+                    cache_file = self.function._get_cache_file_path(cache_key)
+                    self.function._save_to_cache(cache_file, result_to_cache)
 
             # For generators, don't capture updated_session_state -
             # session_state is passed by reference, so mutations made during

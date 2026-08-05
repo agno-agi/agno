@@ -1627,10 +1627,12 @@ async def test_agent_refresh_does_not_call_build_tools_after_reconnect():
 
 
 @pytest.mark.asyncio
-async def test_mcp_cached_results_key_per_user_and_hit_across_runs(tmp_path):
-    """MCP entrypoints receive identity via _agno_run_context; the cache must
-    key that channel exactly like run_context: per user and session, with
-    run_id kept out of the key so results are reusable across runs."""
+async def test_mcp_cached_results_key_per_user_and_stay_per_run(tmp_path):
+    """MCP entrypoints receive identity via _agno_run_context, so the cache
+    keys per user. The injected object stays in the key material, so an MCP
+    cache entry is scoped to its run: a header provider that reads the agent,
+    the team, or run-context metadata cannot serve one caller's result to
+    another."""
     from agno.run.base import RunContext
 
     tool = _make_mcp_tool_mock("get_data")
@@ -1652,10 +1654,10 @@ async def test_mcp_cached_results_key_per_user_and_hit_across_runs(tmp_path):
     await FunctionCall(function=fn).aexecute()
     assert session.call_tool.await_count == 2
 
-    # Same user and session in a new run is served from cache
+    # A new run executes again: the run's own context is part of the key
     fn._run_context = RunContext(run_id="r3", session_id="s1", user_id="alice")
     result = await FunctionCall(function=fn).aexecute()
-    assert session.call_tool.await_count == 2
+    assert session.call_tool.await_count == 3
     assert result.status == "success"
 
 

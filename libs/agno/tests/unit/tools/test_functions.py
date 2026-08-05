@@ -2151,6 +2151,7 @@ def test_nested_type_alias_inside_a_union_is_still_identity():
     assert result.status == "success"
     assert result.result == "RunContext:real-user"
 
+
 # =============================================================================
 # Cache key identity tests
 # =============================================================================
@@ -2399,3 +2400,102 @@ async def test_hooks_run_on_cache_hit_async(tmp_path):
     second = await FunctionCall(function=func, arguments={"x": 1}).aexecute()
     assert second.result == "value 1"
     assert events == ["tool_hook", "post_hook"]
+
+
+def test_result_transforming_hook_not_applied_twice_on_cache_hit(tmp_path):
+    """The cache must store the raw entrypoint return, not the hook-chain
+    output: hooks run again on a hit, so caching their output would apply a
+    result-transforming hook twice."""
+    executions = []
+
+    def redacting_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        return f"[audited] {function_call(**arguments)}"
+
+    def compute(x: int) -> str:
+        executions.append(x)
+        return f"value {x}"
+
+    func = Function(
+        name="compute",
+        entrypoint=compute,
+        cache_results=True,
+        cache_dir=str(tmp_path),
+        tool_hooks=[redacting_hook],
+    )
+
+    first = FunctionCall(function=func, arguments={"x": 1}).execute()
+    second = FunctionCall(function=func, arguments={"x": 1}).execute()
+
+    assert first.result == "[audited] value 1"
+    assert second.result == "[audited] value 1"
+    assert executions == [1]
+
+
+@pytest.mark.asyncio
+async def test_result_transforming_hook_not_applied_twice_on_cache_hit_async(tmp_path):
+    """Async variant: raw entrypoint return cached, hook applied once per call."""
+    executions = []
+
+    async def redacting_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        return f"[audited] {await function_call(**arguments)}"
+
+    async def compute(x: int) -> str:
+        executions.append(x)
+        return f"value {x}"
+
+    func = Function(
+        name="compute",
+        entrypoint=compute,
+        cache_results=True,
+        cache_dir=str(tmp_path),
+        tool_hooks=[redacting_hook],
+    )
+
+    first = await FunctionCall(function=func, arguments={"x": 1}).aexecute()
+    second = await FunctionCall(function=func, arguments={"x": 1}).aexecute()
+
+    assert first.result == "[audited] value 1"
+    assert second.result == "[audited] value 1"
+    assert executions == [1]
+
+
+def test_cached_base_model_revalidates_against_return_annotation(tmp_path):
+    """A cached BaseModel result is validated back into the entrypoint's
+    declared return type on a hit, instead of coming back as a plain dict."""
+
+    class Weather(BaseModel):
+        city: str
+        temp_c: int
+
+    def get_weather(city: str) -> Weather:
+        return Weather(city=city, temp_c=20)
+
+    func = Function(name="get_weather", entrypoint=get_weather, cache_results=True, cache_dir=str(tmp_path))
+
+    first = FunctionCall(function=func, arguments={"city": "Paris"}).execute()
+    second = FunctionCall(function=func, arguments={"city": "Paris"}).execute()
+
+    assert isinstance(first.result, Weather)
+    assert isinstance(second.result, Weather)
+    assert second.result == first.result
+
+
+@pytest.mark.asyncio
+async def test_cached_base_model_revalidates_against_return_annotation_async(tmp_path):
+    """Async variant of the BaseModel cache round-trip."""
+
+    class Weather(BaseModel):
+        city: str
+        temp_c: int
+
+    async def get_weather(city: str) -> Weather:
+        return Weather(city=city, temp_c=20)
+
+    func = Function(name="get_weather", entrypoint=get_weather, cache_results=True, cache_dir=str(tmp_path))
+
+    first = await FunctionCall(function=func, arguments={"city": "Paris"}).aexecute()
+    second = await FunctionCall(function=func, arguments={"city": "Paris"}).aexecute()
+
+    assert isinstance(first.result, Weather)
+    assert isinstance(second.result, Weather)
+    assert second.result == first.result
