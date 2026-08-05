@@ -723,6 +723,17 @@ class AsyncMongoDb(AsyncBaseDb):
             if existing is not None and "run_index" in existing:
                 row["run_index"] = existing["run_index"]
 
+            # Backfill run_index for new runs: compute MAX(run_index) + 1 for this session
+            if row.get("run_index") is None:
+                pipeline: list[dict[str, Any]] = [
+                    {"$match": {"session_id": session_id, "run_index": {"$ne": None}}},
+                    {"$group": {"_id": None, "max_idx": {"$max": "$run_index"}}},
+                ]
+                cursor = runs_collection.aggregate(pipeline)
+                result = await cursor.to_list(length=1)  # type: ignore[union-attr]
+                current_max = result[0]["max_idx"] if result else None
+                row["run_index"] = (current_max + 1) if current_max is not None else 0
+
             await runs_collection.replace_one({"run_id": row["run_id"]}, row, upsert=True)
         except Exception as e:
             log_error(f"Exception upserting run into runs collection: {str(e)}")

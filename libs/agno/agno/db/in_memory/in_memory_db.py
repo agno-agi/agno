@@ -509,8 +509,16 @@ class InMemoryDb(BaseDb):
                         runs[i] = run_dict
                         break
                 else:
-                    if run_index is not None and "run_index" not in run_dict:
-                        run_dict["run_index"] = run_index
+                    # Backfill run_index for new runs: find max in this session
+                    if run_dict.get("run_index") is None:
+                        if run_index is not None:
+                            run_dict["run_index"] = run_index
+                        else:
+                            valid_indices: list[int] = [
+                                r["run_index"] for r in runs if isinstance(r, dict) and r.get("run_index") is not None
+                            ]
+                            current_max = max(valid_indices) if valid_indices else None
+                            run_dict["run_index"] = (current_max + 1) if current_max is not None else 0
                     runs.append(run_dict)
                 session["updated_at"] = int(time.time())
                 return
