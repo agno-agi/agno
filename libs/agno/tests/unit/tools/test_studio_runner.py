@@ -1,21 +1,23 @@
 """Unit tests for StudioRunnerTools -- and StudioTools' embedding of it.
 
 Uses a real SqliteDb backed by a pytest tmp_path so component persistence and
-slug resolution run against the full storage path, not mocks. Run execution is
-exercised through stub components that capture the identity kwargs the runner
-threads through.
+name/slug resolution run against the full storage path, not mocks. Run
+execution is exercised through stub components that capture the identity and
+stream kwargs the runner threads through.
 """
 
 import json
 from typing import Any, Dict, Optional
 
 import pytest
+from pydantic import BaseModel
 
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.registry import Registry
 from agno.run import RunContext
 from agno.run.base import RunStatus
+from agno.tools.function import FunctionCall
 from agno.tools.studio import StudioTools
 from agno.tools.studio_runner import StudioRunnerTools
 
@@ -67,6 +69,21 @@ class _PausedRunOutput:
     active_requirements = [_StubRequirement()]
 
 
+class _StructuredContent(BaseModel):
+    title: str
+    n: int
+
+
+class _StructuredRunOutput:
+    run_id = "run-s"
+    session_id = "sub-sess-s"
+    status = RunStatus.completed
+    content = _StructuredContent(title="Q3", n=3)
+
+    def get_content_as_string(self, **kwargs) -> str:
+        return self.content.model_dump_json(exclude_none=True, **kwargs)
+
+
 class _StubAgent:
     id = "stub"
     name = "Stub"
@@ -75,12 +92,12 @@ class _StubAgent:
         self._output = output or _StubRunOutput()
         self.seen: Optional[Dict[str, Any]] = None
 
-    def run(self, message, user_id=None, session_id=None):
-        self.seen = {"message": message, "user_id": user_id, "session_id": session_id}
+    def run(self, message, stream=None, user_id=None, session_id=None):
+        self.seen = {"message": message, "stream": stream, "user_id": user_id, "session_id": session_id}
         return self._output
 
-    async def arun(self, message, user_id=None, session_id=None):
-        self.seen = {"message": message, "user_id": user_id, "session_id": session_id}
+    async def arun(self, message, stream=None, user_id=None, session_id=None):
+        self.seen = {"message": message, "stream": stream, "user_id": user_id, "session_id": session_id}
         return self._output
 
 
@@ -91,12 +108,12 @@ class _StubTeam:
     def __init__(self):
         self.seen: Optional[Dict[str, Any]] = None
 
-    def run(self, message, user_id=None, session_id=None):
-        self.seen = {"message": message, "user_id": user_id, "session_id": session_id}
+    def run(self, message, stream=None, user_id=None, session_id=None):
+        self.seen = {"message": message, "stream": stream, "user_id": user_id, "session_id": session_id}
         return _StubRunOutput()
 
-    async def arun(self, message, user_id=None, session_id=None):
-        self.seen = {"message": message, "user_id": user_id, "session_id": session_id}
+    async def arun(self, message, stream=None, user_id=None, session_id=None):
+        self.seen = {"message": message, "stream": stream, "user_id": user_id, "session_id": session_id}
         return _StubRunOutput()
 
 
@@ -107,12 +124,12 @@ class _StubWorkflow:
     def __init__(self):
         self.seen: Optional[Dict[str, Any]] = None
 
-    def run(self, input=None, user_id=None, session_id=None):
-        self.seen = {"input": input, "user_id": user_id, "session_id": session_id}
+    def run(self, input=None, stream=None, user_id=None, session_id=None):
+        self.seen = {"input": input, "stream": stream, "user_id": user_id, "session_id": session_id}
         return _StubRunOutput()
 
-    async def arun(self, input=None, user_id=None, session_id=None):
-        self.seen = {"input": input, "user_id": user_id, "session_id": session_id}
+    async def arun(self, input=None, stream=None, user_id=None, session_id=None):
+        self.seen = {"input": input, "stream": stream, "user_id": user_id, "session_id": session_id}
         return _StubRunOutput()
 
 
@@ -159,8 +176,8 @@ class TestIdentityThreading:
     def test_run_agent_threads_user_and_derived_session(self, db):
         stub = _StubAgent()
         runner = StudioRunnerTools(db=db, agents_list=[stub])
-        out = _loads(runner.run_agent("stub", "hi", run_context=_context()))
-        assert stub.seen == {"message": "hi", "user_id": "ash", "session_id": "caller-sess--stub"}
+        out = _loads(runner.run_agent("stub", "hi", _agno_run_context=_context()))
+        assert stub.seen == {"message": "hi", "stream": False, "user_id": "ash", "session_id": "caller-sess--stub"}
         assert out == {
             "agent_id": "stub",
             "run_id": "run-1",
@@ -173,13 +190,13 @@ class TestIdentityThreading:
         stub = _StubAgent()
         runner = StudioRunnerTools(db=db, agents_list=[stub])
         out = _loads(runner.run_agent("stub", "hi"))
-        assert stub.seen == {"message": "hi", "user_id": None, "session_id": None}
+        assert stub.seen == {"message": "hi", "stream": False, "user_id": None, "session_id": None}
         assert out["status"] == "COMPLETED"
 
     def test_run_agent_resolves_code_defined_by_name(self, db):
         stub = _StubAgent()
         runner = StudioRunnerTools(db=db, agents_list=[stub])
-        out = _loads(runner.run_agent("Stub", "hi", run_context=_context()))
+        out = _loads(runner.run_agent("Stub", "hi", _agno_run_context=_context()))
         assert "error" not in out
         # The payload and the derived session both carry the component's real id.
         assert out["agent_id"] == "stub"
@@ -188,24 +205,39 @@ class TestIdentityThreading:
     def test_run_team_threads_identity(self, db):
         stub = _StubTeam()
         runner = StudioRunnerTools(db=db, teams_list=[stub])
-        out = _loads(runner.run_team("stub-team", "hi", run_context=_context()))
-        assert stub.seen == {"message": "hi", "user_id": "ash", "session_id": "caller-sess--stub-team"}
+        out = _loads(runner.run_team("stub-team", "hi", _agno_run_context=_context()))
+        assert stub.seen == {
+            "message": "hi",
+            "stream": False,
+            "user_id": "ash",
+            "session_id": "caller-sess--stub-team",
+        }
         assert out["team_id"] == "stub-team"
 
     def test_run_workflow_threads_identity(self, db):
         stub = _StubWorkflow()
         runner = StudioRunnerTools(db=db, workflows_list=[stub])
-        out = _loads(runner.run_workflow("stub-wf", "go", run_context=_context()))
-        assert stub.seen == {"input": "go", "user_id": "ash", "session_id": "caller-sess--stub-wf"}
+        out = _loads(runner.run_workflow("stub-wf", "go", _agno_run_context=_context()))
+        assert stub.seen == {"input": "go", "stream": False, "user_id": "ash", "session_id": "caller-sess--stub-wf"}
         assert out["workflow_id"] == "stub-wf"
 
     @pytest.mark.asyncio
     async def test_arun_agent_threads_identity(self, db):
         stub = _StubAgent()
         runner = StudioRunnerTools(db=db, agents_list=[stub])
-        out = _loads(await runner.arun_agent("stub", "hi", run_context=_context()))
-        assert stub.seen == {"message": "hi", "user_id": "ash", "session_id": "caller-sess--stub"}
+        out = _loads(await runner.arun_agent("stub", "hi", _agno_run_context=_context()))
+        assert stub.seen == {"message": "hi", "stream": False, "user_id": "ash", "session_id": "caller-sess--stub"}
         assert out["status"] == "COMPLETED"
+
+    @pytest.mark.asyncio
+    async def test_arun_team_and_workflow_pin_stream_off(self, db):
+        team = _StubTeam()
+        wf = _StubWorkflow()
+        runner = StudioRunnerTools(db=db, teams_list=[team], workflows_list=[wf])
+        await runner.arun_team("stub-team", "hi")
+        await runner.arun_workflow("stub-wf", "go")
+        assert team.seen is not None and team.seen["stream"] is False
+        assert wf.seen is not None and wf.seen["stream"] is False
 
 
 # ----------------------------------------------------------------------
@@ -217,7 +249,7 @@ class TestPausedRuns:
     def test_paused_run_returns_requirements_and_resume_ids(self, db):
         stub = _StubAgent(output=_PausedRunOutput())
         runner = StudioRunnerTools(db=db, agents_list=[stub])
-        out = _loads(runner.run_agent("stub", "hi", run_context=_context()))
+        out = _loads(runner.run_agent("stub", "hi", _agno_run_context=_context()))
         assert out["status"] == "PAUSED"
         assert out["run_id"] == "run-p"
         assert out["session_id"] == "sub-sess-p"
@@ -236,6 +268,11 @@ class TestPausedRuns:
         out = _loads(runner.run_agent("stub", "hi"))
         assert out["media"] == {"images": 2}
 
+    def test_structured_content_serializes_as_json_not_repr(self, db):
+        runner = StudioRunnerTools(db=db, agents_list=[_StubAgent(output=_StructuredRunOutput())])
+        out = _loads(runner.run_agent("stub", "hi"))
+        assert json.loads(out["content"]) == {"title": "Q3", "n": 3}
+
     @pytest.mark.asyncio
     async def test_async_paused_run_returns_requirements(self, db):
         stub = _StubAgent(output=_PausedRunOutput())
@@ -246,7 +283,109 @@ class TestPausedRuns:
 
 
 # ----------------------------------------------------------------------
-# Resolution: DB components, slug fallback
+# Injected identity cannot be overridden by tool-call arguments
+# ----------------------------------------------------------------------
+
+
+def _passthrough_hook(function_name, function_call, arguments):
+    return function_call(**arguments)
+
+
+async def _async_passthrough_hook(function_name, function_call, arguments):
+    return await function_call(**arguments)
+
+
+class TestInjectionGuard:
+    def _registered_run_agent(self, db, stub, tool_hooks=None):
+        runner = StudioRunnerTools(db=db, agents_list=[stub])
+        function = runner.functions["run_agent"]
+        function.process_entrypoint()
+        function.tool_hooks = tool_hooks
+        function._run_context = _context()
+        return function
+
+    def test_spoofed_context_is_dropped_on_the_hooks_path(self, db):
+        # The tool-hooks execution chain merges tool-call arguments over the
+        # injected ones; a model-emitted _agno_run_context must not win.
+        stub = _StubAgent()
+        function = self._registered_run_agent(db, stub, tool_hooks=[_passthrough_hook])
+        call = FunctionCall(
+            function=function,
+            arguments={
+                "agent_id": "stub",
+                "message": "hi",
+                "_agno_run_context": {"run_id": "x", "user_id": "victim", "session_id": "victim-sess"},
+            },
+        )
+        result = call.execute()
+        assert result.status == "success"
+        assert stub.seen is not None
+        assert stub.seen["user_id"] == "ash"
+        assert stub.seen["session_id"] == "caller-sess--stub"
+
+    def test_spoofed_context_is_dropped_without_hooks(self, db):
+        stub = _StubAgent()
+        function = self._registered_run_agent(db, stub)
+        call = FunctionCall(
+            function=function,
+            arguments={"agent_id": "stub", "message": "hi", "_agno_run_context": None},
+        )
+        result = call.execute()
+        assert result.status == "success"
+        assert stub.seen is not None
+        assert stub.seen["user_id"] == "ash"
+
+    @pytest.mark.asyncio
+    async def test_spoofed_context_is_dropped_on_the_async_hooks_path(self, db):
+        stub = _StubAgent()
+        runner = StudioRunnerTools(db=db, agents_list=[stub])
+        function = runner.async_functions["run_agent"]
+        function.process_entrypoint()
+        function.tool_hooks = [_async_passthrough_hook]
+        function._run_context = _context()
+        call = FunctionCall(
+            function=function,
+            arguments={"agent_id": "stub", "message": "hi", "_agno_run_context": None},
+        )
+        result = await call.aexecute()
+        assert result.status == "success"
+        assert stub.seen is not None
+        assert stub.seen["user_id"] == "ash"
+
+    def test_schema_visible_param_named_like_an_injected_one_keeps_the_model_value(self):
+        # A user tool may declare its own `fc` argument; it stays in the schema,
+        # so the model-supplied value must win over the framework injection.
+        from agno.tools.function import Function
+
+        received: Dict[str, Any] = {}
+
+        def submit(fc: str, note: str) -> str:
+            received.update({"fc": fc, "note": note})
+            return "ok"
+
+        function = Function.from_callable(submit)
+        function.process_entrypoint()
+        assert "fc" in (function.parameters or {}).get("properties", {})
+        function.tool_hooks = [_passthrough_hook]
+        call = FunctionCall(function=function, arguments={"fc": "ABC", "note": "n"})
+        result = call.execute()
+        assert result.status == "success"
+        assert received == {"fc": "ABC", "note": "n"}
+
+    def test_cache_key_is_per_user_and_session_but_not_per_run(self, db):
+        runner = StudioRunnerTools(db=db, agents_list=[_StubAgent()])
+        function = runner.functions["run_agent"]
+
+        def key(run_id: str, user_id: str) -> str:
+            context = RunContext(run_id=run_id, session_id="s", user_id=user_id)
+            return function._get_cache_key({"agent_id": "stub", "_agno_run_context": context}, {"message": "hi"})
+
+        assert key("r1", "alice") == key("r2", "alice")
+        assert key("r1", "alice") != key("r1", "bob")
+
+
+# ----------------------------------------------------------------------
+# Resolution: exact ids, display names, ambiguity, slug fallback
 # ----------------------------------------------------------------------
 
 
@@ -275,6 +414,144 @@ class TestResolution:
         runner = StudioRunnerTools(registry=registry, db=db)
         out = _loads(runner.run_agent("squad", "hi"))
         assert "error" in out
+
+    def test_exact_id_beats_code_defined_display_name(self, db):
+        shadow = _StubAgent()
+        shadow.id = "triage-v2"
+        shadow.name = "researcher"
+        target = _StubAgent()
+        target.id = "researcher"
+        target.name = "Researcher"
+        runner = StudioRunnerTools(db=db, agents_list=[shadow, target])
+        assert runner._find_agent("researcher") is target
+
+    def test_db_exact_id_beats_code_defined_display_name(self, registry, db):
+        studio = StudioTools(registry=registry, db=db)
+        studio.create_agent(name="radar", instructions="i", model_id="gpt-5.4")
+        shadow = _StubAgent()
+        shadow.id = "other"
+        shadow.name = "radar"
+        runner = StudioRunnerTools(registry=registry, db=db, agents_list=[shadow])
+        found = runner._find_agent("radar")
+        assert found is not shadow
+        assert getattr(found, "id", None) == "radar"
+
+    def test_display_name_resolves_across_type_slug_collision(self, registry, db):
+        # The team owns the base slug; the same-named agent got a -2 suffix.
+        # Name resolution is typed, so each type's lookup reaches its own component.
+        studio = StudioTools(registry=registry, db=db, teams=True)
+        studio.create_agent(name="member", instructions="i", model_id="gpt-5.4")
+        studio.create_team(name="Radar Scout", instructions="i", member_ids=["member"], model_id="gpt-5.4")
+        created = _loads(studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4"))
+        assert created["id"] == "radar-scout-2"
+
+        runner = StudioRunnerTools(registry=registry, db=db)
+        agent = runner._find_agent("Radar Scout")
+        team = runner._find_team("Radar Scout")
+        assert agent is not None and agent.id == "radar-scout-2"
+        assert team is not None and team.id == "radar-scout"
+
+    def test_ambiguous_display_name_errors_with_matching_ids(self, registry, db):
+        studio = StudioTools(registry=registry, db=db)
+        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
+        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
+
+        runner = StudioRunnerTools(registry=registry, db=db)
+        out = _loads(runner.run_agent("Radar Scout", "hi"))
+        assert "Ambiguous" in out["error"]
+        assert "radar-scout" in out["error"] and "radar-scout-2" in out["error"]
+        # Exact ids stay unambiguous.
+        found = runner._find_agent("radar-scout-2")
+        assert found is not None and found.id == "radar-scout-2"
+
+    @pytest.mark.asyncio
+    async def test_async_ambiguous_display_name_errors(self, registry, db):
+        studio = StudioTools(registry=registry, db=db)
+        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
+        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
+
+        runner = StudioRunnerTools(registry=registry, db=db)
+        out = _loads(await runner.arun_agent("Radar Scout", "hi"))
+        assert "Ambiguous" in out["error"]
+
+    def test_slug_fallback_resolves_when_name_lookup_misses(self, registry, db):
+        studio = StudioTools(registry=registry, db=db)
+        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
+
+        runner = StudioRunnerTools(registry=registry, db=db)
+        found = runner._find_agent("radar scout!")
+        assert found is not None and found.id == "radar-scout"
+
+    def test_name_lookup_pages_beyond_first_page(self, registry, db, monkeypatch):
+        import agno.tools.studio_runner as studio_runner_module
+
+        monkeypatch.setattr(studio_runner_module, "_NAME_LOOKUP_PAGE", 1)
+        studio = StudioTools(registry=registry, db=db)
+        for name in ("Oldest Match", "newer-a", "newer-b"):
+            studio.create_agent(name=name, instructions="i", model_id="gpt-5.4")
+
+        runner = StudioRunnerTools(registry=registry, db=db)
+        found = runner._find_agent("Oldest Match")
+        assert found is not None and found.id == "oldest-match"
+
+    def test_duplicate_code_defined_names_error(self, db):
+        twin_a = _StubAgent()
+        twin_a.id = "twin-a"
+        twin_a.name = "Twin"
+        twin_b = _StubAgent()
+        twin_b.id = "twin-b"
+        twin_b.name = "Twin"
+        runner = StudioRunnerTools(db=db, agents_list=[twin_a, twin_b])
+        out = _loads(runner.run_agent("Twin", "hi"))
+        assert "Ambiguous" in out["error"]
+        assert "twin-a" in out["error"] and "twin-b" in out["error"]
+
+    def test_broken_exact_id_is_not_reinterpreted_as_a_name(self, registry, db, monkeypatch):
+        # Agent "reports" exists but its config no longer loads; a different
+        # agent is *named* "reports". The exact id must report not-found, not
+        # silently dispatch the name match.
+        from agno.agent.agent import Agent as AgentClass
+
+        studio = StudioTools(registry=registry, db=db)
+        studio.create_agent(name="Reports", instructions="i", model_id="gpt-5.4")
+        created = _loads(studio.create_agent(name="reports", instructions="i", model_id="gpt-5.4"))
+        assert created["id"] == "reports-2"
+
+        original_from_dict = AgentClass.from_dict
+
+        def guarded(config, **kwargs):
+            if isinstance(config, dict) and config.get("name") == "Reports":
+                raise RuntimeError("broken config")
+            return original_from_dict(config, **kwargs)
+
+        monkeypatch.setattr(AgentClass, "from_dict", staticmethod(guarded))
+
+        runner = StudioRunnerTools(registry=registry, db=db)
+        out = _loads(runner.run_agent("reports", "hi"))
+        assert out == {"error": "Agent not found: reports"}
+
+    def test_works_on_db_without_component_support(self):
+        # In-memory and most non-SQL adapters do not implement component
+        # storage; code-defined dispatch must still work and misses must stay
+        # JSON errors, never raw NotImplementedError.
+        from agno.db.in_memory import InMemoryDb
+
+        stub = _StubAgent()
+        runner = StudioRunnerTools(db=InMemoryDb(), agents_list=[stub])
+        out = _loads(runner.run_agent("Stub", "hi"))
+        assert out["agent_id"] == "stub"
+        missing = _loads(runner.run_agent("nope", "hi"))
+        assert missing == {"error": "Agent not found: nope"}
+
+    def test_db_failure_during_resolution_returns_error_payload(self, db):
+        runner = StudioRunnerTools(db=db)
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("connection reset")
+
+        runner.db.list_components = boom  # type: ignore[method-assign]
+        out = _loads(runner.run_agent("Some Name", "hi"))
+        assert "connection reset" in out["error"]
 
 
 # ----------------------------------------------------------------------
@@ -325,13 +602,81 @@ class TestStudioEmbedding:
     def test_identity_threads_through_studio_registered_tool(self, registry, db):
         stub = _StubAgent()
         studio = StudioTools(registry=registry, db=db, agents_list=[stub])
-        out = _loads(studio.functions["run_agent"].entrypoint("stub", "hi", run_context=_context()))
-        assert stub.seen == {"message": "hi", "user_id": "ash", "session_id": "caller-sess--stub"}
+        out = _loads(studio.functions["run_agent"].entrypoint("stub", "hi", _agno_run_context=_context()))
+        assert stub.seen == {"message": "hi", "stream": False, "user_id": "ash", "session_id": "caller-sess--stub"}
         assert out["agent_id"] == "stub"
 
-    def test_studio_lookups_gain_slug_resolution(self, registry, db):
+    def test_studio_lookups_gain_name_resolution(self, registry, db):
         studio = StudioTools(registry=registry, db=db)
         studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
         # get_agent by display name resolves via the shared runner lookup path.
         out = _loads(studio.get_agent("Radar Scout"))
         assert out.get("id") == "radar-scout"
+
+    def test_get_agent_ambiguous_name_errors(self, registry, db):
+        studio = StudioTools(registry=registry, db=db)
+        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
+        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
+        out = _loads(studio.get_agent("Radar Scout"))
+        assert "Ambiguous" in out.get("error", "")
+
+    def test_edit_resolves_display_name_to_canonical_id(self, registry, db):
+        studio = StudioTools(registry=registry, db=db)
+        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
+        out = _loads(studio.edit_agent("Radar Scout", instructions="updated"))
+        assert out.get("status") == "edited"
+        assert out.get("id") == "radar-scout"
+        fetched = _loads(studio.get_agent("radar-scout"))
+        assert fetched["instructions"] == "updated"
+
+    def test_create_team_ambiguous_member_name_errors(self, registry, db):
+        studio = StudioTools(registry=registry, db=db, teams=True)
+        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
+        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
+        out = _loads(studio.create_team(name="squad", instructions="i", member_ids=["Radar Scout"], model_id="gpt-5.4"))
+        assert "Ambiguous" in out.get("error", "")
+
+    def test_delete_requires_exact_id_and_points_to_it(self, registry, db):
+        studio = StudioTools(registry=registry, db=db)
+        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
+        out = _loads(studio.delete_agent("Radar Scout"))
+        assert "error" in out
+        assert "radar-scout" in out["error"]
+        assert _loads(studio.delete_agent("radar-scout"))["status"] == "deleted"
+
+    def test_edit_reaches_db_component_shadowed_by_code_defined_name(self, registry, db):
+        # A code-defined component NAMED like a DB component's id must not make
+        # the DB component uneditable: exact ids win on every path.
+        studio = StudioTools(registry=registry, db=db)
+        studio.create_agent(name="support", instructions="i", model_id="gpt-5.4")
+        shadow = _StubAgent()
+        shadow.id = "code-1"
+        shadow.name = "support"
+        shadowed = StudioTools(registry=registry, db=db, agents_list=[shadow])
+        got = _loads(shadowed.get_agent("support"))
+        assert got["id"] == "support"
+        out = _loads(shadowed.edit_agent("support", instructions="updated"))
+        assert out.get("status") == "edited"
+        assert out.get("id") == "support"
+
+    def test_edit_by_display_name_accumulates_drafts_with_versions(self, registry, db):
+        # The edit base version must come from the RESOLVED id: a display-name
+        # edit picks up the pending draft, not the published config.
+        studio = StudioTools(registry=registry, db=db, versions=True)
+        studio.create_agent(name="Radar Scout", instructions="original", model_id="gpt-5.4")
+        first = _loads(studio.edit_agent("radar-scout", instructions="first-change"))
+        assert first.get("status") == "edited"
+        second = _loads(studio.edit_agent("Radar Scout", description="second-change"))
+        assert second.get("status") == "edited"
+
+        configs = db.list_configs("radar-scout", include_config=True)
+        drafts = [c for c in configs if c.get("stage") == "draft"]
+        latest = max(drafts, key=lambda c: c["version"])
+        assert latest["config"]["instructions"] == "first-change"
+        assert latest["config"]["description"] == "second-change"
+
+    def test_studio_instructions_carry_run_guidance(self, registry, db):
+        studio = StudioTools(registry=registry, db=db)
+        instructions = studio.instructions or ""
+        assert "sequentially" in instructions
+        assert "ambiguous display name" in instructions.lower()

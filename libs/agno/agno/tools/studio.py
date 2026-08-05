@@ -62,7 +62,7 @@ import json
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 from agno.tools.function import Function
-from agno.tools.studio_runner import StudioRunnerTools, _slugify
+from agno.tools.studio_runner import AmbiguousComponentNameError, StudioRunnerTools, _slugify
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_debug, logger
 
@@ -313,6 +313,10 @@ class StudioTools(Toolkit):
             "then call edit_agent/edit_team/edit_workflow with only the fields that change.",
             "Run tools execute a component as the current user; a PAUSED result is waiting on human "
             "approval -- relay its requirements and keep the run_id/session_id for the resume.",
+            "Component lookups accept an exact id or a display name; an ambiguous display name returns "
+            "an error listing the matching ids -- retry with the exact id. Deletes require the exact id.",
+            "Call a given component sequentially within a turn: parallel runs of the same component "
+            "share one session and can overwrite each other.",
         ]
         if self.enable_versions:
             instruction_lines.extend(
@@ -451,8 +455,10 @@ class StudioTools(Toolkit):
 
     # ------------------------------------------------------------------
     # Component lookup -- delegated to the embedded StudioRunnerTools so the
-    # builder and a standalone dispatcher resolve components one way (code-
-    # defined lists first, then DB by id, then DB by slugified name).
+    # builder and a standalone dispatcher resolve components one way: exact
+    # ids first (code-defined, then DB), then display names (code-defined,
+    # then DB, where an ambiguous name raises AmbiguousComponentNameError),
+    # then the identifier's slug as an id.
     # ------------------------------------------------------------------
 
     def _iter_agents(self) -> List["Agent"]:
@@ -479,32 +485,63 @@ class StudioTools(Toolkit):
 
     def _find_agent_for_edit(self, agent_id: str) -> Optional["Agent"]:
         for a in self._iter_agents():
-            if getattr(a, "id", None) == agent_id or getattr(a, "name", None) == agent_id:
+            if getattr(a, "id", None) == agent_id:
                 return a
-        return self._load_agent_from_db(agent_id, version=self._edit_base_version(agent_id))
+        if self._runner_tools._db_component_exists("agent", agent_id):
+            return self._load_agent_from_db(agent_id, version=self._edit_base_version(agent_id))
+        for a in self._iter_agents():
+            if getattr(a, "name", None) == agent_id:
+                return a
+        resolved = self._runner_tools._resolve_db_id_by_name_or_slug("agent", agent_id)
+        if resolved is None:
+            return None
+        return self._load_agent_from_db(resolved, version=self._edit_base_version(resolved))
 
     def _find_team_for_edit(self, team_id: str) -> Optional["Team"]:
         for t in self._iter_teams():
-            if getattr(t, "id", None) == team_id or getattr(t, "name", None) == team_id:
+            if getattr(t, "id", None) == team_id:
                 return t
-        return self._load_team_from_db(team_id, version=self._edit_base_version(team_id))
+        if self._runner_tools._db_component_exists("team", team_id):
+            return self._load_team_from_db(team_id, version=self._edit_base_version(team_id))
+        for t in self._iter_teams():
+            if getattr(t, "name", None) == team_id:
+                return t
+        resolved = self._runner_tools._resolve_db_id_by_name_or_slug("team", team_id)
+        if resolved is None:
+            return None
+        return self._load_team_from_db(resolved, version=self._edit_base_version(resolved))
 
     def _find_workflow_for_edit(self, workflow_id: str) -> Optional["Workflow"]:
         for w in self._iter_workflows():
-            if getattr(w, "id", None) == workflow_id or getattr(w, "name", None) == workflow_id:
+            if getattr(w, "id", None) == workflow_id:
                 return w
-        return self._load_workflow_from_db(workflow_id, version=self._edit_base_version(workflow_id))
+        if self._runner_tools._db_component_exists("workflow", workflow_id):
+            return self._load_workflow_from_db(workflow_id, version=self._edit_base_version(workflow_id))
+        for w in self._iter_workflows():
+            if getattr(w, "name", None) == workflow_id:
+                return w
+        resolved = self._runner_tools._resolve_db_id_by_name_or_slug("workflow", workflow_id)
+        if resolved is None:
+            return None
+        return self._load_workflow_from_db(resolved, version=self._edit_base_version(resolved))
 
-    def _is_code_defined(self, component_id: str, candidates: List[Any]) -> bool:
-        """True if the id/name matches a code-defined (registry/list) component.
+    def _is_code_defined(self, component_id: str, candidates: List[Any], component_type: str) -> bool:
+        """True if the identifier refers to a code-defined (registry/list) component.
 
         Code-defined components are not DB-backed, so editing them would write an
         unreachable DB row that the live object always shadows. edit_* rejects
         these instead of silently persisting a draft no one can load.
+
+        A display-name match only counts when the identifier is not an exact DB
+        id: exact ids resolve to the DB component on every other path (id-first
+        order), so the edit guard must agree.
         """
         for c in candidates:
-            if getattr(c, "id", None) == component_id or getattr(c, "name", None) == component_id:
+            if getattr(c, "id", None) == component_id:
                 return True
+        for c in candidates:
+            if getattr(c, "name", None) == component_id:
+                return not self._runner_tools._db_component_exists(component_type, component_id)
         return False
 
     def _edit_base_version(self, component_id: str) -> Optional[int]:
@@ -743,7 +780,13 @@ class StudioTools(Toolkit):
         Args:
             agent_id (str): The id or name of the agent.
         """
-        agent = self._find_agent(agent_id)
+        try:
+            agent = self._find_agent(agent_id)
+        except AmbiguousComponentNameError as e:
+            return json.dumps({"error": str(e)})
+        except Exception as e:
+            logger.exception("Failed to resolve agent")
+            return json.dumps({"error": f"Failed to resolve agent '{agent_id}': {str(e) or type(e).__name__}"})
         if agent is None:
             return json.dumps({"error": f"Agent not found: {agent_id}"})
         return json.dumps(
@@ -769,7 +812,13 @@ class StudioTools(Toolkit):
         Args:
             team_id (str): The id or name of the team.
         """
-        team = self._find_team(team_id)
+        try:
+            team = self._find_team(team_id)
+        except AmbiguousComponentNameError as e:
+            return json.dumps({"error": str(e)})
+        except Exception as e:
+            logger.exception("Failed to resolve team")
+            return json.dumps({"error": f"Failed to resolve team '{team_id}': {str(e) or type(e).__name__}"})
         if team is None:
             return json.dumps({"error": f"Team not found: {team_id}"})
         members = getattr(team, "members", None) or []
@@ -796,7 +845,13 @@ class StudioTools(Toolkit):
         Args:
             workflow_id (str): The id or name of the workflow.
         """
-        wf = self._find_workflow(workflow_id)
+        try:
+            wf = self._find_workflow(workflow_id)
+        except AmbiguousComponentNameError as e:
+            return json.dumps({"error": str(e)})
+        except Exception as e:
+            logger.exception("Failed to resolve workflow")
+            return json.dumps({"error": f"Failed to resolve workflow '{workflow_id}': {str(e) or type(e).__name__}"})
         if wf is None:
             return json.dumps({"error": f"Workflow not found: {workflow_id}"})
         steps = getattr(wf, "steps", None) or []
@@ -1081,11 +1136,17 @@ class StudioTools(Toolkit):
         """
         if self.db is None:
             return json.dumps({"error": "StudioTools has no db configured; cannot edit components."})
-        if self._is_code_defined(agent_id, self._iter_agents()):
+        if self._is_code_defined(agent_id, self._iter_agents(), "agent"):
             return json.dumps(
                 {"error": f"Cannot edit code-defined agent: {agent_id}. Only Studio-created components are editable."}
             )
-        agent = self._find_agent_for_edit(agent_id)
+        try:
+            agent = self._find_agent_for_edit(agent_id)
+        except AmbiguousComponentNameError as e:
+            return json.dumps({"error": str(e)})
+        except Exception as e:
+            logger.exception("Failed to resolve agent")
+            return json.dumps({"error": f"Failed to resolve agent '{agent_id}': {str(e) or type(e).__name__}"})
         if agent is None:
             return json.dumps({"error": f"Agent not found: {agent_id}"})
 
@@ -1116,8 +1177,8 @@ class StudioTools(Toolkit):
                 agent.add_datetime_to_context = add_datetime_to_context
 
             result = self._save_edit(agent)
-            log_debug(f"StudioTools edited agent id={agent_id} result={result}")
-            return json.dumps({"status": "edited", "id": agent_id, **result})
+            log_debug(f"StudioTools edited agent id={agent.id} result={result}")
+            return json.dumps({"status": "edited", "id": getattr(agent, "id", None) or agent_id, **result})
         except Exception as e:
             logger.exception("Failed to edit agent")
             return json.dumps({"error": str(e)})
@@ -1154,11 +1215,17 @@ class StudioTools(Toolkit):
         """
         if self.db is None:
             return json.dumps({"error": "StudioTools has no db configured; cannot edit components."})
-        if self._is_code_defined(team_id, self._iter_teams()):
+        if self._is_code_defined(team_id, self._iter_teams(), "team"):
             return json.dumps(
                 {"error": f"Cannot edit code-defined team: {team_id}. Only Studio-created components are editable."}
             )
-        team = self._find_team_for_edit(team_id)
+        try:
+            team = self._find_team_for_edit(team_id)
+        except AmbiguousComponentNameError as e:
+            return json.dumps({"error": str(e)})
+        except Exception as e:
+            logger.exception("Failed to resolve team")
+            return json.dumps({"error": f"Failed to resolve team '{team_id}': {str(e) or type(e).__name__}"})
         if team is None:
             return json.dumps({"error": f"Team not found: {team_id}"})
 
@@ -1194,8 +1261,8 @@ class StudioTools(Toolkit):
                 team.add_datetime_to_context = add_datetime_to_context
 
             result = self._save_edit(team)
-            log_debug(f"StudioTools edited team id={team_id} result={result}")
-            return json.dumps({"status": "edited", "id": team_id, **result})
+            log_debug(f"StudioTools edited team id={team.id} result={result}")
+            return json.dumps({"status": "edited", "id": getattr(team, "id", None) or team_id, **result})
         except Exception as e:
             logger.exception("Failed to edit team")
             return json.dumps({"error": str(e)})
@@ -1221,13 +1288,19 @@ class StudioTools(Toolkit):
         """
         if self.db is None:
             return json.dumps({"error": "StudioTools has no db configured; cannot edit components."})
-        if self._is_code_defined(workflow_id, self._iter_workflows()):
+        if self._is_code_defined(workflow_id, self._iter_workflows(), "workflow"):
             return json.dumps(
                 {
                     "error": f"Cannot edit code-defined workflow: {workflow_id}. Only Studio-created components are editable."
                 }
             )
-        wf = self._find_workflow_for_edit(workflow_id)
+        try:
+            wf = self._find_workflow_for_edit(workflow_id)
+        except AmbiguousComponentNameError as e:
+            return json.dumps({"error": str(e)})
+        except Exception as e:
+            logger.exception("Failed to resolve workflow")
+            return json.dumps({"error": f"Failed to resolve workflow '{workflow_id}': {str(e) or type(e).__name__}"})
         if wf is None:
             return json.dumps({"error": f"Workflow not found: {workflow_id}"})
 
@@ -1245,8 +1318,8 @@ class StudioTools(Toolkit):
                 wf.steps = steps
 
             result = self._save_edit(wf)
-            log_debug(f"StudioTools edited workflow id={workflow_id} result={result}")
-            return json.dumps({"status": "edited", "id": workflow_id, **result})
+            log_debug(f"StudioTools edited workflow id={wf.id} result={result}")
+            return json.dumps({"status": "edited", "id": getattr(wf, "id", None) or workflow_id, **result})
         except Exception as e:
             logger.exception("Failed to edit workflow")
             return json.dumps({"error": str(e)})
@@ -1386,7 +1459,8 @@ class StudioTools(Toolkit):
         """Hard-delete an agent DB component.
 
         Args:
-            agent_id (str): The id of the agent to delete.
+            agent_id (str): The exact id of the agent to delete. Display names
+                do not resolve for destructive operations.
         """
         if self.db is None:
             return json.dumps({"error": "StudioTools has no db configured; cannot delete components."})
@@ -1395,6 +1469,11 @@ class StudioTools(Toolkit):
 
             component = self.db.get_component(agent_id, component_type=ComponentType.AGENT)
             if component is None:
+                resolved = self._runner_tools._resolve_db_id_by_name_or_slug("agent", agent_id)
+                if resolved is not None:
+                    return json.dumps(
+                        {"error": f"Delete requires the exact id: '{agent_id}' resolves to '{resolved}'."}
+                    )
                 return json.dumps({"error": f"Agent not found: {agent_id}"})
             deleted = self.db.delete_component(agent_id, hard_delete=True)
             if not deleted:
@@ -1408,7 +1487,8 @@ class StudioTools(Toolkit):
         """Hard-delete a team component.
 
         Args:
-            team_id (str): The id of the team to delete.
+            team_id (str): The exact id of the team to delete. Display names
+                do not resolve for destructive operations.
         """
         if self.db is None:
             return json.dumps({"error": "StudioTools has no db configured; cannot delete components."})
@@ -1417,6 +1497,9 @@ class StudioTools(Toolkit):
 
             component = self.db.get_component(team_id, component_type=ComponentType.TEAM)
             if component is None:
+                resolved = self._runner_tools._resolve_db_id_by_name_or_slug("team", team_id)
+                if resolved is not None:
+                    return json.dumps({"error": f"Delete requires the exact id: '{team_id}' resolves to '{resolved}'."})
                 return json.dumps({"error": f"Team not found: {team_id}"})
             deleted = self.db.delete_component(team_id, hard_delete=True)
             if not deleted:
@@ -1430,7 +1513,8 @@ class StudioTools(Toolkit):
         """Hard-delete a workflow component.
 
         Args:
-            workflow_id (str): The id of the workflow to delete.
+            workflow_id (str): The exact id of the workflow to delete. Display
+                names do not resolve for destructive operations.
         """
         if self.db is None:
             return json.dumps({"error": "StudioTools has no db configured; cannot delete components."})
@@ -1439,6 +1523,11 @@ class StudioTools(Toolkit):
 
             component = self.db.get_component(workflow_id, component_type=ComponentType.WORKFLOW)
             if component is None:
+                resolved = self._runner_tools._resolve_db_id_by_name_or_slug("workflow", workflow_id)
+                if resolved is not None:
+                    return json.dumps(
+                        {"error": f"Delete requires the exact id: '{workflow_id}' resolves to '{resolved}'."}
+                    )
                 return json.dumps({"error": f"Workflow not found: {workflow_id}"})
             deleted = self.db.delete_component(workflow_id, hard_delete=True)
             if not deleted:

@@ -1482,10 +1482,10 @@ class _StubAgent:
     id = "stub"
     name = "Stub"
 
-    def run(self, message, user_id=None, session_id=None):
+    def run(self, message, stream=None, user_id=None, session_id=None):
         return _StubRunOutput()
 
-    async def arun(self, message, user_id=None, session_id=None):
+    async def arun(self, message, stream=None, user_id=None, session_id=None):
         return _StubRunOutput()
 
 

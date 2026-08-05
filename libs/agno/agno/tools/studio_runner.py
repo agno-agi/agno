@@ -26,10 +26,16 @@ Semantics:
       run_id/session_id a continue call must address (the same shape the
       AgentOS MCP plane returns) -- human-in-the-loop pauses are relayed, not
       swallowed.
-    * run_* resolve the exact component id first, then a code-defined
-      display name, then the id's slug -- Studio-created components live in
-      the database under slugified-name ids, so the name users say ("Radar
-      Scout") reaches the component it created ("radar-scout").
+    * Runs are dispatched with stream=False pinned: run-option resolution is
+      call-site > component.stream > False, so a component saved with
+      stream=True would otherwise hand back an unconsumed event iterator
+      instead of its final run output.
+    * run_* resolve in a fixed order: code-defined exact id, DB exact id,
+      code-defined display name, DB display name, then the identifier's slug
+      as an id (covers renamed components, whose ids keep the original
+      name's slug). Exact ids always win over display names. A display name
+      matching several components of the type returns an error listing the
+      matching ids instead of silently picking one.
     * list_* read the database only (id, name, description, newest first):
       code-defined components are the wielding platform's own and are not
       re-listed. 'total' reports the full DB count, so a capped list is
@@ -57,6 +63,10 @@ if TYPE_CHECKING:
     from agno.team.team import Team
     from agno.workflow.workflow import Workflow
 
+# Page size for the display-name fallback lookup, which scans the components
+# table when an identifier is not an exact id.
+_NAME_LOOKUP_PAGE = 100
+
 
 def _slugify(name: str) -> str:
     """Component ids are slugified names (shared with StudioTools' create path)."""
@@ -64,6 +74,20 @@ def _slugify(name: str) -> str:
     while "--" in slug:
         slug = slug.replace("--", "-")
     return slug.strip("-") or "component"
+
+
+class AmbiguousComponentNameError(ValueError):
+    """A display name matched more than one component of the requested type.
+
+    Raised instead of silently resolving to one of them; the message lists the
+    matching ids so the caller (model or code) can retry with an exact id.
+    """
+
+    def __init__(self, component_type: str, name: str, matches: List[str]):
+        self.matches = sorted(matches)
+        super().__init__(
+            f"Ambiguous {component_type} name: '{name}' matches ids {', '.join(self.matches)}. Use the exact id."
+        )
 
 
 # The two helpers below mirror agno/os/mcp_results.py so toolkit results and MCP
@@ -142,12 +166,14 @@ class StudioRunnerTools(Toolkit):
                 "Run components built in the Studio: discover what exists, then run by id.",
                 f"{list_names}: id, name, and description of what exists in the platform database, newest first.",
                 f"{run_names}: send one message; the result carries run_id, session_id, status, and content. "
-                "Use the exact id from a list tool; a display name or its slug also resolves.",
+                "Use the exact id from a list tool; a display name or its slug also resolves. An ambiguous "
+                "display name returns an error listing the matching ids -- retry with the exact id.",
                 "A PAUSED status means the run awaits human approval: relay the requirements to the user and "
                 "include the run_id and session_id -- the run is resumed through the platform, never by "
                 "running it again.",
                 "Runs execute as the current user and keep one session per component per conversation, so "
-                "repeat runs continue where they left off.",
+                "repeat runs continue where they left off. Call a given component sequentially within a "
+                "turn: parallel calls to the same component share one session and can overwrite each other.",
             ]
 
         # Toolkit instructions are only injected into the system message when
@@ -183,39 +209,115 @@ class StudioRunnerTools(Toolkit):
         return list(self.workflows_list) if self.workflows_list is not None else []
 
     def _find_agent(self, agent_id: str) -> Optional["Agent"]:
-        """Lookup order: code-defined list (id or name), DB by id, DB by slug.
-        Studio-created components live in DB under slugified-name ids."""
+        """Lookup order: code-defined exact id, DB exact id, code-defined display
+        name, DB display name (ambiguous -> AmbiguousComponentNameError), then
+        the identifier's slug as an id. Exact ids always win over names."""
         for a in self._iter_agents():
-            if getattr(a, "id", None) == agent_id or getattr(a, "name", None) == agent_id:
+            if getattr(a, "id", None) == agent_id:
                 return a
         agent = self._load_agent_from_db(agent_id)
-        if agent is None:
-            slug = _slugify(agent_id)
-            if slug != agent_id:
-                agent = self._load_agent_from_db(slug)
-        return agent
+        if agent is not None:
+            return agent
+        if self._db_component_exists("agent", agent_id):
+            # The id names a stored component whose config is missing or broken;
+            # never reinterpret an exact id as a display name.
+            return None
+        named_agents = [a for a in self._iter_agents() if getattr(a, "name", None) == agent_id]
+        if len(named_agents) > 1:
+            raise AmbiguousComponentNameError("agent", agent_id, [str(getattr(a, "id", "")) for a in named_agents])
+        if named_agents:
+            return named_agents[0]
+        resolved = self._resolve_db_id_by_name_or_slug("agent", agent_id)
+        return self._load_agent_from_db(resolved) if resolved is not None else None
 
     def _find_team(self, team_id: str) -> Optional["Team"]:
         for t in self._iter_teams():
-            if getattr(t, "id", None) == team_id or getattr(t, "name", None) == team_id:
+            if getattr(t, "id", None) == team_id:
                 return t
         team = self._load_team_from_db(team_id)
-        if team is None:
-            slug = _slugify(team_id)
-            if slug != team_id:
-                team = self._load_team_from_db(slug)
-        return team
+        if team is not None:
+            return team
+        if self._db_component_exists("team", team_id):
+            return None
+        named_teams = [t for t in self._iter_teams() if getattr(t, "name", None) == team_id]
+        if len(named_teams) > 1:
+            raise AmbiguousComponentNameError("team", team_id, [str(getattr(t, "id", "")) for t in named_teams])
+        if named_teams:
+            return named_teams[0]
+        resolved = self._resolve_db_id_by_name_or_slug("team", team_id)
+        return self._load_team_from_db(resolved) if resolved is not None else None
 
     def _find_workflow(self, workflow_id: str) -> Optional["Workflow"]:
         for w in self._iter_workflows():
-            if getattr(w, "id", None) == workflow_id or getattr(w, "name", None) == workflow_id:
+            if getattr(w, "id", None) == workflow_id:
                 return w
         wf = self._load_workflow_from_db(workflow_id)
-        if wf is None:
-            slug = _slugify(workflow_id)
-            if slug != workflow_id:
-                wf = self._load_workflow_from_db(slug)
-        return wf
+        if wf is not None:
+            return wf
+        if self._db_component_exists("workflow", workflow_id):
+            return None
+        named_workflows = [w for w in self._iter_workflows() if getattr(w, "name", None) == workflow_id]
+        if len(named_workflows) > 1:
+            raise AmbiguousComponentNameError(
+                "workflow", workflow_id, [str(getattr(w, "id", "")) for w in named_workflows]
+            )
+        if named_workflows:
+            return named_workflows[0]
+        resolved = self._resolve_db_id_by_name_or_slug("workflow", workflow_id)
+        return self._load_workflow_from_db(resolved) if resolved is not None else None
+
+    def _db_component_exists(self, component_type: str, component_id: str) -> bool:
+        if self.db is None:
+            return False
+        from agno.db.base import ComponentType
+
+        try:
+            return self.db.get_component(component_id, component_type=ComponentType(component_type)) is not None
+        except NotImplementedError:
+            return False
+
+    def _resolve_db_id_by_name(self, component_type: str, name: str) -> Optional[str]:
+        """Id of the DB component of this type whose display name matches exactly.
+
+        Pages through the full components table so a match beyond the first page
+        is never silently missed; only runs after the exact-id lookup missed.
+        Raises AmbiguousComponentNameError when several components share the name.
+        """
+        if self.db is None:
+            return None
+        from agno.db.base import ComponentType
+
+        matches: List[str] = []
+        offset = 0
+        component_type_enum = ComponentType(component_type)
+        while True:
+            try:
+                rows, total = self.db.list_components(
+                    component_type=component_type_enum, limit=_NAME_LOOKUP_PAGE, offset=offset
+                )
+            except NotImplementedError:
+                # Not every db adapter implements component storage; degrade to
+                # "no name match" so code-defined resolution still works.
+                return None
+            if not rows:
+                break
+            matches.extend(str(r["component_id"]) for r in rows if r.get("name") == name and r.get("component_id"))
+            offset += len(rows)
+            if offset >= total:
+                break
+        if len(matches) > 1:
+            raise AmbiguousComponentNameError(component_type, name, matches)
+        return matches[0] if matches else None
+
+    def _resolve_db_id_by_name_or_slug(self, component_type: str, identifier: str) -> Optional[str]:
+        """DB id for a non-id identifier: display name first, then its slug."""
+        resolved = self._resolve_db_id_by_name(component_type, identifier)
+        if resolved is not None:
+            return resolved
+        slug = _slugify(identifier)
+        if slug != identifier and self._db_component_exists(component_type, slug):
+            return slug
+        return None
 
     def _load_agent_from_db(self, agent_id: str, version: Optional[int] = None) -> Optional["Agent"]:
         """Load an agent from DB via config + from_dict. Bypasses Agent.load() to
@@ -284,9 +386,17 @@ class StudioRunnerTools(Toolkit):
         """
         if self.db is None:
             return None
-        if component_type is not None and self.db.get_component(component_id, component_type=component_type) is None:
+        try:
+            if (
+                component_type is not None
+                and self.db.get_component(component_id, component_type=component_type) is None
+            ):
+                return None
+            row = self.db.get_config(component_id=component_id, version=version)
+        except NotImplementedError:
+            # Not every db adapter implements component storage; treat the
+            # component as absent so code-defined resolution still works.
             return None
-        row = self.db.get_config(component_id=component_id, version=version)
         if row is None:
             return None
         config = row.get("config") if isinstance(row, dict) else None
@@ -357,7 +467,7 @@ class StudioRunnerTools(Toolkit):
     # Execution
     # ------------------------------------------------------------------
 
-    def run_agent(self, agent_id: str, message: str, run_context: Optional[RunContext] = None) -> str:
+    def run_agent(self, agent_id: str, message: str, _agno_run_context: Optional[RunContext] = None) -> str:
         """Run an agent and return its result.
 
         The run executes as the current user and continues that user's
@@ -373,22 +483,29 @@ class StudioRunnerTools(Toolkit):
             str: JSON object with 'agent_id', 'run_id', 'session_id', 'status',
                 'content' and, when paused, 'requirements'.
         """
-        agent = self._find_agent(agent_id)
+        try:
+            agent = self._find_agent(agent_id)
+        except AmbiguousComponentNameError as e:
+            return json.dumps({"error": str(e)})
+        except Exception as e:
+            logger.exception("Failed to resolve agent")
+            return json.dumps({"error": f"Failed to resolve agent '{agent_id}': {str(e) or type(e).__name__}"})
         if agent is None:
             return json.dumps({"error": f"Agent not found: {agent_id}"})
         component_id = getattr(agent, "id", None) or agent_id
         try:
             response = agent.run(
                 message,
-                user_id=run_context.user_id if run_context is not None else None,
-                session_id=self._sub_session_id(run_context, component_id),
+                stream=False,
+                user_id=_agno_run_context.user_id if _agno_run_context is not None else None,
+                session_id=self._sub_session_id(_agno_run_context, component_id),
             )
             return self._run_payload("agent_id", component_id, response)
         except Exception as e:
             logger.exception("Failed to run agent")
             return json.dumps({"error": str(e)})
 
-    def run_team(self, team_id: str, message: str, run_context: Optional[RunContext] = None) -> str:
+    def run_team(self, team_id: str, message: str, _agno_run_context: Optional[RunContext] = None) -> str:
         """Run a team and return its result.
 
         The run executes as the current user and continues that user's
@@ -404,22 +521,29 @@ class StudioRunnerTools(Toolkit):
             str: JSON object with 'team_id', 'run_id', 'session_id', 'status',
                 'content' and, when paused, 'requirements'.
         """
-        team = self._find_team(team_id)
+        try:
+            team = self._find_team(team_id)
+        except AmbiguousComponentNameError as e:
+            return json.dumps({"error": str(e)})
+        except Exception as e:
+            logger.exception("Failed to resolve team")
+            return json.dumps({"error": f"Failed to resolve team '{team_id}': {str(e) or type(e).__name__}"})
         if team is None:
             return json.dumps({"error": f"Team not found: {team_id}"})
         component_id = getattr(team, "id", None) or team_id
         try:
             response = team.run(
                 message,
-                user_id=run_context.user_id if run_context is not None else None,
-                session_id=self._sub_session_id(run_context, component_id),
+                stream=False,
+                user_id=_agno_run_context.user_id if _agno_run_context is not None else None,
+                session_id=self._sub_session_id(_agno_run_context, component_id),
             )
             return self._run_payload("team_id", component_id, response)
         except Exception as e:
             logger.exception("Failed to run team")
             return json.dumps({"error": str(e)})
 
-    def run_workflow(self, workflow_id: str, message: str, run_context: Optional[RunContext] = None) -> str:
+    def run_workflow(self, workflow_id: str, message: str, _agno_run_context: Optional[RunContext] = None) -> str:
         """Run a workflow and return its final result.
 
         The run executes as the current user and continues that user's
@@ -435,22 +559,29 @@ class StudioRunnerTools(Toolkit):
             str: JSON object with 'workflow_id', 'run_id', 'session_id', 'status',
                 'content' and, when paused, 'requirements'.
         """
-        wf = self._find_workflow(workflow_id)
+        try:
+            wf = self._find_workflow(workflow_id)
+        except AmbiguousComponentNameError as e:
+            return json.dumps({"error": str(e)})
+        except Exception as e:
+            logger.exception("Failed to resolve workflow")
+            return json.dumps({"error": f"Failed to resolve workflow '{workflow_id}': {str(e) or type(e).__name__}"})
         if wf is None:
             return json.dumps({"error": f"Workflow not found: {workflow_id}"})
         component_id = getattr(wf, "id", None) or workflow_id
         try:
             response = wf.run(
                 input=message,
-                user_id=run_context.user_id if run_context is not None else None,
-                session_id=self._sub_session_id(run_context, component_id),
+                stream=False,
+                user_id=_agno_run_context.user_id if _agno_run_context is not None else None,
+                session_id=self._sub_session_id(_agno_run_context, component_id),
             )
             return self._run_payload("workflow_id", component_id, response)
         except Exception as e:
             logger.exception("Failed to run workflow")
             return json.dumps({"error": str(e)})
 
-    async def arun_agent(self, agent_id: str, message: str, run_context: Optional[RunContext] = None) -> str:
+    async def arun_agent(self, agent_id: str, message: str, _agno_run_context: Optional[RunContext] = None) -> str:
         """Async variant of run_agent.
 
         Args:
@@ -458,59 +589,82 @@ class StudioRunnerTools(Toolkit):
             message (str): The message to send.
         """
         # Resolution hits the DB synchronously; keep it off the event loop.
-        agent = await asyncio.to_thread(self._find_agent, agent_id)
+        try:
+            agent = await asyncio.to_thread(self._find_agent, agent_id)
+        except AmbiguousComponentNameError as e:
+            return json.dumps({"error": str(e)})
+        except Exception as e:
+            logger.exception("Failed to resolve agent")
+            return json.dumps({"error": f"Failed to resolve agent '{agent_id}': {str(e) or type(e).__name__}"})
         if agent is None:
             return json.dumps({"error": f"Agent not found: {agent_id}"})
         component_id = getattr(agent, "id", None) or agent_id
         try:
             response = await agent.arun(
                 message,
-                user_id=run_context.user_id if run_context is not None else None,
-                session_id=self._sub_session_id(run_context, component_id),
+                stream=False,
+                user_id=_agno_run_context.user_id if _agno_run_context is not None else None,
+                session_id=self._sub_session_id(_agno_run_context, component_id),
             )
             return self._run_payload("agent_id", component_id, response)
         except Exception as e:
             logger.exception("Failed to run agent")
             return json.dumps({"error": str(e)})
 
-    async def arun_team(self, team_id: str, message: str, run_context: Optional[RunContext] = None) -> str:
+    async def arun_team(self, team_id: str, message: str, _agno_run_context: Optional[RunContext] = None) -> str:
         """Async variant of run_team.
 
         Args:
             team_id (str): Id of the team to run (a display name or its slug also resolves).
             message (str): The message to send.
         """
-        team = await asyncio.to_thread(self._find_team, team_id)
+        try:
+            team = await asyncio.to_thread(self._find_team, team_id)
+        except AmbiguousComponentNameError as e:
+            return json.dumps({"error": str(e)})
+        except Exception as e:
+            logger.exception("Failed to resolve team")
+            return json.dumps({"error": f"Failed to resolve team '{team_id}': {str(e) or type(e).__name__}"})
         if team is None:
             return json.dumps({"error": f"Team not found: {team_id}"})
         component_id = getattr(team, "id", None) or team_id
         try:
             response = await team.arun(
                 message,
-                user_id=run_context.user_id if run_context is not None else None,
-                session_id=self._sub_session_id(run_context, component_id),
+                stream=False,
+                user_id=_agno_run_context.user_id if _agno_run_context is not None else None,
+                session_id=self._sub_session_id(_agno_run_context, component_id),
             )
             return self._run_payload("team_id", component_id, response)
         except Exception as e:
             logger.exception("Failed to run team")
             return json.dumps({"error": str(e)})
 
-    async def arun_workflow(self, workflow_id: str, message: str, run_context: Optional[RunContext] = None) -> str:
+    async def arun_workflow(
+        self, workflow_id: str, message: str, _agno_run_context: Optional[RunContext] = None
+    ) -> str:
         """Async variant of run_workflow.
 
         Args:
             workflow_id (str): Id of the workflow to run (a display name or its slug also resolves).
             message (str): Input to pass to the first step.
         """
-        wf = await asyncio.to_thread(self._find_workflow, workflow_id)
+        try:
+            wf = await asyncio.to_thread(self._find_workflow, workflow_id)
+        except AmbiguousComponentNameError as e:
+            return json.dumps({"error": str(e)})
+        except Exception as e:
+            logger.exception("Failed to resolve workflow")
+            return json.dumps({"error": f"Failed to resolve workflow '{workflow_id}': {str(e) or type(e).__name__}"})
         if wf is None:
             return json.dumps({"error": f"Workflow not found: {workflow_id}"})
         component_id = getattr(wf, "id", None) or workflow_id
         try:
             response = await wf.arun(
                 input=message,
-                user_id=run_context.user_id if run_context is not None else None,
-                session_id=self._sub_session_id(run_context, component_id),
+                stream=False,
+                user_id=_agno_run_context.user_id if _agno_run_context is not None else None,
+                session_id=self._sub_session_id(_agno_run_context, component_id),
             )
             return self._run_payload("workflow_id", component_id, response)
         except Exception as e:
@@ -543,12 +697,22 @@ class StudioRunnerTools(Toolkit):
 
     @staticmethod
     def _run_payload(id_key: str, component_id: str, run_output: Any) -> str:
+        content = getattr(run_output, "content", None)
+        # Structured (output_schema) content must reach the caller as JSON, not
+        # a pydantic repr; get_content_as_string is the same shaping the MCP
+        # plane uses. A serialization failure falls back to the raw content so
+        # a completed run never turns into an error result.
+        if content is not None and not isinstance(content, str) and hasattr(run_output, "get_content_as_string"):
+            try:
+                content = run_output.get_content_as_string()
+            except Exception:
+                logger.warning("StudioRunnerTools: get_content_as_string failed; returning raw content", exc_info=True)
         payload: Dict[str, Any] = {
             id_key: component_id,
             "run_id": getattr(run_output, "run_id", None),
             "session_id": getattr(run_output, "session_id", None),
             "status": _run_status(run_output),
-            "content": getattr(run_output, "content", None),
+            "content": content,
         }
         requirements = _paused_requirements(run_output)
         if requirements is not None:

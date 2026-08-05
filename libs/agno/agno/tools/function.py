@@ -315,6 +315,11 @@ class Function(BaseModel):
                 del type_hints["audios"]
             if "files" in sig.parameters and "files" in type_hints:
                 del type_hints["files"]
+            # `_agno_`-prefixed parameters are framework-injection channels
+            # (see FunctionCall._build_entrypoint_args) and never model-facing.
+            for param_name in list(type_hints):
+                if param_name.startswith("_agno_"):
+                    del type_hints[param_name]
             # log_info(f"Type hints for {function_name}: {type_hints}")
 
             # Filter out return type and only process parameters
@@ -322,6 +327,7 @@ class Function(BaseModel):
                 name: type_hints.get(name)
                 for name in sig.parameters
                 if name != "return"
+                and not name.startswith("_agno_")
                 and name
                 not in [
                     "agent",
@@ -379,6 +385,7 @@ class Function(BaseModel):
                     name
                     for name, param in sig.parameters.items()
                     if param.default == param.empty
+                    and not name.startswith("_agno_")
                     and name
                     not in [
                         "agent",
@@ -448,6 +455,11 @@ class Function(BaseModel):
                 del type_hints["audios"]
             if "files" in sig.parameters and "files" in type_hints:
                 del type_hints["files"]
+            # `_agno_`-prefixed parameters are framework-injection channels
+            # (see FunctionCall._build_entrypoint_args) and never model-facing.
+            for param_name in list(type_hints):
+                if param_name.startswith("_agno_"):
+                    del type_hints[param_name]
 
             # Filter out return type and only process parameters
             excluded_params = [
@@ -461,6 +473,7 @@ class Function(BaseModel):
                 "audios",
                 "files",
             ]
+            excluded_params.extend(name for name in sig.parameters if name.startswith("_agno_"))
 
             # Also exclude parameters whose types are framework-injected,
             # even if the parameter name differs (e.g. my_agent: Agent). See issue #6344.
@@ -717,6 +730,17 @@ class Function(BaseModel):
             del copy_entrypoint_args["audios"]
         if "files" in copy_entrypoint_args:
             del copy_entrypoint_args["files"]
+        # An injected run context must not make the key unique per run (its repr
+        # carries the run_id), but the cache must stay per-user and per-session:
+        # a result computed for one user is never served to another.
+        run_context = copy_entrypoint_args.pop("_agno_run_context", None)
+        if run_context is not None:
+            copy_entrypoint_args["_agno_run_context"] = {
+                "user_id": getattr(run_context, "user_id", None),
+                "session_id": getattr(run_context, "session_id", None),
+            }
+        for key in [k for k in copy_entrypoint_args if k.startswith("_agno_") and k != "_agno_run_context"]:
+            del copy_entrypoint_args[key]
         # Use json.dumps with sort_keys=True to ensure consistent ordering regardless of dict key order
         args_str = json.dumps(copy_entrypoint_args, sort_keys=True, default=str)
 
@@ -983,6 +1007,34 @@ class FunctionCall(BaseModel):
 
         return entrypoint_args
 
+    def _drop_injected_overrides(self, entrypoint_args: Dict[str, Any]) -> None:
+        """Drop tool-call arguments that collide with framework-injected parameters.
+
+        A parameter the framework injects and excludes from the model-facing
+        schema (run_context, agent, team, media, `_agno_`-prefixed channels)
+        can never legitimately be model-supplied -- at worst the value is an
+        attempt to override the caller's identity on an identity-threading
+        tool. Without this, the tool-hooks execution chain merges model
+        arguments over the injected ones. Parameters that DO appear in the
+        tool's schema (e.g. a user tool with its own ``fc`` argument) keep the
+        model-supplied value.
+        """
+        if not self.arguments:
+            return
+        schema_properties = (self.function.parameters or {}).get("properties") or {}
+        dropped = [
+            key
+            for key in self.arguments
+            if key.startswith("_agno_") or (key in entrypoint_args and key not in schema_properties)
+        ]
+        for key in dropped:
+            del self.arguments[key]
+        if dropped:
+            log_warning(
+                f"{self.function.name}: dropped tool-call arguments that collide "
+                f"with framework-injected parameters: {dropped}"
+            )
+
     def _build_hook_args(self, hook: Callable, name: str, func: Callable, args: Dict[str, Any]) -> Dict[str, Any]:
         """Build the arguments for the hook."""
         from inspect import signature
@@ -1074,6 +1126,7 @@ class FunctionCall(BaseModel):
         self._handle_pre_hook()
 
         entrypoint_args = self._build_entrypoint_args()
+        self._drop_injected_overrides(entrypoint_args)
 
         # Check cache if enabled and not a generator function
         if self.function.cache_results and not isgeneratorfunction(self.function.entrypoint):
@@ -1120,13 +1173,10 @@ class FunctionCall(BaseModel):
                     self.function._save_to_cache(cache_file, self.result)
 
                 updated_session_state = None
-                if entrypoint_args.get("run_context") is not None:
-                    run_context = entrypoint_args.get("run_context")
-                    updated_session_state = (
-                        run_context.session_state
-                        if run_context is not None and run_context.session_state is not None
-                        else None
-                    )
+                run_context = entrypoint_args.get("run_context") or entrypoint_args.get("_agno_run_context")
+                if run_context is not None:
+                    session_state = getattr(run_context, "session_state", None)
+                    updated_session_state = session_state if isinstance(session_state, dict) else None
 
                 execution_result = FunctionExecutionResult(
                     status="success", result=self.result, updated_session_state=updated_session_state
@@ -1294,6 +1344,7 @@ class FunctionCall(BaseModel):
             self._handle_pre_hook()
 
         entrypoint_args = self._build_entrypoint_args()
+        self._drop_injected_overrides(entrypoint_args)
 
         # Check cache if enabled and not a generator function
         if self.function.cache_results and not (
@@ -1346,13 +1397,10 @@ class FunctionCall(BaseModel):
                 updated_session_state = None
             else:
                 updated_session_state = None
-                if entrypoint_args.get("run_context") is not None:
-                    run_context = entrypoint_args.get("run_context")
-                    updated_session_state = (
-                        run_context.session_state
-                        if run_context is not None and run_context.session_state is not None
-                        else None
-                    )
+                run_context = entrypoint_args.get("run_context") or entrypoint_args.get("_agno_run_context")
+                if run_context is not None:
+                    session_state = getattr(run_context, "session_state", None)
+                    updated_session_state = session_state if isinstance(session_state, dict) else None
 
             execution_result = FunctionExecutionResult(
                 status="success", result=self.result, updated_session_state=updated_session_state
