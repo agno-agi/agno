@@ -1550,6 +1550,8 @@ class PostgresDb(BaseDb):
                 session_dict["session_data"] = sanitize_postgres_strings(session_dict["session_data"])
             if session_dict.get("summary"):
                 session_dict["summary"] = sanitize_postgres_strings(session_dict["summary"])
+            if session_dict.get("compaction"):
+                session_dict["compaction"] = sanitize_postgres_strings(session_dict["compaction"])
             if session_dict.get("metadata"):
                 session_dict["metadata"] = sanitize_postgres_strings(session_dict["metadata"])
 
@@ -1561,6 +1563,7 @@ class PostgresDb(BaseDb):
                     agent_data=session_dict.get("agent_data"),
                     session_data=session_dict.get("session_data"),
                     summary=session_dict.get("summary"),
+                    compaction=session_dict.get("compaction"),
                     metadata=session_dict.get("metadata"),
                 )
             elif isinstance(session, TeamSession):
@@ -1571,6 +1574,7 @@ class PostgresDb(BaseDb):
                     team_data=session_dict.get("team_data"),
                     session_data=session_dict.get("session_data"),
                     summary=session_dict.get("summary"),
+                    compaction=session_dict.get("compaction"),
                     metadata=session_dict.get("metadata"),
                 )
             elif isinstance(session, WorkflowSession):
@@ -1581,6 +1585,7 @@ class PostgresDb(BaseDb):
                     workflow_data=session_dict.get("workflow_data"),
                     session_data=session_dict.get("session_data"),
                     summary=session_dict.get("summary"),
+                    compaction=session_dict.get("compaction"),
                     metadata=session_dict.get("metadata"),
                 )
             else:
