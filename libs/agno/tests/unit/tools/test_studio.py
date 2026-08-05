@@ -403,6 +403,28 @@ class TestToolNameResolution:
         assert "error" in out
         assert "ambiguous" in out["error"]
 
+    def test_find_tool_by_function_name_stamps_owning_toolkit(self, db):
+        """Selecting a toolkit member by its function name hands back a bare
+        Function; it must carry its toolkit attribution so a component saved
+        with it keeps the "toolkit" key (see Registry.rehydrate_function)."""
+
+        def read_file(path: str) -> str:
+            """Read a file."""
+            return path
+
+        registry = Registry(
+            name="Stamp Registry",
+            tools=[Toolkit(name="agent_files", tools=[read_file])],
+            models=[OpenAIResponses(id="gpt-5.5")],
+            dbs=[db],
+        )
+        studio = StudioTool(registry=registry, db=db)
+
+        member = studio._find_tool("read_file")
+
+        assert isinstance(member, Function)
+        assert member.owning_toolkit == "agent_files"
+
 
 class TestMCPToolkitPersistence:
     """Registry MCP toolkits must persist their functions and survive rehydration.

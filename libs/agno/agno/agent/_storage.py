@@ -566,14 +566,21 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         _claimed_names: Set[str] = set()
         for _tool in agent.tools:
             if isinstance(_tool, Toolkit):
-                for _name in _tool.functions:
-                    if _name in _claimed_names:
+                # get_functions() rather than .functions: subclasses may expose
+                # a subset, and parse_tools serializes what get_functions()
+                # returns. Claimed by Function.name, not dict key: the two can
+                # differ, and the serialized dict carries the Function's name.
+                for _func in _tool.get_functions().values():
+                    if _func.name in _claimed_names:
                         continue
-                    _claimed_names.add(_name)
-                    if _tool.name:
-                        _owning_toolkit[_name] = _tool.name
+                    _claimed_names.add(_func.name)
+                    if isinstance(_tool.name, str) and _tool.name:
+                        _owning_toolkit[_func.name] = _tool.name
             elif isinstance(_tool, Function):
-                _claimed_names.add(_tool.name)
+                if _tool.name not in _claimed_names:
+                    _claimed_names.add(_tool.name)
+                    if _tool.owning_toolkit:
+                        _owning_toolkit[_tool.name] = _tool.owning_toolkit
             elif callable(_tool) and getattr(_tool, "__name__", None) is not None:
                 _claimed_names.add(_tool.__name__)
     if _tools:
@@ -816,7 +823,7 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
     # --- Handle tools reconstruction ---
     if "tools" in config and config["tools"]:
         if registry:
-            config["tools"] = [registry.rehydrate_function(t) for t in config["tools"]]
+            config["tools"] = registry.rehydrate_functions(config["tools"])
         else:
             log_warning("No registry provided, tools will not be rehydrated.")
             del config["tools"]

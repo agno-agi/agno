@@ -54,16 +54,17 @@ class Registry:
     teams: List[Team] = field(default_factory=list)
 
     @cached_property
-    def _entrypoint_lookup(self) -> Dict[str, Any]:
+    def _entrypoint_lookup(self) -> Dict[Any, Any]:
         # Maps function name -> source: the Function that owns the entrypoint
         # (for Toolkit and Function tools) or the plain callable itself.
         # Toolkit functions are additionally indexed under a toolkit-qualified
-        # key ("<toolkit name>.<function name>") so serialized dicts that carry
-        # their owning toolkit's name (the "toolkit" key written at
+        # tuple key (<toolkit name>, <function name>) so serialized dicts that
+        # carry their owning toolkit's name (the "toolkit" key written at
         # serialization) resolve to the right toolkit even when two registry
-        # toolkits share member names. Function names cannot contain dots, so
-        # qualified keys never collide with flat ones.
-        lookup: Dict[str, Any] = {}
+        # toolkits share member names. A tuple never equals a string, so
+        # qualified keys cannot collide with flat names -- including function
+        # names that contain characters like dots.
+        lookup: Dict[Any, Any] = {}
 
         def _entrypoint(source: Any) -> Optional[Callable]:
             return source.entrypoint if isinstance(source, Function) else source
@@ -85,11 +86,18 @@ class Registry:
 
         for tool in self.tools:
             if isinstance(tool, Toolkit):
-                for func in tool.functions.values():
+                # get_functions() rather than .functions: subclasses may expose
+                # a subset, and only exposed functions are serialized or run --
+                # a hidden member must not claim a slot (or warn) here either.
+                for func in tool.get_functions().values():
                     if func.entrypoint is not None:
                         register(func.name, func)
-                        if tool.name:
-                            register(f"{tool.name}.{func.name}", func)
+                        if isinstance(tool.name, str) and tool.name:
+                            # A qualified slot collides only when two same-named
+                            # toolkits share a member name, and that collision has
+                            # already warned on the flat slot above -- so this
+                            # write stays silent (last wins).
+                            lookup[(tool.name, func.name)] = func
             elif isinstance(tool, Function):
                 if tool.entrypoint is not None:
                     register(tool.name, tool)
@@ -107,31 +115,56 @@ class Registry:
         saved before qualification and for functions whose toolkit is no longer
         in the registry.
         """
+        return self._rehydrate_function(func_dict, {"rebuilt": False})
+
+    def rehydrate_functions(self, func_dicts: List[Dict[str, Any]]) -> List[Function]:
+        """Rehydrate a batch of function dicts, sharing one cache-rebuild budget.
+
+        A component load rehydrates every tool in its config; one rebuild of the
+        entrypoint lookup per batch is enough to pick up late-registered
+        functions, so repeated misses within a load don't each pay a rebuild.
+        """
+        rebuild_state = {"rebuilt": False}
+        return [self._rehydrate_function(func_dict, rebuild_state) for func_dict in func_dicts]
+
+    def _rehydrate_function(self, func_dict: Dict[str, Any], rebuild_state: Dict[str, bool]) -> Function:
         func = Function.from_dict(func_dict)
         toolkit_name = func_dict.get("toolkit")
+        if isinstance(toolkit_name, str) and toolkit_name:
+            # Keep the attribution on the object so a load -> save round trip
+            # re-stamps the "toolkit" key even though the loaded component holds
+            # bare Functions instead of Toolkits.
+            func.owning_toolkit = toolkit_name
 
-        rebuilt = False
-
-        def lookup(key: str) -> Optional[Any]:
+        def lookup(key: Any) -> Optional[Any]:
             # Toolkits can gain functions after the lookup is first built -- MCP
             # toolkits only register their functions once connected -- so a miss
             # may just mean the cache is stale. Rebuild once and retry.
-            nonlocal rebuilt
             found = self._entrypoint_lookup.get(key)
-            if found is None and not rebuilt:
+            if found is None and not rebuild_state["rebuilt"]:
                 self.__dict__.pop("_entrypoint_lookup", None)
-                rebuilt = True
+                rebuild_state["rebuilt"] = True
                 found = self._entrypoint_lookup.get(key)
             return found
 
         source: Optional[Any] = None
-        if isinstance(toolkit_name, str) and toolkit_name:
+        if func.owning_toolkit is not None:
             # A qualified miss rebuilds before falling back to the flat name:
             # the flat slot may hold a same-named function from a *different*
             # toolkit while the right one simply hasn't populated the cache yet.
-            source = lookup(f"{toolkit_name}.{func.name}")
+            source = lookup((func.owning_toolkit, func.name))
         if source is None:
             source = lookup(func.name)
+            if source is not None and func.owning_toolkit is not None:
+                # The recorded toolkit could not be honored, so the flat slot's
+                # same-named function -- possibly from a different toolkit -- is
+                # being bound instead.
+                log_warning(
+                    f"Registry: toolkit '{func.owning_toolkit}' does not provide '{func.name}' "
+                    "in this registry; binding the same-named function found under the flat "
+                    "name instead. If the toolkit was renamed, update the registry or re-save "
+                    "the component."
+                )
         if isinstance(source, Function):
             func.entrypoint = source.entrypoint
             # Entrypoints built for a fixed schema (e.g. MCP call proxies) must

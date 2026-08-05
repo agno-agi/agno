@@ -298,7 +298,12 @@ class StudioTools(Toolkit):
                 if tool.name == name:
                     matches.append(tool)
                 elif name in tool.functions:
-                    function_matches.append(tool.functions[name])
+                    member = tool.functions[name]
+                    # Stamp the attribution so a component saved with this bare
+                    # Function keeps its "toolkit" key (see Registry.rehydrate_function).
+                    if isinstance(tool.name, str) and tool.name:
+                        member.owning_toolkit = tool.name
+                    function_matches.append(member)
             elif isinstance(tool, Function):
                 if tool.name == name:
                     matches.append(tool)

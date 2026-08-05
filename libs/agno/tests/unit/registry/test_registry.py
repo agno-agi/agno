@@ -129,6 +129,7 @@ def mock_toolkit():
         "toolkit_func_1": func1,
         "toolkit_func_2": func2,
     }
+    toolkit.get_functions.return_value = toolkit.functions
     return toolkit
 
 
@@ -317,9 +318,9 @@ class TestEntrypointLookup:
         assert lookup1 is lookup2
 
     def test_entrypoint_lookup_indexes_toolkit_qualified_keys(self):
-        """Toolkit functions are also indexed under '<toolkit>.<function>' so
-        serialized dicts carrying their owning toolkit's name can resolve to
-        the right toolkit when two toolkits share member names."""
+        """Toolkit functions are also indexed under a (toolkit, function) tuple
+        key so serialized dicts carrying their owning toolkit's name can resolve
+        to the right toolkit when two toolkits share member names."""
 
         def shared_read(path: str) -> str:
             return f"shared:{path}"
@@ -335,10 +336,32 @@ class TestEntrypointLookup:
 
         lookup = reg._entrypoint_lookup
 
-        assert lookup["filesystem.read_file"].entrypoint is shared_read
-        assert lookup["agent_files.read_file"].entrypoint is agent_read
+        assert lookup[("filesystem", "read_file")].entrypoint is shared_read
+        assert lookup[("agent_files", "read_file")].entrypoint is agent_read
         # The flat slot still exists (last registration wins) for legacy configs
         assert lookup["read_file"].entrypoint is agent_read
+
+    def test_qualified_keys_cannot_collide_with_dotted_function_names(self):
+        """Function names are not validated, so a name like "browser.navigate"
+        can reach the registry (e.g. verbatim from an MCP server). The tuple
+        qualified keys must not displace such a flat name, in either
+        declaration order."""
+
+        def dotted_ep(path: str) -> str:
+            return f"dotted:{path}"
+
+        def toolkit_ep(path: str) -> str:
+            return f"toolkit:{path}"
+
+        dotted = Function(name="browser.navigate", entrypoint=dotted_ep)
+        browser = Toolkit(name="browser")
+        browser.functions["navigate"] = Function(name="navigate", entrypoint=toolkit_ep)
+
+        for tools in ([dotted, browser], [browser, dotted]):
+            reg = Registry(tools=tools)
+            rehydrated = reg.rehydrate_function({"name": "browser.navigate", "parameters": {}})
+            assert rehydrated.entrypoint is dotted_ep
+            assert reg._entrypoint_lookup[("browser", "navigate")].entrypoint is toolkit_ep
 
 
 # =============================================================================
@@ -528,9 +551,15 @@ class TestToolkitQualifiedRehydration:
 
         assert rehydrated.entrypoint is self._agent_read
 
-    def test_qualified_dict_with_missing_toolkit_falls_back_to_flat(self):
+    def test_qualified_dict_with_missing_toolkit_falls_back_to_flat(self, monkeypatch):
         """A dict whose toolkit has left the registry falls back to the flat
-        name so the function still gets an entrypoint."""
+        name so the function still gets an entrypoint, and warns that the
+        recorded attribution could not be honored."""
+        import agno.registry.registry as registry_module
+
+        warnings = []
+        monkeypatch.setattr(registry_module, "log_warning", lambda msg, *a, **k: warnings.append(msg))
+
         reg, _, agent_files = self._registry_with_shared_names()
 
         func_dict = agent_files.functions["read_file"].to_dict()
@@ -539,6 +568,7 @@ class TestToolkitQualifiedRehydration:
         rehydrated = reg.rehydrate_function(func_dict)
 
         assert rehydrated.entrypoint is self._agent_read
+        assert any("gone_files" in w for w in warnings)
 
     def test_qualified_lookup_rebuilds_stale_cache(self):
         """A qualified miss rebuilds the cached lookup before falling back to
@@ -551,7 +581,7 @@ class TestToolkitQualifiedRehydration:
         reg = Registry(tools=[shared, agent_files])
 
         # Prime the cache while agent_files is still "unconnected"
-        assert "agent_files.read_file" not in reg._entrypoint_lookup
+        assert ("agent_files", "read_file") not in reg._entrypoint_lookup
 
         agent_files.functions["read_file"] = Function(name="read_file", entrypoint=self._agent_read)
         func_dict = agent_files.functions["read_file"].to_dict()
@@ -560,6 +590,133 @@ class TestToolkitQualifiedRehydration:
         rehydrated = reg.rehydrate_function(func_dict)
 
         assert rehydrated.entrypoint is self._agent_read
+
+    def test_rehydrated_function_carries_owning_toolkit(self):
+        """The dict's toolkit attribution lands on the Function object so a
+        load -> save round trip can re-stamp the "toolkit" key."""
+        reg, _, agent_files = self._registry_with_shared_names()
+
+        func_dict = agent_files.functions["read_file"].to_dict()
+        func_dict["toolkit"] = "agent_files"
+        rehydrated = reg.rehydrate_function(func_dict)
+        assert rehydrated.owning_toolkit == "agent_files"
+
+        unqualified = reg.rehydrate_function({"name": "read_file", "parameters": {}})
+        assert unqualified.owning_toolkit is None
+        # owning_toolkit never leaks into the model-facing schema
+        assert "owning_toolkit" not in rehydrated.to_dict()
+
+    def test_same_named_toolkits_warn_once_per_collision(self, monkeypatch):
+        """Two same-named toolkits sharing a member name collide on both the
+        flat and the qualified slot, but only the flat registration warns --
+        the same single warning main emitted before qualified keys existed."""
+        import agno.registry.registry as registry_module
+
+        warnings = []
+        monkeypatch.setattr(registry_module, "log_warning", lambda msg, *a, **k: warnings.append(msg))
+
+        kit_a = Toolkit(name="filesystem")
+        kit_a.functions["read_file"] = Function(name="read_file", entrypoint=self._shared_read)
+        kit_b = Toolkit(name="filesystem")
+        kit_b.functions["read_file"] = Function(name="read_file", entrypoint=self._agent_read)
+
+        _ = Registry(tools=[kit_a, kit_b])._entrypoint_lookup
+
+        assert len(warnings) == 1
+        assert "read_file" in warnings[0]
+
+
+class TestRehydrateFunctionsBatch:
+    """rehydrate_functions shares one cache-rebuild budget across a load."""
+
+    @staticmethod
+    def _read(path: str) -> str:
+        return f"read:{path}"
+
+    def _counting_registry(self):
+        """Registry whose lookup builds are observable via tools iterations."""
+        builds = []
+
+        class CountingList(list):
+            def __iter__(self):
+                builds.append(1)
+                return super().__iter__()
+
+        kit = Toolkit(name="agent_files")
+        kit.functions["read_file"] = Function(name="read_file", entrypoint=self._read)
+        reg = Registry()
+        reg.tools = CountingList([kit])
+        return reg, builds
+
+    def test_batch_shares_single_rebuild(self):
+        """N dicts whose toolkit is missing from the registry trigger at most
+        one lookup rebuild for the whole batch, not one per dict."""
+        reg, builds = self._counting_registry()
+        _ = reg._entrypoint_lookup  # prime the cache
+
+        dicts = [{"name": "read_file", "parameters": {}, "toolkit": "renamed_kit"} for _ in range(5)]
+        rehydrated = reg.rehydrate_functions(dicts)
+
+        assert all(f.entrypoint is self._read for f in rehydrated)
+        assert sum(builds) == 2  # the priming build plus one shared rebuild
+
+    def test_batch_resolves_mixed_dicts(self):
+        """Qualified, legacy-unqualified, and unknown dicts resolve in one batch."""
+        reg, _ = self._counting_registry()
+
+        rehydrated = reg.rehydrate_functions(
+            [
+                {"name": "read_file", "parameters": {}, "toolkit": "agent_files"},
+                {"name": "read_file", "parameters": {}},
+                {"name": "missing_tool", "parameters": {}},
+            ]
+        )
+
+        assert rehydrated[0].entrypoint is self._read
+        assert rehydrated[1].entrypoint is self._read
+        assert rehydrated[2].entrypoint is None
+
+    def test_batch_rebuild_still_finds_late_functions(self):
+        """The shared budget still covers the late-connecting toolkit case:
+        a function registered after the cache was primed is found via the
+        batch's one rebuild."""
+        reg, _ = self._counting_registry()
+        kit = reg.tools[0]
+        _ = reg._entrypoint_lookup  # prime while write_file is unregistered
+
+        def _write(path: str) -> str:
+            return f"write:{path}"
+
+        kit.functions["write_file"] = Function(name="write_file", entrypoint=_write)
+        rehydrated = reg.rehydrate_functions(
+            [
+                {"name": "write_file", "parameters": {}, "toolkit": "agent_files"},
+                {"name": "read_file", "parameters": {}, "toolkit": "agent_files"},
+            ]
+        )
+
+        assert rehydrated[0].entrypoint is _write
+        assert rehydrated[1].entrypoint is self._read
+
+    def test_rebuild_budget_resets_per_batch(self):
+        """Each rehydrate_functions call gets a fresh rebuild budget: a batch
+        that spent its rebuild must not starve the next batch's ability to
+        pick up functions registered in between (e.g. successive component
+        loads while an MCP toolkit connects)."""
+        reg, _ = self._counting_registry()
+        kit = reg.tools[0]
+        _ = reg._entrypoint_lookup  # prime the cache
+
+        first = reg.rehydrate_functions([{"name": "read_file", "parameters": {}, "toolkit": "renamed_kit"}])
+        assert first[0].entrypoint is self._read  # spent this batch's rebuild
+
+        def _write(path: str) -> str:
+            return f"write:{path}"
+
+        kit.functions["write_file"] = Function(name="write_file", entrypoint=_write)
+        second = reg.rehydrate_functions([{"name": "write_file", "parameters": {}, "toolkit": "agent_files"}])
+
+        assert second[0].entrypoint is _write
 
 
 # =============================================================================
