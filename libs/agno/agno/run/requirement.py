@@ -272,6 +272,17 @@ class RunRequirement:
         requirement.member_agent_name = data.get("member_agent_name")
         requirement.member_run_id = data.get("member_run_id")
 
+        # A top-level resolution must reach tool_execution: the continue paths
+        # rebuild run tools from tool_execution alone, and dispatch reads only
+        # tool_execution.confirmed - a bare {"confirmation": true} payload would
+        # otherwise be dropped and audited as a rejection. An explicitly set nested
+        # value stays authoritative.
+        if requirement.tool_execution is not None:
+            if requirement.confirmation is not None and requirement.tool_execution.confirmed is None:
+                requirement.tool_execution.confirmed = requirement.confirmation
+                if requirement.confirmation is False and requirement.confirmation_note is not None:
+                    requirement.tool_execution.confirmation_note = requirement.confirmation_note
+
         # Handle user_input_schema
         schema_raw = data.get("user_input_schema")
         if schema_raw is not None:
