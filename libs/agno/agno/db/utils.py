@@ -215,6 +215,15 @@ def build_run_rows_for_session(session: "Session") -> List[Dict[str, Any]]:
     return rows
 
 
+def run_index_lock_name(session_id: str) -> str:
+    """Per-session named-lock key serializing run_index backfills on engines
+    with connection-scoped user locks (MySQL GET_LOCK). Hashed because MySQL
+    caps lock names at 64 characters and session ids are caller-provided."""
+    import hashlib
+
+    return "agno_run_index_" + hashlib.md5(session_id.encode()).hexdigest()
+
+
 def canonical_run_status(value: Any) -> Any:
     """Map a run status of any casing or enum form to the stored convention:
     ``RunStatus.value`` (uppercase, e.g. ``"COMPLETED"``).

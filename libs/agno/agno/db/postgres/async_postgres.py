@@ -812,6 +812,15 @@ class AsyncPostgresDb(AsyncBaseDb):
                     # A NULL index has no position and breaks ORDER BY run_index. ON CONFLICT
                     # preserves the existing index, so this only sets it on a genuine insert.
                     if row.get("run_index") is None:
+                        # Serialize same-session backfills: under READ COMMITTED two
+                        # concurrent max-reads can both see the same MAX and land
+                        # duplicate indexes. The advisory lock is transaction-scoped
+                        # (released at COMMIT/ROLLBACK) and keyed on session_id, so
+                        # only same-session backfilling inserts queue behind it.
+                        await sess.execute(
+                            text("SELECT pg_advisory_xact_lock(hashtext('agno_run_index'), hashtext(:sid))"),
+                            {"sid": session_id},
+                        )
                         current_max = (
                             await sess.execute(
                                 select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
@@ -4602,6 +4611,11 @@ class AsyncPostgresDb(AsyncBaseDb):
                 async with self.async_session_factory() as sess:
                     async with sess.begin():
                         if row.get("run_index") is None:
+                            # Same-session backfill serialization - see upsert_run
+                            await sess.execute(
+                                text("SELECT pg_advisory_xact_lock(hashtext('agno_run_index'), hashtext(:sid))"),
+                                {"sid": session_id},
+                            )
                             current_max = (
                                 await sess.execute(
                                     select(func.max(runs_table.c.run_index)).where(
