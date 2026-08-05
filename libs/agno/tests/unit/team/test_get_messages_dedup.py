@@ -105,6 +105,42 @@ def _nested_team_history_session() -> TeamSession:
     return session
 
 
+def _member_response_team_history_session() -> TeamSession:
+    """Build a three-level team run tree stored only through member responses."""
+    leaf_run = TeamRunOutput(
+        run_id="leaf-run",
+        team_id="leaf-team",
+        parent_run_id="middle-run",
+        status=RunStatus.completed,
+        messages=[
+            Message(role="user", content="Leaf request"),
+            Message(role="assistant", content="Leaf response"),
+        ],
+    )
+    middle_run = TeamRunOutput(
+        run_id="middle-run",
+        team_id="middle-team",
+        parent_run_id="root-run",
+        status=RunStatus.completed,
+        messages=[
+            Message(role="user", content="Middle request"),
+            Message(role="assistant", content="Middle response"),
+        ],
+        member_responses=[leaf_run],
+    )
+    root_run = TeamRunOutput(
+        run_id="root-run",
+        team_id="root-team",
+        status=RunStatus.completed,
+        messages=[
+            Message(role="user", content="Root request"),
+            Message(role="assistant", content="Root response"),
+        ],
+        member_responses=[middle_run],
+    )
+    return TeamSession(session_id="member-response-team-session", team_id="root-team", runs=[root_run])
+
+
 class TestGetMessagesMemberDedup:
     """Tests for deduplication when member runs appear in multiple locations."""
 
@@ -297,6 +333,32 @@ class TestNestedTeamHistory:
         history = _get_history_for_member_agent(parent_team, session, nested_team)
 
         assert [message.content for message in history] == ["Nested request", "Nested response"]
+
+    def test_team_id_filter_finds_team_in_member_responses(self):
+        """A nested team stored only as a member response remains queryable."""
+        session = _member_response_team_history_session()
+
+        messages = session.get_messages(team_id="middle-team")
+
+        assert [message.content for message in messages] == ["Middle request", "Middle response"]
+
+    def test_team_id_filter_finds_deeply_nested_team(self):
+        """Team history lookup traverses more than one member-response level."""
+        session = _member_response_team_history_session()
+
+        messages = session.get_messages(team_id="leaf-team")
+
+        assert [message.content for message in messages] == ["Leaf request", "Leaf response"]
+
+    def test_team_id_filter_deduplicates_flat_and_nested_run(self):
+        """Dual storage of a team run must not duplicate its history messages."""
+        session = _member_response_team_history_session()
+        leaf_run = session.runs[0].member_responses[0].member_responses[0]  # type: ignore[union-attr]
+        session.runs.append(leaf_run)
+
+        messages = session.get_messages(team_id="leaf-team")
+
+        assert [message.content for message in messages] == ["Leaf request", "Leaf response"]
 
 
 class TestGetTeamHistoryZeroCount:
