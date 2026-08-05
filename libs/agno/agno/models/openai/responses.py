@@ -26,6 +26,12 @@ try:
 except ImportError as e:
     raise ImportError("`openai` not installed. Please install using `pip install openai -U`") from e
 
+# Placeholder output paired at format time with a function_call whose result was never
+# recorded, keeping the request valid while telling the model the call did not complete.
+MISSING_TOOL_RESULT_PLACEHOLDER = (
+    "Error: no result was recorded for this tool call (the run may have been interrupted)."
+)
+
 
 @dataclass
 class OpenAIResponses(Model):
@@ -636,9 +642,10 @@ class OpenAIResponses(Model):
         # The Responses API rejects any function_call that has no function_call_output with a
         # matching call_id. Sessions can hold runs whose tool result was never recorded
         # and replaying them would poison every subsequent run. Collect the call_ids that will
-        # actually be emitted as output, using the same conditions as the tool branch below, so an
-        # unpairable function_call can be dropped instead of sent.
+        # actually be emitted as output, using the same conditions as the tool branch below, so
+        # any function_call left unpaired can be given a placeholder result.
         pairable_call_ids: Set[str] = set()
+        repaired_call_ids: List[str] = []
         for message in messages_to_format:
             if message.role != "tool" or not message.tool_call_id:
                 continue
@@ -703,17 +710,14 @@ class OpenAIResponses(Model):
                 if self._using_reasoning_model() and previous_response_id is not None:
                     continue
 
+                unpaired_call_ids: List[str] = []
                 for tool_call in message.tool_calls:
-                    call_id = tool_call.get("call_id", tool_call.get("id"))
-                    # Skip calls whose output was never recorded or is not formattable. Sending
-                    # them makes the API reject the entire request.
-                    if call_id not in pairable_call_ids:
-                        log_warning(
-                            f"Skipping tool call {call_id} with no matching tool result. "
-                            "The model will not see this call in its history."
-                        )
+                    call_id = tool_call.get("call_id") or tool_call.get("id")
+                    if call_id is None:
+                        log_warning("Skipping a tool call with no id; it cannot be paired with a result.")
                         continue
-
+                    if call_id not in pairable_call_ids:
+                        unpaired_call_ids.append(call_id)
                     formatted_messages.append(
                         {
                             "type": "function_call",
@@ -724,6 +728,17 @@ class OpenAIResponses(Model):
                             "status": "completed",
                         }
                     )
+                # Calls whose output was never recorded or is not formattable get a placeholder
+                # result, emitted after the message's calls so real outputs keep their position.
+                for call_id in unpaired_call_ids:
+                    formatted_messages.append(
+                        {
+                            "type": "function_call_output",
+                            "call_id": call_id,
+                            "output": MISSING_TOOL_RESULT_PLACEHOLDER,
+                        }
+                    )
+                repaired_call_ids.extend(unpaired_call_ids)
             elif message.role == "assistant":
                 # Handle null content by converting to empty string
                 content = message.content if message.content is not None else ""
@@ -735,6 +750,12 @@ class OpenAIResponses(Model):
                             message.provider_data["reasoning_output"]
                         )
                         formatted_messages.append(reasoning_output)
+
+        if repaired_call_ids:
+            log_warning(
+                f"No tool result was recorded for tool call(s) {repaired_call_ids}; "
+                "placeholder results were inserted to keep the request valid."
+            )
         return formatted_messages
 
     def count_tokens(
