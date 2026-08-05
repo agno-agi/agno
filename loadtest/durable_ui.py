@@ -23,8 +23,10 @@ import os
 from agno.agent import Agent
 from agno.job_queue.config import QueueConfig
 from agno.os import AgentOS
+from agno.team import Team
 from agno.tools import Toolkit
 from agno.tools.user_control_flow import UserControlFlowTools
+from agno.workflow import Condition, Step, Workflow
 
 # Reuse the harness's model factory (respects MODEL=real|stub) and DB wiring.
 from app import _int, db, make_model  # noqa: E402
@@ -78,10 +80,109 @@ durable_agent = Agent(
     db=db,
 )
 
+
+# --- Durable team: two members, one is HITL (same UserControlFlowTools) -------
+# The team delegates to whichever member fits. The Emailer member carries the
+# SAME EmailTools + UserControlFlowTools as the standalone agent, so a delegated
+# email task pauses the whole team run for user input (e.g. the to_address) -
+# and that team-level pause rides the durable queue: it survives crashes and its
+# continue can land on either replica. The Researcher member is a plain
+# responder, giving the team a real routing decision.
+durable_team = Team(
+    id="durable-team",
+    name="Durable HITL Team",
+    model=make_model(),
+    members=[
+        Agent(
+            id="durable-team-researcher",
+            name="Researcher",
+            model=make_model(),
+            instructions="Answer research/summary questions directly and concisely.",
+        ),
+        Agent(
+            id="durable-team-emailer",
+            name="Emailer",
+            model=make_model(),
+            tools=[EmailTools(), UserControlFlowTools()],
+            instructions=(
+                "Handle email tasks. When sending an email, if any required field "
+                "(recipient/subject/body) is missing, ask the user for it instead of "
+                "guessing."
+            ),
+        ),
+    ],
+    instructions=(
+        "Route research/summary asks to the Researcher and email asks to the Emailer. "
+        "Keep replies short."
+    ),
+    markdown=True,
+    description="A two-member team; the Emailer member pauses for user input - durable across replicas",
+    db=db,
+)
+
+
+# --- Durable workflow: a Condition gating a Step (condition + step mix) --------
+# Step 1 (triage) always runs. The Condition then routes: if the triage output
+# looks like an email request it runs the 'compose' step, otherwise it runs the
+# 'summarize' else-branch. Both the condition evaluation and the chosen leg
+# execute durably on whichever replica's worker claims the job.
+def _looks_like_email(step_input) -> bool:
+    """Route to the email leg when the triage text mentions email/send."""
+    text = (step_input.get_last_step_content() or step_input.get_input_as_string() or "").lower()
+    return "email" in text or "send" in text
+
+
+durable_workflow = Workflow(
+    id="durable-workflow",
+    name="Durable Condition Workflow",
+    db=db,
+    description="A workflow mixing a Step and a Condition (email vs summarize routing) - durable",
+    steps=[
+        Step(
+            name="triage",
+            agent=Agent(
+                id="durable-wf-triage",
+                name="Triage",
+                model=make_model(),
+                instructions="Restate the user's request in one line so it can be routed.",
+            ),
+        ),
+        Condition(
+            name="route",
+            evaluator=_looks_like_email,
+            steps=[
+                Step(
+                    name="compose",
+                    agent=Agent(
+                        id="durable-wf-compose",
+                        name="Composer",
+                        model=make_model(),
+                        instructions="Draft the email body requested. Keep it short.",
+                    ),
+                )
+            ],
+            else_steps=[
+                Step(
+                    name="summarize",
+                    agent=Agent(
+                        id="durable-wf-summarize",
+                        name="Summarizer",
+                        model=make_model(),
+                        instructions="Summarize the request in two sentences.",
+                    ),
+                )
+            ],
+        ),
+    ],
+)
+
+
 agent_os = AgentOS(
     id="durable-ui-os",
     description="Durable multi-worker AgentOS (UI + per-worker tracing)",
     agents=[durable_agent],
+    teams=[durable_team],
+    workflows=[durable_workflow],
     db=db,
     queue=QueueConfig(
         durable=True,

@@ -23,6 +23,24 @@ case "${1:-}" in
   up)
     docker compose -f "$CF" up --build -d postgres redis replica1 replica2 lb
     wait_healthy ;;
+  ui)
+    # Multi-worker durable AgentOS for the AgentOS UI + real-time worker tracing.
+    # Serves the single durable-agent (durable_ui.py) across 2 replicas behind the
+    # LB. Point the AgentOS UI at http://localhost:7777 (agent id: durable-agent).
+    # Watch which worker runs each job with:  ./run.sh trace
+    echo "=== durable multi-worker AgentOS (UI) — 2 replicas + LB, real model ==="
+    APP_MODULE=durable_ui MODEL=${MODEL:-real} \
+      docker compose -f "$CF" up --build -d postgres redis replica1 replica2 lb
+    wait_healthy
+    echo "UI target: http://localhost:7777   (agent id: durable-agent)"
+    echo "per-replica: replica1 :7801 · replica2 :7802"
+    echo "watch workers live:  ./run.sh trace" ;;
+  trace)
+    # Live combined worker log: each replica prints [replicaN] CLAIMED/COMPLETED
+    # run=<id>, so you see which worker handled each background run in real time.
+    echo "=== live worker trace (Ctrl-C to stop) ==="
+    docker compose -f "$CF" logs -f replica1 replica2 2>&1 \
+      | grep --line-buffered -E "CLAIMED|COMPLETED|POST /agents|Job queue worker|PAUSED|continue" ;;
   phase)
     phase="${2:?phase}"; n="${3:-500}"; c="${4:-200}"
     echo "=== driving phase=$phase n=$n concurrency=$c ==="
