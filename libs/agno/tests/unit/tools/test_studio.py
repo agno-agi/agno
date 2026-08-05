@@ -7,6 +7,7 @@ config persistence path is exercised, not mocked.
 import json
 import time
 from datetime import datetime
+from importlib.util import find_spec
 from typing import Any, Dict
 
 import pytest
@@ -1069,6 +1070,10 @@ class TestVersioning:
 # ----------------------------------------------------------------------
 
 
+@pytest.mark.skipif(
+    find_spec("croniter") is None or find_spec("pytz") is None,
+    reason="scheduler extras not installed (pip install agno[scheduler])",
+)
 class TestSchedules:
     def _create_target_agent(self, studio, name="digest"):
         return _loads(studio.create_agent(name=name, instructions="i", model_id="gpt-5.4"))
