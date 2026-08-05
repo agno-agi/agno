@@ -2323,3 +2323,79 @@ async def test_tool_result_with_media_is_not_cached_async(tmp_path):
     assert len(executions) == 2
     assert isinstance(second.result, ToolResult)
     assert second.result.images[0].content == b"\x89PNG raw"
+
+
+# =============================================================================
+# Hooks on cache hit tests
+# =============================================================================
+
+
+def test_hooks_run_on_cache_hit(tmp_path):
+    """tool_hooks and post_hook must run on a cache hit, with the cached
+    result substituted for the entrypoint call, so audit hooks never miss a
+    tool call."""
+    events = []
+
+    def audit_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        events.append("tool_hook")
+        return function_call(**arguments)
+
+    def post_hook():
+        events.append("post_hook")
+
+    def compute(x: int) -> str:
+        events.append("entrypoint")
+        return f"value {x}"
+
+    func = Function(
+        name="compute",
+        entrypoint=compute,
+        cache_results=True,
+        cache_dir=str(tmp_path),
+        tool_hooks=[audit_hook],
+        post_hook=post_hook,
+    )
+
+    first = FunctionCall(function=func, arguments={"x": 1}).execute()
+    assert first.result == "value 1"
+    assert events == ["tool_hook", "entrypoint", "post_hook"]
+
+    events.clear()
+    second = FunctionCall(function=func, arguments={"x": 1}).execute()
+    assert second.result == "value 1"
+    assert events == ["tool_hook", "post_hook"]
+
+
+@pytest.mark.asyncio
+async def test_hooks_run_on_cache_hit_async(tmp_path):
+    """Async variant: hooks run on cache hits through aexecute."""
+    events = []
+
+    async def audit_hook(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        events.append("tool_hook")
+        return await function_call(**arguments)
+
+    async def post_hook():
+        events.append("post_hook")
+
+    async def compute(x: int) -> str:
+        events.append("entrypoint")
+        return f"value {x}"
+
+    func = Function(
+        name="compute",
+        entrypoint=compute,
+        cache_results=True,
+        cache_dir=str(tmp_path),
+        tool_hooks=[audit_hook],
+        post_hook=post_hook,
+    )
+
+    first = await FunctionCall(function=func, arguments={"x": 1}).aexecute()
+    assert first.result == "value 1"
+    assert events == ["tool_hook", "entrypoint", "post_hook"]
+
+    events.clear()
+    second = await FunctionCall(function=func, arguments={"x": 1}).aexecute()
+    assert second.result == "value 1"
+    assert events == ["tool_hook", "post_hook"]

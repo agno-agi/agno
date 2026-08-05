@@ -1286,17 +1286,21 @@ class FunctionCall(BaseModel):
             hook_args["arguments"] = args
         return hook_args
 
-    def _build_nested_execution_chain(self, entrypoint_args: Dict[str, Any]):
+    def _build_nested_execution_chain(self, entrypoint_args: Dict[str, Any], cached_result: Optional[Any] = None):
         """Build a nested chain of hook executions with the entrypoint at the center.
 
         This creates a chain where each hook wraps the next one, with the function call
-        at the innermost level. Returns bubble back up through each hook.
+        at the innermost level. Returns bubble back up through each hook. When
+        cached_result is provided, it is substituted for the entrypoint call so
+        hooks still run on cache hits.
         """
         from functools import reduce
         from inspect import iscoroutinefunction
 
         def execute_entrypoint(name, func, args):
             """Execute the entrypoint function."""
+            if cached_result is not None:
+                return cached_result
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
                 arguments.update(self.arguments)
@@ -1352,15 +1356,16 @@ class FunctionCall(BaseModel):
         self._handle_pre_hook()
 
         # Check cache if enabled and not a generator function
+        cached_result = None
         if self.function.cache_results and not isgeneratorfunction(self.function.entrypoint):
             cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
             cache_file = self.function._get_cache_file_path(cache_key)
             cached_result = self.function._get_cached_result(cache_file)
-
             if cached_result is not None:
                 log_debug(f"Cache hit for: {self.get_call_str()}")
-                self.result = cached_result
-                return FunctionExecutionResult(status="success", result=cached_result)
+        # A cache hit substitutes for the entrypoint call only: tool_hooks and
+        # post_hook still run, so audit hooks see every tool call.
+        from_cache = cached_result is not None
 
         # Execute function
         execution_result: FunctionExecutionResult
@@ -1369,8 +1374,12 @@ class FunctionCall(BaseModel):
         try:
             # Build and execute the nested chain of hooks
             if self.function.tool_hooks is not None:
-                execution_chain = self._build_nested_execution_chain(entrypoint_args=entrypoint_args)
+                execution_chain = self._build_nested_execution_chain(
+                    entrypoint_args=entrypoint_args, cached_result=cached_result
+                )
                 result = execution_chain(self.function.name, self.function.entrypoint, self.arguments or {})
+            elif from_cache:
+                result = cached_result
             else:
                 if self.arguments is None or self.arguments == {}:
                     result = self.function.entrypoint(**entrypoint_args)
@@ -1389,8 +1398,9 @@ class FunctionCall(BaseModel):
                 )
             else:
                 self.result = result
-                # Only cache non-generator results
-                if self.function.cache_results:
+                # Only cache non-generator results, and never re-save a result
+                # that was just served from cache
+                if self.function.cache_results and not from_cache:
                     cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
                     cache_file = self.function._get_cache_file_path(cache_key)
                     self.function._save_to_cache(cache_file, self.result)
@@ -1488,16 +1498,22 @@ class FunctionCall(BaseModel):
                 log_warning(f"Error in post-hook callback: {str(e)}")
                 log_exception(e)
 
-    async def _build_nested_execution_chain_async(self, entrypoint_args: Dict[str, Any]):
+    async def _build_nested_execution_chain_async(
+        self, entrypoint_args: Dict[str, Any], cached_result: Optional[Any] = None
+    ):
         """Build a nested chain of async hook executions with the entrypoint at the center.
 
-        Similar to _build_nested_execution_chain but for async execution.
+        Similar to _build_nested_execution_chain but for async execution. When
+        cached_result is provided, it is substituted for the entrypoint call so
+        hooks still run on cache hits.
         """
         from functools import reduce
         from inspect import isasyncgenfunction, iscoroutinefunction
 
         async def execute_entrypoint_async(name, func, args):
             """Execute the entrypoint function asynchronously."""
+            if cached_result is not None:
+                return cached_result
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
                 arguments.update(self.arguments)
@@ -1509,6 +1525,8 @@ class FunctionCall(BaseModel):
 
         def execute_entrypoint(name, func, args):
             """Execute the entrypoint function synchronously."""
+            if cached_result is not None:
+                return cached_result
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
                 arguments.update(self.arguments)
@@ -1572,6 +1590,7 @@ class FunctionCall(BaseModel):
             self._handle_pre_hook()
 
         # Check cache if enabled and not a generator function
+        cached_result = None
         if self.function.cache_results and not (
             isasyncgenfunction(self.function.entrypoint) or isgeneratorfunction(self.function.entrypoint)
         ):
@@ -1580,8 +1599,9 @@ class FunctionCall(BaseModel):
             cached_result = self.function._get_cached_result(cache_file)
             if cached_result is not None:
                 log_debug(f"Cache hit for: {self.get_call_str()}")
-                self.result = cached_result
-                return FunctionExecutionResult(status="success", result=cached_result)
+        # A cache hit substitutes for the entrypoint call only: tool_hooks and
+        # post_hook still run, so audit hooks see every tool call.
+        from_cache = cached_result is not None
 
         # Execute function
         execution_result: FunctionExecutionResult
@@ -1590,8 +1610,12 @@ class FunctionCall(BaseModel):
         try:
             # Build and execute the nested chain of hooks
             if self.function.tool_hooks is not None:
-                execution_chain = await self._build_nested_execution_chain_async(entrypoint_args)
+                execution_chain = await self._build_nested_execution_chain_async(
+                    entrypoint_args, cached_result=cached_result
+                )
                 self.result = await execution_chain(self.function.name, self.function.entrypoint, self.arguments or {})
+            elif from_cache:
+                self.result = cached_result
             else:
                 if self.arguments is None or self.arguments == {}:
                     result = self.function.entrypoint(**entrypoint_args)
@@ -1608,8 +1632,13 @@ class FunctionCall(BaseModel):
                 else:
                     self.result = result  # Sync function, result is already computed
 
-            # Only cache if not a generator
-            if self.function.cache_results and not (isgenerator(self.result) or isasyncgen(self.result)):
+            # Only cache if not a generator, and never re-save a result that
+            # was just served from cache
+            if (
+                self.function.cache_results
+                and not from_cache
+                and not (isgenerator(self.result) or isasyncgen(self.result))
+            ):
                 cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
                 cache_file = self.function._get_cache_file_path(cache_key)
                 self.function._save_to_cache(cache_file, self.result)
