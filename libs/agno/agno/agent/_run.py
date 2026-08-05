@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
-import warnings
 from collections import deque
 from time import time as unix_time
 from typing import (
@@ -46,7 +45,7 @@ from agno.models.base import Model
 from agno.models.fallback import acall_model_with_fallback, call_model_with_fallback
 from agno.models.message import Message
 from agno.models.metrics import RunMetrics, merge_background_metrics
-from agno.models.response import ModelResponse, ToolExecution
+from agno.models.response import ModelResponse
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
     RunCancelledEvent,
@@ -78,6 +77,7 @@ from agno.run.messages import RunMessages
 from agno.run.requirement import RunRequirement
 from agno.run.status_persist import apersist_run_transition
 from agno.session import AgentSession
+from agno.session._utils import resolve_run_index
 from agno.tools.function import Function
 from agno.utils.agent import (
     await_for_open_threads,
@@ -1951,7 +1951,7 @@ async def _arun_background(
 
     Callers can poll for results via agent.aget_run_output(run_id, session_id).
     """
-    from agno.agent._session import asave_session
+    from agno.agent._session import asave_run, asave_session
     from agno.agent._storage import aread_or_create_session, update_metadata
 
     # 1. Register the run for cancellation tracking (before spawning the task)
@@ -1964,7 +1964,9 @@ async def _arun_background(
     agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
     update_metadata(agent, session=agent_session)
     agent_session.upsert_run(run=run_response)
+    run_index = resolve_run_index(agent_session, run_response)
     await asave_session(agent, session=agent_session)
+    await asave_run(agent, run=run_response, session_id=session_id, user_id=user_id, run_index=run_index)
 
     log_info(f"Background run {run_response.run_id} created with PENDING status")
 
@@ -2028,7 +2030,7 @@ async def _arun_background(
             raise
         except Exception as e:
             log_error(f"Background run {run_response.run_id} failed: {str(e)}")
-            # Persist ERROR status
+            # Persist ERROR status — only persist the changed run (O(1))
             try:
                 run_response.status = RunStatus.error
                 await apersist_run_transition(agent, "agent", session_id, run_response, user_id=user_id, full_run=True)
@@ -2073,7 +2075,7 @@ async def _arun_background_stream(
     Similar to how Workflow._arun_background_stream handles WebSocket streaming,
     but uses SSE transport backed by the pluggable event stream.
     """
-    from agno.agent._session import asave_session
+    from agno.agent._session import asave_run, asave_session
     from agno.agent._storage import aread_or_create_session, update_metadata
     from agno.os.event_streams import get_event_stream
 
@@ -2088,7 +2090,9 @@ async def _arun_background_stream(
     agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
     update_metadata(agent, session=agent_session)
     agent_session.upsert_run(run=run_response)
+    run_index = resolve_run_index(agent_session, run_response)
     await asave_session(agent, session=agent_session)
+    await asave_run(agent, run=run_response, session_id=session_id, user_id=user_id, run_index=run_index)
 
     # Pre-register with the event buffer so reconnecting clients can attach and
     # wait while the run is still queued (no events buffered yet).
@@ -2189,7 +2193,7 @@ async def _arun_background_stream(
             await acleanup_run(run_id)
         except Exception:
             log_error(f"Background stream run {run_id} failed", exc_info=True)
-            # Persist ERROR status
+            # Persist ERROR status — only persist the changed run (O(1))
             try:
                 run_response.status = RunStatus.error
                 await apersist_run_transition(agent, "agent", session_id, run_response, user_id=user_id, full_run=True)
@@ -3336,7 +3340,6 @@ def continue_run_dispatch(
     run_response: Optional[RunOutput] = None,
     *,
     run_id: Optional[str] = None,  # type: ignore
-    updated_tools: Optional[List[ToolExecution]] = None,
     requirements: Optional[List[RunRequirement]] = None,
     input: Optional[str] = None,
     continue_from: Union[int, Literal["end", "last_user"]] = "end",
@@ -3482,10 +3485,7 @@ def continue_run_dispatch(
             run_response.regenerated_from = original_run_id_for_lineage
             if replace_original is not False and run_response.forked_from_run_id:
                 # Mark the original run as REGENERATED so history builders skip it.
-                for r in agent_session.runs or []:
-                    if r.run_id == original_run_id_for_lineage:
-                        r.status = RunStatus.regenerated
-                        break
+                _mark_run_regenerated(agent, agent_session, original_run_id_for_lineage)
         input_messages = run_response.messages or []
     elif run_id is not None:
         # The run is continued from a run_id.
@@ -3536,25 +3536,12 @@ def continue_run_dispatch(
         if regenerate and original_run_id_for_lineage:
             run_response.regenerated_from = original_run_id_for_lineage
             if replace_original is not False and run_response.forked_from_run_id:
-                for r in agent_session.runs or []:
-                    if r.run_id == original_run_id_for_lineage:
-                        r.status = RunStatus.regenerated
-                        break
+                _mark_run_regenerated(agent, agent_session, original_run_id_for_lineage)
 
         input_messages = run_response.messages or []
 
-        # If we have updated_tools, set them in the run_response
-        if updated_tools is not None:
-            warnings.warn(
-                "The 'updated_tools' parameter is deprecated and will be removed in future versions. Use 'requirements' instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            run_response.tools = updated_tools
-            _sync_requirements_with_tools(run_response, updated_tools)
-
         # If we have requirements, get the updated tools and set them in the run_response
-        elif requirements is not None:
+        if requirements is not None:
             run_response.requirements = requirements
             updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
             if updated_tools and run_response.tools:
@@ -4204,7 +4191,6 @@ def acontinue_run_dispatch(  # type: ignore
     run_response: Optional[RunOutput] = None,
     *,
     run_id: Optional[str] = None,  # type: ignore
-    updated_tools: Optional[List[ToolExecution]] = None,
     requirements: Optional[List[RunRequirement]] = None,
     input: Optional[str] = None,
     continue_from: Union[int, Literal["end", "last_user"]] = "end",
@@ -4250,7 +4236,6 @@ def acontinue_run_dispatch(  # type: ignore
         metadata: The metadata to use for continuing the run.
         debug_mode: Whether to enable debug mode.
         yield_run_output: Whether to yield the run response.
-        (deprecated) updated_tools: Use 'requirements' instead.
     """
     from agno.agent._response import get_response_format
 
@@ -4260,12 +4245,6 @@ def acontinue_run_dispatch(  # type: ignore
     if run_response is None and (run_id is not None and (session_id is None and agent.session_id is None)):
         raise ValueError("Session ID is required to continue a run from a run_id.")
 
-    if updated_tools is not None:
-        warnings.warn(
-            "The 'updated_tools' parameter is deprecated and will be removed in future versions. Use 'requirements' instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
     background_tasks = kwargs.pop("background_tasks", None)
     if background_tasks is not None:
         from fastapi import BackgroundTasks
@@ -4340,7 +4319,6 @@ def acontinue_run_dispatch(  # type: ignore
                 agent,
                 run_response=run_response,
                 run_context=run_context,
-                updated_tools=updated_tools,
                 requirements=requirements,
                 input=input,
                 continue_from=continue_from,
@@ -4364,7 +4342,6 @@ def acontinue_run_dispatch(  # type: ignore
             agent,
             run_response=run_response,
             run_context=run_context,
-            updated_tools=updated_tools,
             requirements=requirements,
             input=input,
             continue_from=continue_from,
@@ -4388,7 +4365,6 @@ def acontinue_run_dispatch(  # type: ignore
             session_id=session_id,
             run_response=run_response,
             run_context=run_context,
-            updated_tools=updated_tools,
             requirements=requirements,
             input=input,
             continue_from=continue_from,
@@ -4410,7 +4386,6 @@ async def _acontinue_run_background_stream(
     session_id: str,
     run_context: RunContext,
     run_response: Optional[RunOutput] = None,
-    updated_tools: Optional[List[ToolExecution]] = None,
     requirements: Optional[List[RunRequirement]] = None,
     input: Optional[str] = None,
     continue_from: Union[int, Literal["end", "last_user"]] = "end",
@@ -4438,7 +4413,7 @@ async def _acontinue_run_background_stream(
     3. Buffers events and publishes to live tails (via the event stream)
     4. Yields SSE-formatted strings via an asyncio.Queue
     """
-    from agno.agent._session import asave_session
+    from agno.agent._session import asave_run, asave_session
     from agno.agent._storage import aread_or_create_session, update_metadata
 
     _run_id = run_id or (run_response.run_id if run_response else None)
@@ -4501,7 +4476,6 @@ async def _acontinue_run_background_stream(
                 agent,
                 run_response=run_response,
                 run_context=run_context,
-                updated_tools=updated_tools,
                 requirements=requirements,
                 input=input,
                 continue_from=continue_from,
@@ -4662,7 +4636,6 @@ async def _acontinue_run(
     session_id: str,
     run_context: RunContext,
     run_response: Optional[RunOutput] = None,
-    updated_tools: Optional[List[ToolExecution]] = None,
     requirements: Optional[List[RunRequirement]] = None,
     input: Optional[str] = None,
     continue_from: Union[int, Literal["end", "last_user"]] = "end",
@@ -4772,10 +4745,7 @@ async def _acontinue_run(
                     if regenerate and original_run_id_for_lineage:
                         run_response.regenerated_from = original_run_id_for_lineage
                         if replace_original is not False and run_response.forked_from_run_id:
-                            for r in agent_session.runs or []:
-                                if r.run_id == original_run_id_for_lineage:
-                                    r.status = RunStatus.regenerated
-                                    break
+                            await _amark_run_regenerated(agent, agent_session, original_run_id_for_lineage)
                     input_messages = run_response.messages or []
                 elif run_id is not None:
                     # The run is continued from a run_id.
@@ -4819,20 +4789,12 @@ async def _acontinue_run(
                     if regenerate and original_run_id_for_lineage:
                         run_response.regenerated_from = original_run_id_for_lineage
                         if replace_original is not False and run_response.forked_from_run_id:
-                            for r in agent_session.runs or []:
-                                if r.run_id == original_run_id_for_lineage:
-                                    r.status = RunStatus.regenerated
-                                    break
+                            await _amark_run_regenerated(agent, agent_session, original_run_id_for_lineage)
 
                     input_messages = run_response.messages or []
 
-                    # If we have updated_tools, set them in the run_response
-                    if updated_tools is not None:
-                        run_response.tools = updated_tools
-                        _sync_requirements_with_tools(run_response, updated_tools)
-
                     # If we have requirements, get the updated tools and set them in the run_response
-                    elif requirements is not None:
+                    if requirements is not None:
                         run_response.requirements = requirements
                         updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
                         if updated_tools and run_response.tools:
@@ -5156,7 +5118,6 @@ async def _acontinue_run_stream(
     session_id: str,
     run_context: RunContext,
     run_response: Optional[RunOutput] = None,
-    updated_tools: Optional[List[ToolExecution]] = None,
     requirements: Optional[List[RunRequirement]] = None,
     input: Optional[str] = None,
     continue_from: Union[int, Literal["end", "last_user"]] = "end",
@@ -5262,10 +5223,7 @@ async def _acontinue_run_stream(
                     if regenerate and original_run_id_for_lineage:
                         run_response.regenerated_from = original_run_id_for_lineage
                         if replace_original is not False and run_response.forked_from_run_id:
-                            for r in agent_session.runs or []:
-                                if r.run_id == original_run_id_for_lineage:
-                                    r.status = RunStatus.regenerated
-                                    break
+                            await _amark_run_regenerated(agent, agent_session, original_run_id_for_lineage)
                     input_messages = run_response.messages or []
 
                 elif run_id is not None:
@@ -5310,20 +5268,12 @@ async def _acontinue_run_stream(
                     if regenerate and original_run_id_for_lineage:
                         run_response.regenerated_from = original_run_id_for_lineage
                         if replace_original is not False and run_response.forked_from_run_id:
-                            for r in agent_session.runs or []:
-                                if r.run_id == original_run_id_for_lineage:
-                                    r.status = RunStatus.regenerated
-                                    break
+                            await _amark_run_regenerated(agent, agent_session, original_run_id_for_lineage)
 
                     input_messages = run_response.messages or []
 
-                    # If we have updated_tools, set them in the run_response
-                    if updated_tools is not None:
-                        run_response.tools = updated_tools
-                        _sync_requirements_with_tools(run_response, updated_tools)
-
                     # If we have requirements, get the updated tools and set them in the run_response
-                    elif requirements is not None:
+                    if requirements is not None:
                         run_response.requirements = requirements
                         updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
                         if updated_tools and run_response.tools:
@@ -5953,7 +5903,8 @@ def persist_run_in_session(
     Shared by terminal cleanup (cleanup_and_store) and mid-run checkpointing
     (checkpoint_run). Performs: scrub a shallow copy (unless one is supplied),
     upsert it into the session's runs list, refresh session metrics, sync
-    session_state into session_data, and call save_session.
+    session_state into session_data, and persist both the session row and the
+    run row (O(1) each).
 
     Does NOT stop the run timer, write to file, or update approval status —
     those are terminal-only and live in cleanup_and_store.
@@ -5965,6 +5916,7 @@ def persist_run_in_session(
 
     # Add scrubbed RunOutput to Agent Session
     session.upsert_run(run=storage_copy)
+    run_index = resolve_run_index(session, storage_copy)
 
     # Calculate session metrics
     update_session_metrics(agent, session=session, run_response=run_response)
@@ -5976,8 +5928,15 @@ def persist_run_in_session(
         else:
             session.session_data = {"session_state": run_context.session_state}
 
-    # Save session to memory
+    # Persist the session row and this single run (both O(1))
     _session.save_session(agent, session=session)
+    _session.save_run(
+        agent,
+        run=storage_copy,
+        session_id=session.session_id,
+        user_id=session.user_id,
+        run_index=run_index,
+    )
 
 
 async def apersist_run_in_session(
@@ -5994,6 +5953,7 @@ async def apersist_run_in_session(
         storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context, isolate_inflight=True)
 
     session.upsert_run(run=storage_copy)
+    run_index = resolve_run_index(session, storage_copy)
     update_session_metrics(agent, session=session, run_response=run_response)
 
     if run_context is not None and run_context.session_state is not None:
@@ -6003,6 +5963,46 @@ async def apersist_run_in_session(
             session.session_data = {"session_state": run_context.session_state}
 
     await _session.asave_session(agent, session=session)
+    await _session.asave_run(
+        agent,
+        run=storage_copy,
+        session_id=session.session_id,
+        user_id=session.user_id,
+        run_index=run_index,
+    )
+
+
+def cleanup_and_store(
+    agent: Agent,
+    run_response: RunOutput,
+    session: AgentSession,
+    run_context: Optional[RunContext] = None,
+    user_id: Optional[str] = None,
+) -> None:
+    from agno.run.approval import update_approval_run_status
+
+    storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context)
+
+    # Stop the timer for the Run duration (terminal only)
+    if run_response.metrics:
+        run_response.metrics.stop_timer()
+
+    # Optional: Save output to file if save_response_to_file is set (terminal only)
+    save_run_response_to_file(
+        agent,
+        run_response=storage_copy,
+        input=run_response.input.input_content_string() if run_response.input else "",
+        session_id=session.session_id,
+        user_id=user_id,
+    )
+
+    # Persist run into session, save session row and run row
+    persist_run_in_session(agent, run_response, session, run_context, storage_copy=storage_copy)
+
+    # Update approval run_status if this run has an associated approval.
+    # This is a no-op if no approval exists for this run_id. (Terminal only.)
+    if run_response.status is not None and run_response.run_id is not None:
+        update_approval_run_status(agent.db, run_response.run_id, run_response.status)
 
 
 def flush_in_flight_messages_on_error(
@@ -6050,41 +6050,6 @@ def flush_in_flight_messages_on_error(
     if not run_messages.messages:
         return
     run_response.messages = [m for m in run_messages.messages if m.add_to_agent_memory]
-
-
-def cleanup_and_store(
-    agent: Agent,
-    run_response: RunOutput,
-    session: AgentSession,
-    run_context: Optional[RunContext] = None,
-    user_id: Optional[str] = None,
-) -> None:
-    from agno.run.approval import update_approval_run_status
-
-    # Scrub a shallow copy for storage — the original run_response is never
-    # mutated so the caller always sees generated media regardless of store_media.
-    storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context)
-
-    # Stop the timer for the Run duration (terminal only)
-    if run_response.metrics:
-        run_response.metrics.stop_timer()
-
-    # Optional: Save output to file if save_response_to_file is set (terminal only)
-    save_run_response_to_file(
-        agent,
-        run_response=storage_copy,
-        input=run_response.input.input_content_string() if run_response.input else "",
-        session_id=session.session_id,
-        user_id=user_id,
-    )
-
-    # Persist run into session and save session
-    persist_run_in_session(agent, run_response, session, run_context, storage_copy=storage_copy)
-
-    # Update approval run_status if this run has an associated approval.
-    # This is a no-op if no approval exists for this run_id. (Terminal only.)
-    if run_response.status is not None and run_response.run_id is not None:
-        update_approval_run_status(agent.db, run_response.run_id, run_response.status)
 
 
 async def acleanup_and_store(
@@ -6190,6 +6155,53 @@ def _mark_checkpoint_message(run_response: RunOutput) -> None:
     message = run_response.messages[-1]
     message.checkpoint_status = run_response.status.value if run_response.status else None
     message.checkpoint_created_at = int(unix_time())
+
+
+def _mark_run_regenerated(
+    agent: Agent,
+    session: AgentSession,
+    original_run_id: str,
+) -> None:
+    """Flip the parent run's status to ``REGENERATED`` and persist that single
+    row. Under v3 storage, mutating ``session.runs[i].status`` in memory is not
+    enough: ``save_session`` writes only the session row, so without an
+    explicit ``save_run`` here the DB row keeps its old (COMPLETED) status and
+    history builders still surface the parent — producing duplicate content in
+    conversation history after regenerate."""
+    from agno.agent._session import save_run
+
+    for r in session.runs or []:
+        if r.run_id == original_run_id:
+            r.status = RunStatus.regenerated
+            save_run(
+                agent,
+                run=cast(RunOutput, r),
+                session_id=session.session_id,
+                user_id=session.user_id,
+                run_index=resolve_run_index(session, r),
+            )
+            return
+
+
+async def _amark_run_regenerated(
+    agent: Agent,
+    session: AgentSession,
+    original_run_id: str,
+) -> None:
+    """Async variant of :func:`_mark_run_regenerated`."""
+    from agno.agent._session import asave_run
+
+    for r in session.runs or []:
+        if r.run_id == original_run_id:
+            r.status = RunStatus.regenerated
+            await asave_run(
+                agent,
+                run=cast(RunOutput, r),
+                session_id=session.session_id,
+                user_id=session.user_id,
+                run_index=resolve_run_index(session, r),
+            )
+            return
 
 
 def checkpoint_run(
@@ -6367,6 +6379,21 @@ def fork_session_dispatch(
 
     new_session = _build_forked_session(source_session, new_user_id=user_id)
     save_session(agent, session=new_session)
+
+    # Under v3 storage, save_session no longer writes runs — persist each
+    # forked run individually so the new session isn't observably empty.
+    # AgentSession.runs is typed as Union[RunOutput, TeamRunOutput] for legacy
+    # reasons; an agent's own session only ever holds RunOutput.
+    from agno.agent._session import save_run
+
+    for idx, run in enumerate(new_session.runs or []):
+        save_run(
+            agent,
+            run=cast(RunOutput, run),
+            session_id=new_session.session_id,
+            user_id=new_session.user_id,
+            run_index=idx,
+        )
     return new_session.session_id
 
 
@@ -6401,6 +6428,31 @@ async def afork_session_dispatch(
         await asave_session(agent, session=new_session)
     else:
         save_session(agent, session=new_session)
+
+    # Under v3 storage, [a]save_session no longer writes runs — persist each
+    # forked run individually so the new session isn't observably empty.
+    # AgentSession.runs is typed as Union[RunOutput, TeamRunOutput] for legacy
+    # reasons; an agent's own session only ever holds RunOutput.
+    from agno.agent._session import asave_run, save_run
+
+    for idx, run in enumerate(new_session.runs or []):
+        run_out = cast(RunOutput, run)
+        if has_async_db(agent):
+            await asave_run(
+                agent,
+                run=run_out,
+                session_id=new_session.session_id,
+                user_id=new_session.user_id,
+                run_index=idx,
+            )
+        else:
+            save_run(
+                agent,
+                run=run_out,
+                session_id=new_session.session_id,
+                user_id=new_session.user_id,
+                run_index=idx,
+            )
 
     return new_session.session_id
 
