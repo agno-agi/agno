@@ -307,4 +307,56 @@ class RunRequirement:
                     rebuilt_feedback.append(UserFeedbackQuestion.from_dict(item))
             requirement.user_feedback_schema = rebuilt_feedback if rebuilt_feedback else None
 
+        # The same rule applies to the schema lanes: to_dict ships each schema
+        # both at the requirement level and inside tool_execution, but dispatch
+        # reads only tool_execution's copy - values filled on the requirement-level
+        # copy must reach it. Merging mirrors provide_user_input and
+        # provide_user_feedback; a value already set on the nested copy stays
+        # authoritative. answered is inferred only when this merge resolves the
+        # last open field: a paused schema can arrive with every value pre-filled
+        # by the model, so a plain reload of a stored pause must never read as
+        # answered.
+        if requirement.tool_execution is not None:
+            if requirement.user_input_schema:
+                tool_input_schema = requirement.tool_execution.user_input_schema
+                if tool_input_schema is None:
+                    requirement.tool_execution.user_input_schema = requirement.user_input_schema
+                else:
+                    input_values = {f.name: f.value for f in requirement.user_input_schema if f.value is not None}
+                    input_merged = False
+                    for tool_field in tool_input_schema:
+                        if tool_field.value is None and tool_field.name in input_values:
+                            tool_field.value = input_values[tool_field.name]
+                            input_merged = True
+                    if (
+                        input_merged
+                        and requirement.tool_execution.answered is None
+                        and all(f.value is not None for f in tool_input_schema)
+                    ):
+                        requirement.tool_execution.answered = True
+            if requirement.user_feedback_schema:
+                tool_feedback_schema = requirement.tool_execution.user_feedback_schema
+                if tool_feedback_schema is None:
+                    requirement.tool_execution.user_feedback_schema = requirement.user_feedback_schema
+                else:
+                    selections = {
+                        q.question: q.selected_options
+                        for q in requirement.user_feedback_schema
+                        if q.selected_options is not None
+                    }
+                    feedback_merged = False
+                    for tool_question in tool_feedback_schema:
+                        if tool_question.selected_options is None and tool_question.question in selections:
+                            tool_question.selected_options = selections[tool_question.question]
+                            if tool_question.options:
+                                for opt in tool_question.options:
+                                    opt.selected = opt.label in tool_question.selected_options
+                            feedback_merged = True
+                    if (
+                        feedback_merged
+                        and requirement.tool_execution.answered is None
+                        and all(q.selected_options is not None for q in tool_feedback_schema)
+                    ):
+                        requirement.tool_execution.answered = True
+
         return requirement
