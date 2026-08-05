@@ -1909,10 +1909,22 @@ class StudioTools(Toolkit):
         return db.get_component(component_id) is not None
 
     def _resolve_members(self, member_ids: List[str]) -> tuple[List[TeamMember], List[str]]:
+        """Resolve member identifiers to agents or teams.
+
+        Exact ids resolve across BOTH types before any name matching, so an
+        agent merely named like a team's id can never steal that member slot.
+        An identifier naming a stored component that fails to load counts as
+        missing rather than falling through to name matching.
+        """
+        runner = self._runner_tools
         members: List[TeamMember] = []
         missing: List[str] = []
         for mid in member_ids:
-            member = self._find_agent(mid) or self._find_team(mid)
+            member: Optional[TeamMember] = runner._find_agent_by_exact_id(mid) or runner._find_team_by_exact_id(mid)
+            if member is None and not (
+                runner._db_component_exists("agent", mid) or runner._db_component_exists("team", mid)
+            ):
+                member = runner._find_agent_by_name(mid) or runner._find_team_by_name(mid)
             if member is None:
                 missing.append(mid)
             else:

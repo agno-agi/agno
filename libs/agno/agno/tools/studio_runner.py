@@ -20,8 +20,12 @@ Semantics:
       injected and its user_id passed through, so per-user state (memory,
       learning) lands on the human who asked, never on a service default.
     * Each target keeps one session per calling conversation
-      ("<caller_session_id>--<component_id>"), so repeat runs continue their
-      context instead of starting cold.
+      ("<caller_session_id>--<component_type>--<component_id>"), so repeat
+      runs continue their context instead of starting cold.
+    * Code-defined components are dispatched on a fresh deep copy per run
+      (mirroring AgentOS's create_fresh resolution), so per-run mutation of a
+      shared instance never bleeds across callers. DB-loaded components are
+      reconstructed per call already.
     * A PAUSED result carries the unresolved requirements plus the
       run_id/session_id a continue call must address (the same shape the
       AgentOS MCP plane returns) -- human-in-the-loop pauses are relayed, not
@@ -211,17 +215,27 @@ class StudioRunnerTools(Toolkit):
     def _find_agent(self, agent_id: str) -> Optional["Agent"]:
         """Lookup order: code-defined exact id, DB exact id, code-defined display
         name, DB display name (ambiguous -> AmbiguousComponentNameError), then
-        the identifier's slug as an id. Exact ids always win over names."""
-        for a in self._iter_agents():
-            if getattr(a, "id", None) == agent_id:
-                return a
-        agent = self._load_agent_from_db(agent_id)
+        the identifier's slug as an id. Exact ids always win over names.
+
+        Split into an exact tier and a name tier so cross-type callers
+        (StudioTools._resolve_members) can try exact ids across both types
+        before any name matching."""
+        agent = self._find_agent_by_exact_id(agent_id)
         if agent is not None:
             return agent
         if self._db_component_exists("agent", agent_id):
             # The id names a stored component whose config is missing or broken;
             # never reinterpret an exact id as a display name.
             return None
+        return self._find_agent_by_name(agent_id)
+
+    def _find_agent_by_exact_id(self, agent_id: str) -> Optional["Agent"]:
+        for a in self._iter_agents():
+            if getattr(a, "id", None) == agent_id:
+                return a
+        return self._load_agent_from_db(agent_id)
+
+    def _find_agent_by_name(self, agent_id: str) -> Optional["Agent"]:
         named_agents = [a for a in self._iter_agents() if getattr(a, "name", None) == agent_id]
         if len(named_agents) > 1:
             raise AmbiguousComponentNameError("agent", agent_id, [str(getattr(a, "id", "")) for a in named_agents])
@@ -231,14 +245,20 @@ class StudioRunnerTools(Toolkit):
         return self._load_agent_from_db(resolved) if resolved is not None else None
 
     def _find_team(self, team_id: str) -> Optional["Team"]:
-        for t in self._iter_teams():
-            if getattr(t, "id", None) == team_id:
-                return t
-        team = self._load_team_from_db(team_id)
+        team = self._find_team_by_exact_id(team_id)
         if team is not None:
             return team
         if self._db_component_exists("team", team_id):
             return None
+        return self._find_team_by_name(team_id)
+
+    def _find_team_by_exact_id(self, team_id: str) -> Optional["Team"]:
+        for t in self._iter_teams():
+            if getattr(t, "id", None) == team_id:
+                return t
+        return self._load_team_from_db(team_id)
+
+    def _find_team_by_name(self, team_id: str) -> Optional["Team"]:
         named_teams = [t for t in self._iter_teams() if getattr(t, "name", None) == team_id]
         if len(named_teams) > 1:
             raise AmbiguousComponentNameError("team", team_id, [str(getattr(t, "id", "")) for t in named_teams])
@@ -248,14 +268,20 @@ class StudioRunnerTools(Toolkit):
         return self._load_team_from_db(resolved) if resolved is not None else None
 
     def _find_workflow(self, workflow_id: str) -> Optional["Workflow"]:
-        for w in self._iter_workflows():
-            if getattr(w, "id", None) == workflow_id:
-                return w
-        wf = self._load_workflow_from_db(workflow_id)
+        wf = self._find_workflow_by_exact_id(workflow_id)
         if wf is not None:
             return wf
         if self._db_component_exists("workflow", workflow_id):
             return None
+        return self._find_workflow_by_name(workflow_id)
+
+    def _find_workflow_by_exact_id(self, workflow_id: str) -> Optional["Workflow"]:
+        for w in self._iter_workflows():
+            if getattr(w, "id", None) == workflow_id:
+                return w
+        return self._load_workflow_from_db(workflow_id)
+
+    def _find_workflow_by_name(self, workflow_id: str) -> Optional["Workflow"]:
         named_workflows = [w for w in self._iter_workflows() if getattr(w, "name", None) == workflow_id]
         if len(named_workflows) > 1:
             raise AmbiguousComponentNameError(
@@ -265,6 +291,34 @@ class StudioRunnerTools(Toolkit):
             return named_workflows[0]
         resolved = self._resolve_db_id_by_name_or_slug("workflow", workflow_id)
         return self._load_workflow_from_db(resolved) if resolved is not None else None
+
+    # run_* execute code-defined components on a fresh copy, so per-run
+    # mutation never bleeds across callers (mirrors AgentOS's create_fresh
+    # resolution). DB-loaded components are already reconstructed per call.
+
+    def _agent_for_run(self, agent_id: str) -> Optional["Agent"]:
+        agent = self._find_agent(agent_id)
+        if agent is not None and any(a is agent for a in self._iter_agents()):
+            copier = getattr(agent, "deep_copy", None)
+            if callable(copier):
+                agent = copier()
+        return agent
+
+    def _team_for_run(self, team_id: str) -> Optional["Team"]:
+        team = self._find_team(team_id)
+        if team is not None and any(t is team for t in self._iter_teams()):
+            copier = getattr(team, "deep_copy", None)
+            if callable(copier):
+                team = copier()
+        return team
+
+    def _workflow_for_run(self, workflow_id: str) -> Optional["Workflow"]:
+        wf = self._find_workflow(workflow_id)
+        if wf is not None and any(w is wf for w in self._iter_workflows()):
+            copier = getattr(wf, "deep_copy", None)
+            if callable(copier):
+                wf = copier()
+        return wf
 
     def _db_component_exists(self, component_type: str, component_id: str) -> bool:
         if self.db is None:
@@ -332,7 +386,10 @@ class StudioRunnerTools(Toolkit):
         try:
             agent = Agent.from_dict(config, registry=self.registry)
             agent.id = agent_id
-            agent.db = self.db
+            # The catalog db is a fallback only: a config-declared db (resolved
+            # by from_dict, possibly with table overrides) must keep winning.
+            if getattr(agent, "db", None) is None:
+                agent.db = self.db
             return agent
         except Exception:
             logger.warning("StudioRunnerTools: Agent.from_dict failed for %s", agent_id, exc_info=True)
@@ -349,7 +406,9 @@ class StudioRunnerTools(Toolkit):
         try:
             team = Team.from_dict(config, db=self.db, registry=self.registry)
             team.id = team_id
-            team.db = self.db
+            # The catalog db is a fallback only; a config-declared db wins.
+            if getattr(team, "db", None) is None:
+                team.db = self.db
             return team
         except Exception:
             logger.warning("StudioRunnerTools: Team.from_dict failed for %s", team_id, exc_info=True)
@@ -366,7 +425,9 @@ class StudioRunnerTools(Toolkit):
         try:
             wf = Workflow.from_dict(config, db=self.db, registry=self.registry)
             wf.id = workflow_id
-            wf.db = self.db
+            # The catalog db is a fallback only; a config-declared db wins.
+            if getattr(wf, "db", None) is None:
+                wf.db = self.db
             return wf
         except Exception:
             logger.warning("StudioRunnerTools: Workflow.from_dict failed for %s", workflow_id, exc_info=True)
@@ -484,7 +545,7 @@ class StudioRunnerTools(Toolkit):
                 'content' and, when paused, 'requirements'.
         """
         try:
-            agent = self._find_agent(agent_id)
+            agent = self._agent_for_run(agent_id)
         except AmbiguousComponentNameError as e:
             return json.dumps({"error": str(e)})
         except Exception as e:
@@ -498,7 +559,7 @@ class StudioRunnerTools(Toolkit):
                 message,
                 stream=False,
                 user_id=_agno_run_context.user_id if _agno_run_context is not None else None,
-                session_id=self._sub_session_id(_agno_run_context, component_id),
+                session_id=self._sub_session_id(_agno_run_context, "agent", component_id),
             )
             return self._run_payload("agent_id", component_id, response)
         except Exception as e:
@@ -522,7 +583,7 @@ class StudioRunnerTools(Toolkit):
                 'content' and, when paused, 'requirements'.
         """
         try:
-            team = self._find_team(team_id)
+            team = self._team_for_run(team_id)
         except AmbiguousComponentNameError as e:
             return json.dumps({"error": str(e)})
         except Exception as e:
@@ -536,7 +597,7 @@ class StudioRunnerTools(Toolkit):
                 message,
                 stream=False,
                 user_id=_agno_run_context.user_id if _agno_run_context is not None else None,
-                session_id=self._sub_session_id(_agno_run_context, component_id),
+                session_id=self._sub_session_id(_agno_run_context, "team", component_id),
             )
             return self._run_payload("team_id", component_id, response)
         except Exception as e:
@@ -560,7 +621,7 @@ class StudioRunnerTools(Toolkit):
                 'content' and, when paused, 'requirements'.
         """
         try:
-            wf = self._find_workflow(workflow_id)
+            wf = self._workflow_for_run(workflow_id)
         except AmbiguousComponentNameError as e:
             return json.dumps({"error": str(e)})
         except Exception as e:
@@ -574,7 +635,7 @@ class StudioRunnerTools(Toolkit):
                 input=message,
                 stream=False,
                 user_id=_agno_run_context.user_id if _agno_run_context is not None else None,
-                session_id=self._sub_session_id(_agno_run_context, component_id),
+                session_id=self._sub_session_id(_agno_run_context, "workflow", component_id),
             )
             return self._run_payload("workflow_id", component_id, response)
         except Exception as e:
@@ -590,7 +651,7 @@ class StudioRunnerTools(Toolkit):
         """
         # Resolution hits the DB synchronously; keep it off the event loop.
         try:
-            agent = await asyncio.to_thread(self._find_agent, agent_id)
+            agent = await asyncio.to_thread(self._agent_for_run, agent_id)
         except AmbiguousComponentNameError as e:
             return json.dumps({"error": str(e)})
         except Exception as e:
@@ -604,7 +665,7 @@ class StudioRunnerTools(Toolkit):
                 message,
                 stream=False,
                 user_id=_agno_run_context.user_id if _agno_run_context is not None else None,
-                session_id=self._sub_session_id(_agno_run_context, component_id),
+                session_id=self._sub_session_id(_agno_run_context, "agent", component_id),
             )
             return self._run_payload("agent_id", component_id, response)
         except Exception as e:
@@ -619,7 +680,7 @@ class StudioRunnerTools(Toolkit):
             message (str): The message to send.
         """
         try:
-            team = await asyncio.to_thread(self._find_team, team_id)
+            team = await asyncio.to_thread(self._team_for_run, team_id)
         except AmbiguousComponentNameError as e:
             return json.dumps({"error": str(e)})
         except Exception as e:
@@ -633,7 +694,7 @@ class StudioRunnerTools(Toolkit):
                 message,
                 stream=False,
                 user_id=_agno_run_context.user_id if _agno_run_context is not None else None,
-                session_id=self._sub_session_id(_agno_run_context, component_id),
+                session_id=self._sub_session_id(_agno_run_context, "team", component_id),
             )
             return self._run_payload("team_id", component_id, response)
         except Exception as e:
@@ -650,7 +711,7 @@ class StudioRunnerTools(Toolkit):
             message (str): Input to pass to the first step.
         """
         try:
-            wf = await asyncio.to_thread(self._find_workflow, workflow_id)
+            wf = await asyncio.to_thread(self._workflow_for_run, workflow_id)
         except AmbiguousComponentNameError as e:
             return json.dumps({"error": str(e)})
         except Exception as e:
@@ -664,7 +725,7 @@ class StudioRunnerTools(Toolkit):
                 input=message,
                 stream=False,
                 user_id=_agno_run_context.user_id if _agno_run_context is not None else None,
-                session_id=self._sub_session_id(_agno_run_context, component_id),
+                session_id=self._sub_session_id(_agno_run_context, "workflow", component_id),
             )
             return self._run_payload("workflow_id", component_id, response)
         except Exception as e:
@@ -688,12 +749,16 @@ class StudioRunnerTools(Toolkit):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _sub_session_id(run_context: Optional[RunContext], component_id: str) -> Optional[str]:
+    def _sub_session_id(run_context: Optional[RunContext], component_type: str, component_id: str) -> Optional[str]:
         """One session per component per calling conversation: repeat runs from the
-        same caller session continue, different conversations stay separate."""
+        same caller session continue, different conversations stay separate.
+
+        The component type is part of the key: session ids are globally unique
+        while ids are only unique per type, so an agent and a team sharing an id
+        must not share a session row."""
         if run_context is None or not getattr(run_context, "session_id", None):
             return None
-        return f"{run_context.session_id}--{component_id}"
+        return f"{run_context.session_id}--{component_type}--{component_id}"
 
     @staticmethod
     def _run_payload(id_key: str, component_id: str, run_output: Any) -> str:

@@ -91,6 +91,7 @@ class _StubAgent:
     def __init__(self, output: Any = None):
         self._output = output or _StubRunOutput()
         self.seen: Optional[Dict[str, Any]] = None
+        self.copied = False
 
     def run(self, message, stream=None, user_id=None, session_id=None):
         self.seen = {"message": message, "stream": stream, "user_id": user_id, "session_id": session_id}
@@ -99,6 +100,10 @@ class _StubAgent:
     async def arun(self, message, stream=None, user_id=None, session_id=None):
         self.seen = {"message": message, "stream": stream, "user_id": user_id, "session_id": session_id}
         return self._output
+
+    def deep_copy(self):
+        self.copied = True
+        return self
 
 
 class _StubTeam:
@@ -107,6 +112,7 @@ class _StubTeam:
 
     def __init__(self):
         self.seen: Optional[Dict[str, Any]] = None
+        self.copied = False
 
     def run(self, message, stream=None, user_id=None, session_id=None):
         self.seen = {"message": message, "stream": stream, "user_id": user_id, "session_id": session_id}
@@ -116,6 +122,10 @@ class _StubTeam:
         self.seen = {"message": message, "stream": stream, "user_id": user_id, "session_id": session_id}
         return _StubRunOutput()
 
+    def deep_copy(self):
+        self.copied = True
+        return self
+
 
 class _StubWorkflow:
     id = "stub-wf"
@@ -123,6 +133,7 @@ class _StubWorkflow:
 
     def __init__(self):
         self.seen: Optional[Dict[str, Any]] = None
+        self.copied = False
 
     def run(self, input=None, stream=None, user_id=None, session_id=None):
         self.seen = {"input": input, "stream": stream, "user_id": user_id, "session_id": session_id}
@@ -131,6 +142,10 @@ class _StubWorkflow:
     async def arun(self, input=None, stream=None, user_id=None, session_id=None):
         self.seen = {"input": input, "stream": stream, "user_id": user_id, "session_id": session_id}
         return _StubRunOutput()
+
+    def deep_copy(self):
+        self.copied = True
+        return self
 
 
 # ----------------------------------------------------------------------
@@ -177,7 +192,12 @@ class TestIdentityThreading:
         stub = _StubAgent()
         runner = StudioRunnerTools(db=db, agents_list=[stub])
         out = _loads(runner.run_agent("stub", "hi", _agno_run_context=_context()))
-        assert stub.seen == {"message": "hi", "stream": False, "user_id": "ash", "session_id": "caller-sess--stub"}
+        assert stub.seen == {
+            "message": "hi",
+            "stream": False,
+            "user_id": "ash",
+            "session_id": "caller-sess--agent--stub",
+        }
         assert out == {
             "agent_id": "stub",
             "run_id": "run-1",
@@ -200,7 +220,7 @@ class TestIdentityThreading:
         assert "error" not in out
         # The payload and the derived session both carry the component's real id.
         assert out["agent_id"] == "stub"
-        assert stub.seen is not None and stub.seen["session_id"] == "caller-sess--stub"
+        assert stub.seen is not None and stub.seen["session_id"] == "caller-sess--agent--stub"
 
     def test_run_team_threads_identity(self, db):
         stub = _StubTeam()
@@ -210,7 +230,7 @@ class TestIdentityThreading:
             "message": "hi",
             "stream": False,
             "user_id": "ash",
-            "session_id": "caller-sess--stub-team",
+            "session_id": "caller-sess--team--stub-team",
         }
         assert out["team_id"] == "stub-team"
 
@@ -218,7 +238,12 @@ class TestIdentityThreading:
         stub = _StubWorkflow()
         runner = StudioRunnerTools(db=db, workflows_list=[stub])
         out = _loads(runner.run_workflow("stub-wf", "go", _agno_run_context=_context()))
-        assert stub.seen == {"input": "go", "stream": False, "user_id": "ash", "session_id": "caller-sess--stub-wf"}
+        assert stub.seen == {
+            "input": "go",
+            "stream": False,
+            "user_id": "ash",
+            "session_id": "caller-sess--workflow--stub-wf",
+        }
         assert out["workflow_id"] == "stub-wf"
 
     @pytest.mark.asyncio
@@ -226,7 +251,12 @@ class TestIdentityThreading:
         stub = _StubAgent()
         runner = StudioRunnerTools(db=db, agents_list=[stub])
         out = _loads(await runner.arun_agent("stub", "hi", _agno_run_context=_context()))
-        assert stub.seen == {"message": "hi", "stream": False, "user_id": "ash", "session_id": "caller-sess--stub"}
+        assert stub.seen == {
+            "message": "hi",
+            "stream": False,
+            "user_id": "ash",
+            "session_id": "caller-sess--agent--stub",
+        }
         assert out["status"] == "COMPLETED"
 
     @pytest.mark.asyncio
@@ -321,7 +351,7 @@ class TestInjectionGuard:
         assert result.status == "success"
         assert stub.seen is not None
         assert stub.seen["user_id"] == "ash"
-        assert stub.seen["session_id"] == "caller-sess--stub"
+        assert stub.seen["session_id"] == "caller-sess--agent--stub"
 
     def test_spoofed_context_is_dropped_without_hooks(self, db):
         stub = _StubAgent()
@@ -554,6 +584,59 @@ class TestResolution:
 
 
 # ----------------------------------------------------------------------
+# Dispatch isolation: fresh copies, per-type sessions, preserved dbs
+# ----------------------------------------------------------------------
+
+
+class TestDispatchIsolation:
+    def test_code_defined_targets_are_deep_copied_per_run(self, db):
+        stub = _StubAgent()
+        team = _StubTeam()
+        wf = _StubWorkflow()
+        runner = StudioRunnerTools(db=db, agents_list=[stub], teams_list=[team], workflows_list=[wf])
+        runner.run_agent("stub", "hi")
+        runner.run_team("stub-team", "hi")
+        runner.run_workflow("stub-wf", "go")
+        assert stub.copied and team.copied and wf.copied
+
+    def test_agent_and_team_sharing_an_id_get_separate_sessions(self, db):
+        agent = _StubAgent()
+        agent.id = "shared"
+        agent.name = "Shared Agent"
+        team = _StubTeam()
+        team.id = "shared"
+        team.name = "Shared Team"
+        runner = StudioRunnerTools(db=db, agents_list=[agent], teams_list=[team])
+        runner.run_agent("shared", "hi", _agno_run_context=_context())
+        runner.run_team("shared", "hi", _agno_run_context=_context())
+        assert agent.seen is not None and team.seen is not None
+        assert agent.seen["session_id"] == "caller-sess--agent--shared"
+        assert team.seen["session_id"] == "caller-sess--team--shared"
+
+    def test_loader_keeps_config_declared_db(self, registry, db, tmp_path, monkeypatch):
+        # A db reconstructed from the component's own config (possibly carrying
+        # table overrides) must not be overwritten by the catalog db.
+        from agno.agent.agent import Agent as AgentClass
+
+        studio = StudioTools(registry=registry, db=db)
+        studio.create_agent(name="Radar", instructions="i", model_id="gpt-5.4")
+
+        own_db = SqliteDb(id="component-own-db", db_file=str(tmp_path / "own.db"))
+        original_from_dict = AgentClass.from_dict
+
+        def with_own_db(config, **kwargs):
+            agent = original_from_dict(config, **kwargs)
+            agent.db = own_db
+            return agent
+
+        monkeypatch.setattr(AgentClass, "from_dict", staticmethod(with_own_db))
+        runner = StudioRunnerTools(registry=registry, db=db)
+        found = runner._find_agent("radar")
+        assert found is not None
+        assert found.db is own_db
+
+
+# ----------------------------------------------------------------------
 # Discovery
 # ----------------------------------------------------------------------
 
@@ -602,7 +685,12 @@ class TestStudioEmbedding:
         stub = _StubAgent()
         studio = StudioTools(registry=registry, db=db, agents_list=[stub])
         out = _loads(studio.functions["run_agent"].entrypoint("stub", "hi", _agno_run_context=_context()))
-        assert stub.seen == {"message": "hi", "stream": False, "user_id": "ash", "session_id": "caller-sess--stub"}
+        assert stub.seen == {
+            "message": "hi",
+            "stream": False,
+            "user_id": "ash",
+            "session_id": "caller-sess--agent--stub",
+        }
         assert out["agent_id"] == "stub"
 
     def test_studio_lookups_gain_name_resolution(self, registry, db):
@@ -627,6 +715,18 @@ class TestStudioEmbedding:
         assert out.get("id") == "radar-scout"
         fetched = _loads(studio.get_agent("radar-scout"))
         assert fetched["instructions"] == "updated"
+
+    def test_exact_team_member_id_beats_agent_display_name(self, registry, db):
+        studio = StudioTools(registry=registry, db=db, teams=True)
+        studio.create_agent(name="member", instructions="i", model_id="gpt-5.4")
+        studio.create_team(name="support", instructions="i", member_ids=["member"], model_id="gpt-5.4")
+        # An agent NAMED "support" (stored as support-2) must not steal the
+        # team's exact id in member resolution.
+        created_agent = _loads(studio.create_agent(name="support", instructions="i", model_id="gpt-5.4"))
+        assert created_agent["id"] == "support-2"
+
+        created = _loads(studio.create_team(name="squad", instructions="i", member_ids=["support"], model_id="gpt-5.4"))
+        assert created.get("member_ids") == ["support"]
 
     def test_create_team_ambiguous_member_name_errors(self, registry, db):
         studio = StudioTools(registry=registry, db=db, teams=True)
