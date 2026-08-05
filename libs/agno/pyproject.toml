@@ -67,6 +67,9 @@ dev = [
   "agno[slack]",
   "agno[agui]",
   "agno[a2a]",
+  # Scheduler deps (croniter, pytz); without them the scheduler unit suite
+  # and the StudioTools schedule tests skip.
+  "agno[scheduler]",
 ]
 
 # AgentOS server bundle
