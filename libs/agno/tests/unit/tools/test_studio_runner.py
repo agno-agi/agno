@@ -102,8 +102,12 @@ class _StubAgent:
         return self._output
 
     def deep_copy(self):
+        # A distinct instance that shares state, so tests can see both the
+        # copy call and the run through the original stub.
         self.copied = True
-        return self
+        clone = object.__new__(type(self))
+        clone.__dict__ = self.__dict__
+        return clone
 
 
 class _StubTeam:
@@ -123,8 +127,12 @@ class _StubTeam:
         return _StubRunOutput()
 
     def deep_copy(self):
+        # A distinct instance that shares state, so tests can see both the
+        # copy call and the run through the original stub.
         self.copied = True
-        return self
+        clone = object.__new__(type(self))
+        clone.__dict__ = self.__dict__
+        return clone
 
 
 class _StubWorkflow:
@@ -144,8 +152,12 @@ class _StubWorkflow:
         return _StubRunOutput()
 
     def deep_copy(self):
+        # A distinct instance that shares state, so tests can see both the
+        # copy call and the run through the original stub.
         self.copied = True
-        return self
+        clone = object.__new__(type(self))
+        clone.__dict__ = self.__dict__
+        return clone
 
 
 # ----------------------------------------------------------------------
@@ -629,9 +641,10 @@ class TestDispatchIsolation:
         assert agent.seen["session_id"] == "caller-sess--agent--shared"
         assert team.seen["session_id"] == "caller-sess--team--shared"
 
-    def test_lossy_deep_copy_falls_back_to_the_shared_instance(self, db):
-        # deep_copy rebuilds via __init__ and can blank a subclass or raise;
-        # a copy that lost its id (or failed) must not be dispatched.
+    def test_bad_deep_copy_refuses_dispatch(self, db):
+        # deep_copy rebuilds via __init__ and can blank a subclass or raise.
+        # The runner must not dispatch the bad copy. It must also not fall
+        # back to the shared instance. It must return an error.
         class _LossyCopyAgent(_StubAgent):
             def deep_copy(self):
                 blank = _StubAgent()
@@ -643,17 +656,24 @@ class TestDispatchIsolation:
             def deep_copy(self):
                 raise TypeError("missing 1 required positional argument")
 
+        class _NoCopyAgent(_StubAgent):
+            deep_copy = None
+
         lossy = _LossyCopyAgent()
         runner = StudioRunnerTools(db=db, agents_list=[lossy])
         out = _loads(runner.run_agent("stub", "hi"))
-        assert out["agent_id"] == "stub"
-        assert lossy.seen is not None  # the ORIGINAL ran, not the blank copy
+        assert "lost its identity" in out["error"]
+        assert lossy.seen is None
 
         raising = _RaisingCopyAgent()
         runner = StudioRunnerTools(db=db, agents_list=[raising])
         out = _loads(runner.run_agent("stub", "hi"))
-        assert out["agent_id"] == "stub"
-        assert raising.seen is not None
+        assert "deep_copy failed" in out["error"]
+        assert raising.seen is None
+
+        runner = StudioRunnerTools(db=db, agents_list=[_NoCopyAgent()])
+        out = _loads(runner.run_agent("stub", "hi"))
+        assert "has no deep_copy" in out["error"]
 
     def test_loader_keeps_config_declared_db(self, registry, db, tmp_path, monkeypatch):
         # A db reconstructed from the component's own config (possibly carrying
@@ -724,6 +744,22 @@ class TestDiscovery:
 
 
 class TestStudioEmbedding:
+    def test_public_run_methods_forward_to_the_runner(self, registry, db):
+        stub = _StubAgent()
+        studio = StudioTools(registry=registry, db=db, agents_list=[stub])
+        for name in ("run_agent", "run_team", "run_workflow", "arun_agent", "arun_team", "arun_workflow"):
+            assert hasattr(studio, name)
+        out = _loads(studio.run_agent("stub", "hi"))
+        assert out["agent_id"] == "stub"
+        assert stub.seen is not None
+
+    @pytest.mark.asyncio
+    async def test_public_arun_agent_forwards_to_the_runner(self, registry, db):
+        stub = _StubAgent()
+        studio = StudioTools(registry=registry, db=db, agents_list=[stub])
+        out = _loads(await studio.arun_agent("stub", "hi"))
+        assert out["agent_id"] == "stub"
+
     def test_studio_registers_runner_bound_methods(self, registry, db):
         studio = StudioTools(registry=registry, db=db, teams=True, workflows=True)
         for name in ("run_agent", "run_team", "run_workflow"):
@@ -779,6 +815,19 @@ class TestStudioEmbedding:
         created = _loads(studio.create_team(name="squad", instructions="i", member_ids=["support"], model_id="gpt-5.4"))
         assert created.get("member_ids") == ["support"]
 
+    def test_list_shows_db_component_named_like_a_code_id(self, registry, db):
+        code_agent = _StubAgent()
+        code_agent.id = "support"
+        code_agent.name = "Support Code"
+        shadowed = StudioTools(registry=registry, db=db, agents_list=[code_agent])
+        created = _loads(shadowed.create_agent(name="support", instructions="i", model_id="gpt-5.4"))
+        assert created["id"] == "support-2"
+
+        listed = _loads(shadowed.list_agents())
+        ids = {row["id"] for row in listed["agents"]}
+        assert "support" in ids
+        assert "support-2" in ids
+
     def test_edit_collision_error_points_at_the_editable_component(self, registry, db):
         studio = StudioTools(registry=registry, db=db)
         studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
@@ -828,6 +877,33 @@ class TestStudioEmbedding:
         # With the registry the same component resolves.
         with_registry = StudioRunnerTools(registry=armed_registry, db=db)
         assert with_registry._find_agent("armed") is not None
+
+    def test_registry_less_runner_refuses_team_with_tool_bearing_member(self, db):
+        from agno.tools.calculator import CalculatorTools
+
+        armed_registry = Registry(
+            name="Armed Registry",
+            models=[OpenAIResponses(id="gpt-5.4")],
+            tools=[CalculatorTools()],
+            dbs=[db],
+        )
+        studio = StudioTools(registry=armed_registry, db=db, teams=True)
+        studio.create_agent(name="Armed", instructions="i", model_id="gpt-5.4", tool_names=["calculator"])
+        studio.create_team(name="Crew", instructions="i", member_ids=["armed"], model_id="gpt-5.4")
+
+        runner = StudioRunnerTools(db=db)
+        out = _loads(runner.run_team("crew", "hi"))
+        assert "registry" in out.get("error", "")
+
+    def test_registry_less_runner_refuses_workflow_with_code_defined_step(self, registry, db):
+        code_agent = _StubAgent()
+        studio = StudioTools(registry=registry, db=db, workflows=True, agents_list=[code_agent])
+        studio.create_workflow(name="Flow", description="d", step_specs=[{"name": "s1", "agent_id": "stub"}])
+
+        runner = StudioRunnerTools(db=db)
+        out = _loads(runner.run_workflow("flow", "go"))
+        assert "registry" in out.get("error", "")
+        assert "not found" not in out.get("error", "")
 
     def test_create_team_ambiguous_member_name_errors(self, registry, db):
         studio = StudioTools(registry=registry, db=db, teams=True)

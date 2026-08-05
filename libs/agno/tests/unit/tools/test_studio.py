@@ -1502,6 +1502,9 @@ class _StubAgent:
     async def arun(self, message, stream=None, user_id=None, session_id=None):
         return _StubRunOutput()
 
+    def deep_copy(self):
+        return self
+
 
 class TestRunSerialization:
     def test_run_agent_serializes_non_json_content(self, registry, db):

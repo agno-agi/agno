@@ -1,7 +1,23 @@
 from dataclasses import dataclass
 from functools import lru_cache, partial, wraps
 from importlib.metadata import version
-from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, Set, Type, TypeVar, get_type_hints
+import types
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Literal,
+    Optional,
+    Sequence,
+    Set,
+    Type,
+    TypeVar,
+    Union,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 
 from docstring_parser import parse
 from packaging.version import Version
@@ -35,6 +51,17 @@ def _framework_injected_types() -> tuple:
     from agno.team.team import Team
 
     return (Agent, Team, RunContext, Image, Video, Audio, File)
+
+
+def _is_framework_typed(hint: Any, framework_types: tuple) -> bool:
+    """True when the annotation names a framework-injected type, including
+    Optional[...] and union spellings (Optional[RunContext], RunContext | None)."""
+    if isinstance(hint, type):
+        return issubclass(hint, framework_types)
+    origin = get_origin(hint)
+    if origin is Union or origin is getattr(types, "UnionType", None):
+        return any(_is_framework_typed(arg, framework_types) for arg in get_args(hint) if arg is not type(None))
+    return False
 
 
 @lru_cache(maxsize=1)
@@ -341,7 +368,7 @@ class Function(BaseModel):
                 _fw_types = _framework_injected_types()
                 for _pname in sig.parameters:
                     _hint = type_hints.get(_pname)
-                    if isinstance(_hint, type) and issubclass(_hint, _fw_types):
+                    if _hint is not None and _is_framework_typed(_hint, _fw_types):
                         framework_typed_params.add(_pname)
             except Exception:
                 pass
@@ -460,7 +487,7 @@ class Function(BaseModel):
         try:
             framework_types = _framework_injected_types()
             for param_name, hint in get_type_hints(self.entrypoint).items():
-                if param_name in sig.parameters and isinstance(hint, type) and issubclass(hint, framework_types):
+                if param_name in sig.parameters and _is_framework_typed(hint, framework_types):
                     found.add(param_name)
         except Exception:
             pass
@@ -524,7 +551,7 @@ class Function(BaseModel):
             try:
                 framework_types = _framework_injected_types()
                 for param_name, hint in list(type_hints.items()):
-                    if isinstance(hint, type) and issubclass(hint, framework_types):
+                    if _is_framework_typed(hint, framework_types):
                         del type_hints[param_name]
                         excluded_params.append(param_name)
             except Exception:

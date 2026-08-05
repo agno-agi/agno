@@ -1809,3 +1809,21 @@ def test_user_parameters_without_properties_key_keeps_description():
     func.process_entrypoint()
     assert func.description and "docstring" in func.description.lower()
     assert func.parameters.get("required") == []
+
+
+def test_optional_framework_typed_param_is_excluded_and_guarded():
+    # Optional[RunContext] must get the same treatment as a bare RunContext
+    # annotation: out of the model schema and into the framework params.
+    from typing import Optional as Opt
+
+    from agno.run import RunContext
+    from agno.tools.function import Function
+
+    def fetch(query: str, ctx: Opt[RunContext] = None) -> str:
+        return "ok"
+
+    function = Function.from_callable(fetch)
+    function.process_entrypoint()
+    properties = (function.parameters or {}).get("properties") or {}
+    assert set(properties) == {"query"}
+    assert "ctx" in (function._framework_params or set())

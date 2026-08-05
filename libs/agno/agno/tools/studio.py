@@ -656,14 +656,15 @@ class StudioTools(Toolkit):
         """
         try:
             result: List[Dict[str, Any]] = []
-            seen: set[str] = set()  # code ids, plus the names of code components that have no id
+            seen_ids: set[str] = set()
+            idless_names: set[str] = set()  # code ids, plus the names of code components that have no id
             for a in self._iter_agents():
                 aid = getattr(a, "id", None)
                 name = getattr(a, "name", None)
                 if aid is not None:
-                    seen.add(aid)
+                    seen_ids.add(aid)
                 elif name is not None:
-                    seen.add(name)
+                    idless_names.add(name)
                 result.append(
                     {
                         "id": aid,
@@ -679,7 +680,7 @@ class StudioTools(Toolkit):
             # a code component that HAS its own id is a genuinely distinct component and
             # must stay listed (it is what get_/run_/edit_ resolve to).
             for row in db_rows:
-                if row["id"] in seen or row["name"] in seen:
+                if row["id"] in seen_ids or row["name"] in idless_names:
                     continue
                 result.append({**row, "source": "db"})
             return json.dumps({"agents": result, "count": len(result), "db_total": db_total})
@@ -696,14 +697,15 @@ class StudioTools(Toolkit):
         """
         try:
             result: List[Dict[str, Any]] = []
-            seen: set[str] = set()  # code ids, plus the names of code components that have no id
+            seen_ids: set[str] = set()
+            idless_names: set[str] = set()  # code ids, plus the names of code components that have no id
             for team in self._iter_teams():
                 tid = getattr(team, "id", None)
                 name = getattr(team, "name", None)
                 if tid is not None:
-                    seen.add(tid)
+                    seen_ids.add(tid)
                 elif name is not None:
-                    seen.add(name)
+                    idless_names.add(name)
                 members = getattr(team, "members", None) or []
                 member_ids = [getattr(m, "id", None) for m in members] if not callable(members) else []
                 result.append(
@@ -721,7 +723,7 @@ class StudioTools(Toolkit):
             # a code component that HAS its own id is a genuinely distinct component and
             # must stay listed (it is what get_/run_/edit_ resolve to).
             for row in db_rows:
-                if row["id"] in seen or row["name"] in seen:
+                if row["id"] in seen_ids or row["name"] in idless_names:
                     continue
                 result.append({**row, "source": "db"})
             return json.dumps({"teams": result, "count": len(result), "db_total": db_total})
@@ -738,14 +740,15 @@ class StudioTools(Toolkit):
         """
         try:
             result: List[Dict[str, Any]] = []
-            seen: set[str] = set()  # code ids, plus the names of code components that have no id
+            seen_ids: set[str] = set()
+            idless_names: set[str] = set()  # code ids, plus the names of code components that have no id
             for wf in self._iter_workflows():
                 wid = getattr(wf, "id", None)
                 name = getattr(wf, "name", None)
                 if wid is not None:
-                    seen.add(wid)
+                    seen_ids.add(wid)
                 elif name is not None:
-                    seen.add(name)
+                    idless_names.add(name)
                 steps = getattr(wf, "steps", None) or []
                 result.append(
                     {
@@ -762,7 +765,7 @@ class StudioTools(Toolkit):
             # a code component that HAS its own id is a genuinely distinct component and
             # must stay listed (it is what get_/run_/edit_ resolve to).
             for row in db_rows:
-                if row["id"] in seen or row["name"] in seen:
+                if row["id"] in seen_ids or row["name"] in idless_names:
                     continue
                 result.append({**row, "source": "db"})
             return json.dumps({"workflows": result, "count": len(result), "db_total": db_total})
@@ -1584,6 +1587,37 @@ class StudioTools(Toolkit):
     # registered from the embedded StudioRunnerTools in __init__. The runner
     # owns run semantics: current-user identity, per-conversation sub-sessions,
     # and PAUSED results that carry their unresolved requirements.
+
+    # ------------------------------------------------------------------
+    # Compatibility methods. StudioTools.run_*/arun_* shipped as public
+    # methods from v2.6.19 through v2.8.7. The implementations moved to
+    # StudioRunnerTools; these forward so direct callers keep working. The
+    # result shape follows the runner (see agno/tools/studio_runner.py).
+    # ------------------------------------------------------------------
+
+    def run_agent(self, agent_id: str, message: str) -> str:
+        """Run an agent by id or display name. Forwards to StudioRunnerTools."""
+        return self._runner_tools.run_agent(agent_id, message)
+
+    def run_team(self, team_id: str, message: str) -> str:
+        """Run a team by id or display name. Forwards to StudioRunnerTools."""
+        return self._runner_tools.run_team(team_id, message)
+
+    def run_workflow(self, workflow_id: str, message: str) -> str:
+        """Run a workflow by id or display name. Forwards to StudioRunnerTools."""
+        return self._runner_tools.run_workflow(workflow_id, message)
+
+    async def arun_agent(self, agent_id: str, message: str) -> str:
+        """Async variant of run_agent."""
+        return await self._runner_tools.arun_agent(agent_id, message)
+
+    async def arun_team(self, team_id: str, message: str) -> str:
+        """Async variant of run_team."""
+        return await self._runner_tools.arun_team(team_id, message)
+
+    async def arun_workflow(self, workflow_id: str, message: str) -> str:
+        """Async variant of run_workflow."""
+        return await self._runner_tools.arun_workflow(workflow_id, message)
 
     # ------------------------------------------------------------------
     # Schedules (component-aware)

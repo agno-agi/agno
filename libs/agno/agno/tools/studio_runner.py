@@ -109,6 +109,15 @@ class ComponentNeedsRegistryError(RuntimeError):
     function steps missing, code-defined members lost)."""
 
 
+class DispatchCopyError(RuntimeError):
+    """A code-defined component could not be copied faithfully for dispatch.
+
+    Raised instead of running the shared instance: the runner promises that
+    per-run mutation never crosses callers, so an unverifiable copy must not
+    be dispatched. Give the component class a deep_copy that rebuilds it, or
+    store the component in the database."""
+
+
 def _references_executors(value: Any) -> bool:
     """True when a stored workflow config references a registry function step."""
     if isinstance(value, dict):
@@ -118,6 +127,35 @@ def _references_executors(value: Any) -> bool:
     if isinstance(value, list):
         return any(_references_executors(v) for v in value)
     return False
+
+
+def _component_references(component_type: str, config: Dict[str, Any]) -> List[tuple]:
+    """(type, id) pairs for the components a stored config references by id."""
+    refs: List[tuple] = []
+    if component_type == "team":
+        for member in config.get("members") or []:
+            if not isinstance(member, dict):
+                continue
+            if member.get("team_id"):
+                refs.append(("team", str(member["team_id"])))
+            elif member.get("agent_id"):
+                refs.append(("agent", str(member["agent_id"])))
+    if component_type == "workflow":
+
+        def walk(value: Any) -> None:
+            if isinstance(value, dict):
+                if value.get("agent_id"):
+                    refs.append(("agent", str(value["agent_id"])))
+                if value.get("team_id"):
+                    refs.append(("team", str(value["team_id"])))
+                for child in value.values():
+                    walk(child)
+            elif isinstance(value, list):
+                for child in value:
+                    walk(child)
+
+        walk(config.get("steps"))
+    return refs
 
 
 class StudioRunnerTools(Toolkit):
@@ -296,28 +334,34 @@ class StudioRunnerTools(Toolkit):
 
     @staticmethod
     def _fresh_copy(component: Any) -> Any:
-        """A deep copy for dispatch, guarded against lossy copies.
+        """A deep copy for dispatch. Raises DispatchCopyError on a bad copy.
 
         deep_copy rebuilds via the component class's __init__ signature, so a
         subclass with a ``(custom, **kwargs)`` initializer can come back blank
-        or fail to rebuild entirely. A copy that raised or lost its id is not
-        the same component -- run the shared instance instead of silently
-        dispatching a differently-configured one.
+        or fail to rebuild entirely. A copy that is unavailable, raised, or
+        lost its id is not the same component. The runner refuses to dispatch
+        it, and it also refuses to dispatch the shared instance (mirrors the
+        AgentOS create_fresh path, which propagates copy failure).
         """
+        label = getattr(component, "id", None) or component.__class__.__name__
         copier = getattr(component, "deep_copy", None)
         if not callable(copier):
-            return component
-        label = getattr(component, "id", None) or component.__class__.__name__
+            raise DispatchCopyError(
+                f"'{label}' has no deep_copy; the runner does not dispatch a shared instance. "
+                "Give the class a deep_copy method, or store the component in the database."
+            )
         try:
             fresh = copier()
-        except Exception:
-            logger.warning(
-                "StudioRunnerTools: deep_copy failed for %s; running the shared instance", label, exc_info=True
-            )
-            return component
+        except Exception as e:
+            raise DispatchCopyError(
+                f"deep_copy failed for '{label}': {str(e) or type(e).__name__}. "
+                "Give the class a deep_copy that rebuilds it, or store the component in the database."
+            ) from e
         if getattr(fresh, "id", None) != getattr(component, "id", None):
-            logger.warning("StudioRunnerTools: deep_copy of %s lost its identity; running the shared instance", label)
-            return component
+            raise DispatchCopyError(
+                f"deep_copy of '{label}' lost its identity. "
+                "Give the class a deep_copy that rebuilds it, or store the component in the database."
+            )
         return fresh
 
     def _agent_for_run(self, agent_id: str) -> Optional["Agent"]:
@@ -391,14 +435,28 @@ class StudioRunnerTools(Toolkit):
             return slug
         return None
 
-    def _require_registry_for(self, component_type: str, component_id: str, config: Dict[str, Any]) -> None:
+    def _require_registry_for(
+        self,
+        component_type: str,
+        component_id: str,
+        config: Dict[str, Any],
+        _seen: Optional[set] = None,
+    ) -> None:
         """Refuse to rebuild a component whose config needs the absent registry.
 
         from_dict silently drops registry-backed references when no registry is
         given; a dispatch surface must refuse rather than run the degraded
-        result."""
+        result. The check is transitive: a team's members and a workflow's
+        agent/team steps are checked too, so a nested component cannot degrade
+        silently. Covers the Studio config shape (id references)."""
         if self.registry is not None:
             return
+        if _seen is None:
+            _seen = set()
+        key = f"{component_type}:{component_id}"
+        if key in _seen:
+            return
+        _seen.add(key)
         needs: List[str] = []
         if config.get("tools"):
             needs.append("tools")
@@ -406,19 +464,22 @@ class StudioRunnerTools(Toolkit):
             needs.append("schemas")
         if component_type == "workflow" and _references_executors(config.get("steps")):
             needs.append("function steps")
-        if component_type == "team":
-            for member in config.get("members") or []:
-                if not isinstance(member, dict):
-                    continue
-                member_type = "team" if member.get("team_id") else "agent"
-                member_id = member.get("team_id") or member.get("agent_id")
-                if member_id and not self._db_component_exists(member_type, str(member_id)):
-                    needs.append(f"code-defined member '{member_id}'")
         if needs:
             raise ComponentNeedsRegistryError(
                 f"{component_type.capitalize()} '{component_id}' references registry-backed "
                 f"{', '.join(needs)}; construct StudioRunnerTools with the registry to run it."
             )
+        from agno.db.base import ComponentType
+
+        for ref_type, ref_id in _component_references(component_type, config):
+            ref_config = self._load_config_from_db(ref_id, component_type=ComponentType(ref_type))
+            if ref_config is None:
+                raise ComponentNeedsRegistryError(
+                    f"{component_type.capitalize()} '{component_id}' references {ref_type} '{ref_id}', "
+                    "which is not stored in the database (a code-defined component); "
+                    "construct StudioRunnerTools with the registry to run it."
+                )
+            self._require_registry_for(ref_type, ref_id, ref_config, _seen)
 
     def _load_agent_from_db(self, agent_id: str, version: Optional[int] = None) -> Optional["Agent"]:
         """Load an agent from DB via config + from_dict.
