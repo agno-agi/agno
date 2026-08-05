@@ -91,9 +91,8 @@ class Registry:
 
         for tool in self.tools:
             if isinstance(tool, Toolkit):
-                # get_functions() rather than .functions: subclasses may expose
-                # a subset, and only exposed functions are serialized or run --
-                # a hidden member must not claim a slot (or warn) here either.
+                # get_functions() is the exposed subset -- the only functions that
+                # are serialized or run, so only those claim a slot or warn here.
                 for func in tool.get_functions().values():
                     if func.entrypoint is not None:
                         register(func.name, func)

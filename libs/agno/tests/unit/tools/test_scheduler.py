@@ -1,6 +1,9 @@
 """Unit tests for SchedulerTools toolkit."""
 
+import asyncio
 import json
+import threading
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -481,3 +484,61 @@ class TestAsyncTriggerSchedule:
         assert "error" in result
         assert "disabled" in result["error"]
         tools.manager.aupdate.assert_not_called()
+
+
+@pytest.mark.asyncio
+class TestAsyncDbCallsRunOffThread:
+    """A sync DB adapter must not run on the event loop thread."""
+
+    async def test_sync_adapter_runs_on_worker_thread(self):
+        from agno.scheduler.manager import ScheduleManager
+
+        loop_thread = threading.get_ident()
+        seen = {}
+
+        db = MagicMock()
+
+        def get_schedules(**kwargs):
+            seen["thread"] = threading.get_ident()
+            return []
+
+        db.get_schedules = get_schedules
+        manager = ScheduleManager(db=db)
+
+        await manager._acall("get_schedules")
+
+        assert seen["thread"] != loop_thread
+
+    async def test_async_adapter_is_awaited_directly(self):
+        from agno.scheduler.manager import ScheduleManager
+
+        db = MagicMock()
+        db.get_schedules = AsyncMock(return_value=[])
+        manager = ScheduleManager(db=db)
+
+        assert await manager._acall("get_schedules") == []
+        db.get_schedules.assert_awaited_once()
+
+    async def test_sync_adapter_does_not_stall_the_loop(self):
+        from agno.scheduler.manager import ScheduleManager
+
+        db = MagicMock()
+        db.get_schedules = lambda **kwargs: (time.sleep(0.3), [])[1]
+        manager = ScheduleManager(db=db)
+
+        gaps = []
+
+        async def heartbeat():
+            last = time.perf_counter()
+            while True:
+                await asyncio.sleep(0.005)
+                now = time.perf_counter()
+                gaps.append(now - last)
+                last = now
+
+        beat = asyncio.create_task(heartbeat())
+        await manager._acall("get_schedules")
+        beat.cancel()
+
+        assert gaps, "the heartbeat never ran: the loop was blocked for the whole query"
+        assert max(gaps) < 0.2

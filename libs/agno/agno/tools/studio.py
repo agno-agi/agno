@@ -106,8 +106,7 @@ class StudioTools(Toolkit):
             enable_schedule, disable_schedule, delete_schedule). Defaults to
             False. Requires the optional scheduler dependencies (croniter and
             pytz -- ``pip install agno[scheduler]``); when they are missing,
-            the first schedule tool call that needs them returns an error JSON
-            instead of raising at import time.
+            the first schedule tool call that needs them returns an error JSON.
     """
 
     def __init__(
@@ -205,7 +204,7 @@ class StudioTools(Toolkit):
                 ]
             )
 
-        # Schedules target existing components of any enabled type; opt-in.
+        # Schedules target an existing component by id; opt-in.
         if self._scheduler_tools is not None:
             tools.extend(
                 [
