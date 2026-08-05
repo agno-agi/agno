@@ -1355,7 +1355,7 @@ class TestTypeGuards:
         tool.create_agent(name="member", instructions="i", model_id="gpt-5.4")
         tool.create_team(name="squad", instructions="i", member_ids=["member"], model_id="gpt-5.4")
 
-        out = _loads(tool.run_agent("squad", message="hi"))
+        out = _loads(_tool(tool, "run_agent")("squad", message="hi"))
         assert "error" in out
 
     def test_get_team_rejects_agent_id(self, registry, db):
@@ -1482,24 +1482,24 @@ class _StubAgent:
     id = "stub"
     name = "Stub"
 
-    def run(self, message):
+    def run(self, message, user_id=None, session_id=None):
         return _StubRunOutput()
 
-    async def arun(self, message):
+    async def arun(self, message, user_id=None, session_id=None):
         return _StubRunOutput()
 
 
 class TestRunSerialization:
     def test_run_agent_serializes_non_json_content(self, registry, db):
         tool = StudioTools(registry=registry, db=db, agents_list=[_StubAgent()])
-        out = _loads(tool.run_agent("stub", "hi"))
+        out = _loads(_tool(tool, "run_agent")("stub", "hi"))
         assert "error" not in out
         assert out["content"].startswith("2026-01-01")
 
     @pytest.mark.asyncio
     async def test_arun_agent_serializes_non_json_content(self, registry, db):
         tool = StudioTools(registry=registry, db=db, agents_list=[_StubAgent()])
-        out = _loads(await tool.arun_agent("stub", "hi"))
+        out = _loads(await tool.async_functions["run_agent"].entrypoint("stub", "hi"))
         assert "error" not in out
         assert out["content"].startswith("2026-01-01")
 

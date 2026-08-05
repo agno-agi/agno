@@ -26,6 +26,12 @@ Semantics:
       - with versions=False (default) the edit is published immediately as a
         new current version. Each edit creates a new published version; prior
         versions remain in history (they are immutable).
+    * run_* execute a component as the current user, with one sub-session per
+      calling conversation and PAUSED results that carry their unresolved
+      requirements. The implementation is StudioRunnerTools
+      (agno.tools.studio_runner), which platforms can also mount standalone
+      as a dispatch-only surface -- discovery and execution without the
+      Studio's mutation tools.
 
 Enable flags:
     * Default: only agent operations are exposed (agents=True, teams=False,
@@ -56,6 +62,7 @@ import json
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 from agno.tools.function import Function
+from agno.tools.studio_runner import StudioRunnerTools, _slugify
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_debug, logger
 
@@ -133,6 +140,18 @@ class StudioTools(Toolkit):
         self.default_model_id = default_model_id
         self.default_num_history_runs = default_num_history_runs
 
+        # Execution and component resolution live on StudioRunnerTools -- the
+        # standalone dispatch toolkit. Studio registers its run tools from this
+        # embedded instance and delegates its own lookups to it, so the builder
+        # and a dispatcher resolve and run components one way.
+        self._runner_tools = StudioRunnerTools(
+            registry=registry,
+            db=self.db,
+            agents_list=agents_list,
+            teams_list=teams_list,
+            workflows_list=workflows_list,
+        )
+
         self.enable_agents, self.enable_teams, self.enable_workflows = _resolve_flags(
             agents=agents,
             teams=teams,
@@ -168,7 +187,7 @@ class StudioTools(Toolkit):
                     self.create_agent,
                     self.edit_agent,
                     self.delete_agent,
-                    self.run_agent,
+                    self._runner_tools.run_agent,
                 ]
             )
         if self.enable_teams:
@@ -178,7 +197,7 @@ class StudioTools(Toolkit):
                     self.create_team,
                     self.edit_team,
                     self.delete_team,
-                    self.run_team,
+                    self._runner_tools.run_team,
                 ]
             )
         if self.enable_workflows:
@@ -188,7 +207,7 @@ class StudioTools(Toolkit):
                     self.create_workflow,
                     self.edit_workflow,
                     self.delete_workflow,
-                    self.run_workflow,
+                    self._runner_tools.run_workflow,
                 ]
             )
 
@@ -235,7 +254,7 @@ class StudioTools(Toolkit):
                     (self.acreate_agent, "create_agent"),
                     (self.aedit_agent, "edit_agent"),
                     (self.adelete_agent, "delete_agent"),
-                    (self.arun_agent, "run_agent"),
+                    (self._runner_tools.arun_agent, "run_agent"),
                 ]
             )
         if self.enable_teams:
@@ -245,7 +264,7 @@ class StudioTools(Toolkit):
                     (self.acreate_team, "create_team"),
                     (self.aedit_team, "edit_team"),
                     (self.adelete_team, "delete_team"),
-                    (self.arun_team, "run_team"),
+                    (self._runner_tools.arun_team, "run_team"),
                 ]
             )
         if self.enable_workflows:
@@ -255,7 +274,7 @@ class StudioTools(Toolkit):
                     (self.acreate_workflow, "create_workflow"),
                     (self.aedit_workflow, "edit_workflow"),
                     (self.adelete_workflow, "delete_workflow"),
-                    (self.arun_workflow, "run_workflow"),
+                    (self._runner_tools.arun_workflow, "run_workflow"),
                 ]
             )
         if self.enable_versions:
@@ -292,6 +311,8 @@ class StudioTools(Toolkit):
             "add_history_to_context=False only for stateless components.",
             "Edit: ALWAYS call get_agent/get_team/get_workflow first to read the current state, "
             "then call edit_agent/edit_team/edit_workflow with only the fields that change.",
+            "Run tools execute a component as the current user; a PAUSED result is waiting on human "
+            "approval -- relay its requirements and keep the run_id/session_id for the resume.",
         ]
         if self.enable_versions:
             instruction_lines.extend(
@@ -429,45 +450,28 @@ class StudioTools(Toolkit):
         return normalized
 
     # ------------------------------------------------------------------
-    # Component lookup: union of live lists, registry, and studio cache.
-    # Studio cache is checked first so freshly created/edited components
-    # are always current in-process.
+    # Component lookup -- delegated to the embedded StudioRunnerTools so the
+    # builder and a standalone dispatcher resolve components one way (code-
+    # defined lists first, then DB by id, then DB by slugified name).
     # ------------------------------------------------------------------
 
     def _iter_agents(self) -> List["Agent"]:
-        """Code-defined agents: passed-in list, else registry.agents."""
-        if self.agents_list is not None:
-            return list(self.agents_list)
-        return list(self.registry.agents)
+        return self._runner_tools._iter_agents()
 
     def _iter_teams(self) -> List["Team"]:
-        """Code-defined teams: passed-in list, else registry.teams."""
-        if self.teams_list is not None:
-            return list(self.teams_list)
-        return list(self.registry.teams)
+        return self._runner_tools._iter_teams()
 
     def _iter_workflows(self) -> List["Workflow"]:
-        """Code-defined workflows."""
-        return list(self.workflows_list) if self.workflows_list is not None else []
+        return self._runner_tools._iter_workflows()
 
     def _find_agent(self, agent_id: str) -> Optional["Agent"]:
-        """Lookup order: code-defined list, then DB. Studio-created components live in DB."""
-        for a in self._iter_agents():
-            if getattr(a, "id", None) == agent_id or getattr(a, "name", None) == agent_id:
-                return a
-        return self._load_agent_from_db(agent_id)
+        return self._runner_tools._find_agent(agent_id)
 
     def _find_team(self, team_id: str) -> Optional["Team"]:
-        for t in self._iter_teams():
-            if getattr(t, "id", None) == team_id or getattr(t, "name", None) == team_id:
-                return t
-        return self._load_team_from_db(team_id)
+        return self._runner_tools._find_team(team_id)
 
     def _find_workflow(self, workflow_id: str) -> Optional["Workflow"]:
-        for w in self._iter_workflows():
-            if getattr(w, "id", None) == workflow_id or getattr(w, "name", None) == workflow_id:
-                return w
-        return self._load_workflow_from_db(workflow_id)
+        return self._runner_tools._find_workflow(workflow_id)
 
     # Edit-base lookups: like _find_*, but DB components load from the latest
     # draft when versioning is enabled, so successive partial edits accumulate
@@ -520,57 +524,13 @@ class StudioTools(Toolkit):
         return max(drafts) if drafts else None
 
     def _load_agent_from_db(self, agent_id: str, version: Optional[int] = None) -> Optional["Agent"]:
-        """Load an agent from DB via config + from_dict. Bypasses Agent.load() to
-        avoid Agno's load_component_graph signature mismatch."""
-        from agno.db.base import ComponentType
-
-        config = self._load_config_from_db(agent_id, version=version, component_type=ComponentType.AGENT)
-        if config is None:
-            return None
-        from agno.agent.agent import Agent
-
-        try:
-            agent = Agent.from_dict(config, registry=self.registry)
-            agent.id = agent_id
-            agent.db = self.db
-            return agent
-        except Exception:
-            logger.warning("StudioTools: Agent.from_dict failed for %s", agent_id, exc_info=True)
-            return None
+        return self._runner_tools._load_agent_from_db(agent_id, version=version)
 
     def _load_team_from_db(self, team_id: str, version: Optional[int] = None) -> Optional["Team"]:
-        from agno.db.base import ComponentType
-
-        config = self._load_config_from_db(team_id, version=version, component_type=ComponentType.TEAM)
-        if config is None:
-            return None
-        from agno.team.team import Team
-
-        try:
-            team = Team.from_dict(config, db=self.db, registry=self.registry)
-            team.id = team_id
-            team.db = self.db
-            return team
-        except Exception:
-            logger.warning("StudioTools: Team.from_dict failed for %s", team_id, exc_info=True)
-            return None
+        return self._runner_tools._load_team_from_db(team_id, version=version)
 
     def _load_workflow_from_db(self, workflow_id: str, version: Optional[int] = None) -> Optional["Workflow"]:
-        from agno.db.base import ComponentType
-
-        config = self._load_config_from_db(workflow_id, version=version, component_type=ComponentType.WORKFLOW)
-        if config is None:
-            return None
-        from agno.workflow.workflow import Workflow
-
-        try:
-            wf = Workflow.from_dict(config, db=self.db, registry=self.registry)
-            wf.id = workflow_id
-            wf.db = self.db
-            return wf
-        except Exception:
-            logger.warning("StudioTools: Workflow.from_dict failed for %s", workflow_id, exc_info=True)
-            return None
+        return self._runner_tools._load_workflow_from_db(workflow_id, version=version)
 
     def _load_config_from_db(
         self,
@@ -578,21 +538,7 @@ class StudioTools(Toolkit):
         version: Optional[int] = None,
         component_type: Optional["ComponentType"] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Load a component's config by id.
-
-        When ``component_type`` is given, the stored component must be of that
-        type; a mismatch returns None so that, e.g., a team id never loads as an
-        Agent (mirrors the typed ``get_component`` guard used by delete_agent).
-        """
-        if self.db is None:
-            return None
-        if component_type is not None and self.db.get_component(component_id, component_type=component_type) is None:
-            return None
-        row = self.db.get_config(component_id=component_id, version=version)
-        if row is None:
-            return None
-        config = row.get("config") if isinstance(row, dict) else None
-        return config if isinstance(config, dict) else None
+        return self._runner_tools._load_config_from_db(component_id, version=version, component_type=component_type)
 
     # ------------------------------------------------------------------
     # Discovery tools
@@ -782,19 +728,8 @@ class StudioTools(Toolkit):
 
     def _list_db_components(self, component_type: str) -> List[Dict[str, Any]]:
         """Return a thin summary of DB components of a given type: [{id, name, description}]."""
-        if self.db is None:
-            return []
-        from agno.db.base import ComponentType
-
-        rows, _ = self.db.list_components(component_type=ComponentType(component_type))
-        return [
-            {
-                "id": r.get("component_id"),
-                "name": r.get("name"),
-                "description": r.get("description"),
-            }
-            for r in rows
-        ]
+        rows, _ = self._runner_tools._list_db_component_rows(component_type)
+        return rows
 
     # ------------------------------------------------------------------
     # Read one
@@ -1513,60 +1448,10 @@ class StudioTools(Toolkit):
             logger.exception("Failed to delete workflow")
             return json.dumps({"error": str(e)})
 
-    # ------------------------------------------------------------------
-    # Execute
-    # ------------------------------------------------------------------
-
-    def run_agent(self, agent_id: str, message: str) -> str:
-        """Run an agent and return its response content.
-
-        Args:
-            agent_id (str): The id of the agent to run.
-            message (str): The message to send.
-        """
-        agent = self._find_agent(agent_id)
-        if agent is None:
-            return json.dumps({"error": f"Agent not found: {agent_id}"})
-        try:
-            response = agent.run(message)
-            return json.dumps({"id": agent_id, "content": getattr(response, "content", None)}, default=str)
-        except Exception as e:
-            logger.exception("Failed to run agent")
-            return json.dumps({"error": str(e)})
-
-    def run_team(self, team_id: str, message: str) -> str:
-        """Run a team and return its response content.
-
-        Args:
-            team_id (str): The id of the team to run.
-            message (str): The message to send.
-        """
-        team = self._find_team(team_id)
-        if team is None:
-            return json.dumps({"error": f"Team not found: {team_id}"})
-        try:
-            response = team.run(message)
-            return json.dumps({"id": team_id, "content": getattr(response, "content", None)}, default=str)
-        except Exception as e:
-            logger.exception("Failed to run team")
-            return json.dumps({"error": str(e)})
-
-    def run_workflow(self, workflow_id: str, message: str) -> str:
-        """Run a workflow and return its final content.
-
-        Args:
-            workflow_id (str): The id of the workflow to run.
-            message (str): Input to pass to the first step.
-        """
-        wf = self._find_workflow(workflow_id)
-        if wf is None:
-            return json.dumps({"error": f"Workflow not found: {workflow_id}"})
-        try:
-            response = wf.run(input=message)
-            return json.dumps({"id": workflow_id, "content": getattr(response, "content", None)}, default=str)
-        except Exception as e:
-            logger.exception("Failed to run workflow")
-            return json.dumps({"error": str(e)})
+    # Execution (run_agent/run_team/run_workflow and async variants) is
+    # registered from the embedded StudioRunnerTools in __init__. The runner
+    # owns run semantics: current-user identity, per-conversation sub-sessions,
+    # and PAUSED results that carry their unresolved requirements.
 
     # ------------------------------------------------------------------
     # Schedules (component-aware)
@@ -1847,57 +1732,6 @@ class StudioTools(Toolkit):
         """Async variant of delete_workflow."""
         return await self._run_sync_tool(self.delete_workflow, workflow_id)
 
-    async def arun_agent(self, agent_id: str, message: str) -> str:
-        """Async variant of run_agent.
-
-        Args:
-            agent_id (str): The id of the agent to run.
-            message (str): The message to send.
-        """
-        agent = self._find_agent(agent_id)
-        if agent is None:
-            return json.dumps({"error": f"Agent not found: {agent_id}"})
-        try:
-            response = await agent.arun(message)
-            return json.dumps({"id": agent_id, "content": getattr(response, "content", None)}, default=str)
-        except Exception as e:
-            logger.exception("Failed to run agent")
-            return json.dumps({"error": str(e)})
-
-    async def arun_team(self, team_id: str, message: str) -> str:
-        """Async variant of run_team.
-
-        Args:
-            team_id (str): The id of the team to run.
-            message (str): The message to send.
-        """
-        team = self._find_team(team_id)
-        if team is None:
-            return json.dumps({"error": f"Team not found: {team_id}"})
-        try:
-            response = await team.arun(message)
-            return json.dumps({"id": team_id, "content": getattr(response, "content", None)}, default=str)
-        except Exception as e:
-            logger.exception("Failed to run team")
-            return json.dumps({"error": str(e)})
-
-    async def arun_workflow(self, workflow_id: str, message: str) -> str:
-        """Async variant of run_workflow.
-
-        Args:
-            workflow_id (str): The id of the workflow to run.
-            message (str): Input to pass to the first step.
-        """
-        wf = self._find_workflow(workflow_id)
-        if wf is None:
-            return json.dumps({"error": f"Workflow not found: {workflow_id}"})
-        try:
-            response = await wf.arun(input=message)
-            return json.dumps({"id": workflow_id, "content": getattr(response, "content", None)}, default=str)
-        except Exception as e:
-            logger.exception("Failed to run workflow")
-            return json.dumps({"error": str(e)})
-
     async def acreate_schedule(
         self,
         name: str,
@@ -2094,13 +1928,6 @@ class StudioTools(Toolkit):
 # ----------------------------------------------------------------------
 # Module-level helpers
 # ----------------------------------------------------------------------
-
-
-def _slugify(name: str) -> str:
-    slug = "".join(c.lower() if c.isalnum() else "-" for c in name.strip())
-    while "--" in slug:
-        slug = slug.replace("--", "-")
-    return slug.strip("-") or "component"
 
 
 def _summarize_tools(tools: Any) -> List[str]:

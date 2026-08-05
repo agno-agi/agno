@@ -1,0 +1,565 @@
+"""StudioRunnerTools -- discovery and execution over Studio-built components.
+
+The runner is the dispatch half of the Studio: list the agents, teams, and
+workflows that exist in the platform database, and run one by id. It carries no
+create/edit/delete surface, so it is safe to mount on any component that should
+hand work to built components -- a team lead, a router -- without granting the
+Studio's mutation tools.
+
+Typical use:
+    from agno.tools.studio_runner import StudioRunnerTools
+
+    lead = Team(
+        model=...,
+        members=[...],
+        tools=[StudioRunnerTools(registry=registry, db=db)],
+    )
+
+Semantics:
+    * Runs execute as the current user: the wielding component's run_context is
+      injected and its user_id passed through, so per-user state (memory,
+      learning) lands on the human who asked, never on a service default.
+    * Each target keeps one session per calling conversation
+      ("<caller_session_id>--<component_id>"), so repeat runs continue their
+      context instead of starting cold.
+    * A PAUSED result carries the unresolved requirements plus the
+      run_id/session_id a continue call must address (the same shape the
+      AgentOS MCP plane returns) -- human-in-the-loop pauses are relayed, not
+      swallowed.
+    * run_* resolve the exact component id first, then a code-defined
+      display name, then the id's slug -- Studio-created components live in
+      the database under slugified-name ids, so the name users say ("Radar
+      Scout") reaches the component it created ("radar-scout").
+    * list_* read the database only (id, name, description, newest first):
+      code-defined components are the wielding platform's own and are not
+      re-listed. 'total' reports the full DB count, so a capped list is
+      visible as capped.
+
+StudioTools embeds this toolkit for its own run_* tools and delegates its
+component lookups here, so a builder's smoke-test runs and a dispatcher's
+production runs share one implementation.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
+
+from agno.run import RunContext
+from agno.tools.toolkit import Toolkit
+from agno.utils.log import logger
+
+if TYPE_CHECKING:
+    from agno.agent.agent import Agent
+    from agno.db.base import BaseDb, ComponentType
+    from agno.registry.registry import Registry
+    from agno.team.team import Team
+    from agno.workflow.workflow import Workflow
+
+
+def _slugify(name: str) -> str:
+    """Component ids are slugified names (shared with StudioTools' create path)."""
+    slug = "".join(c.lower() if c.isalnum() else "-" for c in name.strip())
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return slug.strip("-") or "component"
+
+
+# The two helpers below mirror agno/os/mcp_results.py so toolkit results and MCP
+# results speak one vocabulary for run status and paused requirements.
+# (mcp_results imports mcp.types, a server extra, so it cannot be imported here.)
+
+
+def _run_status(run_output: Any) -> str:
+    status = getattr(run_output, "status", None)
+    value = getattr(status, "value", status)
+    return str(value) if value is not None else "COMPLETED"
+
+
+def _paused_requirements(run_output: Any) -> Optional[List[Dict[str, Any]]]:
+    """Serialized unresolved requirements when the run is paused, else None."""
+    if not getattr(run_output, "is_paused", False):
+        return None
+    # Agents/teams expose active_requirements; workflows expose active_step_requirements.
+    requirements = (
+        getattr(run_output, "active_requirements", None) or getattr(run_output, "active_step_requirements", None) or []
+    )
+    serialized: List[Dict[str, Any]] = []
+    for requirement in requirements:
+        if hasattr(requirement, "to_dict"):
+            serialized.append(requirement.to_dict())
+        elif isinstance(requirement, dict):
+            serialized.append(requirement)
+    return serialized or None
+
+
+class StudioRunnerTools(Toolkit):
+    def __init__(
+        self,
+        registry: Optional["Registry"] = None,
+        db: Optional["BaseDb"] = None,
+        agents_list: Optional[List["Agent"]] = None,
+        teams_list: Optional[List["Team"]] = None,
+        workflows_list: Optional[List["Workflow"]] = None,
+        agents: bool = True,
+        teams: bool = True,
+        workflows: bool = True,
+        list_limit: int = 100,
+        name: str = "studio_runners",
+        **kwargs: Any,
+    ):
+        self.registry = registry
+        self.db: Optional["BaseDb"] = (
+            db if db is not None else (registry.dbs[0] if registry is not None and registry.dbs else None)
+        )
+        self.agents_list = agents_list
+        self.teams_list = teams_list
+        self.workflows_list = workflows_list
+        self.enable_agents = agents
+        self.enable_teams = teams
+        self.enable_workflows = workflows
+        self.list_limit = list_limit
+
+        tools: List[Callable] = []
+        async_tools: List[tuple[Callable[..., Any], str]] = []
+        if agents:
+            tools.extend([self.list_agents, self.run_agent])
+            async_tools.extend([(self.alist_agents, "list_agents"), (self.arun_agent, "run_agent")])
+        if teams:
+            tools.extend([self.list_teams, self.run_team])
+            async_tools.extend([(self.alist_teams, "list_teams"), (self.arun_team, "run_team")])
+        if workflows:
+            tools.extend([self.list_workflows, self.run_workflow])
+            async_tools.extend([(self.alist_workflows, "list_workflows"), (self.arun_workflow, "run_workflow")])
+
+        enabled = [label for flag, label in ((agents, "agents"), (teams, "teams"), (workflows, "workflows")) if flag]
+        instruction_lines: List[str] = []
+        if enabled:
+            list_names = "/".join(f"list_{label}" for label in enabled)
+            run_names = "/".join(f"run_{label[:-1]}" for label in enabled)
+            instruction_lines = [
+                "Run components built in the Studio: discover what exists, then run by id.",
+                f"{list_names}: id, name, and description of what exists in the platform database, newest first.",
+                f"{run_names}: send one message; the result carries run_id, session_id, status, and content. "
+                "Use the exact id from a list tool; a display name or its slug also resolves.",
+                "A PAUSED status means the run awaits human approval: relay the requirements to the user and "
+                "include the run_id and session_id -- the run is resumed through the platform, never by "
+                "running it again.",
+                "Runs execute as the current user and keep one session per component per conversation, so "
+                "repeat runs continue where they left off.",
+            ]
+
+        # Toolkit instructions are only injected into the system message when
+        # add_instructions is set, so default it on.
+        kwargs.setdefault("add_instructions", True)
+        super().__init__(
+            name=name,
+            tools=tools,
+            async_tools=async_tools,
+            instructions="\n".join(instruction_lines),
+            **kwargs,
+        )
+
+    # ------------------------------------------------------------------
+    # Component resolution -- StudioTools delegates its lookups here so the
+    # builder and the runner resolve components one way.
+    # ------------------------------------------------------------------
+
+    def _iter_agents(self) -> List["Agent"]:
+        """Code-defined agents: passed-in list, else registry."""
+        if self.agents_list is not None:
+            return list(self.agents_list)
+        return list(self.registry.agents) if self.registry is not None else []
+
+    def _iter_teams(self) -> List["Team"]:
+        """Code-defined teams: passed-in list, else registry."""
+        if self.teams_list is not None:
+            return list(self.teams_list)
+        return list(self.registry.teams) if self.registry is not None else []
+
+    def _iter_workflows(self) -> List["Workflow"]:
+        """Code-defined workflows."""
+        return list(self.workflows_list) if self.workflows_list is not None else []
+
+    def _find_agent(self, agent_id: str) -> Optional["Agent"]:
+        """Lookup order: code-defined list (id or name), DB by id, DB by slug.
+        Studio-created components live in DB under slugified-name ids."""
+        for a in self._iter_agents():
+            if getattr(a, "id", None) == agent_id or getattr(a, "name", None) == agent_id:
+                return a
+        agent = self._load_agent_from_db(agent_id)
+        if agent is None:
+            slug = _slugify(agent_id)
+            if slug != agent_id:
+                agent = self._load_agent_from_db(slug)
+        return agent
+
+    def _find_team(self, team_id: str) -> Optional["Team"]:
+        for t in self._iter_teams():
+            if getattr(t, "id", None) == team_id or getattr(t, "name", None) == team_id:
+                return t
+        team = self._load_team_from_db(team_id)
+        if team is None:
+            slug = _slugify(team_id)
+            if slug != team_id:
+                team = self._load_team_from_db(slug)
+        return team
+
+    def _find_workflow(self, workflow_id: str) -> Optional["Workflow"]:
+        for w in self._iter_workflows():
+            if getattr(w, "id", None) == workflow_id or getattr(w, "name", None) == workflow_id:
+                return w
+        wf = self._load_workflow_from_db(workflow_id)
+        if wf is None:
+            slug = _slugify(workflow_id)
+            if slug != workflow_id:
+                wf = self._load_workflow_from_db(slug)
+        return wf
+
+    def _load_agent_from_db(self, agent_id: str, version: Optional[int] = None) -> Optional["Agent"]:
+        """Load an agent from DB via config + from_dict. Bypasses Agent.load() to
+        avoid Agno's load_component_graph signature mismatch."""
+        from agno.db.base import ComponentType
+
+        config = self._load_config_from_db(agent_id, version=version, component_type=ComponentType.AGENT)
+        if config is None:
+            return None
+        from agno.agent.agent import Agent
+
+        try:
+            agent = Agent.from_dict(config, registry=self.registry)
+            agent.id = agent_id
+            agent.db = self.db
+            return agent
+        except Exception:
+            logger.warning("StudioRunnerTools: Agent.from_dict failed for %s", agent_id, exc_info=True)
+            return None
+
+    def _load_team_from_db(self, team_id: str, version: Optional[int] = None) -> Optional["Team"]:
+        from agno.db.base import ComponentType
+
+        config = self._load_config_from_db(team_id, version=version, component_type=ComponentType.TEAM)
+        if config is None:
+            return None
+        from agno.team.team import Team
+
+        try:
+            team = Team.from_dict(config, db=self.db, registry=self.registry)
+            team.id = team_id
+            team.db = self.db
+            return team
+        except Exception:
+            logger.warning("StudioRunnerTools: Team.from_dict failed for %s", team_id, exc_info=True)
+            return None
+
+    def _load_workflow_from_db(self, workflow_id: str, version: Optional[int] = None) -> Optional["Workflow"]:
+        from agno.db.base import ComponentType
+
+        config = self._load_config_from_db(workflow_id, version=version, component_type=ComponentType.WORKFLOW)
+        if config is None:
+            return None
+        from agno.workflow.workflow import Workflow
+
+        try:
+            wf = Workflow.from_dict(config, db=self.db, registry=self.registry)
+            wf.id = workflow_id
+            wf.db = self.db
+            return wf
+        except Exception:
+            logger.warning("StudioRunnerTools: Workflow.from_dict failed for %s", workflow_id, exc_info=True)
+            return None
+
+    def _load_config_from_db(
+        self,
+        component_id: str,
+        version: Optional[int] = None,
+        component_type: Optional["ComponentType"] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Load a component's config by id.
+
+        When ``component_type`` is given, the stored component must be of that
+        type; a mismatch returns None so that, e.g., a team id never loads as an
+        Agent (mirrors the typed ``get_component`` guard used by delete_agent).
+        """
+        if self.db is None:
+            return None
+        if component_type is not None and self.db.get_component(component_id, component_type=component_type) is None:
+            return None
+        row = self.db.get_config(component_id=component_id, version=version)
+        if row is None:
+            return None
+        config = row.get("config") if isinstance(row, dict) else None
+        return config if isinstance(config, dict) else None
+
+    def _list_db_component_rows(
+        self, component_type: str, limit: Optional[int] = None
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Thin DB component summaries ({id, name, description}) plus the total count."""
+        if self.db is None:
+            return [], 0
+        from agno.db.base import ComponentType
+
+        rows, total = self.db.list_components(
+            component_type=ComponentType(component_type),
+            limit=limit if limit is not None else self.list_limit,
+        )
+        return (
+            [{"id": r.get("component_id"), "name": r.get("name"), "description": r.get("description")} for r in rows],
+            total,
+        )
+
+    # ------------------------------------------------------------------
+    # Discovery
+    # ------------------------------------------------------------------
+
+    def list_agents(self) -> str:
+        """List agents built in the Studio (stored in the platform database), newest first.
+
+        Returns:
+            str: JSON object with 'agents' (each {id, name, description}), 'count'
+                (returned) and 'total' (in the database; total > count means the
+                list is capped -- components beyond the cap still run by exact id).
+        """
+        return self._list_payload("agent", "agents")
+
+    def list_teams(self) -> str:
+        """List teams built in the Studio (stored in the platform database), newest first.
+
+        Returns:
+            str: JSON object with 'teams' (each {id, name, description}), 'count'
+                (returned) and 'total' (in the database; total > count means the
+                list is capped -- components beyond the cap still run by exact id).
+        """
+        return self._list_payload("team", "teams")
+
+    def list_workflows(self) -> str:
+        """List workflows built in the Studio (stored in the platform database), newest first.
+
+        Returns:
+            str: JSON object with 'workflows' (each {id, name, description}), 'count'
+                (returned) and 'total' (in the database; total > count means the
+                list is capped -- components beyond the cap still run by exact id).
+        """
+        return self._list_payload("workflow", "workflows")
+
+    def _list_payload(self, component_type: str, key: str) -> str:
+        if self.db is None:
+            return json.dumps({"error": "StudioRunnerTools has no db configured; cannot list components."})
+        try:
+            items, total = self._list_db_component_rows(component_type)
+            return json.dumps({key: items, "count": len(items), "total": total})
+        except Exception as e:
+            logger.exception("Failed to list %s", key)
+            return json.dumps({"error": str(e)})
+
+    # ------------------------------------------------------------------
+    # Execution
+    # ------------------------------------------------------------------
+
+    def run_agent(self, agent_id: str, message: str, run_context: Optional[RunContext] = None) -> str:
+        """Run an agent and return its result.
+
+        The run executes as the current user and continues that user's
+        per-conversation session with this agent. A PAUSED status means the run
+        awaits human approval: the result carries the unresolved requirements
+        plus the run_id and session_id a continue call must address.
+
+        Args:
+            agent_id (str): Id of the agent to run (a display name or its slug also resolves).
+            message (str): The message to send.
+
+        Returns:
+            str: JSON object with 'agent_id', 'run_id', 'session_id', 'status',
+                'content' and, when paused, 'requirements'.
+        """
+        agent = self._find_agent(agent_id)
+        if agent is None:
+            return json.dumps({"error": f"Agent not found: {agent_id}"})
+        component_id = getattr(agent, "id", None) or agent_id
+        try:
+            response = agent.run(
+                message,
+                user_id=run_context.user_id if run_context is not None else None,
+                session_id=self._sub_session_id(run_context, component_id),
+            )
+            return self._run_payload("agent_id", component_id, response)
+        except Exception as e:
+            logger.exception("Failed to run agent")
+            return json.dumps({"error": str(e)})
+
+    def run_team(self, team_id: str, message: str, run_context: Optional[RunContext] = None) -> str:
+        """Run a team and return its result.
+
+        The run executes as the current user and continues that user's
+        per-conversation session with this team. A PAUSED status means the run
+        awaits human approval: the result carries the unresolved requirements
+        plus the run_id and session_id a continue call must address.
+
+        Args:
+            team_id (str): Id of the team to run (a display name or its slug also resolves).
+            message (str): The message to send.
+
+        Returns:
+            str: JSON object with 'team_id', 'run_id', 'session_id', 'status',
+                'content' and, when paused, 'requirements'.
+        """
+        team = self._find_team(team_id)
+        if team is None:
+            return json.dumps({"error": f"Team not found: {team_id}"})
+        component_id = getattr(team, "id", None) or team_id
+        try:
+            response = team.run(
+                message,
+                user_id=run_context.user_id if run_context is not None else None,
+                session_id=self._sub_session_id(run_context, component_id),
+            )
+            return self._run_payload("team_id", component_id, response)
+        except Exception as e:
+            logger.exception("Failed to run team")
+            return json.dumps({"error": str(e)})
+
+    def run_workflow(self, workflow_id: str, message: str, run_context: Optional[RunContext] = None) -> str:
+        """Run a workflow and return its final result.
+
+        The run executes as the current user and continues that user's
+        per-conversation session with this workflow. A PAUSED status means the
+        run awaits human approval: the result carries the unresolved
+        requirements plus the run_id and session_id a continue call must address.
+
+        Args:
+            workflow_id (str): Id of the workflow to run (a display name or its slug also resolves).
+            message (str): Input to pass to the first step.
+
+        Returns:
+            str: JSON object with 'workflow_id', 'run_id', 'session_id', 'status',
+                'content' and, when paused, 'requirements'.
+        """
+        wf = self._find_workflow(workflow_id)
+        if wf is None:
+            return json.dumps({"error": f"Workflow not found: {workflow_id}"})
+        component_id = getattr(wf, "id", None) or workflow_id
+        try:
+            response = wf.run(
+                input=message,
+                user_id=run_context.user_id if run_context is not None else None,
+                session_id=self._sub_session_id(run_context, component_id),
+            )
+            return self._run_payload("workflow_id", component_id, response)
+        except Exception as e:
+            logger.exception("Failed to run workflow")
+            return json.dumps({"error": str(e)})
+
+    async def arun_agent(self, agent_id: str, message: str, run_context: Optional[RunContext] = None) -> str:
+        """Async variant of run_agent.
+
+        Args:
+            agent_id (str): Id of the agent to run (a display name or its slug also resolves).
+            message (str): The message to send.
+        """
+        # Resolution hits the DB synchronously; keep it off the event loop.
+        agent = await asyncio.to_thread(self._find_agent, agent_id)
+        if agent is None:
+            return json.dumps({"error": f"Agent not found: {agent_id}"})
+        component_id = getattr(agent, "id", None) or agent_id
+        try:
+            response = await agent.arun(
+                message,
+                user_id=run_context.user_id if run_context is not None else None,
+                session_id=self._sub_session_id(run_context, component_id),
+            )
+            return self._run_payload("agent_id", component_id, response)
+        except Exception as e:
+            logger.exception("Failed to run agent")
+            return json.dumps({"error": str(e)})
+
+    async def arun_team(self, team_id: str, message: str, run_context: Optional[RunContext] = None) -> str:
+        """Async variant of run_team.
+
+        Args:
+            team_id (str): Id of the team to run (a display name or its slug also resolves).
+            message (str): The message to send.
+        """
+        team = await asyncio.to_thread(self._find_team, team_id)
+        if team is None:
+            return json.dumps({"error": f"Team not found: {team_id}"})
+        component_id = getattr(team, "id", None) or team_id
+        try:
+            response = await team.arun(
+                message,
+                user_id=run_context.user_id if run_context is not None else None,
+                session_id=self._sub_session_id(run_context, component_id),
+            )
+            return self._run_payload("team_id", component_id, response)
+        except Exception as e:
+            logger.exception("Failed to run team")
+            return json.dumps({"error": str(e)})
+
+    async def arun_workflow(self, workflow_id: str, message: str, run_context: Optional[RunContext] = None) -> str:
+        """Async variant of run_workflow.
+
+        Args:
+            workflow_id (str): Id of the workflow to run (a display name or its slug also resolves).
+            message (str): Input to pass to the first step.
+        """
+        wf = await asyncio.to_thread(self._find_workflow, workflow_id)
+        if wf is None:
+            return json.dumps({"error": f"Workflow not found: {workflow_id}"})
+        component_id = getattr(wf, "id", None) or workflow_id
+        try:
+            response = await wf.arun(
+                input=message,
+                user_id=run_context.user_id if run_context is not None else None,
+                session_id=self._sub_session_id(run_context, component_id),
+            )
+            return self._run_payload("workflow_id", component_id, response)
+        except Exception as e:
+            logger.exception("Failed to run workflow")
+            return json.dumps({"error": str(e)})
+
+    async def alist_agents(self) -> str:
+        """Async variant of list_agents."""
+        return await asyncio.to_thread(self.list_agents)
+
+    async def alist_teams(self) -> str:
+        """Async variant of list_teams."""
+        return await asyncio.to_thread(self.list_teams)
+
+    async def alist_workflows(self) -> str:
+        """Async variant of list_workflows."""
+        return await asyncio.to_thread(self.list_workflows)
+
+    # ------------------------------------------------------------------
+    # Result shaping
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _sub_session_id(run_context: Optional[RunContext], component_id: str) -> Optional[str]:
+        """One session per component per calling conversation: repeat runs from the
+        same caller session continue, different conversations stay separate."""
+        if run_context is None or not getattr(run_context, "session_id", None):
+            return None
+        return f"{run_context.session_id}--{component_id}"
+
+    @staticmethod
+    def _run_payload(id_key: str, component_id: str, run_output: Any) -> str:
+        payload: Dict[str, Any] = {
+            id_key: component_id,
+            "run_id": getattr(run_output, "run_id", None),
+            "session_id": getattr(run_output, "session_id", None),
+            "status": _run_status(run_output),
+            "content": getattr(run_output, "content", None),
+        }
+        requirements = _paused_requirements(run_output)
+        if requirements is not None:
+            payload["requirements"] = requirements
+        # Media artifacts cannot travel in a JSON tool result; count them so the
+        # caller knows they exist (retrievable from the run via the platform).
+        media = {
+            kind: len(artifacts)
+            for kind in ("images", "videos", "audio")
+            if (artifacts := getattr(run_output, kind, None))
+        }
+        if media:
+            payload["media"] = media
+        return json.dumps(payload, default=str)
