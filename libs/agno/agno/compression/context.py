@@ -259,7 +259,9 @@ class ContextCompactionManager:
         return to_compact, preserved_user, keep_verbatim
 
     def _make_summary_msg(self, summary: str) -> Message:
-        return Message(role="user", content=SUMMARY_PREFIX + summary, from_history=True, temporary=True)
+        # from_history=True prevents duplication on history reload
+        # NOT temporary=True — that would strip summary from fallback models
+        return Message(role="user", content=SUMMARY_PREFIX + summary, from_history=True)
 
     def _summarize(
         self, to_compact: List[Message], prev_summary: Optional[str], run_metrics: Optional["RunMetrics"]

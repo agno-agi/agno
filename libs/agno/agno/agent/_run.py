@@ -527,7 +527,18 @@ def _run(
                 # Check for cancellation before model call
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 6. Generate a response from the Model (includes running function calls)
+                # 6. Context compaction (if enabled and threshold exceeded)
+                compaction_result = None
+                if agent.context_compaction_manager is not None:
+                    compaction_result = agent.context_compaction_manager.compact(
+                        run_messages.messages,
+                        session=agent_session,
+                        run_metrics=run_response.metrics,
+                    )
+                    if compaction_result.summary:
+                        run_messages.messages = compaction_result.view
+
+                # 7. Generate a response from the Model (includes running function calls)
                 agent.model = cast(Model, agent.model)
 
                 model_response: ModelResponse = call_model_with_fallback(
@@ -561,7 +572,7 @@ def _run(
                     agent, model_response, run_messages, run_context=run_context, run_response=run_response
                 )
 
-                # 7. Update the RunOutput with the model response
+                # 8. Update the RunOutput with the model response
                 update_run_response(
                     agent,
                     model_response=model_response,
@@ -569,6 +580,10 @@ def _run(
                     run_messages=run_messages,
                     run_context=run_context,
                 )
+
+                # 9. Commit compaction (mark messages, store summary) after model success
+                if compaction_result is not None and compaction_result.summary:
+                    compaction_result.commit(agent_session)
 
                 # We should break out of the run function
                 if any(tool_call.is_paused for tool_call in run_response.tools or []):
@@ -1670,7 +1685,18 @@ async def _arun(
                 # Check for cancellation before model call
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 9. Generate a response from the Model (includes running function calls)
+                # 9. Context compaction (if enabled and threshold exceeded)
+                compaction_result = None
+                if agent.context_compaction_manager is not None:
+                    compaction_result = await agent.context_compaction_manager.acompact(
+                        run_messages.messages,
+                        session=agent_session,
+                        run_metrics=run_response.metrics,
+                    )
+                    if compaction_result.summary:
+                        run_messages.messages = compaction_result.view
+
+                # 10. Generate a response from the Model (includes running function calls)
                 model_response: ModelResponse = await acall_model_with_fallback(
                     agent.model,
                     agent.fallback_config,
@@ -1708,7 +1734,7 @@ async def _arun(
                     run_response=run_response,
                 )
 
-                # 10. Update the RunOutput with the model response
+                # 11. Update the RunOutput with the model response
                 update_run_response(
                     agent,
                     model_response=model_response,
@@ -1716,6 +1742,10 @@ async def _arun(
                     run_messages=run_messages,
                     run_context=run_context,
                 )
+
+                # 12. Commit compaction (mark messages, store summary) after model success
+                if compaction_result is not None and compaction_result.summary:
+                    compaction_result.commit(agent_session)
 
                 # We should break out of the run function
                 if any(tool_call.is_paused for tool_call in run_response.tools or []):
@@ -6052,21 +6082,35 @@ def build_after_tool_results_callback(
     run_messages: RunMessages,
     run_context: Optional[RunContext] = None,
 ) -> Optional[Any]:
-    """Build the sync ``after_tool_results`` callback for ``checkpoint="tool-batch"``.
+    """Build the sync ``after_tool_results`` callback.
 
-    Returns ``None`` when checkpointing is not enabled — the caller passes the
-    result directly to the model's ``after_tool_results=`` kwarg, and the
-    zero-cost path is taken when the callback is None.
+    Returns ``None`` when neither checkpointing nor compaction is enabled.
 
-    The returned callback receives the current ``ModelResponse``, syncs
-    ``run_response`` with the in-flight messages/tools, and writes a checkpoint.
+    The returned callback receives the current ``ModelResponse``, optionally
+    compacts context if threshold exceeded, syncs ``run_response`` with the
+    in-flight messages/tools, and writes a checkpoint if enabled.
     """
-    if agent.checkpoint != "tool-batch":
+    needs_checkpoint = agent.checkpoint == "tool-batch"
+    needs_compaction = agent.context_compaction_manager is not None
+
+    if not needs_checkpoint and not needs_compaction:
         return None
 
     def _callback(model_response: ModelResponse) -> None:
-        _sync_run_response_with_model_response(run_response, run_messages, model_response)
-        checkpoint_run(agent, run_response, session, run_context)
+        # Mid-loop compaction: check threshold, compact if exceeded
+        if agent.context_compaction_manager is not None:
+            result = agent.context_compaction_manager.compact(
+                run_messages.messages,
+                session=session,
+                run_metrics=run_response.metrics,
+            )
+            if result.summary:
+                run_messages.messages[:] = result.view  # In-place swap for loop to continue
+                result.commit(session)
+
+        if needs_checkpoint:
+            _sync_run_response_with_model_response(run_response, run_messages, model_response)
+            checkpoint_run(agent, run_response, session, run_context)
 
     return _callback
 
@@ -6079,12 +6123,27 @@ def abuild_after_tool_results_callback(
     run_context: Optional[RunContext] = None,
 ) -> Optional[Any]:
     """Async variant of :func:`build_after_tool_results_callback`."""
-    if agent.checkpoint != "tool-batch":
+    needs_checkpoint = agent.checkpoint == "tool-batch"
+    needs_compaction = agent.context_compaction_manager is not None
+
+    if not needs_checkpoint and not needs_compaction:
         return None
 
     async def _callback(model_response: ModelResponse) -> None:
-        _sync_run_response_with_model_response(run_response, run_messages, model_response)
-        await acheckpoint_run(agent, run_response, session, run_context)
+        # Mid-loop compaction: check threshold, compact if exceeded
+        if agent.context_compaction_manager is not None:
+            result = await agent.context_compaction_manager.acompact(
+                run_messages.messages,
+                session=session,
+                run_metrics=run_response.metrics,
+            )
+            if result.summary:
+                run_messages.messages[:] = result.view  # In-place swap for loop to continue
+                result.commit(session)
+
+        if needs_checkpoint:
+            _sync_run_response_with_model_response(run_response, run_messages, model_response)
+            await acheckpoint_run(agent, run_response, session, run_context)
 
     return _callback
 

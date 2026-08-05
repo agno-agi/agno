@@ -1266,7 +1266,6 @@ def get_run_messages(
             role="user",
             content=SUMMARY_PREFIX + session.compaction.summary,
             from_history=True,
-            temporary=True,
         )
         run_messages.messages.append(summary_msg)
         log_debug(f"Injected compaction summary ({len(session.compaction.summary)} chars)")
@@ -1488,7 +1487,6 @@ async def aget_run_messages(
             role="user",
             content=SUMMARY_PREFIX + session.compaction.summary,
             from_history=True,
-            temporary=True,
         )
         run_messages.messages.append(summary_msg)
         log_debug(f"Injected compaction summary ({len(session.compaction.summary)} chars)")
@@ -1703,7 +1701,6 @@ def get_continue_run_messages(
             role="user",
             content=SUMMARY_PREFIX + session.compaction.summary,
             from_history=True,
-            temporary=True,
         )
         run_messages.messages.append(summary_msg)
         log_debug(f"Injected compaction summary ({len(session.compaction.summary)} chars)")
