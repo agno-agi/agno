@@ -74,3 +74,43 @@ class TestFromDictConfirmationPropagation:
         assert restored.tool_execution is not None
         assert restored.tool_execution.confirmed is True
         assert restored.needs_confirmation is False
+
+
+# =============================================================================
+# from_dict: external_execution_result propagates to tool_execution
+# =============================================================================
+
+
+class TestFromDictExternalExecutionResultPropagation:
+    def test_top_level_result_reaches_tool_execution(self):
+        data = {
+            "id": "req-2",
+            "tool_execution": {
+                "tool_name": "run_query",
+                "tool_args": {"sql": "select 1"},
+                "tool_call_id": "call-2",
+                "external_execution_required": True,
+            },
+            "external_execution_result": "1 row",
+        }
+        req = RunRequirement.from_dict(data)
+        assert req.external_execution_result == "1 row"
+        assert req.tool_execution is not None
+        assert req.tool_execution.result == "1 row"
+        assert req.needs_external_execution is False
+
+    def test_nested_result_stays_authoritative(self):
+        data = {
+            "id": "req-3",
+            "tool_execution": {
+                "tool_name": "run_query",
+                "tool_args": {"sql": "select 1"},
+                "tool_call_id": "call-3",
+                "external_execution_required": True,
+                "result": "nested result",
+            },
+            "external_execution_result": "top-level result",
+        }
+        req = RunRequirement.from_dict(data)
+        assert req.tool_execution is not None
+        assert req.tool_execution.result == "nested result"

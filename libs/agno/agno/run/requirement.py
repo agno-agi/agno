@@ -282,6 +282,8 @@ class RunRequirement:
                 requirement.tool_execution.confirmed = requirement.confirmation
                 if requirement.confirmation is False and requirement.confirmation_note is not None:
                     requirement.tool_execution.confirmation_note = requirement.confirmation_note
+            if requirement.external_execution_result is not None and requirement.tool_execution.result is None:
+                requirement.tool_execution.result = requirement.external_execution_result
 
         # Handle user_input_schema
         schema_raw = data.get("user_input_schema")
