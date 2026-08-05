@@ -1316,22 +1316,20 @@ def get_run_messages(
         )
 
         if len(history) > 0:
-            # Create a deep copy of the history messages to avoid modifying the original messages
-            history_copy = [deepcopy(msg) for msg in history]
+            # Deepcopy, tag, and filter compacted in one pass (skip deepcopy for compacted)
+            history_copy = []
+            for msg in history:
+                if getattr(msg, "is_compacted", False):
+                    continue
+                msg_copy = deepcopy(msg)
+                msg_copy.from_history = True
+                history_copy.append(msg_copy)
 
-            # Tag each message as coming from history
-            for _msg in history_copy:
-                _msg.from_history = True
-
-            # Filter tool calls from history if limit is set (before adding to run_messages)
+            # Filter tool calls from history if limit is set
             if agent.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
 
-            # Filter out compacted messages (their content is in the summary)
-            history_copy = [m for m in history_copy if not getattr(m, "is_compacted", False)]
-
             log_debug(f"Adding {len(history_copy)} messages from history")
-
             run_messages.messages += history_copy
 
     # 4. Add user message to run_messages
