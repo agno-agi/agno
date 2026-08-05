@@ -5,6 +5,7 @@ config persistence path is exercised, not mocked.
 """
 
 import json
+import time
 from datetime import datetime
 from typing import Any, Dict
 
@@ -50,6 +51,11 @@ def studio_versioned(registry, db):
     return StudioTools(registry=registry, db=db, versions=True)
 
 
+@pytest.fixture
+def studio_schedules(registry, db):
+    return StudioTools(registry=registry, db=db, schedules=True)
+
+
 def _loads(s: str) -> Dict[str, Any]:
     return json.loads(s)
 
@@ -82,6 +88,16 @@ VERSIONING_TOOLS = {
     "delete_version",
 }
 
+SCHEDULE_TOOLS = {
+    "create_schedule",
+    "list_schedules",
+    "get_schedule_runs",
+    "trigger_schedule",
+    "enable_schedule",
+    "disable_schedule",
+    "delete_schedule",
+}
+
 
 class TestInitialization:
     def test_default_registers_agents_plus_discovery(self, studio):
@@ -112,6 +128,18 @@ class TestInitialization:
         assert studio_versioned.enable_versions is True
         assert VERSIONING_TOOLS.issubset(set(studio_versioned.functions.keys()))
         assert VERSIONING_TOOLS.issubset(set(studio_versioned.async_functions.keys()))
+
+    def test_schedule_tools_not_registered_by_default(self, studio):
+        assert studio.enable_schedules is False
+        assert not SCHEDULE_TOOLS & set(studio.functions.keys())
+        assert not SCHEDULE_TOOLS & set(studio.async_functions.keys())
+        assert "Schedules:" not in studio.instructions
+
+    def test_schedules_flag_registers_schedule_tools(self, studio_schedules):
+        assert studio_schedules.enable_schedules is True
+        assert SCHEDULE_TOOLS.issubset(set(studio_schedules.functions.keys()))
+        assert SCHEDULE_TOOLS.issubset(set(studio_schedules.async_functions.keys()))
+        assert "Schedules:" in studio_schedules.instructions
 
     def test_instructions_reflect_versioning_flag(self, studio, studio_versioned):
         assert "published immediately" in studio.instructions
@@ -796,6 +824,165 @@ class TestVersioning:
         # v1 is published+current — DB should refuse to delete it
         out = _loads(studio_versioned.delete_version("tutor", 1))
         assert "error" in out
+
+
+# ----------------------------------------------------------------------
+# Schedules: component-aware schedule tools with schedules=True
+# ----------------------------------------------------------------------
+
+
+class TestSchedules:
+    def _create_target_agent(self, studio, name="digest"):
+        return _loads(studio.create_agent(name=name, instructions="i", model_id="gpt-5.4"))
+
+    def _create_schedule(self, studio, **overrides):
+        params = {
+            "name": "daily-digest",
+            "cron": "0 9 * * *",
+            "target_type": "agent",
+            "target_id": "digest",
+            "message": "Send the daily digest.",
+        }
+        params.update(overrides)
+        return _loads(studio.create_schedule(**params))
+
+    def test_create_schedule_for_created_agent_persists_endpoint_and_payload(self, studio_schedules):
+        self._create_target_agent(studio_schedules)
+        out = self._create_schedule(studio_schedules)
+
+        assert out["status"] == "created"
+        assert out["target_type"] == "agent"
+        assert out["target_id"] == "digest"
+        assert out["endpoint"] == "/agents/digest/runs"
+        assert out["enabled"] is True
+
+        schedule = studio_schedules._get_schedule_manager().get(out["id"])
+        assert schedule is not None
+        assert schedule.endpoint == "/agents/digest/runs"
+        assert schedule.method == "POST"
+        assert schedule.payload == {"message": "Send the daily digest."}
+
+    def test_name_based_target_resolves_to_real_component_id(self, registry, db):
+        live = Agent(id="live-agent", name="Live Agent", model=OpenAIResponses(id="gpt-5.4"))
+        tool = StudioTools(registry=registry, db=db, agents_list=[live], schedules=True)
+
+        out = self._create_schedule(tool, target_id="Live Agent")
+        assert out["status"] == "created"
+        assert out["target_id"] == "live-agent"
+        assert out["endpoint"] == "/agents/live-agent/runs"
+
+    def test_unknown_target_returns_error(self, studio_schedules):
+        out = self._create_schedule(studio_schedules, target_id="ghost")
+        assert "error" in out
+        assert "Agent not found: ghost" in out["error"]
+
+    def test_bad_target_type_returns_error(self, studio_schedules):
+        self._create_target_agent(studio_schedules)
+        out = self._create_schedule(studio_schedules, target_type="cron-job")
+        assert "error" in out
+        assert "Invalid target_type" in out["error"]
+
+    def test_invalid_cron_returns_error(self, studio_schedules):
+        self._create_target_agent(studio_schedules)
+        out = self._create_schedule(studio_schedules, cron="not-a-cron")
+        assert "error" in out
+        assert "Invalid cron expression" in out["error"]
+
+    def test_invalid_timezone_returns_error(self, studio_schedules):
+        self._create_target_agent(studio_schedules)
+        out = self._create_schedule(studio_schedules, timezone="Mars/Olympus")
+        assert "error" in out
+        assert "Invalid timezone" in out["error"]
+
+    def test_empty_message_returns_error(self, studio_schedules):
+        self._create_target_agent(studio_schedules)
+        out = self._create_schedule(studio_schedules, message="   ")
+        assert "error" in out
+        assert "message" in out["error"]
+
+    def test_same_name_create_updates_in_place(self, studio_schedules):
+        self._create_target_agent(studio_schedules)
+        first = self._create_schedule(studio_schedules)
+        second = self._create_schedule(studio_schedules, cron="30 18 * * *")
+
+        assert second["id"] == first["id"]
+        assert second["cron"] == "30 18 * * *"
+
+        listed = _loads(studio_schedules.list_schedules())
+        assert listed["count"] == 1
+        assert listed["schedules"][0]["cron"] == "30 18 * * *"
+
+    def test_enable_disable_delete_roundtrip(self, studio_schedules):
+        self._create_target_agent(studio_schedules)
+        schedule_id = self._create_schedule(studio_schedules)["id"]
+
+        disabled = _loads(studio_schedules.disable_schedule(schedule_id))
+        assert disabled["status"] == "disabled"
+        assert disabled["enabled"] is False
+        assert _loads(studio_schedules.list_schedules(enabled_only=True))["count"] == 0
+
+        enabled = _loads(studio_schedules.enable_schedule(schedule_id))
+        assert enabled["status"] == "enabled"
+        assert enabled["enabled"] is True
+        assert _loads(studio_schedules.list_schedules(enabled_only=True))["count"] == 1
+
+        deleted = _loads(studio_schedules.delete_schedule(schedule_id))
+        assert deleted["status"] == "deleted"
+        assert _loads(studio_schedules.list_schedules())["count"] == 0
+
+    def test_delete_unknown_schedule_returns_error(self, studio_schedules):
+        out = _loads(studio_schedules.delete_schedule("ghost"))
+        assert "error" in out
+
+    def test_get_schedule_runs_empty_for_new_schedule(self, studio_schedules):
+        self._create_target_agent(studio_schedules)
+        schedule_id = self._create_schedule(studio_schedules)["id"]
+        out = _loads(studio_schedules.get_schedule_runs(schedule_id))
+        assert out["runs"] == []
+        assert out["count"] == 0
+
+    def test_trigger_sets_next_run_at_to_now(self, studio_schedules):
+        self._create_target_agent(studio_schedules)
+        schedule_id = self._create_schedule(studio_schedules)["id"]
+
+        out = _loads(studio_schedules.trigger_schedule(schedule_id))
+        assert out["status"] == "triggered"
+        assert out["id"] == schedule_id
+        assert "poll interval" in out["note"]
+
+        # The poller claims schedules with next_run_at <= now, so the trigger
+        # must have moved next_run_at into the claimable window.
+        schedule = studio_schedules._get_schedule_manager().get(schedule_id)
+        assert schedule.next_run_at <= int(time.time())
+
+    def test_trigger_disabled_schedule_returns_error(self, studio_schedules):
+        self._create_target_agent(studio_schedules)
+        schedule_id = self._create_schedule(studio_schedules)["id"]
+        studio_schedules.disable_schedule(schedule_id)
+
+        out = _loads(studio_schedules.trigger_schedule(schedule_id))
+        assert "error" in out
+        assert "disabled" in out["error"]
+
+    def test_trigger_unknown_schedule_returns_error(self, studio_schedules):
+        out = _loads(studio_schedules.trigger_schedule("ghost"))
+        assert "error" in out
+        assert "Schedule not found" in out["error"]
+
+    @pytest.mark.asyncio
+    async def test_async_create_schedule(self, studio_schedules):
+        self._create_target_agent(studio_schedules)
+        out = _loads(
+            await studio_schedules.acreate_schedule(
+                name="async-digest",
+                cron="0 9 * * *",
+                target_type="agent",
+                target_id="digest",
+                message="Send it.",
+            )
+        )
+        assert out["status"] == "created"
+        assert out["endpoint"] == "/agents/digest/runs"
 
 
 # ----------------------------------------------------------------------

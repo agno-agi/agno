@@ -38,6 +38,9 @@ Enable flags:
       False overrides the auto-enable.
     * Versioning tools (list_versions, get_version, publish_component,
       set_current_version, delete_version) are exposed only when versions=True.
+    * Schedule tools (create_schedule, list_schedules, get_schedule_runs,
+      trigger_schedule, enable_schedule, disable_schedule, delete_schedule)
+      are exposed only when schedules=True.
 
 Persistence:
     * Studio saves ONLY the component it creates/edits. It does NOT cascade to
@@ -48,6 +51,7 @@ Persistence:
 from __future__ import annotations
 
 import json
+import time
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 from agno.tools.function import Function
@@ -59,11 +63,14 @@ if TYPE_CHECKING:
     from agno.db.base import BaseDb, ComponentType
     from agno.models.base import Model
     from agno.registry.registry import Registry
+    from agno.scheduler.manager import ScheduleManager
     from agno.team.team import Team
     from agno.workflow.workflow import Workflow
 
 Component = Union["Agent", "Team", "Workflow"]
 TeamMember = Union["Agent", "Team"]
+
+_SCHEDULE_TARGET_TYPES = ("agent", "team", "workflow")
 
 
 class StudioTools(Toolkit):
@@ -88,6 +95,13 @@ class StudioTools(Toolkit):
             publish_component, set_current_version, delete_version). Defaults
             to False; without versioning, edits publish immediately instead of
             producing drafts.
+        schedules: Expose component-aware schedule tools (create_schedule,
+            list_schedules, get_schedule_runs, trigger_schedule,
+            enable_schedule, disable_schedule, delete_schedule). Defaults to
+            False. Requires the optional scheduler dependencies (croniter and
+            pytz -- ``pip install agno[scheduler]``); when they are missing,
+            the first schedule tool call that needs them returns an error JSON
+            instead of raising at import time.
     """
 
     def __init__(
@@ -102,6 +116,7 @@ class StudioTools(Toolkit):
         teams: Optional[bool] = None,
         workflows: Optional[bool] = None,
         versions: bool = False,
+        schedules: bool = False,
         **kwargs: Any,
     ):
         self.registry = registry
@@ -119,6 +134,8 @@ class StudioTools(Toolkit):
             has_teams_list=teams_list is not None,
         )
         self.enable_versions: bool = versions
+        self.enable_schedules: bool = schedules
+        self._schedule_manager: Optional["ScheduleManager"] = None  # lazy -- needs self.db
 
         tools: List[Callable] = [
             # Discovery -- always available regardless of flags.
@@ -174,6 +191,20 @@ class StudioTools(Toolkit):
                 ]
             )
 
+        # Schedules target existing components of any enabled type; opt-in.
+        if self.enable_schedules:
+            tools.extend(
+                [
+                    self.create_schedule,
+                    self.list_schedules,
+                    self.get_schedule_runs,
+                    self.trigger_schedule,
+                    self.enable_schedule,
+                    self.disable_schedule,
+                    self.delete_schedule,
+                ]
+            )
+
         async_tools: List[tuple[Callable[..., Any], str]] = [
             (self.alist_models, "list_models"),
             (self.alist_tools, "list_tools"),
@@ -223,6 +254,18 @@ class StudioTools(Toolkit):
                     (self.adelete_version, "delete_version"),
                 ]
             )
+        if self.enable_schedules:
+            async_tools.extend(
+                [
+                    (self.acreate_schedule, "create_schedule"),
+                    (self.alist_schedules, "list_schedules"),
+                    (self.aget_schedule_runs, "get_schedule_runs"),
+                    (self.atrigger_schedule, "trigger_schedule"),
+                    (self.aenable_schedule, "enable_schedule"),
+                    (self.adisable_schedule, "disable_schedule"),
+                    (self.adelete_schedule, "delete_schedule"),
+                ]
+            )
 
         instruction_lines = [
             "Compose agents, teams, and workflows from registry primitives.",
@@ -251,6 +294,13 @@ class StudioTools(Toolkit):
             instruction_lines.append(
                 "Workflow rules: each step_spec is a dict with 'name' and exactly one of "
                 "'agent_id', 'team_id', or 'function_name'. Use function_name values from list_functions."
+            )
+        if self.enable_schedules:
+            instruction_lines.append(
+                "Schedules: create_schedule targets an existing component by target_type "
+                "('agent'/'team'/'workflow') + target_id (ids from list_agents/list_teams/list_workflows) "
+                "and requires a message. Cron is 5-field; timezone is an IANA name. trigger_schedule "
+                "queues an enabled schedule to run now via the platform poller."
             )
 
         # Toolkit instructions are only injected into the system message when
@@ -1423,6 +1473,237 @@ class StudioTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     # ------------------------------------------------------------------
+    # Schedules (component-aware)
+    # ------------------------------------------------------------------
+
+    def create_schedule(
+        self,
+        name: str,
+        cron: str,
+        target_type: str,
+        target_id: str,
+        message: str,
+        timezone: str = "UTC",
+        description: Optional[str] = None,
+    ) -> str:
+        """Create (or update) a schedule that runs an existing component on a cron cadence.
+
+        Args:
+            name (str): Unique schedule name (e.g. "daily-news-digest"). Re-using an
+                existing name updates that schedule in place.
+            cron (str): 5-field cron expression (e.g. "0 9 * * *" for daily at 9am).
+            target_type (str): One of 'agent', 'team', or 'workflow'.
+            target_id (str): Id (or name) of an existing component -- use ids from
+                list_agents/list_teams/list_workflows.
+            message (str): The message sent to the component on every scheduled run.
+            timezone (str): IANA timezone name for the cron expression
+                (e.g. "America/New_York"). Defaults to "UTC".
+            description (Optional[str]): Human-readable description of the schedule.
+
+        Returns:
+            str: JSON with {status, id, name, cron, target_type, target_id, endpoint,
+                timezone, enabled, next_run_at}.
+        """
+        try:
+            component_id, target_error = self._resolve_schedule_target(target_type, target_id)
+            if target_error is not None:
+                return json.dumps({"error": target_error})
+            if not message or not message.strip():
+                return json.dumps(
+                    {
+                        "error": "message must be a non-empty string; it is the prompt "
+                        "sent to the component on every scheduled run."
+                    }
+                )
+            manager = self._get_schedule_manager()
+            schedule = manager.create(
+                name=name,
+                cron=cron,
+                endpoint=f"/{target_type}s/{component_id}/runs",
+                method="POST",
+                description=description,
+                payload={"message": message},
+                timezone=timezone,
+                if_exists="update",
+            )
+            log_debug(f"StudioTools created schedule name={name} target={target_type}:{component_id}")
+            return json.dumps(
+                {
+                    "status": "created",
+                    "id": schedule.id,
+                    "name": schedule.name,
+                    "cron": schedule.cron_expr,
+                    "target_type": target_type,
+                    "target_id": component_id,
+                    "endpoint": schedule.endpoint,
+                    "timezone": schedule.timezone,
+                    "enabled": schedule.enabled,
+                    "next_run_at": schedule.next_run_at,
+                }
+            )
+        except Exception as e:
+            logger.exception("Failed to create schedule")
+            return json.dumps({"error": str(e)})
+
+    def list_schedules(self, enabled_only: bool = False) -> str:
+        """List all existing schedules.
+
+        Args:
+            enabled_only (bool): If True, only return enabled schedules. Defaults to False.
+
+        Returns:
+            str: JSON with {schedules, count}.
+        """
+        try:
+            enabled_filter = True if enabled_only else None
+            schedules = self._get_schedule_manager().list(enabled=enabled_filter)
+            result = [
+                {
+                    "id": s.id,
+                    "name": s.name,
+                    "cron": s.cron_expr,
+                    "endpoint": s.endpoint,
+                    "timezone": s.timezone,
+                    "enabled": s.enabled,
+                    "description": s.description,
+                }
+                for s in schedules
+            ]
+            return json.dumps({"schedules": result, "count": len(result)})
+        except Exception as e:
+            logger.exception("Failed to list schedules")
+            return json.dumps({"error": str(e)})
+
+    def get_schedule_runs(self, schedule_id: str, limit: int = 10) -> str:
+        """Get the run history for a schedule.
+
+        Args:
+            schedule_id (str): The id of the schedule to get runs for.
+            limit (int): Maximum number of runs to return. Defaults to 10.
+
+        Returns:
+            str: JSON with {runs, count}.
+        """
+        try:
+            runs = self._get_schedule_manager().get_runs(schedule_id, limit=limit)
+            result = [
+                {
+                    "id": r.id,
+                    "status": r.status,
+                    "triggered_at": r.triggered_at,
+                    "completed_at": r.completed_at,
+                    "error": r.error,
+                }
+                for r in runs
+            ]
+            return json.dumps({"runs": result, "count": len(result)})
+        except Exception as e:
+            logger.exception("Failed to get schedule runs")
+            return json.dumps({"error": str(e)})
+
+    def trigger_schedule(self, schedule_id: str) -> str:
+        """Queue an enabled schedule to run now.
+
+        Sets the schedule's next run time to now; the scheduler poller claims and
+        executes it within one poll interval. The regular cron cadence resumes
+        after the run.
+
+        Args:
+            schedule_id (str): The id of the schedule to trigger.
+
+        Returns:
+            str: JSON with {status, id, note}.
+        """
+        try:
+            manager = self._get_schedule_manager()
+            schedule = manager.get(schedule_id)
+            if schedule is None:
+                return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+            if not schedule.enabled:
+                return json.dumps(
+                    {"error": f"Schedule is disabled: {schedule_id}. Call enable_schedule first, then trigger it."}
+                )
+            manager.update(schedule_id, next_run_at=int(time.time()))
+            return json.dumps(
+                {
+                    "status": "triggered",
+                    "id": schedule_id,
+                    "note": "The scheduler poller will execute it within one poll interval.",
+                }
+            )
+        except Exception as e:
+            logger.exception("Failed to trigger schedule")
+            return json.dumps({"error": str(e)})
+
+    def enable_schedule(self, schedule_id: str) -> str:
+        """Enable a disabled schedule so it starts running again.
+
+        Args:
+            schedule_id (str): The id of the schedule to enable.
+
+        Returns:
+            str: JSON with {status, id, name, enabled}.
+        """
+        try:
+            schedule = self._get_schedule_manager().enable(schedule_id)
+            if schedule is None:
+                return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+            return json.dumps(
+                {
+                    "status": "enabled",
+                    "id": schedule.id,
+                    "name": schedule.name,
+                    "enabled": schedule.enabled,
+                }
+            )
+        except Exception as e:
+            logger.exception("Failed to enable schedule")
+            return json.dumps({"error": str(e)})
+
+    def disable_schedule(self, schedule_id: str) -> str:
+        """Disable a schedule so it stops running. Can be re-enabled later.
+
+        Args:
+            schedule_id (str): The id of the schedule to disable.
+
+        Returns:
+            str: JSON with {status, id, name, enabled}.
+        """
+        try:
+            schedule = self._get_schedule_manager().disable(schedule_id)
+            if schedule is None:
+                return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+            return json.dumps(
+                {
+                    "status": "disabled",
+                    "id": schedule.id,
+                    "name": schedule.name,
+                    "enabled": schedule.enabled,
+                }
+            )
+        except Exception as e:
+            logger.exception("Failed to disable schedule")
+            return json.dumps({"error": str(e)})
+
+    def delete_schedule(self, schedule_id: str) -> str:
+        """Delete a schedule by its id. This permanently removes the schedule.
+
+        Args:
+            schedule_id (str): The id of the schedule to delete.
+
+        Returns:
+            str: JSON with {status, id}.
+        """
+        try:
+            deleted = self._get_schedule_manager().delete(schedule_id)
+            if deleted:
+                return json.dumps({"status": "deleted", "id": schedule_id})
+            return json.dumps({"error": f"Schedule not found or could not be deleted: {schedule_id}"})
+        except Exception as e:
+            logger.exception("Failed to delete schedule")
+            return json.dumps({"error": str(e)})
+
+    # ------------------------------------------------------------------
     # Async tools
     # ------------------------------------------------------------------
 
@@ -1655,6 +1936,52 @@ class StudioTools(Toolkit):
             logger.exception("Failed to run workflow")
             return json.dumps({"error": str(e)})
 
+    async def acreate_schedule(
+        self,
+        name: str,
+        cron: str,
+        target_type: str,
+        target_id: str,
+        message: str,
+        timezone: str = "UTC",
+        description: Optional[str] = None,
+    ) -> str:
+        """Async variant of create_schedule."""
+        return await self._run_sync_tool(
+            self.create_schedule,
+            name,
+            cron,
+            target_type,
+            target_id,
+            message,
+            timezone=timezone,
+            description=description,
+        )
+
+    async def alist_schedules(self, enabled_only: bool = False) -> str:
+        """Async variant of list_schedules."""
+        return await self._run_sync_tool(self.list_schedules, enabled_only=enabled_only)
+
+    async def aget_schedule_runs(self, schedule_id: str, limit: int = 10) -> str:
+        """Async variant of get_schedule_runs."""
+        return await self._run_sync_tool(self.get_schedule_runs, schedule_id, limit=limit)
+
+    async def atrigger_schedule(self, schedule_id: str) -> str:
+        """Async variant of trigger_schedule."""
+        return await self._run_sync_tool(self.trigger_schedule, schedule_id)
+
+    async def aenable_schedule(self, schedule_id: str) -> str:
+        """Async variant of enable_schedule."""
+        return await self._run_sync_tool(self.enable_schedule, schedule_id)
+
+    async def adisable_schedule(self, schedule_id: str) -> str:
+        """Async variant of disable_schedule."""
+        return await self._run_sync_tool(self.disable_schedule, schedule_id)
+
+    async def adelete_schedule(self, schedule_id: str) -> str:
+        """Async variant of delete_schedule."""
+        return await self._run_sync_tool(self.delete_schedule, schedule_id)
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -1677,6 +2004,39 @@ class StudioTools(Toolkit):
             candidate = f"{base}-{suffix}"
             suffix += 1
         return candidate
+
+    def _get_schedule_manager(self) -> "ScheduleManager":
+        """Lazily build the ScheduleManager over the toolkit's db."""
+        if self._schedule_manager is None:
+            if self.db is None:
+                raise ValueError("StudioTools has no db configured; cannot manage schedules.")
+            from agno.scheduler.manager import ScheduleManager
+
+            self._schedule_manager = ScheduleManager(db=self.db)
+        return self._schedule_manager
+
+    def _resolve_schedule_target(self, target_type: str, target_id: str) -> tuple[Optional[str], Optional[str]]:
+        """Resolve a schedule target to a real component id.
+
+        Returns ``(component_id, error)``: exactly one side is set. Targets
+        resolve through the Studio lookup path (code-defined lists, then DB;
+        matched by id or name), so schedules always point at a component's
+        real id even when the caller passed its display name.
+        """
+        if target_type not in _SCHEDULE_TARGET_TYPES:
+            return None, f"Invalid target_type: {target_type}. Must be one of {list(_SCHEDULE_TARGET_TYPES)}."
+        finders: Dict[str, Callable[[str], Optional[Any]]] = {
+            "agent": self._find_agent,
+            "team": self._find_team,
+            "workflow": self._find_workflow,
+        }
+        component = finders[target_type](target_id)
+        if component is None:
+            return None, f"{target_type.capitalize()} not found: {target_id}"
+        component_id = getattr(component, "id", None)
+        if component_id is None:
+            return None, f"{target_type.capitalize()} has no id: {target_id}"
+        return component_id, None
 
     def _component_id_exists(self, component_id: str, db: "BaseDb") -> bool:
         for component in [*self._iter_agents(), *self._iter_teams(), *self._iter_workflows()]:
