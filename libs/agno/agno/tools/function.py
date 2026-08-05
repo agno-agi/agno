@@ -932,6 +932,10 @@ class Function(BaseModel):
             # even if the parameter name differs (e.g. my_agent: Agent). See issue #6344.
             try:
                 for param_name, hint in list(type_hints.items()):
+                    # get_type_hints includes the return annotation under
+                    # "return"; it is not an injectable parameter.
+                    if param_name == "return":
+                        continue
                     if _is_schema_excluded(hint):
                         del type_hints[param_name]
                         excluded_params.append(param_name)
