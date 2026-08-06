@@ -8,7 +8,6 @@ from agno.tools.function import Function
 from agno.utils.log import log_debug, log_warning
 from agno.utils.path_safety import safe_join_relative_path
 
-
 # Groups a Toolkit by the guidance it emits rather than by object identity.
 # Agent.deep_copy / Team.deep_copy clone a Toolkit list entry while the
 # rehydrated Functions that came from it keep pointing at the live registry
