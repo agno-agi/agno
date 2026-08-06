@@ -109,49 +109,37 @@ class Registry:
                 register(tool.__name__, tool)
         return lookup
 
-    def _live_toolkit_for(
-        self, source: EntrypointSource, name: str, toolkit_name: Optional[str] = None
-    ) -> Tuple[Optional[Toolkit], bool, int]:
+    def _live_toolkit_for(self, source: EntrypointSource, name: str) -> Tuple[Optional[Toolkit], bool]:
         """Locate the live Toolkit that currently exposes ``source`` under ``name``.
 
-        Returns ``(toolkit, stale, exposures)``.
+        Returns ``(toolkit, stale)``. Matching is by object identity, so it
+        works for a config saved before tool names were toolkit-qualified and
+        for one whose toolkit was renamed: neither carries a name to match on.
 
         ``stale`` marks a resolved source that no Toolkit owns any more while a
         Toolkit does expose ``name`` with a different Function object. That is
         what a toolkit which rebuilt its functions dict looks like: MCP toolkits
         replace every Function on connect, and the cache entry written before
-        the rebuild still *hits*, so a plain miss check cannot catch it.
-
-        ``exposures`` counts the registry toolkits exposing ``name`` at all.
-        More than one means the flat slot's winner is arbitrary, so the
-        resolution must not be written back into a config.
-
-        ``toolkit_name`` restricts the search to same-named toolkits, for
-        sources resolved through a toolkit-qualified key.
+        the rebuild still *hits*, so a miss-only check cannot catch it.
         """
         if not isinstance(source, Function):
-            return None, False, 0
+            return None, False
 
-        owner: Optional[Toolkit] = None
-        exposures = 0
-        registered_directly = False
+        shadowed = False
         for tool in self.tools:
             if tool is source:
                 # Registered directly as a registry tool, so no toolkit owns it
                 # and a same-named toolkit member does not make it stale.
-                registered_directly = True
-                continue
+                return None, False
             if not isinstance(tool, Toolkit):
-                continue
-            if toolkit_name is not None and tool.name != toolkit_name:
                 continue
             current = tool.get_functions().get(name)
             if current is None:
                 continue
-            exposures += 1
             if current is source:
-                owner = tool
-        return owner, owner is None and exposures > 0 and not registered_directly, exposures
+                return tool, False
+            shadowed = True
+        return None, shadowed
 
     def rehydrate_function(self, func_dict: Dict[str, Any]) -> Function:
         """Reconstruct a Function from dict, reattaching its entrypoint.
@@ -234,22 +222,20 @@ class Registry:
             # has left the registry binds the flat slot, which may belong to a
             # different toolkit, and that toolkit's guidance is not this
             # function's to carry.
-            source_toolkit, _, exposures = (
-                self._live_toolkit_for(source, func.name) if resolved_as_recorded else (None, False, 0)
-            )
+            source_toolkit = self._live_toolkit_for(source, func.name)[0] if resolved_as_recorded else None
             if source_toolkit is not None:
                 # Keep the exact live Toolkit available to instruction
                 # collection. Every member points to the same object, so the
                 # collector can add toolkit-level guidance once without
                 # copying it into persisted Function dictionaries.
+                #
+                # The attribution is deliberately not written back onto an
+                # unqualified config. Identity resolution already reaches the
+                # Toolkit without a recorded name, and stamping one would tie
+                # the config to that name: a later rename would then take the
+                # qualified path, miss, and lose the guidance the unstamped
+                # config still finds.
                 func.source_toolkit = source_toolkit
-                if func.owning_toolkit is None and exposures == 1:
-                    # An unqualified config resolved unambiguously, so stamp the
-                    # attribution: a load -> save round trip then migrates it to
-                    # the qualified form. When several toolkits expose the name
-                    # the flat slot's winner is arbitrary and must not be made
-                    # permanent.
-                    func.owning_toolkit = source_toolkit.name
         else:
             func.entrypoint = source
         if func.entrypoint is None:

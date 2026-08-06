@@ -657,18 +657,36 @@ class TestToolkitQualifiedRehydration:
         assert rehydrated.entrypoint is search_function
         assert rehydrated.instructions == source.instructions
         assert rehydrated.source_toolkit is toolkit
-        # Re-stamped, so the next save writes the "toolkit" key and the config
-        # stops depending on the flat slot.
-        assert rehydrated.owning_toolkit == "agno_docs"
+        # The attribution is not invented. Stamping the toolkit's current name
+        # would tie the config to it -- see the rename test below.
+        assert rehydrated.owning_toolkit is None
 
-    def test_legacy_dict_with_an_ambiguous_name_is_not_restamped(self):
-        """Two toolkits exposing the name make the flat slot's winner arbitrary,
-        so the resolution must not be written back into the config."""
+    def test_unqualified_dict_survives_a_toolkit_rename(self):
+        """Identity resolution is what makes an unqualified config rename-proof.
+        Recording the toolkit's name on load would take that away: the next load
+        would go through the qualified key, miss, and lose the guidance."""
+        toolkit = Toolkit(name="old_name", instructions="Toolkit guidance.", add_instructions=True)
+        toolkit.functions["search_docs"] = Function(name="search_docs", entrypoint=search_function)
+        legacy_dict = toolkit.functions["search_docs"].to_dict()
+
+        renamed = Toolkit(name="new_name", instructions="Toolkit guidance.", add_instructions=True)
+        renamed.functions["search_docs"] = Function(name="search_docs", entrypoint=search_function)
+        reg = Registry(tools=[renamed])
+
+        rehydrated = reg.rehydrate_function(legacy_dict)
+
+        assert rehydrated.source_toolkit is renamed
+        assert rehydrated.owning_toolkit is None
+
+    def test_ambiguous_flat_name_still_resolves_to_the_bound_toolkit(self):
+        """Two toolkits expose the name, so the flat slot's winner is arbitrary,
+        but the Toolkit carried forward is the one that owns the bound
+        function -- not merely one that shares its name."""
         reg, _, agent_files = self._registry_with_shared_names()
 
         rehydrated = reg.rehydrate_function({"name": "read_file", "parameters": {}})
 
-        # The bound source is still identified exactly, so its guidance applies.
+        assert rehydrated.entrypoint is self._agent_read
         assert rehydrated.source_toolkit is agent_files
         assert rehydrated.owning_toolkit is None
 
