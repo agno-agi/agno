@@ -131,6 +131,22 @@ class Registry:
         rebuild_state = {"rebuilt": False}
         return [self._rehydrate_function(func_dict, rebuild_state) for func_dict in func_dicts]
 
+    def _toolkit_owning(self, source: Function) -> Optional[Toolkit]:
+        """The live Toolkit holding ``source``, matched by object identity.
+
+        Identity is what makes this work for a config saved before tool names
+        were toolkit-qualified, and for one whose toolkit was renamed: both
+        resolve through the flat name and carry no toolkit to match on. Slots
+        are last-write-wins, so the scan runs in reverse to return the Toolkit
+        that supplied the resolved source.
+        """
+        for tool in reversed(self.tools):
+            if not isinstance(tool, Toolkit):
+                continue
+            if any(tool_func is source for tool_func in tool.get_functions().values()):
+                return tool
+        return None
+
     def _rehydrate_function(self, func_dict: Dict[str, Any], rebuild_state: Dict[str, bool]) -> Function:
         func = Function.from_dict(func_dict)
         toolkit_name = func_dict.get("toolkit")
@@ -152,21 +168,13 @@ class Registry:
             return found
 
         source: Optional[EntrypointSource] = None
-        source_toolkit: Optional[Toolkit] = None
+        resolved_as_recorded = func.owning_toolkit is None
         if func.owning_toolkit is not None:
             # A qualified miss rebuilds before falling back to the flat name:
             # the flat slot may hold a same-named function from a *different*
             # toolkit while the right one simply hasn't populated the cache yet.
             source = lookup((func.owning_toolkit, func.name))
-            if isinstance(source, Function):
-                # Qualified slots are last-write-wins, so search in reverse to
-                # retain the exact Toolkit that supplied the resolved source.
-                for tool in reversed(self.tools):
-                    if not isinstance(tool, Toolkit) or tool.name != func.owning_toolkit:
-                        continue
-                    if any(tool_func is source for tool_func in tool.get_functions().values()):
-                        source_toolkit = tool
-                        break
+            resolved_as_recorded = source is not None
         if source is None:
             source = lookup(func.name)
             if source is not None and func.owning_toolkit is not None:
@@ -190,6 +198,12 @@ class Registry:
             # not be re-introspected at run time: processing would rebuild the
             # schema's `required` list from the proxy's signature.
             func.skip_entrypoint_processing = source.skip_entrypoint_processing
+            # Only when the bound function is the one the config named, or the
+            # config named no toolkit at all. A config whose recorded toolkit
+            # has left the registry binds the flat slot, which may belong to a
+            # different toolkit, and that toolkit's guidance is not this
+            # function's to carry.
+            source_toolkit = self._toolkit_owning(source) if resolved_as_recorded else None
             if source_toolkit is not None:
                 # Keep the exact live Toolkit available to instruction
                 # collection. Every member points to the same object, so the

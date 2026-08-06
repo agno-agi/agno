@@ -633,6 +633,30 @@ class TestToolkitQualifiedRehydration:
         assert rehydrated.add_instructions is False
         assert rehydrated.source_toolkit is toolkit
 
+    def test_unqualified_dict_still_gets_its_live_toolkit(self):
+        """A config saved before tool names carried a toolkit resolves through
+        the flat name, and still reaches the Toolkit that owns the bound
+        function, so toolkit-level guidance is restored too."""
+
+        source = Function(
+            name="search_docs",
+            entrypoint=search_function,
+            instructions="Creation-time function guidance.",
+        )
+        toolkit = Toolkit(name="agno_docs", instructions="Toolkit guidance.", add_instructions=True)
+        toolkit.functions[source.name] = source
+        reg = Registry(tools=[toolkit])
+
+        func_dict = source.to_dict()
+        assert "toolkit" not in func_dict
+
+        source.instructions = "Use the live registry search conventions."
+        rehydrated = reg.rehydrate_function(func_dict)
+
+        assert rehydrated.entrypoint is search_function
+        assert rehydrated.instructions == source.instructions
+        assert rehydrated.source_toolkit is toolkit
+
     def test_same_named_toolkits_warn_once_per_collision(self, monkeypatch):
         """Two same-named toolkits sharing a member name collide on both the
         flat and the qualified slot, but only the flat registration warns --
