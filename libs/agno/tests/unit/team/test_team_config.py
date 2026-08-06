@@ -951,6 +951,22 @@ class TestTeamLoad:
         # And the toolkit came with them, so its guidance survives the reload.
         assert member_tools[0].source_toolkit is toolkit
 
+    def test_load_passes_member_builtin_dict_tools_through(self, tmp_path):
+        """Provider-builtin tools persist as plain dicts. Rehydrating one as a
+        Function config raised a ValidationError that took the whole team load
+        down; it must ride through the member's tools untouched instead."""
+        from agno.models.openai import OpenAIResponses
+
+        model = OpenAIResponses(id="gpt-5.5")
+        db = SqliteDb(db_file=str(tmp_path / "team_builtin_tools.db"))
+        member = Agent(id="builtin-member", name="Member", model=model, tools=[{"type": "web_search"}])
+        Team(id="builtin-team", name="Builtin Team", model=model, members=[member]).save(db=db)
+
+        loaded = Team.load(id="builtin-team", db=db, registry=Registry(models=[model]))
+
+        assert loaded is not None
+        assert loaded.members[0].tools == [{"type": "web_search"}]
+
 
 # =============================================================================
 # delete() Tests

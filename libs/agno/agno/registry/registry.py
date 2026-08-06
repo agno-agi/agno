@@ -155,15 +155,25 @@ class Registry:
         """
         return self._rehydrate_function(func_dict, {"rebuilt": False})
 
-    def rehydrate_functions(self, func_dicts: List[Dict[str, Any]]) -> List[Function]:
-        """Rehydrate a batch of function dicts, sharing one cache-rebuild budget.
+    def rehydrate_functions(self, func_dicts: List[Dict[str, Any]]) -> List[Union[Function, Dict[str, Any]]]:
+        """Rehydrate a batch of persisted tool dicts, sharing one cache-rebuild budget.
 
         A component load rehydrates every tool in its config; one rebuild of the
         entrypoint lookup per batch is enough to pick up late-registered
         functions, so repeated misses within a load don't each pay a rebuild.
+
+        A tools list can also carry provider-builtin tools, persisted as plain
+        dicts. Those run inside the model provider, not the framework: there is
+        no entrypoint to reattach, so they pass through unchanged, in place. A
+        top-level ``type`` is what marks one -- every provider's builtin dicts
+        carry it, some alongside a ``name`` -- while a persisted Function dict
+        writes only ``SERIALIZED_FIELDS``, which has no ``type``.
         """
         rebuild_state = {"rebuilt": False}
-        return [self._rehydrate_function(func_dict, rebuild_state) for func_dict in func_dicts]
+        return [
+            func_dict if "type" in func_dict else self._rehydrate_function(func_dict, rebuild_state)
+            for func_dict in func_dicts
+        ]
 
     def _rehydrate_function(self, func_dict: Dict[str, Any], rebuild_state: Dict[str, bool]) -> Function:
         func = Function.from_dict(func_dict)

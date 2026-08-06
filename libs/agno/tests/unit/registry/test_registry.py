@@ -837,6 +837,12 @@ class TestRuntimeOnlyFieldRestoration:
             "restored by RUNTIME_ONLY_FIELDS, so they are lost on reload."
         )
 
+        # And the other direction: a field removed from the model but left in
+        # a list would make rehydration setattr/getattr a missing attribute,
+        # crashing every component load.
+        stale = (set(SERIALIZED_FIELDS) | set(RUNTIME_ONLY_FIELDS)) - set(Function.model_fields)
+        assert stale == set(), f"{sorted(stale)} are listed but no longer Function fields."
+
     def test_user_input_settings_survive_a_round_trip(self):
         """Without these, process_entrypoint stops excluding the user-supplied
         field, so the model is handed a `required` entry the schema never
@@ -1038,6 +1044,28 @@ class TestRehydrateFunctionsBatch:
         assert rehydrated[0].entrypoint is self._read
         assert rehydrated[1].entrypoint is self._read
         assert rehydrated[2].entrypoint is None
+
+    def test_provider_builtin_dicts_pass_through_unchanged(self):
+        """Builtin tools run inside the model provider and persist as plain
+        dicts. Parsing one as a Function config raised a ValidationError that
+        took the whole component load down. They pass through in place; a
+        top-level ``type`` marks one, including provider dicts that also carry
+        a ``name``."""
+        reg, _ = self._counting_registry()
+        openai_style = {"type": "web_search"}
+        anthropic_style = {"type": "web_search_20250305", "name": "web_search", "max_uses": 3}
+
+        rehydrated = reg.rehydrate_functions(
+            [
+                openai_style,
+                {"name": "read_file", "parameters": {}, "toolkit": "agent_files"},
+                anthropic_style,
+            ]
+        )
+
+        assert rehydrated[0] is openai_style
+        assert isinstance(rehydrated[1], Function) and rehydrated[1].entrypoint is self._read
+        assert rehydrated[2] is anthropic_style
 
     def test_batch_rebuild_still_finds_late_functions(self):
         """The shared budget still covers the late-connecting toolkit case:
