@@ -40,14 +40,13 @@ def _resolve_db_in_config(
     """
     Resolve db reference in config by looking up in registry or OS db.
 
-    If config contains a db dict with an id, this function will:
-    1. Check if the id matches the OS db
-    2. Check if the id exists in the registry
-    3. Merge the resolved db's connection details with the caller-provided
-       fields, with caller-provided fields (e.g. custom table names) taking
-       precedence. This preserves user-specified overrides like
-       ``session_table`` / ``memory_table`` while still reusing the resolved
-       db's connection configuration.
+    If config contains a db dict, this function will:
+    1. Resolve its id against the OS db or registry, if provided
+    2. Fall back to the OS db when the id is missing or cannot be resolved
+    3. Merge the resolved db's connection details with caller-provided
+       table-name overrides. This preserves user-specified values like
+       ``session_table`` / ``memory_table`` without trusting caller-provided
+       connection configuration.
 
     Args:
         config: The config dict that may contain a db reference
@@ -60,8 +59,8 @@ def _resolve_db_in_config(
     component_db = config.get("db")
     if component_db is not None and isinstance(component_db, dict):
         component_db_id = component_db.get("id")
+        resolved_db = None
         if component_db_id is not None:
-            resolved_db = None
             # First check if it matches the OS db
             if component_db_id == os_db.id:
                 resolved_db = os_db
@@ -69,17 +68,21 @@ def _resolve_db_in_config(
             elif registry is not None:
                 resolved_db = registry.get_db(component_db_id)
 
-            # Merge resolved db with caller-provided table-name overrides.
-            # Connection-defining fields (type, db_url, db_file, db_schema,
-            # id, ...) always come from the resolved db so the caller can't
-            # redirect a referenced db to a different backend. Only the
-            # whitelisted table-name keys are taken from the caller.
-            if resolved_db is not None:
-                resolved_dict = resolved_db.to_dict()
-                table_overrides = {key: component_db[key] for key in DB_TABLE_NAME_KEYS if key in component_db}
-                config["db"] = {**resolved_dict, **table_overrides}
+        if resolved_db is None:
+            resolved_db = os_db
+            if component_db_id is None:
+                log_warning("Component db config is missing an id; using the OS db")
             else:
-                log_error(f"Could not resolve db with id: {component_db_id}")
+                log_error(f"Could not resolve db with id: {component_db_id}; using the OS db")
+
+        # Merge resolved db with caller-provided table-name overrides.
+        # Connection-defining fields (type, db_url, db_file, db_schema,
+        # id, ...) always come from the resolved db so the caller can't
+        # redirect a component to a different backend. Only the whitelisted
+        # table-name keys are taken from the caller.
+        resolved_dict = resolved_db.to_dict()
+        table_overrides = {key: component_db[key] for key in DB_TABLE_NAME_KEYS if key in component_db}
+        config["db"] = {**resolved_dict, **table_overrides}
     elif component_db is None and "db" in config:
         # Explicitly set to None, remove the key
         config.pop("db", None)
