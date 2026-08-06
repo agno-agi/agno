@@ -192,6 +192,65 @@ def apply_pause_state(
         workflow_run_response.step_requirements = existing + [pause_result.step_requirement]
 
 
+def apply_conversational_pause(
+    workflow_run_response: "WorkflowRunOutput",
+    step: Any,
+    step_index: int,
+    step_name: Optional[str],
+    step_output: "StepOutput",
+    collected_step_outputs: List[Union["StepOutput", List["StepOutput"]]],
+) -> None:
+    """Apply conversational sticky-step pause state to the workflow run response.
+
+    The step's natural-language reply is kept on workflow content for the UI, but
+    the step is not appended to completed step_results until complete_step.
+    """
+    from agno.workflow.types import StepRequirement, StepType
+
+    workflow_run_response.status = RunStatus.paused
+    workflow_run_response.paused_step_index = step_index
+    workflow_run_response.paused_step_name = step_name
+    workflow_run_response.pause_kind = PauseKind.CONVERSATIONAL
+    workflow_run_response.step_results = list(collected_step_outputs)
+    # Surface the assistant reply to the user without completing the step
+    if step_output.content is not None:
+        workflow_run_response.content = step_output.content
+
+    requirement = StepRequirement(
+        step_id=getattr(step, "step_id", None) or step_name or f"step_{step_index}",
+        step_name=step_name,
+        step_index=step_index,
+        step_type=StepType.STEP,
+        requires_conversational_input=True,
+    )
+    existing = workflow_run_response.step_requirements or []
+    workflow_run_response.step_requirements = existing + [requirement]
+
+
+def create_conversational_paused_event(
+    workflow_run_response: "WorkflowRunOutput",
+    step: Any,
+    step_name: str,
+    step_index: int,
+    step_output: "StepOutput",
+) -> Any:
+    """Create a StepPausedEvent for a conversational sticky-step pause."""
+    from agno.run.workflow import StepPausedEvent
+
+    return StepPausedEvent(
+        run_id=workflow_run_response.run_id or "",
+        workflow_name=workflow_run_response.workflow_name,
+        workflow_id=workflow_run_response.workflow_id,
+        session_id=workflow_run_response.session_id,
+        step_name=step_name,
+        step_index=step_index,
+        step_id=getattr(step, "step_id", None),
+        requires_conversational_input=True,
+        content=step_output.content,
+        user_input_message="Continue the conversation with the active step.",
+    )
+
+
 def save_paused_session(
     workflow: Any,
     session: "WorkflowSession",

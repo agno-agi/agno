@@ -158,6 +158,9 @@ class Step:
     # Action when timeout expires: "cancel", "skip", or "approve"
     on_timeout: Union[OnTimeout, str] = OnTimeout.cancel
 
+    # Conversational sticky step: multi-turn chat until complete_step / goto
+    conversational: bool = False
+
     _retry_count: int = 0
 
     def __init__(
@@ -187,6 +190,7 @@ class Step:
         hitl_timeout: Optional[int] = None,
         on_timeout: Union[OnTimeout, str] = OnTimeout.cancel,
         human_review: Optional[HumanReview] = None,
+        conversational: bool = False,
     ):
         # Auto-detect HITL metadata from @hitl decorator on executor function
         if executor is not None:
@@ -266,13 +270,25 @@ class Step:
         self.hitl_max_retries = self.human_review.max_retries
         self.hitl_timeout = self.human_review.timeout
         self.on_timeout = self.human_review.on_timeout
+        self.conversational = conversational
         self.step_id = step_id
+
+        # Shared control plane for complete_step / goto tools
+        from agno.workflow.conversational import ConversationalControl
+
+        self._conversational_control = ConversationalControl()
 
         if step_id is None:
             self.step_id = str(uuid4())
 
         # Set the active executor
         self._set_active_executor()
+
+        if conversational and self._executor_type not in ("agent", "team"):
+            raise ValueError(
+                f"conversational=True requires an agent or team executor "
+                f"(step '{name or 'unnamed'}' has executor_type={self._executor_type!r})"
+            )
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert step to a dictionary representation."""
@@ -287,6 +303,7 @@ class Step:
             "add_workflow_history": self.add_workflow_history,
             "num_history_runs": self.num_history_runs,
             "human_review": self.human_review.to_dict(),
+            "conversational": self.conversational,
         }
 
         if self.agent is not None:
@@ -446,6 +463,7 @@ class Step:
             team=team,
             executor=executor,
             workflow=workflow,
+            conversational=config.get("conversational", False),
         )
 
     def get_links(self, position: int = 0) -> List[Dict[str, Any]]:
@@ -842,10 +860,7 @@ class Step:
                             response = StepOutput(content=str(result))
                 else:
                     # For agents and teams, prepare message with context
-                    message = self._prepare_message(
-                        step_input.input,
-                        step_input.previous_step_outputs,
-                    )
+                    message = self._resolve_executor_message(step_input)
 
                     # Execute agent or team with media
                     if self._executor_type in ["agent", "team"]:
@@ -854,6 +869,8 @@ class Step:
                             use_agent_logger()
                         elif self._executor_type == "team":
                             use_team_logger()
+
+                        self._prepare_conversational_executor()
 
                         images = (
                             self._convert_image_artifacts_to_images(step_input.images) if step_input.images else None
@@ -941,6 +958,10 @@ class Step:
 
                         # Switch back to workflow logger after execution
                         use_workflow_logger()
+
+                        # Apply conversational complete_step / goto signals
+                        if self.conversational:
+                            return self._apply_conversational_signal_to_output(response)
                     elif self._executor_type == "workflow":
                         # Execute nested workflow
                         response = self._execute_nested_workflow(
@@ -1178,10 +1199,7 @@ class Step:
                         log_debug("Function returned non-iterable, created StepOutput")
                 else:
                     # For agents and teams, prepare message with context
-                    message = self._prepare_message(
-                        step_input.input,
-                        step_input.previous_step_outputs,
-                    )
+                    message = self._resolve_executor_message(step_input)
 
                     if self._executor_type in ["agent", "team"]:
                         # Switch to appropriate logger based on executor type
@@ -1189,6 +1207,8 @@ class Step:
                             use_agent_logger()
                         elif self._executor_type == "team":
                             use_team_logger()
+
+                        self._prepare_conversational_executor()
 
                         images = (
                             self._convert_image_artifacts_to_images(step_input.images) if step_input.images else None
@@ -1335,7 +1355,7 @@ class Step:
                 use_workflow_logger()
 
                 # Yield the step output
-                final_response = self._process_step_output(final_response)
+                final_response = self._apply_conversational_signal_to_output(final_response)
                 yield final_response
 
                 # Emit StepCompletedEvent
@@ -1516,10 +1536,7 @@ class Step:
 
                 else:
                     # For agents and teams, prepare message with context
-                    message = self._prepare_message(
-                        step_input.input,
-                        step_input.previous_step_outputs,
-                    )
+                    message = self._resolve_executor_message(step_input)
 
                     # Execute agent or team with media
                     if self._executor_type in ["agent", "team"]:
@@ -1528,6 +1545,8 @@ class Step:
                             use_agent_logger()
                         elif self._executor_type == "team":
                             use_team_logger()
+
+                        self._prepare_conversational_executor()
 
                         images = (
                             self._convert_image_artifacts_to_images(step_input.images) if step_input.images else None
@@ -1615,6 +1634,9 @@ class Step:
 
                         # Switch back to workflow logger after execution
                         use_workflow_logger()
+
+                        if self.conversational:
+                            return self._apply_conversational_signal_to_output(response)
                     elif self._executor_type == "workflow":
                         # Execute nested workflow asynchronously
                         response = await self._aexecute_nested_workflow(
@@ -1826,10 +1848,7 @@ class Step:
                         merge_dictionaries(session_state, session_state_copy)
                 else:
                     # For agents and teams, prepare message with context
-                    message = self._prepare_message(
-                        step_input.input,
-                        step_input.previous_step_outputs,
-                    )
+                    message = self._resolve_executor_message(step_input)
 
                     if self._executor_type in ["agent", "team"]:
                         # Switch to appropriate logger based on executor type
@@ -1837,6 +1856,8 @@ class Step:
                             use_agent_logger()
                         elif self._executor_type == "team":
                             use_team_logger()
+
+                        self._prepare_conversational_executor()
 
                         images = (
                             self._convert_image_artifacts_to_images(step_input.images) if step_input.images else None
@@ -1982,7 +2003,7 @@ class Step:
                 use_workflow_logger()
 
                 # Yield the final response
-                final_response = self._process_step_output(final_response)
+                final_response = self._apply_conversational_signal_to_output(final_response)
                 yield final_response
 
                 if stream_events and workflow_run_response:
@@ -2164,6 +2185,45 @@ class Step:
 
         # For regular steps, return their content
         return step_output.content  # type: ignore
+
+    def _resolve_executor_message(
+        self,
+        step_input: StepInput,
+    ) -> Optional[Union[str, List[Any], Dict[str, Any], BaseModel]]:
+        """Resolve the message passed to an agent/team executor.
+
+        Conversational resume/goto uses ``conversational_user_message`` from
+        additional_data; otherwise falls back to previous-step / workflow input.
+        """
+        if self.conversational and step_input.additional_data:
+            conversational_user_message = step_input.additional_data.get("conversational_user_message")
+            if conversational_user_message is not None:
+                return conversational_user_message
+        return self._prepare_message(step_input.input, step_input.previous_step_outputs)
+
+    def _prepare_conversational_executor(self) -> None:
+        """Refresh complete_step/goto tools on the active agent/team executor."""
+        if not self.conversational:
+            return
+        from agno.workflow.conversational import ensure_conversational_tools_on_executor
+
+        self._conversational_control.reset_signal()
+        ensure_conversational_tools_on_executor(self.active_executor, self._conversational_control)
+
+    def _apply_conversational_signal_to_output(
+        self,
+        response: Union[RunOutput, TeamRunOutput, StepOutput],
+    ) -> StepOutput:
+        """Build StepOutput and annotate conversational complete/goto/incomplete flags."""
+        from agno.workflow.conversational import apply_signal_to_step_output, extract_signal_from_run_output
+
+        step_output = self._process_step_output(response)
+        if not self.conversational:
+            return step_output
+        signal = self._conversational_control.signal
+        if signal is None and not isinstance(response, StepOutput):
+            signal = extract_signal_from_run_output(response)
+        return apply_signal_to_step_output(step_output, signal, conversational=True)
 
     def _prepare_message(
         self,
