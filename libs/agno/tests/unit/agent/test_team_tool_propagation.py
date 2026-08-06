@@ -411,6 +411,37 @@ def test_non_string_toolkit_instructions_do_not_break_the_run():
     assert agent._tool_instructions == [["rule one", "rule two"]]
 
 
+def test_duplicate_last_member_still_emits_toolkit_guidance():
+    """Guidance is emitted at the toolkit's last list position. When that
+    position holds a duplicate-named member, the duplicate is skipped as a
+    tool but the position still owes the toolkit its guidance."""
+    toolkit = _guided_toolkit()
+    registry = Registry(tools=[toolkit])
+    rehydrated = _rehydrate(registry, toolkit)
+    second_again = registry.rehydrate_functions([rehydrated[1].to_dict() | {"toolkit": toolkit.name}])
+
+    agent = Agent(tools=rehydrated + second_again)
+    parse_tools(agent=agent, tools=agent.tools, model=_mock_model())
+
+    assert agent._tool_instructions == ["first-rule", "second-rule", "toolkit-level-rule"]
+
+
+def test_junk_source_toolkit_is_ignored():
+    """source_toolkit is typed Any and travels through copies; a value that is
+    not a live Toolkit must not crash collection or fabricate guidance."""
+
+    def lone_tool() -> str:
+        return "lone"
+
+    function = Function.from_callable(lone_tool)
+    function.source_toolkit = "junk"
+
+    agent = Agent(tools=[function])
+    parse_tools(agent=agent, tools=agent.tools, model=_mock_model())
+
+    assert agent._tool_instructions == []
+
+
 def test_swapped_sync_async_surfaces_are_not_pooled():
     """Coverage is measured per mode, so the sync and async surfaces are
     separate parts of the grouping key. Two same-named toolkits whose surfaces

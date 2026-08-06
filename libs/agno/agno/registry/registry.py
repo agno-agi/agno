@@ -102,8 +102,8 @@ class Registry:
         """Every (owning toolkit, name, source) registration, in order.
 
         The single source of truth for what claims an entrypoint slot:
-        ``_entrypoint_lookup`` folds these into its dicts and ``_slot_owner``
-        replays them for one key, so the two can never disagree on a winner.
+        ``_entrypoint_lookup`` folds these into its dicts and ``_owner_index``
+        replays them per batch, so the two can never disagree on a winner.
         """
         for tool in self.tools:
             if isinstance(tool, Toolkit):
@@ -118,12 +118,12 @@ class Registry:
             elif callable(tool):
                 yield None, tool.__name__, tool
 
-    def _slot_owner(self, key: EntrypointKey) -> Tuple[Optional[Toolkit], Optional[EntrypointSource]]:
-        """The (toolkit, source) a fresh lookup build would leave in ``key``'s slot.
+    def _owner_index(self) -> Dict[EntrypointKey, Tuple[Optional[Toolkit], EntrypointSource]]:
+        """The (toolkit, source) a fresh lookup build would leave in every slot.
 
         Replayed from the same registrations the cached lookup was built from,
-        so comparing a cached entry against this owner detects every way the
-        cache can go stale: a toolkit that rebuilt its functions dict (MCP
+        so comparing a cached entry against its slot's owner detects every way
+        the cache can go stale: a toolkit that rebuilt its functions dict (MCP
         toolkits replace every Function on connect), a member deleted after the
         cache was built, or a slot whose last-write-wins winner changed. A
         miss-only check catches none of those, because the stale entry still
@@ -132,16 +132,16 @@ class Registry:
         The toolkit half is the attribution for ``source_toolkit``: the live
         Toolkit whose registration owns the slot, or ``None`` for a Function or
         plain callable registered directly.
+
+        Built once per rehydration batch, so a component load pays one walk of
+        the registrations rather than one per tool dict.
         """
-        owner: Tuple[Optional[Toolkit], Optional[EntrypointSource]] = (None, None)
+        index: Dict[EntrypointKey, Tuple[Optional[Toolkit], EntrypointSource]] = {}
         for toolkit, name, source in self._iter_entrypoint_sources():
-            if isinstance(key, tuple):
-                if toolkit is None or toolkit.name != key[0] or name != key[1]:
-                    continue
-            elif name != key:
-                continue
-            owner = (toolkit, source)
-        return owner
+            index[name] = (toolkit, source)
+            if toolkit is not None and isinstance(toolkit.name, str) and toolkit.name:
+                index[(toolkit.name, name)] = (toolkit, source)
+        return index
 
     def rehydrate_function(self, func_dict: Dict[str, Any]) -> Function:
         """Reconstruct a Function from dict, reattaching its entrypoint.
@@ -175,7 +175,7 @@ class Registry:
             for func_dict in func_dicts
         ]
 
-    def _rehydrate_function(self, func_dict: Dict[str, Any], rebuild_state: Dict[str, bool]) -> Function:
+    def _rehydrate_function(self, func_dict: Dict[str, Any], rebuild_state: Dict[str, Any]) -> Function:
         func = Function.from_dict(func_dict)
         toolkit_name = func_dict.get("toolkit")
         if isinstance(toolkit_name, str) and toolkit_name:
@@ -184,27 +184,28 @@ class Registry:
             # bare Functions instead of Toolkits.
             func.owning_toolkit = toolkit_name
 
+        owners = rebuild_state.get("owners")
+        if owners is None:
+            owners = rebuild_state["owners"] = self._owner_index()
+
         def lookup(key: EntrypointKey) -> Tuple[Optional[EntrypointSource], Optional[Toolkit]]:
-            # The cache is fresh for this key only while it holds the same
-            # object a rebuild would produce -- the slot's replayed owner.
-            # Toolkits can gain functions after the lookup is first built (MCP
-            # toolkits only register their functions once connected), so a miss
-            # may just mean the cache is stale; a hit goes stale the same way
-            # when a toolkit rebuilds or drops its functions, or a slot's
-            # last-write-wins winner changes. Rebuild once per batch when the
-            # cache disagrees with the owner, and not at all when a rebuild
-            # could not help (the key has no owner, so it would miss too).
-            owner_toolkit, owner_source = self._slot_owner(key)
-            found = self._entrypoint_lookup.get(key)
-            if not rebuild_state["rebuilt"] and found is not owner_source:
+            # Resolution serves the slot's owner: the same answer a fresh cache
+            # build would give. The cached lookup is compared against it to
+            # decide when to rebuild -- Toolkits can gain functions after the
+            # lookup is first built (MCP toolkits only register their functions
+            # once connected), so a miss may just mean the cache is stale, and
+            # a hit goes stale the same way when a toolkit rebuilds or drops
+            # its functions, or a slot's last-write-wins winner changes.
+            # Rebuild once per batch when the cache disagrees, so collision
+            # warnings re-surface and later batches start warm, and not at all
+            # when a rebuild could not help (the key has no owner in the
+            # current registrations, so it would miss too).
+            owner_toolkit, owner_source = owners.get(key, (None, None))
+            if not rebuild_state["rebuilt"] and self._entrypoint_lookup.get(key) is not owner_source:
                 self.__dict__.pop("_entrypoint_lookup", None)
                 rebuild_state["rebuilt"] = True
-                found = self._entrypoint_lookup.get(key)
-            # No disagreement is possible here: a rebuild folds the very
-            # registrations the replay walked, so once one has run this batch
-            # -- for this key or an earlier one -- the cached entry *is* the
-            # owner, and the fresh-check above covers the pre-rebuild path.
-            return found, owner_toolkit
+                _ = self._entrypoint_lookup
+            return owner_source, owner_toolkit
 
         source: Optional[EntrypointSource] = None
         source_owner: Optional[Toolkit] = None

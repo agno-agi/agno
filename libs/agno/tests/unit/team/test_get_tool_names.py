@@ -277,6 +277,36 @@ def test_rehydrated_toolkit_instructions_reach_team_once():
     assert team._tool_instructions == ["first-function-rule", "second-function-rule", "toolkit-level-rule"]
 
 
+def test_duplicate_last_member_still_emits_toolkit_guidance_team():
+    """Guidance is emitted at the toolkit's last list position; a duplicate
+    there is skipped as a tool but still owes the toolkit its guidance."""
+
+    def first_tool() -> str:
+        return "first"
+
+    def second_tool() -> str:
+        return "second"
+
+    toolkit = Toolkit(
+        name="my_toolkit",
+        tools=[first_tool, second_tool],
+        instructions="toolkit-level-rule",
+        add_instructions=True,
+    )
+    registry = Registry(tools=[toolkit])
+    stored = []
+    for function in toolkit.get_functions().values():
+        function_dict = function.to_dict()
+        function_dict["toolkit"] = toolkit.name
+        stored.append(function_dict)
+    stored.append(dict(stored[-1]))
+
+    team = Team(name="t", members=[], tools=registry.rehydrate_functions(stored))
+    _resolve(team)
+
+    assert team._tool_instructions == ["toolkit-level-rule"]
+
+
 def test_rehydrated_subset_does_not_get_the_whole_toolkits_guidance_team():
     """A team that persisted one member of a toolkit must not be handed guidance
     naming the members it was not given."""

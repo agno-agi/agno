@@ -189,15 +189,14 @@ def isolated_runtime_value(value: Any) -> Any:
 
     Lists are rebuilt rather than deep-copied, so callables such as tool hooks
     stay the same objects; only dataclass elements are copied, because those
-    are the ones written in place.
+    are the ones written in place. No RUNTIME_ONLY_FIELDS entry holds a dict,
+    so lists are the only containers handled.
     """
     from copy import copy
     from dataclasses import is_dataclass
 
     if isinstance(value, list):
         return [copy(item) if is_dataclass(item) else item for item in value]
-    if isinstance(value, dict):
-        return dict(value)
     return value
 
 
