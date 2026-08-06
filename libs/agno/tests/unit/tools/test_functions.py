@@ -2548,6 +2548,592 @@ async def test_hooks_run_on_cache_hit_async(tmp_path):
     assert events == ["tool_hook", "post_hook"]
 
 
+# =============================================================================
+# Cache key identity: each field on its own
+# =============================================================================
+
+
+def test_cached_results_do_not_leak_across_users_in_one_session(tmp_path):
+    """user_id must reach the key on its own. Two callers can share a session
+    id, so a key built from the session alone serves one user's result to
+    another."""
+    executions = []
+
+    def get_secret(run_context: RunContext) -> str:
+        executions.append(run_context.user_id)
+        return f"secret for {run_context.user_id}"
+
+    func = Function(name="get_secret", entrypoint=get_secret, cache_results=True, cache_dir=str(tmp_path))
+
+    func._run_context = RunContext(run_id="r1", session_id="shared", user_id="alice")
+    assert FunctionCall(function=func).execute().result == "secret for alice"
+
+    func._run_context = RunContext(run_id="r2", session_id="shared", user_id="bob")
+    assert FunctionCall(function=func).execute().result == "secret for bob"
+    assert executions == ["alice", "bob"]
+
+
+def test_cached_results_do_not_leak_across_sessions_for_one_user(tmp_path):
+    """session_id must reach the key on its own, so one user's two sessions do
+    not share an entry."""
+    executions = []
+
+    def read_scratch(run_context: RunContext) -> str:
+        executions.append(run_context.session_id)
+        return f"notes in {run_context.session_id}"
+
+    func = Function(name="read_scratch", entrypoint=read_scratch, cache_results=True, cache_dir=str(tmp_path))
+
+    func._run_context = RunContext(run_id="r1", session_id="s1", user_id="alice")
+    assert FunctionCall(function=func).execute().result == "notes in s1"
+
+    func._run_context = RunContext(run_id="r2", session_id="s2", user_id="alice")
+    assert FunctionCall(function=func).execute().result == "notes in s2"
+    assert executions == ["s1", "s2"]
+
+
+# =============================================================================
+# Cache hits reproduce what the miss returned
+# =============================================================================
+
+
+def test_hook_mutating_the_result_is_not_applied_twice_on_a_cache_hit(tmp_path):
+    """A hook that edits the result in place is an ordinary way to write one.
+    The hit must return what the miss returned, not the hook's edit applied to
+    its own earlier output."""
+    executions = []
+
+    def enrich(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        result = function_call(**arguments)
+        result["items"].append("enriched")
+        return result
+
+    def load(x: int) -> dict:
+        executions.append(x)
+        return {"items": ["raw"]}
+
+    func = Function(name="load", entrypoint=load, cache_results=True, cache_dir=str(tmp_path), tool_hooks=[enrich])
+
+    first = FunctionCall(function=func, arguments={"x": 1}).execute()
+    second = FunctionCall(function=func, arguments={"x": 1}).execute()
+
+    assert first.result == {"items": ["raw", "enriched"]}
+    assert second.result == first.result
+    assert executions == [1]
+
+
+@pytest.mark.asyncio
+async def test_hook_mutating_the_result_is_not_applied_twice_on_a_cache_hit_async(tmp_path):
+    """Async variant of the in-place mutation case."""
+    executions = []
+
+    async def enrich(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        result = await function_call(**arguments)
+        result["items"].append("enriched")
+        return result
+
+    async def load(x: int) -> dict:
+        executions.append(x)
+        return {"items": ["raw"]}
+
+    func = Function(
+        name="load_async", entrypoint=load, cache_results=True, cache_dir=str(tmp_path), tool_hooks=[enrich]
+    )
+
+    first = await FunctionCall(function=func, arguments={"x": 1}).aexecute()
+    second = await FunctionCall(function=func, arguments={"x": 1}).aexecute()
+
+    assert first.result == {"items": ["raw", "enriched"]}
+    assert second.result == first.result
+    assert executions == [1]
+
+
+def test_a_hook_reading_the_result_still_gets_the_tools_shape_on_a_hit(tmp_path):
+    """A hook receives what the tool returned, on a hit as on a miss. A hook
+    that reads the tool's own shape would break on anything else."""
+    executions = []
+
+    def render(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        rows = function_call(**arguments)
+        return "\n".join(f"{row['title']} ({row['score']})" for row in rows)
+
+    def search(query: str) -> List[Dict[str, Any]]:
+        executions.append(query)
+        return [{"title": "alpha", "score": 0.9}, {"title": "beta", "score": 0.7}]
+
+    func = Function(
+        name="search_rows", entrypoint=search, cache_results=True, cache_dir=str(tmp_path), tool_hooks=[render]
+    )
+
+    first = FunctionCall(function=func, arguments={"query": "q"}).execute()
+    second = FunctionCall(function=func, arguments={"query": "q"}).execute()
+
+    assert first.status == "success"
+    assert second.status == "success"
+    assert second.result == first.result == "alpha (0.9)\nbeta (0.7)"
+    assert executions == ["q"]
+
+
+def test_a_hook_whose_output_depends_on_the_caller_still_decides_on_a_hit(tmp_path):
+    """The hooks run again on a hit, so a hook that redacts for the current
+    caller keeps deciding rather than replaying the first caller's answer."""
+    viewer = {"role": "admin"}
+
+    def redact(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        summary = function_call(**arguments)
+        if viewer["role"] != "admin":
+            summary = summary.replace("4111111111111111", "****")
+        return summary
+
+    def account_summary() -> str:
+        return "card=4111111111111111"
+
+    func = Function(
+        name="account_summary",
+        entrypoint=account_summary,
+        cache_results=True,
+        cache_dir=str(tmp_path),
+        tool_hooks=[redact],
+    )
+
+    assert FunctionCall(function=func, arguments={}).execute().result == "card=4111111111111111"
+
+    viewer["role"] = "support"
+    assert FunctionCall(function=func, arguments={}).execute().result == "card=****"
+
+
+def test_a_hook_calling_the_entrypoint_twice_is_not_cached(tmp_path):
+    """No single return stands for a call whose hooks ran the tool more than
+    once, so there is nothing to replay the hooks over and the call is not
+    cached."""
+    counter = iter(range(1, 99))
+
+    def compare(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        return f"{function_call(**arguments)}|{function_call(**arguments)}"
+
+    def attempt() -> str:
+        return f"value-{next(counter)}"
+
+    func = Function(
+        name="attempt", entrypoint=attempt, cache_results=True, cache_dir=str(tmp_path), tool_hooks=[compare]
+    )
+
+    first = FunctionCall(function=func, arguments={}).execute()
+    second = FunctionCall(function=func, arguments={}).execute()
+
+    assert first.result == "value-1|value-2"
+    assert second.result == "value-3|value-4"
+    assert list(tmp_path.rglob("*.json")) == []
+
+
+def test_a_hook_that_answers_without_the_entrypoint_is_not_cached(tmp_path):
+    """A hook that recovers from an error, or refuses before the tool runs,
+    produced no result of the tool's own. Caching its answer would keep
+    answering for the tool long after the condition passed."""
+    available = {"ok": False}
+
+    def recover(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        try:
+            return f"[ok] {function_call(**arguments)}"
+        except Exception as e:
+            return f"[error] {e}"
+
+    def upstream() -> str:
+        if not available["ok"]:
+            raise ValueError("upstream down")
+        return "fresh data"
+
+    func = Function(
+        name="upstream", entrypoint=upstream, cache_results=True, cache_dir=str(tmp_path), tool_hooks=[recover]
+    )
+
+    assert FunctionCall(function=func, arguments={}).execute().result == "[error] upstream down"
+    assert list(tmp_path.rglob("*.json")) == []
+
+    available["ok"] = True
+    assert FunctionCall(function=func, arguments={}).execute().result == "[ok] fresh data"
+
+
+def test_a_hook_can_still_refuse_a_call_served_from_cache(tmp_path):
+    """Hooks run on hits so a policy hook governs cached calls too."""
+    calls = []
+
+    def rate_limit(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        calls.append(1)
+        if len(calls) > 1:
+            raise PermissionError("rate limit exceeded")
+        return function_call(**arguments)
+
+    def lookup() -> str:
+        return "sensitive"
+
+    func = Function(
+        name="lookup", entrypoint=lookup, cache_results=True, cache_dir=str(tmp_path), tool_hooks=[rate_limit]
+    )
+
+    assert FunctionCall(function=func, arguments={}).execute().status == "success"
+    refused = FunctionCall(function=func, arguments={}).execute()
+    assert refused.status == "failure"
+    assert "rate limit exceeded" in refused.error
+
+
+def test_post_hook_and_session_state_still_run_on_a_hit_without_tool_hooks(tmp_path):
+    """Most cached tools declare no tool_hooks. The hit must not short-circuit
+    past post_hook or past the session state the run context collected."""
+    events = []
+
+    def post_hook():
+        events.append("post_hook")
+
+    def remember(run_context: RunContext) -> str:
+        events.append("entrypoint")
+        run_context.session_state["seen"] = 1
+        return "noted"
+
+    func = Function(
+        name="remember", entrypoint=remember, cache_results=True, cache_dir=str(tmp_path), post_hook=post_hook
+    )
+    func._run_context = RunContext(run_id="r1", session_id="s1", user_id="alice", session_state={})
+
+    FunctionCall(function=func).execute()
+    events.clear()
+
+    func._run_context = RunContext(run_id="r2", session_id="s1", user_id="alice", session_state={})
+    hit = FunctionCall(function=func).execute()
+
+    assert events == ["post_hook"]
+    assert hit.result == "noted"
+
+
+@pytest.mark.asyncio
+async def test_sync_entrypoint_with_hooks_is_cached_under_aexecute(tmp_path):
+    """A sync tool called through aexecute takes its own branch of the async
+    hook chain, and caching must work there too."""
+    executions = []
+
+    async def audit(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        return await function_call(**arguments)
+
+    def compute(x: int) -> str:
+        executions.append(x)
+        return f"value {x}"
+
+    func = Function(
+        name="compute_sync_async",
+        entrypoint=compute,
+        cache_results=True,
+        cache_dir=str(tmp_path),
+        tool_hooks=[audit],
+    )
+
+    first = await FunctionCall(function=func, arguments={"x": 1}).aexecute()
+    second = await FunctionCall(function=func, arguments={"x": 1}).aexecute()
+
+    assert first.result == "value 1"
+    assert second.result == "value 1"
+    assert executions == [1]
+
+
+# =============================================================================
+# What the cache file may hold
+# =============================================================================
+
+
+def test_a_sanitizing_hook_redacts_the_hit_as_well_as_the_miss(tmp_path):
+    """The entry holds the tool's own return, so a hook that strips a secret
+    keeps stripping it on every hit. The stripped value reaches the cache file,
+    which is why entries are readable by their owner alone."""
+    import json
+
+    def redact(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        result = function_call(**arguments)
+        return {k: v for k, v in result.items() if k != "card"}
+
+    def profile() -> dict:
+        return {"name": "Ada", "card": "4111111111111111"}
+
+    func = Function(
+        name="profile", entrypoint=profile, cache_results=True, cache_dir=str(tmp_path), tool_hooks=[redact]
+    )
+
+    assert FunctionCall(function=func, arguments={}).execute().result == {"name": "Ada"}
+    assert FunctionCall(function=func, arguments={}).execute().result == {"name": "Ada"}
+
+    written = list(tmp_path.rglob("*.json"))
+    assert len(written) == 1
+    assert json.loads(written[0].read_text())["result"] == {"name": "Ada", "card": "4111111111111111"}
+
+
+def test_cache_files_are_readable_by_their_owner_only(tmp_path):
+    """The default cache directory is shared, and an entry holds the caller's
+    data."""
+    import stat
+
+    def compute() -> str:
+        return "value"
+
+    func = Function(name="compute_mode", entrypoint=compute, cache_results=True, cache_dir=str(tmp_path))
+    FunctionCall(function=func, arguments={}).execute()
+
+    written = list(tmp_path.rglob("*.json"))
+    assert len(written) == 1
+    assert stat.S_IMODE(written[0].stat().st_mode) == 0o600
+
+
+def test_a_result_that_cannot_be_copied_is_not_cached(tmp_path):
+    """The cache keeps a copy of the tool's return because the hooks run after
+    it and may edit it in place. A value too deeply nested to copy leaves
+    nothing safe to keep, so the call is not cached rather than cached with the
+    hook's edit folded in."""
+
+    def enrich(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        result = function_call(**arguments)
+        result["items"].append("enriched")
+        return result
+
+    def nested() -> dict:
+        deep: Any = []
+        for _ in range(600):
+            deep = [deep]
+        return {"items": ["raw"], "deep": deep}
+
+    func = Function(name="nested", entrypoint=nested, cache_results=True, cache_dir=str(tmp_path), tool_hooks=[enrich])
+
+    reported = []
+    original = function_module.log_exception
+    function_module.log_exception = lambda *args, **kwargs: reported.append(args)
+    try:
+        first = FunctionCall(function=func, arguments={}).execute()
+        second = FunctionCall(function=func, arguments={}).execute()
+    finally:
+        function_module.log_exception = original
+
+    assert first.result["items"] == ["raw", "enriched"]
+    assert second.result["items"] == ["raw", "enriched"]
+    assert list(tmp_path.rglob("*.json")) == []
+    # A result the cache cannot keep is an ordinary outcome, not a failure.
+    assert reported == []
+
+
+def test_a_result_that_cannot_be_serialized_leaves_no_cache_file(tmp_path):
+    """A half-written file would fail to parse on every later call, and the
+    expiry path never reaches it."""
+    import threading
+
+    def handle() -> dict:
+        return {"lock": threading.Lock()}
+
+    func = Function(name="handle", entrypoint=handle, cache_results=True, cache_dir=str(tmp_path))
+    assert FunctionCall(function=func, arguments={}).execute().status == "success"
+
+    assert list(tmp_path.rglob("*.json")) == []
+
+
+def test_calls_carrying_attached_media_are_not_cached(tmp_path):
+    """Attached media is the input the tool reads, and it is not part of the
+    key, so two documents would otherwise share one entry."""
+    from agno.media import File as MediaFile
+
+    reads = []
+
+    def summarize(question: str, files: Optional[List[Any]] = None) -> str:
+        content = files[0].content if files else b""
+        reads.append(content)
+        return f"summary of {content.decode()}"
+
+    func = Function(name="summarize", entrypoint=summarize, cache_results=True, cache_dir=str(tmp_path))
+
+    func._files = [MediaFile(content=b"DOC-A")]
+    first = FunctionCall(function=func, arguments={"question": "what is this"}).execute()
+    func._files = [MediaFile(content=b"DOC-B")]
+    second = FunctionCall(function=func, arguments={"question": "what is this"}).execute()
+
+    assert first.result == "summary of DOC-A"
+    assert second.result == "summary of DOC-B"
+    assert reads == [b"DOC-A", b"DOC-B"]
+    assert list(tmp_path.rglob("*.json")) == []
+
+
+# =============================================================================
+# Entries that no longer match the code
+# =============================================================================
+
+
+def test_an_entry_from_an_earlier_cache_format_is_discarded(tmp_path):
+    """An earlier version stored what the hooks made of the result. Replaying
+    the hooks over that would apply them twice, so entries without the current
+    format are discarded unread and the tool runs again."""
+    import json
+    from time import time
+
+    executions = []
+
+    def verify(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        return f"[verified] {function_call(**arguments)}"
+
+    def balance() -> str:
+        executions.append(1)
+        return "balance = 100"
+
+    func = Function(
+        name="balance", entrypoint=balance, cache_results=True, cache_dir=str(tmp_path), tool_hooks=[verify]
+    )
+
+    cache_file = func._get_cache_file_path(func._get_cache_key({}, {}))
+    with open(cache_file, "w", encoding="utf-8") as f:
+        json.dump({"timestamp": time(), "result": "[verified] balance = 100"}, f)
+
+    assert FunctionCall(function=func, arguments={}).execute().result == "[verified] balance = 100"
+    assert executions == [1]
+
+    # The entry it wrote in passing is in the current format, so the next call hits.
+    assert FunctionCall(function=func, arguments={}).execute().result == "[verified] balance = 100"
+    assert executions == [1]
+
+
+def test_an_entry_claiming_a_tool_result_the_tool_does_not_return_is_discarded(tmp_path):
+    """The declared return type decides what a hit rebuilds, so an entry cannot
+    choose the class and hand the model loop media it named itself."""
+    import json
+    from time import time
+
+    executions = []
+
+    def get_price(symbol: str) -> str:
+        executions.append(symbol)
+        return "100"
+
+    func = Function(name="get_price", entrypoint=get_price, cache_results=True, cache_dir=str(tmp_path))
+
+    cache_file = func._get_cache_file_path(func._get_cache_key({}, {"symbol": "AGNO"}))
+    with open(cache_file, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "timestamp": time(),
+                "cache_format": function_module.CACHE_FORMAT,
+                "result_type": "ToolResult",
+                "result": {"content": "owned", "images": [{"id": "x", "filepath": "/etc/passwd"}]},
+            },
+            f,
+        )
+
+    result = FunctionCall(function=func, arguments={"symbol": "AGNO"}).execute()
+    assert result.result == "100"
+    assert executions == ["AGNO"]
+
+
+def test_an_entry_typed_against_the_declared_return_is_discarded_without_media(tmp_path):
+    """The declared return type alone settles it. An entry naming a class the
+    tool does not return is discarded whether or not it carries media."""
+    import json
+    from time import time
+
+    executions = []
+
+    def get_note(key: str) -> str:
+        executions.append(key)
+        return "the real note"
+
+    func = Function(name="get_note", entrypoint=get_note, cache_results=True, cache_dir=str(tmp_path))
+
+    cache_file = func._get_cache_file_path(func._get_cache_key({}, {"key": "k"}))
+    with open(cache_file, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "timestamp": time(),
+                "cache_format": function_module.CACHE_FORMAT,
+                "result_type": "ToolResult",
+                "result": {"content": "planted"},
+            },
+            f,
+        )
+
+    result = FunctionCall(function=func, arguments={"key": "k"}).execute()
+    assert result.result == "the real note"
+    assert executions == ["k"]
+
+
+def test_an_entry_a_tool_result_cannot_carry_is_discarded(tmp_path):
+    """Media is never written to the cache, so an entry holding it did not come
+    from here."""
+    import json
+    from time import time
+
+    executions = []
+
+    def report() -> ToolResult:
+        executions.append(1)
+        return ToolResult(content="clean")
+
+    func = Function(name="report", entrypoint=report, cache_results=True, cache_dir=str(tmp_path))
+
+    cache_file = func._get_cache_file_path(func._get_cache_key({}, {}))
+    with open(cache_file, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "timestamp": time(),
+                "cache_format": function_module.CACHE_FORMAT,
+                "result_type": "ToolResult",
+                "result": {"content": "owned", "images": [{"id": "x", "filepath": "/etc/passwd"}]},
+            },
+            f,
+        )
+
+    result = FunctionCall(function=func, arguments={}).execute()
+    assert isinstance(result.result, ToolResult)
+    assert result.result.content == "clean"
+    assert result.result.images is None
+    assert executions == [1]
+
+
+def test_optional_model_return_stays_typed_on_a_cache_hit(tmp_path):
+    """A union spelling is the ordinary way to annotate a tool that may return
+    nothing, and the hit must not hand back a plain dict."""
+
+    class Weather(BaseModel):
+        city: str
+        temp_c: int
+
+    def forecast(city: str) -> Optional[Weather]:
+        return Weather(city=city, temp_c=21)
+
+    func = Function(name="forecast", entrypoint=forecast, cache_results=True, cache_dir=str(tmp_path))
+
+    first = FunctionCall(function=func, arguments={"city": "Paris"}).execute()
+    second = FunctionCall(function=func, arguments={"city": "Paris"}).execute()
+
+    assert isinstance(first.result, Weather)
+    assert isinstance(second.result, Weather)
+    assert second.result.city == "Paris"
+
+
+def test_a_result_the_declared_return_type_cannot_hold_is_recomputed(tmp_path):
+    """A tool may return a richer subclass than it declares. Rebuilding the
+    declared type would drop the extra fields, so the entry is discarded and
+    the call runs again with every field intact."""
+
+    class SearchResult(BaseModel):
+        title: str
+
+    class RichSearchResult(SearchResult):
+        url: str
+
+    executions = []
+
+    def search(q: str) -> SearchResult:
+        executions.append(q)
+        return RichSearchResult(title="Agno", url="https://agno.com")
+
+    func = Function(name="search", entrypoint=search, cache_results=True, cache_dir=str(tmp_path))
+
+    first = FunctionCall(function=func, arguments={"q": "agno"}).execute()
+    second = FunctionCall(function=func, arguments={"q": "agno"}).execute()
+
+    assert first.result.url == "https://agno.com"
+    assert second.result.url == "https://agno.com"
+    assert executions == ["agno", "agno"]
+
+
 def test_result_transforming_hook_not_applied_twice_on_cache_hit(tmp_path):
     """The cache must store the raw entrypoint return, not the hook-chain
     output: hooks run again on a hit, so caching their output would apply a
