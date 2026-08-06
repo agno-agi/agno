@@ -278,11 +278,22 @@ class ContextCompactionManager:
         return compaction.summary if compaction and compaction.summary else None
 
     def _partition(self, messages: List[Message]) -> tuple:
-        """Split into: to_compact, preserved_user, keep_verbatim."""
+        """Split non-system messages into three groups for compaction.
+
+        Returns (to_compact, preserved_user, keep_verbatim):
+        - to_compact: Older messages that will be summarized by LLM
+        - preserved_user: Recent user messages kept verbatim (preserves intent)
+        - keep_verbatim: Last N messages kept verbatim (tool-pair safe)
+
+        Visual:
+            [m1, m2, ..., m35, m36(user), m37, m38(user), m39, m40, ..., m50]
+             └── to_compact ──┘ └─ preserved_user ─┘ └──── keep_verbatim ────┘
+        """
         if not messages:
             return [], [], []
 
-        # Keep last N messages verbatim (tool-pair safe)
+        # 1. Keep last N messages verbatim (default: 10)
+        #    safe_truncation_index snaps boundary to avoid breaking tool pairs
         keep_count = min(self.keep_recent, len(messages))
         split_idx = safe_truncation_index(messages, len(messages) - keep_count)
         keep_verbatim = messages[split_idx:]
@@ -291,13 +302,16 @@ class ContextCompactionManager:
         if not remaining:
             return [], [], keep_verbatim
 
-        # Preserve recent user messages up to token budget
+        # 2. From remaining (older) messages, preserve recent user messages
+        #    User messages often contain critical intent/corrections
+        #    Budget: ~1000 tokens (roughly 2-5 user messages)
         limit = self.message_limit or len(messages)
         user_budget = max(100, limit * 20)
         preserved_user: List[Message] = []
         budget_used = 0
         preserved_indices = set()
 
+        # Walk backwards to get most recent user messages first
         for i in range(len(remaining) - 1, -1, -1):
             msg = remaining[i]
             if msg.role == "user":
@@ -309,6 +323,7 @@ class ContextCompactionManager:
                 else:
                     break
 
+        # 3. Everything else gets summarized
         to_compact = [m for i, m in enumerate(remaining) if i not in preserved_indices]
         return to_compact, preserved_user, keep_verbatim
 
