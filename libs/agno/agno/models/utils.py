@@ -107,6 +107,11 @@ def _build_provider_to_key() -> Dict[str, str]:
 # Display `provider` string -> key, used as a fallback when `name` is missing or shared.
 _PROVIDER_TO_KEY: Dict[str, str] = _build_provider_to_key()
 
+_OUTPUT_PROVIDER_KEY_OVERRIDES: Dict[Tuple[str, str], str] = {
+    ("openai", "OpenAIChat"): "openai-chat",
+    ("openai", "OpenAIResponses"): "openai-responses",
+}
+
 
 def _canonical_provider_display(key: str) -> str:
     """The lowercased display `provider` string a given provider key's class reports."""
@@ -137,6 +142,19 @@ def _resolve_provider_key(model_provider: Optional[str], model_name: Optional[st
     if name_key is not None and _canonical_provider_display(name_key) == provider:
         return name_key
     return provider_key
+
+
+def normalize_provider_key(model_provider: Optional[str], model_name: Optional[str] = None) -> Optional[str]:
+    """Return the stable provider key accepted by ``get_model()`` for serialized output."""
+    provider = (model_provider or "").strip().lower()
+    name = (model_name or "").strip()
+    if not provider and not name:
+        return None
+
+    override = _OUTPUT_PROVIDER_KEY_OVERRIDES.get((provider, name))
+    if override is not None:
+        return override
+    return _resolve_provider_key(model_provider, model_name)
 
 
 def _get_model_class(model_id: str, model_provider: str) -> Model:

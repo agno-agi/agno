@@ -1602,7 +1602,9 @@ class EntityMemoryStore(LearningStore):
             # A minimal entity created by link_entities acquires its real type;
             # the row key embeds the type, so the old row must be replaced.
             if entity_obj.entity_type == _UNKNOWN_ENTITY_TYPE and normalized_type != _UNKNOWN_ENTITY_TYPE:
-                stale_row_key = self._build_entity_db_id(entity_obj.entity_id, entity_obj.entity_type, namespace)
+                stale_row_key = self._build_entity_db_id(
+                    entity_obj.entity_id, entity_obj.entity_type, namespace, user_id=user_id
+                )
                 entity_obj.entity_type = normalized_type
 
             # Remember the name variant this write arrived under, bounded so the
@@ -3390,6 +3392,7 @@ class EntityMemoryStore(LearningStore):
         entity_id: str,
         entity_type: str,
         namespace: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> bool:
         """Hard-delete an entity from the store (data API - not exposed as a tool)."""
         db = self._sync_db()
@@ -3398,7 +3401,11 @@ class EntityMemoryStore(LearningStore):
 
         effective_namespace = namespace or self.config.namespace
         try:
-            return bool(db.delete_learning(id=self._build_entity_db_id(entity_id, entity_type, effective_namespace)))
+            return bool(
+                db.delete_learning(
+                    id=self._build_entity_db_id(entity_id, entity_type, effective_namespace, user_id=user_id)
+                )
+            )
         except Exception as e:
             log_debug(f"EntityMemoryStore.delete failed: {e}")
             return False
@@ -3408,6 +3415,7 @@ class EntityMemoryStore(LearningStore):
         entity_id: str,
         entity_type: str,
         namespace: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> bool:
         """Async version of delete."""
         if not self.db:
@@ -3418,11 +3426,13 @@ class EntityMemoryStore(LearningStore):
             if isinstance(self.db, AsyncBaseDb):
                 return bool(
                     await self.db.delete_learning(
-                        id=self._build_entity_db_id(entity_id, entity_type, effective_namespace)
+                        id=self._build_entity_db_id(entity_id, entity_type, effective_namespace, user_id=user_id)
                     )
                 )
             return bool(
-                self.db.delete_learning(id=self._build_entity_db_id(entity_id, entity_type, effective_namespace))
+                self.db.delete_learning(
+                    id=self._build_entity_db_id(entity_id, entity_type, effective_namespace, user_id=user_id)
+                )
             )
         except Exception as e:
             log_debug(f"EntityMemoryStore.adelete failed: {e}")
@@ -3453,7 +3463,9 @@ class EntityMemoryStore(LearningStore):
                 return False
 
             db.upsert_learning(
-                id=self._build_entity_db_id(entity.entity_id, entity.entity_type, effective_namespace),
+                id=self._build_entity_db_id(
+                    entity.entity_id, entity.entity_type, effective_namespace, user_id=user_id
+                ),
                 learning_type=self.learning_type,
                 entity_id=entity.entity_id,
                 entity_type=entity.entity_type,
@@ -3491,7 +3503,9 @@ class EntityMemoryStore(LearningStore):
 
             if isinstance(self.db, AsyncBaseDb):
                 await self.db.upsert_learning(
-                    id=self._build_entity_db_id(entity.entity_id, entity.entity_type, effective_namespace),
+                    id=self._build_entity_db_id(
+                        entity.entity_id, entity.entity_type, effective_namespace, user_id=user_id
+                    ),
                     learning_type=self.learning_type,
                     entity_id=entity.entity_id,
                     entity_type=entity.entity_type,
@@ -3503,7 +3517,9 @@ class EntityMemoryStore(LearningStore):
                 )
             else:
                 self.db.upsert_learning(
-                    id=self._build_entity_db_id(entity.entity_id, entity.entity_type, effective_namespace),
+                    id=self._build_entity_db_id(
+                        entity.entity_id, entity.entity_type, effective_namespace, user_id=user_id
+                    ),
                     learning_type=self.learning_type,
                     entity_id=entity.entity_id,
                     entity_type=entity.entity_type,
@@ -3529,11 +3545,18 @@ class EntityMemoryStore(LearningStore):
         entity_id: str,
         entity_type: str,
         namespace: str,
+        user_id: Optional[str] = None,
     ) -> str:
         """Build unique DB ID for entity."""
         return cast(
             str,
-            build_learning_id("entity_memory", entity_id=entity_id, entity_type=entity_type, namespace=namespace),
+            build_learning_id(
+                "entity_memory",
+                entity_id=entity_id,
+                entity_type=entity_type,
+                namespace=namespace,
+                user_id=user_id,
+            ),
         )
 
     def _format_entity_basic(self, entity: Any) -> str:

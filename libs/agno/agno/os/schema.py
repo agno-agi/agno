@@ -10,6 +10,7 @@ from agno.agent.protocol import AgentProtocol
 from agno.agent.remote import RemoteAgent
 from agno.db.base import SessionType
 from agno.db.utils import detect_session_type
+from agno.models.utils import normalize_provider_key
 from agno.os.config import (
     ChatConfig,
     EvalsConfig,
@@ -153,9 +154,10 @@ def _extract_model(entity: Any) -> Optional[Model]:
         return None
     model_id = getattr(raw, "id", None)
     provider = getattr(raw, "provider", None)
+    name = getattr(raw, "name", None)
     if model_id is None and provider is None:
         return None
-    return Model(id=model_id, provider=provider)
+    return Model(id=model_id, provider=normalize_provider_key(provider, name))
 
 
 class AgentSummaryResponse(BaseModel):
