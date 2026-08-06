@@ -164,6 +164,7 @@ class TestAcontinueRunBackgroundStream:
             ),
             patch("agno.team._storage._update_metadata"),
             patch("agno.team._session.asave_session", new_callable=AsyncMock) as mock_save,
+            patch("agno.team._session.asave_run", new_callable=AsyncMock) as mock_save_run,
             patch("agno.os.managers.event_buffer") as mock_eb,
             patch("agno.os.managers.sse_subscriber_manager") as mock_ssm,
             patch("agno.os.utils.format_sse_event_with_index", return_value="data: x\n\n"),
@@ -183,8 +184,12 @@ class TestAcontinueRunBackgroundStream:
 
         # The error path must have set RunStatus.error on the run_response
         assert run_response.status == RunStatus.error, "background helper must persist RunStatus.error on failure"
-        # asave_session is called at least twice: once for RUNNING, once for ERROR
-        assert mock_save.await_count >= 2
+        # Under v3, the initial RUNNING transition writes session + run; the ERROR
+        # transition only writes the run (status-only change). So we expect:
+        #   asave_session: 1 (RUNNING transition)
+        #   asave_run:     2 (RUNNING + ERROR transitions)
+        assert mock_save.await_count >= 1
+        assert mock_save_run.await_count >= 2
         # SSE subscribers must be signaled even on failure (call_count covers either
         # direct await or asyncio.shield-wrapped await)
         assert mock_ssm.complete.call_count >= 1

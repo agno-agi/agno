@@ -140,10 +140,10 @@ router_workflow = Workflow(
                 Step(name="Analysis", agent=analysis_agent),
                 Step(name="Summary", agent=summary_agent),
             ],
-            allow_multiple_selections=True,
             human_review=HumanReview(
                 requires_user_input=True,
                 user_input_message="Select which processing steps to run:",
+                allow_multiple_selections=True,
             ),
         ),
         Step(name="WriteReport", agent=writer_agent),

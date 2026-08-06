@@ -113,7 +113,14 @@ def apply_sorting(query, sort_by: Optional[str] = None, sort_order: Optional[str
 
 
 def apply_pagination(query, limit: Optional[int] = None, page: Optional[int] = None):
-    """Apply pagination to Firestore query."""
+    """Apply pagination to Firestore query.
+
+    Raises ``ValueError`` when ``page`` is provided without ``limit`` — see
+    ``agno.db.utils.validate_pagination``.
+    """
+    from agno.db.utils import validate_pagination
+
+    validate_pagination(limit, page)
     if limit is not None:
         query = query.limit(limit)
         if page is not None and page > 1:
@@ -162,7 +169,14 @@ def apply_sorting_to_records(
 def apply_pagination_to_records(
     records: List[Dict[str, Any]], limit: Optional[int] = None, page: Optional[int] = None
 ) -> List[Dict[str, Any]]:
-    """Apply pagination to in-memory records (for cases where Firestore query pagination isn't possible)."""
+    """Apply pagination to in-memory records (for cases where Firestore query pagination isn't possible).
+
+    Raises ``ValueError`` when ``page`` is provided without ``limit`` — see
+    ``agno.db.utils.validate_pagination``.
+    """
+    from agno.db.utils import validate_pagination
+
+    validate_pagination(limit, page)
     if limit is None:
         return records
 
