@@ -1830,8 +1830,12 @@ def get_team_by_id(
 
         # Links for this config version carry the member versions pinned at
         # save time, so members load at those versions like the graph loader.
+        # Adapters without link support load unpinned.
         resolved_version = row.get("version")
-        links = db.get_links(component_id=id, version=resolved_version) if resolved_version else []
+        try:
+            links = db.get_links(component_id=id, version=resolved_version) if resolved_version else []
+        except NotImplementedError:
+            links = []
 
         team = Team.from_dict(cfg, db=db, registry=registry, links=links, strict=strict)
         # Ensure team.id is set to the component_id
@@ -1879,7 +1883,9 @@ def get_teams(
                         if "id" not in team_config:
                             team_config["id"] = component_id
                         # Lenient on purpose: listings must show degraded
-                        # components so they stay visible and fixable.
+                        # components so they stay visible and fixable. Listings
+                        # also show members at their current version; the
+                        # per-version pin links are a detail-read concern.
                         team = Team.from_dict(team_config, db=db, registry=registry, strict=False)
                         team.id = component_id
                         team._version = component.get("current_version")

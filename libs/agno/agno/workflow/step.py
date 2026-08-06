@@ -316,17 +316,40 @@ class Step:
             data: Dictionary containing step configuration
             registry: Optional registry for rehydrating non-serializable objects
             db: Optional database for loading agents/teams in steps
-            links: Optional links for this step version
+            links: The workflow version's links; step_agent/step_team links
+                carry the child version pinned at save time, and db-backed
+                step members load at that version
+            strict: If True, an unresolvable step agent/team raises
+                ComponentRehydrationError instead of being dropped
 
         Returns:
             Step: Reconstructed step instance
         """
+        from agno.exceptions import ComponentRehydrationError
+
         config = data.copy()
 
         agent = None
         team = None
         executor = None
         workflow = None
+
+        # Prefer the link written for this step; fall back to any link that
+        # pins the same child (a save pins one version per child id).
+        step_link_key = config.get("step_id") or config.get("name")
+
+        def _pinned_version(child_id: Optional[str]) -> Optional[int]:
+            fallback = None
+            for link in links or []:
+                if link.get("link_kind") not in ("step_agent", "step_team"):
+                    continue
+                if link.get("child_component_id") != child_id:
+                    continue
+                if link.get("link_key") == step_link_key:
+                    return link.get("child_version")
+                if fallback is None:
+                    fallback = link.get("child_version")
+            return fallback
 
         # --- Handle Agent reconstruction ---
         if "agent_id" in config and config["agent_id"]:
@@ -346,16 +369,24 @@ class Step:
 
                         agent = registry_agent
 
-            # Fall back to database
+            # Fall back to database, at the version the workflow pinned
             if agent is None and db is not None and agent_id is not None:
                 from agno.agent.agent import get_agent_by_id
 
-                agent = get_agent_by_id(db=db, id=agent_id, registry=registry, strict=strict)
+                pinned = _pinned_version(agent_id)
+                try:
+                    agent = get_agent_by_id(db=db, id=agent_id, version=pinned, registry=registry, strict=strict)
+                except ComponentRehydrationError as step_member_error:
+                    if pinned is not None:
+                        raise ComponentRehydrationError(
+                            f"Step '{config.get('name')}' pins agent '{agent_id}' at version {pinned}, "
+                            f"which failed to rebuild: {step_member_error} "
+                            "Re-save the workflow to pin the agent's current version."
+                        ) from step_member_error
+                    raise
 
             if agent is None and agent_id:
                 if strict:
-                    from agno.exceptions import ComponentRehydrationError
-
                     raise ComponentRehydrationError(
                         f"Step '{config.get('name')}' references agent '{agent_id}' which was not "
                         "found in the registry or db. Restore the agent, or pass strict=False to "
@@ -383,16 +414,24 @@ class Step:
 
                         team = registry_team
 
-            # Fall back to database
+            # Fall back to database, at the version the workflow pinned
             if team is None and db is not None and team_id is not None:
                 from agno.team.team import get_team_by_id
 
-                team = get_team_by_id(db=db, id=team_id, registry=registry, strict=strict)
+                pinned = _pinned_version(team_id)
+                try:
+                    team = get_team_by_id(db=db, id=team_id, version=pinned, registry=registry, strict=strict)
+                except ComponentRehydrationError as step_member_error:
+                    if pinned is not None:
+                        raise ComponentRehydrationError(
+                            f"Step '{config.get('name')}' pins team '{team_id}' at version {pinned}, "
+                            f"which failed to rebuild: {step_member_error} "
+                            "Re-save the workflow to pin the team's current version."
+                        ) from step_member_error
+                    raise
 
             if team is None and team_id:
                 if strict:
-                    from agno.exceptions import ComponentRehydrationError
-
                     raise ComponentRehydrationError(
                         f"Step '{config.get('name')}' references team '{team_id}' which was not "
                         "found in the registry or db. Restore the team, or pass strict=False to "

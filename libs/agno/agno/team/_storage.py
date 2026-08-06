@@ -789,7 +789,14 @@ def from_dict(
     pinned_versions: Dict[str, Optional[int]] = {}
     for link in links or []:
         if link.get("link_kind") == "member" and link.get("child_component_id"):
-            pinned_versions[link["child_component_id"]] = link.get("child_version")
+            child_id = link["child_component_id"]
+            child_version = link.get("child_version")
+            if child_id in pinned_versions and pinned_versions[child_id] != child_version:
+                log_warning(
+                    f"{component_label} carries member links for '{child_id}' pinned at different "
+                    f"versions ({pinned_versions[child_id]} and {child_version}); using {child_version}."
+                )
+            pinned_versions[child_id] = child_version
 
     if "members" in config and config["members"]:
         members = []
@@ -797,17 +804,36 @@ def from_dict(
             member_type = member_data.get("type")
             if member_type == "agent":
                 agent_id = member_data["agent_id"]
-                agent = (
-                    get_agent_by_id(
-                        id=agent_id,
-                        db=db,
-                        version=pinned_versions.get(agent_id),
-                        registry=registry,
-                        strict=strict,
+                pinned = pinned_versions.get(agent_id)
+                try:
+                    agent = (
+                        get_agent_by_id(
+                            id=agent_id,
+                            db=db,
+                            version=pinned,
+                            registry=registry,
+                            strict=strict,
+                        )
+                        if db is not None
+                        else None
                     )
-                    if db is not None
-                    else None
-                )
+                except ComponentRehydrationError as member_error:
+                    if pinned is not None:
+                        raise ComponentRehydrationError(
+                            f"{component_label} pins member agent '{agent_id}' at version {pinned}, "
+                            f"which failed to rebuild: {member_error} "
+                            "Re-save the team to pin the member's current version."
+                        ) from member_error
+                    raise
+                # An explicit pin names one exact stored version; a same-id
+                # registry component is a different object, so a strict load
+                # refuses rather than substituting it.
+                if agent is None and strict and pinned is not None:
+                    raise ComponentRehydrationError(
+                        f"{component_label} pins member agent '{agent_id}' at version {pinned}, "
+                        "which was not found in the db. Restore that version, or re-save the "
+                        "team to pin the member's current version."
+                    )
                 # Fall back to a code-defined agent registered in the registry.
                 # These are legitimately not persisted as DB components (e.g. agents
                 # passed to AgentOS(agents=[...])), so a DB lookup returns nothing.
@@ -829,17 +855,36 @@ def from_dict(
             elif member_type == "team":
                 # Handle nested teams as members
                 team_id = member_data["team_id"]
-                nested_team = (
-                    get_team_by_id(
-                        id=team_id,
-                        db=db,
-                        version=pinned_versions.get(team_id),
-                        registry=registry,
-                        strict=strict,
+                pinned = pinned_versions.get(team_id)
+                try:
+                    nested_team = (
+                        get_team_by_id(
+                            id=team_id,
+                            db=db,
+                            version=pinned,
+                            registry=registry,
+                            strict=strict,
+                        )
+                        if db is not None
+                        else None
                     )
-                    if db is not None
-                    else None
-                )
+                except ComponentRehydrationError as member_error:
+                    if pinned is not None:
+                        raise ComponentRehydrationError(
+                            f"{component_label} pins member team '{team_id}' at version {pinned}, "
+                            f"which failed to rebuild: {member_error} "
+                            "Re-save the team to pin the member's current version."
+                        ) from member_error
+                    raise
+                # An explicit pin names one exact stored version; a same-id
+                # registry component is a different object, so a strict load
+                # refuses rather than substituting it.
+                if nested_team is None and strict and pinned is not None:
+                    raise ComponentRehydrationError(
+                        f"{component_label} pins member team '{team_id}' at version {pinned}, "
+                        "which was not found in the db. Restore that version, or re-save the "
+                        "team to pin the member's current version."
+                    )
                 # Fall back to a code-defined team registered in the registry.
                 # Deep copy so the shared registry singleton isn't mutated on run.
                 if nested_team is None and registry is not None:

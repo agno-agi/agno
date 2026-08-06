@@ -1332,8 +1332,9 @@ class StudioRunnerTools(Toolkit):
         self._require_registry_for("team", team_id, config)
         from agno.team.team import Team
 
+        links = self._load_links_from_db(team_id, version=version)
         try:
-            team = Team.from_dict(config, db=self.db, registry=self.registry, strict=for_dispatch)
+            team = Team.from_dict(config, db=self.db, registry=self.registry, links=links, strict=for_dispatch)
             team.id = team_id
             # The catalog db is a fallback only; a config-declared db wins.
             if getattr(team, "db", None) is None:
@@ -1345,7 +1346,7 @@ class StudioRunnerTools(Toolkit):
                 config,
                 "team",
                 team_id,
-                lambda: Team.from_dict(config, db=self.db, registry=self.registry, strict=False),
+                lambda: Team.from_dict(config, db=self.db, registry=self.registry, links=links, strict=False),
             ) from rehydration_error
         except Exception:
             logger.warning("StudioRunnerTools: Team.from_dict failed for %s", team_id, exc_info=True)
@@ -1369,8 +1370,9 @@ class StudioRunnerTools(Toolkit):
         self._require_registry_for("workflow", workflow_id, config)
         from agno.workflow.workflow import Workflow
 
+        links = self._load_links_from_db(workflow_id, version=version)
         try:
-            wf = Workflow.from_dict(config, db=self.db, registry=self.registry, strict=for_dispatch)
+            wf = Workflow.from_dict(config, db=self.db, registry=self.registry, links=links, strict=for_dispatch)
             wf.id = workflow_id
             # The catalog db is a fallback only; a config-declared db wins.
             if getattr(wf, "db", None) is None:
@@ -1382,7 +1384,7 @@ class StudioRunnerTools(Toolkit):
                 config,
                 "workflow",
                 workflow_id,
-                lambda: Workflow.from_dict(config, db=self.db, registry=self.registry, strict=False),
+                lambda: Workflow.from_dict(config, db=self.db, registry=self.registry, links=links, strict=False),
             ) from rehydration_error
         except Exception:
             logger.warning("StudioRunnerTools: Workflow.from_dict failed for %s", workflow_id, exc_info=True)
@@ -1420,6 +1422,25 @@ class StudioRunnerTools(Toolkit):
             return None
         config = row.get("config") if isinstance(row, dict) else None
         return config if isinstance(config, dict) else None
+
+    def _load_links_from_db(self, component_id: str, version: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Links for a component's resolved config version.
+
+        Member and step links carry the child versions pinned at save time, so
+        a rebuilt team/workflow resolves its children at the versions the
+        parent was saved against. Adapters without link support pin nothing.
+        """
+        if self.db is None:
+            return []
+        try:
+            if version is None:
+                row = self.db.get_config(component_id=component_id)
+                version = row.get("version") if isinstance(row, dict) else None
+            if not version:
+                return []
+            return self.db.get_links(component_id=component_id, version=version) or []
+        except NotImplementedError:
+            return []
 
     def _list_db_component_rows(
         self, component_type: str, limit: Optional[int] = None

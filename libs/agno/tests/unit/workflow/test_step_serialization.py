@@ -235,7 +235,7 @@ class TestStepFromDict:
             mock_db = MagicMock()
             step = Step.from_dict(data, registry=registry, db=mock_db, strict=True)
 
-            mock_get_agent.assert_called_once_with(db=mock_db, id="db-agent", registry=registry, strict=True)
+            mock_get_agent.assert_called_once_with(db=mock_db, id="db-agent", version=None, registry=registry, strict=True)
             assert step.agent is mock_db_agent
 
     def test_from_dict_team_resolved_from_registry(self):

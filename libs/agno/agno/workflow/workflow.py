@@ -1170,7 +1170,15 @@ class Workflow:
         if config is None:
             return None
 
-        workflow = cls.from_dict(config, db=db, registry=registry, strict=strict)
+        # Links for this config version carry the step-member versions pinned
+        # at save time, so step agents/teams load at those versions.
+        resolved_version = data.get("version")
+        try:
+            links = db.get_links(component_id=id, version=resolved_version) if resolved_version else []
+        except NotImplementedError:
+            links = []
+
+        workflow = cls.from_dict(config, db=db, links=links, registry=registry, strict=strict)
 
         workflow.id = id
         # Only fall back to the caller-provided db if the config didn't
@@ -10814,8 +10822,11 @@ def get_workflow_by_id(
 
         resolved_version = row.get("version")
 
-        # Get links for this workflow version
-        links = db.get_links(component_id=id, version=resolved_version) if resolved_version else []
+        # Links for this workflow version; adapters without link support load unpinned.
+        try:
+            links = db.get_links(component_id=id, version=resolved_version) if resolved_version else []
+        except NotImplementedError:
+            links = []
 
         workflow = Workflow.from_dict(cfg, db=db, links=links, registry=registry, strict=strict)
 
