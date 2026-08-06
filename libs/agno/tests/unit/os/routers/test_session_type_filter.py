@@ -534,6 +534,102 @@ class TestRunTimestampFiltering:
         assert run_ids == ["middle"]
 
 
+class TestSessionRunsPagination:
+    """GET /sessions/{id}/runs pagination is opt-in via limit/page."""
+
+    def _session_with_runs(self, db, session_id, count):
+        now = int(time.time())
+        runs = [
+            RunOutput(
+                run_id=f"run-{i}",
+                agent_id="test-agent",
+                status=RunStatus.completed,
+                messages=[],
+                created_at=now + i,
+            )
+            for i in range(count)
+        ]
+        db.upsert_session(
+            AgentSession(
+                session_id=session_id,
+                agent_id="test-agent",
+                user_id="user-1",
+                session_data={"session_name": "Paginated Runs"},
+                created_at=now,
+                updated_at=now,
+                runs=runs,
+            )
+        )
+
+    def test_no_params_returns_bare_list(self):
+        """Without limit/page the response is the original bare list of every run."""
+        db = InMemoryDb()
+        uid = uuid.uuid4().hex[:8]
+        self._session_with_runs(db, f"page-{uid}", count=5)
+        client = _build_client(db)
+
+        resp = client.get(f"/sessions/page-{uid}/runs?user_id=user-1")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert isinstance(body, list)
+        assert [r["run_id"] for r in body] == ["run-0", "run-1", "run-2", "run-3", "run-4"]
+
+    def test_limit_returns_envelope_with_meta(self):
+        db = InMemoryDb()
+        uid = uuid.uuid4().hex[:8]
+        self._session_with_runs(db, f"page-{uid}", count=5)
+        client = _build_client(db)
+
+        resp = client.get(f"/sessions/page-{uid}/runs?user_id=user-1&limit=2")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert isinstance(body, dict)
+        assert [r["run_id"] for r in body["data"]] == ["run-0", "run-1"]
+        assert body["meta"]["page"] == 1
+        assert body["meta"]["limit"] == 2
+        assert body["meta"]["total_count"] == 5
+        assert body["meta"]["total_pages"] == 3
+
+    def test_page_only_defaults_limit(self):
+        """Passing only page opts into pagination with the default page size."""
+        db = InMemoryDb()
+        uid = uuid.uuid4().hex[:8]
+        self._session_with_runs(db, f"page-{uid}", count=3)
+        client = _build_client(db)
+
+        resp = client.get(f"/sessions/page-{uid}/runs?user_id=user-1&page=1")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert isinstance(body, dict)
+        assert len(body["data"]) == 3
+        assert body["meta"]["limit"] == 20
+        assert body["meta"]["total_pages"] == 1
+
+    def test_second_page(self):
+        db = InMemoryDb()
+        uid = uuid.uuid4().hex[:8]
+        self._session_with_runs(db, f"page-{uid}", count=5)
+        client = _build_client(db)
+
+        resp = client.get(f"/sessions/page-{uid}/runs?user_id=user-1&limit=2&page=2")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert [r["run_id"] for r in body["data"]] == ["run-2", "run-3"]
+        assert body["meta"]["page"] == 2
+
+    def test_page_beyond_range_returns_empty_data(self):
+        db = InMemoryDb()
+        uid = uuid.uuid4().hex[:8]
+        self._session_with_runs(db, f"page-{uid}", count=5)
+        client = _build_client(db)
+
+        resp = client.get(f"/sessions/page-{uid}/runs?user_id=user-1&limit=2&page=99")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["data"] == []
+        assert body["meta"]["total_count"] == 5
+
+
 class TestTeamSessionRunsParsing:
     """Team session runs should correctly classify agent vs team runs."""
 

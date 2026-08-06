@@ -181,3 +181,39 @@ async def get_session_runs(
 
     classified = (classify_session_run(run, resolved_type) for run in filtered)
     return [run_schema for run_schema in classified if run_schema is not None]
+
+
+async def get_session_runs_page(
+    db: Union[BaseDb, AsyncBaseDb],
+    *,
+    session_id: str,
+    session_type: Optional[SessionType] = None,
+    user_id: Optional[str] = None,
+    created_after: Optional[int] = None,
+    created_before: Optional[int] = None,
+    limit: Optional[int] = 20,
+    page: Optional[int] = 1,
+) -> Tuple[List[AnyRunSchema], int]:
+    """One page of a session's runs as schema objects, plus the total count.
+
+    Runs are embedded in the session record, so filtering and pagination happen in
+    memory here. ``limit`` of ``None`` (or non-positive) returns every run.
+
+    Raises :class:`SessionNotFoundError` when the session does not exist.
+    """
+    runs = await get_session_runs(
+        db,
+        session_id=session_id,
+        session_type=session_type,
+        user_id=user_id,
+        created_after=created_after,
+        created_before=created_before,
+    )
+
+    total_count = len(runs)
+    if limit is None or limit <= 0:
+        return runs, total_count
+
+    current_page = page if page is not None and page > 0 else 1
+    start = (current_page - 1) * limit
+    return runs[start : start + limit], total_count

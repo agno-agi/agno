@@ -1837,11 +1837,19 @@ class AgentOSClient:
         user_id: Optional[str] = None,
         created_after: Optional[int] = None,
         created_before: Optional[int] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
         db_id: Optional[str] = None,
         table: Optional[str] = None,
         headers: Optional[Dict[str, str]] = None,
-    ) -> List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]]:
-        """Get all runs for a specific session.
+    ) -> Union[
+        List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
+        PaginatedResponse[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]],
+    ]:
+        """Get the runs for a specific session.
+
+        Pagination is opt-in: with neither ``limit`` nor ``page`` set the server returns every run
+        as a list. Providing either returns a :class:`PaginatedResponse` with data and metadata.
 
         Args:
             session_id: ID of the session
@@ -1849,12 +1857,14 @@ class AgentOSClient:
             user_id: Optional user ID filter
             created_after: Filter runs created after this Unix timestamp
             created_before: Filter runs created before this Unix timestamp
+            limit: Number of runs per page (enables pagination)
+            page: Page number (enables pagination)
             db_id: Optional database ID to use
             table: Optional table name to use
             headers: HTTP headers to include in the request (optional)
 
         Returns:
-            List of runs (RunSchema, TeamRunSchema, or WorkflowRunSchema)
+            A list of runs, or a PaginatedResponse of runs when limit/page is provided.
 
         Raises:
             HTTPStatusError: On HTTP errors
@@ -1864,23 +1874,35 @@ class AgentOSClient:
             "user_id": user_id,
             "created_after": created_after,
             "created_before": created_before,
+            "limit": str(limit) if limit is not None else None,
+            "page": str(page) if page is not None else None,
             "db_id": db_id,
             "table": table,
         }
         params = {k: v for k, v in params.items() if v is not None}
 
-        data = await self._aget(f"/sessions/{session_id}/runs", params=params, headers=headers)
+        response = await self._aget(f"/sessions/{session_id}/runs", params=params, headers=headers)
 
-        # Parse runs based on session type and run content
+        # The server returns a bare list unless pagination was requested, in which case it
+        # returns a {"data": [...], "meta": {...}} envelope.
+        raw_runs = response["data"] if isinstance(response, dict) else response
         runs: List[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]] = []
-        for run in data:
+        for run in raw_runs:
             if run.get("workflow_id") is not None:
                 runs.append(WorkflowRunSchema.model_validate(run))
             elif run.get("team_id") is not None:
                 runs.append(TeamRunSchema.model_validate(run))
             else:
                 runs.append(RunSchema.model_validate(run))
-        return runs
+
+        if not isinstance(response, dict):
+            return runs
+
+        pagination_info = PaginationInfo.model_validate(response.get("meta", {}))
+        return PaginatedResponse[Union[RunSchema, TeamRunSchema, WorkflowRunSchema]](
+            data=runs,
+            meta=pagination_info,
+        )
 
     async def get_session_run(
         self,
