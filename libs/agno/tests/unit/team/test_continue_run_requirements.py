@@ -1212,6 +1212,48 @@ class TestRoutingForwardsRunContextToMembers:
         assert kwargs["metadata"] == {"trace": "id"}
         assert kwargs["knowledge_filters"] == {"tag": "v"}
 
+    def test_async_streaming_routing_accepts_nested_team_run_output(self):
+        from agno.team._run import _aroute_requirements_to_members_stream
+
+        run_response, session, _ = self._make_run_response_with_member_req()
+
+        member_response = TeamRunOutput(
+            team_id="nested-team-id",
+            run_id="nested-team-run-1",
+            content="nested team completed",
+        )
+
+        async def _member_stream(*args, **kwargs):
+            yield member_response
+
+        member = MagicMock()
+        member.name = "Nested Team"
+        member.acontinue_run = MagicMock(side_effect=lambda *a, **kw: _member_stream())
+
+        team = MagicMock()
+        team.stream_member_events = False
+        team.events_to_skip = []
+        team.store_events = False
+
+        async def _exercise():
+            with patch("agno.team._tools._find_member_route_by_id", return_value=(0, member)):
+                member_results = []
+                async for _ in _aroute_requirements_to_members_stream(
+                    team,
+                    run_response=run_response,
+                    session=session,
+                    member_results=member_results,
+                    stream_events=False,
+                ):
+                    pass
+
+            return member_results
+
+        member_results = asyncio.run(_exercise())
+
+        session.upsert_run.assert_called_once_with(member_response)
+        assert member_results == ["[Nested Team]: nested team completed"]
+
     def test_sync_streaming_routing_forwards_dependencies(self):
         from agno.team._run import _route_requirements_to_members_stream
 
@@ -1250,6 +1292,44 @@ class TestRoutingForwardsRunContextToMembers:
         assert kwargs["dependencies"] == {"user_token": "Bearer abc"}
         assert kwargs["metadata"] == {"trace": "id"}
         assert kwargs["knowledge_filters"] == {"tag": "v"}
+
+    def test_sync_streaming_routing_accepts_nested_team_run_output(self):
+        from agno.team._run import _route_requirements_to_members_stream
+
+        run_response, session, _ = self._make_run_response_with_member_req()
+
+        member_response = TeamRunOutput(
+            team_id="nested-team-id",
+            run_id="nested-team-run-1",
+            content="nested team completed",
+        )
+
+        def _member_stream(*args, **kwargs):
+            yield member_response
+
+        member = MagicMock()
+        member.name = "Nested Team"
+        member.continue_run = MagicMock(side_effect=lambda *a, **kw: _member_stream())
+
+        team = MagicMock()
+        team.stream_member_events = False
+        team.events_to_skip = []
+        team.store_events = False
+
+        with patch("agno.team._tools._find_member_route_by_id", return_value=(0, member)):
+            member_results = []
+            list(
+                _route_requirements_to_members_stream(
+                    team,
+                    run_response=run_response,
+                    session=session,
+                    member_results=member_results,
+                    stream_events=False,
+                )
+            )
+
+        session.upsert_run.assert_called_once_with(member_response)
+        assert member_results == ["[Nested Team]: nested team completed"]
 
     def test_routing_with_none_run_context_does_not_inject_kwargs(self):
         """When the team has no run_context (defensive), no forwarding kwargs are added."""
