@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from agno.team.team import Team
 
+import asyncio
 import json
 from collections import ChainMap
 from typing import (
@@ -541,8 +542,8 @@ def get_system_message(
                 system_message_content += f"\n- {_memory.memory}"
             system_message_content += "\n</memories_from_previous_interactions>\n\n"
             system_message_content += (
-                "Note: this information is from previous interactions and may be updated in this conversation. "
-                "You should always prefer information from this conversation over the past memories.\n"
+                "Note: this information is from previous interactions and may be outdated. "
+                "You should ALWAYS prefer information from this conversation over the past memories.\n\n"
             )
         else:
             system_message_content += (
@@ -782,8 +783,8 @@ async def aget_system_message(
                 system_message_content += f"\n- {_memory.memory}"
             system_message_content += "\n</memories_from_previous_interactions>\n\n"
             system_message_content += (
-                "Note: this information is from previous interactions and may be updated in this conversation. "
-                "You should always prefer information from this conversation over the past memories.\n"
+                "Note: this information is from previous interactions and may be outdated. "
+                "You should ALWAYS prefer information from this conversation over the past memories.\n\n"
             )
         else:
             system_message_content += (
@@ -947,6 +948,18 @@ def _get_run_messages(
             for _msg in history_copy:
                 _msg.from_history = True
 
+            # Refresh pre-signed URLs for media loaded from history
+            if team.media_storage is not None:
+                from agno.media.storage.base import AsyncMediaStorage
+
+                if isinstance(team.media_storage, AsyncMediaStorage):
+                    raise ValueError("Cannot use sync run() with an AsyncMediaStorage. Use arun() instead.")
+
+                from agno.utils.media_offload import refresh_message_media_urls
+
+                for _msg in history_copy:
+                    refresh_message_media_urls(_msg, team.media_storage)
+
             # Filter tool calls from history messages
             if team.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, team.max_tool_calls_from_history)
@@ -1081,6 +1094,24 @@ async def _aget_run_messages(
             # Tag each message as coming from history
             for _msg in history_copy:
                 _msg.from_history = True
+
+            # Refresh pre-signed URLs for media loaded from history
+            if team.media_storage is not None:
+                from agno.media.storage.base import AsyncMediaStorage
+
+                if isinstance(team.media_storage, AsyncMediaStorage):
+                    from agno.utils.media_offload import arefresh_message_media_urls
+
+                    for _msg in history_copy:
+                        await arefresh_message_media_urls(_msg, team.media_storage)
+                else:
+                    from agno.utils.media_offload import refresh_message_media_urls
+
+                    # Sync storage in an async run — refresh in a worker thread. Inline, every
+                    # history image re-signs (and on a non-signing backend, downloads) on the
+                    # event loop before the model call can start.
+                    for _msg in history_copy:
+                        await asyncio.to_thread(refresh_message_media_urls, _msg, team.media_storage)
 
             # Filter tool calls from history messages
             if team.max_tool_calls_from_history is not None:

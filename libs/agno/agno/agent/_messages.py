@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -1311,6 +1312,18 @@ def get_run_messages(
             for _msg in history_copy:
                 _msg.from_history = True
 
+            # Refresh pre-signed URLs for media loaded from history
+            if agent.media_storage is not None:
+                from agno.media.storage.base import AsyncMediaStorage
+
+                if isinstance(agent.media_storage, AsyncMediaStorage):
+                    raise ValueError("Cannot use sync run() with an AsyncMediaStorage. Use arun() instead.")
+
+                from agno.utils.media_offload import refresh_message_media_urls
+
+                for _msg in history_copy:
+                    refresh_message_media_urls(_msg, agent.media_storage)
+
             # Filter tool calls from history if limit is set (before adding to run_messages)
             if agent.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
@@ -1516,6 +1529,24 @@ async def aget_run_messages(
             # Tag each message as coming from history
             for _msg in history_copy:
                 _msg.from_history = True
+
+            # Refresh pre-signed URLs for media loaded from history
+            if agent.media_storage is not None:
+                from agno.media.storage.base import AsyncMediaStorage
+
+                if isinstance(agent.media_storage, AsyncMediaStorage):
+                    from agno.utils.media_offload import arefresh_message_media_urls
+
+                    for _msg in history_copy:
+                        await arefresh_message_media_urls(_msg, agent.media_storage)
+                else:
+                    from agno.utils.media_offload import refresh_message_media_urls
+
+                    # Sync storage in an async run — refresh in a worker thread. Inline, every
+                    # history image re-signs (and on a non-signing backend, downloads) on the
+                    # event loop before the model call can start.
+                    for _msg in history_copy:
+                        await asyncio.to_thread(refresh_message_media_urls, _msg, agent.media_storage)
 
             # Filter tool calls from history if limit is set (before adding to run_messages)
             if agent.max_tool_calls_from_history is not None:
@@ -1819,6 +1850,7 @@ def get_relevant_docs_from_knowledge(
 
     if num_documents is None and resolved_knowledge is not None:
         num_documents = getattr(resolved_knowledge, "max_results", None)
+
     # Validate the filters against known valid filter keys
     if resolved_knowledge is not None and filters is not None:
         if validate_filters:

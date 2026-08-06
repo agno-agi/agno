@@ -1,0 +1,57 @@
+import re
+from typing import Any, Dict, Optional
+
+_UNSAFE_HEADER_CHARS = re.compile(r"[^\t\x20-\x7e]")
+
+# DeleteObjects accepts at most 1000 keys per call.
+S3_DELETE_BATCH_SIZE = 1000
+
+# SigV4 signs for at most seven days. boto3 does not check, so an expiry above this yields a
+# URL that looks valid and is rejected on use.
+S3_MAX_PRESIGNED_EXPIRY = 7 * 24 * 60 * 60
+
+
+def sanitize_s3_metadata(items: Dict[str, Any], *, max_bytes: int = 1800) -> Dict[str, str]:
+    """Coerce metadata to ASCII-only string values that S3 accepts.
+
+    S3 user metadata travels as HTTP headers, so it must be ASCII, free of control
+    characters, and small (~2KB total) — a value carrying a newline fails the whole
+    upload. Entries that can't be encoded, carry a control character, or would exceed
+    the size budget are dropped; the full metadata is preserved on the MediaReference,
+    so nothing is permanently lost.
+    """
+    safe: Dict[str, str] = {}
+    total = 0
+    for k, v in items.items():
+        try:
+            # Lowercased because S3 does: two keys differing only in case become one header
+            # twice over, and the request fails signature validation. The guard above then
+            # swallows it and the row silently reverts to inline base64.
+            key = str(k).encode("ascii").decode("ascii").lower()
+            val = str(v).encode("ascii").decode("ascii")
+        except UnicodeEncodeError:
+            continue
+        if _UNSAFE_HEADER_CHARS.search(key) or _UNSAFE_HEADER_CHARS.search(val):
+            continue
+        total += len(key) + len(val)
+        if total > max_bytes:
+            break
+        safe[key] = val
+    return safe
+
+
+def raise_if_acl_unsupported(error: Exception, bucket: Optional[str]) -> None:
+    """Re-raise S3's ACL rejection as an actionable configuration error.
+
+    The offload layer turns an upload failure into a warning and keeps the bytes inline,
+    so this message is the only thing the user ever sees.
+    """
+    from botocore.exceptions import ClientError
+
+    if (
+        isinstance(error, ClientError)
+        and error.response.get("Error", {}).get("Code") == "AccessControlListNotSupported"
+    ):
+        raise ValueError(
+            f"Bucket '{bucket}' does not allow ACLs. Drop the acl argument; get_url() returns presigned URLs."
+        ) from error

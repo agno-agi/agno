@@ -55,6 +55,7 @@ from agno.os.utils import (
     format_sse_event,
     get_agent_by_id,
     get_request_kwargs,
+    parse_files_metadata,
     process_audio,
     process_document,
     process_image,
@@ -601,6 +602,9 @@ def get_agent_router(
         files: Optional[List[UploadFile]] = File(
             None, description="Files to upload (images, audio, video, or documents)"
         ),
+        files_metadata: Optional[str] = Form(
+            None, description="JSON array of per-file metadata objects, matched to files[] by position"
+        ),
         version: Optional[str] = Form(None, description="Agent version to use for this run"),
         background: bool = Form(
             False, description="Run in background and return immediately with run metadata (requires database)"
@@ -611,6 +615,9 @@ def get_agent_router(
         ),
     ):
         kwargs = await get_request_kwargs(request, create_agent_run)
+
+        # Parse per-file metadata (JSON array matching files[] by position)
+        files_metadata_list = parse_files_metadata(files_metadata)
 
         # Scoped non-admin callers always get their JWT sub as user_id.
         # Admins and unscoped callers fall through to middleware/form values.
@@ -663,18 +670,19 @@ def get_agent_router(
         input_files: List[FileMedia] = []
 
         if files:
-            for file in files:
+            for idx, file in enumerate(files):
+                file_meta = files_metadata_list[idx] if idx < len(files_metadata_list) else None
                 file_category = classify_upload_file(file)
                 if file_category == "image":
                     try:
-                        base64_image = process_image(file)
+                        base64_image = process_image(file, metadata=file_meta)
                         base64_images.append(base64_image)
                     except Exception as e:
                         log_error(f"Error processing image {file.filename}: {str(e)}")
                         continue
                 elif file_category == "audio":
                     try:
-                        audio = process_audio(file)
+                        audio = process_audio(file, metadata=file_meta)
                         base64_audios.append(audio)
                     except Exception as e:
                         log_error(
@@ -683,7 +691,7 @@ def get_agent_router(
                         continue
                 elif file_category == "video":
                     try:
-                        base64_video = process_video(file)
+                        base64_video = process_video(file, metadata=file_meta)
                         base64_videos.append(base64_video)
                     except Exception as e:
                         log_error(f"Error processing video {file.filename}: {str(e)}")
@@ -691,7 +699,7 @@ def get_agent_router(
                 elif file_category == "document":
                     # Process document files
                     try:
-                        input_file = process_document(file)
+                        input_file = process_document(file, metadata=file_meta)
                         if input_file is not None:
                             input_files.append(input_file)
                     except Exception as e:
@@ -703,10 +711,23 @@ def get_agent_router(
         # Merge media passed as JSON form fields (sent by AgnoClient, e.g. when a team
         # delegates to this agent as a remote member) with media from uploaded files.
         # Popped from kwargs since they are passed explicitly to the run methods below.
-        base64_images.extend(kwargs.pop("images", None) or [])
-        base64_audios.extend(kwargs.pop("audio", None) or [])
-        base64_videos.extend(kwargs.pop("videos", None) or [])
-        input_files.extend(kwargs.pop("files", None) or [])
+        # These arrive as JSON arrays from AgnoClient. A multipart *file* part of the same
+        # name would otherwise reach .extend() as an UploadFile and 500 — files belong in `files`.
+        for field, target in (
+            ("images", base64_images),
+            ("audio", base64_audios),
+            ("videos", base64_videos),
+            ("files", input_files),
+        ):
+            value = kwargs.pop(field, None)
+            if value is None:
+                continue
+            if not isinstance(value, (list, tuple)):
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"`{field}` must be a JSON array; upload binary content via `files`",
+                )
+            target.extend(value)
 
         # Extract auth token for remote agents
         auth_token = get_auth_token_from_request(request)

@@ -2310,8 +2310,6 @@ class DynamoDb(BaseDb):
                     delete_requests.append({"DeleteRequest": {"Key": {"run_id": {"S": eval_run_id}}}})
 
                 batch_write_with_retry(self.client, {self.eval_table_name: delete_requests})
-                if delete_requests:
-                    self.client.batch_write_item(RequestItems={self.eval_table_name: delete_requests})
 
         except Exception as e:
             log_error(f"Failed to delete eval runs: {str(e)}")
