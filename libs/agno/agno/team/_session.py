@@ -198,6 +198,12 @@ def save_session(team: "Team", session: TeamSession) -> None:
             for run in session.runs:
                 if hasattr(run, "member_responses"):
                     if not team.store_member_responses:
+                        if run.member_responses and run.status == RunStatus.paused:
+                            log_warning(
+                                f"store_member_responses=False: wiping {len(run.member_responses)} "
+                                f"member_responses on paused run {run.run_id}. "
+                                "Set store_member_responses=True to preserve them for HITL resume."
+                            )
                         # Remove all member responses
                         run.member_responses = []
                     else:
