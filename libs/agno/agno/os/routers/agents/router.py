@@ -868,8 +868,6 @@ def get_agent_router(
             agent = get_agent_by_id(
                 agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True, strict=False
             )  # type: ignore[assignment]
-        except ComponentRehydrationError as rehydration_error:
-            raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -1207,10 +1205,8 @@ def get_agent_router(
 
         try:
             agent = get_agent_by_id(
-                agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True, strict=False
             )
-        except ComponentRehydrationError as rehydration_error:
-            raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -1440,10 +1436,8 @@ def get_agent_router(
         else:
             try:
                 agent = get_agent_by_id(
-                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True, strict=False
                 )  # type: ignore[assignment]
-            except ComponentRehydrationError as rehydration_error:
-                raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -1510,10 +1504,8 @@ def get_agent_router(
         else:
             try:
                 agent = get_agent_by_id(
-                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True, strict=False
                 )  # type: ignore[assignment]
-            except ComponentRehydrationError as rehydration_error:
-                raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -1573,10 +1565,8 @@ def get_agent_router(
         else:
             try:
                 agent = get_agent_by_id(
-                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True, strict=False
                 )  # type: ignore[assignment]
-            except ComponentRehydrationError as rehydration_error:
-                raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -1727,10 +1717,8 @@ def get_agent_router(
         else:
             try:
                 agent = get_agent_by_id(
-                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True, strict=False
                 )  # type: ignore[assignment]
-            except ComponentRehydrationError as rehydration_error:
-                raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")

@@ -866,9 +866,16 @@ def get_agent_by_id(
         agents: List of agents (and/or AgentFactory entries) to search
         create_fresh: If True, creates a new instance using deep_copy()
         ctx: RequestContext for factory invocation (required if a factory is matched)
+        strict: If True (the default here, unlike the from_dict/load APIs), a
+            db-backed agent whose references cannot be rehydrated raises
+            instead of loading degraded
 
     Returns:
         The agent instance (shared or fresh copy based on create_fresh)
+
+    Raises:
+        ComponentRehydrationError: If strict and a db-backed agent's references
+            cannot be resolved
     """
     if agent_id is None:
         return None
@@ -901,7 +908,7 @@ def get_agent_by_id(
             db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry, strict=strict)
             return db_agent
         except ComponentRehydrationError:
-            # Broken is not "not found": let the app-level handler surface it.
+            # Broken is not "not found": propagate so the caller can refuse loudly.
             raise
         except Exception:
             logger.exception(f"Error getting agent {agent_id} from database")
@@ -951,7 +958,7 @@ async def get_agent_by_id_async(
             db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry, strict=strict)
             return db_agent
         except ComponentRehydrationError:
-            # Broken is not "not found": let the app-level handler surface it.
+            # Broken is not "not found": propagate so the caller can refuse loudly.
             raise
         except Exception:
             logger.exception(f"Error getting agent {agent_id} from database")
@@ -983,9 +990,16 @@ def get_team_by_id(
         teams: List of teams (and/or TeamFactory entries) to search
         create_fresh: If True, creates a new instance using deep_copy()
         ctx: RequestContext for factory invocation (required if a factory is matched)
+        strict: If True (the default here, unlike the from_dict/load APIs), a
+            db-backed team whose members or references cannot be rehydrated
+            raises instead of loading degraded
 
     Returns:
         The team instance (shared or fresh copy based on create_fresh)
+
+    Raises:
+        ComponentRehydrationError: If strict and a db-backed team's members or
+            references cannot be resolved
     """
     if team_id is None:
         return None
@@ -1011,7 +1025,7 @@ def get_team_by_id(
             db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry, strict=strict)
             return db_team
         except ComponentRehydrationError:
-            # Broken is not "not found": let the app-level handler surface it.
+            # Broken is not "not found": propagate so the caller can refuse loudly.
             raise
         except Exception:
             logger.exception(f"Error getting team {team_id} from database")
@@ -1055,7 +1069,7 @@ async def get_team_by_id_async(
             db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry, strict=strict)
             return db_team
         except ComponentRehydrationError:
-            # Broken is not "not found": let the app-level handler surface it.
+            # Broken is not "not found": propagate so the caller can refuse loudly.
             raise
         except Exception:
             logger.exception(f"Error getting team {team_id} from database")
@@ -1090,9 +1104,16 @@ def get_workflow_by_id(
         version: Workflow version, if needed
         registry: Optional Registry instance
         ctx: RequestContext for factory invocation (required if a factory is matched)
+        strict: If True (the default here, unlike the from_dict/load APIs), a
+            db-backed workflow whose references cannot be rehydrated raises
+            instead of loading degraded
 
     Returns:
         The workflow instance (shared or fresh copy based on create_fresh)
+
+    Raises:
+        ComponentRehydrationError: If strict and a db-backed workflow's
+            references cannot be resolved
     """
     if workflow_id is None:
         return None
@@ -1122,7 +1143,7 @@ def get_workflow_by_id(
             )
             return db_workflow
         except ComponentRehydrationError:
-            # Broken is not "not found": let the app-level handler surface it.
+            # Broken is not "not found": propagate so the caller can refuse loudly.
             raise
         except Exception:
             logger.exception(f"Error getting workflow {workflow_id} from database")
@@ -1170,7 +1191,7 @@ async def get_workflow_by_id_async(
             )
             return db_workflow
         except ComponentRehydrationError:
-            # Broken is not "not found": let the app-level handler surface it.
+            # Broken is not "not found": propagate so the caller can refuse loudly.
             raise
         except Exception:
             logger.exception(f"Error getting workflow {workflow_id} from database")
@@ -2007,11 +2028,15 @@ async def resolve_agent(
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
     factory_input: Optional[str] = None,
+    strict: bool = True,
 ) -> Union[Agent, RemoteAgent, AgentProtocol]:
     """Resolve an agent by ID with proper error handling for both factory and non-factory paths.
 
     For factory agents: builds RequestContext, invokes factory, handles factory-specific errors.
-    For non-factory agents: resolves via deep_copy or DB lookup.
+    For non-factory agents: resolves via deep_copy or DB lookup. With strict=True
+    (the default), a db-backed agent whose references cannot be rehydrated is
+    refused with a 422; pass strict=False for callers that only need a handle
+    on the component (cancel, history reads).
 
     Raises HTTPException on all error paths.
     """
@@ -2036,9 +2061,11 @@ async def resolve_agent(
             raise HTTPException(status_code=500, detail=f"Error in agent factory: {e}")
     else:
         try:
-            agent = get_agent_by_id(agent_id, agents, db, registry, version=version, create_fresh=True)
-        except ComponentRehydrationError:
-            raise
+            agent = get_agent_by_id(agent_id, agents, db, registry, version=version, create_fresh=True, strict=strict)
+        except ComponentRehydrationError as e:
+            # Broken is not "not found": answer with the error's own status so
+            # the refusal survives on caller-supplied apps with no handlers.
+            raise HTTPException(status_code=e.status_code, detail=str(e))
         except Exception as e:
             logger.error(f"Error resolving agent '{agent_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -2058,8 +2085,13 @@ async def resolve_team(
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
     factory_input: Optional[str] = None,
+    strict: bool = True,
 ) -> Union[Team, RemoteTeam]:
-    """Resolve a team by ID with proper error handling for both factory and non-factory paths."""
+    """Resolve a team by ID with proper error handling for both factory and non-factory paths.
+
+    Raises HTTPException on all error paths; an unrehydratable db-backed team
+    is refused with a 422 unless strict=False.
+    """
     is_factory = teams and any(isinstance(t, TeamFactory) and t.id == team_id for t in teams)
     if is_factory:
         if request is None:
@@ -2081,9 +2113,13 @@ async def resolve_team(
             raise HTTPException(status_code=500, detail=f"Error in team factory: {e}")
     else:
         try:
-            team = get_team_by_id(team_id, teams, db=db, version=version, registry=registry, create_fresh=True)
-        except ComponentRehydrationError:
-            raise
+            team = get_team_by_id(
+                team_id, teams, db=db, version=version, registry=registry, create_fresh=True, strict=strict
+            )
+        except ComponentRehydrationError as e:
+            # Broken is not "not found": answer with the error's own status so
+            # the refusal survives on caller-supplied apps with no handlers.
+            raise HTTPException(status_code=e.status_code, detail=str(e))
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -2103,8 +2139,13 @@ async def resolve_workflow(
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
     factory_input: Optional[str] = None,
+    strict: bool = True,
 ) -> Union[Workflow, RemoteWorkflow]:
-    """Resolve a workflow by ID with proper error handling for both factory and non-factory paths."""
+    """Resolve a workflow by ID with proper error handling for both factory and non-factory paths.
+
+    Raises HTTPException on all error paths; an unrehydratable db-backed
+    workflow is refused with a 422 unless strict=False.
+    """
     is_factory = workflows and any(isinstance(w, WorkflowFactory) and w.id == workflow_id for w in workflows)
     if is_factory:
         if request is None:
@@ -2127,10 +2168,12 @@ async def resolve_workflow(
     else:
         try:
             workflow = get_workflow_by_id(
-                workflow_id, workflows, db=db, version=version, registry=registry, create_fresh=True
+                workflow_id, workflows, db=db, version=version, registry=registry, create_fresh=True, strict=strict
             )
-        except ComponentRehydrationError:
-            raise
+        except ComponentRehydrationError as e:
+            # Broken is not "not found": answer with the error's own status so
+            # the refusal survives on caller-supplied apps with no handlers.
+            raise HTTPException(status_code=e.status_code, detail=str(e))
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
