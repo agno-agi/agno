@@ -126,7 +126,7 @@ class ContextCompactionManager:
         """Compact messages if threshold exceeded.
 
         Returns:
-            CompactionResult with view (messages to send) and summary (if compaction occurred).
+            CompactionResult with compacted_messages and summary (if compaction occurred).
         """
         # 1. Check if compaction needed
         if self.model is None or not self.should_compact(messages):
