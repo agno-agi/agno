@@ -6040,7 +6040,8 @@ def flush_in_flight_messages_on_error(
     and were deleted rather than left implying coverage. A background run
     that errors at the WRAPPER level (outside the inner run's own error
     handling) persists without its in-flight conversation. Threading the
-    real flush out to the wrappers is the item-33 test target.
+    real flush out to the wrappers - with a wrapper-level-error test -
+    is a known follow-up.
     """
     if run_messages is None:
         return
