@@ -332,7 +332,6 @@ def _determine_tools_for_model(
     _function_names = []
     _functions: List[Union[Function, dict]] = []
     _toolkit_instruction_keys: Set[ToolkitKey] = set()
-    _live_toolkit_keys = {_toolkit_key(tool) for tool in _tools if isinstance(tool, Toolkit)}
     _source_toolkit_last_index, _source_toolkit_members = _group_source_toolkits(_tools)
     team._tool_instructions = []
 
@@ -350,7 +349,6 @@ def _determine_tools_for_model(
         return _emits_toolkit_instructions(
             source_toolkit,
             index,
-            live_toolkit_keys=_live_toolkit_keys,
             last_index=_source_toolkit_last_index,
             members=_source_toolkit_members,
         )

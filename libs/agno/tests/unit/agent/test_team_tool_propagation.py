@@ -273,3 +273,20 @@ def test_rehydrated_toolkit_guidance_survives_deep_copy():
     parse_tools(agent=copied, tools=copied.tools, model=_mock_model())
 
     assert copied._tool_instructions == ["first-rule", "second-rule", "toolkit-level-rule"]
+
+
+def test_cloned_toolkit_and_its_rehydrated_members_are_one_toolkit():
+    """deep_copy clones the Toolkit list entry while the rehydrated members keep
+    the live one. Grouping by object identity would see two toolkits here and
+    emit the guidance twice."""
+    toolkit = _guided_toolkit()
+    registry = Registry(tools=[toolkit])
+    mixed = [toolkit] + _rehydrate(registry, toolkit)
+
+    copied = Agent(tools=mixed).deep_copy()
+    # The premise: the copy really did split the object.
+    assert copied.tools[0] is not toolkit
+    assert copied.tools[1].source_toolkit is toolkit
+
+    parse_tools(agent=copied, tools=copied.tools, model=_mock_model())
+    assert copied._tool_instructions == ["first-rule", "second-rule", "toolkit-level-rule"]

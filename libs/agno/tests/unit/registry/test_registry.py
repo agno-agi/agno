@@ -758,6 +758,20 @@ class TestRehydrateFunctionsBatch:
         assert all(f.entrypoint is self._read for f in rehydrated)
         assert sum(builds) == 2  # the priming build plus one shared rebuild
 
+    def test_directly_registered_function_does_not_look_stale(self):
+        """A Function registered as a registry tool in its own right owns the
+        flat slot legitimately. A toolkit member sharing its name must not read
+        as a rebuilt-toolkit cache entry and force a rebuild on every batch."""
+        reg, builds = self._counting_registry()
+        bare = Function(name="read_file", entrypoint=self._read)
+        reg.tools.append(bare)
+        _ = reg._entrypoint_lookup  # prime the cache
+
+        rehydrated = reg.rehydrate_functions([{"name": "read_file", "parameters": {}} for _ in range(3)])
+
+        assert all(f.entrypoint is self._read for f in rehydrated)
+        assert sum(builds) == 1  # the priming build only
+
     def test_batch_resolves_mixed_dicts(self):
         """Qualified, legacy-unqualified, and unknown dicts resolve in one batch."""
         reg, _ = self._counting_registry()

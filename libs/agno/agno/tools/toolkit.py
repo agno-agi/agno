@@ -44,27 +44,23 @@ def _group_source_toolkits(tools: Sequence[Any]) -> Tuple[Dict[ToolkitKey, int],
 def _emits_toolkit_instructions(
     source_toolkit: "Toolkit",
     index: int,
-    live_toolkit_keys: Set[ToolkitKey],
     last_index: Dict[ToolkitKey, int],
     members: Dict[ToolkitKey, Set[str]],
 ) -> bool:
     """Whether the bare Function at ``index`` should emit its toolkit's guidance.
 
     Guidance belongs after all of the toolkit's member guidance, so only the
-    last member emits it. Two cases suppress it entirely:
+    last member emits it, and only when the component holds every function the
+    toolkit exposes. Persistence records one dict per function, so a component
+    built from a whole toolkit and one built from a single member are
+    indistinguishable on reload; resolving that ambiguity as "whole toolkit"
+    would hand the model guidance naming tools it was not given.
 
-    - A live Toolkit carrying the same guidance is in the same tools list. It
-      emits at its own index, after its own members, which is where the
-      guidance would have gone had nothing been flattened.
-    - The component holds only some of the toolkit's functions. Persistence
-      records one dict per function, so a component built from a whole toolkit
-      and one built from a single member are indistinguishable on reload;
-      resolving that ambiguity as "whole toolkit" would hand the model guidance
-      naming tools it was not given.
+    A live Toolkit for the same guidance elsewhere in the list needs no special
+    case: whichever representation reaches its emission point first wins, and
+    :func:`_toolkit_key` makes the caller's dedup collapse the two.
     """
     key = _toolkit_key(source_toolkit)
-    if key in live_toolkit_keys:
-        return False
     if last_index.get(key) != index:
         return False
     exposed = set(source_toolkit.get_functions())

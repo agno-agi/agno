@@ -360,7 +360,6 @@ def parse_tools(
     _function_names: List[str] = []
     _functions: List[Union[Function, dict]] = []
     _toolkit_instruction_keys: Set[ToolkitKey] = set()
-    _live_toolkit_keys = {_toolkit_key(tool) for tool in tools if isinstance(tool, Toolkit)}
     _source_toolkit_last_index, _source_toolkit_members = _group_source_toolkits(tools)
     agent._tool_instructions = []
 
@@ -378,7 +377,6 @@ def parse_tools(
         return _emits_toolkit_instructions(
             source_toolkit,
             index,
-            live_toolkit_keys=_live_toolkit_keys,
             last_index=_source_toolkit_last_index,
             members=_source_toolkit_members,
         )
