@@ -308,6 +308,34 @@ def test_two_toolkits_are_not_collapsed_by_the_grouping_key():
     assert agent._tool_instructions == ["rule"]
 
 
+def test_toolkits_sharing_guidance_text_are_still_grouped_apart():
+    """Two toolkits can carry the same guidance and still be different
+    toolkits. Pooling their members would let one toolkit's functions satisfy
+    the other's coverage check, so a fully-loaded toolkit loses its guidance to
+    a partially-loaded neighbour."""
+
+    def a_one() -> str:
+        return "a1"
+
+    def a_two() -> str:
+        return "a2"
+
+    def b_one() -> str:
+        return "b1"
+
+    alpha = Toolkit(name="alpha", tools=[a_one, a_two], instructions="shared-rule", add_instructions=True)
+    beta = Toolkit(name="beta", tools=[b_one], instructions="shared-rule", add_instructions=True)
+    registry = Registry(tools=[alpha, beta])
+
+    # beta is complete, alpha is a subset, and alpha's member comes last.
+    tools = _rehydrate(registry, beta) + _rehydrate(registry, alpha, only={"a_one"})
+    agent = Agent(tools=tools)
+    parse_tools(agent=agent, tools=agent.tools, model=_mock_model())
+
+    # beta earns its guidance; alpha does not, and cannot borrow beta's members.
+    assert agent._tool_instructions == ["shared-rule"]
+
+
 def test_async_only_members_are_counted_when_checking_coverage():
     """In async mode a live Toolkit contributes its async variants too, and the
     registry cannot rehydrate those. The component is genuinely short a tool, so
