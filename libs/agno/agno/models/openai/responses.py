@@ -1,7 +1,7 @@
 import asyncio
 import time
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple, Type, Union
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Set, Tuple, Type, Union
 
 import httpx
 from pydantic import BaseModel
@@ -633,6 +633,27 @@ class OpenAIResponses(Model):
 
         fc_id_to_call_id = self._build_fc_id_to_call_id_map(messages)
 
+        # Whether this request chains from a previous response (reasoning models). In that
+        # mode the API holds the conversation state server-side, so function_call_output
+        # items are intentionally emitted without their matching function_call items.
+        is_chaining = self._using_reasoning_model() and previous_response_id is not None
+
+        # Collect the call_ids that will be emitted as function_call items in this request.
+        # Used to detect orphaned function_call_output items (tool results whose matching
+        # function_call was truncated out of the history), which the Responses API rejects
+        # with "No tool call found for function call output with call_id ...".
+        emitted_call_ids: Set[str] = set()
+        if not is_chaining:
+            for msg in messages_to_format:
+                if msg.role != "assistant":
+                    continue
+                tool_calls = getattr(msg, "tool_calls", None)
+                if tool_calls:
+                    for tc in tool_calls:
+                        call_id = tc.get("call_id") or tc.get("id")
+                        if isinstance(call_id, str):
+                            emitted_call_ids.add(call_id)
+
         for message in messages_to_format:
             if message.role in ["user", "system"]:
                 message_dict: Dict[str, Any] = {
@@ -679,6 +700,19 @@ class OpenAIResponses(Model):
                         call_id_value = fc_id_to_call_id[function_call_id]
                     else:
                         call_id_value = function_call_id
+
+                    # Drop orphaned function_call_output items. When history truncation cuts
+                    # out the assistant's function_call but keeps its tool result, emitting
+                    # the output alone makes the Responses API reject the whole request.
+                    # The previous_response_id path is exempt: the API holds that state
+                    # server-side and expects outputs without their calls.
+                    if not is_chaining and call_id_value not in emitted_call_ids:
+                        log_warning(
+                            f"Skipping orphaned function_call_output with call_id {call_id_value}: "
+                            "no matching function_call in this request"
+                        )
+                        continue
+
                     formatted_messages.append(
                         {"type": "function_call_output", "call_id": call_id_value, "output": tool_result}
                     )
