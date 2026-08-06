@@ -90,6 +90,7 @@ class AgentResponse(BaseModel):
             # Sessions defaults
             "add_history_to_context": False,
             "num_history_runs": 3,
+            "add_cancelled_runs_to_context": False,
             "enable_session_summaries": False,
             "search_past_sessions": False,
             "cache_session": False,
@@ -185,6 +186,7 @@ class AgentResponse(BaseModel):
             "add_history_to_context": agent.add_history_to_context,
             "enable_session_summaries": agent.enable_session_summaries,
             "num_history_runs": agent.num_history_runs,
+            "add_cancelled_runs_to_context": agent.add_cancelled_runs_to_context,
             "search_past_sessions": agent.search_past_sessions,
             "num_past_sessions_to_search": agent.num_past_sessions_to_search,
             "num_past_session_runs_in_search": agent.num_past_session_runs_in_search,
