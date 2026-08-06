@@ -109,6 +109,50 @@ class Registry:
                 register(tool.__name__, tool)
         return lookup
 
+    def _live_toolkit_for(
+        self, source: EntrypointSource, name: str, toolkit_name: Optional[str] = None
+    ) -> Tuple[Optional[Toolkit], bool, int]:
+        """Locate the live Toolkit that currently exposes ``source`` under ``name``.
+
+        Returns ``(toolkit, stale, exposures)``.
+
+        ``stale`` marks a resolved source that no Toolkit owns any more while a
+        Toolkit does expose ``name`` with a different Function object. That is
+        what a toolkit which rebuilt its functions dict looks like: MCP toolkits
+        replace every Function on connect, and the cache entry written before
+        the rebuild still *hits*, so a plain miss check cannot catch it.
+
+        ``exposures`` counts the registry toolkits exposing ``name`` at all.
+        More than one means the flat slot's winner is arbitrary, so the
+        resolution must not be written back into a config.
+
+        ``toolkit_name`` restricts the search to same-named toolkits, for
+        sources resolved through a toolkit-qualified key.
+        """
+        if not isinstance(source, Function):
+            return None, False, 0
+
+        owner: Optional[Toolkit] = None
+        exposures = 0
+        registered_directly = False
+        for tool in self.tools:
+            if tool is source:
+                # Registered directly as a registry tool, so no toolkit owns it
+                # and a same-named toolkit member does not make it stale.
+                registered_directly = True
+                continue
+            if not isinstance(tool, Toolkit):
+                continue
+            if toolkit_name is not None and tool.name != toolkit_name:
+                continue
+            current = tool.get_functions().get(name)
+            if current is None:
+                continue
+            exposures += 1
+            if current is source:
+                owner = tool
+        return owner, owner is None and exposures > 0 and not registered_directly, exposures
+
     def rehydrate_function(self, func_dict: Dict[str, Any]) -> Function:
         """Reconstruct a Function from dict, reattaching its entrypoint.
 
@@ -131,22 +175,6 @@ class Registry:
         rebuild_state = {"rebuilt": False}
         return [self._rehydrate_function(func_dict, rebuild_state) for func_dict in func_dicts]
 
-    def _toolkit_owning(self, source: Function) -> Optional[Toolkit]:
-        """The live Toolkit holding ``source``, matched by object identity.
-
-        Identity is what makes this work for a config saved before tool names
-        were toolkit-qualified, and for one whose toolkit was renamed: both
-        resolve through the flat name and carry no toolkit to match on. Slots
-        are last-write-wins, so the scan runs in reverse to return the Toolkit
-        that supplied the resolved source.
-        """
-        for tool in reversed(self.tools):
-            if not isinstance(tool, Toolkit):
-                continue
-            if any(tool_func is source for tool_func in tool.get_functions().values()):
-                return tool
-        return None
-
     def _rehydrate_function(self, func_dict: Dict[str, Any], rebuild_state: Dict[str, bool]) -> Function:
         func = Function.from_dict(func_dict)
         toolkit_name = func_dict.get("toolkit")
@@ -159,9 +187,12 @@ class Registry:
         def lookup(key: EntrypointKey) -> Optional[EntrypointSource]:
             # Toolkits can gain functions after the lookup is first built -- MCP
             # toolkits only register their functions once connected -- so a miss
-            # may just mean the cache is stale. Rebuild once and retry.
+            # may just mean the cache is stale. A hit goes stale the same way: a
+            # toolkit that rebuilds its functions dict leaves the cache holding
+            # Function objects it no longer owns, and that entry still resolves.
+            # Rebuild once for either and retry.
             found = self._entrypoint_lookup.get(key)
-            if found is None and not rebuild_state["rebuilt"]:
+            if not rebuild_state["rebuilt"] and (found is None or self._live_toolkit_for(found, func.name)[1]):
                 self.__dict__.pop("_entrypoint_lookup", None)
                 rebuild_state["rebuilt"] = True
                 found = self._entrypoint_lookup.get(key)
@@ -203,13 +234,22 @@ class Registry:
             # has left the registry binds the flat slot, which may belong to a
             # different toolkit, and that toolkit's guidance is not this
             # function's to carry.
-            source_toolkit = self._toolkit_owning(source) if resolved_as_recorded else None
+            source_toolkit, _, exposures = (
+                self._live_toolkit_for(source, func.name) if resolved_as_recorded else (None, False, 0)
+            )
             if source_toolkit is not None:
                 # Keep the exact live Toolkit available to instruction
                 # collection. Every member points to the same object, so the
                 # collector can add toolkit-level guidance once without
                 # copying it into persisted Function dictionaries.
                 func.source_toolkit = source_toolkit
+                if func.owning_toolkit is None and exposures == 1:
+                    # An unqualified config resolved unambiguously, so stamp the
+                    # attribution: a load -> save round trip then migrates it to
+                    # the qualified form. When several toolkits expose the name
+                    # the flat slot's winner is arbitrary and must not be made
+                    # permanent.
+                    func.owning_toolkit = source_toolkit.name
         else:
             func.entrypoint = source
         if func.entrypoint is None:

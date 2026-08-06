@@ -9,7 +9,8 @@ Tests cover:
 """
 
 import os
-from typing import Optional
+from functools import cached_property
+from typing import List, Optional
 from unittest.mock import MagicMock
 
 import pytest
@@ -656,6 +657,48 @@ class TestToolkitQualifiedRehydration:
         assert rehydrated.entrypoint is search_function
         assert rehydrated.instructions == source.instructions
         assert rehydrated.source_toolkit is toolkit
+        # Re-stamped, so the next save writes the "toolkit" key and the config
+        # stops depending on the flat slot.
+        assert rehydrated.owning_toolkit == "agno_docs"
+
+    def test_legacy_dict_with_an_ambiguous_name_is_not_restamped(self):
+        """Two toolkits exposing the name make the flat slot's winner arbitrary,
+        so the resolution must not be written back into the config."""
+        reg, _, agent_files = self._registry_with_shared_names()
+
+        rehydrated = reg.rehydrate_function({"name": "read_file", "parameters": {}})
+
+        # The bound source is still identified exactly, so its guidance applies.
+        assert rehydrated.source_toolkit is agent_files
+        assert rehydrated.owning_toolkit is None
+
+    def test_rebuilt_toolkit_functions_are_not_served_from_the_stale_cache(self):
+        """A toolkit that replaces its Function objects -- what MCPTools does on
+        every connect -- leaves cache entries that still hit. Rehydration must
+        detect that and rebuild rather than serve the old entrypoint."""
+
+        toolkit = Toolkit(name="agno_docs", instructions="Toolkit guidance.", add_instructions=True)
+        toolkit.functions["search_docs"] = Function(
+            name="search_docs", entrypoint=search_function, instructions="Stale guidance."
+        )
+        reg = Registry(tools=[toolkit])
+
+        func_dict = toolkit.functions["search_docs"].to_dict()
+        func_dict["toolkit"] = toolkit.name
+        reg.rehydrate_function(func_dict)  # warms the cached lookup
+
+        def rebuilt_entrypoint() -> str:
+            return "rebuilt"
+
+        toolkit.functions["search_docs"] = Function(
+            name="search_docs", entrypoint=rebuilt_entrypoint, instructions="Fresh guidance."
+        )
+
+        rehydrated = reg.rehydrate_function(func_dict)
+
+        assert rehydrated.entrypoint is rebuilt_entrypoint
+        assert rehydrated.instructions == "Fresh guidance."
+        assert rehydrated.source_toolkit is toolkit
 
     def test_same_named_toolkits_warn_once_per_collision(self, monkeypatch):
         """Two same-named toolkits sharing a member name collide on both the
@@ -685,19 +728,23 @@ class TestRehydrateFunctionsBatch:
         return f"read:{path}"
 
     def _counting_registry(self):
-        """Registry whose lookup builds are observable via tools iterations."""
-        builds = []
+        """Registry that records every build of the cached entrypoint lookup.
 
-        class CountingList(list):
-            def __iter__(self):
+        Counts the cached_property's own evaluations rather than iterations of
+        ``reg.tools``: rehydration walks ``tools`` for other reasons too, so an
+        iteration count would not isolate rebuilds.
+        """
+        builds: List[int] = []
+
+        class CountingRegistry(Registry):
+            @cached_property
+            def _entrypoint_lookup(self):
                 builds.append(1)
-                return super().__iter__()
+                return Registry._entrypoint_lookup.func(self)
 
         kit = Toolkit(name="agent_files")
         kit.functions["read_file"] = Function(name="read_file", entrypoint=self._read)
-        reg = Registry()
-        reg.tools = CountingList([kit])
-        return reg, builds
+        return CountingRegistry(tools=[kit]), builds
 
     def test_batch_shares_single_rebuild(self):
         """N dicts whose toolkit is missing from the registry trigger at most

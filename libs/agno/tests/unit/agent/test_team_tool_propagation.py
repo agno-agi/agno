@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 
 from agno.agent._tools import parse_tools
 from agno.agent.agent import Agent
+from agno.registry import Registry
 from agno.tools import tool
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
@@ -190,3 +191,85 @@ def test_toolkit_function_without_instructions_does_not_append_none():
     parse_tools(agent=agent, tools=agent.tools, model=_mock_model())
 
     assert agent._tool_instructions == []
+
+
+# -- Rehydrated toolkit members ----------------------------------------------
+
+
+def _guided_toolkit() -> Toolkit:
+    def first_tool() -> str:
+        return "first"
+
+    def second_tool() -> str:
+        return "second"
+
+    toolkit = Toolkit(
+        name="my_toolkit",
+        tools=[first_tool, second_tool],
+        instructions="toolkit-level-rule",
+        add_instructions=True,
+    )
+    toolkit.functions["first_tool"].instructions = "first-rule"
+    toolkit.functions["second_tool"].instructions = "second-rule"
+    return toolkit
+
+
+def _rehydrate(registry: Registry, toolkit: Toolkit, only: Any = None) -> Any:
+    stored = []
+    for name, function in toolkit.get_functions().items():
+        if only is not None and name not in only:
+            continue
+        function_dict = function.to_dict()
+        function_dict["toolkit"] = toolkit.name
+        stored.append(function_dict)
+    return registry.rehydrate_functions(stored)
+
+
+def test_rehydrated_toolkit_instructions_reach_agent_once():
+    toolkit = _guided_toolkit()
+    registry = Registry(tools=[toolkit])
+
+    agent = Agent(tools=_rehydrate(registry, toolkit))
+    parse_tools(agent=agent, tools=agent.tools, model=_mock_model())
+
+    assert agent._tool_instructions == ["first-rule", "second-rule", "toolkit-level-rule"]
+
+
+def test_rehydrated_subset_does_not_get_the_whole_toolkits_guidance():
+    """A component that persisted one member of a toolkit must not be handed
+    guidance naming the members it was not given."""
+    toolkit = _guided_toolkit()
+    registry = Registry(tools=[toolkit])
+
+    agent = Agent(tools=_rehydrate(registry, toolkit, only={"first_tool"}))
+    parse_tools(agent=agent, tools=agent.tools, model=_mock_model())
+
+    assert agent._tool_instructions == ["first-rule"]
+
+
+def test_live_toolkit_beside_rehydrated_members_emits_guidance_once_and_last():
+    """A tools list holding both representations of one toolkit must read the
+    same as the live Toolkit alone -- before and after deep_copy, which clones
+    the Toolkit entry while the Functions keep the live one."""
+    toolkit = _guided_toolkit()
+    registry = Registry(tools=[toolkit])
+    mixed = _rehydrate(registry, toolkit, only={"first_tool"}) + [toolkit]
+
+    agent = Agent(tools=mixed)
+    parse_tools(agent=agent, tools=agent.tools, model=_mock_model())
+    assert agent._tool_instructions == ["first-rule", "second-rule", "toolkit-level-rule"]
+
+    copied = Agent(tools=mixed).deep_copy()
+    parse_tools(agent=copied, tools=copied.tools, model=_mock_model())
+    assert copied._tool_instructions == ["first-rule", "second-rule", "toolkit-level-rule"]
+
+
+def test_rehydrated_toolkit_guidance_survives_deep_copy():
+    toolkit = _guided_toolkit()
+    registry = Registry(tools=[toolkit])
+
+    copied = Agent(tools=_rehydrate(registry, toolkit)).deep_copy()
+    assert all(tool.source_toolkit is toolkit for tool in copied.tools)
+    parse_tools(agent=copied, tools=copied.tools, model=_mock_model())
+
+    assert copied._tool_instructions == ["first-rule", "second-rule", "toolkit-level-rule"]

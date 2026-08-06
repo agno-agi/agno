@@ -250,13 +250,24 @@ class Function(BaseModel):
             approval_type=data.get("approval_type"),
         )
 
-    def __deepcopy__(self, memo: Dict[int, Any]) -> "Function":
-        """Deep-copy runtime state while retaining the live source Toolkit."""
+    def __deepcopy__(self, memo: Optional[Dict[int, Any]] = None) -> "Function":
+        """Deep-copy runtime state while retaining the live source Toolkit.
+
+        ``memo`` is optional because ``BaseModel.model_copy(deep=True)`` calls
+        ``__deepcopy__()`` with no argument.
+        """
+        if memo is None:
+            memo = {}
         if self.source_toolkit is not None:
             # AgentOS deep-copies each Function independently for request
-            # isolation. Sharing the registry Toolkit preserves its connections,
-            # current instructions, and one stable identity for deduplication.
-            memo[id(self.source_toolkit)] = self.source_toolkit
+            # isolation. Sharing the registry Toolkit keeps its connections and
+            # current instructions, and keeps the entrypoint bound to the live
+            # toolkit rather than to a detached clone of it.
+            #
+            # setdefault, not assignment: the memo belongs to the in-progress
+            # copy. Overwriting an entry it already made would leave one
+            # original with two stand-ins in the same object graph.
+            memo.setdefault(id(self.source_toolkit), self.source_toolkit)
         return super().__deepcopy__(memo)
 
     def model_copy(self, *, deep: bool = False) -> "Function":

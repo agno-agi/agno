@@ -277,6 +277,67 @@ def test_rehydrated_toolkit_instructions_reach_team_once():
     assert team._tool_instructions == ["first-function-rule", "second-function-rule", "toolkit-level-rule"]
 
 
+def test_rehydrated_subset_does_not_get_the_whole_toolkits_guidance_team():
+    """A team that persisted one member of a toolkit must not be handed guidance
+    naming the members it was not given."""
+
+    def first_tool() -> str:
+        return "first"
+
+    def second_tool() -> str:
+        return "second"
+
+    toolkit = Toolkit(
+        name="my_toolkit",
+        tools=[first_tool, second_tool],
+        instructions="toolkit-level-rule",
+        add_instructions=True,
+    )
+    toolkit.functions["first_tool"].instructions = "first-function-rule"
+    registry = Registry(tools=[toolkit])
+    stored = toolkit.get_functions()["first_tool"].to_dict()
+    stored["toolkit"] = toolkit.name
+
+    team = Team(name="t", members=[], tools=registry.rehydrate_functions([stored]))
+    _resolve(team)
+
+    assert team._tool_instructions == ["first-function-rule"]
+
+
+def test_live_toolkit_beside_rehydrated_members_emits_guidance_once_team():
+    """Both representations of one toolkit in a team's tools list must read the
+    same as the live Toolkit alone, including after deep_copy."""
+
+    def first_tool() -> str:
+        return "first"
+
+    def second_tool() -> str:
+        return "second"
+
+    toolkit = Toolkit(
+        name="my_toolkit",
+        tools=[first_tool, second_tool],
+        instructions="toolkit-level-rule",
+        add_instructions=True,
+    )
+    toolkit.functions["first_tool"].instructions = "first-function-rule"
+    toolkit.functions["second_tool"].instructions = "second-function-rule"
+    registry = Registry(tools=[toolkit])
+    stored = toolkit.get_functions()["first_tool"].to_dict()
+    stored["toolkit"] = toolkit.name
+    mixed = registry.rehydrate_functions([stored]) + [toolkit]
+
+    expected = ["first-function-rule", "second-function-rule", "toolkit-level-rule"]
+
+    team = Team(name="t", members=[], tools=mixed)
+    _resolve(team)
+    assert team._tool_instructions == expected
+
+    copied = Team(name="t", members=[], tools=mixed).deep_copy()
+    _resolve(copied)
+    assert copied._tool_instructions == expected
+
+
 def test_toolkit_per_function_add_instructions_false_is_respected_team():
     class MyToolkit(Toolkit):
         def __init__(self):

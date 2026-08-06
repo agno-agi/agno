@@ -1,12 +1,81 @@
 from collections import OrderedDict
 from inspect import iscoroutinefunction
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union, cast, get_type_hints
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union, cast, get_type_hints
 
 from agno.exceptions import PathSecurityError
 from agno.tools.function import Function
 from agno.utils.log import log_debug, log_warning
 from agno.utils.path_safety import safe_join_relative_path
+
+
+# Groups a Toolkit by the guidance it emits rather than by object identity.
+# Agent.deep_copy / Team.deep_copy clone a Toolkit list entry while the
+# rehydrated Functions that came from it keep pointing at the live registry
+# Toolkit, so identity splits one logical toolkit into two. Two toolkits that
+# agree on all three fields emit the same text, so collapsing them is correct.
+ToolkitKey = Tuple[str, Optional[str], bool]
+
+
+def _toolkit_key(toolkit: "Toolkit") -> ToolkitKey:
+    return (toolkit.name, toolkit.instructions, toolkit.add_instructions)
+
+
+def _group_source_toolkits(tools: Sequence[Any]) -> Tuple[Dict[ToolkitKey, int], Dict[ToolkitKey, Set[str]]]:
+    """Index the bare Functions that a live Toolkit was flattened into.
+
+    Returns the last index each toolkit's members occupy in ``tools`` and the
+    member names present, both keyed by :func:`_toolkit_key`.
+    """
+    last_index: Dict[ToolkitKey, int] = {}
+    members: Dict[ToolkitKey, Set[str]] = {}
+    for index, tool in enumerate(tools):
+        if not isinstance(tool, Function):
+            continue
+        source_toolkit = tool.source_toolkit
+        if not isinstance(source_toolkit, Toolkit):
+            continue
+        key = _toolkit_key(source_toolkit)
+        last_index[key] = index
+        members.setdefault(key, set()).add(tool.name)
+    return last_index, members
+
+
+def _emits_toolkit_instructions(
+    source_toolkit: "Toolkit",
+    index: int,
+    live_toolkit_keys: Set[ToolkitKey],
+    last_index: Dict[ToolkitKey, int],
+    members: Dict[ToolkitKey, Set[str]],
+) -> bool:
+    """Whether the bare Function at ``index`` should emit its toolkit's guidance.
+
+    Guidance belongs after all of the toolkit's member guidance, so only the
+    last member emits it. Two cases suppress it entirely:
+
+    - A live Toolkit carrying the same guidance is in the same tools list. It
+      emits at its own index, after its own members, which is where the
+      guidance would have gone had nothing been flattened.
+    - The component holds only some of the toolkit's functions. Persistence
+      records one dict per function, so a component built from a whole toolkit
+      and one built from a single member are indistinguishable on reload;
+      resolving that ambiguity as "whole toolkit" would hand the model guidance
+      naming tools it was not given.
+    """
+    key = _toolkit_key(source_toolkit)
+    if key in live_toolkit_keys:
+        return False
+    if last_index.get(key) != index:
+        return False
+    exposed = set(source_toolkit.get_functions())
+    present = members.get(key, set())
+    if not exposed <= present:
+        log_debug(
+            f"Toolkit '{source_toolkit.name}' instructions skipped: the component holds "
+            f"{len(present)} of its {len(exposed)} functions."
+        )
+        return False
+    return True
 
 
 class Toolkit:

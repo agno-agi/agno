@@ -548,6 +548,30 @@ class TestToolNameResolution:
 
 
 class TestToolkitInstructionPersistence:
+    def test_source_toolkit_survives_every_copy_path(self):
+        """The live Toolkit must survive both copy entry points, including
+        pydantic's own model_copy(deep=True), which calls __deepcopy__() with
+        no memo."""
+        from copy import deepcopy
+
+        from pydantic import BaseModel
+
+        def read_file(path: str) -> str:
+            return path
+
+        toolkit = Toolkit(name="agent_files", tools=[read_file])
+        function = toolkit.get_functions()["read_file"].model_copy()
+        function.source_toolkit = toolkit
+
+        assert deepcopy(function).source_toolkit is toolkit
+        assert function.model_copy(deep=True).source_toolkit is toolkit
+        assert BaseModel.model_copy(function, deep=True).source_toolkit is toolkit
+
+        # The pin must not overwrite a stand-in the in-progress copy already
+        # made: one original may not end up with two stand-ins.
+        copied_toolkit, copied_function = deepcopy([toolkit, function])
+        assert copied_function.source_toolkit is copied_toolkit
+
     def test_db_loaded_agent_includes_live_toolkit_guidance_once(self, db):
         creation_guidance = "CREATION_TOOLKIT_GUIDANCE"
         live_guidance = "LIVE_TOOLKIT_GUIDANCE"

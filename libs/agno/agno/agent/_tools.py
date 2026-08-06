@@ -11,6 +11,7 @@ from typing import (
     Iterator,
     List,
     Optional,
+    Set,
     Union,
     cast,
 )
@@ -28,6 +29,12 @@ from agno.run.messages import RunMessages
 from agno.session import AgentSession
 from agno.tools import Toolkit
 from agno.tools.function import Function
+from agno.tools.toolkit import (
+    ToolkitKey,
+    _emits_toolkit_instructions,
+    _group_source_toolkits,
+    _toolkit_key,
+)
 from agno.utils.agent import (
     collect_joint_audios,
     collect_joint_files,
@@ -352,23 +359,29 @@ def parse_tools(
 ) -> List[Union[Function, dict]]:
     _function_names: List[str] = []
     _functions: List[Union[Function, dict]] = []
-    _toolkit_instruction_sources: set[int] = set()
-    _source_toolkit_last_indices = {
-        id(tool.source_toolkit): index
-        for index, tool in enumerate(tools)
-        if isinstance(tool, Function) and isinstance(tool.source_toolkit, Toolkit)
-    }
+    _toolkit_instruction_keys: Set[ToolkitKey] = set()
+    _live_toolkit_keys = {_toolkit_key(tool) for tool in tools if isinstance(tool, Toolkit)}
+    _source_toolkit_last_index, _source_toolkit_members = _group_source_toolkits(tools)
     agent._tool_instructions = []
 
     def add_toolkit_instructions(toolkit: Toolkit) -> None:
-        source_id = id(toolkit)
-        if source_id in _toolkit_instruction_sources:
+        key = _toolkit_key(toolkit)
+        if key in _toolkit_instruction_keys:
             return
         if toolkit.add_instructions and toolkit.instructions is not None:
             if agent._tool_instructions is None:
                 agent._tool_instructions = []
             agent._tool_instructions.append(toolkit.instructions)
-            _toolkit_instruction_sources.add(source_id)
+            _toolkit_instruction_keys.add(key)
+
+    def emits_toolkit_instructions(source_toolkit: Toolkit, index: int) -> bool:
+        return _emits_toolkit_instructions(
+            source_toolkit,
+            index,
+            live_toolkit_keys=_live_toolkit_keys,
+            last_index=_source_toolkit_last_index,
+            members=_source_toolkit_members,
+        )
 
     # Get output_schema from run_context
     output_schema = run_context.output_schema if run_context else None
@@ -424,12 +437,12 @@ def parse_tools(
 
         elif isinstance(tool, Function):
             source_toolkit = tool.source_toolkit if isinstance(tool.source_toolkit, Toolkit) else None
-            is_last_source_toolkit_function = (
-                source_toolkit is not None and _source_toolkit_last_indices.get(id(source_toolkit)) == tool_index
+            emit_toolkit_instructions = source_toolkit is not None and emits_toolkit_instructions(
+                source_toolkit, tool_index
             )
             if tool.name in _function_names:
                 log_warning(f"Duplicate tool name '{tool.name}' already registered on agent; skipping the duplicate.")
-                if is_last_source_toolkit_function and source_toolkit is not None:
+                if emit_toolkit_instructions and source_toolkit is not None:
                     add_toolkit_instructions(source_toolkit)
                 continue
             _function_names.append(tool.name)
@@ -457,7 +470,7 @@ def parse_tools(
             # Toolkit is restored by Registry.rehydrate_function; add its
             # guidance after all its member Functions, matching live Toolkit
             # instruction order, and only once.
-            if is_last_source_toolkit_function and source_toolkit is not None:
+            if emit_toolkit_instructions and source_toolkit is not None:
                 add_toolkit_instructions(source_toolkit)
 
         elif callable(tool):
