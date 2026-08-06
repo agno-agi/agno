@@ -3219,13 +3219,18 @@ def _normalize_regenerate_params(
 
 def _maybe_append_input_message(run_response: RunOutput, new_input: Optional[str], agent: Agent) -> None:
     """If ``new_input`` is a non-empty string, append it as a new user-role message
-    to ``run_response.messages``.
+    to ``run_response.messages`` and update ``run_response.input.input_content``.
 
     Used by the unified /continue dispatch (ADR-003) when the caller wants to
     extend a persisted run with an additional turn — e.g. continuing a COMPLETED
     run with a follow-up question, or providing context after a mid-flight
     resume. Mutates ``run_response.messages`` in place; the appended message
     flows through ``get_continue_run_messages`` into the model loop.
+
+    Also updates ``run_response.input.input_content`` so downstream consumers
+    (followups, file save, UI display, eval/scoring) see the actual question
+    that triggered this run, not the original ancestor's input. Media fields
+    (images/videos/audios/files) are preserved if already present.
     """
     if not new_input:
         return
@@ -3234,6 +3239,12 @@ def _maybe_append_input_message(run_response: RunOutput, new_input: Optional[str
         run_response.messages = [new_message]
     else:
         run_response.messages.append(new_message)
+
+    # Update input.input_content to match the appended message
+    if run_response.input is None:
+        run_response.input = RunInput(input_content=new_input)
+    else:
+        run_response.input.input_content = new_input
 
 
 def _sync_requirements_with_tools(run_response: RunOutput, updated_tools: List[Any]) -> None:

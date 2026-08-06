@@ -6235,9 +6235,13 @@ def _maybe_append_input_message_team(
     new_input: Optional[str],
     team: "Team",
 ) -> None:
-    """Append a new user-role message to the team run's ``messages`` so the
-    model loop sees it. Used when the caller passes ``input=`` or
-    ``additional_instructions=`` to /continue.
+    """Append a new user-role message to the team run's ``messages`` and update
+    ``run_response.input.input_content`` so downstream consumers see the actual
+    question that triggered this run.
+
+    Used when the caller passes ``input=`` or ``additional_instructions=`` to
+    /continue. Media fields (images/videos/audios/files) are preserved if
+    already present on the input.
     """
     if not new_input:
         return
@@ -6246,6 +6250,12 @@ def _maybe_append_input_message_team(
         run_response.messages = [new_message]
     else:
         run_response.messages.append(new_message)
+
+    # Update input.input_content to match the appended message
+    if run_response.input is None:
+        run_response.input = TeamRunInput(input_content=new_input)
+    else:
+        run_response.input.input_content = new_input
 
 
 # ---------------------------------------------------------------------------
