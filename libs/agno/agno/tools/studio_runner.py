@@ -86,7 +86,7 @@ import asyncio
 import json
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
-from agno.exceptions import ComponentRehydrationError
+from agno.exceptions import ComponentPinError, ComponentRehydrationError
 from agno.run import RunContext
 from agno.run.utils import run_status_string, serialized_paused_requirements
 from agno.tools.toolkit import Toolkit
@@ -771,6 +771,7 @@ class StudioRunnerTools(Toolkit):
         component_id: str,
         config: Dict[str, Any],
         _seen: Optional[set] = None,
+        version: Optional[int] = None,
     ) -> None:
         """Refuse to rebuild a component whose config needs the absent registry.
 
@@ -803,15 +804,22 @@ class StudioRunnerTools(Toolkit):
             )
         from agno.db.base import ComponentType
 
+        pins: Dict[str, Optional[int]] = {}
+        for link in self._load_links_from_db(component_id, version=version):
+            child_id = link.get("child_component_id")
+            if child_id:
+                pins[child_id] = link.get("child_version")
         for ref_type, ref_id in _component_references(component_type, config):
-            ref_config = self._load_config_from_db(ref_id, component_type=ComponentType(ref_type))
+            ref_config = self._load_config_from_db(
+                ref_id, version=pins.get(ref_id), component_type=ComponentType(ref_type)
+            )
             if ref_config is None:
                 raise ComponentNeedsRegistryError(
                     f"{component_type.capitalize()} '{component_id}' references {ref_type} '{ref_id}', "
                     "which is not stored in the database (a code-defined component); "
                     "construct StudioRunnerTools with the registry to run it."
                 )
-            self._require_registry_for(ref_type, ref_id, ref_config, _seen)
+            self._require_registry_for(ref_type, ref_id, ref_config, _seen, version=pins.get(ref_id))
 
     def _dispatch_refusal(
         self,
@@ -820,16 +828,20 @@ class StudioRunnerTools(Toolkit):
         component_type: str,
         component_id: str,
         rebuild_leniently: Callable[[], Any],
+        version: Optional[int] = None,
     ) -> Exception:
         """The refusal to raise when strict rehydration rejects a dispatch.
 
         The dispatch guards name both the component the caller asked for and
         the nested piece that failed, so they inspect a lenient rebuild first.
         A loss deeper than the guards see falls through to the rehydration
-        error, which names the component that raised.
+        error, which names the component that raised. A pin failure already
+        names the pinned version and the remedy, which no guard improves on.
         """
+        if isinstance(error, ComponentPinError):
+            return ComponentNeedsRegistryError(str(error))
         try:
-            self._require_dispatchable(rebuild_leniently(), config, component_type, component_id)
+            self._require_dispatchable(rebuild_leniently(), config, component_type, component_id, version=version)
         except StudioRunnerError as refusal:
             return refusal
         except Exception:
@@ -837,7 +849,12 @@ class StudioRunnerTools(Toolkit):
         return ComponentNeedsRegistryError(str(error))
 
     def _require_dispatchable(
-        self, component: Any, config: Dict[str, Any], component_type: str, component_id: str
+        self,
+        component: Any,
+        config: Dict[str, Any],
+        component_type: str,
+        component_id: str,
+        version: Optional[int] = None,
     ) -> None:
         """Every dispatch guard for the component type, in refusal-priority order."""
         self._require_inspectable_depth(component, component_type, component_id)
@@ -846,7 +863,7 @@ class StudioRunnerTools(Toolkit):
         self._require_faithful_rebuild(component, config, component_type, component_id)
         if component_type in ("team", "workflow"):
             self._require_faithful_registry_copies(component, component_type, component_id)
-            self._require_faithful_references(component, config, component_type, component_id)
+            self._require_faithful_references(component, config, component_type, component_id, version=version)
 
     def _require_faithful_rebuild(
         self, component: Any, config: Dict[str, Any], component_type: str, component_id: str
@@ -1001,7 +1018,12 @@ class StudioRunnerTools(Toolkit):
         return found
 
     def _require_faithful_references(
-        self, component: Any, config: Dict[str, Any], component_type: str, component_id: str
+        self,
+        component: Any,
+        config: Dict[str, Any],
+        component_type: str,
+        component_id: str,
+        version: Optional[int] = None,
     ) -> None:
         """Check each referenced member or step executor against its OWN config.
 
@@ -1011,25 +1033,40 @@ class StudioRunnerTools(Toolkit):
         components' own configs, so every branch of that check is silent for a
         workflow. Without this, an executor that lost its output_schema to an
         incomplete registry dispatches and answers in prose, while the same
-        component dispatched directly is refused."""
+        component dispatched directly is refused. ``version`` is the parent's
+        resolved config version; its links pin the child versions the members
+        were rebuilt from, so each child is judged against that config."""
         if self.db is None:
             return
-        self._check_references(component, config, component_type, component_id, set())
+        self._check_references(component, config, component_type, component_id, set(), version=version)
 
     def _check_references(
-        self, component: Any, config: Dict[str, Any], component_type: str, component_id: str, seen: set
+        self,
+        component: Any,
+        config: Dict[str, Any],
+        component_type: str,
+        component_id: str,
+        seen: set,
+        version: Optional[int] = None,
     ) -> None:
         """Check this component's references, then theirs, down to the leaves.
 
         A reference's own config names references of its own, so stopping after
         one hop leaves an outer team dispatchable while its inner team's member
-        lost the schema it declared."""
+        lost the schema it declared. Each child is compared against the config
+        version the parent's links pin, which is the version it was rebuilt
+        from; an unpinned child was rebuilt at its current version."""
         from agno.db.base import ComponentType
 
         key = (component_type, component_id)
         if key in seen or len(seen) > _GRAPH_DEPTH_CAP:
             return
         seen.add(key)
+        pins: Dict[str, Optional[int]] = {}
+        for link in self._load_links_from_db(component_id, version=version):
+            child_id = link.get("child_component_id")
+            if child_id:
+                pins[child_id] = link.get("child_version")
         rebuilt = self._components_by_id(component)
         for ref_type, ref_id in _component_references(component_type, config):
             target = rebuilt.get((ref_type, ref_id))
@@ -1043,7 +1080,7 @@ class StudioRunnerTools(Toolkit):
                 continue
             # A db read that fails is not evidence of fidelity, so it must not
             # pass as one: let it reach the caller's handler.
-            ref_config = self._load_config_from_db(ref_id, component_type=stored_type)
+            ref_config = self._load_config_from_db(ref_id, version=pins.get(ref_id), component_type=stored_type)
             if ref_config is None:
                 # A code-defined reference has no stored config to compare
                 # against, and _require_registry_for covers an absent registry.
@@ -1053,7 +1090,7 @@ class StudioRunnerTools(Toolkit):
                 self._require_reference_type_matches(ref_type, ref_id, component_type, component_id)
                 continue
             self._require_faithful_rebuild(target, ref_config, ref_type, ref_id)
-            self._check_references(target, ref_config, ref_type, ref_id, seen)
+            self._check_references(target, ref_config, ref_type, ref_id, seen, version=pins.get(ref_id))
 
     @staticmethod
     def _components_by_id(node: Any) -> Dict[tuple, Any]:
@@ -1291,7 +1328,7 @@ class StudioRunnerTools(Toolkit):
         config = self._load_config_from_db(agent_id, version=version, component_type=ComponentType.AGENT)
         if config is None:
             return None
-        self._require_registry_for("agent", agent_id, config)
+        self._require_registry_for("agent", agent_id, config, version=version)
         from agno.agent.agent import Agent
 
         try:
@@ -1309,12 +1346,13 @@ class StudioRunnerTools(Toolkit):
                 "agent",
                 agent_id,
                 lambda: Agent.from_dict(config, registry=self.registry, strict=False),
+                version=version,
             ) from rehydration_error
         except Exception:
             logger.warning("StudioRunnerTools: Agent.from_dict failed for %s", agent_id, exc_info=True)
             return None
         if for_dispatch:
-            self._require_dispatchable(agent, config, "agent", agent_id)
+            self._require_dispatchable(agent, config, "agent", agent_id, version=version)
         return agent
 
     def _load_team_from_db(
@@ -1329,7 +1367,7 @@ class StudioRunnerTools(Toolkit):
             # Dispatch only: a null reference cannot be resolved, but the component
             # still has to load so the bad reference can be seen and repaired.
             self._require_resolvable_member_ids("team", team_id, config)
-        self._require_registry_for("team", team_id, config)
+        self._require_registry_for("team", team_id, config, version=version)
         from agno.team.team import Team
 
         links = self._load_links_from_db(team_id, version=version)
@@ -1347,12 +1385,13 @@ class StudioRunnerTools(Toolkit):
                 "team",
                 team_id,
                 lambda: Team.from_dict(config, db=self.db, registry=self.registry, links=links, strict=False),
+                version=version,
             ) from rehydration_error
         except Exception:
             logger.warning("StudioRunnerTools: Team.from_dict failed for %s", team_id, exc_info=True)
             return None
         if for_dispatch:
-            self._require_dispatchable(team, config, "team", team_id)
+            self._require_dispatchable(team, config, "team", team_id, version=version)
         return team
 
     def _load_workflow_from_db(
@@ -1367,7 +1406,7 @@ class StudioRunnerTools(Toolkit):
             # Dispatch only: a null reference cannot be resolved, but the component
             # still has to load so the bad reference can be seen and repaired.
             self._require_resolvable_member_ids("workflow", workflow_id, config)
-        self._require_registry_for("workflow", workflow_id, config)
+        self._require_registry_for("workflow", workflow_id, config, version=version)
         from agno.workflow.workflow import Workflow
 
         links = self._load_links_from_db(workflow_id, version=version)
@@ -1385,12 +1424,13 @@ class StudioRunnerTools(Toolkit):
                 "workflow",
                 workflow_id,
                 lambda: Workflow.from_dict(config, db=self.db, registry=self.registry, links=links, strict=False),
+                version=version,
             ) from rehydration_error
         except Exception:
             logger.warning("StudioRunnerTools: Workflow.from_dict failed for %s", workflow_id, exc_info=True)
             return None
         if for_dispatch:
-            self._require_dispatchable(wf, config, "workflow", workflow_id)
+            self._require_dispatchable(wf, config, "workflow", workflow_id, version=version)
         return wf
 
     def _load_config_from_db(

@@ -269,22 +269,19 @@ class Loop:
             if end_condition_type == "cel" or (end_condition_type is None and is_cel_expression(end_condition_data)):
                 end_condition = end_condition_data
             else:
-                if registry:
-                    end_condition = registry.get_function(end_condition_data)
-                    if end_condition is None:
+                end_condition = registry.get_function(end_condition_data) if registry else None
+                if end_condition is None:
+                    if registry:
                         message = f"End condition function '{end_condition_data}' not found in registry"
-                        if strict:
-                            from agno.exceptions import ComponentRehydrationError
-
-                            raise ComponentRehydrationError(message)
-                        raise ValueError(message)
-                else:
-                    message = f"Registry required to deserialize end_condition function '{end_condition_data}'"
+                    else:
+                        message = f"Registry required to deserialize end_condition function '{end_condition_data}'"
                     if strict:
                         from agno.exceptions import ComponentRehydrationError
 
                         raise ComponentRehydrationError(message)
-                    raise ValueError(message)
+                    # An end condition is optional on a Loop, so a lenient load
+                    # drops it and the loop runs to max_iterations.
+                    log_warning(message)
 
         # HITL config
         if data.get("human_review"):

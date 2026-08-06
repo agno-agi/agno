@@ -551,3 +551,26 @@ class TestPopulateRegistryDedupLogging:
         AgentOS(agents=[a, b], telemetry=False)
 
         assert not any("shared_name" in m for m in logged)
+
+
+class TestKnowledgeRouteScope:
+    def test_member_owned_knowledge_resolves_but_is_not_exposed_on_routes(self, tmp_path):
+        """The component walk mirrors member knowledge into the registry for
+        name resolution; only user-declared knowledge feeds the routes."""
+        from unittest.mock import MagicMock
+
+        from agno.db.sqlite import SqliteDb
+        from agno.knowledge.knowledge import Knowledge
+        from agno.team.team import Team
+
+        db = SqliteDb(db_file=str(tmp_path / "member_kb.db"))
+        member_kb = Knowledge(name="member-private-kb", contents_db=db, vector_db=MagicMock())
+        member = Agent(id="kb-member", name="Member", knowledge=member_kb, telemetry=False)
+        team = Team(id="kb-team", name="Team", members=[member], telemetry=False)
+
+        os = AgentOS(teams=[team], telemetry=False)
+        os.get_app()
+
+        assert os.registry is not None
+        assert os.registry.get_knowledge("member-private-kb") is member_kb
+        assert all(getattr(k, "name", None) != "member-private-kb" for k in os.knowledge_instances)

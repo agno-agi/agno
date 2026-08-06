@@ -290,6 +290,15 @@ class ComponentRehydrationError(AgnoError):
         self.error_id = "component_rehydration_error"
 
 
+class ComponentPinError(ComponentRehydrationError):
+    """Raised when an explicitly pinned component version cannot be satisfied.
+
+    A parent component's links pin a child at an exact stored version. When
+    that version is missing or fails to rebuild, the refusal names the pin and
+    the remedy (re-save the parent), which no broader guard can improve on.
+    """
+
+
 class RunNotFoundError(RuntimeError):
     """Raised when a run_id cannot be found in the session.
 

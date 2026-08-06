@@ -2145,3 +2145,32 @@ def test_dispatch_resolves_members_at_pinned_versions(tmp_path):
 
     assert team is not None
     assert team.members[0].description == "v1 desc"
+
+
+def test_dispatch_judges_pinned_members_against_their_pinned_config(tmp_path):
+    """A republish of a pinned member must not make the pinned parent
+    undispatchable: fidelity guards compare the rebuilt member against the
+    config version it was built from, not the member's current version."""
+    from agno.agent.agent import Agent
+    from agno.db.sqlite import SqliteDb
+    from agno.models.openai import OpenAIChat
+    from agno.registry import Registry
+    from agno.team.team import Team
+    from agno.tools.studio_runner import StudioRunnerTools
+
+    def weather(city: str) -> str:
+        """Weather."""
+        return city
+
+    db = SqliteDb(db_file=str(tmp_path / "pin_fidelity.db"))
+    member = Agent(id="fm", name="Member")
+    Team(id="ft", name="Team", members=[member]).save(db=db)
+    member.model = OpenAIChat(id="gpt-4o-mini")
+    member.tools = [weather]
+    member.save(db=db)
+
+    runner = StudioRunnerTools(registry=Registry(), db=db)
+    team = runner._load_team_from_db("ft", for_dispatch=True)
+
+    assert team is not None
+    assert team.members[0].id == "fm"

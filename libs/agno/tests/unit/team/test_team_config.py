@@ -1355,5 +1355,7 @@ class TestMemberPinFailures:
         with pytest.raises(ComponentRehydrationError, match="pins member agent 'ps-member'"):
             get_team_by_id(db=db, id="ps-team", registry=registry, strict=True)
 
+        # Lenient degrades to the member's current stored version, so the
+        # team stays usable without silently substituting the registry object.
         lenient = get_team_by_id(db=db, id="ps-team", registry=registry, strict=False)
-        assert [m.name for m in lenient.members] == ["Code Member"]
+        assert lenient.members[0].description == "v2"

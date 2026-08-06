@@ -121,6 +121,8 @@ class TestRehydrationHttpStatus:
 
         response = client.get("/agents/broken-agent/runs", params={"session_id": "s1"})
         assert response.status_code in (200, 404)
+        # A 404 here may only mean the session is missing, never the component.
+        assert response.json().get("detail") != "Agent not found"
 
 
 class TestRegistryAutoCollection:
@@ -151,3 +153,64 @@ class TestRegistryAutoCollection:
 
         assert os_app.registry is not None
         assert os_app.registry.get_knowledge("Docs KB") is kb
+
+    def test_stored_function_step_resolves_from_code_workflows(self, db):
+        """Step callables on code workflows are auto-collected, so a stored
+        workflow referencing the same function loads strictly."""
+        from agno.workflow.step import Step, StepInput, StepOutput
+        from agno.workflow.workflow import Workflow
+
+        def enrich(step_input: StepInput) -> StepOutput:
+            return StepOutput(content="x")
+
+        code_wf = Workflow(id="code-wf", name="CodeWF", steps=[Step(name="s1", executor=enrich)])
+        Workflow(id="stored-wf", name="StoredWF", steps=[Step(name="s1", executor=enrich)]).save(db=db)
+        os_app = AgentOS(id="fn-os", db=db, workflows=[code_wf])
+        client = _client(os_app.get_app())
+
+        assert client.get("/workflows/stored-wf").status_code == 200
+
+
+class TestBrokenWorkflowLifecycle:
+    def test_broken_workflow_stays_listed_cancellable_and_distinguishable(self, db):
+        """Lenient loading builds a degraded-but-real workflow: it stays in
+        listings, its runs stay reachable, and cancel answers 200, while the
+        detail read and dispatch refuse with 422 rather than 404."""
+        from agno.workflow.step import Step, StepInput, StepOutput
+        from agno.workflow.workflow import Workflow
+
+        def summarize(step_input: StepInput) -> StepOutput:
+            return StepOutput(content="s")
+
+        Workflow(id="fn-wf", name="FnWF", steps=[Step(name="s1", executor=summarize)]).save(db=db)
+        os_app = AgentOS(id="fnwf-os", db=db, registry=Registry(dbs=[db]))
+        client = _client(os_app.get_app())
+
+        assert client.get("/workflows/fn-wf").status_code == 422
+        listing = client.get("/workflows")
+        assert listing.status_code == 200
+        assert "fn-wf" in [w["id"] for w in listing.json()]
+        assert client.post("/workflows/fn-wf/runs", data={"message": "hi", "stream": "false"}).status_code == 422
+        assert client.post("/workflows/fn-wf/runs/r1/cancel").status_code == 200
+        runs = client.get("/workflows/fn-wf/runs", params={"session_id": "s1"})
+        assert runs.json().get("detail") != "Workflow not found"
+
+
+class TestMcpResolutionStrictness:
+    def test_mcp_run_resolution_is_strict_and_cancel_is_lenient(self, toolless_os):
+        """The MCP run tools refuse a broken component with the actionable
+        message; the cancel tool resolves leniently so a drifted registry
+        never makes a run uncancellable on that surface."""
+        import asyncio
+
+        from agno.os.mcp import _resolve_run_component
+
+        toolless_os.get_app()
+
+        with pytest.raises(Exception, match="not resolvable from the registry"):
+            asyncio.run(_resolve_run_component(toolless_os, "agents", "broken-agent", user_id=None, session_id=None))
+
+        agent = asyncio.run(
+            _resolve_run_component(toolless_os, "agents", "broken-agent", user_id=None, session_id=None, strict=False)
+        )
+        assert agent.id == "broken-agent"

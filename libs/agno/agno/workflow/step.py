@@ -100,6 +100,26 @@ StepExecutor = Callable[
 ]
 
 
+def _unresolvable_ref_placeholder(config: Dict[str, Any], kind: str, ref: Any) -> Callable[[StepInput], StepOutput]:
+    """A constructible stand-in for a step reference a lenient load could not resolve.
+
+    It keeps the degraded step inspectable (listings, run history, cancel) and
+    refuses at execution. to_dict re-emits the original reference keys, so a
+    round trip does not overwrite them with the placeholder.
+    """
+
+    def _unresolvable(step_input: StepInput) -> StepOutput:
+        return StepOutput(
+            content=f"Step {kind} '{ref}' is not resolvable from the registry or db, so this step cannot execute.",
+            success=False,
+        )
+
+    _unresolvable.__agno_unresolved__ = {  # type: ignore[attr-defined]
+        key: config[key] for key in ("agent_id", "team_id", "executor_ref") if config.get(key)
+    }
+    return _unresolvable
+
+
 @dataclass
 class Step:
     """A single unit of work in a workflow pipeline"""
@@ -296,7 +316,13 @@ class Step:
         if self.workflow is not None:
             result["workflow_id"] = self.workflow.id
         if self.executor is not None:
-            result["executor_ref"] = self.executor.__name__
+            unresolved = getattr(self.executor, "__agno_unresolved__", None)
+            if unresolved is not None:
+                # A lenient load stood in a placeholder for a reference it
+                # could not resolve; a round trip keeps the original keys.
+                result.update(unresolved)
+            else:
+                result["executor_ref"] = self.executor.__name__
 
         return result
 
@@ -319,13 +345,15 @@ class Step:
             links: The workflow version's links; step_agent/step_team links
                 carry the child version pinned at save time, and db-backed
                 step members load at that version
-            strict: If True, an unresolvable step agent/team raises
-                ComponentRehydrationError instead of being dropped
+            strict: If True, an unresolvable step agent, team or executor
+                function raises ComponentRehydrationError. If False, the step
+                is built with a placeholder executor that refuses at run time,
+                so degraded workflows stay loadable for reads.
 
         Returns:
             Step: Reconstructed step instance
         """
-        from agno.exceptions import ComponentRehydrationError
+        from agno.exceptions import ComponentPinError, ComponentRehydrationError
 
         config = data.copy()
 
@@ -334,8 +362,8 @@ class Step:
         executor = None
         workflow = None
 
-        # Prefer the link written for this step; fall back to any link that
-        # pins the same child (a save pins one version per child id).
+        # Prefer the link written for this step; when the step's link_key does
+        # not match (e.g. the step was renamed), any link for the child serves.
         step_link_key = config.get("step_id") or config.get("name")
 
         def _pinned_version(child_id: Optional[str]) -> Optional[int]:
@@ -354,9 +382,12 @@ class Step:
         # --- Handle Agent reconstruction ---
         if "agent_id" in config and config["agent_id"]:
             agent_id = config.get("agent_id")
+            pinned = _pinned_version(agent_id)
 
-            # First try registry (code-defined agents)
-            if registry and agent_id:
+            # An explicit pin resolves from the db first: the pin names one
+            # exact stored version, which a code-defined registry agent is not.
+            # Without a pin, code-defined registry agents win as before.
+            if pinned is None and registry and agent_id:
                 registry_agent = registry.get_agent(agent_id)
                 if registry_agent is not None:
                     try:
@@ -369,21 +400,37 @@ class Step:
 
                         agent = registry_agent
 
-            # Fall back to database, at the version the workflow pinned
             if agent is None and db is not None and agent_id is not None:
                 from agno.agent.agent import get_agent_by_id
 
-                pinned = _pinned_version(agent_id)
                 try:
                     agent = get_agent_by_id(db=db, id=agent_id, version=pinned, registry=registry, strict=strict)
                 except ComponentRehydrationError as step_member_error:
                     if pinned is not None:
-                        raise ComponentRehydrationError(
+                        raise ComponentPinError(
                             f"Step '{config.get('name')}' pins agent '{agent_id}' at version {pinned}, "
                             f"which failed to rebuild: {step_member_error} "
                             "Re-save the workflow to pin the agent's current version."
                         ) from step_member_error
                     raise
+                if agent is None and pinned is not None:
+                    if strict:
+                        raise ComponentPinError(
+                            f"Step '{config.get('name')}' pins agent '{agent_id}' at version {pinned}, "
+                            "which was not found in the db. Restore that version, or re-save the "
+                            "workflow to pin the agent's current version."
+                        )
+                    log_warning(
+                        f"Step '{config.get('name')}' pins agent '{agent_id}' at version {pinned}, which "
+                        "was not found in the db; loading the agent's current version instead."
+                    )
+                    agent = get_agent_by_id(db=db, id=agent_id, registry=registry, strict=False)
+
+            # A pinned lenient load may still fall back to a code-defined agent.
+            if agent is None and pinned is not None and registry and agent_id:
+                registry_agent = registry.get_agent(agent_id)
+                if registry_agent is not None:
+                    agent = registry_agent.deep_copy()
 
             if agent is None and agent_id:
                 if strict:
@@ -395,13 +442,16 @@ class Step:
                 log_warning(
                     f"Could not resolve agent_id='{agent_id}' from registry or DB for step '{config.get('name')}'"
                 )
+                executor = _unresolvable_ref_placeholder(config, "agent", agent_id)
 
         # --- Handle Team reconstruction ---
         if "team_id" in config and config["team_id"]:
             team_id = config.get("team_id")
+            pinned = _pinned_version(team_id)
 
-            # First try registry (code-defined teams)
-            if registry and team_id:
+            # An explicit pin resolves from the db first: the pin names one
+            # exact stored version, which a code-defined registry team is not.
+            if pinned is None and registry and team_id:
                 registry_team = registry.get_team(team_id)
                 if registry_team is not None:
                     try:
@@ -414,21 +464,37 @@ class Step:
 
                         team = registry_team
 
-            # Fall back to database, at the version the workflow pinned
             if team is None and db is not None and team_id is not None:
                 from agno.team.team import get_team_by_id
 
-                pinned = _pinned_version(team_id)
                 try:
                     team = get_team_by_id(db=db, id=team_id, version=pinned, registry=registry, strict=strict)
                 except ComponentRehydrationError as step_member_error:
                     if pinned is not None:
-                        raise ComponentRehydrationError(
+                        raise ComponentPinError(
                             f"Step '{config.get('name')}' pins team '{team_id}' at version {pinned}, "
                             f"which failed to rebuild: {step_member_error} "
                             "Re-save the workflow to pin the team's current version."
                         ) from step_member_error
                     raise
+                if team is None and pinned is not None:
+                    if strict:
+                        raise ComponentPinError(
+                            f"Step '{config.get('name')}' pins team '{team_id}' at version {pinned}, "
+                            "which was not found in the db. Restore that version, or re-save the "
+                            "workflow to pin the team's current version."
+                        )
+                    log_warning(
+                        f"Step '{config.get('name')}' pins team '{team_id}' at version {pinned}, which "
+                        "was not found in the db; loading the team's current version instead."
+                    )
+                    team = get_team_by_id(db=db, id=team_id, registry=registry, strict=False)
+
+            # A pinned lenient load may still fall back to a code-defined team.
+            if team is None and pinned is not None and registry and team_id:
+                registry_team = registry.get_team(team_id)
+                if registry_team is not None:
+                    team = registry_team.deep_copy()
 
             if team is None and team_id:
                 if strict:
@@ -440,6 +506,7 @@ class Step:
                 log_warning(
                     f"Could not resolve team_id='{team_id}' from registry or DB for step '{config.get('name')}'"
                 )
+                executor = _unresolvable_ref_placeholder(config, "team", team_id)
 
         # --- Handle Workflow reconstruction ---
         # TODO: Add workflow support to Registry (get_workflow method) for full reconstruction.
@@ -470,6 +537,12 @@ class Step:
             executor = registry.get_function(executor_ref) if registry else None
             if executor is None:
                 if strict:
+                    if registry is None:
+                        raise ComponentRehydrationError(
+                            f"Step '{config.get('name')}' references executor function '{executor_ref}' "
+                            "but no registry was provided to resolve it. Provide a registry holding "
+                            "the function, or pass strict=False to load the workflow without it."
+                        )
                     raise ComponentRehydrationError(
                         f"Step '{config.get('name')}' references executor function '{executor_ref}' "
                         "which was not found in the registry. Register the function, or pass "
@@ -478,6 +551,7 @@ class Step:
                 log_warning(
                     f"Could not resolve executor_ref='{executor_ref}' from the registry for step '{config.get('name')}'"
                 )
+                executor = _unresolvable_ref_placeholder(config, "executor function", executor_ref)
 
         # HITL config
         if config.get("human_review"):

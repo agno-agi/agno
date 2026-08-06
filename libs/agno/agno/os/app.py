@@ -401,6 +401,9 @@ class AgentOS:
         self.lifespan = lifespan
 
         self.registry = registry
+        # Knowledge the user put on the registry themselves is a knowledge-route
+        # source; instances the component walk mirrors in later are not.
+        self._user_registry_knowledge: List[Any] = list(registry.knowledge) if registry else []
 
         # RBAC
         self.authorization = authorization
@@ -1739,7 +1742,12 @@ class AgentOS:
 
         if self.registry is not None:
             for knowledge_base in self.registry.knowledge or []:
-                _add_knowledge_if_not_duplicate(knowledge_base)
+                # Only user-declared registry knowledge feeds the routes. The
+                # component walk mirrors member- and step-owned knowledge into
+                # the registry for name resolution; that is not a grant of
+                # route-level exposure.
+                if any(knowledge_base is user_kb for user_kb in self._user_registry_knowledge):
+                    _add_knowledge_if_not_duplicate(knowledge_base)
 
         self.knowledge_instances = knowledge_instances
 

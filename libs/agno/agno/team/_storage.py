@@ -22,7 +22,7 @@ from pydantic import BaseModel
 from agno.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
 from agno.db.utils import resolve_db_from_config
-from agno.exceptions import ComponentRehydrationError
+from agno.exceptions import ComponentPinError, ComponentRehydrationError
 from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
@@ -819,7 +819,7 @@ def from_dict(
                     )
                 except ComponentRehydrationError as member_error:
                     if pinned is not None:
-                        raise ComponentRehydrationError(
+                        raise ComponentPinError(
                             f"{component_label} pins member agent '{agent_id}' at version {pinned}, "
                             f"which failed to rebuild: {member_error} "
                             "Re-save the team to pin the member's current version."
@@ -827,13 +827,21 @@ def from_dict(
                     raise
                 # An explicit pin names one exact stored version; a same-id
                 # registry component is a different object, so a strict load
-                # refuses rather than substituting it.
-                if agent is None and strict and pinned is not None:
-                    raise ComponentRehydrationError(
-                        f"{component_label} pins member agent '{agent_id}' at version {pinned}, "
-                        "which was not found in the db. Restore that version, or re-save the "
-                        "team to pin the member's current version."
+                # refuses rather than substituting it. A lenient load degrades
+                # to the member's current version so the team stays usable.
+                if agent is None and pinned is not None:
+                    if strict:
+                        raise ComponentPinError(
+                            f"{component_label} pins member agent '{agent_id}' at version {pinned}, "
+                            "which was not found in the db. Restore that version, or re-save the "
+                            "team to pin the member's current version."
+                        )
+                    log_warning(
+                        f"{component_label} pins member agent '{agent_id}' at version {pinned}, which "
+                        "was not found in the db; loading the member's current version instead."
                     )
+                    if db is not None:
+                        agent = get_agent_by_id(id=agent_id, db=db, registry=registry, strict=False)
                 # Fall back to a code-defined agent registered in the registry.
                 # These are legitimately not persisted as DB components (e.g. agents
                 # passed to AgentOS(agents=[...])), so a DB lookup returns nothing.
@@ -870,7 +878,7 @@ def from_dict(
                     )
                 except ComponentRehydrationError as member_error:
                     if pinned is not None:
-                        raise ComponentRehydrationError(
+                        raise ComponentPinError(
                             f"{component_label} pins member team '{team_id}' at version {pinned}, "
                             f"which failed to rebuild: {member_error} "
                             "Re-save the team to pin the member's current version."
@@ -878,13 +886,21 @@ def from_dict(
                     raise
                 # An explicit pin names one exact stored version; a same-id
                 # registry component is a different object, so a strict load
-                # refuses rather than substituting it.
-                if nested_team is None and strict and pinned is not None:
-                    raise ComponentRehydrationError(
-                        f"{component_label} pins member team '{team_id}' at version {pinned}, "
-                        "which was not found in the db. Restore that version, or re-save the "
-                        "team to pin the member's current version."
+                # refuses rather than substituting it. A lenient load degrades
+                # to the member's current version so the team stays usable.
+                if nested_team is None and pinned is not None:
+                    if strict:
+                        raise ComponentPinError(
+                            f"{component_label} pins member team '{team_id}' at version {pinned}, "
+                            "which was not found in the db. Restore that version, or re-save the "
+                            "team to pin the member's current version."
+                        )
+                    log_warning(
+                        f"{component_label} pins member team '{team_id}' at version {pinned}, which "
+                        "was not found in the db; loading the member's current version instead."
                     )
+                    if db is not None:
+                        nested_team = get_team_by_id(id=team_id, db=db, registry=registry, strict=False)
                 # Fall back to a code-defined team registered in the registry.
                 # Deep copy so the shared registry singleton isn't mutated on run.
                 if nested_team is None and registry is not None:

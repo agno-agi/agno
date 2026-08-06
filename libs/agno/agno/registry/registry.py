@@ -439,6 +439,26 @@ class Registry:
             return
         self.vector_dbs.append(vector_db)
 
+    def add_function(self, func: Any) -> None:
+        """Add a plain callable unless one with the same name is already present.
+
+        Workflow step executors, evaluators, selectors and end conditions
+        resolve by function name at rehydration. The first callable under a
+        name wins; a distinct same-named callable is reported, since it would
+        be shadowed.
+        """
+        if not callable(func) or not getattr(func, "__name__", None):
+            return
+        existing = self.get_function(func.__name__)
+        if existing is not None:
+            if existing is not func:
+                log_warning(
+                    f"Registry: multiple distinct callables share the name '{func.__name__}'; "
+                    "keeping the first. Rename one to avoid it being shadowed."
+                )
+            return
+        self.functions.append(func)
+
     def add_knowledge(self, knowledge: Any) -> None:
         """Add a knowledge instance unless one with the same name is already present.
 

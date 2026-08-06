@@ -276,16 +276,23 @@ class TestStepFromDict:
         with pytest.raises(ComponentRehydrationError, match="nonexistent-agent"):
             Step.from_dict(data, strict=True)
 
-    def test_from_dict_unresolvable_agent_raises_when_lenient(self):
-        """With strict=False the step still fails executor validation, as before."""
+    def test_from_dict_unresolvable_agent_builds_a_refusing_placeholder_when_lenient(self):
+        """A lenient load stays constructible so reads work; the placeholder
+        refuses at execution and a round trip keeps the original reference."""
         data = {
             "type": "Step",
             "name": "broken-step",
             "agent_id": "nonexistent-agent",
         }
 
-        with pytest.raises(ValueError, match="must have one executor"):
-            Step.from_dict(data, strict=False)
+        step = Step.from_dict(data, strict=False)
+
+        assert step.agent is None
+        output = step.executor(MagicMock())
+        assert output.success is False
+        assert "nonexistent-agent" in output.content
+        assert step.to_dict().get("agent_id") == "nonexistent-agent"
+        assert "executor_ref" not in step.to_dict()
 
     def test_from_dict_unresolvable_team_raises(self):
         """Test from_dict fails loudly when the team can't be resolved."""
@@ -300,16 +307,20 @@ class TestStepFromDict:
         with pytest.raises(ComponentRehydrationError, match="nonexistent-team"):
             Step.from_dict(data, strict=True)
 
-    def test_from_dict_unresolvable_team_raises_when_lenient(self):
-        """With strict=False the step still fails executor validation, as before."""
+    def test_from_dict_unresolvable_team_builds_a_refusing_placeholder_when_lenient(self):
+        """Same lenient contract for team references."""
         data = {
             "type": "Step",
             "name": "broken-step",
             "team_id": "nonexistent-team",
         }
 
-        with pytest.raises(ValueError, match="must have one executor"):
-            Step.from_dict(data, strict=False)
+        step = Step.from_dict(data, strict=False)
+
+        assert step.team is None
+        output = step.executor(MagicMock())
+        assert output.success is False
+        assert step.to_dict().get("team_id") == "nonexistent-team"
 
     def test_from_dict_with_executor(self, registry_with_functions):
         """Test from_dict reconstructs step with executor function."""
@@ -454,8 +465,11 @@ class TestStrictExecutorRefs:
         with pytest.raises(ComponentRehydrationError, match="missing_fn"):
             Step.from_dict(data, registry=Registry(), strict=True)
 
-    def test_from_dict_unresolvable_executor_still_fails_validation_when_lenient(self):
+    def test_from_dict_unresolvable_executor_builds_a_refusing_placeholder_when_lenient(self):
         data = {"type": "Step", "name": "fn-step", "executor_ref": "missing_fn"}
 
-        with pytest.raises(ValueError, match="must have one executor"):
-            Step.from_dict(data, registry=Registry(), strict=False)
+        step = Step.from_dict(data, registry=Registry(), strict=False)
+
+        output = step.executor(MagicMock())
+        assert output.success is False
+        assert step.to_dict().get("executor_ref") == "missing_fn"

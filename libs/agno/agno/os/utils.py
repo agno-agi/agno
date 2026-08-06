@@ -1730,6 +1730,8 @@ def _collect_components_from_step(step: Any, registry: Registry, visited: Set[in
         nested_workflow = getattr(step, "workflow", None)
         if nested_workflow is not None:
             collect_components_from_workflow(nested_workflow, registry, visited)
+        if callable(getattr(step, "executor", None)):
+            registry.add_function(step.executor)
 
     elif isinstance(step, Agent):
         collect_components_from_agent(step, registry, visited)
@@ -1741,6 +1743,13 @@ def _collect_components_from_step(step: Any, registry: Registry, visited: Set[in
         collect_components_from_workflow(step, registry, visited)
 
     elif isinstance(step, (Steps, Loop, Parallel, Condition, Router)):
+        # Container-level callable refs resolve by function name at rehydration.
+        if isinstance(step, Condition) and callable(getattr(step, "evaluator", None)):
+            registry.add_function(step.evaluator)
+        if isinstance(step, Router) and callable(getattr(step, "selector", None)):
+            registry.add_function(step.selector)
+        if isinstance(step, Loop) and callable(getattr(step, "end_condition", None)):
+            registry.add_function(step.end_condition)
         # Walk every sub-step container: `steps` (all), `else_steps` (Condition)
         # and `choices` (Router, before it is prepared into `steps`).
         for attr in ("steps", "else_steps", "choices"):
@@ -1749,7 +1758,9 @@ def _collect_components_from_step(step: Any, registry: Registry, visited: Set[in
                 for sub_step in sub_steps:
                     _collect_components_from_step(sub_step, registry, visited)
 
-    # else: plain callable executor or unknown step type -> nothing to collect
+    elif callable(step):
+        # A bare callable used directly as a step serializes as an executor ref.
+        registry.add_function(step)
 
 
 def collect_components_from_os(

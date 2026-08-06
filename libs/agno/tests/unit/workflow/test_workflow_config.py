@@ -797,3 +797,31 @@ class TestStepMemberPins:
 
         assert loaded is not None
         assert loaded.steps[0].agent.description == "v1 desc"
+
+
+class TestStepPinFailures:
+    def test_lenient_load_degrades_deleted_step_pin_to_current_version(self, tmp_path):
+        """A deleted pinned version must not make the workflow vanish from
+        lenient reads; it degrades to the agent's current version with a
+        warning, and strict refuses naming the pin."""
+        from agno.agent.agent import Agent
+        from agno.db.sqlite import SqliteDb
+        from agno.exceptions import ComponentPinError
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import get_workflow_by_id
+
+        db = SqliteDb(db_file=str(tmp_path / "step_pin_del.db"))
+        member = Agent(id="dp-agent", name="DP", description="v1")
+        Workflow(id="dp-wf", name="WF", steps=[Step(name="s1", agent=member)]).save(db=db)
+        member.description = "v2"
+        member.save(db=db)
+        links = db.get_links(component_id="dp-wf", version=1)
+        pinned = next(link for link in links if link["link_kind"] == "step_agent")["child_version"]
+        assert db.delete_config(component_id="dp-agent", version=pinned)
+
+        lenient = get_workflow_by_id(db=db, id="dp-wf", strict=False)
+        assert lenient is not None
+        assert lenient.steps[0].agent.description == "v2"
+
+        with pytest.raises(ComponentPinError, match=f"pins agent 'dp-agent' at version {pinned}"):
+            get_workflow_by_id(db=db, id="dp-wf", strict=True)
