@@ -12,15 +12,17 @@ from agno.run.agent import RunOutput
 from agno.tools.yfinance import YFinanceTools
 
 
-def _thinking_persisted_in_runs(storage_dir: str) -> bool:
+def _thinking_persisted_in_runs(storage_dir: str, session_table: str = "agno_sessions") -> bool:
     """Check the v3 runs table for any message carrying reasoning_content.
 
     Under v3, runs live in a separate table (default: agno_runs.json), not
-    inline on the session record. The thinking-content assertion only needs
-    to know a run persisted with reasoning, which this inspection covers
-    regardless of session_table naming.
+    inline on the session record. When ``session_table`` is customized, the
+    runs table name derives from it as ``f"{session_table}_runs"`` (see
+    ``BaseDb.__init__``), so callers must pass the same ``session_table`` the
+    agent was configured with.
     """
-    runs_path = os.path.join(storage_dir, "agno_runs.json")
+    runs_filename = f"{session_table}_runs.json" if session_table != "agno_sessions" else "agno_runs.json"
+    runs_path = os.path.join(storage_dir, runs_filename)
     if not os.path.exists(runs_path):
         return False
     with open(runs_path, "r") as f:
@@ -193,7 +195,9 @@ async def test_thinking_with_storage():
         assert response.reasoning_content is not None
         assert len(response.reasoning_content) > 0
 
-        assert _thinking_persisted_in_runs(storage_dir), "Thinking content should be persisted in storage"
+        assert _thinking_persisted_in_runs(storage_dir, session_table="test_session"), (
+            "Thinking content should be persisted in storage"
+        )
 
 
 @pytest.mark.asyncio
@@ -217,7 +221,9 @@ async def test_thinking_with_streaming_storage():
         assert final_response is not None
         assert hasattr(final_response, "reasoning_content") and final_response.reasoning_content is not None  # type: ignore
 
-        assert _thinking_persisted_in_runs(storage_dir), "Thinking content from streaming should be stored"
+        assert _thinking_persisted_in_runs(storage_dir, session_table="test_session_stream"), (
+            "Thinking content from streaming should be stored"
+        )
 
 
 # ============================================================================
@@ -327,7 +333,9 @@ async def test_interleaved_thinking_with_storage():
         assert response.reasoning_content is not None
         assert len(response.reasoning_content) > 0
 
-        assert _thinking_persisted_in_runs(storage_dir), "Interleaved thinking content should be persisted in storage"
+        assert _thinking_persisted_in_runs(storage_dir, session_table="test_session_interleaved"), (
+            "Interleaved thinking content should be persisted in storage"
+        )
 
 
 @pytest.mark.asyncio
@@ -355,7 +363,9 @@ async def test_interleaved_thinking_streaming_with_storage():
         assert final_response is not None
         assert hasattr(final_response, "reasoning_content") and final_response.reasoning_content is not None  # type: ignore
 
-        assert _thinking_persisted_in_runs(storage_dir), "Interleaved thinking content from streaming should be stored"
+        assert _thinking_persisted_in_runs(storage_dir, session_table="test_session_interleaved_stream"), (
+            "Interleaved thinking content from streaming should be stored"
+        )
 
 
 def test_interleaved_thinking_vs_regular_thinking():
