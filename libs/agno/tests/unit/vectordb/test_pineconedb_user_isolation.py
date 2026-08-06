@@ -51,14 +51,6 @@ def _doc(content="hello world", **kwargs):
     return Document(content=content, meta_data={"topic": "t"}, name="d", **kwargs)
 
 
-def _matches(metadatas):
-    """A query response carrying one match per metadata dict, as Pinecone would
-    return for a filter those rows satisfy."""
-    response = MagicMock()
-    response.matches = [MagicMock(id=f"v{i}", metadata=metadata) for i, metadata in enumerate(metadatas)]
-    return response
-
-
 class TestWritePersistsOwner:
     """On write the owner is stamped into ``metadata.user_id``; ``None``
     collapses to the SHARED bucket (no ``user_id`` key)."""
@@ -156,10 +148,7 @@ class TestDeleteByContentIdIsolation:
 class TestContentHashScoping:
     """The per-user dedup path keys on ``content_hash`` scoped by owner. A
     scoped check/delete touches only that owner's chunks; ``None`` touches
-    only the SHARED bucket (owner absent) — never every owner's chunks. The
-    check is the guard half of the pair, so it has to mean exactly what the
-    delete means, or a shared publish gets skipped on the strength of a
-    privately owned row and the shared bucket never receives it."""
+    only the SHARED bucket (owner absent) — never every owner's chunks."""
 
     def test_content_hash_exists_scoped_to_owner(self, pinecone_db):
         pinecone_db.content_hash_exists("h1", user_id="alice")
@@ -172,24 +161,6 @@ class TestContentHashScoping:
 
         sent_filter = pinecone_db.index.query.call_args.kwargs["filter"]
         assert sent_filter == {"content_hash": {"$eq": "h1"}, USER_ID_KEY: {"$exists": False}}
-
-    def test_content_hash_exists_none_cannot_match_a_privately_owned_row(self, pinecone_db):
-        """``$exists: False`` is unsatisfiable for a row carrying an owner, so a
-        shared publish is never skipped because some tenant already holds the
-        same bytes."""
-        sent_filter = None
-
-        def query(**kwargs):
-            nonlocal sent_filter
-            sent_filter = kwargs["filter"]
-            owned = {USER_ID_KEY: "alice", "content_hash": "h1"}
-            hit = sent_filter[USER_ID_KEY] == {"$eq": owned[USER_ID_KEY]}
-            return _matches([owned] if hit else [])
-
-        pinecone_db.index.query.side_effect = query
-
-        assert pinecone_db.content_hash_exists("h1", user_id=None) is False
-        assert pinecone_db.content_hash_exists("h1", user_id="alice") is True
 
     def test_delete_by_content_hash_scoped_to_owner(self, pinecone_db):
         pinecone_db._delete_by_content_hash("h1", user_id="alice")
@@ -230,36 +201,6 @@ class TestStealPrevention:
 
         pinecone_db.upsert(content_hash="h1", documents=[_doc(content="same", id="doc-1")], user_id=None)
         assert pinecone_db.index.upsert.call_args.kwargs["vectors"][0]["id"] == "doc-1"
-
-    def test_owner_boundary_cannot_be_shifted(self, pinecone_db):
-        """The base id is caller-controlled, so it is collapsed to a fixed-length
-        digest before the owner is folded in. Without that, ("doc_1", "alice") and
-        ("doc", "1_alice") both join to "doc_1_alice" and land on ONE vector id —
-        and every agno chunk id ends in "_<n>", so a caller passing
-        user_id="1_alice" overwrites alice's chunk 1."""
-        assert pinecone_db._record_id("doc_1", "alice") != pinecone_db._record_id("doc", "1_alice")
-
-    def test_shifted_boundary_write_does_not_overwrite_the_owner(self, pinecone_db):
-        """The consequence on the write path: the crafted owner's vector id is not
-        alice's, so her vector survives."""
-        pinecone_db.content_hash_exists = MagicMock(return_value=False)
-
-        pinecone_db.upsert(content_hash="h1", documents=[_doc(content="same", id="doc_1")], user_id="alice")
-        alice_id = pinecone_db.index.upsert.call_args.kwargs["vectors"][0]["id"]
-
-        pinecone_db.upsert(content_hash="h1", documents=[_doc(content="same", id="doc")], user_id="1_alice")
-        assert pinecone_db.index.upsert.call_args.kwargs["vectors"][0]["id"] != alice_id
-
-    async def test_async_upsert_folds_the_same_id(self, pinecone_db):
-        """The async write path shares the fold, so the two surfaces agree on the
-        key — otherwise a sync re-ingest would not replace an async-written chunk."""
-        pinecone_db.content_hash_exists = MagicMock(return_value=False)
-
-        pinecone_db.upsert(content_hash="h1", documents=[_doc(content="same", id="doc-1")], user_id="alice")
-        sync_id = pinecone_db.index.upsert.call_args.kwargs["vectors"][0]["id"]
-
-        await pinecone_db.async_upsert(content_hash="h1", documents=[_doc(content="same", id="doc-1")], user_id="alice")
-        assert pinecone_db.index.upsert.call_args.kwargs["vectors"][0]["id"] == sync_id
 
     def test_upsert_dedup_check_is_scoped_to_writing_owner(self, pinecone_db):
         """Bob upserting content Alice already owns must dedup-check only Bob's

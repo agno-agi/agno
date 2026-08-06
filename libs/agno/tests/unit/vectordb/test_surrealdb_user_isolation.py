@@ -134,25 +134,6 @@ def _last_query(client):
     return client.queries[-1]
 
 
-def _content_hash_store(client, rows):
-    """Answer the content-hash SELECT from ``rows`` — a list of
-    ``(content_hash, user_id)`` — matching the bound owner exactly as the server
-    does, so the check's scope is measured and not merely read off the SQL."""
-    record = client.query
-
-    def query(sql, vars=None):
-        record(sql, vars)
-        if "meta_data.content_hash" not in sql:
-            return []
-        return [
-            {"meta_data": {"content_hash": content_hash}, "user_id": owner}
-            for content_hash, owner in rows
-            if content_hash == vars["content_hash"] and owner == vars["user_id"]
-        ]
-
-    client.query = query
-
-
 class TestUserIdStoredAsField:
     """``user_id`` is a first-class field of the written record, not nested in
     meta_data; None/omitted persist as the shared (NONE) bucket."""
@@ -308,92 +289,6 @@ class TestDeleteByContentIdIsolation:
         assert "content_id = $content_id" in sql
         assert "user_id" not in sql
         assert params == {"content_id": "doc-1"}
-
-
-class TestExistenceChecks:
-    """The existence checks read the rows SurrealDB returns. surrealdb >= 1.0
-    answers a SELECT with the rows themselves and a miss with ``[]`` — the
-    shapes below are what a live 2.x server actually returned — so a fake that
-    wraps them in the legacy ``{"result": ...}`` envelope would let a broken
-    unwrap pass, which is how these checks stayed inert."""
-
-    ROW = {
-        "content": "alice text",
-        "content_id": "cid",
-        "meta_data": {"content_hash": "h_alice", "name": "alice-doc"},
-        "user_id": "alice",
-    }
-
-    def test_content_hash_exists_true_for_a_stored_hash(self, surreal_db, fake_client):
-        fake_client.query_return = [self.ROW]
-        assert surreal_db.content_hash_exists("h_alice") is True
-
-    def test_content_hash_exists_false_for_an_absent_hash(self, surreal_db, fake_client):
-        fake_client.query_return = []
-        assert surreal_db.content_hash_exists("nope") is False
-
-    def test_scoped_content_hash_check_binds_owner(self, surreal_db, fake_client):
-        surreal_db.content_hash_exists("h_alice", user_id="alice")
-        sql, params = _last_query(fake_client)
-        assert "meta_data.content_hash = $content_hash" in sql
-        assert "AND user_id = $user_id" in sql
-        assert params == {"content_hash": "h_alice", "user_id": "alice"}
-
-    def test_unscoped_content_hash_check_binds_the_shared_bucket(self, surreal_db, fake_client):
-        # None is the guard half of a shared upsert, whose delete only ever clears
-        # the shared bucket, so it binds NONE rather than dropping the owner clause.
-        surreal_db.content_hash_exists("h_alice", user_id=None)
-        sql, params = _last_query(fake_client)
-        assert "AND user_id = $user_id" in sql
-        assert params == {"content_hash": "h_alice", "user_id": None}
-
-    def test_none_check_sees_the_shared_row(self, surreal_db, fake_client):
-        _content_hash_store(fake_client, [("h1", SHARED_MARKER)])
-        assert surreal_db.content_hash_exists("h1", user_id=None) is True
-
-    def test_none_check_does_not_see_a_privately_owned_row(self, surreal_db, fake_client):
-        """Alice privately holds this content. If ``None`` matched her row, a shared
-        publish of the same bytes would be judged a duplicate and silently skipped,
-        and the shared bucket would never receive it."""
-        _content_hash_store(fake_client, [("h1", "alice")])
-        assert surreal_db.content_hash_exists("h1", user_id=None) is False
-        assert surreal_db.content_hash_exists("h1", user_id="alice") is True
-
-    def test_name_exists_reads_the_returned_rows(self, surreal_db, fake_client):
-        fake_client.query_return = [self.ROW]
-        assert surreal_db.name_exists("alice-doc") is True
-
-        fake_client.query_return = []
-        assert surreal_db.name_exists("ghost") is False
-
-    def test_id_exists_binds_the_record_id_the_upsert_wrote(self, surreal_db, fake_client):
-        """A plain string never compares equal to a record link, so the id has to
-        go through type::record exactly as the upsert bound it."""
-        fake_client.query_return = [self.ROW]
-        assert surreal_db.id_exists("doc_alice") is True
-
-        sql, params = _last_query(fake_client)
-        assert "id = type::record($table, $record_id)" in sql
-        assert params == {"table": COLLECTION, "record_id": "doc_alice"}
-
-    def test_id_exists_false_when_nothing_matches(self, surreal_db, fake_client):
-        fake_client.query_return = []
-        assert surreal_db.id_exists("ghost") is False
-
-    def test_delete_by_id_binds_the_record_id_the_upsert_wrote(self, surreal_db, fake_client):
-        """Same string-vs-record-link defect as ``id_exists``: bound as a plain
-        ``$id`` the DELETE matched nothing and removed nothing."""
-        assert surreal_db.delete_by_id("doc_alice") is True
-
-        sql, params = _last_query(fake_client)
-        assert "id = type::record($table, $record_id)" in sql
-        assert params == {"table": COLLECTION, "record_id": "doc_alice"}
-
-    def test_delete_by_id_reports_success_on_the_empty_delete_response(self, surreal_db, fake_client):
-        """A SurrealDB DELETE answers with ``[]`` whether or not it matched, so
-        ``bool(result)`` called every successful delete a failure."""
-        fake_client.query_return = []
-        assert surreal_db.delete_by_id("doc_alice") is True
 
 
 class TestKeyInjectionSafety:

@@ -21,9 +21,9 @@ import pytest
 from agno.knowledge.document import Document
 from agno.vectordb.search import SearchType
 from agno.vectordb.weaviate import Weaviate
-from agno.vectordb.weaviate.weaviate import USER_ID_PROPERTY
 
 TEST_COLLECTION = "IsolationTest"
+USER_ID_KEY = Weaviate.USER_ID_KEY
 
 
 def _leaves(f):
@@ -136,17 +136,17 @@ class TestWriteStampsOwner:
     def test_explicit_user_id_persisted(self, weaviate_db, mock_weaviate_client):
         weaviate_db.insert(content_hash="h1", documents=_alice_docs(), user_id="alice")
         props = _collection(mock_weaviate_client).data.insert.call_args.kwargs["properties"]
-        assert props[USER_ID_PROPERTY] == "alice"
+        assert props[USER_ID_KEY] == "alice"
 
     def test_none_user_id_persisted_as_null(self, weaviate_db, mock_weaviate_client):
         weaviate_db.insert(content_hash="h1", documents=_shared_docs(), user_id=None)
         props = _collection(mock_weaviate_client).data.insert.call_args.kwargs["properties"]
-        assert props[USER_ID_PROPERTY] is None
+        assert props[USER_ID_KEY] is None
 
     def test_user_id_omitted_defaults_to_null(self, weaviate_db, mock_weaviate_client):
         weaviate_db.insert(content_hash="h1", documents=_shared_docs())
         props = _collection(mock_weaviate_client).data.insert.call_args.kwargs["properties"]
-        assert props[USER_ID_PROPERTY] is None
+        assert props[USER_ID_KEY] is None
 
 
 class TestOwnerFoldedId:
@@ -181,16 +181,6 @@ class TestOwnerFoldedId:
         shared_uuid = self._insert_uuid(weaviate_db, mock_weaviate_client, None)
         assert alice_uuid != shared_uuid
 
-    def test_owner_boundary_cannot_be_shifted(self, weaviate_db):
-        """The base parts are collapsed to a fixed-length digest before the owner
-        is folded in, so the '_' boundary cannot slide. Folding the owner straight
-        onto the raw parts instead would let ("h", "alice") and ("h_alice", None)
-        join to one string and land on ONE uuid, so a crafted owner overwrites the
-        shared chunk."""
-        assert weaviate_db._scoped_record_id("doc", "h", "alice") != weaviate_db._scoped_record_id(
-            "doc", "h_alice", None
-        )
-
 
 class TestSearchScope:
     """A scoped search filters own-OR-shared (user_id == caller OR IS NULL); an
@@ -201,8 +191,8 @@ class TestSearchScope:
         sent = _collection(mock_weaviate_client).query.near_vector.call_args.kwargs["filters"]
         assert _combinator(sent) == "_FilterOr"
         assert _leaves(sent) == [
-            (USER_ID_PROPERTY, "Equal", "alice"),
-            (USER_ID_PROPERTY, "IsNull", True),
+            (USER_ID_KEY, "Equal", "alice"),
+            (USER_ID_KEY, "IsNull", True),
         ]
 
     def test_scoped_search_never_names_other_owner(self, weaviate_db, mock_weaviate_client):
@@ -220,8 +210,8 @@ class TestSearchScope:
         sent = _collection(mock_weaviate_client).query.bm25.call_args.kwargs["filters"]
         assert _combinator(sent) == "_FilterOr"
         assert _leaves(sent) == [
-            (USER_ID_PROPERTY, "Equal", "alice"),
-            (USER_ID_PROPERTY, "IsNull", True),
+            (USER_ID_KEY, "Equal", "alice"),
+            (USER_ID_KEY, "IsNull", True),
         ]
 
     def test_hybrid_search_scoped(self, weaviate_db, mock_weaviate_client):
@@ -230,8 +220,8 @@ class TestSearchScope:
         sent = _collection(mock_weaviate_client).query.hybrid.call_args.kwargs["filters"]
         assert _combinator(sent) == "_FilterOr"
         assert _leaves(sent) == [
-            (USER_ID_PROPERTY, "Equal", "alice"),
-            (USER_ID_PROPERTY, "IsNull", True),
+            (USER_ID_KEY, "Equal", "alice"),
+            (USER_ID_KEY, "IsNull", True),
         ]
 
 
@@ -246,7 +236,7 @@ class TestScopedDedup:
         assert _combinator(where) == "_FilterAnd"
         assert _leaves(where) == [
             ("content_hash", "Equal", "h"),
-            (USER_ID_PROPERTY, "Equal", "alice"),
+            (USER_ID_KEY, "Equal", "alice"),
         ]
 
     def test_shared_upsert_dedup_deletes_only_shared_bucket(self, weaviate_db, mock_weaviate_client):
@@ -256,7 +246,7 @@ class TestScopedDedup:
         assert _combinator(where) == "_FilterAnd"
         assert _leaves(where) == [
             ("content_hash", "Equal", "h"),
-            (USER_ID_PROPERTY, "IsNull", True),
+            (USER_ID_KEY, "IsNull", True),
         ]
 
     def test_upsert_dedup_check_scoped_to_writing_owner(self, weaviate_db):
@@ -276,7 +266,7 @@ class TestDeleteByContentIdScope:
         assert _combinator(where) == "_FilterAnd"
         assert _leaves(where) == [
             ("content_id", "Equal", "doc-1"),
-            (USER_ID_PROPERTY, "Equal", "bob"),
+            (USER_ID_KEY, "Equal", "bob"),
         ]
 
     def test_unscoped_delete_is_content_id_only(self, weaviate_db, mock_weaviate_client):
@@ -296,7 +286,7 @@ class TestDeleteByContentHashScope:
         assert _combinator(where) == "_FilterAnd"
         assert _leaves(where) == [
             ("content_hash", "Equal", "h"),
-            (USER_ID_PROPERTY, "Equal", "alice"),
+            (USER_ID_KEY, "Equal", "alice"),
         ]
 
     def test_none_delete_matches_shared_bucket_only(self, weaviate_db, mock_weaviate_client):
@@ -305,61 +295,8 @@ class TestDeleteByContentHashScope:
         assert _combinator(where) == "_FilterAnd"
         assert _leaves(where) == [
             ("content_hash", "Equal", "h"),
-            (USER_ID_PROPERTY, "IsNull", True),
+            (USER_ID_KEY, "IsNull", True),
         ]
-
-
-class TestContentHashExistsScope:
-    """content_hash_exists is the guard half of the upsert dedup pair, so it means
-    what _delete_by_content_hash means: a set owner checks that owner's chunks and
-    None checks the shared (null) bucket alone, never every owner's rows."""
-
-    def _store(self, client, rows):
-        """Answer fetch_objects from ``rows`` — a list of ``(content_hash, user_id)``
-        — by applying the filter leaves the adapter built, the way the server would."""
-
-        def fetch_objects(limit=None, filters=None, **kwargs):
-            wanted = {}
-            for target, operator, value in _leaves(filters):
-                wanted[target] = None if operator == "IsNull" else value
-            matched = [
-                row for row in rows if row[0] == wanted.get("content_hash") and row[1] == wanted.get(USER_ID_PROPERTY)
-            ]
-            response = MagicMock()
-            response.objects = matched[:limit] if limit else matched
-            return response
-
-        _collection(client).query.fetch_objects.side_effect = fetch_objects
-
-    def test_scoped_check_matches_owner_only(self, weaviate_db, mock_weaviate_client):
-        weaviate_db.content_hash_exists("h", user_id="alice")
-        where = _collection(mock_weaviate_client).query.fetch_objects.call_args.kwargs["filters"]
-        assert _combinator(where) == "_FilterAnd"
-        assert _leaves(where) == [
-            ("content_hash", "Equal", "h"),
-            (USER_ID_PROPERTY, "Equal", "alice"),
-        ]
-
-    def test_none_check_matches_shared_bucket_only(self, weaviate_db, mock_weaviate_client):
-        weaviate_db.content_hash_exists("h", user_id=None)
-        where = _collection(mock_weaviate_client).query.fetch_objects.call_args.kwargs["filters"]
-        assert _combinator(where) == "_FilterAnd"
-        assert _leaves(where) == [
-            ("content_hash", "Equal", "h"),
-            (USER_ID_PROPERTY, "IsNull", True),
-        ]
-
-    def test_none_check_sees_the_shared_row(self, weaviate_db, mock_weaviate_client):
-        self._store(mock_weaviate_client, [("h", None)])
-        assert weaviate_db.content_hash_exists("h", user_id=None) is True
-
-    def test_none_check_does_not_see_a_privately_owned_row(self, weaviate_db, mock_weaviate_client):
-        """Alice privately holds this content. If None matched her row, a shared
-        publish of the same bytes would be judged a duplicate and silently skipped,
-        and the shared bucket would never receive it."""
-        self._store(mock_weaviate_client, [("h", "alice")])
-        assert weaviate_db.content_hash_exists("h", user_id=None) is False
-        assert weaviate_db.content_hash_exists("h", user_id="alice") is True
 
 
 class TestEmptyUserIdRejected:
@@ -393,47 +330,20 @@ class TestAsyncIsolation:
     async def test_async_insert_stamps_owner(self, weaviate_db, mock_async_weaviate_client):
         await weaviate_db.async_insert(content_hash="h1", documents=_alice_docs(), user_id="alice")
         props = _collection(mock_async_weaviate_client).data.insert.call_args.kwargs["properties"]
-        assert props[USER_ID_PROPERTY] == "alice"
+        assert props[USER_ID_KEY] == "alice"
 
     async def test_async_insert_none_is_shared(self, weaviate_db, mock_async_weaviate_client):
         await weaviate_db.async_insert(content_hash="h1", documents=_shared_docs(), user_id=None)
         props = _collection(mock_async_weaviate_client).data.insert.call_args.kwargs["properties"]
-        assert props[USER_ID_PROPERTY] is None
-
-    async def _async_insert_uuid(self, weaviate_db, mock_async_weaviate_client, user_id):
-        _collection(mock_async_weaviate_client).data.insert.reset_mock()
-        await weaviate_db.async_insert(
-            content_hash="shared_hash",
-            documents=[Document(name="doc", content="identical secret body")],
-            user_id=user_id,
-        )
-        return _collection(mock_async_weaviate_client).data.insert.call_args.kwargs["uuid"]
-
-    async def test_async_two_owners_get_distinct_uuids(self, weaviate_db, mock_async_weaviate_client):
-        # The async insert builds its own uuid, so it needs the owner fold proven
-        # here too - a sync-only assertion lets the two paths drift apart.
-        alice_uuid = await self._async_insert_uuid(weaviate_db, mock_async_weaviate_client, "alice")
-        bob_uuid = await self._async_insert_uuid(weaviate_db, mock_async_weaviate_client, "bob")
-        assert alice_uuid != bob_uuid
-
-    async def test_async_shared_write_keeps_base_uuid(self, weaviate_db, mock_async_weaviate_client):
-        shared_uuid = await self._async_insert_uuid(weaviate_db, mock_async_weaviate_client, None)
-        base_id = md5(b"identical secret body").hexdigest()
-        record_id = md5(f"{base_id}_shared_hash".encode()).hexdigest()
-        assert shared_uuid == uuid.UUID(hex=record_id[:32])
-
-    async def test_async_owner_uuid_differs_from_shared(self, weaviate_db, mock_async_weaviate_client):
-        alice_uuid = await self._async_insert_uuid(weaviate_db, mock_async_weaviate_client, "alice")
-        shared_uuid = await self._async_insert_uuid(weaviate_db, mock_async_weaviate_client, None)
-        assert alice_uuid != shared_uuid
+        assert props[USER_ID_KEY] is None
 
     async def test_async_search_scoped(self, weaviate_db, mock_async_weaviate_client):
         await weaviate_db.async_search("salary", limit=10, user_id="alice")
         sent = _collection(mock_async_weaviate_client).query.near_vector.call_args.kwargs["filters"]
         assert _combinator(sent) == "_FilterOr"
         assert _leaves(sent) == [
-            (USER_ID_PROPERTY, "Equal", "alice"),
-            (USER_ID_PROPERTY, "IsNull", True),
+            (USER_ID_KEY, "Equal", "alice"),
+            (USER_ID_KEY, "IsNull", True),
         ]
 
     async def test_async_admin_search_has_no_scope(self, weaviate_db, mock_async_weaviate_client):

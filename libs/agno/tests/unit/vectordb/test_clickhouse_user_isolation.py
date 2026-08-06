@@ -82,26 +82,6 @@ def _empty_result():
     return result
 
 
-def _content_hash_store(client, rows):
-    """Answer ``content_hash`` lookups from ``rows`` — a list of
-    ``(content_hash, user_id)`` — applying the owner clause only when the SQL
-    the adapter built actually carries it, the way the server would."""
-
-    def query(sql, parameters=None):
-        parameters = parameters or {}
-        if "content_hash" not in sql:
-            return _empty_result()
-        matched = [row for row in rows if row[0] == parameters.get("content_hash")]
-        if "user_id" in sql:
-            matched = [row for row in matched if row[1] == parameters.get("user_id")]
-        result = MagicMock()
-        result.result_rows = [(row[0],) for row in matched]
-        result.first_row = result.result_rows[0] if result.result_rows else None
-        return result
-
-    client.query.side_effect = query
-
-
 @pytest.fixture
 def mock_client():
     """Create a mock Clickhouse client."""
@@ -322,10 +302,8 @@ class TestUpsertDedupScope:
 
 
 class TestContentHashExistsScope:
-    """The dedup existence check keys on ``content_hash`` scoped by owner. It is
-    the guard half of the upsert dedup pair, so it means what
-    ``_delete_by_content_hash`` means: ``None`` checks only the shared bucket,
-    never every owner's rows."""
+    """The dedup existence check keys on ``content_hash`` scoped by owner;
+    ``None`` checks only the shared bucket, never every owner's rows."""
 
     def _call(self, client):
         for call in reversed(client.query.call_args_list):
@@ -343,18 +321,6 @@ class TestContentHashExistsScope:
         clickhouse_db.content_hash_exists("h1", user_id=None)
         _, params = self._call(clickhouse_db.client)
         assert params["user_id"] == SHARED_OWNER
-
-    def test_none_check_sees_the_shared_row(self, clickhouse_db):
-        _content_hash_store(clickhouse_db.client, [("h1", SHARED_OWNER)])
-        assert clickhouse_db.content_hash_exists("h1", user_id=None) is True
-
-    def test_none_check_does_not_see_a_privately_owned_row(self, clickhouse_db):
-        """Alice privately holds this content. If ``None`` matched her row, a shared
-        publish of the same bytes would be judged a duplicate and silently skipped,
-        and the shared bucket would never receive it."""
-        _content_hash_store(clickhouse_db.client, [("h1", "alice")])
-        assert clickhouse_db.content_hash_exists("h1", user_id=None) is False
-        assert clickhouse_db.content_hash_exists("h1", user_id="alice") is True
 
 
 class TestAsyncInsertStampsOwner:

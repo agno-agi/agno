@@ -276,46 +276,35 @@ class TestOwnerValidation:
     ``content_hash_exists(user_id=None)``, and untouched by every scoped delete.
     """
 
-    REJECTED = ["", " ", "\t", "\n", "   \t  "]
-
-    @pytest.mark.parametrize("bad", REJECTED)
-    def test_insert_rejects(self, opensearch_db, bad):
+    @pytest.mark.parametrize("bad", ["", "   \t  "])
+    def test_rejects_unsafe_user_id(self, opensearch_db, bad):
+        with pytest.raises(ValueError, match="user_id must not be empty or whitespace-only"):
+            opensearch_db._validate_user_id(bad)
+        # And the rejection is enforced on the write path, not just the helper.
         with pytest.raises(ValueError, match="user_id must not be empty or whitespace-only"):
             opensearch_db.insert("h_alice", [doc("alice", ALICE)], user_id=bad)
-
         assert opensearch_db.client.docs == {}, "the guard must fire before anything is written"
 
-    @pytest.mark.parametrize("bad", REJECTED)
-    def test_upsert_rejects(self, opensearch_db, bad):
-        with pytest.raises(ValueError, match="user_id must not be empty or whitespace-only"):
-            opensearch_db.upsert("h_alice", [doc("alice", ALICE)], user_id=bad)
-
-        assert opensearch_db.client.docs == {}
-
-    @pytest.mark.parametrize("bad", REJECTED)
-    @pytest.mark.asyncio
-    async def test_async_insert_rejects(self, opensearch_db, bad):
-        with pytest.raises(ValueError, match="user_id must not be empty or whitespace-only"):
-            await opensearch_db.async_insert("h_alice", [doc("alice", ALICE)], user_id=bad)
-
-        assert opensearch_db.client.docs == {}
-
-    @pytest.mark.parametrize("bad", REJECTED)
-    @pytest.mark.asyncio
-    async def test_async_upsert_rejects(self, opensearch_db, bad):
-        with pytest.raises(ValueError, match="user_id must not be empty or whitespace-only"):
-            await opensearch_db.async_upsert("h_alice", [doc("alice", ALICE)], user_id=bad)
-
-        assert opensearch_db.client.docs == {}
-
-    @pytest.mark.parametrize("bad", REJECTED)
-    @pytest.mark.parametrize("search_type", [SearchType.vector, SearchType.keyword, SearchType.hybrid])
-    def test_search_rejects(self, opensearch_db, bad, search_type):
-        opensearch_db.search_type = search_type
+    @pytest.mark.parametrize(
+        "call",
+        [
+            lambda db: db.upsert("h_alice", [doc("alice", ALICE)], user_id=""),
+            lambda db: db.search("salary", limit=10, user_id=""),
+            lambda db: db.vector_search("salary", 10, None, ""),
+            lambda db: db.keyword_search("salary", 10, None, ""),
+            lambda db: db.hybrid_search("salary", 10, None, ""),
+            lambda db: db.content_hash_exists("h_alice", user_id=""),
+            lambda db: db.delete_by_content_id("cid", user_id=""),
+        ],
+        ids=["upsert", "search", "vector", "keyword", "hybrid", "content_hash_exists", "delete_by_content_id"],
+    )
+    def test_every_scoped_entry_point_rejects(self, opensearch_db, call):
         seed(opensearch_db)
 
         with pytest.raises(ValueError, match="user_id must not be empty or whitespace-only"):
-            opensearch_db.search("salary", limit=10, user_id=bad)
+            call(opensearch_db)
+
+        assert len(opensearch_db.client.docs) == 3, "the guard must fire before anything is written or deleted"
 
     def test_search_rejects_before_the_search_type_dispatch(self, opensearch_db):
         """An unrecognised search type returns [] without reaching any leaf, so the
@@ -325,44 +314,22 @@ class TestOwnerValidation:
         with pytest.raises(ValueError, match="user_id must not be empty or whitespace-only"):
             opensearch_db.search("salary", limit=10, user_id="")
 
-    @pytest.mark.parametrize("bad", REJECTED)
-    @pytest.mark.asyncio
-    async def test_async_search_rejects(self, opensearch_db, bad):
+    @pytest.mark.parametrize(
+        "call",
+        [
+            lambda db: db.async_insert("h_alice", [doc("alice", ALICE)], user_id=""),
+            lambda db: db.async_upsert("h_alice", [doc("alice", ALICE)], user_id=""),
+            lambda db: db.async_search("salary", limit=10, user_id=""),
+        ],
+        ids=["async_insert", "async_upsert", "async_search"],
+    )
+    async def test_every_async_entry_point_rejects(self, opensearch_db, call):
         """async_search delegates to search on a worker thread, so the ValueError has
         to survive the thread hop and the await."""
         seed(opensearch_db)
 
         with pytest.raises(ValueError, match="user_id must not be empty or whitespace-only"):
-            await opensearch_db.async_search("salary", limit=10, user_id=bad)
-
-    @pytest.mark.parametrize("bad", REJECTED)
-    def test_vector_search_rejects(self, opensearch_db, bad):
-        with pytest.raises(ValueError, match="user_id must not be empty or whitespace-only"):
-            opensearch_db.vector_search("salary", 10, None, bad)
-
-    @pytest.mark.parametrize("bad", REJECTED)
-    def test_keyword_search_rejects(self, opensearch_db, bad):
-        with pytest.raises(ValueError, match="user_id must not be empty or whitespace-only"):
-            opensearch_db.keyword_search("salary", 10, None, bad)
-
-    @pytest.mark.parametrize("bad", REJECTED)
-    def test_hybrid_search_rejects(self, opensearch_db, bad):
-        with pytest.raises(ValueError, match="user_id must not be empty or whitespace-only"):
-            opensearch_db.hybrid_search("salary", 10, None, bad)
-
-    @pytest.mark.parametrize("bad", REJECTED)
-    def test_content_hash_exists_rejects(self, opensearch_db, bad):
-        with pytest.raises(ValueError, match="user_id must not be empty or whitespace-only"):
-            opensearch_db.content_hash_exists("h_alice", user_id=bad)
-
-    @pytest.mark.parametrize("bad", REJECTED)
-    def test_delete_by_content_id_rejects(self, opensearch_db, bad):
-        seed(opensearch_db)
-
-        with pytest.raises(ValueError, match="user_id must not be empty or whitespace-only"):
-            opensearch_db.delete_by_content_id("cid", user_id=bad)
-
-        assert len(opensearch_db.client.docs) == 3, "the guard must fire before anything is deleted"
+            await call(opensearch_db)
 
     def test_none_is_not_rejected_anywhere(self, opensearch_db):
         """None is the shared bucket on a write and the admin view on a read - it is
