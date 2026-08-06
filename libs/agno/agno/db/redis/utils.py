@@ -12,6 +12,8 @@ from agno.utils.log import log_warning
 
 try:
     from redis import Redis, RedisCluster
+    from redis.asyncio import Redis as AsyncRedis
+    from redis.asyncio.cluster import RedisCluster as AsyncRedisCluster
 except ImportError:
     raise ImportError("`redis` not installed. Please install it using `pip install redis`")
 
@@ -171,6 +173,61 @@ def remove_index_entries(
         if field in record_data and record_data[field] is not None:
             index_key = generate_index_key(prefix, table_type, field, str(record_data[field]))
             redis_client.srem(index_key, record_id)
+
+
+# -- Async Redis utils --
+
+
+async def aget_all_keys_for_table(
+    redis_client: Union[AsyncRedis, AsyncRedisCluster], prefix: str, table_type: str
+) -> List[str]:
+    """Get all relevant keys for the given table type using the async Redis client.
+
+    Args:
+        redis_client: The async Redis client.
+        prefix: The prefix for the keys.
+        table_type: The table type.
+
+    Returns:
+        List[str]: A list of all relevant keys for the given table type.
+    """
+    pattern = f"{prefix}:{table_type}:*"
+    relevant_keys: List[str] = []
+
+    async for key in redis_client.scan_iter(match=pattern):
+        if ":index:" in key:  # Skip index keys
+            continue
+        relevant_keys.append(key)
+
+    return relevant_keys
+
+
+async def acreate_index_entries(
+    redis_client: Union[AsyncRedis, AsyncRedisCluster],
+    prefix: str,
+    table_type: str,
+    record_id: str,
+    record_data: Dict[str, Any],
+    index_fields: List[str],
+) -> None:
+    for field in index_fields:
+        if field in record_data and record_data[field] is not None:
+            index_key = generate_index_key(prefix, table_type, field, str(record_data[field]))
+            await redis_client.sadd(index_key, record_id)  # type: ignore[misc]
+
+
+async def aremove_index_entries(
+    redis_client: Union[AsyncRedis, AsyncRedisCluster],
+    prefix: str,
+    table_type: str,
+    record_id: str,
+    record_data: Dict[str, Any],
+    index_fields: List[str],
+) -> None:
+    for field in index_fields:
+        if field in record_data and record_data[field] is not None:
+            index_key = generate_index_key(prefix, table_type, field, str(record_data[field]))
+            await redis_client.srem(index_key, record_id)  # type: ignore[misc]
 
 
 # -- Metrics utils --
