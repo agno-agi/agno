@@ -1119,14 +1119,14 @@ class FunctionCall(BaseModel):
                     cache_file = self.function._get_cache_file_path(cache_key)
                     self.function._save_to_cache(cache_file, self.result)
 
+                # Capture session_state from the shared RunContext so mutations made
+                # inside tool_hooks (which receive run_context even when the tool
+                # function itself does not declare a run_context parameter) are
+                # propagated and persisted. Mirrors the generator-path recapture in
+                # agno/models/base.py.
                 updated_session_state = None
-                if entrypoint_args.get("run_context") is not None:
-                    run_context = entrypoint_args.get("run_context")
-                    updated_session_state = (
-                        run_context.session_state
-                        if run_context is not None and run_context.session_state is not None
-                        else None
-                    )
+                if self.function._run_context is not None and self.function._run_context.session_state is not None:
+                    updated_session_state = self.function._run_context.session_state
 
                 execution_result = FunctionExecutionResult(
                     status="success", result=self.result, updated_session_state=updated_session_state
@@ -1345,14 +1345,14 @@ class FunctionCall(BaseModel):
             if isgenerator(self.result) or isasyncgen(self.result):
                 updated_session_state = None
             else:
+                # Capture session_state from the shared RunContext so mutations made
+                # inside tool_hooks (which receive run_context even when the tool
+                # function itself does not declare a run_context parameter) are
+                # propagated and persisted. Mirrors the generator-path recapture in
+                # agno/models/base.py.
                 updated_session_state = None
-                if entrypoint_args.get("run_context") is not None:
-                    run_context = entrypoint_args.get("run_context")
-                    updated_session_state = (
-                        run_context.session_state
-                        if run_context is not None and run_context.session_state is not None
-                        else None
-                    )
+                if self.function._run_context is not None and self.function._run_context.session_state is not None:
+                    updated_session_state = self.function._run_context.session_state
 
             execution_result = FunctionExecutionResult(
                 status="success", result=self.result, updated_session_state=updated_session_state
