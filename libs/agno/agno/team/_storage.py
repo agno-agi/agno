@@ -961,10 +961,8 @@ def from_dict(
         if resolved is not None:
             config["db"] = resolved
         else:
-            # Only postgres, sqlite and clickhouse serialize a type, so most
-            # backends cannot be rebuilt from config alone. The caller supplies
-            # the db it holds; refusing here would make every component on the
-            # other backends unloadable.
+            # Only postgres, sqlite and clickhouse serialize a type; on other
+            # backends the caller's own db is the fallback, in both modes.
             log_warning(f"{component_label} has a serialized db config that could not be resolved.")
             del config["db"]
 

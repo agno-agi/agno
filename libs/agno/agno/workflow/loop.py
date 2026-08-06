@@ -272,9 +272,19 @@ class Loop:
                 if registry:
                     end_condition = registry.get_function(end_condition_data)
                     if end_condition is None:
-                        raise ValueError(f"End condition function '{end_condition_data}' not found in registry")
+                        message = f"End condition function '{end_condition_data}' not found in registry"
+                        if strict:
+                            from agno.exceptions import ComponentRehydrationError
+
+                            raise ComponentRehydrationError(message)
+                        raise ValueError(message)
                 else:
-                    raise ValueError(f"Registry required to deserialize end_condition function '{end_condition_data}'")
+                    message = f"Registry required to deserialize end_condition function '{end_condition_data}'"
+                    if strict:
+                        from agno.exceptions import ComponentRehydrationError
+
+                        raise ComponentRehydrationError(message)
+                    raise ValueError(message)
 
         # HITL config
         if data.get("human_review"):

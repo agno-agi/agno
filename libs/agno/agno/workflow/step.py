@@ -465,8 +465,20 @@ class Step:
             executor = _placeholder
 
         # --- Handle Executor reconstruction ---
-        if "executor_ref" in config and config["executor_ref"] and registry:
-            executor = registry.get_function(config["executor_ref"])
+        if "executor_ref" in config and config["executor_ref"]:
+            executor_ref = config["executor_ref"]
+            executor = registry.get_function(executor_ref) if registry else None
+            if executor is None:
+                if strict:
+                    raise ComponentRehydrationError(
+                        f"Step '{config.get('name')}' references executor function '{executor_ref}' "
+                        "which was not found in the registry. Register the function, or pass "
+                        "strict=False to load the workflow without it."
+                    )
+                log_warning(
+                    f"Could not resolve executor_ref='{executor_ref}' from the registry for step "
+                    f"'{config.get('name')}'"
+                )
 
         # HITL config
         if config.get("human_review"):

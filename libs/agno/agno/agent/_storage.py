@@ -783,9 +783,11 @@ def from_dict(
         data: Dictionary containing agent configuration
         registry: Optional registry for rehydrating tools and schemas
         strict: If True, unresolvable registry references (tools,
-            schemas, knowledge, db) raise ComponentRehydrationError instead of
-            being silently dropped. Pass False to reconstruct as much as
-            possible, e.g. for listings that must show degraded components.
+            schemas, knowledge) raise ComponentRehydrationError instead of
+            being silently dropped; an unresolvable serialized db config warns
+            and falls back to the caller's db in both modes. Pass False to
+            reconstruct as much as possible, e.g. for listings that must show
+            degraded components.
 
     Returns:
         Agent: Reconstructed agent instance
@@ -863,10 +865,8 @@ def from_dict(
         if resolved is not None:
             config["db"] = resolved
         else:
-            # Only postgres, sqlite and clickhouse serialize a type, so most
-            # backends cannot be rebuilt from config alone. The caller supplies
-            # the db it holds; refusing here would make every component on the
-            # other backends unloadable.
+            # Only postgres, sqlite and clickhouse serialize a type; on other
+            # backends the caller's own db is the fallback, in both modes.
             log_warning(f"{component_label} has a serialized db config that could not be resolved.")
             del config["db"]
 

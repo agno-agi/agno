@@ -281,10 +281,20 @@ class Condition:
                 if registry:
                     func = registry.get_function(evaluator_data)
                     if func is None:
-                        raise ValueError(f"Evaluator function '{evaluator_data}' not found in registry")
+                        message = f"Evaluator function '{evaluator_data}' not found in registry"
+                        if strict:
+                            from agno.exceptions import ComponentRehydrationError
+
+                            raise ComponentRehydrationError(message)
+                        raise ValueError(message)
                     evaluator = func
                 else:
-                    raise ValueError(f"Registry required to deserialize evaluator function '{evaluator_data}'")
+                    message = f"Registry required to deserialize evaluator function '{evaluator_data}'"
+                    if strict:
+                        from agno.exceptions import ComponentRehydrationError
+
+                        raise ComponentRehydrationError(message)
+                    raise ValueError(message)
         else:
             raise ValueError(f"Invalid evaluator type in data: {type(evaluator_data).__name__}")
 

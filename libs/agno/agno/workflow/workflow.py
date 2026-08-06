@@ -945,10 +945,12 @@ class Workflow:
             db: Optional database for loading agents/teams in steps
             links: Optional links for this workflow version
             registry: Optional registry for rehydrating executors
-            strict: If True, unresolvable registry references
-                (input schema, db) raise ComponentRehydrationError instead of
-                being silently dropped. Step-level references already fail
-                loudly regardless of this flag.
+            strict: If True, unresolvable references raise
+                ComponentRehydrationError instead of degrading: the workflow's
+                input schema, and the step-level agents, teams and callable
+                refs (executors, evaluators, selectors, end conditions) the
+                flag is passed down to. An unresolvable serialized db config
+                warns and falls back to the caller's db in both modes.
 
         Returns:
             Workflow: Reconstructed workflow instance
@@ -968,10 +970,8 @@ class Workflow:
             if resolved is not None:
                 config["db"] = resolved
             else:
-                # Only postgres, sqlite and clickhouse serialize a type, so most
-                # backends cannot be rebuilt from config alone. The caller supplies
-                # the db it holds; refusing here would make every component on the
-                # other backends unloadable.
+                # Only postgres, sqlite and clickhouse serialize a type; on other
+                # backends the caller's own db is the fallback, in both modes.
                 log_warning(f"{component_label} has a serialized db config that could not be resolved.")
                 del config["db"]
 
@@ -10836,8 +10836,7 @@ def get_workflow_by_id(
         return workflow
 
     except ComponentRehydrationError:
-        # A rehydration failure is not "workflow not found"; let the caller
-        # decide instead of degrading it to None.
+        # A rehydration failure is not "workflow not found"; propagate it.
         raise
     except Exception as e:
         log_error(f"Error loading Workflow {id} from database: {str(e)}")

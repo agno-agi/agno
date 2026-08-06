@@ -1788,8 +1788,7 @@ def get_agent_by_id(
         return agent
 
     except ComponentRehydrationError:
-        # A rehydration failure is not "agent not found"; let the caller
-        # decide instead of degrading it to None.
+        # A rehydration failure is not "agent not found"; propagate it.
         raise
     except Exception as e:
         log_error(f"Error loading Agent {id} from database: {str(e)}")

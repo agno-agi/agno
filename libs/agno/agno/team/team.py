@@ -1844,8 +1844,7 @@ def get_team_by_id(
         return team
 
     except ComponentRehydrationError:
-        # A rehydration failure is not "team not found"; let the caller
-        # decide instead of degrading it to None.
+        # A rehydration failure is not "team not found"; propagate it.
         raise
     except Exception as e:
         log_error(f"Error loading Team {id} from database: {str(e)}")

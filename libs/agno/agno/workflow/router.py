@@ -342,10 +342,20 @@ class Router:
                 if registry:
                     func = registry.get_function(selector_data)
                     if func is None:
-                        raise ValueError(f"Selector function '{selector_data}' not found in registry")
+                        message = f"Selector function '{selector_data}' not found in registry"
+                        if strict:
+                            from agno.exceptions import ComponentRehydrationError
+
+                            raise ComponentRehydrationError(message)
+                        raise ValueError(message)
                     selector = func
                 else:
-                    raise ValueError(f"Registry required to deserialize selector function '{selector_data}'")
+                    message = f"Registry required to deserialize selector function '{selector_data}'"
+                    if strict:
+                        from agno.exceptions import ComponentRehydrationError
+
+                        raise ComponentRehydrationError(message)
+                    raise ValueError(message)
         else:
             raise ValueError(f"Invalid selector type in data: {type(selector_data).__name__}")
 
