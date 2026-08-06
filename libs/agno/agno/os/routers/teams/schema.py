@@ -73,6 +73,7 @@ class TeamResponse(BaseModel):
         cls,
         team: Team,
         is_component: bool = False,
+        expose_config: bool = True,
     ) -> "TeamResponse":
         def filter_meaningful_config(d: Dict[str, Any], defaults: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             """Filter out fields that match their default values, keeping only meaningful user configurations"""
@@ -122,6 +123,24 @@ class TeamResponse(BaseModel):
             "stream_events": False,
             "stream_member_events": False,
         }
+
+        streaming_info = {
+            "stream": team.stream,
+            "stream_events": team.stream_events,
+            "stream_member_events": team.stream_member_events,
+        }
+
+        if not expose_config:
+            return cls(
+                id=team.id,
+                name=team.name,
+                description=team.description,
+                introduction=team.introduction,
+                streaming=filter_meaningful_config(streaming_info, team_defaults),
+                is_component=is_component,
+                current_version=getattr(team, "_version", None),
+                stage=getattr(team, "_stage", None),
+            )
 
         run_id = str(uuid4())
         session_id = str(uuid4())
@@ -275,12 +294,6 @@ class TeamResponse(BaseModel):
                 provider=team.parser_model.provider,
             ).model_dump()
 
-        streaming_info = {
-            "stream": team.stream,
-            "stream_events": team.stream_events,
-            "stream_member_events": team.stream_member_events,
-        }
-
         # Build team model only if it has at least one non-null field
         _team_model_data: Dict[str, Any] = {}
         if team.model and team.model.name is not None:
@@ -293,10 +306,10 @@ class TeamResponse(BaseModel):
         members: List[Union[AgentResponse, TeamResponse]] = []
         for member in team.members if isinstance(team.members, list) else []:
             if isinstance(member, Agent):
-                agent_response = await AgentResponse.from_agent(member)
+                agent_response = await AgentResponse.from_agent(member, expose_config=expose_config)
                 members.append(agent_response)
             if isinstance(member, Team):
-                team_response = await TeamResponse.from_team(member)
+                team_response = await TeamResponse.from_team(member, expose_config=expose_config)
                 members.append(team_response)
 
         return TeamResponse(

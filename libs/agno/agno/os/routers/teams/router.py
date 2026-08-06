@@ -49,13 +49,16 @@ from agno.os.utils import (
     classify_upload_file,
     find_factory_by_id,
     format_sse_event,
+    format_sse_event_with_index,
     get_request_kwargs,
     get_team_by_id,
     process_audio,
     process_document,
     process_image,
     process_video,
+    resolve_stream_events,
     resolve_team,
+    sanitize_sse_event,
 )
 from agno.registry import Registry
 from agno.run.agent import RunOutput
@@ -66,10 +69,26 @@ from agno.team.factory import TeamFactory
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
 from agno.utils.log import log_debug, log_warning, logger
-from agno.utils.serialize import json_serializer
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
+
+
+def _component_events_to_skip(component: Any) -> List[Any]:
+    return list(getattr(component, "events_to_skip", None) or [])
+
+
+def _safe_team_response(response: TeamResponse) -> TeamResponse:
+    return TeamResponse(
+        id=response.id,
+        name=response.name,
+        description=response.description,
+        introduction=response.introduction,
+        streaming=response.streaming,
+        is_component=response.is_component,
+        current_version=response.current_version,
+        stage=response.stage,
+    )
 
 
 def _is_run_output_accumulator(chunk: Any) -> bool:
@@ -88,6 +107,7 @@ async def team_response_streamer(
     files: Optional[List[FileMedia]] = None,
     background_tasks: Optional[BackgroundTasks] = None,
     auth_token: Optional[str] = None,
+    stream_tool_payloads: bool = False,
     **kwargs: Any,
 ) -> AsyncGenerator:
     """Run the given team asynchronously and yield its response"""
@@ -96,10 +116,7 @@ async def team_response_streamer(
         if background_tasks is not None:
             kwargs["background_tasks"] = background_tasks
 
-        if "stream_events" in kwargs:
-            stream_events = kwargs.pop("stream_events")
-        else:
-            stream_events = True
+        stream_events = resolve_stream_events(team, kwargs)
 
         # Pass auth_token for remote teams
         if auth_token and isinstance(team, RemoteTeam):
@@ -120,7 +137,13 @@ async def team_response_streamer(
         async for run_response_chunk in run_response:
             if _is_run_output_accumulator(run_response_chunk):
                 continue
-            yield format_sse_event(run_response_chunk)  # type: ignore
+            sse_event = format_sse_event(
+                run_response_chunk,  # type: ignore[arg-type]
+                stream_tool_payloads=stream_tool_payloads,
+                events_to_skip=_component_events_to_skip(team),
+            )
+            if sse_event:
+                yield sse_event
     except (InputCheckError, OutputCheckError) as e:
         error_response = TeamRunErrorEvent(
             content=str(e),
@@ -156,6 +179,7 @@ async def team_resumable_response_streamer(
     files: Optional[List[FileMedia]] = None,
     background_tasks: Optional[BackgroundTasks] = None,
     auth_token: Optional[str] = None,
+    stream_tool_payloads: bool = False,
     **kwargs: Any,
 ) -> AsyncGenerator:
     """Resumable SSE generator for background=True, stream=True.
@@ -170,10 +194,7 @@ async def team_resumable_response_streamer(
     if background_tasks is not None:
         kwargs["background_tasks"] = background_tasks
 
-    if "stream_events" in kwargs:
-        stream_events = kwargs.pop("stream_events")
-    else:
-        stream_events = True
+    stream_events = resolve_stream_events(team, kwargs)
 
     if auth_token and isinstance(team, RemoteTeam):
         kwargs["auth_token"] = auth_token
@@ -192,7 +213,13 @@ async def team_resumable_response_streamer(
             background=True,
             **kwargs,
         ):
-            yield sse_data
+            sse_event = sanitize_sse_event(
+                sse_data,
+                stream_tool_payloads=stream_tool_payloads,
+                events_to_skip=_component_events_to_skip(team),
+            )
+            if sse_event:
+                yield sse_event
     except (InputCheckError, OutputCheckError) as e:
         error_response = TeamRunErrorEvent(
             content=str(e),
@@ -220,6 +247,7 @@ async def _resume_stream_generator(
     run_id: str,
     last_event_index: Optional[int],
     session_id: Optional[str],
+    stream_tool_payloads: bool = False,
     user_id: Optional[str] = None,
 ) -> AsyncGenerator:
     """SSE generator for the /resume endpoint.
@@ -251,12 +279,15 @@ async def _resume_stream_generator(
                 yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
 
                 for idx, event in enumerate(run_output.events):
-                    event_dict = event.to_dict()
-                    event_dict["event_index"] = idx
-                    if "run_id" not in event_dict:
-                        event_dict["run_id"] = run_id
-                    event_type = event_dict.get("event", "message")
-                    yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+                    sse_event = format_sse_event_with_index(
+                        event,
+                        event_index=idx,
+                        run_id=run_id,
+                        stream_tool_payloads=stream_tool_payloads,
+                        events_to_skip=_component_events_to_skip(team),
+                    )
+                    if sse_event:
+                        yield sse_event
                 return
             elif run_output:
                 meta = {
@@ -296,12 +327,15 @@ async def _resume_stream_generator(
         yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
 
         for ev_index, buffered_event in missed_events:
-            event_dict = buffered_event.to_dict()
-            event_dict["event_index"] = ev_index
-            if "run_id" not in event_dict:
-                event_dict["run_id"] = run_id
-            event_type = event_dict.get("event", "message")
-            yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+            sse_event = format_sse_event_with_index(
+                buffered_event,
+                event_index=ev_index,
+                run_id=run_id,
+                stream_tool_payloads=stream_tool_payloads,
+                events_to_skip=_component_events_to_skip(team),
+            )
+            if sse_event:
+                yield sse_event
         return
 
     # PATH 1: Run still active -- subscribe FIRST (to avoid race condition), then replay missed events
@@ -326,12 +360,15 @@ async def _resume_stream_generator(
             yield f"event: catch_up\ndata: {json.dumps(meta)}\n\n"
 
             for ev_index, buffered_event in missed_events:
-                event_dict = buffered_event.to_dict()
-                event_dict["event_index"] = ev_index
-                if "run_id" not in event_dict:
-                    event_dict["run_id"] = run_id
-                event_type = event_dict.get("event", "message")
-                yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+                sse_event = format_sse_event_with_index(
+                    buffered_event,
+                    event_index=ev_index,
+                    run_id=run_id,
+                    stream_tool_payloads=stream_tool_payloads,
+                    events_to_skip=_component_events_to_skip(team),
+                )
+                if sse_event:
+                    yield sse_event
                 last_replayed_index = ev_index
 
         # Re-check buffer status after subscribing: the run may have completed
@@ -344,12 +381,15 @@ async def _resume_stream_generator(
             remaining = event_buffer.get_events(run_id, last_event_index=last_replayed_index)
             if remaining:
                 for ev_index, buffered_event in remaining:
-                    event_dict = buffered_event.to_dict()
-                    event_dict["event_index"] = ev_index
-                    if "run_id" not in event_dict:
-                        event_dict["run_id"] = run_id
-                    event_type = event_dict.get("event", "message")
-                    yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+                    sse_event = format_sse_event_with_index(
+                        buffered_event,
+                        event_index=ev_index,
+                        run_id=run_id,
+                        stream_tool_payloads=stream_tool_payloads,
+                        events_to_skip=_component_events_to_skip(team),
+                    )
+                    if sse_event:
+                        yield sse_event
             return
 
         # Confirm subscription for live events
@@ -375,12 +415,15 @@ async def _resume_stream_generator(
                     # Run ended - replay any remaining events from buffer
                     remaining = event_buffer.get_events(run_id, last_event_index=last_replayed_index)
                     for ev_index, buffered_event in remaining:
-                        event_dict = buffered_event.to_dict()
-                        event_dict["event_index"] = ev_index
-                        if "run_id" not in event_dict:
-                            event_dict["run_id"] = run_id
-                        event_type = event_dict.get("event", "message")
-                        yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+                        sse_event = format_sse_event_with_index(
+                            buffered_event,
+                            event_index=ev_index,
+                            run_id=run_id,
+                            stream_tool_payloads=stream_tool_payloads,
+                            events_to_skip=_component_events_to_skip(team),
+                        )
+                        if sse_event:
+                            yield sse_event
                     break
                 # Still running - send heartbeat to keep connection alive
                 yield ": heartbeat\n\n"
@@ -394,7 +437,13 @@ async def _resume_stream_generator(
                 continue
             if ev_idx >= 0:
                 last_replayed_index = ev_idx
-            yield sse_data
+            sse_event = sanitize_sse_event(
+                sse_data,
+                stream_tool_payloads=stream_tool_payloads,
+                events_to_skip=_component_events_to_skip(team),
+            )
+            if sse_event:
+                yield sse_event
     finally:
         sse_subscriber_manager.unsubscribe(run_id, queue)
 
@@ -407,6 +456,7 @@ async def team_continue_response_streamer(
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
     auth_token: Optional[str] = None,
+    stream_tool_payloads: bool = False,
     **kwargs: Any,
 ) -> AsyncGenerator:
     """Continue a paused team run and yield streaming response."""
@@ -414,10 +464,7 @@ async def team_continue_response_streamer(
         if auth_token and isinstance(team, RemoteTeam):
             kwargs["auth_token"] = auth_token
 
-        if "stream_events" in kwargs:
-            stream_events = kwargs.pop("stream_events")
-        else:
-            stream_events = True
+        stream_events = resolve_stream_events(team, kwargs)
 
         continue_response = team.acontinue_run(
             run_id=run_id,
@@ -432,7 +479,13 @@ async def team_continue_response_streamer(
         async for run_response_chunk in continue_response:
             if _is_run_output_accumulator(run_response_chunk):
                 continue
-            yield format_sse_event(run_response_chunk)  # type: ignore
+            sse_event = format_sse_event(
+                run_response_chunk,  # type: ignore[arg-type]
+                stream_tool_payloads=stream_tool_payloads,
+                events_to_skip=_component_events_to_skip(team),
+            )
+            if sse_event:
+                yield sse_event
     except (InputCheckError, OutputCheckError) as e:
         error_response = TeamRunErrorEvent(
             content=str(e),
@@ -463,6 +516,7 @@ async def team_resumable_continue_response_streamer(
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
     auth_token: Optional[str] = None,
+    stream_tool_payloads: bool = False,
     **kwargs: Any,
 ) -> AsyncGenerator:
     """Resumable SSE generator for continue_run with background=True, stream=True.
@@ -479,10 +533,7 @@ async def team_resumable_continue_response_streamer(
     if background_tasks is not None:
         kwargs["background_tasks"] = background_tasks
 
-    if "stream_events" in kwargs:
-        stream_events = kwargs.pop("stream_events")
-    else:
-        stream_events = True
+    stream_events = resolve_stream_events(team, kwargs)
 
     try:
         async for sse_data in team.acontinue_run(
@@ -495,7 +546,13 @@ async def team_resumable_continue_response_streamer(
             background=True,
             **kwargs,
         ):
-            yield sse_data
+            sse_event = sanitize_sse_event(
+                sse_data,
+                stream_tool_payloads=stream_tool_payloads,
+                events_to_skip=_component_events_to_skip(team),
+            )
+            if sse_event:
+                yield sse_event
     except (InputCheckError, OutputCheckError) as e:
         error_response = TeamRunErrorEvent(
             content=str(e),
@@ -590,6 +647,7 @@ def get_team_router(
         ),
     ):
         kwargs = await get_request_kwargs(request, create_team_run)
+        kwargs.pop("stream_tool_payloads", None)
 
         # Scoped non-admin callers always get their JWT sub as user_id.
         # Admins and unscoped callers fall through to middleware/form values.
@@ -713,6 +771,7 @@ def get_team_router(
                         files=document_files if document_files else None,
                         background_tasks=background_tasks,
                         auth_token=auth_token,
+                        stream_tool_payloads=os.stream_tool_payloads,
                         **kwargs,
                     ),
                     media_type="text/event-stream",
@@ -758,6 +817,7 @@ def get_team_router(
                     files=document_files if document_files else None,
                     background_tasks=background_tasks,
                     auth_token=auth_token,
+                    stream_tool_payloads=os.stream_tool_payloads,
                     **kwargs,
                 ),
                 media_type="text/event-stream",
@@ -939,7 +999,14 @@ def get_team_router(
             )
 
         return StreamingResponse(
-            _resume_stream_generator(team, run_id, last_event_index, session_id, user_id=scoped_user_id),
+            _resume_stream_generator(
+                team,
+                run_id,
+                last_event_index,
+                session_id,
+                stream_tool_payloads=os.stream_tool_payloads,
+                user_id=scoped_user_id,
+            ),
             media_type="text/event-stream",
         )
 
@@ -1004,6 +1071,7 @@ def get_team_router(
         background: bool = Form(False),
     ):
         kwargs = await get_request_kwargs(request, continue_team_run)
+        kwargs.pop("stream_tool_payloads", None)
 
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
@@ -1115,6 +1183,7 @@ def get_team_router(
                     user_id=user_id,
                     background_tasks=background_tasks,
                     auth_token=auth_token,
+                    stream_tool_payloads=os.stream_tool_payloads,
                     **kwargs,
                 ),
                 media_type="text/event-stream",
@@ -1135,6 +1204,7 @@ def get_team_router(
                     user_id=user_id,
                     background_tasks=background_tasks,
                     auth_token=auth_token,
+                    stream_tool_payloads=os.stream_tool_payloads,
                     **kwargs,
                 ),
                 media_type="text/event-stream",
@@ -1330,11 +1400,14 @@ def get_team_router(
         teams = []
         for team in accessible_teams:
             if isinstance(team, Team):
-                teams.append(await TeamResponse.from_team(team=team, is_component=False))
+                teams.append(
+                    await TeamResponse.from_team(team=team, is_component=False, expose_config=os.expose_agent_config)
+                )
             elif isinstance(team, TeamFactory):
                 teams.append(TeamResponse.from_factory(team))
             elif isinstance(team, RemoteTeam):
-                teams.append(await team.get_team_config())
+                remote_response = await team.get_team_config()
+                teams.append(remote_response if os.expose_agent_config else _safe_team_response(remote_response))
 
         # Also load teams from database
         if os.db and isinstance(os.db, BaseDb):
@@ -1344,7 +1417,9 @@ def get_team_router(
             exclude_ids = registry.get_team_ids() if registry else None
             db_teams = get_teams(db=os.db, registry=registry, exclude_component_ids=exclude_ids or None)
             for db_team in db_teams:
-                team_response = await TeamResponse.from_team(team=db_team, is_component=True)
+                team_response = await TeamResponse.from_team(
+                    team=db_team, is_component=True, expose_config=os.expose_agent_config
+                )
                 teams.append(team_response)
 
         return teams
@@ -1449,9 +1524,10 @@ def get_team_router(
             raise HTTPException(status_code=404, detail="Team not found")
 
         if isinstance(team, RemoteTeam):
-            return await team.get_team_config()
+            remote_response = await team.get_team_config()
+            return remote_response if os.expose_agent_config else _safe_team_response(remote_response)
         else:
-            return await TeamResponse.from_team(team=team)
+            return await TeamResponse.from_team(team=team, expose_config=os.expose_agent_config)
 
     @router.get(
         "/teams/{team_id}/runs/{run_id}",

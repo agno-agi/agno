@@ -53,6 +53,7 @@ from agno.os.utils import (
     classify_upload_file,
     find_factory_by_id,
     format_sse_event,
+    format_sse_event_with_index,
     get_agent_by_id,
     get_request_kwargs,
     process_audio,
@@ -60,12 +61,13 @@ from agno.os.utils import (
     process_image,
     process_video,
     resolve_agent,
+    resolve_stream_events,
+    sanitize_sse_event,
 )
 from agno.registry import Registry
 from agno.run.agent import RunErrorEvent, RunOutput
 from agno.run.base import RunStatus
 from agno.utils.log import log_debug, log_error, log_warning
-from agno.utils.serialize import json_serializer
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
@@ -75,6 +77,23 @@ def _require_capability(agent: Any, method: str, feature: str) -> None:
     """Raise 501 if the agent does not expose the given method."""
     if not callable(getattr(agent, method, None)):
         raise HTTPException(status_code=501, detail=f"This agent does not support {feature}")
+
+
+def _component_events_to_skip(component: Any) -> List[Any]:
+    return list(getattr(component, "events_to_skip", None) or [])
+
+
+def _safe_agent_response(response: AgentResponse) -> AgentResponse:
+    return AgentResponse(
+        id=response.id,
+        name=response.name,
+        description=response.description,
+        introduction=response.introduction,
+        streaming=response.streaming,
+        is_component=response.is_component,
+        current_version=response.current_version,
+        stage=response.stage,
+    )
 
 
 async def agent_response_streamer(
@@ -88,6 +107,7 @@ async def agent_response_streamer(
     files: Optional[List[FileMedia]] = None,
     background_tasks: Optional[BackgroundTasks] = None,
     auth_token: Optional[str] = None,
+    stream_tool_payloads: bool = False,
     **kwargs: Any,
 ) -> AsyncGenerator:
     """Default SSE generator. Agent runs inline — if client disconnects, agent is cancelled."""
@@ -95,10 +115,7 @@ async def agent_response_streamer(
         if background_tasks is not None:
             kwargs["background_tasks"] = background_tasks
 
-        if "stream_events" in kwargs:
-            stream_events = kwargs.pop("stream_events")
-        else:
-            stream_events = True
+        stream_events = resolve_stream_events(agent, kwargs)
 
         if auth_token and isinstance(agent, RemoteAgent):
             kwargs["auth_token"] = auth_token
@@ -116,7 +133,13 @@ async def agent_response_streamer(
             **kwargs,
         )
         async for run_response_chunk in run_response:  # type: ignore[union-attr]
-            yield format_sse_event(run_response_chunk)  # type: ignore
+            sse_event = format_sse_event(
+                run_response_chunk,  # type: ignore[arg-type]
+                stream_tool_payloads=stream_tool_payloads,
+                events_to_skip=_component_events_to_skip(agent),
+            )
+            if sse_event:
+                yield sse_event
     except (InputCheckError, OutputCheckError) as e:
         error_response = RunErrorEvent(
             content=str(e),
@@ -148,6 +171,7 @@ async def agent_resumable_response_streamer(
     files: Optional[List[FileMedia]] = None,
     background_tasks: Optional[BackgroundTasks] = None,
     auth_token: Optional[str] = None,
+    stream_tool_payloads: bool = False,
     **kwargs: Any,
 ) -> AsyncGenerator:
     """Resumable SSE generator for background=True, stream=True.
@@ -162,10 +186,7 @@ async def agent_resumable_response_streamer(
     if background_tasks is not None:
         kwargs["background_tasks"] = background_tasks
 
-    if "stream_events" in kwargs:
-        stream_events = kwargs.pop("stream_events")
-    else:
-        stream_events = True
+    stream_events = resolve_stream_events(agent, kwargs)
 
     if auth_token and isinstance(agent, RemoteAgent):
         kwargs["auth_token"] = auth_token
@@ -184,7 +205,13 @@ async def agent_resumable_response_streamer(
             background=True,
             **kwargs,
         ):
-            yield sse_data
+            sse_event = sanitize_sse_event(
+                sse_data,
+                stream_tool_payloads=stream_tool_payloads,
+                events_to_skip=_component_events_to_skip(agent),
+            )
+            if sse_event:
+                yield sse_event
     except (InputCheckError, OutputCheckError) as e:
         error_response = RunErrorEvent(
             content=str(e),
@@ -219,6 +246,7 @@ async def agent_continue_response_streamer(
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
     auth_token: Optional[str] = None,
+    stream_tool_payloads: bool = False,
     **kwargs: Any,
 ) -> AsyncGenerator:
     """Default SSE generator for continue_run. Agent runs inline — client disconnect cancels agent."""
@@ -226,10 +254,7 @@ async def agent_continue_response_streamer(
         if auth_token and isinstance(agent, RemoteAgent):
             kwargs["auth_token"] = auth_token
 
-        if "stream_events" in kwargs:
-            stream_events = kwargs.pop("stream_events")
-        else:
-            stream_events = True
+        stream_events = resolve_stream_events(agent, kwargs)
 
         continue_response = agent.acontinue_run(  # type: ignore[union-attr]
             run_id=run_id,
@@ -248,7 +273,13 @@ async def agent_continue_response_streamer(
             **kwargs,
         )
         async for run_response_chunk in continue_response:
-            yield format_sse_event(run_response_chunk)  # type: ignore
+            sse_event = format_sse_event(
+                run_response_chunk,  # type: ignore[arg-type]
+                stream_tool_payloads=stream_tool_payloads,
+                events_to_skip=_component_events_to_skip(agent),
+            )
+            if sse_event:
+                yield sse_event
     except (InputCheckError, OutputCheckError) as e:
         error_response = RunErrorEvent(
             content=str(e),
@@ -286,6 +317,7 @@ async def agent_resumable_continue_response_streamer(
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
     auth_token: Optional[str] = None,
+    stream_tool_payloads: bool = False,
     **kwargs: Any,
 ) -> AsyncGenerator:
     """Resumable SSE generator for continue_run with background=True, stream=True.
@@ -302,10 +334,7 @@ async def agent_resumable_continue_response_streamer(
     if background_tasks is not None:
         kwargs["background_tasks"] = background_tasks
 
-    if "stream_events" in kwargs:
-        stream_events = kwargs.pop("stream_events")
-    else:
-        stream_events = True
+    stream_events = resolve_stream_events(agent, kwargs)
 
     try:
         async for sse_data in agent.acontinue_run(
@@ -324,7 +353,13 @@ async def agent_resumable_continue_response_streamer(
             background=True,
             **kwargs,
         ):
-            yield sse_data
+            sse_event = sanitize_sse_event(
+                sse_data,
+                stream_tool_payloads=stream_tool_payloads,
+                events_to_skip=_component_events_to_skip(agent),
+            )
+            if sse_event:
+                yield sse_event
     except (InputCheckError, OutputCheckError) as e:
         error_response = RunErrorEvent(
             content=str(e),
@@ -350,6 +385,7 @@ async def _resume_stream_generator(
     run_id: str,
     last_event_index: Optional[int],
     session_id: Optional[str],
+    stream_tool_payloads: bool = False,
     user_id: Optional[str] = None,
 ) -> AsyncGenerator:
     """SSE generator for the /resume endpoint.
@@ -381,12 +417,15 @@ async def _resume_stream_generator(
                 yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
 
                 for idx, event in enumerate(run_output.events):
-                    event_dict = event.to_dict()
-                    event_dict["event_index"] = idx
-                    if "run_id" not in event_dict:
-                        event_dict["run_id"] = run_id
-                    event_type = event_dict.get("event", "message")
-                    yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+                    sse_event = format_sse_event_with_index(
+                        event,
+                        event_index=idx,
+                        run_id=run_id,
+                        stream_tool_payloads=stream_tool_payloads,
+                        events_to_skip=_component_events_to_skip(agent),
+                    )
+                    if sse_event:
+                        yield sse_event
                 return
             elif run_output:
                 meta = {
@@ -426,12 +465,15 @@ async def _resume_stream_generator(
         yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
 
         for ev_index, buffered_event in missed_events:
-            event_dict = buffered_event.to_dict()
-            event_dict["event_index"] = ev_index
-            if "run_id" not in event_dict:
-                event_dict["run_id"] = run_id
-            event_type = event_dict.get("event", "message")
-            yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+            sse_event = format_sse_event_with_index(
+                buffered_event,
+                event_index=ev_index,
+                run_id=run_id,
+                stream_tool_payloads=stream_tool_payloads,
+                events_to_skip=_component_events_to_skip(agent),
+            )
+            if sse_event:
+                yield sse_event
         return
 
     # PATH 1: Run still active -- subscribe FIRST (to avoid race condition), then replay missed events
@@ -456,12 +498,15 @@ async def _resume_stream_generator(
             yield f"event: catch_up\ndata: {json.dumps(meta)}\n\n"
 
             for ev_index, buffered_event in missed_events:
-                event_dict = buffered_event.to_dict()
-                event_dict["event_index"] = ev_index
-                if "run_id" not in event_dict:
-                    event_dict["run_id"] = run_id
-                event_type = event_dict.get("event", "message")
-                yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+                sse_event = format_sse_event_with_index(
+                    buffered_event,
+                    event_index=ev_index,
+                    run_id=run_id,
+                    stream_tool_payloads=stream_tool_payloads,
+                    events_to_skip=_component_events_to_skip(agent),
+                )
+                if sse_event:
+                    yield sse_event
                 last_replayed_index = ev_index
 
         # Re-check buffer status after subscribing: the run may have completed
@@ -474,12 +519,15 @@ async def _resume_stream_generator(
             remaining = event_buffer.get_events(run_id, last_event_index=last_replayed_index)
             if remaining:
                 for ev_index, buffered_event in remaining:
-                    event_dict = buffered_event.to_dict()
-                    event_dict["event_index"] = ev_index
-                    if "run_id" not in event_dict:
-                        event_dict["run_id"] = run_id
-                    event_type = event_dict.get("event", "message")
-                    yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+                    sse_event = format_sse_event_with_index(
+                        buffered_event,
+                        event_index=ev_index,
+                        run_id=run_id,
+                        stream_tool_payloads=stream_tool_payloads,
+                        events_to_skip=_component_events_to_skip(agent),
+                    )
+                    if sse_event:
+                        yield sse_event
             return
 
         # Confirm subscription for live events
@@ -505,12 +553,15 @@ async def _resume_stream_generator(
                     # Run ended - replay any remaining events from buffer
                     remaining = event_buffer.get_events(run_id, last_event_index=last_replayed_index)
                     for ev_index, buffered_event in remaining:
-                        event_dict = buffered_event.to_dict()
-                        event_dict["event_index"] = ev_index
-                        if "run_id" not in event_dict:
-                            event_dict["run_id"] = run_id
-                        event_type = event_dict.get("event", "message")
-                        yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+                        sse_event = format_sse_event_with_index(
+                            buffered_event,
+                            event_index=ev_index,
+                            run_id=run_id,
+                            stream_tool_payloads=stream_tool_payloads,
+                            events_to_skip=_component_events_to_skip(agent),
+                        )
+                        if sse_event:
+                            yield sse_event
                     break
                 # Still running - send heartbeat to keep connection alive
                 yield ": heartbeat\n\n"
@@ -524,7 +575,13 @@ async def _resume_stream_generator(
                 continue
             if ev_idx >= 0:
                 last_replayed_index = ev_idx
-            yield sse_data
+            sse_event = sanitize_sse_event(
+                sse_data,
+                stream_tool_payloads=stream_tool_payloads,
+                events_to_skip=_component_events_to_skip(agent),
+            )
+            if sse_event:
+                yield sse_event
     finally:
         sse_subscriber_manager.unsubscribe(run_id, queue)
 
@@ -607,6 +664,7 @@ def get_agent_router(
         ),
     ):
         kwargs = await get_request_kwargs(request, create_agent_run)
+        kwargs.pop("stream_tool_payloads", None)
 
         # Scoped non-admin callers always get their JWT sub as user_id.
         # Admins and unscoped callers fall through to middleware/form values.
@@ -728,6 +786,7 @@ def get_agent_router(
                         files=input_files if input_files else None,
                         background_tasks=background_tasks,
                         auth_token=auth_token,
+                        stream_tool_payloads=os.stream_tool_payloads,
                         **kwargs,
                     ),
                     media_type="text/event-stream",
@@ -776,6 +835,7 @@ def get_agent_router(
                     files=input_files if input_files else None,
                     background_tasks=background_tasks,
                     auth_token=auth_token,
+                    stream_tool_payloads=os.stream_tool_payloads,
                     **kwargs,
                 ),
                 media_type="text/event-stream",
@@ -991,6 +1051,7 @@ def get_agent_router(
         ),
     ):
         kwargs = await get_request_kwargs(request, continue_agent_run)
+        kwargs.pop("stream_tool_payloads", None)
 
         if hasattr(request.state, "user_id") and request.state.user_id is not None:
             user_id = request.state.user_id
@@ -1107,6 +1168,7 @@ def get_agent_router(
                     user_id=user_id,
                     background_tasks=background_tasks,
                     auth_token=auth_token,
+                    stream_tool_payloads=os.stream_tool_payloads,
                     **kwargs,
                 ),
                 media_type="text/event-stream",
@@ -1127,6 +1189,7 @@ def get_agent_router(
                     user_id=user_id,
                     background_tasks=background_tasks,
                     auth_token=auth_token,
+                    stream_tool_payloads=os.stream_tool_payloads,
                     **kwargs,
                 ),
                 media_type="text/event-stream",
@@ -1286,11 +1349,16 @@ def get_agent_router(
         if accessible_agents:
             for agent in accessible_agents:
                 if isinstance(agent, Agent):
-                    agents.append(await AgentResponse.from_agent(agent=agent, is_component=False))
+                    agents.append(
+                        await AgentResponse.from_agent(
+                            agent=agent, is_component=False, expose_config=os.expose_agent_config
+                        )
+                    )
                 elif isinstance(agent, AgentFactory):
                     agents.append(AgentResponse.from_factory(agent))
                 elif isinstance(agent, RemoteAgent):
-                    agents.append(await agent.get_agent_config())
+                    remote_response = await agent.get_agent_config()
+                    agents.append(remote_response if os.expose_agent_config else _safe_agent_response(remote_response))
                 else:
                     # External framework adapter: build a minimal response
                     agent_db = getattr(agent, "db", None)
@@ -1303,9 +1371,11 @@ def get_agent_router(
                             id=agent.id,
                             name=agent.name,
                             description=getattr(agent, "description", None),
-                            db_id=agent_db.id if agent_db else None,
-                            sessions=sessions,
-                            metadata={"framework": getattr(agent, "framework", "external")},
+                            db_id=agent_db.id if os.expose_agent_config and agent_db else None,
+                            sessions=sessions if os.expose_agent_config else None,
+                            metadata={"framework": getattr(agent, "framework", "external")}
+                            if os.expose_agent_config
+                            else None,
                         )
                     )
 
@@ -1320,7 +1390,9 @@ def get_agent_router(
                 if getattr(request.state, "authorization_enabled", False):
                     db_agents = filter_resources_by_access(request, db_agents, "agents")
                 for db_agent in db_agents:
-                    agent_response = await AgentResponse.from_agent(agent=db_agent, is_component=True)
+                    agent_response = await AgentResponse.from_agent(
+                        agent=db_agent, is_component=True, expose_config=os.expose_agent_config
+                    )
                     agents.append(agent_response)
 
         return agents
@@ -1381,9 +1453,10 @@ def get_agent_router(
             raise HTTPException(status_code=404, detail="Agent not found")
 
         if isinstance(agent, RemoteAgent):
-            return await agent.get_agent_config()
+            remote_response = await agent.get_agent_config()
+            return remote_response if os.expose_agent_config else _safe_agent_response(remote_response)
         elif isinstance(agent, Agent):
-            return await AgentResponse.from_agent(agent=agent)
+            return await AgentResponse.from_agent(agent=agent, expose_config=os.expose_agent_config)
         else:
             # External framework agent -- return minimal response
             return AgentResponse(
@@ -1666,7 +1739,14 @@ def get_agent_router(
             )
 
         return StreamingResponse(
-            _resume_stream_generator(agent, run_id, last_event_index, session_id, user_id=scoped_user_id),  # type: ignore[arg-type]
+            _resume_stream_generator(
+                cast(Agent, agent),
+                run_id,
+                last_event_index,
+                session_id,
+                stream_tool_payloads=os.stream_tool_payloads,
+                user_id=scoped_user_id,
+            ),
             media_type="text/event-stream",
         )
 
