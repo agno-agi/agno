@@ -15,6 +15,14 @@ Typical use:
         tools=[StudioRunnerTools(registry=registry, db=db)],
     )
 
+Mount it INSTEAD of StudioTools, not beside it. StudioTools embeds this same
+toolkit and already exposes list_agents/list_teams/list_workflows/run_agent, and
+agno's tool namespace is flat: co-mounting collapses the overlapping names to
+whichever toolkit the tools list holds first, and a warning names the skipped
+one. Two runners scoped to different component lists collapse the same way, so
+the loser's allowlist becomes unreachable. ``name=`` names the toolkit, not its
+functions, so it does not disambiguate them.
+
 Semantics:
     * Runs execute as the current user: the wielding component's run_context is
       injected and its user_id passed through, so per-user state (memory,
@@ -101,7 +109,14 @@ def _slugify(name: str) -> str:
     return slug.strip("-") or "component"
 
 
-class AmbiguousComponentNameError(ValueError):
+class StudioRunnerError(Exception):
+    """Base class for the runner's deliberate refusals.
+
+    Each carries an actionable message meant for the caller (model or code)
+    rather than the log, so the tools catch this one name."""
+
+
+class AmbiguousComponentNameError(StudioRunnerError, ValueError):
     """A display name matched more than one component of the requested type.
 
     The message lists the matching ids so the caller (model or code) can retry
@@ -115,7 +130,7 @@ class AmbiguousComponentNameError(ValueError):
         )
 
 
-class ComponentNeedsRegistryError(RuntimeError):
+class ComponentNeedsRegistryError(StudioRunnerError, RuntimeError):
     """The stored config references registry-backed pieces that cannot be
     reconstructed without the registry.
 
@@ -123,7 +138,7 @@ class ComponentNeedsRegistryError(RuntimeError):
     knowledge and function steps missing, code-defined members lost)."""
 
 
-class ComponentNotDispatchableError(RuntimeError):
+class ComponentNotDispatchableError(StudioRunnerError, RuntimeError):
     """The identifier names a component this runner may read but not run.
 
     Code-defined components reach the runner through the registry, which is
@@ -131,7 +146,7 @@ class ComponentNotDispatchableError(RuntimeError):
     (``include_all_components``)."""
 
 
-class DispatchCopyError(RuntimeError):
+class DispatchCopyError(StudioRunnerError, RuntimeError):
     """A component could not be copied faithfully for dispatch.
 
     The runner refuses a copy that fails its fidelity checks (see
@@ -1085,12 +1100,7 @@ class StudioRunnerTools(Toolkit):
         """
         try:
             agent = self._agent_for_run(agent_id)
-        except (
-            AmbiguousComponentNameError,
-            ComponentNeedsRegistryError,
-            ComponentNotDispatchableError,
-            DispatchCopyError,
-        ) as e:
+        except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
         except Exception as e:
@@ -1129,12 +1139,7 @@ class StudioRunnerTools(Toolkit):
         """
         try:
             team = self._team_for_run(team_id)
-        except (
-            AmbiguousComponentNameError,
-            ComponentNeedsRegistryError,
-            ComponentNotDispatchableError,
-            DispatchCopyError,
-        ) as e:
+        except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
         except Exception as e:
@@ -1173,12 +1178,7 @@ class StudioRunnerTools(Toolkit):
         """
         try:
             wf = self._workflow_for_run(workflow_id)
-        except (
-            AmbiguousComponentNameError,
-            ComponentNeedsRegistryError,
-            ComponentNotDispatchableError,
-            DispatchCopyError,
-        ) as e:
+        except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
         except Exception as e:
@@ -1209,12 +1209,7 @@ class StudioRunnerTools(Toolkit):
         # Resolution hits the DB synchronously; keep it off the event loop.
         try:
             agent = await asyncio.to_thread(self._agent_for_run, agent_id)
-        except (
-            AmbiguousComponentNameError,
-            ComponentNeedsRegistryError,
-            ComponentNotDispatchableError,
-            DispatchCopyError,
-        ) as e:
+        except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
         except Exception as e:
@@ -1244,12 +1239,7 @@ class StudioRunnerTools(Toolkit):
         """
         try:
             team = await asyncio.to_thread(self._team_for_run, team_id)
-        except (
-            AmbiguousComponentNameError,
-            ComponentNeedsRegistryError,
-            ComponentNotDispatchableError,
-            DispatchCopyError,
-        ) as e:
+        except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
         except Exception as e:
@@ -1281,12 +1271,7 @@ class StudioRunnerTools(Toolkit):
         """
         try:
             wf = await asyncio.to_thread(self._workflow_for_run, workflow_id)
-        except (
-            AmbiguousComponentNameError,
-            ComponentNeedsRegistryError,
-            ComponentNotDispatchableError,
-            DispatchCopyError,
-        ) as e:
+        except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
         except Exception as e:
@@ -1348,12 +1333,12 @@ class StudioRunnerTools(Toolkit):
         opt-in for continuity across sessionless calls."""
         if run_context is None or not getattr(run_context, "session_id", None):
             return None
-        from hashlib import sha256
+        from agno.utils.string import hash_string_sha256
 
         parts = (str(run_context.session_id), component_type, component_id)
         # Length-prefixed so no part can impersonate a boundary.
         key = "|".join(f"{len(part)}:{part}" for part in parts)
-        return f"{component_type}-{sha256(key.encode()).hexdigest()[:32]}"
+        return f"{component_type}-{hash_string_sha256(key)[:32]}"
 
     @staticmethod
     def _run_payload(id_key: str, component_id: str, run_output: Any) -> str:
