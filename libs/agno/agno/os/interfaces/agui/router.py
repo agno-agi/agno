@@ -21,6 +21,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
 from agno.agent import Agent, RemoteAgent
+from agno.os.interfaces.agui.history import asession_history_snapshot
 from agno.os.interfaces.agui.input import (
     extract_context,
     extract_media,
@@ -41,6 +42,7 @@ async def run_entity(
     entity: Union[Agent, RemoteAgent, Team, RemoteTeam],
     run_input: RunAgentInput,
     user_id: Optional[str] = None,
+    emit_messages_snapshot: bool = False,
 ) -> AsyncIterator[BaseEvent]:
     """Shared handler for running an Agent or Team with AG-UI input/output mapping.
 
@@ -67,6 +69,16 @@ async def run_entity(
 
         if session_state is not None:
             yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=copy.deepcopy(session_state))
+
+        if emit_messages_snapshot:
+            history_snapshot = await asession_history_snapshot(
+                entity=entity,
+                run_input=run_input,
+                tool_messages=tool_messages,
+                user_id=user_id,
+            )
+            if history_snapshot is not None:
+                yield history_snapshot
 
         ui_deps = extract_context(run_input.context)
 
@@ -125,12 +137,16 @@ async def run_entity(
 
 
 def attach_routes(
-    router: APIRouter, agent: Optional[Union[Agent, RemoteAgent]] = None, team: Optional[Union[Team, RemoteTeam]] = None
+    router: APIRouter,
+    agent: Optional[Union[Agent, RemoteAgent]] = None,
+    team: Optional[Union[Team, RemoteTeam]] = None,
+    emit_messages_snapshot: bool = False,
 ) -> APIRouter:
     if agent is None and team is None:
         raise ValueError("Either agent or team must be provided.")
 
     entity = agent or team
+    assert entity is not None
     encoder = EventEncoder()
 
     @router.post("/agui", name="run_agent")
@@ -140,7 +156,12 @@ def attach_routes(
         user_id = resolve_run_user_id(request, client_user_id)
 
         async def event_generator():
-            async for event in run_entity(entity, run_input, user_id=user_id):  # type: ignore
+            async for event in run_entity(
+                entity,
+                run_input,
+                user_id=user_id,
+                emit_messages_snapshot=emit_messages_snapshot,
+            ):
                 yield encoder.encode(event)
 
         return StreamingResponse(
