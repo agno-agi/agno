@@ -178,6 +178,29 @@ RUNTIME_ONLY_FIELDS = (
 )
 
 
+def isolated_runtime_value(value: Any) -> Any:
+    """A per-component copy of a value restored from a live registry Function.
+
+    Restoring by reference would let every component that loaded the same tool
+    share the registry Function's mutable state. ``user_input_schema`` is the
+    one that bites: the model layer writes the user's answer straight into its
+    ``UserInputField`` objects, so one run's input would be visible to every
+    other component holding that tool, and to the registry itself.
+
+    Lists are rebuilt rather than deep-copied, so callables such as tool hooks
+    stay the same objects; only dataclass elements are copied, because those
+    are the ones written in place.
+    """
+    from copy import copy
+    from dataclasses import is_dataclass
+
+    if isinstance(value, list):
+        return [copy(item) if is_dataclass(item) else item for item in value]
+    if isinstance(value, dict):
+        return dict(value)
+    return value
+
+
 class Function(BaseModel):
     """Model for storing functions that can be called by an agent."""
 

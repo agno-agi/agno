@@ -379,6 +379,7 @@ def parse_tools(
             index,
             last_index=_source_toolkit_last_index,
             members=_source_toolkit_members,
+            async_mode=async_mode,
         )
 
     # Get output_schema from run_context

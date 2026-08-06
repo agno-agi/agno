@@ -275,6 +275,69 @@ def test_rehydrated_toolkit_guidance_survives_deep_copy():
     assert copied._tool_instructions == ["first-rule", "second-rule", "toolkit-level-rule"]
 
 
+def test_two_toolkits_are_not_collapsed_by_the_grouping_key():
+    """Grouping is by emitted guidance, so toolkits that differ in any part of
+    that must stay separate. Without this, one key for everything still passes
+    the single-toolkit tests."""
+
+    def a_tool() -> str:
+        return "a"
+
+    def b_tool() -> str:
+        return "b"
+
+    # Different names, different guidance: two blocks.
+    first = Toolkit(name="first", tools=[a_tool], instructions="first-rule", add_instructions=True)
+    second = Toolkit(name="second", tools=[b_tool], instructions="second-rule", add_instructions=True)
+    agent = Agent(tools=[first, second])
+    parse_tools(agent=agent, tools=agent.tools, model=_mock_model())
+    assert agent._tool_instructions == ["first-rule", "second-rule"]
+
+    # Same name, different guidance: still two blocks.
+    same_name_a = Toolkit(name="shared", tools=[a_tool], instructions="rule-a", add_instructions=True)
+    same_name_b = Toolkit(name="shared", tools=[b_tool], instructions="rule-b", add_instructions=True)
+    agent = Agent(tools=[same_name_a, same_name_b])
+    parse_tools(agent=agent, tools=agent.tools, model=_mock_model())
+    assert agent._tool_instructions == ["rule-a", "rule-b"]
+
+    # Same guidance, one opted out: only the opted-in toolkit emits.
+    opted_in = Toolkit(name="shared", tools=[a_tool], instructions="rule", add_instructions=True)
+    opted_out = Toolkit(name="shared", tools=[b_tool], instructions="rule", add_instructions=False)
+    agent = Agent(tools=[opted_out, opted_in])
+    parse_tools(agent=agent, tools=agent.tools, model=_mock_model())
+    assert agent._tool_instructions == ["rule"]
+
+
+def test_async_only_members_are_counted_when_checking_coverage():
+    """In async mode a live Toolkit contributes its async variants too, and the
+    registry cannot rehydrate those. The component is genuinely short a tool, so
+    the toolkit's guidance must not describe it."""
+
+    def sync_tool() -> str:
+        return "sync"
+
+    async def async_only_tool() -> str:
+        return "async"
+
+    toolkit = Toolkit(
+        name="my_toolkit",
+        tools=[sync_tool, async_only_tool],
+        instructions="toolkit-level-rule",
+        add_instructions=True,
+    )
+    registry = Registry(tools=[toolkit])
+    rehydrated = _rehydrate(registry, toolkit)
+    assert [tool.name for tool in rehydrated] == ["sync_tool"]
+
+    agent = Agent(tools=list(rehydrated))
+    parse_tools(agent=agent, tools=agent.tools, model=_mock_model())
+    assert agent._tool_instructions == ["toolkit-level-rule"]
+
+    agent = Agent(tools=list(rehydrated))
+    parse_tools(agent=agent, tools=agent.tools, model=_mock_model(), async_mode=True)
+    assert agent._tool_instructions == []
+
+
 def test_non_string_toolkit_instructions_do_not_break_the_run():
     """`instructions` is declared Optional[str] but nothing enforces it. Grouping
     toolkits by their guidance must not turn a list into a hard failure."""

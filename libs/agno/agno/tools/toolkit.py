@@ -51,6 +51,7 @@ def _emits_toolkit_instructions(
     index: int,
     last_index: Dict[ToolkitKey, int],
     members: Dict[ToolkitKey, Set[str]],
+    async_mode: bool = False,
 ) -> bool:
     """Whether the bare Function at ``index`` should emit its toolkit's guidance.
 
@@ -68,7 +69,10 @@ def _emits_toolkit_instructions(
     key = _toolkit_key(source_toolkit)
     if last_index.get(key) != index:
         return False
-    exposed = set(source_toolkit.get_functions())
+    # Measured against the set this run would actually deliver: in async mode a
+    # live Toolkit contributes its async variants too, and the registry cannot
+    # rehydrate those, so an async-only member always leaves a gap here.
+    exposed = set(source_toolkit.get_async_functions() if async_mode else source_toolkit.get_functions())
     present = members.get(key, set())
     if not exposed <= present:
         log_debug(

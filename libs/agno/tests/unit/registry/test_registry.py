@@ -820,6 +820,36 @@ class TestRuntimeOnlyFieldRestoration:
         assert rehydrated.post_hook is a_hook
         assert rehydrated.tool_hooks == [a_hook]
 
+    def test_mutable_restored_fields_are_not_shared(self):
+        """The model layer writes the user's answer into UserInputField objects
+        in place. Restoring them by reference would put one run's input into
+        every other component holding the tool, and into the registry."""
+
+        def send(to: str, body: str) -> str:
+            """Send."""
+            return "ok"
+
+        live = Function.from_callable(send)
+        live.requires_user_input = True
+        live.user_input_fields = ["body"]
+        live.process_entrypoint()
+        # A toolkit-decorated tool keeps its parsed schema, because processing
+        # is skipped -- the case where the sharing survives to run time.
+        live.skip_entrypoint_processing = True
+        assert live.user_input_schema
+
+        reg = Registry(tools=[live])
+        first = reg.rehydrate_function(live.to_dict())
+        second = reg.rehydrate_function(live.to_dict())
+
+        assert first.user_input_schema is not second.user_input_schema
+        assert first.user_input_schema is not live.user_input_schema
+        assert first.user_input_fields is not live.user_input_fields
+
+        first.user_input_schema[0].value = "answer for the first component"
+        assert second.user_input_schema[0].value is None
+        assert live.user_input_schema[0].value is None
+
     def test_serialized_fields_keep_the_saved_value(self):
         """The saved config owns what to_dict() carries: a later registry edit
         to those must not silently rewrite an existing component."""

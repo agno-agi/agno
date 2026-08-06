@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from agno.db.base import BaseDb
 from agno.models.base import Model
-from agno.tools.function import RUNTIME_ONLY_FIELDS, Function
+from agno.tools.function import RUNTIME_ONLY_FIELDS, Function, isolated_runtime_value
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_warning
 from agno.vectordb.base import VectorDb
@@ -212,7 +212,7 @@ class Registry:
             # registry Function, so registry-side edits apply on the next
             # component load. See RUNTIME_ONLY_FIELDS for what and why.
             for field_name in RUNTIME_ONLY_FIELDS:
-                setattr(func, field_name, getattr(source, field_name))
+                setattr(func, field_name, isolated_runtime_value(getattr(source, field_name)))
             # Only when the bound function is the one the config named, or the
             # config named no toolkit at all. A config whose recorded toolkit
             # has left the registry binds the flat slot, which may belong to a
