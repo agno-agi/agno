@@ -1,6 +1,9 @@
 """Unit tests for SchedulerTools toolkit."""
 
+import asyncio
 import json
+import threading
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -79,6 +82,7 @@ class TestSchedulerToolsInitialization:
             "delete_schedule",
             "enable_schedule",
             "disable_schedule",
+            "trigger_schedule",
             "get_schedule_runs",
         ]
         for name in expected:
@@ -93,14 +97,15 @@ class TestSchedulerToolsInitialization:
             "delete_schedule",
             "enable_schedule",
             "disable_schedule",
+            "trigger_schedule",
             "get_schedule_runs",
         ]
         for name in expected:
             assert name in async_names, f"Missing async tool: {name}"
 
     def test_tool_count(self, tools):
-        assert len(tools.functions) == 7
-        assert len(tools.async_functions) == 7
+        assert len(tools.functions) == 8
+        assert len(tools.async_functions) == 8
 
     def test_default_config(self, tools):
         assert tools.default_endpoint == "/agents/test-agent/runs"
@@ -335,6 +340,36 @@ class TestEnableDisableSchedule:
         assert "error" in result
 
 
+class TestTriggerSchedule:
+    def test_trigger_success(self, tools):
+        tools.manager.get.return_value = _make_schedule()
+
+        result = json.loads(tools.trigger_schedule("sched-001"))
+
+        assert result["status"] == "triggered"
+        assert result["id"] == "sched-001"
+        args, kwargs = tools.manager.update.call_args
+        assert args == ("sched-001",)
+        assert isinstance(kwargs["next_run_at"], int)
+
+    def test_trigger_not_found(self, tools):
+        tools.manager.get.return_value = None
+
+        result = json.loads(tools.trigger_schedule("ghost"))
+
+        assert "error" in result
+        assert "not found" in result["error"].lower()
+
+    def test_trigger_disabled(self, tools):
+        tools.manager.get.return_value = _make_schedule(enabled=False)
+
+        result = json.loads(tools.trigger_schedule("sched-001"))
+
+        assert "error" in result
+        assert "disabled" in result["error"]
+        tools.manager.update.assert_not_called()
+
+
 class TestGetScheduleRuns:
     def test_get_runs(self, tools):
         tools.manager.get_runs.return_value = [
@@ -424,3 +459,86 @@ class TestAsyncCreateSchedule:
             )
         )
         assert result["status"] == "created"
+
+
+@pytest.mark.asyncio
+class TestAsyncTriggerSchedule:
+    async def test_atrigger_success(self, tools):
+        tools.manager.aget = AsyncMock(return_value=_make_schedule())
+        tools.manager.aupdate = AsyncMock()
+
+        result = json.loads(await tools.atrigger_schedule("sched-001"))
+
+        assert result["status"] == "triggered"
+        assert result["id"] == "sched-001"
+        args, kwargs = tools.manager.aupdate.call_args
+        assert args == ("sched-001",)
+        assert isinstance(kwargs["next_run_at"], int)
+
+    async def test_atrigger_disabled(self, tools):
+        tools.manager.aget = AsyncMock(return_value=_make_schedule(enabled=False))
+        tools.manager.aupdate = AsyncMock()
+
+        result = json.loads(await tools.atrigger_schedule("sched-001"))
+
+        assert "error" in result
+        assert "disabled" in result["error"]
+        tools.manager.aupdate.assert_not_called()
+
+
+@pytest.mark.asyncio
+class TestAsyncDbCallsRunOffThread:
+    """A sync DB adapter must not run on the event loop thread."""
+
+    async def test_sync_adapter_runs_on_worker_thread(self):
+        from agno.scheduler.manager import ScheduleManager
+
+        loop_thread = threading.get_ident()
+        seen = {}
+
+        db = MagicMock()
+
+        def get_schedules(**kwargs):
+            seen["thread"] = threading.get_ident()
+            return []
+
+        db.get_schedules = get_schedules
+        manager = ScheduleManager(db=db)
+
+        await manager._acall("get_schedules")
+
+        assert seen["thread"] != loop_thread
+
+    async def test_async_adapter_is_awaited_directly(self):
+        from agno.scheduler.manager import ScheduleManager
+
+        db = MagicMock()
+        db.get_schedules = AsyncMock(return_value=[])
+        manager = ScheduleManager(db=db)
+
+        assert await manager._acall("get_schedules") == []
+        db.get_schedules.assert_awaited_once()
+
+    async def test_sync_adapter_does_not_stall_the_loop(self):
+        from agno.scheduler.manager import ScheduleManager
+
+        db = MagicMock()
+        db.get_schedules = lambda **kwargs: (time.sleep(0.3), [])[1]
+        manager = ScheduleManager(db=db)
+
+        gaps = []
+
+        async def heartbeat():
+            last = time.perf_counter()
+            while True:
+                await asyncio.sleep(0.005)
+                now = time.perf_counter()
+                gaps.append(now - last)
+                last = now
+
+        beat = asyncio.create_task(heartbeat())
+        await manager._acall("get_schedules")
+        beat.cancel()
+
+        assert gaps, "the heartbeat never ran: the loop was blocked for the whole query"
+        assert max(gaps) < 0.2
