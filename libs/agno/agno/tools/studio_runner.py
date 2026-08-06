@@ -73,6 +73,7 @@ import asyncio
 import json
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
+from agno.exceptions import ComponentRehydrationError
 from agno.run import RunContext
 from agno.run.utils import run_status_string, serialized_paused_requirements
 from agno.tools.toolkit import Toolkit
@@ -792,13 +793,15 @@ class StudioRunnerTools(Toolkit):
         from agno.agent.agent import Agent
 
         try:
-            agent = Agent.from_dict(config, registry=self.registry)
+            agent = Agent.from_dict(config, registry=self.registry, strict=for_dispatch)
             agent.id = agent_id
             # The catalog db is a fallback only: a config-declared db (resolved
             # by from_dict, possibly with table overrides) must keep winning.
             if getattr(agent, "db", None) is None:
                 self._warn_if_declared_db_dropped(config, "agent", agent_id)
                 agent.db = self.db
+        except ComponentRehydrationError:
+            raise
         except Exception:
             logger.warning("StudioRunnerTools: Agent.from_dict failed for %s", agent_id, exc_info=True)
             return None
@@ -818,12 +821,14 @@ class StudioRunnerTools(Toolkit):
         from agno.team.team import Team
 
         try:
-            team = Team.from_dict(config, db=self.db, registry=self.registry)
+            team = Team.from_dict(config, db=self.db, registry=self.registry, strict=for_dispatch)
             team.id = team_id
             # The catalog db is a fallback only; a config-declared db wins.
             if getattr(team, "db", None) is None:
                 self._warn_if_declared_db_dropped(config, "team", team_id)
                 team.db = self.db
+        except ComponentRehydrationError:
+            raise
         except Exception:
             logger.warning("StudioRunnerTools: Team.from_dict failed for %s", team_id, exc_info=True)
             return None
@@ -843,12 +848,14 @@ class StudioRunnerTools(Toolkit):
         from agno.workflow.workflow import Workflow
 
         try:
-            wf = Workflow.from_dict(config, db=self.db, registry=self.registry)
+            wf = Workflow.from_dict(config, db=self.db, registry=self.registry, strict=for_dispatch)
             wf.id = workflow_id
             # The catalog db is a fallback only; a config-declared db wins.
             if getattr(wf, "db", None) is None:
                 self._warn_if_declared_db_dropped(config, "workflow", workflow_id)
                 wf.db = self.db
+        except ComponentRehydrationError:
+            raise
         except Exception:
             logger.warning("StudioRunnerTools: Workflow.from_dict failed for %s", workflow_id, exc_info=True)
             return None

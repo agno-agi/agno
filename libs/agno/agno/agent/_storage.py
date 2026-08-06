@@ -856,13 +856,12 @@ def from_dict(
         resolved = resolve_db_from_config(config["db"], registry=registry)
         if resolved is not None:
             config["db"] = resolved
-        elif strict:
-            raise ComponentRehydrationError(
-                f"{component_label} has a serialized db config that could not be resolved from the "
-                "registry or rebuilt. Register the db, or pass strict=False to load the component "
-                "without persistence."
-            )
         else:
+            # Only postgres, sqlite and clickhouse serialize a type, so most
+            # backends cannot be rebuilt from config alone. The caller supplies
+            # the db it holds; refusing here would make every component on the
+            # other backends unloadable.
+            log_warning(f"{component_label} has a serialized db config that could not be resolved.")
             del config["db"]
 
     # --- Handle Schema reconstruction ---
