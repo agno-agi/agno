@@ -5479,9 +5479,7 @@ def _group_requirements_for_continue(
     run_response: TeamRunOutput,
     session: TeamSession,
     run_context: Optional[RunContext],
-) -> Tuple[
-    List[Tuple[Union["Agent", "Team"], Optional[Union[RunOutput, TeamRunOutput]], List["RunRequirement"]]], List[str]
-]:
+) -> List[Tuple[Union["Agent", "Team"], Optional[Union[RunOutput, TeamRunOutput]], List["RunRequirement"]]]:
     """Group HITL requirements by the paused run that will continue them.
 
     Requirements are keyed by (deep member agent id, deep member run id) and
@@ -5493,8 +5491,11 @@ def _group_requirements_for_continue(
     to it more than once in one turn) stay separate — merging them would
     strand every run but the first.
 
-    Returns (entries, unroutable_messages) where each entry is
-    (routed_member, resolved_target_run_or_None, requirements).
+    Raises RunNotContinuableError if a requirement routes to a member id
+    that is not in the team: the run stays paused and resumable instead of
+    completing with the approved tool silently skipped.
+
+    Returns entries of (routed_member, resolved_target_run_or_None, requirements).
     """
     from agno.team._tools import _find_member_route_by_id
 
@@ -5505,13 +5506,14 @@ def _group_requirements_for_continue(
             member_reqs.setdefault((mid, getattr(req, "member_run_id", None)), []).append(req)
 
     entries: List[Tuple[Union["Agent", "Team"], Optional[Union[RunOutput, TeamRunOutput]], List["RunRequirement"]]] = []
-    unroutable: List[str] = []
     for (member_id, _), reqs in member_reqs.items():
         route_result = _find_member_route_by_id(team, member_id, run_context=run_context)
         if route_result is None:
-            log_warning(f"Could not find member with ID {member_id} for continue_run routing")
-            unroutable.append(f"[{member_id}]: Could not route requirement — member not found")
-            continue
+            raise RunNotContinuableError(
+                f"Cannot continue run {run_response.run_id}: requirement routes to member "
+                f"'{member_id}', which is not a member of team '{team.name or team.id}'. "
+                f"The run remains paused."
+            )
         _, member = route_result
         target = _resolve_member_run_output_for_continue(member, reqs, run_response, session)
         merged = False
@@ -5527,7 +5529,7 @@ def _group_requirements_for_continue(
                     break
         if not merged:
             entries.append((member, target, list(reqs)))
-    return entries, unroutable
+    return entries
 
 
 def _route_requirements_to_members(
@@ -5546,8 +5548,8 @@ def _route_requirements_to_members(
     """
     from agno.utils.team import get_member_id
 
-    groups, unroutable = _group_requirements_for_continue(team, run_response, session, run_context)
-    member_results: List[str] = list(unroutable)
+    groups = _group_requirements_for_continue(team, run_response, session, run_context)
+    member_results: List[str] = []
 
     for member, member_run_output, reqs in groups:
         member_id = get_member_id(member) or ""
@@ -5629,8 +5631,7 @@ def _route_requirements_to_members_stream(
     """
     from agno.utils.team import get_member_id
 
-    groups, unroutable = _group_requirements_for_continue(team, run_response, session, run_context)
-    member_results.extend(unroutable)
+    groups = _group_requirements_for_continue(team, run_response, session, run_context)
 
     for member, member_run_output, reqs in groups:
         member_id = get_member_id(member) or ""
@@ -5726,10 +5727,10 @@ async def _aroute_requirements_to_members(
     """
     from agno.utils.team import get_member_id
 
-    groups, unroutable = _group_requirements_for_continue(team, run_response, session, run_context)
+    groups = _group_requirements_for_continue(team, run_response, session, run_context)
 
     if not groups:
-        return unroutable
+        return []
 
     async def _continue_member(
         member: Union["Agent", "Team"],
@@ -5789,8 +5790,13 @@ async def _aroute_requirements_to_members(
     tasks = [_continue_member(member, member_run_output, reqs) for member, member_run_output, reqs in groups]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
-    member_results: List[str] = list(unroutable)
+    member_results: List[str] = []
     for r in results:
+        if isinstance(r, RunNotContinuableError):
+            # A member (e.g. a sub-team) refused the continue outright; the
+            # paused state is intact, so surface it instead of completing
+            # the team run without the approved tool.
+            raise r
         if isinstance(r, BaseException):
             log_warning(f"Member continue_run failed: {r}")
         elif isinstance(r, str):
@@ -5825,8 +5831,7 @@ async def _aroute_requirements_to_members_stream(
     """
     from agno.utils.team import get_member_id
 
-    groups, unroutable = _group_requirements_for_continue(team, run_response, session, run_context)
-    member_results.extend(unroutable)
+    groups = _group_requirements_for_continue(team, run_response, session, run_context)
 
     for member, member_run_output, reqs in groups:
         member_id = get_member_id(member) or ""
@@ -6763,9 +6768,15 @@ def continue_run_dispatch(
             from agno.team import _hooks
 
             if opts.stream:
-                return _hooks.handle_team_run_paused_stream(
-                    team, run_response=run_response, session=team_session, run_context=run_context
-                )  # type: ignore
+
+                def _paused_stream_with_final() -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
+                    yield from _hooks.handle_team_run_paused_stream(
+                        team, run_response=run_response, session=team_session, run_context=run_context
+                    )
+                    if opts.yield_run_output:
+                        yield run_response
+
+                return _paused_stream_with_final()
             else:
                 return _hooks.handle_team_run_paused(
                     team, run_response=run_response, session=team_session, run_context=run_context
@@ -6979,6 +6990,8 @@ def _continue_run_dispatch_stream_with_member_events(
         yield from _hooks.handle_team_run_paused_stream(
             team, run_response=run_response, session=team_session, run_context=run_context
         )
+        if opts.yield_run_output:
+            yield run_response
         return
 
     # Phase 3: Continue the team run with member results
@@ -6994,6 +7007,8 @@ def _continue_run_dispatch_stream_with_member_events(
             yield from _hooks.handle_team_run_paused_stream(
                 team, run_response=run_response, session=team_session, run_context=run_context
             )
+            if opts.yield_run_output:
+                yield run_response
             return
 
         response_format = get_response_format(team, run_context=run_context) if team.parser_model is None else None

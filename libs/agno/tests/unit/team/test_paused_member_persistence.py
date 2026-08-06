@@ -9,13 +9,14 @@ session reload.
 """
 
 import json
-from typing import Any, AsyncIterator, Iterator, List
+from typing import Any, AsyncIterator, Dict, Iterator, List
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
+from agno.exceptions import RunNotContinuableError
 from agno.models.base import Model
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.run.agent import RunOutput
@@ -654,7 +655,7 @@ def test_store_member_responses_true_keeps_paused_and_completed(tmp_path):
 
 # ---------------------------------------------------------------------------
 # Deeper topologies: 3-level nesting, multiple paused members per sub-team,
-# streaming resume, deep scrub, and session-metrics accuracy.
+# streaming resume, and the deep scrub.
 # ---------------------------------------------------------------------------
 
 
@@ -1206,3 +1207,331 @@ def test_live_run_tree_not_mutated_by_save(tmp_path):
     for r in _reload_runs(db_file, session_id):
         for m in walk(getattr(r, "member_responses", None) or []):
             assert getattr(m, "is_paused", False), f"completed member response persisted: {m.run_id}"
+
+
+# ---------------------------------------------------------------------------
+# Chained pause on the streaming continue path: after the first confirmation
+# is delivered, the member pauses on a second gated tool. The streaming
+# continue must yield the final paused TeamRunOutput and persist the
+# re-paused state, exactly like the other three routing variants.
+# ---------------------------------------------------------------------------
+
+
+def _build_nested_chained_team(db: SqliteDb, phase: str) -> Team:
+    """phase: 'pause' -> emailer calls send_email; 'chain' -> emailer chains
+    send_sms after the confirmed send_email runs; 'finish' -> emailer answers."""
+    emailer_script = {
+        "pause": [("tool", "send_email", {"to": "a@example.com"}, "tc-send")],
+        "chain": [("tool", "send_sms", {"to": "c@x.com"}, "tc-sms-chain"), ("content", "Both sent.")],
+        "finish": [("content", "Both sent.")],
+    }[phase]
+    emailer = Agent(
+        name="Emailer",
+        id="emailer",
+        model=_ScriptedModel("m-emailer", emailer_script),
+        tools=[send_email, send_sms],
+        db=db,
+        telemetry=False,
+    )
+    inner = Team(
+        name="Comms Team",
+        id="comms-team",
+        model=_ScriptedModel(
+            "m-inner",
+            [("content", "Inner done.")]
+            if phase != "pause"
+            else [
+                ("tool", "delegate_task_to_member", {"member_id": "emailer", "task": "send it"}, "tc-inner-deleg"),
+                ("content", "Inner done."),
+            ],
+        ),
+        members=[emailer],
+        db=db,
+        telemetry=False,
+    )
+    return Team(
+        name="Org Team",
+        id="org-team",
+        model=_ScriptedModel(
+            "m-outer",
+            [("content", "All done.")]
+            if phase != "pause"
+            else [
+                (
+                    "tool",
+                    "delegate_task_to_member",
+                    {"member_id": "comms-team", "task": "handle email"},
+                    "tc-outer-deleg",
+                ),
+                ("content", "All done."),
+            ],
+        ),
+        members=[inner],
+        db=db,
+        telemetry=False,
+    )
+
+
+def _assert_chained_pause_surfaced(final, db_file: str, session_id: str) -> None:
+    assert final is not None, "streaming continue must yield the final TeamRunOutput on a chained pause"
+    assert final.is_paused
+    unresolved = [r for r in (final.requirements or []) if not r.is_resolved()]
+    assert [r.tool_execution.tool_name for r in unresolved if r.tool_execution] == ["send_sms"]
+    assert _EXECUTED == ["a@example.com"], "the chained send_sms must not run before its confirmation"
+
+    # The re-paused state is persisted: a fresh reader sees the outer run
+    # paused with the unresolved chained requirement.
+    team_runs = [r for r in _reload_runs(db_file, session_id) if getattr(r, "team_id", None) == "org-team"]
+    assert team_runs[0].is_paused
+    stored_unresolved = [r for r in (team_runs[0].requirements or []) if not r.is_resolved()]
+    assert [r.tool_execution.tool_name for r in stored_unresolved if r.tool_execution] == ["send_sms"]
+
+
+def test_nested_chained_pause_streaming_repauses_and_resumes(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "chained_stream.db")
+    session_id = "s-chained-stream"
+
+    outer1 = _build_nested_chained_team(SqliteDb(db_file=db_file), phase="pause")
+    run1 = outer1.run("Email then sms", session_id=session_id)
+    assert run1.is_paused
+
+    outer2 = _build_nested_chained_team(SqliteDb(db_file=db_file), phase="chain")
+    final = None
+    for event in outer2.continue_run(
+        run_id=run1.run_id,
+        session_id=session_id,
+        requirements=_wire_requirements(run1.requirements),
+        stream=True,
+        yield_run_output=True,
+    ):
+        if isinstance(event, TeamRunOutput):
+            final = event
+    _assert_chained_pause_surfaced(final, db_file, session_id)
+
+    outer3 = _build_nested_chained_team(SqliteDb(db_file=db_file), phase="finish")
+    run3 = None
+    for event in outer3.continue_run(
+        run_id=run1.run_id,
+        session_id=session_id,
+        requirements=_wire_requirements([r for r in final.requirements or [] if not r.is_resolved()]),
+        stream=True,
+        yield_run_output=True,
+    ):
+        if isinstance(event, TeamRunOutput):
+            run3 = event
+    assert run3 is not None
+    assert run3.status == RunStatus.completed
+    assert _EXECUTED == ["a@example.com", "sms:c@x.com"]
+
+
+@pytest.mark.asyncio
+async def test_nested_chained_pause_streaming_repauses_and_resumes_async(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "chained_stream_async.db")
+    session_id = "s-chained-stream-async"
+
+    outer1 = _build_nested_chained_team(SqliteDb(db_file=db_file), phase="pause")
+    run1 = await outer1.arun("Email then sms", session_id=session_id)
+    assert run1.is_paused
+
+    outer2 = _build_nested_chained_team(SqliteDb(db_file=db_file), phase="chain")
+    final = None
+    async for event in outer2.acontinue_run(
+        run_id=run1.run_id,
+        session_id=session_id,
+        requirements=_wire_requirements(run1.requirements),
+        stream=True,
+        yield_run_output=True,
+    ):
+        if isinstance(event, TeamRunOutput):
+            final = event
+    _assert_chained_pause_surfaced(final, db_file, session_id)
+
+    outer3 = _build_nested_chained_team(SqliteDb(db_file=db_file), phase="finish")
+    run3 = None
+    async for event in outer3.acontinue_run(
+        run_id=run1.run_id,
+        session_id=session_id,
+        requirements=_wire_requirements([r for r in final.requirements or [] if not r.is_resolved()]),
+        stream=True,
+        yield_run_output=True,
+    ):
+        if isinstance(event, TeamRunOutput):
+            run3 = event
+    assert run3 is not None
+    assert run3.status == RunStatus.completed
+    assert _EXECUTED == ["a@example.com", "sms:c@x.com"]
+
+
+# ---------------------------------------------------------------------------
+# One member paused in TWO delegations of the same turn: the requirements
+# share member_agent_id but belong to distinct member runs, so grouping by
+# (member id, member run id) must keep them separate — one continue per
+# paused run, both confirmations execute.
+# ---------------------------------------------------------------------------
+
+_SHARED_CURSORS: Dict[str, int] = {}
+
+
+class _SharedCursorModel(_ScriptedModel):
+    """Script cursor kept in module scope by model id, so the copies a leader
+    makes when it delegates to the same member twice in one turn consume
+    consecutive script turns instead of each starting at turn one."""
+
+    def _next(self):
+        self._i = _SHARED_CURSORS.get(self.id, 0)
+        response = super()._next()
+        _SHARED_CURSORS[self.id] = self._i
+        return response
+
+
+def _build_same_member_twice(db: SqliteDb, resuming: bool) -> Team:
+    _SHARED_CURSORS.pop("m-emailer-twice", None)
+    emailer = Agent(
+        name="Emailer",
+        id="emailer",
+        model=_SharedCursorModel(
+            "m-emailer-twice",
+            [("content", "Email sent."), ("content", "Email sent.")]
+            if resuming
+            else [
+                ("tool", "send_email", {"to": "a@x.com"}, "tc-e1"),
+                ("tool", "send_email", {"to": "b@x.com"}, "tc-e2"),
+            ],
+        ),
+        tools=[send_email],
+        db=db,
+        telemetry=False,
+    )
+    return Team(
+        name="Comms Team",
+        id="comms-team",
+        model=_ScriptedModel(
+            "m-leader-twice",
+            [("content", "All done.")]
+            if resuming
+            else [
+                (
+                    "tools",
+                    [
+                        ("delegate_task_to_member", {"member_id": "emailer", "task": "task A"}, "tc-da"),
+                        ("delegate_task_to_member", {"member_id": "emailer", "task": "task B"}, "tc-db"),
+                    ],
+                ),
+                ("content", "All done."),
+            ],
+        ),
+        members=[emailer],
+        db=db,
+        telemetry=False,
+    )
+
+
+def test_same_member_paused_twice_in_one_turn_both_execute(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "same_member_twice.db")
+    session_id = "s-same-member-twice"
+
+    team1 = _build_same_member_twice(SqliteDb(db_file=db_file), resuming=False)
+    run1 = team1.run("Do task A and task B", session_id=session_id)
+    assert run1.is_paused
+    assert len(run1.requirements or []) == 2
+    assert {r.member_agent_id for r in run1.requirements or []} == {"emailer"}
+    assert len({r.member_run_id for r in run1.requirements or []}) == 2, "two distinct paused member runs"
+
+    team2 = _build_same_member_twice(SqliteDb(db_file=db_file), resuming=True)
+    run2 = team2.continue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+    )
+    assert run2.status == RunStatus.completed
+    assert sorted(_EXECUTED) == ["a@x.com", "b@x.com"], "both confirmed tools must execute"
+
+
+@pytest.mark.asyncio
+async def test_same_member_paused_twice_in_one_turn_both_execute_async(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "same_member_twice_async.db")
+    session_id = "s-same-member-twice-async"
+
+    team1 = _build_same_member_twice(SqliteDb(db_file=db_file), resuming=False)
+    run1 = await team1.arun("Do task A and task B", session_id=session_id)
+    assert run1.is_paused
+    assert len({r.member_run_id for r in run1.requirements or []}) == 2
+
+    team2 = _build_same_member_twice(SqliteDb(db_file=db_file), resuming=True)
+    run2 = await team2.acontinue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+    )
+    assert run2.status == RunStatus.completed
+    assert sorted(_EXECUTED) == ["a@x.com", "b@x.com"]
+
+
+# ---------------------------------------------------------------------------
+# A requirement that cannot be routed to any current member fails loudly.
+# The run stays paused and resumable; the approved tool is not silently
+# skipped and the run does not report completed.
+# ---------------------------------------------------------------------------
+
+
+def _build_renamed_member_team(db: SqliteDb) -> Team:
+    renamed = Agent(
+        name="Emailer",
+        id="emailer2",
+        model=_ScriptedModel("m-emailer2", [("content", "Email sent.")]),
+        tools=[send_email],
+        db=db,
+        telemetry=False,
+    )
+    return Team(
+        name="Comms Team",
+        id="comms-team",
+        model=_ScriptedModel("m-leader-renamed", [("content", "All done.")]),
+        members=[renamed],
+        db=db,
+        telemetry=False,
+    )
+
+
+def test_unroutable_requirement_raises_and_run_stays_paused(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "unroutable.db")
+    session_id = "s-unroutable"
+
+    team1 = _build_flat_team(SqliteDb(db_file=db_file), resuming=False)
+    run1 = team1.run("Email a@example.com", session_id=session_id)
+    assert run1.is_paused
+
+    # The member id changed between pause and continue (e.g. a redeploy).
+    team2 = _build_renamed_member_team(SqliteDb(db_file=db_file))
+    with pytest.raises(RunNotContinuableError, match="emailer"):
+        team2.continue_run(
+            run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+        )
+
+    assert _EXECUTED == [], "no confirmed tool may execute when routing fails"
+    team_runs = [r for r in _reload_runs(db_file, session_id) if isinstance(r, TeamRunOutput)]
+    assert team_runs[0].is_paused, "the stored run must stay paused and resumable"
+    assert any(not r.is_resolved() for r in (team_runs[0].requirements or []))
+
+
+@pytest.mark.asyncio
+async def test_unroutable_requirement_raises_and_run_stays_paused_async(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "unroutable_async.db")
+    session_id = "s-unroutable-async"
+
+    team1 = _build_flat_team(SqliteDb(db_file=db_file), resuming=False)
+    run1 = await team1.arun("Email a@example.com", session_id=session_id)
+    assert run1.is_paused
+
+    team2 = _build_renamed_member_team(SqliteDb(db_file=db_file))
+    with pytest.raises(RunNotContinuableError, match="emailer"):
+        await team2.acontinue_run(
+            run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+        )
+
+    assert _EXECUTED == [], "no confirmed tool may execute when routing fails"
+    team_runs = [r for r in _reload_runs(db_file, session_id) if isinstance(r, TeamRunOutput)]
+    assert team_runs[0].is_paused, "the stored run must stay paused and resumable"
+    assert any(not r.is_resolved() for r in (team_runs[0].requirements or []))
