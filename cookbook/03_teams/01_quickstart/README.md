@@ -20,5 +20,6 @@ Examples for team workflows in 01_quickstart.
 - 08_concurrent_member_agents.py - Demonstrates concurrent member agents.
 - broadcast_mode.py - Demonstrates broadcast mode.
 - 09_caching.py - Demonstrates cache team response.
+- 10_team_media_delegation.py - ``add_team_media_to_delegation``: merge prior team run and team message media into delegated member kwargs.
 - nested_teams.py - Demonstrates nested teams.
 - task_mode.py - Demonstrates task mode.
