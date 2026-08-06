@@ -582,6 +582,7 @@ def _set_session_summary_manager(team: "Team") -> None:
     if team.session_summary_manager is not None:
         if team.session_summary_manager.model is None:
             team.session_summary_manager.model = team.model
+        team.session_summary_manager.skip_member_messages = not team.respond_directly
 
     if team.add_session_summary_to_context is None:
         team.add_session_summary_to_context = team.enable_session_summaries or team.session_summary_manager is not None
