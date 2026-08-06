@@ -367,3 +367,33 @@ async def test_async_exists(async_surrealdb_vector: SurrealDb, mock_async_surrea
 
     result = await async_surrealdb_vector.async_exists()
     assert result is False
+
+
+# --- filter injection hardening (#8823) ---
+
+
+def test_build_filter_condition_rejects_injected_key(surrealdb_vector):
+    """A metadata key outside [A-Za-z0-9_] is rejected before building the SurrealQL clause."""
+    from agno.vectordb.filter_validation import InvalidMetadataKeyError
+
+    # The issue's SurrealDB PoC key: x = 1 OR true //
+    with pytest.raises(InvalidMetadataKeyError):
+        surrealdb_vector._build_filter_condition({"x = 1 OR true //": 1})
+
+
+def test_delete_by_metadata_rejects_injected_key(surrealdb_vector, mock_surrealdb_client):
+    """delete_by_metadata validates keys before issuing SurrealQL."""
+    from agno.vectordb.filter_validation import InvalidMetadataKeyError
+
+    with pytest.raises(InvalidMetadataKeyError):
+        surrealdb_vector.delete_by_metadata({"http::get('http://listener/')": "x"})
+
+    # The SSRF-capable query must never be issued.
+    mock_surrealdb_client.query.assert_not_called()
+
+
+def test_build_filter_condition_allows_safe_keys(surrealdb_vector):
+    """Safe keys still build the clause unchanged."""
+    result = surrealdb_vector._build_filter_condition({"linked_to": "tenantA", "category": "alpha"})
+    assert "meta_data.linked_to = $linked_to" in result
+    assert "meta_data.category = $category" in result

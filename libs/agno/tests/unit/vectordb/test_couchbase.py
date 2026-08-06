@@ -1420,3 +1420,35 @@ def test_async_create_collection_does_not_block_event_loop():
     assert "asyncio.sleep" in source, (
         "_async_create_collection_and_scope is expected to use `await asyncio.sleep` for its post-drop wait."
     )
+
+
+# --- filter injection hardening (#8823) ---
+
+
+def test_delete_by_metadata_rejects_injected_key(couchbase_fts, mock_scope):
+    """A metadata key outside [A-Za-z0-9_] is rejected before building the N1QL query.
+
+    Couchbase's delete_by_metadata wraps execution in try/except and returns False
+    on any error, so the security invariant is: the injected query is never issued
+    (scope.query not called) and the method reports failure.
+    """
+    # The issue's Couchbase PoC key: x IS NOT NULL OR 1=1 --
+    result = couchbase_fts.delete_by_metadata({"x IS NOT NULL OR 1=1 --": "anything"})
+
+    # The destructive whole-collection query must never be issued.
+    assert result is False
+    mock_scope.query.assert_not_called()
+
+
+def test_delete_by_metadata_allows_safe_keys(couchbase_fts, mock_scope, mock_collection):
+    """Safe keys still build the query normally."""
+    mock_result = Mock()
+    mock_row = Mock()
+    mock_row.get.return_value = "doc_1"
+    mock_result.rows.return_value = [mock_row]
+    mock_scope.query.return_value = mock_result
+
+    result = couchbase_fts.delete_by_metadata({"category": "test"})
+    assert result is True
+    call_args = mock_scope.query.call_args
+    assert "filters.category = $value_category" in call_args[0][0]

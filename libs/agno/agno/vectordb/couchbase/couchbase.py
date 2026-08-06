@@ -8,6 +8,7 @@ from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
+from agno.vectordb.filter_validation import validate_metadata_keys
 
 try:
     from hashlib import md5
@@ -1281,6 +1282,8 @@ class CouchbaseSearch(VectorDb):
             where_conditions = []
             named_parameters: Dict[str, Any] = {}
 
+            # Validate keys before interpolating into N1QL (see #8823).
+            validate_metadata_keys(metadata)
             for key, value in metadata.items():
                 if isinstance(value, (list, tuple)):
                     # For array values, use ARRAY_CONTAINS
