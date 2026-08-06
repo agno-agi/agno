@@ -275,6 +275,22 @@ def test_rehydrated_toolkit_guidance_survives_deep_copy():
     assert copied._tool_instructions == ["first-rule", "second-rule", "toolkit-level-rule"]
 
 
+def test_non_string_toolkit_instructions_do_not_break_the_run():
+    """`instructions` is declared Optional[str] but nothing enforces it. Grouping
+    toolkits by their guidance must not turn a list into a hard failure."""
+    toolkit = Toolkit(
+        name="my_toolkit",
+        tools=[lambda: "x"],
+        instructions=["rule one", "rule two"],
+        add_instructions=True,
+    )
+
+    agent = Agent(tools=[toolkit])
+    parse_tools(agent=agent, tools=agent.tools, model=_mock_model())
+
+    assert agent._tool_instructions == [["rule one", "rule two"]]
+
+
 def test_cloned_toolkit_and_its_rehydrated_members_are_one_toolkit():
     """deep_copy clones the Toolkit list entry while the rehydrated members keep
     the live one. Grouping by object identity would see two toolkits here and

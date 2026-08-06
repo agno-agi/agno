@@ -13,11 +13,17 @@ from agno.utils.path_safety import safe_join_relative_path
 # rehydrated Functions that came from it keep pointing at the live registry
 # Toolkit, so identity splits one logical toolkit into two. Two toolkits that
 # agree on all three fields emit the same text, so collapsing them is correct.
-ToolkitKey = Tuple[str, Optional[str], bool]
+ToolkitKey = Tuple[str, Any, bool]
 
 
 def _toolkit_key(toolkit: "Toolkit") -> ToolkitKey:
-    return (toolkit.name, toolkit.instructions, toolkit.add_instructions)
+    instructions = toolkit.instructions
+    if instructions is not None and not isinstance(instructions, str):
+        # `instructions` is declared Optional[str] but nothing enforces it, and
+        # a list would make this key unhashable. Fall back to identity for that
+        # toolkit rather than raise: grouping degrades, the run does not fail.
+        return (toolkit.name, id(toolkit), toolkit.add_instructions)
+    return (toolkit.name, instructions, toolkit.add_instructions)
 
 
 def _group_source_toolkits(tools: Sequence[Any]) -> Tuple[Dict[ToolkitKey, int], Dict[ToolkitKey, Set[str]]]:
