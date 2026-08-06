@@ -202,9 +202,7 @@ class InMemoryQueueStore:
             job.update(locked_by=worker_id, locked_at=now, updated_at=now)
             return True
 
-    async def settle_swept_job(
-        self, job_id: str, worker_id: str, status: str, error: Optional[str] = None
-    ) -> bool:
+    async def settle_swept_job(self, job_id: str, worker_id: str, status: str, error: Optional[str] = None) -> bool:
         """Ownership-keyed settle for the SWEEPER: only the holder of the
         sweep lock (via acquire_sweep) may write. The target status matches
         what the run row actually says instead of always "failed" - the
