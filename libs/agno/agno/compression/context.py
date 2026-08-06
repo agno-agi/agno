@@ -365,70 +365,19 @@ class ContextCompactionManager:
             return None
 
     def _compress_tool_results(self, messages: List[Message], run_metrics: Optional["RunMetrics"]) -> List[Message]:
-        """Compress large tool results that exceed token budget."""
-        if self.model is None:
-            return messages
+        """Compress large tool results using CompressionManager."""
+        from agno.compression.manager import CompressionManager
 
-        compressed = []
-        for msg in messages:
-            if msg.role == "tool":
-                content = msg.content or ""
-                if isinstance(content, list):
-                    content = str(content)
-                tokens = self.model.count_tokens([msg])
-                if tokens > 2000:
-                    summary = self._summarize_tool_result(msg.tool_name or "tool", content, run_metrics)
-                    if summary:
-                        msg = Message(
-                            role=msg.role,
-                            tool_call_id=msg.tool_call_id,
-                            tool_name=msg.tool_name,
-                            content=summary,
-                            compressed_content=summary,
-                        )
-            compressed.append(msg)
-        return compressed
+        cm = CompressionManager(model=self.model)
+        cm.compress(messages, run_metrics)
+        return messages
 
     async def _acompress_tool_results(
         self, messages: List[Message], run_metrics: Optional["RunMetrics"]
     ) -> List[Message]:
         """Async version of _compress_tool_results."""
-        if self.model is None:
-            return messages
+        from agno.compression.manager import CompressionManager
 
-        compressed = []
-        for msg in messages:
-            if msg.role == "tool":
-                content = msg.content or ""
-                if isinstance(content, list):
-                    content = str(content)
-                tokens = await self.model.acount_tokens([msg])
-                if tokens > 2000:
-                    summary = await self._asummarize_tool_result(msg.tool_name or "tool", content, run_metrics)
-                    if summary:
-                        msg = Message(
-                            role=msg.role,
-                            tool_call_id=msg.tool_call_id,
-                            tool_name=msg.tool_name,
-                            content=summary,
-                            compressed_content=summary,
-                        )
-            compressed.append(msg)
-        return compressed
-
-    def _summarize_tool_result(
-        self, tool_name: str, content: str, run_metrics: Optional["RunMetrics"]
-    ) -> Optional[str]:
-        """Summarize a single large tool result."""
-        prompt = f"Summarize this {tool_name} result, preserving key data, facts, and actionable information:"
-        # Cap input to avoid sending huge content
-        truncated = content[:50000] if len(content) > 50000 else content
-        return self._call_llm(prompt, truncated, run_metrics)
-
-    async def _asummarize_tool_result(
-        self, tool_name: str, content: str, run_metrics: Optional["RunMetrics"]
-    ) -> Optional[str]:
-        """Async version of _summarize_tool_result."""
-        prompt = f"Summarize this {tool_name} result, preserving key data, facts, and actionable information:"
-        truncated = content[:50000] if len(content) > 50000 else content
-        return await self._acall_llm(prompt, truncated, run_metrics)
+        cm = CompressionManager(model=self.model)
+        await cm.acompress(messages, run_metrics)
+        return messages
