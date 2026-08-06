@@ -17,6 +17,7 @@ from agno.metrics import (
     Metrics,
     ModelMetrics,
     ModelType,
+    RunMetrics,
     SessionMetrics,
     accumulate_eval_metrics,
     accumulate_model_metrics,
@@ -273,6 +274,34 @@ class TestMetricsSerialization:
         assert "model" in restored.details
         assert "output_model" in restored.details
         assert restored.details["model"][0].id == "gpt-4o"
+
+
+class TestRunMetricsRetryCount:
+    def test_retry_count_excluded_when_zero(self):
+        metrics = RunMetrics(input_tokens=10, total_tokens=10)
+        d = metrics.to_dict()
+        assert "retry_count" not in d
+
+    def test_retry_count_included_when_nonzero(self):
+        metrics = RunMetrics(retry_count=2, input_tokens=10, total_tokens=10)
+        d = metrics.to_dict()
+        assert d["retry_count"] == 2
+
+    def test_retry_count_round_trip(self):
+        metrics = RunMetrics(retry_count=3, input_tokens=5, total_tokens=5)
+        d = metrics.to_dict()
+        restored = RunMetrics.from_dict(d)
+        assert restored.retry_count == 3
+
+    def test_retry_count_defaults_to_zero_from_old_data(self):
+        restored = RunMetrics.from_dict({"input_tokens": 10})
+        assert restored.retry_count == 0
+
+    def test_retry_count_add(self):
+        m1 = RunMetrics(retry_count=1, input_tokens=10, total_tokens=10)
+        m2 = RunMetrics(retry_count=2, input_tokens=5, total_tokens=5)
+        combined = m1 + m2
+        assert combined.retry_count == 3
 
 
 class TestMetricsProviderVariants:
