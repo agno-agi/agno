@@ -782,7 +782,7 @@ def from_dict(
         cls: The Agent class (or subclass) to instantiate.
         data: Dictionary containing agent configuration
         registry: Optional registry for rehydrating tools and schemas
-        strict: If True (the default), unresolvable registry references (tools,
+        strict: If True, unresolvable registry references (tools,
             schemas, knowledge, db) raise ComponentRehydrationError instead of
             being silently dropped. Pass False to reconstruct as much as
             possible, e.g. for listings that must show degraded components.
@@ -1145,7 +1145,7 @@ def load(
         registry: Optional registry for rehydrating tools and schemas.
         label: The label of the agent to load.
         version: The version of the agent to load.
-        strict: If True (the default), unresolvable registry references raise
+        strict: If True, unresolvable registry references raise
             ComponentRehydrationError instead of being silently dropped.
 
     Returns:

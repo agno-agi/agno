@@ -1104,9 +1104,8 @@ def get_workflow_router(
                 create_fresh=True,
                 version=version,
             )  # type: ignore[assignment]
-        except ComponentRehydrationError:
-            # A broken reference is a client-visible 422, not a server fault.
-            raise
+        except ComponentRehydrationError as rehydration_error:
+            raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
@@ -1512,11 +1511,15 @@ def get_workflow_router(
 
         try:
             workflow = get_workflow_by_id(
-                workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+                workflow_id=workflow_id,
+                workflows=os.workflows,
+                db=os.db,
+                registry=os.registry,
+                create_fresh=True,
+                strict=False,
             )  # type: ignore[assignment]
-        except ComponentRehydrationError:
-            # A broken reference is a client-visible 422, not a server fault.
-            raise
+        except ComponentRehydrationError as rehydration_error:
+            raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
@@ -1602,7 +1605,12 @@ def get_workflow_router(
             )
 
         workflow = get_workflow_by_id(
-            workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+            workflow_id=workflow_id,
+            workflows=os.workflows,
+            db=os.db,
+            registry=os.registry,
+            create_fresh=True,
+            strict=False,
         )
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
@@ -1673,9 +1681,8 @@ def get_workflow_router(
                 workflow = get_workflow_by_id(
                     workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
                 )  # type: ignore[assignment]
-            except ComponentRehydrationError:
-                # A broken reference is a client-visible 422, not a server fault.
-                raise
+            except ComponentRehydrationError as rehydration_error:
+                raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
             except Exception as e:
                 logger.error(f"Error resolving workflow '{workflow_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")

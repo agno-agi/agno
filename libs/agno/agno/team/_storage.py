@@ -761,7 +761,7 @@ def from_dict(
             carry the member version pinned at save time; when provided,
             members load at their pinned version instead of the current one,
             matching the component-graph loader's semantics.
-        strict: If True (the default), unresolvable members and registry
+        strict: If True, unresolvable members and registry
             references raise ComponentRehydrationError instead of being
             silently dropped. Pass False to reconstruct as much as possible,
             e.g. for listings that must show degraded components.
@@ -1300,7 +1300,7 @@ def load(
         id: The id of the team to load.
         db: The database to load the team from.
         label: The label of the team to load.
-        strict: If True (the default), unresolvable members and registry
+        strict: If True, unresolvable members and registry
             references raise ComponentRehydrationError instead of being
             silently dropped.
 

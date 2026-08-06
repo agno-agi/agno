@@ -281,7 +281,7 @@ class ComponentRehydrationError(AgnoError):
     a reference cannot be resolved from the provided registry or database, the
     component would silently run with less than what was saved - no tools,
     missing members, no persistence. Deserialization raises this error instead,
-    unless the caller opts into lenient reconstruction with ``strict=False``.
+    when the caller asks for strict reconstruction with ``strict=True``.
     """
 
     def __init__(self, message: str):

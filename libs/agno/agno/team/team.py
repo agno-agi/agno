@@ -1808,7 +1808,7 @@ def get_team_by_id(
         version: Optional integer config version.
         label: Optional version_label.
         registry: Optional Registry for reconstructing unserializable components.
-        strict: If True (the default), unresolvable members and registry references
+        strict: If True, unresolvable members and registry references
             raise ComponentRehydrationError; None strictly means the team was not found.
 
     Returns:

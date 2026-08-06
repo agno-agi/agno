@@ -945,7 +945,7 @@ class Workflow:
             db: Optional database for loading agents/teams in steps
             links: Optional links for this workflow version
             registry: Optional registry for rehydrating executors
-            strict: If True (the default), unresolvable registry references
+            strict: If True, unresolvable registry references
                 (input schema, db) raise ComponentRehydrationError instead of
                 being silently dropped. Step-level references already fail
                 loudly regardless of this flag.
@@ -1155,7 +1155,7 @@ class Workflow:
             id: The id of the workflow to load.
             db: The database to load the workflow from.
             label: The label of the workflow to load.
-            strict: If True (the default), unresolvable registry references
+            strict: If True, unresolvable registry references
                 raise ComponentRehydrationError instead of being silently dropped.
 
         Returns:
@@ -10792,7 +10792,7 @@ def get_workflow_by_id(
         version: Optional integer config version.
         label: Optional version_label.
         registry: Optional Registry for reconstructing unserializable components.
-        strict: If True (the default), unresolvable registry references raise
+        strict: If True, unresolvable registry references raise
             ComponentRehydrationError; None strictly means the workflow was not found.
 
     Returns:

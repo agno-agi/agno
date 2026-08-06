@@ -688,6 +688,30 @@ class StudioRunnerTools(Toolkit):
                 )
             self._require_registry_for(ref_type, ref_id, ref_config, _seen)
 
+    def _dispatch_refusal(
+        self,
+        error: ComponentRehydrationError,
+        config: Dict[str, Any],
+        component_type: str,
+        component_id: str,
+        rebuild_leniently: Callable[[], Any],
+    ) -> Exception:
+        """The refusal to raise when strict rehydration rejects a dispatch.
+
+        _require_faithful_rebuild names both the component the caller asked for
+        and the nested one that failed, so it is given the chance to describe
+        the same degradation first. It sees only what a lenient rebuild leaves
+        behind, so a piece lost deeper than it inspects falls through to the
+        rehydration error, which names the component that raised.
+        """
+        try:
+            self._require_faithful_rebuild(rebuild_leniently(), config, component_type, component_id)
+        except StudioRunnerError as refusal:
+            return refusal
+        except Exception:
+            pass
+        return ComponentNeedsRegistryError(str(error))
+
     def _require_faithful_rebuild(
         self, component: Any, config: Dict[str, Any], component_type: str, component_id: str
     ) -> None:
@@ -911,15 +935,21 @@ class StudioRunnerTools(Toolkit):
         from agno.agent.agent import Agent
 
         try:
-            agent = Agent.from_dict(config, registry=self.registry)
+            agent = Agent.from_dict(config, registry=self.registry, strict=for_dispatch)
             agent.id = agent_id
             # The catalog db is a fallback only: a config-declared db (resolved
             # by from_dict, possibly with table overrides) must keep winning.
             if getattr(agent, "db", None) is None:
                 self._warn_if_declared_db_dropped(config, "agent", agent_id)
                 agent.db = self.db
-        except ComponentRehydrationError:
-            raise
+        except ComponentRehydrationError as rehydration_error:
+            raise self._dispatch_refusal(
+                rehydration_error,
+                config,
+                "agent",
+                agent_id,
+                lambda: Agent.from_dict(config, registry=self.registry, strict=False),
+            ) from rehydration_error
         except Exception:
             logger.warning("StudioRunnerTools: Agent.from_dict failed for %s", agent_id, exc_info=True)
             return None
@@ -943,14 +973,20 @@ class StudioRunnerTools(Toolkit):
         from agno.team.team import Team
 
         try:
-            team = Team.from_dict(config, db=self.db, registry=self.registry)
+            team = Team.from_dict(config, db=self.db, registry=self.registry, strict=for_dispatch)
             team.id = team_id
             # The catalog db is a fallback only; a config-declared db wins.
             if getattr(team, "db", None) is None:
                 self._warn_if_declared_db_dropped(config, "team", team_id)
                 team.db = self.db
-        except ComponentRehydrationError:
-            raise
+        except ComponentRehydrationError as rehydration_error:
+            raise self._dispatch_refusal(
+                rehydration_error,
+                config,
+                "team",
+                team_id,
+                lambda: Team.from_dict(config, db=self.db, registry=self.registry, strict=False),
+            ) from rehydration_error
         except Exception:
             logger.warning("StudioRunnerTools: Team.from_dict failed for %s", team_id, exc_info=True)
             return None
@@ -974,14 +1010,20 @@ class StudioRunnerTools(Toolkit):
         from agno.workflow.workflow import Workflow
 
         try:
-            wf = Workflow.from_dict(config, db=self.db, registry=self.registry)
+            wf = Workflow.from_dict(config, db=self.db, registry=self.registry, strict=for_dispatch)
             wf.id = workflow_id
             # The catalog db is a fallback only; a config-declared db wins.
             if getattr(wf, "db", None) is None:
                 self._warn_if_declared_db_dropped(config, "workflow", workflow_id)
                 wf.db = self.db
-        except ComponentRehydrationError:
-            raise
+        except ComponentRehydrationError as rehydration_error:
+            raise self._dispatch_refusal(
+                rehydration_error,
+                config,
+                "workflow",
+                workflow_id,
+                lambda: Workflow.from_dict(config, db=self.db, registry=self.registry, strict=False),
+            ) from rehydration_error
         except Exception:
             logger.warning("StudioRunnerTools: Workflow.from_dict failed for %s", workflow_id, exc_info=True)
             return None

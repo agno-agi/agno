@@ -1761,7 +1761,7 @@ def get_agent_by_id(
         id: Agent entity_id.
         label: Optional label.
         registry: Optional Registry for reconstructing unserializable components.
-        strict: If True (the default), unresolvable registry references raise
+        strict: If True, unresolvable registry references raise
             ComponentRehydrationError; None strictly means the agent was not found.
 
     Returns:
