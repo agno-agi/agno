@@ -1,6 +1,6 @@
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -746,8 +746,11 @@ class RedisDb(BaseDb):
             log_error(f"Error deleting user memories: {str(e)}")
             raise e
 
-    def get_all_memory_topics(self) -> List[str]:
+    def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         """Get all memory topics from Redis.
+
+        Args:
+            user_id (Optional[str]): The ID of the user to filter by.
 
         Returns:
             List[str]: The list of memory topics.
@@ -757,6 +760,8 @@ class RedisDb(BaseDb):
 
             topics = set()
             for memory in all_memories:
+                if user_id is not None and memory.get("user_id") != user_id:
+                    continue
                 memory_topics = memory.get("topics", [])
                 if isinstance(memory_topics, list):
                     topics.update(memory_topics)
@@ -1771,18 +1776,21 @@ class RedisDb(BaseDb):
                 if should_update_name:
                     existing["name"] = trace.name
 
-                # Update context fields ONLY if new value is not None (preserve non-null values)
-                if trace.run_id is not None:
+                # Preserve existing non-null context values: only fill in fields
+                # that the existing row left blank. Otherwise a later upsert from
+                # a child span (e.g. a post-hook agent's run with a different
+                # session_id) would overwrite the trace's already-correct context.
+                if existing.get("run_id") is None and trace.run_id is not None:
                     existing["run_id"] = trace.run_id
-                if trace.session_id is not None:
+                if existing.get("session_id") is None and trace.session_id is not None:
                     existing["session_id"] = trace.session_id
-                if trace.user_id is not None:
+                if existing.get("user_id") is None and trace.user_id is not None:
                     existing["user_id"] = trace.user_id
-                if trace.agent_id is not None:
+                if existing.get("agent_id") is None and trace.agent_id is not None:
                     existing["agent_id"] = trace.agent_id
-                if trace.team_id is not None:
+                if existing.get("team_id") is None and trace.team_id is not None:
                     existing["team_id"] = trace.team_id
-                if trace.workflow_id is not None:
+                if existing.get("workflow_id") is None and trace.workflow_id is not None:
                     existing["workflow_id"] = trace.workflow_id
 
                 log_debug(
@@ -1972,6 +1980,7 @@ class RedisDb(BaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        group_by: Literal["session", "agent", "team", "workflow", "endpoint"] = "session",
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 
@@ -1984,12 +1993,19 @@ class RedisDb(BaseDb):
             end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
+            group_by: Only the default "session" grouping is supported by this backend.
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
                 Each dict contains: session_id, user_id, agent_id, team_id, total_traces,
                 first_trace_at, last_trace_at.
         """
+        if group_by != "session":
+            raise NotImplementedError(
+                f"get_trace_stats with group_by={group_by!r} is not supported by {self.__class__.__name__}. "
+                "Only the default 'session' grouping is available."
+            )
+
         try:
             log_debug(
                 f"get_trace_stats called with filters: user_id={user_id}, agent_id={agent_id}, "

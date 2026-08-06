@@ -1,6 +1,6 @@
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -1179,6 +1179,8 @@ class AsyncMySQLDb(AsyncBaseDb):
             async with self.async_session_factory() as sess, sess.begin():
                 # MySQL approach: extract JSON array elements differently
                 stmt = select(table.c.topics)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(stmt)
                 records = result.fetchall()
 
@@ -1647,7 +1649,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             Exception: If an error occurs during upsert.
         """
         try:
-            table = await self._get_table(table_type="memories")
+            table = await self._get_table(table_type="memories", create_table_if_not_found=True)
 
             async with self.async_session_factory() as sess, sess.begin():
                 if memory.memory_id is None:
@@ -1721,7 +1723,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             return []
 
         try:
-            table = await self._get_table(table_type="memories")
+            table = await self._get_table(table_type="memories", create_table_if_not_found=True)
 
             # Prepare bulk data
             bulk_data = []
@@ -1880,7 +1882,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             Exception: If an error occurs during metrics calculation.
         """
         try:
-            table = await self._get_table(table_type="metrics")
+            table = await self._get_table(table_type="metrics", create_table_if_not_found=True)
 
             starting_date = await self._get_metrics_calculation_starting_date(table)
 
@@ -1956,7 +1958,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             Exception: If an error occurs during retrieval.
         """
         try:
-            table = await self._get_table(table_type="metrics")
+            table = await self._get_table(table_type="metrics", create_table_if_not_found=True)
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
@@ -2571,13 +2573,17 @@ class AsyncMySQLDb(AsyncBaseDb):
                         (new_level > existing_level, insert_stmt.inserted.name),
                         else_=table.c.name,
                     ),
-                    # Preserve existing non-null context values using COALESCE
-                    run_id=func.coalesce(insert_stmt.inserted.run_id, table.c.run_id),
-                    session_id=func.coalesce(insert_stmt.inserted.session_id, table.c.session_id),
-                    user_id=func.coalesce(insert_stmt.inserted.user_id, table.c.user_id),
-                    agent_id=func.coalesce(insert_stmt.inserted.agent_id, table.c.agent_id),
-                    team_id=func.coalesce(insert_stmt.inserted.team_id, table.c.team_id),
-                    workflow_id=func.coalesce(insert_stmt.inserted.workflow_id, table.c.workflow_id),
+                    # Preserve existing non-null context values: COALESCE returns
+                    # the first non-null arg, so put the existing column first.
+                    # Otherwise a later upsert from a child span (e.g. a post-hook
+                    # agent's run with a different session_id) would overwrite
+                    # the trace's already-correct context.
+                    run_id=func.coalesce(table.c.run_id, insert_stmt.inserted.run_id),
+                    session_id=func.coalesce(table.c.session_id, insert_stmt.inserted.session_id),
+                    user_id=func.coalesce(table.c.user_id, insert_stmt.inserted.user_id),
+                    agent_id=func.coalesce(table.c.agent_id, insert_stmt.inserted.agent_id),
+                    team_id=func.coalesce(table.c.team_id, insert_stmt.inserted.team_id),
+                    workflow_id=func.coalesce(table.c.workflow_id, insert_stmt.inserted.workflow_id),
                 )
                 await sess.execute(upsert_stmt)
 
@@ -2740,6 +2746,7 @@ class AsyncMySQLDb(AsyncBaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        group_by: Literal["session", "agent", "team", "workflow", "endpoint"] = "session",
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 
@@ -2752,12 +2759,19 @@ class AsyncMySQLDb(AsyncBaseDb):
             end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
+            group_by: Only the default "session" grouping is supported by this backend.
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
                 Each dict contains: session_id, user_id, agent_id, team_id, total_traces,
                 workflow_id, first_trace_at, last_trace_at.
         """
+        if group_by != "session":
+            raise NotImplementedError(
+                f"get_trace_stats with group_by={group_by!r} is not supported by {self.__class__.__name__}. "
+                "Only the default 'session' grouping is available."
+            )
+
         try:
             table = await self._get_table(table_type="traces")
             if table is None:

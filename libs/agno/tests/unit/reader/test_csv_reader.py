@@ -67,6 +67,17 @@ def test_read_path(csv_reader, csv_file):
     assert documents[3].content == expected_content_4
 
 
+def test_read_str_path(csv_reader, csv_file):
+    documents = csv_reader.read(str(csv_file))
+
+    assert len(documents) == 4
+    assert documents[0].name == "test"
+    assert documents[0].content == "name, age, city"
+    assert documents[1].content == "John, 30, New York"
+    assert documents[2].content == "Jane, 25, San Francisco"
+    assert documents[3].content == "Bob, 40, Chicago"
+
+
 def test_read_file_object(csv_reader):
     file_obj = io.BytesIO(SAMPLE_CSV.encode("utf-8"))
     file_obj.name = "memory.csv"
@@ -112,6 +123,12 @@ def test_read_nonexistent_file(csv_reader, temp_dir):
         csv_reader.read(nonexistent_path)
 
 
+def test_read_nonexistent_str_path(csv_reader, temp_dir):
+    nonexistent_path = temp_dir / "nonexistent.csv"
+    with pytest.raises(FileNotFoundError, match="Could not find file"):
+        csv_reader.read(str(nonexistent_path))
+
+
 def test_read_with_chunking(csv_reader, csv_file):
     def mock_chunk(doc):
         return [
@@ -137,10 +154,32 @@ def test_read_with_chunking(csv_reader, csv_file):
 async def test_async_read_path(csv_reader, csv_file):
     documents = await csv_reader.async_read(csv_file)
 
-    assert len(documents) == 1
+    # RowChunking splits newline-joined content into one doc per row
+    assert len(documents) == 4
     assert documents[0].name == "test"
-    assert documents[0].id.endswith("_1")
-    assert documents[0].content == "name, age, city John, 30, New York Jane, 25, San Francisco Bob, 40, Chicago"
+    assert documents[0].content == "name, age, city"
+    assert documents[1].content == "John, 30, New York"
+    assert documents[2].content == "Jane, 25, San Francisco"
+    assert documents[3].content == "Bob, 40, Chicago"
+
+
+@pytest.mark.asyncio
+async def test_async_read_str_path(csv_reader, csv_file):
+    documents = await csv_reader.async_read(str(csv_file))
+
+    assert len(documents) == 4
+    assert documents[0].name == "test"
+    assert documents[0].content == "name, age, city"
+    assert documents[1].content == "John, 30, New York"
+    assert documents[2].content == "Jane, 25, San Francisco"
+    assert documents[3].content == "Bob, 40, Chicago"
+
+
+@pytest.mark.asyncio
+async def test_async_read_nonexistent_str_path(csv_reader, temp_dir):
+    nonexistent_path = temp_dir / "nonexistent.csv"
+    with pytest.raises(FileNotFoundError, match="Could not find file"):
+        await csv_reader.async_read(str(nonexistent_path))
 
 
 @pytest.fixture
@@ -167,26 +206,25 @@ row10,39,City10"""
 async def test_async_read_multi_page_csv(csv_reader, multi_page_csv_file):
     documents = await csv_reader.async_read(multi_page_csv_file, page_size=5)
 
-    assert len(documents) == 3
-
-    # Check first page
+    # RowChunking splits newline-joined content into one doc per row (11 rows total)
+    assert len(documents) == 11
     assert documents[0].name == "multi_page"
-    assert documents[0].id is not None and isinstance(documents[0].id, str)
+    assert documents[0].content == "name, age, city"
+    assert documents[1].content == "row1, 30, City1"
+    assert documents[10].content == "row10, 39, City10"
+
+    # Pagination metadata should still be present on chunked docs from page 1
     assert documents[0].meta_data["page"] == 1
     assert documents[0].meta_data["start_row"] == 1
     assert documents[0].meta_data["rows"] == 5
-
-    # Check second page
-    assert documents[1].id is not None and isinstance(documents[1].id, str)
-    assert documents[1].meta_data["page"] == 2
-    assert documents[1].meta_data["start_row"] == 6
-    assert documents[1].meta_data["rows"] == 5
-
-    # Check third page
-    assert documents[2].id is not None and isinstance(documents[2].id, str)
-    assert documents[2].meta_data["page"] == 3
-    assert documents[2].meta_data["start_row"] == 11
-    assert documents[2].meta_data["rows"] == 1
+    # Docs from page 2 (rows 6-10)
+    assert documents[5].meta_data["page"] == 2
+    assert documents[5].meta_data["start_row"] == 6
+    assert documents[5].meta_data["rows"] == 5
+    # Doc from page 3 (row 11)
+    assert documents[10].meta_data["page"] == 3
+    assert documents[10].meta_data["start_row"] == 11
+    assert documents[10].meta_data["rows"] == 1
 
 
 @pytest.mark.asyncio
@@ -319,3 +357,17 @@ async def test_async_read_path_with_custom_encoding(temp_dir):
     content = documents[0].content
     assert "José" in content
     assert "São Paulo" in content
+
+
+def test_default_chunking_strategy_is_not_shared_between_instances():
+    """Each CSVReader() created without an explicit chunking_strategy must get
+    its own RowChunking instance, not a shared mutable default constructed
+    once at import time."""
+    reader_a = CSVReader()
+    reader_b = CSVReader()
+
+    assert reader_a.chunking_strategy is not reader_b.chunking_strategy
+
+    reader_a.chunking_strategy.skip_header = True
+
+    assert reader_b.chunking_strategy.skip_header is False

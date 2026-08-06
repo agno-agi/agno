@@ -115,10 +115,12 @@ class TestCallSiteOverrides:
         assert opts.add_dependencies_to_context is True
         assert opts.add_session_state_to_context is True
 
-    def test_dependencies_override(self):
+    def test_dependencies_merge_callsite_over_team(self):
+        # Call-site dependencies merge with team.dependencies (call-site keys win on conflict);
+        # team-level keys (e.g. prompt-template vars) are preserved, not clobbered.
         team = _make_team(dependencies={"a": 1})
         opts = resolve_run_options(team, dependencies={"b": 2})
-        assert opts.dependencies == {"b": 2}
+        assert opts.dependencies == {"a": 1, "b": 2}
 
     def test_output_schema_override(self):
         from pydantic import BaseModel
@@ -154,6 +156,64 @@ class TestStreamEventsCoupling:
         opts = resolve_run_options(team, stream=True, stream_events=True)
         assert opts.stream is True
         assert opts.stream_events is True
+
+
+# ---------------------------------------------------------------------------
+# Dependencies merge
+# ---------------------------------------------------------------------------
+
+
+class TestDependenciesMerge:
+    """Call-site dependencies merge with team.dependencies instead of replacing them.
+
+    Regression: interfaces (Slack/WhatsApp) always pass a non-None call-site
+    ``dependencies`` (channel/thread ids). The old replacement behavior discarded the
+    team's own dependencies, dropping prompt-template variables on those surfaces.
+    """
+
+    def test_both_none(self):
+        team = _make_team()
+        opts = resolve_run_options(team)
+        assert opts.dependencies is None
+
+    def test_only_callsite(self):
+        team = _make_team()
+        opts = resolve_run_options(team, dependencies={"run": "value"})
+        assert opts.dependencies == {"run": "value"}
+
+    def test_only_team(self):
+        team = _make_team(dependencies={"team": "value"})
+        opts = resolve_run_options(team)
+        assert opts.dependencies == {"team": "value"}
+
+    def test_merge_preserves_team_keys(self):
+        team = _make_team(dependencies={"owner_name": "Ash", "caller_information": "resolver"})
+        opts = resolve_run_options(team, dependencies={"channel": "C123", "thread": "T1"})
+        assert opts.dependencies == {
+            "owner_name": "Ash",
+            "caller_information": "resolver",
+            "channel": "C123",
+            "thread": "T1",
+        }
+
+    def test_merge_callsite_takes_precedence(self):
+        team = _make_team(dependencies={"x": "team", "team_only": "t"})
+        opts = resolve_run_options(team, dependencies={"x": "call", "run_only": "r"})
+        # call-site wins on conflict; runtime context overrides static config
+        assert opts.dependencies["x"] == "call"
+        assert opts.dependencies["team_only"] == "t"
+        assert opts.dependencies["run_only"] == "r"
+
+    def test_merge_does_not_mutate_callsite(self):
+        team = _make_team(dependencies={"a": 1})
+        callsite_deps = {"b": 2}
+        resolve_run_options(team, dependencies=callsite_deps)
+        assert callsite_deps == {"b": 2}
+
+    def test_merge_does_not_mutate_team(self):
+        team = _make_team(dependencies={"a": 1})
+        resolve_run_options(team, dependencies={"b": 2})
+        assert team.dependencies == {"a": 1}
 
 
 # ---------------------------------------------------------------------------
