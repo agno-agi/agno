@@ -851,10 +851,21 @@ def from_dict(
                 )
             config["tools"] = rehydrated_tools
         elif strict:
-            raise ComponentRehydrationError(
-                f"{component_label} has serialized tools but no registry was provided to rehydrate "
-                "them. Provide a registry, or pass strict=False to load the component without tools."
-            )
+            # Provider-run dicts and external-execution tools need no registry;
+            # an empty one gives them the same treatment a real one would.
+            rehydrated_tools = Registry().rehydrate_functions(config["tools"], strict=True)
+            unresolved_tools = [
+                f"{f.owning_toolkit}.{f.name}" if f.owning_toolkit else f.name
+                for f in rehydrated_tools
+                if isinstance(f, Function) and f.entrypoint is None and not f.external_execution
+            ]
+            if unresolved_tools:
+                raise ComponentRehydrationError(
+                    f"{component_label} references tools that need a registry to rehydrate: "
+                    f"{unresolved_tools}. Provide a registry, or pass strict=False to load the "
+                    "component without them."
+                )
+            config["tools"] = rehydrated_tools
         else:
             log_warning("No registry provided, tools will not be rehydrated.")
             del config["tools"]

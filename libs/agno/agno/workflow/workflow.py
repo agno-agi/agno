@@ -1101,8 +1101,10 @@ class Workflow:
                     all_links.append(link)
 
             elif isinstance(step, (Parallel, Loop, Steps, Condition)):
-                # Recursively process nested steps
+                # Recursively process nested steps, including a Condition's else branch
                 for nested_position, nested_step in enumerate(step.steps):
+                    _save_step_agents(nested_step, nested_position, saved_versions, all_links)
+                for nested_position, nested_step in enumerate(getattr(step, "else_steps", None) or []):
                     _save_step_agents(nested_step, nested_position, saved_versions, all_links)
 
             elif isinstance(step, Router):

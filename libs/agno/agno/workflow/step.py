@@ -100,6 +100,25 @@ StepExecutor = Callable[
 ]
 
 
+def _unresolvable_callable_placeholder(kind: str, ref: str) -> Callable[..., Any]:
+    """A constructible stand-in for a callable ref a lenient load could not resolve.
+
+    It keeps the workflow loadable for listings, run history and cancel,
+    refuses loudly when executed, and carries the original name so a round
+    trip re-serializes the reference instead of the placeholder.
+    """
+
+    def _unresolvable(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError(
+            f"{kind} '{ref}' was not resolvable from the registry when this workflow was "
+            "loaded, so it cannot execute. Register the function and reload."
+        )
+
+    _unresolvable.__name__ = ref
+    _unresolvable.__qualname__ = ref
+    return _unresolvable
+
+
 def _unresolvable_ref_placeholder(config: Dict[str, Any], kind: str, ref: Any) -> Callable[[StepInput], StepOutput]:
     """A constructible stand-in for a step reference a lenient load could not resolve.
 
@@ -515,6 +534,12 @@ class Step:
         # paused workflows that contain nested workflow steps.
         if "workflow_id" in config and config["workflow_id"]:
             workflow_id = config.get("workflow_id")
+            if strict:
+                raise ComponentRehydrationError(
+                    f"Step '{config.get('name')}' references nested workflow '{workflow_id}', which "
+                    "cannot be reconstructed yet (the registry does not track workflows). Pass "
+                    "strict=False to load it with a non-executable placeholder."
+                )
             log_warning(
                 f"Cannot reconstruct nested workflow '{workflow_id}' for step '{config.get('name')}' "
                 f"(workflow registry support not yet implemented). "
@@ -529,6 +554,7 @@ class Step:
                     success=False,
                 )
 
+            _placeholder.__agno_unresolved__ = {"workflow_id": workflow_id}  # type: ignore[attr-defined]
             executor = _placeholder
 
         # --- Handle Executor reconstruction ---

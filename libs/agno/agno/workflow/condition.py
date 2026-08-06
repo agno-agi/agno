@@ -16,7 +16,7 @@ from agno.run.workflow import (
     WorkflowRunOutputEvent,
 )
 from agno.session.workflow import WorkflowSession
-from agno.utils.log import log_debug, log_error, logger
+from agno.utils.log import log_debug, log_error, log_warning, logger
 from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_condition_evaluator, is_cel_expression
 from agno.workflow.step import Step
 from agno.workflow.types import (
@@ -278,23 +278,21 @@ class Condition:
                 evaluator = evaluator_data
             else:
                 # Function name - look up in registry
-                if registry:
-                    func = registry.get_function(evaluator_data)
-                    if func is None:
+                func = registry.get_function(evaluator_data) if registry else None
+                if func is None:
+                    if registry:
                         message = f"Evaluator function '{evaluator_data}' not found in registry"
-                        if strict:
-                            from agno.exceptions import ComponentRehydrationError
-
-                            raise ComponentRehydrationError(message)
-                        raise ValueError(message)
-                    evaluator = func
-                else:
-                    message = f"Registry required to deserialize evaluator function '{evaluator_data}'"
+                    else:
+                        message = f"Registry required to deserialize evaluator function '{evaluator_data}'"
                     if strict:
                         from agno.exceptions import ComponentRehydrationError
 
                         raise ComponentRehydrationError(message)
-                    raise ValueError(message)
+                    from agno.workflow.step import _unresolvable_callable_placeholder
+
+                    log_warning(message)
+                    func = _unresolvable_callable_placeholder("Condition evaluator", evaluator_data)
+                evaluator = func
         else:
             raise ValueError(f"Invalid evaluator type in data: {type(evaluator_data).__name__}")
 

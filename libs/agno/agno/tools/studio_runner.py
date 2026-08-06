@@ -1365,10 +1365,11 @@ class StudioRunnerTools(Toolkit):
         Registry-backed references resolve at their current published version."""
         from agno.db.base import ComponentType
 
-        config = self._load_config_from_db(agent_id, version=version, component_type=ComponentType.AGENT)
-        if config is None:
+        loaded = self._load_config_row_from_db(agent_id, version=version, component_type=ComponentType.AGENT)
+        if loaded is None:
             return None
-        self._require_registry_for("agent", agent_id, config, version=version)
+        config, resolved_version = loaded
+        self._require_registry_for("agent", agent_id, config, version=resolved_version)
         from agno.agent.agent import Agent
 
         try:
@@ -1386,13 +1387,13 @@ class StudioRunnerTools(Toolkit):
                 "agent",
                 agent_id,
                 lambda: Agent.from_dict(config, registry=self.registry, strict=False),
-                version=version,
+                version=resolved_version,
             ) from rehydration_error
         except Exception:
             logger.warning("StudioRunnerTools: Agent.from_dict failed for %s", agent_id, exc_info=True)
             return None
         if for_dispatch:
-            self._require_dispatchable(agent, config, "agent", agent_id, version=version)
+            self._require_dispatchable(agent, config, "agent", agent_id, version=resolved_version)
         return agent
 
     def _load_team_from_db(
@@ -1400,17 +1401,18 @@ class StudioRunnerTools(Toolkit):
     ) -> Optional["Team"]:
         from agno.db.base import ComponentType
 
-        config = self._load_config_from_db(team_id, version=version, component_type=ComponentType.TEAM)
-        if config is None:
+        loaded = self._load_config_row_from_db(team_id, version=version, component_type=ComponentType.TEAM)
+        if loaded is None:
             return None
+        config, resolved_version = loaded
         if for_dispatch:
             # Dispatch only: a null reference cannot be resolved, but the component
             # still has to load so the bad reference can be seen and repaired.
             self._require_resolvable_member_ids("team", team_id, config)
-        self._require_registry_for("team", team_id, config, version=version)
+        self._require_registry_for("team", team_id, config, version=resolved_version)
         from agno.team.team import Team
 
-        links = self._load_links_from_db(team_id, version=version)
+        links = self._load_links_from_db(team_id, version=resolved_version)
         try:
             team = Team.from_dict(config, db=self.db, registry=self.registry, links=links, strict=for_dispatch)
             team.id = team_id
@@ -1425,13 +1427,13 @@ class StudioRunnerTools(Toolkit):
                 "team",
                 team_id,
                 lambda: Team.from_dict(config, db=self.db, registry=self.registry, links=links, strict=False),
-                version=version,
+                version=resolved_version,
             ) from rehydration_error
         except Exception:
             logger.warning("StudioRunnerTools: Team.from_dict failed for %s", team_id, exc_info=True)
             return None
         if for_dispatch:
-            self._require_dispatchable(team, config, "team", team_id, version=version)
+            self._require_dispatchable(team, config, "team", team_id, version=resolved_version)
         return team
 
     def _load_workflow_from_db(
@@ -1439,17 +1441,18 @@ class StudioRunnerTools(Toolkit):
     ) -> Optional["Workflow"]:
         from agno.db.base import ComponentType
 
-        config = self._load_config_from_db(workflow_id, version=version, component_type=ComponentType.WORKFLOW)
-        if config is None:
+        loaded = self._load_config_row_from_db(workflow_id, version=version, component_type=ComponentType.WORKFLOW)
+        if loaded is None:
             return None
+        config, resolved_version = loaded
         if for_dispatch:
             # Dispatch only: a null reference cannot be resolved, but the component
             # still has to load so the bad reference can be seen and repaired.
             self._require_resolvable_member_ids("workflow", workflow_id, config)
-        self._require_registry_for("workflow", workflow_id, config, version=version)
+        self._require_registry_for("workflow", workflow_id, config, version=resolved_version)
         from agno.workflow.workflow import Workflow
 
-        links = self._load_links_from_db(workflow_id, version=version)
+        links = self._load_links_from_db(workflow_id, version=resolved_version)
         try:
             wf = Workflow.from_dict(config, db=self.db, registry=self.registry, links=links, strict=for_dispatch)
             wf.id = workflow_id
@@ -1464,13 +1467,13 @@ class StudioRunnerTools(Toolkit):
                 "workflow",
                 workflow_id,
                 lambda: Workflow.from_dict(config, db=self.db, registry=self.registry, links=links, strict=False),
-                version=version,
+                version=resolved_version,
             ) from rehydration_error
         except Exception:
             logger.warning("StudioRunnerTools: Workflow.from_dict failed for %s", workflow_id, exc_info=True)
             return None
         if for_dispatch:
-            self._require_dispatchable(wf, config, "workflow", workflow_id, version=version)
+            self._require_dispatchable(wf, config, "workflow", workflow_id, version=resolved_version)
         return wf
 
     def _load_config_from_db(
@@ -1479,7 +1482,21 @@ class StudioRunnerTools(Toolkit):
         version: Optional[int] = None,
         component_type: Optional["ComponentType"] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Load a component's config by id.
+        """Load a component's config by id. See _load_config_row_from_db."""
+        loaded = self._load_config_row_from_db(component_id, version=version, component_type=component_type)
+        return loaded[0] if loaded is not None else None
+
+    def _load_config_row_from_db(
+        self,
+        component_id: str,
+        version: Optional[int] = None,
+        component_type: Optional["ComponentType"] = None,
+    ) -> Optional[Tuple[Dict[str, Any], Optional[int]]]:
+        """Load a component's config and its resolved version in one read.
+
+        The resolved version feeds the links fetch and the dispatch guards, so
+        a publish between reads can never pair one version's config with
+        another version's links.
 
         When ``component_type`` is given, the stored component must be of that
         type; a mismatch returns None so that, e.g., a team id never loads as an
@@ -1498,10 +1515,13 @@ class StudioRunnerTools(Toolkit):
             # Not every db adapter implements component storage; treat the
             # component as absent so code-defined resolution still works.
             return None
-        if row is None:
+        if not isinstance(row, dict):
             return None
-        config = row.get("config") if isinstance(row, dict) else None
-        return config if isinstance(config, dict) else None
+        config = row.get("config")
+        if not isinstance(config, dict):
+            return None
+        resolved_version = row.get("version")
+        return config, (resolved_version if isinstance(resolved_version, int) else None)
 
     def _load_links_from_db(self, component_id: str, version: Optional[int] = None) -> List[Dict[str, Any]]:
         """Links for a component's resolved config version.

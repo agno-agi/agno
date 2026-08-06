@@ -473,3 +473,25 @@ class TestStrictExecutorRefs:
         output = step.executor(MagicMock())
         assert output.success is False
         assert step.to_dict().get("executor_ref") == "missing_fn"
+
+
+class TestNestedWorkflowRefs:
+    def test_from_dict_nested_workflow_raises_under_strict(self):
+        """A nested workflow cannot be reconstructed yet, so strict refuses
+        instead of fabricating a step that reports failure as completion."""
+        from agno.exceptions import ComponentRehydrationError
+
+        data = {"type": "Step", "name": "nested", "workflow_id": "inner-wf"}
+
+        with pytest.raises(ComponentRehydrationError, match="inner-wf"):
+            Step.from_dict(data, strict=True)
+
+    def test_from_dict_nested_workflow_placeholder_round_trips_when_lenient(self):
+        data = {"type": "Step", "name": "nested", "workflow_id": "inner-wf"}
+
+        step = Step.from_dict(data, strict=False)
+
+        output = step.executor(MagicMock())
+        assert output.success is False
+        assert step.to_dict().get("workflow_id") == "inner-wf"
+        assert "executor_ref" not in step.to_dict()

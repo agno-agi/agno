@@ -825,3 +825,44 @@ class TestStepPinFailures:
 
         with pytest.raises(ComponentPinError, match=f"pins agent 'dp-agent' at version {pinned}"):
             get_workflow_by_id(db=db, id="dp-wf", strict=True)
+
+
+class TestElseBranchPersistence:
+    def test_save_persists_and_pins_else_branch_agents(self, tmp_path):
+        """Condition else-branch agents cascade-save and pin like if-branch
+        agents, so a strict reload works immediately after a save."""
+        from agno.agent.agent import Agent
+        from agno.db.sqlite import SqliteDb
+        from agno.workflow.condition import Condition
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import get_workflow_by_id
+
+        db = SqliteDb(db_file=str(tmp_path / "else_save.db"))
+        if_agent = Agent(id="if-agent", name="If")
+        else_agent = Agent(id="else-agent", name="Else", description="v1")
+        workflow = Workflow(
+            id="else-wf",
+            name="WF",
+            steps=[
+                Condition(
+                    name="branch",
+                    evaluator=True,
+                    steps=[Step(name="if-step", agent=if_agent)],
+                    else_steps=[Step(name="else-step", agent=else_agent)],
+                )
+            ],
+        )
+        workflow.save(db=db)
+
+        links = db.get_links(component_id="else-wf", version=1)
+        pinned_children = {link["child_component_id"]: link["child_version"] for link in links}
+        assert "else-agent" in pinned_children
+
+        # A later publish of the else agent must not change the pinned load
+        else_agent.description = "v2"
+        else_agent.save(db=db)
+
+        loaded = get_workflow_by_id(db=db, id="else-wf", strict=True)
+        assert loaded is not None
+        else_step = loaded.steps[0].else_steps[0]
+        assert else_step.agent.description == "v1"

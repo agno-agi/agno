@@ -279,9 +279,10 @@ class Loop:
                         from agno.exceptions import ComponentRehydrationError
 
                         raise ComponentRehydrationError(message)
-                    # An end condition is optional on a Loop, so a lenient load
-                    # drops it and the loop runs to max_iterations.
+                    from agno.workflow.step import _unresolvable_callable_placeholder
+
                     log_warning(message)
+                    end_condition = _unresolvable_callable_placeholder("Loop end condition", end_condition_data)
 
         # HITL config
         if data.get("human_review"):

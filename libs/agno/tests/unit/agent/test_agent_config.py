@@ -438,11 +438,32 @@ class TestAgentFromDict:
 
         config = {
             "id": "no-registry-agent",
-            "tools": [{"name": "search"}],
+            "tools": [{"name": "search", "description": "Search", "parameters": {"type": "object", "properties": {}}}],
         }
 
-        with pytest.raises(ComponentRehydrationError, match="no registry"):
+        with pytest.raises(ComponentRehydrationError, match="need a registry"):
             Agent.from_dict(config, strict=True)
+
+    def test_from_dict_without_registry_loads_registry_free_tools_under_strict(self):
+        """Provider-native dicts and external-execution tools need no registry,
+        so a strict load without one accepts them - identical to an empty
+        Registry."""
+        config = {
+            "id": "registry-free-agent",
+            "tools": [
+                {"type": "web_search"},
+                {
+                    "name": "charge_card",
+                    "description": "Charge",
+                    "parameters": {"type": "object", "properties": {}},
+                    "external_execution": True,
+                },
+            ],
+        }
+
+        agent = Agent.from_dict(config, strict=True)
+
+        assert agent.tools is not None and len(agent.tools) == 2
 
     def test_from_dict_missing_tool_in_registry_raises(self):
         """Test from_dict fails loudly when the registry lacks a referenced tool."""

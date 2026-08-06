@@ -485,10 +485,10 @@ class TestTeamFromDict:
 
         config = {
             "id": "no-registry-team",
-            "tools": [{"name": "search"}],
+            "tools": [{"name": "search", "description": "Search", "parameters": {"type": "object", "properties": {}}}],
         }
 
-        with pytest.raises(ComponentRehydrationError, match="no registry"):
+        with pytest.raises(ComponentRehydrationError, match="need a registry"):
             Team.from_dict(config, strict=True)
 
     def test_from_dict_without_registry_removes_tools_when_lenient(self):

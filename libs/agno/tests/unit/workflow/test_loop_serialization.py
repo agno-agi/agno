@@ -230,9 +230,10 @@ class TestLoopFromDict:
         assert loop.end_condition == simple_end_condition
         assert callable(loop.end_condition)
 
-    def test_from_dict_without_registry_drops_end_condition_when_lenient(self):
-        """An end condition is optional, so a lenient load drops an
-        unresolvable one and the loop runs to max_iterations."""
+    def test_from_dict_without_registry_builds_end_condition_placeholder_when_lenient(self):
+        """A lenient load keeps the loop constructible; the end-condition
+        placeholder refuses at execution and round-trips the name, so a
+        read-modify-save cycle never erases the stored reference."""
         data = {
             "type": "Loop",
             "name": "condition-loop",
@@ -244,7 +245,11 @@ class TestLoopFromDict:
 
         loop = Loop.from_dict(data, registry=None)
 
-        assert loop.end_condition is None
+        assert callable(loop.end_condition)
+        with pytest.raises(RuntimeError, match="simple_end_condition"):
+            loop.end_condition([])
+        assert loop.to_dict()["end_condition"] == "simple_end_condition"
+        assert loop.to_dict()["end_condition_type"] == "function"
 
     def test_from_dict_unknown_end_condition_raises_under_strict(self, registry_with_functions):
         """Under strict an unresolvable end condition refuses loudly."""
@@ -263,7 +268,8 @@ class TestLoopFromDict:
             Loop.from_dict(data, registry=registry_with_functions, strict=True)
 
         lenient = Loop.from_dict(data, registry=registry_with_functions, strict=False)
-        assert lenient.end_condition is None
+        assert callable(lenient.end_condition)
+        assert lenient.to_dict()["end_condition"] == "unknown_function"
 
     def test_from_dict_with_multiple_steps(self, registry_with_functions):
         """Test from_dict with multiple nested steps."""

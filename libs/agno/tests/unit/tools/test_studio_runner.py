@@ -2281,3 +2281,39 @@ def test_dispatch_judges_pinned_members_against_their_pinned_config(tmp_path):
 
     assert team is not None
     assert team.members[0].id == "fm"
+
+
+def test_dispatch_never_mixes_config_and_links_from_different_versions(tmp_path):
+    """A publish between the config read and any later read must not produce a
+    hybrid artifact: links and guards use the version the config row resolved."""
+    from agno.agent.agent import Agent
+    from agno.db.sqlite import SqliteDb
+    from agno.registry import Registry
+    from agno.team.team import Team
+    from agno.tools.studio_runner import StudioRunnerTools
+
+    db = SqliteDb(db_file=str(tmp_path / "race.db"))
+    member = Agent(id="rv-m", name="M", description="v1")
+    Team(id="rv-t", name="T", members=[member]).save(db=db)
+
+    runner = StudioRunnerTools(registry=Registry(), db=db)
+    real_get_config = db.get_config
+    state = {"raced": False}
+
+    def racy_get_config(component_id=None, version=None, **kwargs):
+        row = real_get_config(component_id=component_id, version=version, **kwargs)
+        if not state["raced"] and component_id == "rv-t":
+            state["raced"] = True
+            member.description = "v2"
+            member.save(db=db)
+            Team(id="rv-t", name="T", members=[member]).save(db=db)
+        return row
+
+    db.get_config = racy_get_config
+    try:
+        team_obj = runner._load_team_from_db("rv-t", for_dispatch=True)
+    finally:
+        del db.get_config
+
+    assert team_obj is not None
+    assert team_obj.members[0].description == "v1"
