@@ -134,6 +134,72 @@ class UserFeedbackQuestion:
         )
 
 
+# What Function.to_dict() writes and from_dict() reads back: the choices that
+# belong to the saved component, so a later registry edit must not rewrite them.
+SERIALIZED_FIELDS = (
+    "name",
+    "description",
+    "parameters",
+    "strict",
+    "requires_confirmation",
+    "external_execution",
+    "approval_type",
+)
+
+# Fields Function.to_dict() deliberately omits and from_dict() cannot rebuild.
+# They describe how the tool behaves rather than what the saved component chose,
+# and several hold callables that do not serialize at all. Registry rehydration
+# copies them back from the live Function, so a reloaded component behaves like
+# the tool it was built from and picks up registry-side edits. The fields
+# to_dict() *does* carry stay as persisted: the saved config owns those.
+# Consumed by Registry._rehydrate_function.
+RUNTIME_ONLY_FIELDS = (
+    "instructions",
+    "add_instructions",
+    # Entrypoints built for a fixed schema (e.g. MCP call proxies) must not be
+    # re-introspected at run time: processing would rebuild the schema's
+    # `required` list from the proxy's signature.
+    "skip_entrypoint_processing",
+    "show_result",
+    "stop_after_tool_call",
+    "pre_hook",
+    "post_hook",
+    "tool_hooks",
+    # Without these, process_entrypoint stops excluding the user-supplied
+    # fields, so `required` lists a property the schema never defines and the
+    # gate that would have collected it is gone.
+    "requires_user_input",
+    "user_input_fields",
+    "user_input_schema",
+    "external_execution_silent",
+    "cache_results",
+    "cache_dir",
+    "cache_ttl",
+)
+
+
+def isolated_runtime_value(value: Any) -> Any:
+    """A per-component copy of a value restored from a live registry Function.
+
+    Restoring by reference would let every component that loaded the same tool
+    share the registry Function's mutable state. ``user_input_schema`` is the
+    one that bites: the model layer writes the user's answer straight into its
+    ``UserInputField`` objects, so one run's input would be visible to every
+    other component holding that tool, and to the registry itself.
+
+    Lists are rebuilt rather than deep-copied, so callables such as tool hooks
+    stay the same objects; only dataclass elements are copied, because those
+    are the ones written in place. No RUNTIME_ONLY_FIELDS entry holds a dict,
+    so lists are the only containers handled.
+    """
+    from copy import copy
+    from dataclasses import is_dataclass
+
+    if isinstance(value, list):
+        return [copy(item) if is_dataclass(item) else item for item in value]
+    return value
+
+
 class Function(BaseModel):
     """Model for storing functions that can be called by an agent."""
 
@@ -198,6 +264,10 @@ class Function(BaseModel):
     # to_dict: it is persisted via the storage layer's "toolkit" key and never
     # sent to models.
     owning_toolkit: Optional[str] = None
+    # Live Toolkit this function was flattened from during registry
+    # rehydration. It restores toolkit-level behavior without persisting the
+    # Toolkit or its instructions in component configs.
+    source_toolkit: Optional[Any] = Field(default=None, exclude=True, repr=False)
 
     # Caching configuration
     cache_results: bool = False
@@ -219,18 +289,7 @@ class Function(BaseModel):
     _files: Optional[Sequence[File]] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return self.model_dump(
-            exclude_none=True,
-            include={
-                "name",
-                "description",
-                "parameters",
-                "strict",
-                "requires_confirmation",
-                "external_execution",
-                "approval_type",
-            },
-        )
+        return self.model_dump(exclude_none=True, include=set(SERIALIZED_FIELDS))
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Function":
@@ -245,6 +304,26 @@ class Function(BaseModel):
             external_execution=data.get("external_execution", False),
             approval_type=data.get("approval_type"),
         )
+
+    def __deepcopy__(self, memo: Optional[Dict[int, Any]] = None) -> "Function":
+        """Deep-copy runtime state while retaining the live source Toolkit.
+
+        ``memo`` is optional because ``BaseModel.model_copy(deep=True)`` calls
+        ``__deepcopy__()`` with no argument.
+        """
+        if memo is None:
+            memo = {}
+        if self.source_toolkit is not None:
+            # AgentOS deep-copies each Function independently for request
+            # isolation. Sharing the registry Toolkit keeps its connections and
+            # current instructions, and keeps the entrypoint bound to the live
+            # toolkit rather than to a detached clone of it.
+            #
+            # setdefault, not assignment: the memo belongs to the in-progress
+            # copy. Overwriting an entry it already made would leave one
+            # original with two stand-ins in the same object graph.
+            memo.setdefault(id(self.source_toolkit), self.source_toolkit)
+        return super().__deepcopy__(memo)
 
     def model_copy(self, *, deep: bool = False) -> "Function":
         """
@@ -269,8 +348,12 @@ class Function(BaseModel):
                 if field_name in shallow_fields:
                     # Shallow copy - just reference the same object
                     copied_data[field_name] = field_value
-                elif field_name == "parameters":
-                    # Deep copy the parameters dict
+                elif field_name in ("parameters", "user_input_schema"):
+                    # Deep copy the mutable run state. parse_tools hands the
+                    # model a per-run copy of each Function; the model layer
+                    # then writes the user's answers into user_input_schema in
+                    # place, so an aliased schema carries one run's input into
+                    # every later run of the same component.
                     from copy import deepcopy
 
                     copied_data[field_name] = deepcopy(field_value)
