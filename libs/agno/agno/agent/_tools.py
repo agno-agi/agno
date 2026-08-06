@@ -360,11 +360,19 @@ def parse_tools(
     _function_names: List[str] = []
     _functions: List[Union[Function, dict]] = []
     _toolkit_instruction_keys: Set[ToolkitKey] = set()
-    _source_toolkit_last_index, _source_toolkit_members = _group_source_toolkits(tools)
+    _source_toolkit_last_index, _source_toolkit_members, _toolkit_keys = _group_source_toolkits(tools)
     agent._tool_instructions = []
 
+    def toolkit_key(toolkit: Toolkit) -> ToolkitKey:
+        # The key folds the toolkit's whole function surface; memoized so one
+        # collection pass computes it once per toolkit, not once per member.
+        key = _toolkit_keys.get(id(toolkit))
+        if key is None:
+            key = _toolkit_keys[id(toolkit)] = _toolkit_key(toolkit)
+        return key
+
     def add_toolkit_instructions(toolkit: Toolkit) -> None:
-        key = _toolkit_key(toolkit)
+        key = toolkit_key(toolkit)
         if key in _toolkit_instruction_keys:
             return
         if toolkit.add_instructions and toolkit.instructions is not None:
@@ -377,6 +385,7 @@ def parse_tools(
         return _emits_toolkit_instructions(
             source_toolkit,
             index,
+            key=toolkit_key(source_toolkit),
             last_index=_source_toolkit_last_index,
             members=_source_toolkit_members,
             async_mode=async_mode,

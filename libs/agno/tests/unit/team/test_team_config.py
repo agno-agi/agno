@@ -951,21 +951,26 @@ class TestTeamLoad:
         # And the toolkit came with them, so its guidance survives the reload.
         assert member_tools[0].source_toolkit is toolkit
 
-    def test_load_passes_member_builtin_dict_tools_through(self, tmp_path):
-        """Provider-builtin tools persist as plain dicts. Rehydrating one as a
-        Function config raised a ValidationError that took the whole team load
-        down; it must ride through the member's tools untouched instead."""
+    def test_load_passes_member_provider_dict_tools_through(self, tmp_path):
+        """Provider-run tools persist as plain dicts, typed builtins and
+        untyped custom shapes alike. Rehydrating one as a Function config
+        raised a ValidationError that took the whole team load down; they must
+        ride through the member's tools untouched instead."""
         from agno.models.openai import OpenAIResponses
 
+        provider_dicts = [
+            {"type": "web_search"},
+            {"name": "get_weather", "description": "Weather", "input_schema": {"type": "object"}},
+        ]
         model = OpenAIResponses(id="gpt-5.5")
         db = SqliteDb(db_file=str(tmp_path / "team_builtin_tools.db"))
-        member = Agent(id="builtin-member", name="Member", model=model, tools=[{"type": "web_search"}])
+        member = Agent(id="builtin-member", name="Member", model=model, tools=list(provider_dicts))
         Team(id="builtin-team", name="Builtin Team", model=model, members=[member]).save(db=db)
 
         loaded = Team.load(id="builtin-team", db=db, registry=Registry(models=[model]))
 
         assert loaded is not None
-        assert loaded.members[0].tools == [{"type": "web_search"}]
+        assert loaded.members[0].tools == provider_dicts
 
 
 # =============================================================================

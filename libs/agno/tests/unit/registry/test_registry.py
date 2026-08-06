@@ -753,6 +753,23 @@ class TestToolkitQualifiedRehydration:
         assert rehydrated.entrypoint is None
         assert rehydrated.source_toolkit is None
 
+    def test_direct_registration_does_not_strip_toolkit_provenance(self):
+        """A toolkit member also registered directly owns its flat slot as the
+        direct registration, but the toolkit still holds the object, and its
+        guidance still belongs to a component that loaded the member.
+        Freshness follows the slot; provenance follows the object."""
+        toolkit = Toolkit(name="agno_docs", instructions="Toolkit guidance.", add_instructions=True)
+        member = Function(name="search_docs", entrypoint=search_function)
+        toolkit.functions["search_docs"] = member
+        # AgentOS component collection appends a loaded component's Functions
+        # directly, after the toolkit that owns them.
+        reg = Registry(tools=[toolkit, member])
+
+        rehydrated = reg.rehydrate_function({"name": "search_docs", "parameters": {}})
+
+        assert rehydrated.entrypoint is search_function
+        assert rehydrated.source_toolkit is toolkit
+
     def test_direct_registration_does_not_mask_the_toolkits_flat_slot(self):
         """The same object can be registered directly and owned by a later
         toolkit. The toolkit's registration wins the flat slot, so when the
@@ -1045,27 +1062,62 @@ class TestRehydrateFunctionsBatch:
         assert rehydrated[1].entrypoint is self._read
         assert rehydrated[2].entrypoint is None
 
-    def test_provider_builtin_dicts_pass_through_unchanged(self):
-        """Builtin tools run inside the model provider and persist as plain
-        dicts. Parsing one as a Function config raised a ValidationError that
-        took the whole component load down. They pass through in place; a
-        top-level ``type`` marks one, including provider dicts that also carry
-        a ``name``."""
+    def test_provider_tool_dicts_pass_through_unchanged(self):
+        """Provider-run tools persist as plain dicts. Parsing one as a
+        Function config raised a ValidationError that took the whole component
+        load down. Only a dict that Function.to_dict() could have written is
+        rehydrated -- name and parameters present, no provider marker --
+        and every other dict passes through in place."""
         reg, _ = self._counting_registry()
-        openai_style = {"type": "web_search"}
-        anthropic_style = {"type": "web_search_20250305", "name": "web_search", "max_uses": 3}
+        openai_builtin = {"type": "web_search"}
+        anthropic_builtin = {"type": "web_search_20250305", "name": "web_search", "max_uses": 3}
+        anthropic_custom = {"name": "get_weather", "description": "Weather", "input_schema": {"type": "object"}}
+        marked_but_parametered = {"name": "get_time", "parameters": {}, "input_schema": {"type": "object"}}
+        # The OpenAI Responses custom-function shape carries name AND
+        # parameters, so the type marker alone keeps it out of rehydration.
+        openai_responses_fn = {"type": "function", "name": "get_news", "parameters": {"type": "object"}}
 
         rehydrated = reg.rehydrate_functions(
             [
-                openai_style,
+                openai_builtin,
                 {"name": "read_file", "parameters": {}, "toolkit": "agent_files"},
-                anthropic_style,
+                anthropic_builtin,
+                anthropic_custom,
+                marked_but_parametered,
+                openai_responses_fn,
             ]
         )
 
-        assert rehydrated[0] is openai_style
+        assert rehydrated[0] is openai_builtin
         assert isinstance(rehydrated[1], Function) and rehydrated[1].entrypoint is self._read
-        assert rehydrated[2] is anthropic_style
+        assert rehydrated[2] is anthropic_builtin
+        assert rehydrated[3] is anthropic_custom
+        assert rehydrated[4] is marked_but_parametered
+        assert rehydrated[5] is openai_responses_fn
+
+    def test_unparseable_function_looking_dict_passes_through(self, monkeypatch):
+        """A dict that looks like a serialized Function but fails validation
+        must not abort the component load: it is warned about and handed to
+        the model provider unchanged."""
+        import agno.registry.registry as registry_module
+
+        warnings = []
+        monkeypatch.setattr(registry_module, "log_warning", warnings.append)
+        reg, _ = self._counting_registry()
+        broken = {"name": 123, "parameters": {}}
+
+        rehydrated = reg.rehydrate_functions([broken, {"name": "read_file", "parameters": {}}])
+
+        assert rehydrated[0] is broken
+        assert isinstance(rehydrated[1], Function) and rehydrated[1].entrypoint is self._read
+        assert any("does not validate" in w for w in warnings)
+
+        # A dict without ``parameters`` cannot be a to_dict() product, so it
+        # is not a near-miss worth a warning: it passes through silently.
+        warnings.clear()
+        plain = {"name": "solo_dict"}
+        assert reg.rehydrate_functions([plain]) == [plain]
+        assert warnings == []
 
     def test_batch_rebuild_still_finds_late_functions(self):
         """The shared budget still covers the late-connecting toolkit case:

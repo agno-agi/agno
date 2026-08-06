@@ -5,7 +5,7 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Optional, Set, Tuple, Type, Union
 from uuid import uuid4
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from agno.db.base import BaseDb
 from agno.models.base import Model
@@ -118,30 +118,38 @@ class Registry:
             elif callable(tool):
                 yield None, tool.__name__, tool
 
-    def _owner_index(self) -> Dict[EntrypointKey, Tuple[Optional[Toolkit], EntrypointSource]]:
-        """The (toolkit, source) a fresh lookup build would leave in every slot.
+    def _owner_index(
+        self,
+    ) -> Tuple[Dict[EntrypointKey, Tuple[Optional[Toolkit], EntrypointSource]], Dict[int, Toolkit]]:
+        """Slot owners and toolkit provenance, replayed from the registrations.
 
-        Replayed from the same registrations the cached lookup was built from,
-        so comparing a cached entry against its slot's owner detects every way
-        the cache can go stale: a toolkit that rebuilt its functions dict (MCP
-        toolkits replace every Function on connect), a member deleted after the
-        cache was built, or a slot whose last-write-wins winner changed. A
-        miss-only check catches none of those, because the stale entry still
-        *hits*.
+        The first map holds the (toolkit, source) a fresh lookup build would
+        leave in every slot. Comparing a cached entry against its slot's owner
+        detects every way the cache can go stale: a toolkit that rebuilt its
+        functions dict (MCP toolkits replace every Function on connect), a
+        member deleted after the cache was built, or a slot whose
+        last-write-wins winner changed. A miss-only check catches none of
+        those, because the stale entry still *hits*.
 
-        The toolkit half is the attribution for ``source_toolkit``: the live
-        Toolkit whose registration owns the slot, or ``None`` for a Function or
-        plain callable registered directly.
+        The second map answers a different question: which live Toolkit holds
+        this exact Function object. Slot ownership cannot answer it -- a
+        toolkit member also registered directly owns its flat slot as a direct
+        registration, yet the toolkit still holds the object, and its guidance
+        still belongs to a component that loaded the member. Freshness is the
+        slot's; provenance is the object's.
 
         Built once per rehydration batch, so a component load pays one walk of
         the registrations rather than one per tool dict.
         """
         index: Dict[EntrypointKey, Tuple[Optional[Toolkit], EntrypointSource]] = {}
+        by_identity: Dict[int, Toolkit] = {}
         for toolkit, name, source in self._iter_entrypoint_sources():
             index[name] = (toolkit, source)
-            if toolkit is not None and isinstance(toolkit.name, str) and toolkit.name:
-                index[(toolkit.name, name)] = (toolkit, source)
-        return index
+            if toolkit is not None:
+                by_identity[id(source)] = toolkit
+                if isinstance(toolkit.name, str) and toolkit.name:
+                    index[(toolkit.name, name)] = (toolkit, source)
+        return index, by_identity
 
     def rehydrate_function(self, func_dict: Dict[str, Any]) -> Function:
         """Reconstruct a Function from dict, reattaching its entrypoint.
@@ -155,6 +163,26 @@ class Registry:
         """
         return self._rehydrate_function(func_dict, {"rebuilt": False})
 
+    @staticmethod
+    def _is_function_config(func_dict: Dict[str, Any]) -> bool:
+        """Whether ``Function.to_dict()`` could have written this dict.
+
+        Positive identification: ``name`` and ``parameters`` are always
+        written (``parameters`` has a non-None default, and ``to_dict`` only
+        drops None values), and no ``SERIALIZED_FIELDS`` key is ``type`` or
+        ``input_schema``. Provider-native tool dicts miss on one of these --
+        OpenAI-style builtins carry a top-level ``type``, Anthropic-style
+        custom tools carry ``input_schema`` and no ``parameters``. Anything
+        else in a tools list is the provider's to interpret, not ours to
+        parse.
+        """
+        return (
+            "name" in func_dict
+            and "parameters" in func_dict
+            and "type" not in func_dict
+            and "input_schema" not in func_dict
+        )
+
     def rehydrate_functions(self, func_dicts: List[Dict[str, Any]]) -> List[Union[Function, Dict[str, Any]]]:
         """Rehydrate a batch of persisted tool dicts, sharing one cache-rebuild budget.
 
@@ -162,18 +190,30 @@ class Registry:
         entrypoint lookup per batch is enough to pick up late-registered
         functions, so repeated misses within a load don't each pay a rebuild.
 
-        A tools list can also carry provider-builtin tools, persisted as plain
-        dicts. Those run inside the model provider, not the framework: there is
-        no entrypoint to reattach, so they pass through unchanged, in place. A
-        top-level ``type`` is what marks one -- every provider's builtin dicts
-        carry it, some alongside a ``name`` -- while a persisted Function dict
-        writes only ``SERIALIZED_FIELDS``, which has no ``type``.
+        A tools list can also carry provider-run tools persisted as plain
+        dicts. Those run inside the model provider, not the framework: there
+        is no entrypoint to reattach, so anything that is not positively a
+        serialized Function -- see ``_is_function_config`` -- passes through
+        unchanged, in place. A dict that looks like one but fails validation
+        passes through too: one unparseable tool must not take down the whole
+        component load.
         """
-        rebuild_state = {"rebuilt": False}
-        return [
-            func_dict if "type" in func_dict else self._rehydrate_function(func_dict, rebuild_state)
-            for func_dict in func_dicts
-        ]
+        rebuild_state: Dict[str, Any] = {"rebuilt": False}
+        rehydrated: List[Union[Function, Dict[str, Any]]] = []
+        for func_dict in func_dicts:
+            if not self._is_function_config(func_dict):
+                rehydrated.append(func_dict)
+                continue
+            try:
+                rehydrated.append(self._rehydrate_function(func_dict, rebuild_state))
+            except ValidationError as e:
+                log_warning(
+                    f"Registry: tool dict '{func_dict.get('name')}' looks like a serialized "
+                    f"Function but does not validate as one ({e.error_count()} error(s)); "
+                    "passing it through to the model provider unchanged."
+                )
+                rehydrated.append(func_dict)
+        return rehydrated
 
     def _rehydrate_function(self, func_dict: Dict[str, Any], rebuild_state: Dict[str, Any]) -> Function:
         func = Function.from_dict(func_dict)
@@ -184,9 +224,10 @@ class Registry:
             # bare Functions instead of Toolkits.
             func.owning_toolkit = toolkit_name
 
-        owners = rebuild_state.get("owners")
-        if owners is None:
-            owners = rebuild_state["owners"] = self._owner_index()
+        owner_maps = rebuild_state.get("owners")
+        if owner_maps is None:
+            owner_maps = rebuild_state["owners"] = self._owner_index()
+        owners, toolkit_by_identity = owner_maps
 
         def lookup(key: EntrypointKey) -> Tuple[Optional[EntrypointSource], Optional[Toolkit]]:
             # Resolution serves the slot's owner: the same answer a fresh cache
@@ -240,7 +281,13 @@ class Registry:
             # has left the registry binds the flat slot, which may belong to a
             # different toolkit, and that toolkit's guidance is not this
             # function's to carry.
-            source_toolkit = source_owner if resolved_as_recorded else None
+            #
+            # The slot's owner is the primary attribution; the identity map is
+            # the fallback for a flat slot owned by a direct registration of an
+            # object a Toolkit also holds -- provenance follows the object.
+            source_toolkit = source_owner if source_owner is not None else toolkit_by_identity.get(id(source))
+            if not resolved_as_recorded:
+                source_toolkit = None
             if source_toolkit is not None:
                 # Keep the exact live Toolkit available to instruction
                 # collection. Every member points to the same object, so the

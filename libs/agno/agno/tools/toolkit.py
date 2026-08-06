@@ -36,29 +36,39 @@ def _toolkit_key(toolkit: "Toolkit") -> ToolkitKey:
     return (toolkit.name, instructions, toolkit.add_instructions, sync_surface, async_surface)
 
 
-def _group_source_toolkits(tools: Sequence[Any]) -> Tuple[Dict[ToolkitKey, int], Dict[ToolkitKey, Set[str]]]:
+def _group_source_toolkits(
+    tools: Sequence[Any],
+) -> Tuple[Dict[ToolkitKey, int], Dict[ToolkitKey, Set[str]], Dict[int, ToolkitKey]]:
     """Index the bare Functions that a live Toolkit was flattened into.
 
     Returns the last index each toolkit's members occupy in ``tools`` and the
-    member names present, both keyed by :func:`_toolkit_key`.
+    member names present, both keyed by :func:`_toolkit_key`, plus the key
+    itself memoized per live Toolkit object. The key folds the toolkit's whole
+    function surface, so rebuilding it per member Function would make one
+    collection pass quadratic in the toolkit's size; every later key read must
+    come from the memo.
     """
     last_index: Dict[ToolkitKey, int] = {}
     members: Dict[ToolkitKey, Set[str]] = {}
+    keys_by_id: Dict[int, ToolkitKey] = {}
     for index, tool in enumerate(tools):
         if not isinstance(tool, Function):
             continue
         source_toolkit = tool.source_toolkit
         if not isinstance(source_toolkit, Toolkit):
             continue
-        key = _toolkit_key(source_toolkit)
+        key = keys_by_id.get(id(source_toolkit))
+        if key is None:
+            key = keys_by_id[id(source_toolkit)] = _toolkit_key(source_toolkit)
         last_index[key] = index
         members.setdefault(key, set()).add(tool.name)
-    return last_index, members
+    return last_index, members, keys_by_id
 
 
 def _emits_toolkit_instructions(
     source_toolkit: "Toolkit",
     index: int,
+    key: ToolkitKey,
     last_index: Dict[ToolkitKey, int],
     members: Dict[ToolkitKey, Set[str]],
     async_mode: bool = False,
@@ -72,11 +82,14 @@ def _emits_toolkit_instructions(
     indistinguishable on reload; resolving that ambiguity as "whole toolkit"
     would hand the model guidance naming tools it was not given.
 
+    ``key`` is ``_toolkit_key(source_toolkit)``, passed in from the caller's
+    memo rather than rebuilt here: the key folds the toolkit's whole function
+    surface, and this check runs once per member Function.
+
     A live Toolkit for the same guidance elsewhere in the list needs no special
     case: whichever representation reaches its emission point first wins, and
     :func:`_toolkit_key` makes the caller's dedup collapse the two.
     """
-    key = _toolkit_key(source_toolkit)
     if last_index.get(key) != index:
         return False
     # Measured against the set this run would actually deliver: in async mode a
