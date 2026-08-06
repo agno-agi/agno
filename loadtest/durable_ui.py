@@ -45,7 +45,9 @@ WORKER_LABEL = os.environ.get("WORKER_LABEL") or os.environ.get("HOSTNAME", "wor
 # survives crashes and the continue can land on either replica.
 class EmailTools(Toolkit):
     def __init__(self, *args, **kwargs):
-        super().__init__(name="EmailTools", tools=[self.send_email, self.get_emails], *args, **kwargs)
+        super().__init__(
+            name="EmailTools", tools=[self.send_email, self.get_emails], *args, **kwargs
+        )
 
     def send_email(self, subject: str, body: str, to_address: str) -> str:
         """Send an email to the given address with the given subject and body.
@@ -65,8 +67,18 @@ class EmailTools(Toolkit):
             date_to (str): The end date (in YYYY-MM-DD format).
         """
         return [
-            {"subject": "Hello", "body": "Hello, world!", "to_address": "test@test.com", "date": date_from},
-            {"subject": "Random other email", "body": "This is a random other email", "to_address": "john@doe.com", "date": date_to},
+            {
+                "subject": "Hello",
+                "body": "Hello, world!",
+                "to_address": "test@test.com",
+                "date": date_from,
+            },
+            {
+                "subject": "Random other email",
+                "body": "This is a random other email",
+                "to_address": "john@doe.com",
+                "date": date_to,
+            },
         ]
 
 
@@ -128,7 +140,9 @@ durable_team = Team(
 # execute durably on whichever replica's worker claims the job.
 def _looks_like_email(step_input) -> bool:
     """Route to the email leg when the triage text mentions email/send."""
-    text = (step_input.get_last_step_content() or step_input.get_input_as_string() or "").lower()
+    text = (
+        step_input.get_last_step_content() or step_input.get_input_as_string() or ""
+    ).lower()
     return "email" in text or "send" in text
 
 
@@ -190,7 +204,6 @@ agent_os = AgentOS(
         max_concurrency=_int("MAX_CONCURRENCY", 8),
         max_queue_depth=_int("MAX_QUEUE_DEPTH", 1000),
         max_attempts=_int("MAX_ATTEMPTS", 1),
-        allow_multi_attempt_experimental=_int("MAX_ATTEMPTS", 1) > 1,
         lock_grace_seconds=_int("LOCK_GRACE", 60),
         timeout_seconds=_int("TIMEOUT_SECONDS", 3600),
     ),
@@ -225,8 +238,12 @@ def _install_worker_tracing() -> None:
                 )
             return job
 
-        async def _traced_complete(job_id, worker_id, attempt, status, error=None, *ca, **ck):
-            print(f"[{WORKER_LABEL}] COMPLETED run={job_id} status={status}", flush=True)
+        async def _traced_complete(
+            job_id, worker_id, attempt, status, error=None, *ca, **ck
+        ):
+            print(
+                f"[{WORKER_LABEL}] COMPLETED run={job_id} status={status}", flush=True
+            )
             return await _complete(job_id, worker_id, attempt, status, error, *ca, **ck)
 
         # only wrap once per store instance
@@ -244,4 +261,9 @@ _install_worker_tracing()
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("durable_ui:app", host="0.0.0.0", port=int(os.environ.get("PORT", 7777)), reload=False)
+    uvicorn.run(
+        "durable_ui:app",
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", 7777)),
+        reload=False,
+    )

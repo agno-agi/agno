@@ -187,9 +187,6 @@ agent_os = AgentOS(
             max_concurrency=_int("MAX_CONCURRENCY", 8),
             max_queue_depth=_int("MAX_QUEUE_DEPTH", 1000),
             max_attempts=_int("MAX_ATTEMPTS", 1),
-            # The new base gates max_attempts>1 behind an experimental opt-in;
-            # the retry/timeout scenarios set MAX_ATTEMPTS=2, so enable it when needed.
-            allow_multi_attempt_experimental=_int("MAX_ATTEMPTS", 1) > 1,
             lock_grace_seconds=_int("LOCK_GRACE", 60),
             timeout_seconds=_int("TIMEOUT_SECONDS", 3600),
         )
