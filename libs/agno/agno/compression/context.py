@@ -133,18 +133,17 @@ class ContextCompactionManager:
         if self.model is None:
             return CompactionResult(view=messages)
 
-        # 2. Filter out already-compacted messages (by ID, survives deepcopy)
-        compacted_ids = session.compaction.compacted_message_ids if session and session.compaction else set()
-        active = [m for m in messages if not (m.id and m.id in compacted_ids)]
+        # 2. Get stored summary for incremental compaction
         stored_summary = self._get_stored_summary(session)
 
         # 3. Check threshold — skip if under limit
-        if not self._needs_compaction(active):
+        # Note: messages already filtered by _messages.py via skip_compacted_messages=True
+        if not self._needs_compaction(messages):
             return CompactionResult(view=messages)
 
         # 4. Separate system messages (always kept at top)
-        system_msgs = [m for m in active if m.role == "system"]
-        non_system = [m for m in active if m.role != "system"]
+        system_msgs = [m for m in messages if m.role == "system"]
+        non_system = [m for m in messages if m.role != "system"]
 
         # 5. Partition non-system messages:
         #    - to_compact: older messages to summarize
@@ -200,18 +199,17 @@ class ContextCompactionManager:
         if self.model is None:
             return CompactionResult(view=messages)
 
-        # 2. Filter out already-compacted messages (by ID, survives deepcopy)
-        compacted_ids = session.compaction.compacted_message_ids if session and session.compaction else set()
-        active = [m for m in messages if not (m.id and m.id in compacted_ids)]
+        # 2. Get stored summary for incremental compaction
         stored_summary = self._get_stored_summary(session)
 
         # 3. Check threshold — skip if under limit
-        if not await self._aneeds_compaction(active):
+        # Note: messages already filtered by _messages.py via skip_compacted_messages=True
+        if not await self._aneeds_compaction(messages):
             return CompactionResult(view=messages)
 
         # 4. Separate system messages (always kept at top)
-        system_msgs = [m for m in active if m.role == "system"]
-        non_system = [m for m in active if m.role != "system"]
+        system_msgs = [m for m in messages if m.role == "system"]
+        non_system = [m for m in messages if m.role != "system"]
 
         # 5. Partition non-system messages
         to_compact, preserved_user, keep_verbatim = self._partition(non_system)
