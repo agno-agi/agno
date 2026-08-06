@@ -4456,11 +4456,8 @@ def _cleanup_and_store(
     # Add scrubbed RunOutput to Team Session
     session.upsert_run(run_response=storage_copy)
 
-    # Calculate session metrics. A paused run is not terminal: its metrics
-    # accumulate once, on the save after it completes — accumulating here too
-    # would count the pre-pause tokens twice when the run is resumed.
-    if run_response.status != RunStatus.paused:
-        update_session_metrics(team, session=session, run_response=run_response)
+    # Calculate session metrics (each run counted once, when it is final)
+    update_session_metrics(team, session=session, run_response=run_response)
 
     # Update session state before saving the session
     if run_context is not None and run_context.session_state is not None:
@@ -4508,11 +4505,8 @@ async def _acleanup_and_store(
     # Add scrubbed RunOutput to Team Session
     session.upsert_run(run_response=storage_copy)
 
-    # Calculate session metrics. A paused run is not terminal: its metrics
-    # accumulate once, on the save after it completes — accumulating here too
-    # would count the pre-pause tokens twice when the run is resumed.
-    if run_response.status != RunStatus.paused:
-        update_session_metrics(team, session=session, run_response=run_response)
+    # Calculate session metrics (each run counted once, when it is final)
+    update_session_metrics(team, session=session, run_response=run_response)
 
     # Update session state before saving the session
     if run_context is not None and run_context.session_state is not None:
@@ -5481,43 +5475,60 @@ def _resolve_member_run_output_for_continue(
     return member_run_output
 
 
-def _group_requirements_by_routed_member(
+def _group_requirements_for_continue(
     team: "Team",
     run_response: TeamRunOutput,
+    session: TeamSession,
     run_context: Optional[RunContext],
-) -> Tuple[List[Tuple[Union["Agent", "Team"], List["RunRequirement"]]], List[str]]:
-    """Group HITL requirements by the direct member that will continue them.
+) -> Tuple[
+    List[Tuple[Union["Agent", "Team"], Optional[Union[RunOutput, TeamRunOutput]], List["RunRequirement"]]], List[str]
+]:
+    """Group HITL requirements by the paused run that will continue them.
 
-    Requirements are keyed by the deep member's agent id, and several deep
-    members can live inside the same sub-team. That sub-team must receive ALL
-    of their requirements in one continue_run call — its own dispatch routes
-    them deeper. One call per requirement group would hand the second group an
-    already-completed sub-team run and drop its confirmations.
+    Requirements are keyed by (deep member agent id, deep member run id) and
+    resolved to their target run up front. Groups whose requirements resolve
+    to the SAME sub-team run are merged into one continue_run call — that
+    run's own dispatch routes them deeper; a second call on the same run
+    would hit an already-completed run and drop its confirmations. Groups
+    that resolve to DIFFERENT runs of the same sub-team (the leader delegated
+    to it more than once in one turn) stay separate — merging them would
+    strand every run but the first.
 
-    Returns (groups, unroutable_messages).
+    Returns (entries, unroutable_messages) where each entry is
+    (routed_member, resolved_target_run_or_None, requirements).
     """
     from agno.team._tools import _find_member_route_by_id
 
-    member_reqs: Dict[str, List["RunRequirement"]] = {}
+    member_reqs: Dict[Tuple[str, Optional[str]], List["RunRequirement"]] = {}
     for req in run_response.requirements or []:
         mid = getattr(req, "member_agent_id", None)
         if mid is not None:
-            member_reqs.setdefault(mid, []).append(req)
+            member_reqs.setdefault((mid, getattr(req, "member_run_id", None)), []).append(req)
 
-    groups: Dict[int, Tuple[Union["Agent", "Team"], List["RunRequirement"]]] = {}
+    entries: List[Tuple[Union["Agent", "Team"], Optional[Union[RunOutput, TeamRunOutput]], List["RunRequirement"]]] = []
     unroutable: List[str] = []
-    for member_id, reqs in member_reqs.items():
+    for (member_id, _), reqs in member_reqs.items():
         route_result = _find_member_route_by_id(team, member_id, run_context=run_context)
         if route_result is None:
             log_warning(f"Could not find member with ID {member_id} for continue_run routing")
             unroutable.append(f"[{member_id}]: Could not route requirement — member not found")
             continue
-        route_index, member = route_result
-        if route_index in groups:
-            groups[route_index][1].extend(reqs)
-        else:
-            groups[route_index] = (member, list(reqs))
-    return list(groups.values()), unroutable
+        _, member = route_result
+        target = _resolve_member_run_output_for_continue(member, reqs, run_response, session)
+        merged = False
+        if target is not None:
+            for existing_member, existing_target, existing_reqs in entries:
+                if (
+                    existing_member is member
+                    and existing_target is not None
+                    and (existing_target is target or existing_target.run_id == target.run_id)
+                ):
+                    existing_reqs.extend(reqs)
+                    merged = True
+                    break
+        if not merged:
+            entries.append((member, target, list(reqs)))
+    return entries, unroutable
 
 
 def _route_requirements_to_members(
@@ -5536,14 +5547,11 @@ def _route_requirements_to_members(
     """
     from agno.utils.team import get_member_id
 
-    groups, unroutable = _group_requirements_by_routed_member(team, run_response, run_context)
+    groups, unroutable = _group_requirements_for_continue(team, run_response, session, run_context)
     member_results: List[str] = list(unroutable)
 
-    for member, reqs in groups:
+    for member, member_run_output, reqs in groups:
         member_id = get_member_id(member) or ""
-
-        # Get the member's paused run output — see _resolve_member_run_output_for_continue.
-        member_run_output = _resolve_member_run_output_for_continue(member, reqs, run_response, session)
         member_run_id = reqs[0].member_run_id if reqs else None
 
         member_run_id = getattr(member_run_output, "run_id", None) if member_run_output is not None else member_run_id
@@ -5622,13 +5630,11 @@ def _route_requirements_to_members_stream(
     """
     from agno.utils.team import get_member_id
 
-    groups, unroutable = _group_requirements_by_routed_member(team, run_response, run_context)
+    groups, unroutable = _group_requirements_for_continue(team, run_response, session, run_context)
     member_results.extend(unroutable)
 
-    for member, reqs in groups:
+    for member, member_run_output, reqs in groups:
         member_id = get_member_id(member) or ""
-
-        member_run_output = _resolve_member_run_output_for_continue(member, reqs, run_response, session)
         member_run_id = reqs[0].member_run_id if reqs else None
 
         member_run_id = getattr(member_run_output, "run_id", None) if member_run_output is not None else member_run_id
@@ -5721,14 +5727,17 @@ async def _aroute_requirements_to_members(
     """
     from agno.utils.team import get_member_id
 
-    groups, unroutable = _group_requirements_by_routed_member(team, run_response, run_context)
+    groups, unroutable = _group_requirements_for_continue(team, run_response, session, run_context)
 
     if not groups:
         return unroutable
 
-    async def _continue_member(member: Union["Agent", "Team"], reqs: List["RunRequirement"]) -> Optional[str]:
+    async def _continue_member(
+        member: Union["Agent", "Team"],
+        member_run_output: Optional[Union[RunOutput, TeamRunOutput]],
+        reqs: List["RunRequirement"],
+    ) -> Optional[str]:
         member_id = get_member_id(member) or ""
-        member_run_output = _resolve_member_run_output_for_continue(member, reqs, run_response, session)
         member_run_id = reqs[0].member_run_id if reqs else None
 
         member_run_id = getattr(member_run_output, "run_id", None) if member_run_output is not None else member_run_id
@@ -5778,7 +5787,7 @@ async def _aroute_requirements_to_members(
             content = getattr(member_response, "content", None) or "Task completed"
             return f"[{member.name or member_id}]: {content}"
 
-    tasks = [_continue_member(member, reqs) for member, reqs in groups]
+    tasks = [_continue_member(member, member_run_output, reqs) for member, member_run_output, reqs in groups]
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     member_results: List[str] = list(unroutable)
@@ -5817,13 +5826,11 @@ async def _aroute_requirements_to_members_stream(
     """
     from agno.utils.team import get_member_id
 
-    groups, unroutable = _group_requirements_by_routed_member(team, run_response, run_context)
+    groups, unroutable = _group_requirements_for_continue(team, run_response, session, run_context)
     member_results.extend(unroutable)
 
-    for member, reqs in groups:
+    for member, member_run_output, reqs in groups:
         member_id = get_member_id(member) or ""
-
-        member_run_output = _resolve_member_run_output_for_continue(member, reqs, run_response, session)
         member_run_id = reqs[0].member_run_id if reqs else None
 
         member_run_id = getattr(member_run_output, "run_id", None) if member_run_output is not None else member_run_id

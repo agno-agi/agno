@@ -1038,3 +1038,257 @@ def test_session_metrics_not_double_counted_on_fresh_process_resume(tmp_path):
     session = SqliteDb(db_file=db_file).get_session(session_id=session_id, session_type="team")
     metrics = (session.session_data or {}).get("session_metrics") or {}
     assert metrics.get("total_tokens") == 60, f"expected 60 total tokens, got {metrics.get('total_tokens')}"
+
+
+# ---------------------------------------------------------------------------
+# Same sub-team paused twice in one turn, live-tree integrity, and
+# exactly-once session metrics.
+# ---------------------------------------------------------------------------
+
+
+def _build_same_subteam_twice(db: SqliteDb, resuming: bool) -> Team:
+    """The leader delegates TWICE to the same sub-team in one turn; a
+    different member pauses in each delegation, so the session holds two
+    distinct paused runs of the same sub-team."""
+    smser = Agent(
+        name="Smser",
+        id="smser",
+        model=_ScriptedModel(
+            "m-smser",
+            [("content", "SMS sent.")]
+            if resuming
+            else [("tool", "send_sms", {"to": "b@x.com"}, "tc-sms"), ("content", "SMS sent.")],
+        ),
+        tools=[send_sms],
+        db=db,
+        telemetry=False,
+    )
+    emailer = Agent(
+        name="Emailer",
+        id="emailer",
+        model=_ScriptedModel(
+            "m-emailer",
+            [("content", "Email sent.")]
+            if resuming
+            else [("tool", "send_email", {"to": "a@x.com"}, "tc-send"), ("content", "Email sent.")],
+        ),
+        tools=[send_email],
+        db=db,
+        telemetry=False,
+    )
+    inner = Team(
+        name="Comms Team",
+        id="comms-team",
+        model=_ScriptedModel(
+            "m-inner",
+            # Run 1 consumes the first turn (pauses on emailer), run 2 the
+            # second (pauses on smser); on resume the clamped last turn answers.
+            [("content", "Inner done.")]
+            if resuming
+            else [
+                ("tool", "delegate_task_to_member", {"member_id": "emailer", "task": "email it"}, "tc-d1"),
+                ("tool", "delegate_task_to_member", {"member_id": "smser", "task": "sms it"}, "tc-d2"),
+            ],
+        ),
+        members=[emailer, smser],
+        db=db,
+        telemetry=False,
+    )
+    return Team(
+        name="Org Team",
+        id="org-team",
+        model=_ScriptedModel(
+            "m-outer",
+            [("content", "Outer done.")]
+            if resuming
+            else [
+                (
+                    "tools",
+                    [
+                        ("delegate_task_to_member", {"member_id": "comms-team", "task": "task A"}, "tc-oa"),
+                        ("delegate_task_to_member", {"member_id": "comms-team", "task": "task B"}, "tc-ob"),
+                    ],
+                ),
+                ("content", "Outer done."),
+            ],
+        ),
+        members=[inner],
+        db=db,
+        telemetry=False,
+    )
+
+
+def test_same_subteam_paused_twice_both_confirmations_execute(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "twice.db")
+    session_id = "s-twice"
+
+    outer1 = _build_same_subteam_twice(SqliteDb(db_file=db_file), resuming=False)
+    run1 = outer1.run("Do task A and task B", session_id=session_id)
+    assert run1.is_paused
+    assert len(run1.requirements or []) == 2
+    assert len({r.member_run_id for r in run1.requirements or []}) == 2, "two distinct paused member runs"
+
+    outer2 = _build_same_subteam_twice(SqliteDb(db_file=db_file), resuming=True)
+    run2 = outer2.continue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+    )
+    assert run2.status == RunStatus.completed
+    assert sorted(_EXECUTED) == ["a@x.com", "sms:b@x.com"], "both confirmed tools must execute"
+
+
+@pytest.mark.asyncio
+async def test_same_subteam_paused_twice_both_confirmations_execute_async(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "twice_async.db")
+    session_id = "s-twice-async"
+
+    outer1 = _build_same_subteam_twice(SqliteDb(db_file=db_file), resuming=False)
+    run1 = await outer1.arun("Do task A and task B", session_id=session_id)
+    assert run1.is_paused
+
+    outer2 = _build_same_subteam_twice(SqliteDb(db_file=db_file), resuming=True)
+    run2 = await outer2.acontinue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+    )
+    assert run2.status == RunStatus.completed
+    assert sorted(_EXECUTED) == ["a@x.com", "sms:b@x.com"]
+
+
+def _build_completed_sibling_team(db: SqliteDb, resuming: bool) -> Team:
+    """Flat team where 'reporter' completes and then 'emailer' pauses."""
+    reporter = Agent(
+        name="Reporter",
+        id="reporter",
+        model=_ScriptedModel("m-reporter", [("content", "Report ready.")]),
+        db=db,
+        telemetry=False,
+    )
+    return Team(
+        name="Comms Team",
+        id="comms-team",
+        model=_ScriptedModel(
+            "m-leader",
+            [("content", "All done.")]
+            if resuming
+            else [
+                ("tool", "delegate_task_to_member", {"member_id": "reporter", "task": "report"}, "tc-rep"),
+                ("tool", "delegate_task_to_member", {"member_id": "emailer", "task": "send it"}, "tc-mail"),
+                ("content", "All done."),
+            ],
+        ),
+        members=[reporter, _emailer_agent(db, resuming)],
+        db=db,
+        telemetry=False,
+    )
+
+
+def test_metrics_exact_with_completed_sibling_before_pause(tmp_path):
+    """Reporter completes before the pause; with the default flag its
+    response is scrubbed from storage, but its tokens count exactly once.
+    Six model turns at 15 tokens each = 90."""
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "metrics_sibling.db")
+    session_id = "s-metrics-sibling"
+
+    team1 = _build_completed_sibling_team(SqliteDb(db_file=db_file), resuming=False)
+    run1 = team1.run("Report then email", session_id=session_id)
+    assert run1.is_paused
+
+    # The pause-time save counts only runs that reached a final state.
+    session = SqliteDb(db_file=db_file).get_session(session_id=session_id, session_type="team")
+    metrics = (session.session_data or {}).get("session_metrics") or {}
+    assert metrics.get("total_tokens") == 15, "only the completed reporter run is counted while paused"
+
+    team2 = _build_completed_sibling_team(SqliteDb(db_file=db_file), resuming=True)
+    run2 = team2.continue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+    )
+    assert run2.status == RunStatus.completed
+
+    session = SqliteDb(db_file=db_file).get_session(session_id=session_id, session_type="team")
+    metrics = (session.session_data or {}).get("session_metrics") or {}
+    assert metrics.get("total_tokens") == 90, f"expected 90 total tokens, got {metrics.get('total_tokens')}"
+
+
+def test_live_run_tree_not_mutated_by_save(tmp_path):
+    """The default-flag scrub writes filtered copies to storage; the run tree
+    the caller holds keeps every member response, at every level. The
+    completed reporter sits three levels down, where the recursive scrub
+    reaches it — on the storage copy only."""
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "live_tree.db")
+    session_id = "s-live-tree"
+
+    db = SqliteDb(db_file=db_file)
+    reporter = Agent(
+        name="Reporter",
+        id="reporter",
+        model=_ScriptedModel("m-reporter", [("content", "Report ready.")]),
+        db=db,
+        telemetry=False,
+    )
+    inner = Team(
+        name="Comms Team",
+        id="comms-team",
+        model=_ScriptedModel(
+            "m-inner",
+            [
+                ("tool", "delegate_task_to_member", {"member_id": "reporter", "task": "report"}, "tc-rep"),
+                ("tool", "delegate_task_to_member", {"member_id": "emailer", "task": "send it"}, "tc-mail"),
+                ("content", "Inner done."),
+            ],
+        ),
+        members=[reporter, _emailer_agent(db, resuming=False)],
+        db=db,
+        telemetry=False,
+    )
+    mid = Team(
+        name="Division Team",
+        id="div-team",
+        model=_ScriptedModel(
+            "m-mid",
+            [
+                ("tool", "delegate_task_to_member", {"member_id": "comms-team", "task": "notify"}, "tc-mid"),
+                ("content", "Division done."),
+            ],
+        ),
+        members=[inner],
+        db=db,
+        telemetry=False,
+    )
+    outer = Team(
+        name="Org Team",
+        id="org-team",
+        model=_ScriptedModel(
+            "m-outer",
+            [
+                ("tool", "delegate_task_to_member", {"member_id": "div-team", "task": "handle comms"}, "tc-outer"),
+                ("content", "Outer done."),
+            ],
+        ),
+        members=[mid],
+        db=db,
+        telemetry=False,
+    )
+
+    run1 = outer.run("Report then email", session_id=session_id)
+    assert run1.is_paused
+
+    # Live tree intact at depth 3: both the completed reporter and the paused emailer.
+    div_run = run1.member_responses[0]
+    comms_run = div_run.member_responses[0]
+    agent_ids = {getattr(m, "agent_id", None) for m in comms_run.member_responses}
+    assert agent_ids == {"reporter", "emailer"}
+
+    # Storage scrubbed at every level: no completed member response anywhere.
+    def walk(runs):
+        stack = list(runs)
+        while stack:
+            r = stack.pop()
+            yield r
+            stack.extend(getattr(r, "member_responses", None) or [])
+
+    for r in _reload_runs(db_file, session_id):
+        for m in walk(getattr(r, "member_responses", None) or []):
+            assert getattr(m, "is_paused", False), f"completed member response persisted: {m.run_id}"

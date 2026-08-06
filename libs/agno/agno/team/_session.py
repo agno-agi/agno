@@ -175,16 +175,30 @@ async def aget_session(
     return None
 
 
-def _scrub_member_responses_keeping_paused(run: Union[TeamRunOutput, "RunOutput"]) -> None:
-    """Remove member responses at every nesting level, sparing paused ones: a
-    paused member run is the resume state for continue_run after a session
-    reload, and the save after it completes scrubs it. Completed responses
-    inside a spared paused sub-team run are removed too."""
-    spared = [m for m in (getattr(run, "member_responses", None) or []) if getattr(m, "is_paused", False)]
+def _scrub_member_responses_keeping_paused(
+    run: Union[TeamRunOutput, "RunOutput"],
+) -> Union[TeamRunOutput, "RunOutput"]:
+    """Return a storage view of the run with member responses removed at every
+    nesting level, sparing paused ones: a paused member run is the resume
+    state for continue_run after a session reload, and the save after it
+    completes scrubs it. Completed responses inside a spared paused sub-team
+    run are removed too.
+
+    Copy-on-write: levels that need filtering are shallow-copied so the live
+    run tree the caller holds keeps its member responses; the spared paused
+    leaf runs are shared, never copied, so resume state stays live."""
+    from copy import copy
+
+    spared = []
+    for member_response in getattr(run, "member_responses", None) or []:
+        if not getattr(member_response, "is_paused", False):
+            continue
+        if getattr(member_response, "member_responses", None):
+            member_response = _scrub_member_responses_keeping_paused(member_response)
+        spared.append(member_response)
+    run = copy(run)
     run.member_responses = spared  # type: ignore[union-attr]
-    for member_response in spared:
-        if hasattr(member_response, "member_responses"):
-            _scrub_member_responses_keeping_paused(member_response)
+    return run
 
 
 def save_session(team: "Team", session: TeamSession) -> None:
@@ -209,10 +223,12 @@ def save_session(team: "Team", session: TeamSession) -> None:
 
         # scrub the member responses based on storage settings
         if session.runs is not None:
-            for run in session.runs:
+            for i, run in enumerate(session.runs):
                 if hasattr(run, "member_responses"):
                     if not team.store_member_responses:
-                        _scrub_member_responses_keeping_paused(run)
+                        # Store the scrubbed copy; the live run tree keeps its
+                        # member responses.
+                        session.runs[i] = _scrub_member_responses_keeping_paused(run)
                     else:
                         # Scrub individual member responses based on their storage flags
                         _scrub_member_responses(team, run.member_responses)
@@ -239,10 +255,12 @@ async def asave_session(team: "Team", session: TeamSession) -> None:
 
         # scrub the member responses based on storage settings
         if session.runs is not None:
-            for run in session.runs:
+            for i, run in enumerate(session.runs):
                 if hasattr(run, "member_responses"):
                     if not team.store_member_responses:
-                        _scrub_member_responses_keeping_paused(run)
+                        # Store the scrubbed copy; the live run tree keeps its
+                        # member responses.
+                        session.runs[i] = _scrub_member_responses_keeping_paused(run)
                     else:
                         # Scrub individual member responses based on their storage flags
                         _scrub_member_responses(team, run.member_responses)
@@ -512,6 +530,9 @@ async def aget_session_metrics(team: "Team", session_id: Optional[str] = None) -
     return await aget_session_metrics_util(cast(Any, team), session_id=session_id)
 
 
+_FINAL_RUN_STATUSES = frozenset({RunStatus.completed, RunStatus.error, RunStatus.cancelled})
+
+
 def update_session_metrics(team: "Team", session: TeamSession, run_response: TeamRunOutput) -> None:
     """Calculate session metrics and write them to session_data.
 
@@ -519,35 +540,42 @@ def update_session_metrics(team: "Team", session: TeamSession, run_response: Tea
     session-level SessionMetrics (details: List[ModelMetrics]) using
     SessionMetrics.accumulate_from_run().
 
-    Accumulates metrics from the team leader's own model calls as well as
-    all member agent/team responses (recursively for nested teams).
+    Walks the team leader's run and all member responses (recursively for
+    nested teams). Each run is accumulated exactly once, at the first save
+    where it is in a final state; the accumulated run ids persist with the
+    session, so a run saved several times across a pause and its resume
+    contributes its full metrics once. A run that never reaches a final
+    state — an abandoned pause — is not counted.
     """
     from agno.team._storage import get_session_metrics_internal
 
     session_metrics = get_session_metrics_internal(team, session=session)
     if session_metrics is None:
         return
-    if run_response.metrics is not None:
-        session_metrics.accumulate_from_run(run_response.metrics)
 
-    # Accumulate metrics from member responses (agent and nested team runs)
-    _accumulate_member_metrics(session_metrics, run_response.member_responses)
+    stored_run_ids = (
+        session.session_data.get("session_metrics_run_ids") if isinstance(session.session_data, dict) else None
+    )
+    accumulated_run_ids = set(stored_run_ids) if isinstance(stored_run_ids, list) else set()
+
+    def _accumulate(node: Any) -> None:
+        run_id = getattr(node, "run_id", None)
+        if (
+            getattr(node, "status", None) in _FINAL_RUN_STATUSES
+            and run_id is not None
+            and run_id not in accumulated_run_ids
+        ):
+            accumulated_run_ids.add(run_id)
+            if node.metrics is not None:
+                session_metrics.accumulate_from_run(node.metrics)
+        for member_response in getattr(node, "member_responses", None) or []:
+            _accumulate(member_response)
+
+    _accumulate(run_response)
 
     if session.session_data is not None:
         session.session_data["session_metrics"] = session_metrics.to_dict()
-
-
-def _accumulate_member_metrics(
-    session_metrics: SessionMetrics,
-    member_responses: "List",
-) -> None:
-    """Recursively accumulate metrics from member responses into session metrics."""
-    for member_response in member_responses:
-        if member_response.metrics is not None:
-            session_metrics.accumulate_from_run(member_response.metrics)
-        # Recurse into nested team member responses
-        if isinstance(member_response, TeamRunOutput) and member_response.member_responses:
-            _accumulate_member_metrics(session_metrics, member_response.member_responses)
+        session.session_data["session_metrics_run_ids"] = sorted(accumulated_run_ids)
 
 
 # ---------------------------------------------------------------------------
