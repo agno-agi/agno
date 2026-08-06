@@ -718,6 +718,64 @@ class TestToolkitQualifiedRehydration:
         assert rehydrated.instructions == "Fresh guidance."
         assert rehydrated.source_toolkit is toolkit
 
+    def test_members_without_entrypoints_do_not_claim_slots(self):
+        """A member whose entrypoint is None cannot be executed, so it must
+        not claim a slot: a later toolkit holding an unbound namesake would
+        otherwise shadow the executable one."""
+        bound = Toolkit(name="bound_kit")
+        bound.functions["search_docs"] = Function(name="search_docs", entrypoint=search_function)
+        unbound = Toolkit(name="unbound_kit")
+        unbound.functions["search_docs"] = Function(name="search_docs")
+        reg = Registry(tools=[bound, unbound])
+
+        rehydrated = reg.rehydrate_function({"name": "search_docs", "parameters": {}})
+
+        assert rehydrated.entrypoint is search_function
+        assert rehydrated.source_toolkit is bound
+
+    def test_deleted_function_is_not_served_from_the_stale_cache(self):
+        """A member deleted after the cache was built leaves an entry that
+        still hits. Serving it would execute a function the registry no longer
+        offers; the cache must agree with what a fresh build would say:
+        nothing."""
+        toolkit = Toolkit(name="agno_docs")
+        toolkit.functions["search_docs"] = Function(name="search_docs", entrypoint=search_function)
+        reg = Registry(tools=[toolkit])
+
+        func_dict = toolkit.functions["search_docs"].to_dict()
+        func_dict["toolkit"] = toolkit.name
+        warm = reg.rehydrate_function(dict(func_dict))
+        assert warm.entrypoint is search_function  # warms the cached lookup
+
+        del toolkit.functions["search_docs"]
+        rehydrated = reg.rehydrate_function(dict(func_dict))
+
+        assert rehydrated.entrypoint is None
+        assert rehydrated.source_toolkit is None
+
+    def test_direct_registration_does_not_mask_the_toolkits_flat_slot(self):
+        """The same object can be registered directly and owned by a later
+        toolkit. The toolkit's registration wins the flat slot, so when the
+        toolkit rebuilds the member, the cached flat entry is stale even though
+        the direct registration still exists."""
+        member = Function(name="search_docs", entrypoint=search_function)
+        toolkit = Toolkit(name="agno_docs", instructions="Toolkit guidance.", add_instructions=True)
+        toolkit.functions["search_docs"] = member
+        reg = Registry(tools=[member, toolkit])
+
+        flat_dict = {"name": "search_docs", "parameters": {}}
+        warm = reg.rehydrate_function(dict(flat_dict))
+        assert warm.entrypoint is search_function  # warms the cached lookup
+
+        def rebuilt_entrypoint() -> str:
+            return "rebuilt"
+
+        toolkit.functions["search_docs"] = Function(name="search_docs", entrypoint=rebuilt_entrypoint)
+        rehydrated = reg.rehydrate_function(dict(flat_dict))
+
+        assert rehydrated.entrypoint is rebuilt_entrypoint
+        assert rehydrated.source_toolkit is toolkit
+
     def test_direct_registration_does_not_mask_a_rebuilt_toolkit(self):
         """A Function can be both a toolkit member and a registry tool in its
         own right. A qualified config named the toolkit, so the toolkit alone
@@ -920,8 +978,28 @@ class TestRehydrateFunctionsBatch:
         return CountingRegistry(tools=[kit]), builds
 
     def test_batch_shares_single_rebuild(self):
-        """N dicts whose toolkit is missing from the registry trigger at most
-        one lookup rebuild for the whole batch, not one per dict."""
+        """N dicts naming a function registered after the cache was primed
+        trigger at most one lookup rebuild for the whole batch, not one per
+        dict."""
+        reg, builds = self._counting_registry()
+        kit = reg.tools[0]
+        _ = reg._entrypoint_lookup  # prime while write_file is unregistered
+
+        def _write(path: str) -> str:
+            return f"write:{path}"
+
+        kit.functions["write_file"] = Function(name="write_file", entrypoint=_write)
+        dicts = [{"name": "write_file", "parameters": {}, "toolkit": "agent_files"} for _ in range(5)]
+        rehydrated = reg.rehydrate_functions(dicts)
+
+        assert all(f.entrypoint is _write for f in rehydrated)
+        assert sum(builds) == 2  # the priming build plus one shared rebuild
+
+    def test_unresolvable_batch_spends_no_rebuild(self):
+        """A rebuild is skipped when it could not help: a key with no owner in
+        the current registrations misses before and after a rebuild, so dicts
+        naming a missing toolkit resolve through the flat fallback without
+        spending the batch's budget."""
         reg, builds = self._counting_registry()
         _ = reg._entrypoint_lookup  # prime the cache
 
@@ -929,7 +1007,7 @@ class TestRehydrateFunctionsBatch:
         rehydrated = reg.rehydrate_functions(dicts)
 
         assert all(f.entrypoint is self._read for f in rehydrated)
-        assert sum(builds) == 2  # the priming build plus one shared rebuild
+        assert sum(builds) == 1  # the priming build only
 
     def test_directly_registered_function_does_not_look_stale(self):
         """A Function registered as a registry tool in its own right owns the
@@ -992,16 +1070,20 @@ class TestRehydrateFunctionsBatch:
         kit = reg.tools[0]
         _ = reg._entrypoint_lookup  # prime the cache
 
-        first = reg.rehydrate_functions([{"name": "read_file", "parameters": {}, "toolkit": "renamed_kit"}])
-        assert first[0].entrypoint is self._read  # spent this batch's rebuild
-
         def _write(path: str) -> str:
             return f"write:{path}"
 
         kit.functions["write_file"] = Function(name="write_file", entrypoint=_write)
-        second = reg.rehydrate_functions([{"name": "write_file", "parameters": {}, "toolkit": "agent_files"}])
+        first = reg.rehydrate_functions([{"name": "write_file", "parameters": {}, "toolkit": "agent_files"}])
+        assert first[0].entrypoint is _write  # spent this batch's rebuild
 
-        assert second[0].entrypoint is _write
+        def _more(path: str) -> str:
+            return f"more:{path}"
+
+        kit.functions["more_file"] = Function(name="more_file", entrypoint=_more)
+        second = reg.rehydrate_functions([{"name": "more_file", "parameters": {}, "toolkit": "agent_files"}])
+
+        assert second[0].entrypoint is _more
 
 
 # =============================================================================

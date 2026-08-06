@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple, Type, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Optional, Set, Tuple, Type, Union
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -89,76 +89,59 @@ class Registry:
                 )
             lookup[name] = source
 
-        for tool in self.tools:
-            if isinstance(tool, Toolkit):
-                # get_functions() is the exposed subset -- the only functions that
-                # are serialized or run, so only those claim a slot or warn here.
-                for func in tool.get_functions().values():
-                    if func.entrypoint is not None:
-                        register(func.name, func)
-                        if isinstance(tool.name, str) and tool.name:
-                            # A qualified slot collides only when two same-named
-                            # toolkits share a member name, and that collision has
-                            # already warned on the flat slot above -- so this
-                            # write stays silent (last wins).
-                            lookup[(tool.name, func.name)] = func
-            elif isinstance(tool, Function):
-                if tool.entrypoint is not None:
-                    register(tool.name, tool)
-            elif callable(tool):
-                register(tool.__name__, tool)
+        for toolkit, name, source in self._iter_entrypoint_sources():
+            register(name, source)
+            if toolkit is not None and isinstance(toolkit.name, str) and toolkit.name:
+                # A qualified slot collides only when two same-named toolkits
+                # share a member name, and that collision has already warned on
+                # the flat slot above -- so this write stays silent (last wins).
+                lookup[(toolkit.name, name)] = source
         return lookup
 
-    def _live_toolkit_for(
-        self, source: EntrypointSource, name: str, toolkit_name: Optional[str] = None
-    ) -> Tuple[Optional[Toolkit], bool]:
-        """Locate the live Toolkit that currently exposes ``source`` under ``name``.
+    def _iter_entrypoint_sources(self) -> Iterator[Tuple[Optional[Toolkit], str, EntrypointSource]]:
+        """Every (owning toolkit, name, source) registration, in order.
 
-        Returns ``(toolkit, stale)``. Matching is by object identity, so owner
-        resolution works for a config saved before tool names were
-        toolkit-qualified and for one whose toolkit was renamed: neither carries
-        a name to match on.
-
-        ``stale`` marks a resolved source that no Toolkit owns any more while a
-        Toolkit does expose ``name`` with a different Function object. That is
-        what a toolkit which rebuilt its functions dict looks like: MCP toolkits
-        replace every Function on connect, and the cache entry written before
-        the rebuild still *hits*, so a miss-only check cannot catch it.
-
-        ``toolkit_name`` narrows the search to same-named toolkits, for a
-        resolution that came from a toolkit-qualified key. Such a config named
-        the toolkit it wants, so only that toolkit can say whether the cached
-        entry is still fresh.
+        The single source of truth for what claims an entrypoint slot:
+        ``_entrypoint_lookup`` folds these into its dicts and ``_slot_owner``
+        replays them for one key, so the two can never disagree on a winner.
         """
-        if not isinstance(source, Function):
-            return None, False
-
-        shadowed = False
-        registered_directly = False
         for tool in self.tools:
-            if tool is source:
-                registered_directly = True
-                continue
-            if not isinstance(tool, Toolkit):
-                continue
-            if toolkit_name is not None and tool.name != toolkit_name:
-                continue
-            current = tool.get_functions().get(name)
-            if current is None:
-                continue
-            if current is source:
-                return tool, False
-            shadowed = True
+            if isinstance(tool, Toolkit):
+                # get_functions() is the exposed subset -- the only functions
+                # that are serialized or run, so only those claim a slot.
+                for func in tool.get_functions().values():
+                    if func.entrypoint is not None:
+                        yield tool, func.name, func
+            elif isinstance(tool, Function):
+                if tool.entrypoint is not None:
+                    yield None, tool.name, tool
+            elif callable(tool):
+                yield None, tool.__name__, tool
 
-        # A Function registered as a registry tool in its own right owns the
-        # flat slot legitimately, so a same-named toolkit member does not make
-        # it stale. That only holds for an unqualified resolution: a config that
-        # named a toolkit is asking that toolkit, and a standalone registration
-        # of the same object says nothing about whether the toolkit still holds
-        # it.
-        if toolkit_name is None and registered_directly:
-            return None, False
-        return None, shadowed
+    def _slot_owner(self, key: EntrypointKey) -> Tuple[Optional[Toolkit], Optional[EntrypointSource]]:
+        """The (toolkit, source) a fresh lookup build would leave in ``key``'s slot.
+
+        Replayed from the same registrations the cached lookup was built from,
+        so comparing a cached entry against this owner detects every way the
+        cache can go stale: a toolkit that rebuilt its functions dict (MCP
+        toolkits replace every Function on connect), a member deleted after the
+        cache was built, or a slot whose last-write-wins winner changed. A
+        miss-only check catches none of those, because the stale entry still
+        *hits*.
+
+        The toolkit half is the attribution for ``source_toolkit``: the live
+        Toolkit whose registration owns the slot, or ``None`` for a Function or
+        plain callable registered directly.
+        """
+        owner: Tuple[Optional[Toolkit], Optional[EntrypointSource]] = (None, None)
+        for toolkit, name, source in self._iter_entrypoint_sources():
+            if isinstance(key, tuple):
+                if toolkit is None or toolkit.name != key[0] or name != key[1]:
+                    continue
+            elif name != key:
+                continue
+            owner = (toolkit, source)
+        return owner
 
     def rehydrate_function(self, func_dict: Dict[str, Any]) -> Function:
         """Reconstruct a Function from dict, reattaching its entrypoint.
@@ -191,35 +174,39 @@ class Registry:
             # bare Functions instead of Toolkits.
             func.owning_toolkit = toolkit_name
 
-        def lookup(key: EntrypointKey) -> Optional[EntrypointSource]:
-            # Toolkits can gain functions after the lookup is first built -- MCP
-            # toolkits only register their functions once connected -- so a miss
-            # may just mean the cache is stale. A hit goes stale the same way: a
-            # toolkit that rebuilds its functions dict leaves the cache holding
-            # Function objects it no longer owns, and that entry still resolves.
-            # Rebuild once for either and retry.
-            # A qualified key is a question addressed to one toolkit, so its
-            # freshness is that toolkit's to answer.
-            qualified_toolkit = key[0] if isinstance(key, tuple) else None
+        def lookup(key: EntrypointKey) -> Tuple[Optional[EntrypointSource], Optional[Toolkit]]:
+            # The cache is fresh for this key only while it holds the same
+            # object a rebuild would produce -- the slot's replayed owner.
+            # Toolkits can gain functions after the lookup is first built (MCP
+            # toolkits only register their functions once connected), so a miss
+            # may just mean the cache is stale; a hit goes stale the same way
+            # when a toolkit rebuilds or drops its functions, or a slot's
+            # last-write-wins winner changes. Rebuild once per batch when the
+            # cache disagrees with the owner, and not at all when a rebuild
+            # could not help (the key has no owner, so it would miss too).
+            owner_toolkit, owner_source = self._slot_owner(key)
             found = self._entrypoint_lookup.get(key)
-            if not rebuild_state["rebuilt"] and (
-                found is None or self._live_toolkit_for(found, func.name, qualified_toolkit)[1]
-            ):
+            if not rebuild_state["rebuilt"] and found is not owner_source:
                 self.__dict__.pop("_entrypoint_lookup", None)
                 rebuild_state["rebuilt"] = True
                 found = self._entrypoint_lookup.get(key)
-            return found
+            # No disagreement is possible here: a rebuild folds the very
+            # registrations the replay walked, so once one has run this batch
+            # -- for this key or an earlier one -- the cached entry *is* the
+            # owner, and the fresh-check above covers the pre-rebuild path.
+            return found, owner_toolkit
 
         source: Optional[EntrypointSource] = None
+        source_owner: Optional[Toolkit] = None
         resolved_as_recorded = func.owning_toolkit is None
         if func.owning_toolkit is not None:
             # A qualified miss rebuilds before falling back to the flat name:
             # the flat slot may hold a same-named function from a *different*
             # toolkit while the right one simply hasn't populated the cache yet.
-            source = lookup((func.owning_toolkit, func.name))
+            source, source_owner = lookup((func.owning_toolkit, func.name))
             resolved_as_recorded = source is not None
         if source is None:
-            source = lookup(func.name)
+            source, source_owner = lookup(func.name)
             if source is not None and func.owning_toolkit is not None:
                 # The recorded toolkit could not be honored, so the flat slot's
                 # same-named function -- possibly from a different toolkit -- is
@@ -242,7 +229,7 @@ class Registry:
             # has left the registry binds the flat slot, which may belong to a
             # different toolkit, and that toolkit's guidance is not this
             # function's to carry.
-            source_toolkit = self._live_toolkit_for(source, func.name)[0] if resolved_as_recorded else None
+            source_toolkit = source_owner if resolved_as_recorded else None
             if source_toolkit is not None:
                 # Keep the exact live Toolkit available to instruction
                 # collection. Every member points to the same object, so the

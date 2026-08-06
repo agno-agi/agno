@@ -17,20 +17,23 @@ from agno.utils.path_safety import safe_join_relative_path
 # The function surface is part of the key because the coverage check reads it:
 # two same-named toolkits carrying the same guidance but exposing different
 # functions would otherwise pool their members, and one toolkit's coverage would
-# be judged against the other's function set.
-ToolkitKey = Tuple[str, Any, bool, frozenset]
+# be judged against the other's function set. The sync and async surfaces stay
+# separate parts of the key: coverage is measured per mode, and two toolkits
+# whose surfaces agree only as a union would pool members that mode-specific
+# coverage then judges against the wrong function set.
+ToolkitKey = Tuple[str, Any, bool, frozenset, frozenset]
 
 
 def _toolkit_key(toolkit: "Toolkit") -> ToolkitKey:
-    # Both dicts, so the key does not shift between sync and async collection.
-    surface = frozenset(toolkit.get_functions()) | frozenset(toolkit.get_async_functions())
+    sync_surface = frozenset(toolkit.get_functions())
+    async_surface = frozenset(toolkit.get_async_functions())
     instructions = toolkit.instructions
     if instructions is not None and not isinstance(instructions, str):
         # `instructions` is declared Optional[str] but nothing enforces it, and
         # a list would make this key unhashable. Fall back to identity for that
         # toolkit rather than raise: grouping degrades, the run does not fail.
-        return (toolkit.name, id(toolkit), toolkit.add_instructions, surface)
-    return (toolkit.name, instructions, toolkit.add_instructions, surface)
+        return (toolkit.name, id(toolkit), toolkit.add_instructions, sync_surface, async_surface)
+    return (toolkit.name, instructions, toolkit.add_instructions, sync_surface, async_surface)
 
 
 def _group_source_toolkits(tools: Sequence[Any]) -> Tuple[Dict[ToolkitKey, int], Dict[ToolkitKey, Set[str]]]:

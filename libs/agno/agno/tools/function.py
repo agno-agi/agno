@@ -349,8 +349,12 @@ class Function(BaseModel):
                 if field_name in shallow_fields:
                     # Shallow copy - just reference the same object
                     copied_data[field_name] = field_value
-                elif field_name == "parameters":
-                    # Deep copy the parameters dict
+                elif field_name in ("parameters", "user_input_schema"):
+                    # Deep copy the mutable run state. parse_tools hands the
+                    # model a per-run copy of each Function; the model layer
+                    # then writes the user's answers into user_input_schema in
+                    # place, so an aliased schema carries one run's input into
+                    # every later run of the same component.
                     from copy import deepcopy
 
                     copied_data[field_name] = deepcopy(field_value)

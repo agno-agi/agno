@@ -411,6 +411,86 @@ def test_non_string_toolkit_instructions_do_not_break_the_run():
     assert agent._tool_instructions == [["rule one", "rule two"]]
 
 
+def test_swapped_sync_async_surfaces_are_not_pooled():
+    """Coverage is measured per mode, so the sync and async surfaces are
+    separate parts of the grouping key. Two same-named toolkits whose surfaces
+    agree only as a union would otherwise pool their members, and a complete
+    toolkit's guidance would be judged against -- and silenced by -- its
+    namesake's function set."""
+
+    def make_first() -> Toolkit:
+        def a() -> str:
+            return "a"
+
+        def b() -> str:
+            return "b"
+
+        async def c() -> str:
+            return "c"
+
+        async def d() -> str:
+            return "d"
+
+        return Toolkit(name="shared", tools=[a, b, c, d], instructions="rule", add_instructions=True)
+
+    def make_second() -> Toolkit:
+        def c() -> str:
+            return "c"
+
+        def d() -> str:
+            return "d"
+
+        async def a() -> str:
+            return "a"
+
+        async def b() -> str:
+            return "b"
+
+        return Toolkit(name="shared", tools=[c, d, a, b], instructions="rule", add_instructions=True)
+
+    first, second = make_first(), make_second()
+    registry = Registry(tools=[first, second])
+
+    # All of first, plus one member of second: first earned the guidance.
+    tools = _rehydrate(registry, first) + _rehydrate(registry, second, only={"c"})
+    agent = Agent(tools=tools)
+    parse_tools(agent=agent, tools=agent.tools, model=_mock_model())
+
+    assert agent._tool_instructions == ["rule"]
+
+
+def test_user_input_does_not_leak_between_runs_of_a_rehydrated_agent():
+    """parse_tools hands the model a per-run copy of each Function, and the
+    model layer writes the user's answer into that copy's user_input_schema in
+    place. The copy must not alias the loaded component's schema, or one run's
+    input reappears in the next run -- and nothing purges it in between."""
+
+    def send_email(to: str, subject: str, body: str) -> str:
+        """Send an email."""
+        return "sent"
+
+    live = Function.from_callable(send_email)
+    live.requires_user_input = True
+    live.user_input_fields = ["body"]
+    live.process_entrypoint()
+    live.skip_entrypoint_processing = True
+
+    registry = Registry(tools=[live])
+    agent = Agent(tools=registry.rehydrate_functions([live.to_dict()]))
+
+    first_run = parse_tools(agent=agent, tools=agent.tools, model=_mock_model())
+    first_fn = next(f for f in first_run if isinstance(f, Function))
+    assert first_fn.user_input_schema
+    for input_field in first_fn.user_input_schema:
+        input_field.value = "secret-from-run-1"
+
+    second_run = parse_tools(agent=agent, tools=agent.tools, model=_mock_model())
+    second_fn = next(f for f in second_run if isinstance(f, Function))
+    assert second_fn.user_input_schema
+    assert all(input_field.value is None for input_field in second_fn.user_input_schema)
+    assert all(input_field.value is None for input_field in live.user_input_schema or [])
+
+
 def test_cloned_toolkit_and_its_rehydrated_members_are_one_toolkit():
     """deep_copy clones the Toolkit list entry while the rehydrated members keep
     the live one. Grouping by object identity would see two toolkits here and
