@@ -30,6 +30,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 ContentDict = Dict[str, Union[str, Dict[str, str]]]
+_WEB_URL_EXTENSIONS = {".html", ".htm", ".xhtml"}
 
 
 class KnowledgeContentOrigin(Enum):
@@ -1228,6 +1229,11 @@ class Knowledge(RemoteKnowledge):
         else:
             return self.text_reader
 
+    def _reader_supports_url(self, reader: Optional[Reader]) -> bool:
+        if reader is None or not hasattr(reader, "get_supported_content_types"):
+            return False
+        return ContentType.URL in reader.get_supported_content_types()
+
     def _read(
         self,
         reader: Reader,
@@ -1572,15 +1578,14 @@ class Knowledge(RemoteKnowledge):
         # 3. Fetch and load content if file has an extension
         url_path = Path(parsed_url.path)
         file_extension = url_path.suffix.lower()
+        use_web_reader = file_extension in _WEB_URL_EXTENSIONS and (
+            content.reader is None or self._reader_supports_url(content.reader)
+        )
 
         bytes_content = None
         # Skip pre-download when a custom URL-based reader is provided —
         # it handles the URL directly (e.g. LLMsTxtReader fetches linked pages)
-        skip_download = (
-            content.reader is not None
-            and hasattr(content.reader, "get_supported_content_types")
-            and ContentType.URL in content.reader.get_supported_content_types()
-        )
+        skip_download = use_web_reader or self._reader_supports_url(content.reader)
         if file_extension and not skip_download:
             async with AsyncClient() as client:
                 response = await async_fetch_with_retry(content.url, client=client)
@@ -1588,7 +1593,7 @@ class Knowledge(RemoteKnowledge):
 
         # 4. Select reader
         name = content.name if content.name else content.url
-        if file_extension:
+        if file_extension and not use_web_reader:
             reader, default_name = self._select_reader_by_extension(file_extension, content.reader)
             if default_name and file_extension == ".csv":
                 name = basename(parsed_url.path) or default_name
@@ -1727,22 +1732,21 @@ class Knowledge(RemoteKnowledge):
         # 3. Fetch and load content if file has an extension
         url_path = Path(parsed_url.path)
         file_extension = url_path.suffix.lower()
+        use_web_reader = file_extension in _WEB_URL_EXTENSIONS and (
+            content.reader is None or self._reader_supports_url(content.reader)
+        )
 
         bytes_content = None
         # Skip pre-download when a custom URL-based reader is provided —
         # it handles the URL directly (e.g. LLMsTxtReader fetches linked pages)
-        skip_download = (
-            content.reader is not None
-            and hasattr(content.reader, "get_supported_content_types")
-            and ContentType.URL in content.reader.get_supported_content_types()
-        )
+        skip_download = use_web_reader or self._reader_supports_url(content.reader)
         if file_extension and not skip_download:
             response = fetch_with_retry(content.url)
             bytes_content = BytesIO(response.content)
 
         # 4. Select reader
         name = content.name if content.name else content.url
-        if file_extension:
+        if file_extension and not use_web_reader:
             reader, default_name = self._select_reader_by_extension(file_extension, content.reader)
             if default_name and file_extension == ".csv":
                 name = basename(parsed_url.path) or default_name
