@@ -77,6 +77,38 @@ class _StaleCacheEntry(Exception):
     """A cache entry that no longer matches what the code returns."""
 
 
+def _make_private_dir(directory: Any) -> None:
+    """Create the cache directory, and refuse one somebody else can write.
+
+    The default location is a shared temporary directory under a predictable
+    name, so a directory already there may not be ours. Raising leaves the tool
+    call itself alone: the caller treats an unusable cache directory as a
+    reason to stop caching, not a reason to fail."""
+    import os
+    import stat
+
+    missing = []
+    probe = directory
+    while not probe.exists():
+        missing.append(probe)
+        if probe.parent == probe:
+            break
+        probe = probe.parent
+    for level in reversed(missing):
+        try:
+            level.mkdir(mode=0o700)
+        except FileExistsError:
+            pass
+
+    owner = os.geteuid() if hasattr(os, "geteuid") else None
+    for level in (directory, directory.parent, directory.parent.parent):
+        info = level.stat()
+        if owner is not None and info.st_uid != owner:
+            raise PermissionError(f"Refusing a cache directory owned by another user: {level}")
+        if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            raise PermissionError(f"Refusing a cache directory others can write to: {level}")
+
+
 def _has_injected_media(entrypoint_args: Dict[str, Any]) -> bool:
     """True when the call carries attached media.
 
@@ -86,25 +118,33 @@ def _has_injected_media(entrypoint_args: Dict[str, Any]) -> bool:
     return any(entrypoint_args.get(name) for name in MEDIA_INJECTED_PARAMS)
 
 
-# Stands in for an entrypoint return that could not be copied. Recording it
-# keeps the count of entrypoint calls honest while making the call uncacheable.
-_UNCOPYABLE = object()
+# Stands in for an entrypoint call that left no value the cache can keep: one
+# that raised, and one whose return could not be copied. Recording it keeps the
+# count of entrypoint calls honest while making the call uncacheable.
+_NO_RESULT = object()
 
 
-def _record_entrypoint_result(raw_results: List[Any], result: Any) -> None:
+def _start_entrypoint_call(raw_results: List[Any]) -> int:
+    """Count an entrypoint call that is about to run, and return its slot.
+
+    The slot is claimed before the call, so a call that raises still counts. A
+    hook that retried past a failure ran the tool twice, and what the retry
+    returned does not stand for the call."""
+    raw_results.append(_NO_RESULT)
+    return len(raw_results) - 1
+
+
+def _record_entrypoint_result(raw_results: List[Any], slot: int, result: Any) -> None:
     """Record what the entrypoint returned, detached from the caller.
 
     The hooks run after this and may edit the result in place, so the cache
-    must keep a copy rather than the object itself. A value that cannot be
-    copied is recorded as uncopyable rather than skipped, so a hook that ran the
-    entrypoint twice still counts as twice."""
+    must keep a copy rather than the object itself."""
     from copy import deepcopy
 
     try:
-        raw_results.append(deepcopy(result))
+        raw_results[slot] = deepcopy(result)
     except Exception as e:
         log_debug(f"Result could not be copied for the cache, so this call is not cacheable: {e}")
-        raw_results.append(_UNCOPYABLE)
 
 
 def _unwrap_annotation(hint: Any) -> Any:
@@ -146,6 +186,29 @@ def _mentions_base_model(hint: Any, seen: Optional[List[Any]] = None) -> bool:
         return False
     seen.append(hint)
     return any(_mentions_base_model(arg, seen) for arg in get_args(hint))
+
+
+def _dump_for_cache(model: BaseModel) -> Any:
+    """What _save_to_cache writes for this model, as JSON gives it back.
+
+    A round trip turns tuples into lists and dates into strings, so a rebuilt
+    value can only be compared with a stored one on the far side of one."""
+    import json
+
+    return json.loads(json.dumps(model.model_dump(), default=str))
+
+
+def _validate_by_field_name(adapter: Any, payload: Any) -> Any:
+    """Rebuild a value this cache wrote.
+
+    Entries are written with model_dump(), which emits field names, so a model
+    whose fields carry aliases has to be validated by name or it would never be
+    readable. Older pydantic releases take no such argument and accept field
+    names anyway."""
+    try:
+        return adapter.validate_python(payload, by_name=True)
+    except TypeError:
+        return adapter.validate_python(payload)
 
 
 @lru_cache(maxsize=256)
@@ -1110,6 +1173,12 @@ class Function(BaseModel):
         no run context, so key composition for run-context-free tools is
         unchanged.
 
+        Only those two fields enter the key. A run context also carries
+        metadata, dependencies, session_state and knowledge_filters, and none of
+        them scope an entry, so two calls that differ only there share one. A
+        tool that reads them, rather than taking the same information as an
+        argument the model supplies, is not safely cacheable.
+
         Reuse across runs holds for the "run_context" spelling alone.
         _get_cache_key removes only FRAMEWORK_INJECTED_PARAMS from the key
         material, so an injected "_agno_run_context" object is also serialized
@@ -1134,7 +1203,10 @@ class Function(BaseModel):
 
         copy_entrypoint_args = entrypoint_args.copy()
         # Injected framework objects are not part of a call's identity for caching
-        # purposes; the caller's identity is contributed separately, above.
+        # purposes; a run context contributes the caller's identity below. An
+        # injected agent or team contributes none, so a cache_results tool that
+        # reads agent.user_id still shares entries across users. Tracked as a
+        # follow-up.
         for param_name in FRAMEWORK_INJECTED_PARAMS:
             copy_entrypoint_args.pop(param_name, None)
         # Use json.dumps with sort_keys=True to ensure consistent ordering regardless of dict key order
@@ -1158,12 +1230,13 @@ class Function(BaseModel):
 
         base_cache_dir = self.cache_dir or Path(gettempdir()) / "agno_cache"
         func_cache_dir = Path(base_cache_dir) / "functions" / self.name
-        func_cache_dir.mkdir(parents=True, exist_ok=True)
+        _make_private_dir(func_cache_dir)
         return str(func_cache_dir / f"{cache_key}.json")
 
     def _get_cached_result(self, cache_file: str) -> Optional[Any]:
         """Retrieve cached result if valid."""
         import json
+        import os
         from pathlib import Path
         from time import time
 
@@ -1172,7 +1245,11 @@ class Function(BaseModel):
             return None
 
         try:
-            with cache_path.open("r", encoding="utf-8") as f:
+            # Never follow a link out of the cache directory. The path is
+            # predictable, so a symlink planted there would otherwise choose
+            # the file a cache hit reads.
+            fd = os.open(cache_file, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            with os.fdopen(fd, "r", encoding="utf-8") as f:
                 cache_data = json.load(f)
 
             timestamp = cache_data.get("timestamp", 0)
@@ -1191,6 +1268,13 @@ class Function(BaseModel):
             log_exception("Error reading cache")
 
         return None
+
+    def _survives_the_cache(self, cache_data: Dict[str, Any], result: Any) -> bool:
+        """Whether reading this entry back gives what the tool just returned."""
+        try:
+            return bool(self._cached_value(cache_data.get("result"), cache_data.get("result_type")) == result)
+        except Exception:
+            return False
 
     def _cached_value(self, payload: Any, result_type: Optional[str]) -> Any:
         """The cached payload as the type the entrypoint declares it returns.
@@ -1211,20 +1295,14 @@ class Function(BaseModel):
                 adapter = None
             if adapter is not None:
                 try:
-                    value = adapter.validate_python(payload)
+                    value = _validate_by_field_name(adapter, payload)
                 except Exception as e:
-                    # The tool may not return what it says it returns, and a
-                    # model may name its fields one way and serialize them
-                    # another. Neither is reason to throw the entry away: hand
-                    # back what was stored, as a tool with no annotation does.
-                    log_debug(f"Cached result for {self.name} does not rebuild into {return_type}: {e}")
-                    return payload
-                if isinstance(payload, dict) and isinstance(value, BaseModel):
-                    dropped = set(payload) - set(value.model_dump())
-                    if dropped:
-                        raise _StaleCacheEntry(
-                            f"the declared return type cannot hold {sorted(dropped)}, which the entry carries"
-                        )
+                    raise _StaleCacheEntry(f"the payload no longer rebuilds into {return_type}: {e}")
+                if isinstance(value, BaseModel) and _dump_for_cache(value) != payload:
+                    raise _StaleCacheEntry(
+                        f"{return_type} cannot hold everything the entry carries, so the entry no longer stands "
+                        "for what the tool returns"
+                    )
         elif result_type == "ToolResult":
             if return_type is not None:
                 raise _StaleCacheEntry(f"the entry holds a ToolResult but the tool returns {return_type}")
@@ -1283,6 +1361,15 @@ class Function(BaseModel):
             # Serialize before writing anything: a result that cannot be
             # encoded must leave no half-written file for the next call to read.
             payload = json.dumps(cache_data)
+            if self.tool_hooks and not self._survives_the_cache(json.loads(payload), result):
+                # On a hit this value is handed back to the hooks in the
+                # entrypoint's place, so a hook that reads it would see
+                # something the tool never returned: a tuple comes back a list,
+                # and a model richer than its declared return type comes back
+                # without the difference. Tools with no hooks are unaffected,
+                # since a stored value only ever reaches the model from there.
+                log_debug(f"Skipping cache for {self.name}: the result does not survive being stored")
+                return
             # Write a new file and move it into place. The cache path is
             # predictable and the default directory is shared, so writing
             # through the target would follow a symlink someone else planted
@@ -1656,9 +1743,10 @@ class FunctionCall(BaseModel):
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
                 arguments.update(self.arguments)
+            slot = _start_entrypoint_call(raw_results) if raw_results is not None else -1
             result = self.function.entrypoint(**arguments)  # type: ignore
             if raw_results is not None:
-                _record_entrypoint_result(raw_results, result)
+                _record_entrypoint_result(raw_results, slot, result)
             return result
 
         # If no hooks, just return the entrypoint execution function
@@ -1712,7 +1800,7 @@ class FunctionCall(BaseModel):
                 )
                 return
             result_to_cache = raw_results[0]
-            if result_to_cache is _UNCOPYABLE:
+            if result_to_cache is _NO_RESULT:
                 return
         else:
             result_to_cache = self.result
@@ -1917,11 +2005,12 @@ class FunctionCall(BaseModel):
             if self.arguments is not None:
                 arguments.update(self.arguments)
 
+            slot = _start_entrypoint_call(raw_results) if raw_results is not None else -1
             result = self.function.entrypoint(**arguments)  # type: ignore
             if iscoroutinefunction(self.function.entrypoint) and not isasyncgenfunction(self.function.entrypoint):
                 result = await result
             if raw_results is not None:
-                _record_entrypoint_result(raw_results, result)
+                _record_entrypoint_result(raw_results, slot, result)
             return result
 
         def execute_entrypoint(name, func, args):
@@ -1931,9 +2020,10 @@ class FunctionCall(BaseModel):
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
                 arguments.update(self.arguments)
+            slot = _start_entrypoint_call(raw_results) if raw_results is not None else -1
             result = self.function.entrypoint(**arguments)  # type: ignore
             if raw_results is not None:
-                _record_entrypoint_result(raw_results, result)
+                _record_entrypoint_result(raw_results, slot, result)
             return result
 
         # If no hooks, just return the async entrypoint execution function

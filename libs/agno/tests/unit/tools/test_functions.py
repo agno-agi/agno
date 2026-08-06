@@ -3067,6 +3067,11 @@ def test_an_entry_a_tool_result_cannot_carry_is_discarded(tmp_path):
 
     func = Function(name="report", entrypoint=report, cache_results=True, cache_dir=str(tmp_path))
 
+    from agno.media import Image
+
+    # A complete dump, so the entry rebuilds cleanly and only the media in it
+    # can be what makes it unusable.
+    planted = ToolResult(content="owned", images=[Image(id="x", filepath="/etc/passwd")]).model_dump()
     cache_file = func._get_cache_file_path(func._get_cache_key({}, {}))
     with open(cache_file, "w", encoding="utf-8") as f:
         json.dump(
@@ -3074,7 +3079,7 @@ def test_an_entry_a_tool_result_cannot_carry_is_discarded(tmp_path):
                 "timestamp": time(),
                 "cache_format": function_module.CACHE_FORMAT,
                 "result_type": "ToolResult",
-                "result": {"content": "owned", "images": [{"id": "x", "filepath": "/etc/passwd"}]},
+                "result": planted,
             },
             f,
         )
@@ -3231,3 +3236,238 @@ async def test_cached_base_model_revalidates_against_return_annotation_async(tmp
     assert isinstance(first.result, Weather)
     assert isinstance(second.result, Weather)
     assert second.result == first.result
+
+
+# =============================================================================
+# Calls the cache must refuse
+# =============================================================================
+
+
+def test_a_hook_retrying_past_a_failure_is_not_cached(tmp_path):
+    """A hook that retries has run the tool twice even though only the second
+    attempt returned. Neither attempt stands for the call, so caching the one
+    that succeeded would make the hit take a path the miss never took."""
+    attempts = []
+    counter = iter(range(1, 99))
+
+    def retry(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        try:
+            return f"primary:{function_call(**arguments)}"
+        except Exception:
+            return f"recovered:{function_call(**arguments)}"
+
+    def flaky() -> str:
+        n = next(counter)
+        attempts.append(n)
+        if n == 1:
+            raise RuntimeError("transient")
+        return f"value-{n}"
+
+    func = Function(name="flaky", entrypoint=flaky, cache_results=True, cache_dir=str(tmp_path), tool_hooks=[retry])
+
+    assert FunctionCall(function=func, arguments={}).execute().result == "recovered:value-2"
+    assert attempts == [1, 2]
+    assert list(tmp_path.rglob("*.json")) == []
+
+
+@pytest.mark.asyncio
+async def test_a_hook_retrying_past_a_failure_is_not_cached_async(tmp_path):
+    """Async variant: the attempt that raised still counts."""
+    attempts = []
+    counter = iter(range(1, 99))
+
+    async def retry(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        try:
+            return f"primary:{await function_call(**arguments)}"
+        except Exception:
+            return f"recovered:{await function_call(**arguments)}"
+
+    async def flaky() -> str:
+        n = next(counter)
+        attempts.append(n)
+        if n == 1:
+            raise RuntimeError("transient")
+        return f"value-{n}"
+
+    func = Function(
+        name="flaky_async", entrypoint=flaky, cache_results=True, cache_dir=str(tmp_path), tool_hooks=[retry]
+    )
+
+    result = await FunctionCall(function=func, arguments={}).aexecute()
+    assert result.result == "recovered:value-2"
+    assert attempts == [1, 2]
+    assert list(tmp_path.rglob("*.json")) == []
+
+
+def test_a_hook_recovering_from_the_only_attempt_is_not_reported_as_an_error(tmp_path):
+    """The tool ran once and returned nothing, so there is nothing to store.
+    That is an ordinary outcome of a recovering hook, not a failure to report."""
+
+    def recover(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        try:
+            return function_call(**arguments)
+        except Exception as e:
+            return f"[error] {e}"
+
+    def upstream() -> str:
+        raise ValueError("upstream down")
+
+    func = Function(
+        name="single_failure", entrypoint=upstream, cache_results=True, cache_dir=str(tmp_path), tool_hooks=[recover]
+    )
+
+    reported = []
+    original = function_module.log_exception
+    function_module.log_exception = lambda *args, **kwargs: reported.append(args)
+    try:
+        result = FunctionCall(function=func, arguments={}).execute()
+    finally:
+        function_module.log_exception = original
+
+    assert result.result == "[error] upstream down"
+    assert list(tmp_path.rglob("*.json")) == []
+    assert reported == []
+
+
+def test_a_result_a_hook_could_not_read_back_is_not_cached(tmp_path):
+    """A hit hands the stored value to the hooks in the tool's place, so a
+    value a JSON round trip changes is not stored at all. A tuple would come
+    back a list, and the hook that unpacks it would be reading something the
+    tool never returned."""
+
+    def unpack(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        low, high = function_call(**arguments)
+        return f"{low}..{high}"
+
+    def span() -> tuple:
+        return (1, 9)
+
+    func = Function(name="span", entrypoint=span, cache_results=True, cache_dir=str(tmp_path), tool_hooks=[unpack])
+
+    first = FunctionCall(function=func, arguments={}).execute()
+    second = FunctionCall(function=func, arguments={}).execute()
+
+    assert first.status == "success"
+    assert second.status == "success"
+    assert second.result == first.result == "1..9"
+    assert list(tmp_path.rglob("*.json")) == []
+
+
+def test_an_entry_that_no_longer_rebuilds_into_the_return_type_is_discarded(tmp_path):
+    """A model that gained a required field between deploys leaves entries the
+    code can no longer read. Handing back the old shape would give the caller a
+    value its own annotation says it cannot receive."""
+    import json
+    from time import time
+
+    class Forecast(BaseModel):
+        city: str
+        country: str
+
+    executions = []
+
+    def forecast() -> Forecast:
+        executions.append(1)
+        return Forecast(city="oslo", country="no")
+
+    func = Function(name="forecast", entrypoint=forecast, cache_results=True, cache_dir=str(tmp_path))
+
+    cache_file = func._get_cache_file_path(func._get_cache_key({}, {}))
+    with open(cache_file, "w", encoding="utf-8") as f:
+        json.dump({"timestamp": time(), "cache_format": function_module.CACHE_FORMAT, "result": {"city": "oslo"}}, f)
+
+    result = FunctionCall(function=func, arguments={}).execute()
+    assert isinstance(result.result, Forecast)
+    assert result.result.country == "no"
+    assert executions == [1]
+
+
+def test_a_model_whose_fields_carry_aliases_still_caches(tmp_path):
+    """Entries are written with field names, so reading one back has to accept
+    field names. Otherwise an ordinary aliased model would re-execute forever."""
+    from pydantic import Field
+
+    executions = []
+
+    class Profile(BaseModel):
+        user_name: str = Field(alias="userName")
+
+    def whoami() -> Profile:
+        executions.append(1)
+        return Profile(userName="ada")
+
+    func = Function(name="whoami", entrypoint=whoami, cache_results=True, cache_dir=str(tmp_path))
+
+    first = FunctionCall(function=func, arguments={}).execute()
+    second = FunctionCall(function=func, arguments={}).execute()
+
+    assert isinstance(first.result, Profile)
+    assert isinstance(second.result, Profile)
+    assert second.result.user_name == "ada"
+    assert executions == [1]
+
+
+def test_the_cache_directory_is_private_to_its_owner(tmp_path):
+    """The default location is a shared temporary directory under a
+    predictable name."""
+    import stat
+    from pathlib import Path
+
+    def compute() -> str:
+        return "value"
+
+    func = Function(name="private_dir", entrypoint=compute, cache_results=True, cache_dir=str(tmp_path / "cache"))
+    FunctionCall(function=func, arguments={}).execute()
+
+    leaf = Path(func._get_cache_file_path(func._get_cache_key({}, {}))).parent
+    for level in (leaf, leaf.parent, leaf.parent.parent):
+        assert stat.S_IMODE(level.stat().st_mode) == 0o700, level
+
+
+def test_a_link_planted_at_the_cache_path_is_not_read(tmp_path):
+    """The cache path is predictable, so a link left there must not choose the
+    file a hit reads."""
+    import json
+    from pathlib import Path
+    from time import time
+
+    executions = []
+
+    def get_note() -> str:
+        executions.append(1)
+        return "the real note"
+
+    func = Function(name="linked", entrypoint=get_note, cache_results=True, cache_dir=str(tmp_path / "cache"))
+
+    planted = tmp_path / "planted.json"
+    planted.write_text(json.dumps({"timestamp": time(), "cache_format": function_module.CACHE_FORMAT, "result": "x"}))
+    cache_path = Path(func._get_cache_file_path(func._get_cache_key({}, {})))
+    cache_path.symlink_to(planted)
+
+    result = FunctionCall(function=func, arguments={}).execute()
+    assert result.result == "the real note"
+    assert executions == [1]
+
+
+def test_a_cache_directory_others_can_write_is_refused(tmp_path):
+    """A directory somebody else can write to can choose what a hit reads, and
+    losing the cache is not a reason to lose the tool call."""
+    hostile = tmp_path / "cache" / "functions" / "hostile"
+    hostile.mkdir(parents=True)
+    hostile.chmod(0o777)
+
+    executions = []
+
+    def compute() -> str:
+        executions.append(1)
+        return "value"
+
+    func = Function(name="hostile", entrypoint=compute, cache_results=True, cache_dir=str(tmp_path / "cache"))
+
+    first = FunctionCall(function=func, arguments={}).execute()
+    second = FunctionCall(function=func, arguments={}).execute()
+
+    assert first.status == "success"
+    assert second.status == "success"
+    assert len(executions) == 2
+    assert list(hostile.glob("*.json")) == []
