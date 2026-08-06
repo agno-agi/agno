@@ -280,3 +280,39 @@ class TestBackgroundContinueCompatFallthrough:
             data={"background": "false", "stream": "false", "session_id": "s1"},
         )
         assert resp.status_code != 409, f"nothing here should 409: {resp.json()}"
+
+
+class TestSubmitBackgroundBodyParity:
+    """background=true + stream=false submits answer with the SAME body shape
+    whether or not the durable queue is wired: 202 and exactly
+    {run_id, session_id, status}. The durable seam's body is pinned by
+    TestPrepareFailureTruthfulness/TestTicketPollFallback above; this pins
+    the NON-durable detached path for all three components, so a client
+    written against one deployment mode works unchanged on the other."""
+
+    @pytest.fixture()
+    def submit_harness(self, tmp_path):
+        from fastapi.testclient import TestClient
+
+        from agno.agent import Agent
+        from agno.db.sqlite import SqliteDb
+        from agno.os import AgentOS
+        from agno.team import Team
+        from agno.workflow import Workflow
+
+        db = SqliteDb(db_file=str(tmp_path / "t.db"))
+        agent = Agent(id="qa-agent", name="QA Agent", db=db)
+        team = Team(id="qa-team", name="QA Team", members=[], db=db)
+        workflow = Workflow(id="qa-wf", name="QA Workflow", db=db, steps=[])
+        app = AgentOS(agents=[agent], teams=[team], workflows=[workflow], telemetry=False).get_app()
+        return TestClient(app, raise_server_exceptions=False)
+
+    @pytest.mark.parametrize("path", ["/agents/qa-agent/runs", "/teams/qa-team/runs", "/workflows/qa-wf/runs"])
+    def test_non_durable_body_matches_durable_contract(self, submit_harness, path):
+        resp = submit_harness.post(path, data={"message": "hi", "stream": "false", "background": "true"})
+        assert resp.status_code == 202, f"{path}: {resp.status_code} {resp.text[:200]}"
+        body = resp.json()
+        assert set(body.keys()) == {"run_id", "session_id", "status"}, (
+            f"{path}: the non-durable 202 body must match the durable seam's shape exactly, got {body}"
+        )
+        assert body["status"] in ("PENDING", "RUNNING")
