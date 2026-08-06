@@ -1978,45 +1978,110 @@ def _media_agent():
     return Agent(id="real-host", name="Host")
 
 
-@pytest.mark.parametrize("path", ["from_callable", "process_entrypoint"])
-def test_media_typed_param_under_its_own_name_stays_model_fillable(path):
-    """Media is injected by reserved NAME only (images/videos/audios/files), so a
-    media-typed parameter under any other name has to stay model-fillable. Hiding it
-    would leave it unfillable by anything."""
+def test_bare_media_typed_param_is_hidden_on_the_process_entrypoint_path():
+    """Media is injected by reserved NAME only (images/videos/audios/files), so on
+    the Toolkit/@tool path a bare media-typed parameter under any other name is
+    hidden from the model, as at 2.8.7. Exposing it would let the model fabricate
+    the object -- choosing whose data the tool reads -- and the schema it emits is
+    invalid under strict mode, failing the whole request rather than one call."""
     from agno.media import Image
 
     def caption(image: Image, style: str = "short") -> str:
         return f"{getattr(image, 'url', image)}|{style}"
 
-    if path == "from_callable":
-        func = Function.from_callable(caption)
-    else:
-        func = Function(name="caption", entrypoint=caption)
-        func.process_entrypoint()
+    func = Function(name="caption", entrypoint=caption)
+    func.process_entrypoint()
 
-    assert set((func.parameters or {})["properties"]) == {"image", "style"}
-    assert "image" in ((func.parameters or {}).get("required") or [])
-    assert "image" not in (func._framework_params or set())
+    assert set((func.parameters or {})["properties"]) == {"style"}
+    assert "image" not in ((func.parameters or {}).get("required") or [])
+    assert "image" in (func._framework_params or set())
 
+    # A model-supplied value for the hidden parameter is dropped; with nothing
+    # to fill it, the required parameter fails the call loudly.
     func._agent = _media_agent()
     result = FunctionCall(function=func, arguments={"image": {"url": "http://x/a.png"}, "style": "long"}).execute()
-    assert result.status == "success"
-    assert result.result == "http://x/a.png|long"
+    assert result.status == "failure"
 
 
-def test_media_typed_param_with_a_default_is_not_silently_dropped():
-    """The silent half of the same defect: success is reported, the value is gone."""
+def test_bare_media_typed_param_with_a_default_keeps_it_on_the_process_entrypoint_path():
+    """The default-carrying case of the same rule: the hidden parameter cannot be
+    claimed by the model, and the call runs with the parameter's own default."""
     from agno.media import Image
 
     def search(query: str, pic: Image = None) -> str:  # type: ignore[assignment]
         return f"{query}|{getattr(pic, 'url', pic)}"
 
-    func = Function.from_callable(search)
+    func = Function(name="search", entrypoint=search)
+    func.process_entrypoint()
+    assert "pic" not in (func.parameters or {})["properties"]
+    assert "pic" in (func._framework_params or set())
+
+    result = FunctionCall(function=func, arguments={"query": "cats", "pic": {"url": "http://x/b.png"}}).execute()
+    assert result.status == "success"
+    assert result.result == "cats|None"
+
+
+def test_bare_media_typed_param_stays_model_fillable_on_the_plain_callable_path():
+    """from_callable never hid media by type at 2.8.7: a plain callable passed as
+    Agent(tools=[fn]) exposes `pic: Image` to the model, whose dict pydantic
+    coerces into an Image. Hiding it here would break tools that work today."""
+    from agno.media import Image
+
+    def describe(query: str, pic: Image = None) -> str:  # type: ignore[assignment]
+        return f"{query}|{getattr(pic, 'url', pic)}"
+
+    func = Function.from_callable(describe)
     assert "pic" in (func.parameters or {})["properties"]
+    assert "pic" not in (func._framework_params or set())
 
     result = FunctionCall(function=func, arguments={"query": "cats", "pic": {"url": "http://x/b.png"}}).execute()
     assert result.status == "success"
     assert result.result == "cats|http://x/b.png"
+
+
+def test_variadic_identity_params_are_never_keyword_bound():
+    """*args/**kwargs annotated with an identity type can never take a keyword
+    bind: Python rejects `rest=None` outright and validate_call rejects
+    `extra=None`. Injection skips them, as at 2.8.7, and they bind their own
+    empty containers."""
+
+    from agno.agent.agent import Agent
+
+    def vp(query: str, *rest: Agent) -> str:
+        return f"{query}|{rest}"
+
+    def vk(query: str, **extra: RunContext) -> str:
+        return f"{query}|{extra}"
+
+    for fn, expected in ((vp, "q|()"), (vk, "q|{}")):
+        func = Function(name=fn.__name__, entrypoint=fn)
+        func.process_entrypoint()
+        result = FunctionCall(function=func, arguments={"query": "q"}).execute()
+        assert result.status == "success", f"{fn.__name__}: {result.result}"
+        assert result.result == expected
+
+
+def test_identity_typed_param_binds_none_when_the_wielder_has_no_such_object():
+    """A tool registered on a Team has no Agent. `owner: Agent` is hidden from
+    the model, so injection binds it to None rather than leaving a required
+    parameter no one can fill."""
+    from agno.agent.agent import Agent
+
+    def owner_tool(q: str, owner: Agent) -> str:
+        return f"{q}|{owner}"
+
+    func = Function.from_callable(owner_tool)
+    assert set((func.parameters or {})["properties"]) == {"q"}
+
+    result = FunctionCall(function=func, arguments={"q": "hi"}).execute()
+    assert result.status == "success"
+    assert result.result == "hi|None"
+
+    injected = _media_agent()
+    func._agent = injected
+    result = FunctionCall(function=func, arguments={"q": "hi"}).execute()
+    assert result.status == "success"
+    assert result.result == f"hi|{injected}"
 
 
 def test_union_naming_agent_beside_an_ordinary_type_stays_model_fillable():
@@ -2178,3 +2243,30 @@ def test_union_of_two_identity_types_falls_through_to_the_one_available():
     # With both, the first named arm still wins.
     func._agent = Agent(id="a", name="A")
     assert FunctionCall(function=func, arguments={"task": "x"}).execute().result == "Agent"
+
+
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 type alias syntax needs 3.12")
+@pytest.mark.parametrize("annotation", ["Two", "Three", "MaybeTwo"])
+def test_chained_type_aliases_are_unwrapped_to_the_end(annotation):
+    """Aliases chain. One unwrap step leaves `type One = RunContext; type Two = One`
+    model-facing, and pydantic then builds a live RunContext from the model's dict
+    -- handing it the caller's identity. Unwrapping repeats to the end."""
+    namespace: Dict[str, Any] = {"RunContext": RunContext}
+    exec("type One = RunContext\ntype Two = One\ntype Three = Two\ntype MaybeTwo = Two | None", namespace)
+    exec(
+        f"def fetch(query: str, ctx: {annotation} = None) -> str:\n"
+        "    return f\"{type(ctx).__name__}:{getattr(ctx, 'user_id', ctx)}\"",
+        namespace,
+    )
+
+    func = Function(name="fetch", entrypoint=namespace["fetch"])
+    func.process_entrypoint()
+    assert set((func.parameters or {})["properties"]) == {"query"}
+
+    func._run_context = RunContext(run_id="r1", session_id="s1", user_id="real-user")
+    result = FunctionCall(
+        function=func,
+        arguments={"query": "q", "ctx": {"run_id": "r9", "session_id": "s9", "user_id": "ATTACKER"}},
+    ).execute()
+    assert result.status == "success"
+    assert result.result == "RunContext:real-user"

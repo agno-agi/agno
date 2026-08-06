@@ -19,11 +19,14 @@ Semantics:
     * Runs execute as the current user: the wielding component's run_context is
       injected and its user_id passed through, so per-user state (memory,
       learning) lands on the human who asked, never on a service default.
-    * Each target keeps one session per calling conversation, keyed on the
-      caller's session, the component type and the component id, so repeat
-      runs continue their context instead of starting cold. A caller with no
-      session of its own (a direct Python call) leaves the session unset, so
-      the component runs on its own default session.
+    * Each target keeps one session per calling conversation: the session id
+      is a digest keyed on the caller's session id, the component type and
+      the component id (see _sub_session_id), so repeat runs continue their
+      context instead of starting cold. A caller with no session of its own
+      (a direct Python call) passes no session id -- and because dispatch
+      runs on a per-call copy or rebuild, each such run starts a session of
+      its own. Construct the component with an explicit session_id to keep
+      continuity across sessionless calls.
     * Code-defined components are dispatched on a fresh deep copy per run, so
       per-run mutation of a shared instance never bleeds across callers.
       DB-loaded components are reconstructed per call already.
@@ -717,12 +720,60 @@ class StudioRunnerTools(Toolkit):
             if len(rebuilt_members) < len(declared_members):
                 missing.append(f"members ({len(declared_members) - len(rebuilt_members)} of {len(declared_members)})")
 
+        nested = self._unresolved_below(component)
+        if nested is not None:
+            missing.append(f"nested component {nested}")
+
         if missing:
             raise ComponentNeedsRegistryError(
                 f"{component_type.capitalize()} '{component_id}' references registry-backed resources this "
                 f"registry does not provide ({'; '.join(missing)}); register them before running it. Reads and "
                 "edits still load the component."
             )
+
+    @staticmethod
+    def _unresolved_below(node: Any, depth: int = 0, seen: Optional[set] = None) -> Optional[str]:
+        """The first nested member or step executor holding a tool with no
+        entrypoint, or None when the graph below is intact.
+
+        A member and a step executor rebuild from configs of their own, so the
+        parent's config check says nothing about them: rehydrate_functions binds
+        an unresolved tool to ``entrypoint=None`` at every depth alike, and an
+        incomplete registry would otherwise run a nested member stripped of its
+        tools. Depth- and cycle-capped, over objects already in memory."""
+        from agno.tools.function import Function
+
+        if node is None or depth > 12:
+            return None
+        seen = set() if seen is None else seen
+        if id(node) in seen:
+            return None
+        seen.add(id(node))
+
+        children: List[Any] = list(getattr(node, "members", None) or [])
+        for step in getattr(node, "steps", None) or []:
+            for attribute in ("agent", "team"):
+                child = getattr(step, attribute, None)
+                if child is not None:
+                    children.append(child)
+            for nested_attribute in ("steps", "else_steps", "choices"):
+                children.extend(getattr(step, nested_attribute, None) or [])
+
+        for child in children:
+            unresolved = sorted(
+                {
+                    str(getattr(tool, "name", None) or "?")
+                    for tool in (getattr(child, "tools", None) or [])
+                    if isinstance(tool, Function) and tool.entrypoint is None
+                }
+            )
+            if unresolved:
+                label = getattr(child, "id", None) or getattr(child, "name", None) or type(child).__name__
+                return f"{label}: tools ({', '.join(unresolved)})"
+            found = StudioRunnerTools._unresolved_below(child, depth + 1, seen)
+            if found is not None:
+                return found
+        return None
 
     def _warn_if_model_rebuilt(self, component: Any, component_type: str, component_id: str) -> None:
         """Log when a dispatched agent's or team's model is a config rebuild.
@@ -1280,10 +1331,12 @@ class StudioRunnerTools(Toolkit):
         which the joined form is not: nested dispatch grows it without limit and
         MySQL caps session_id at 128 characters.
 
-        A caller without a session gets None, so the component runs on its own
-        default session. That is what a direct Python call gets -- run_agent()
-        has no session argument -- and minting a session per call instead would
-        make every call in a script a cold start with no way to opt out."""
+        A caller without a session (a direct Python call -- run_agent() has no
+        session argument) gets None: no session id is passed to the target.
+        Dispatch runs on a per-call copy (code-defined) or a per-call rebuild
+        (DB-loaded), so each such run starts a session of its own. A component
+        constructed with an explicit session_id keeps using it, which is the
+        opt-in for continuity across sessionless calls."""
         if run_context is None or not getattr(run_context, "session_id", None):
             return None
         from hashlib import sha256
