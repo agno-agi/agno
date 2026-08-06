@@ -8,10 +8,12 @@ from typing import (
     Dict,
     List,
     Optional,
+    Union,
     cast,
 )
 
 if TYPE_CHECKING:
+    from agno.run.agent import RunOutput
     from agno.team.team import Team
 
 from agno.db.base import SessionType
@@ -173,6 +175,18 @@ async def aget_session(
     return None
 
 
+def _scrub_member_responses_keeping_paused(run: Union[TeamRunOutput, "RunOutput"]) -> None:
+    """Remove member responses at every nesting level, sparing paused ones: a
+    paused member run is the resume state for continue_run after a session
+    reload, and the save after it completes scrubs it. Completed responses
+    inside a spared paused sub-team run are removed too."""
+    spared = [m for m in (getattr(run, "member_responses", None) or []) if getattr(m, "is_paused", False)]
+    run.member_responses = spared  # type: ignore[union-attr]
+    for member_response in spared:
+        if hasattr(member_response, "member_responses"):
+            _scrub_member_responses_keeping_paused(member_response)
+
+
 def save_session(team: "Team", session: TeamSession) -> None:
     """
     Save the TeamSession to storage
@@ -198,12 +212,7 @@ def save_session(team: "Team", session: TeamSession) -> None:
             for run in session.runs:
                 if hasattr(run, "member_responses"):
                     if not team.store_member_responses:
-                        # Remove member responses, sparing paused ones: a paused
-                        # member run is the resume state for continue_run after a
-                        # session reload, and the save after it completes scrubs it.
-                        run.member_responses = [
-                            m for m in (run.member_responses or []) if getattr(m, "is_paused", False)
-                        ]
+                        _scrub_member_responses_keeping_paused(run)
                     else:
                         # Scrub individual member responses based on their storage flags
                         _scrub_member_responses(team, run.member_responses)
@@ -233,12 +242,7 @@ async def asave_session(team: "Team", session: TeamSession) -> None:
             for run in session.runs:
                 if hasattr(run, "member_responses"):
                     if not team.store_member_responses:
-                        # Remove member responses, sparing paused ones: a paused
-                        # member run is the resume state for continue_run after a
-                        # session reload, and the save after it completes scrubs it.
-                        run.member_responses = [
-                            m for m in (run.member_responses or []) if getattr(m, "is_paused", False)
-                        ]
+                        _scrub_member_responses_keeping_paused(run)
                     else:
                         # Scrub individual member responses based on their storage flags
                         _scrub_member_responses(team, run.member_responses)
