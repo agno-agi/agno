@@ -5353,7 +5353,7 @@ def _backfill_approval_to_requirements(
                     setattr(te, attr, getattr(src, attr))
 
 
-def _reclaim_own_requirements(team: "Team", requirements: List[Any]) -> None:
+def _reclaim_own_requirements(team: "Team", requirements: List[Any], continuing_run_id: Optional[str]) -> None:
     """Clear the member stamp from requirements that belong to this team itself.
 
     When a sub-team's OWN tool pauses, _propagate_member_pause stamps the
@@ -5361,7 +5361,14 @@ def _reclaim_own_requirements(team: "Team", requirements: List[Any]) -> None:
     back down. Once the requirement arrives at the team it names, the stamp's
     job is done: the requirement is this team's own, team-level requirement.
     Without reclaiming it, member routing looks the team's own id up among
-    its members, finds nothing, and refuses the continue."""
+    its members, finds nothing, and refuses the continue.
+
+    A matching id alone does not prove ownership: a member may share the
+    team's id, or its url-safe name (get_member_id falls back to the name).
+    The requirement is the team's own only if it also points at the run being
+    continued at this dispatch level — _propagate_member_pause stamps
+    member_run_id alongside member_agent_id, and for a member's requirement
+    that is the member's run id, never this team's."""
     from agno.utils.team import get_member_id
 
     if not any(getattr(req, "member_agent_id", None) is not None for req in requirements):
@@ -5370,9 +5377,13 @@ def _reclaim_own_requirements(team: "Team", requirements: List[Any]) -> None:
     if not own_id:
         return
     for req in requirements:
-        if getattr(req, "member_agent_id", None) == own_id:
-            req.member_agent_id = None
-            req.member_agent_name = None
+        if getattr(req, "member_agent_id", None) != own_id:
+            continue
+        member_run_id = getattr(req, "member_run_id", None)
+        if member_run_id is not None and member_run_id != continuing_run_id:
+            continue
+        req.member_agent_id = None
+        req.member_agent_name = None
 
 
 def _has_member_requirements(requirements: List[Any]) -> bool:
@@ -6706,7 +6717,7 @@ def continue_run_dispatch(
         _did_snapshot_dispatch = True
 
     # Determine what kind of pause we're continuing from
-    _reclaim_own_requirements(team, run_response.requirements or [])
+    _reclaim_own_requirements(team, run_response.requirements or [], run_response.run_id)
     has_member = _has_member_requirements(run_response.requirements or [])
     has_team_level = _has_team_level_requirements(run_response.requirements or [])
 
@@ -8128,7 +8139,7 @@ async def _acontinue_run(
                     store_events=team.store_events,
                 )
 
-                _reclaim_own_requirements(team, run_response.requirements or [])
+                _reclaim_own_requirements(team, run_response.requirements or [], run_response.run_id)
                 has_member = _has_member_requirements(run_response.requirements or [])
                 has_team_level = _has_team_level_requirements(run_response.requirements or [])
 
@@ -8562,7 +8573,7 @@ async def _acontinue_run_stream(
 
                 await aregister_run(run_response.run_id)  # type: ignore
 
-                _reclaim_own_requirements(team, run_response.requirements or [])
+                _reclaim_own_requirements(team, run_response.requirements or [], run_response.run_id)
                 has_member = _has_member_requirements(run_response.requirements or [])
                 has_team_level = _has_team_level_requirements(run_response.requirements or [])
 

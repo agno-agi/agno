@@ -1632,6 +1632,201 @@ async def test_subteam_own_gated_tool_executes_on_continue_async(tmp_path, mixed
 
 
 # ---------------------------------------------------------------------------
+# A member may share the team's id — or its url-safe name, which get_member_id
+# falls back to. The member stamp on a requirement is then ambiguous, and
+# continue dispatch must still route the member's requirement to the member:
+# reclaiming it as team-level silently drops the confirmed tool.
+# ---------------------------------------------------------------------------
+
+
+def _build_id_collision_team(db: SqliteDb, resuming: bool) -> Team:
+    return Team(
+        name="Emailer Team",
+        id="emailer",
+        model=_ScriptedModel(
+            "m-leader",
+            [("content", "All done.")]
+            if resuming
+            else [
+                ("tool", "delegate_task_to_member", {"member_id": "emailer", "task": "send it"}, "tc-deleg"),
+                ("content", "All done."),
+            ],
+        ),
+        members=[_emailer_agent(db, resuming)],
+        db=db,
+        telemetry=False,
+    )
+
+
+def _build_deep_id_collision_team(db: SqliteDb, resuming: bool) -> Team:
+    inner = Team(
+        name="Comms Team",
+        id="comms-team",
+        model=_ScriptedModel(
+            "m-inner",
+            [("content", "Inner done.")]
+            if resuming
+            else [
+                ("tool", "delegate_task_to_member", {"member_id": "emailer", "task": "send it"}, "tc-inner-deleg"),
+                ("content", "Inner done."),
+            ],
+        ),
+        members=[_emailer_agent(db, resuming)],
+        db=db,
+        telemetry=False,
+    )
+    return Team(
+        name="Org Team",
+        id="emailer",
+        model=_ScriptedModel(
+            "m-outer",
+            [("content", "All done.")]
+            if resuming
+            else [
+                (
+                    "tool",
+                    "delegate_task_to_member",
+                    {"member_id": "comms-team", "task": "handle email"},
+                    "tc-outer-deleg",
+                ),
+                ("content", "All done."),
+            ],
+        ),
+        members=[inner],
+        db=db,
+        telemetry=False,
+    )
+
+
+def _build_name_collision_team(db: SqliteDb, resuming: bool) -> Team:
+    member = Agent(
+        name="Emailer",
+        model=_ScriptedModel(
+            "m-emailer",
+            [("content", "Email sent.")]
+            if resuming
+            else [("tool", "send_email", {"to": "a@example.com"}, "tc-send"), ("content", "Email sent.")],
+        ),
+        tools=[send_email],
+        db=db,
+        telemetry=False,
+    )
+    return Team(
+        name="Emailer",
+        model=_ScriptedModel(
+            "m-leader",
+            [("content", "All done.")]
+            if resuming
+            else [
+                ("tool", "delegate_task_to_member", {"member_id": "emailer", "task": "send it"}, "tc-deleg"),
+                ("content", "All done."),
+            ],
+        ),
+        members=[member],
+        db=db,
+        telemetry=False,
+    )
+
+
+def test_member_sharing_team_id_resumes_fresh_process(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "id_collision.db")
+    session_id = "s-id-collision"
+
+    team1 = _build_id_collision_team(SqliteDb(db_file=db_file), resuming=False)
+    run1 = team1.run("Email a@example.com", session_id=session_id)
+    assert run1.is_paused
+    assert _EXECUTED == []
+
+    team2 = _build_id_collision_team(SqliteDb(db_file=db_file), resuming=True)
+    run2 = team2.continue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+    )
+    assert run2.status == RunStatus.completed
+    assert _EXECUTED == ["a@example.com"]
+
+
+@pytest.mark.asyncio
+async def test_member_sharing_team_id_resumes_fresh_process_async(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "id_collision_async.db")
+    session_id = "s-id-collision-async"
+
+    team1 = _build_id_collision_team(SqliteDb(db_file=db_file), resuming=False)
+    run1 = await team1.arun("Email a@example.com", session_id=session_id)
+    assert run1.is_paused
+    assert _EXECUTED == []
+
+    team2 = _build_id_collision_team(SqliteDb(db_file=db_file), resuming=True)
+    run2 = await team2.acontinue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+    )
+    assert run2.status == RunStatus.completed
+    assert _EXECUTED == ["a@example.com"]
+
+
+def test_member_sharing_team_id_resumes_fresh_process_streaming(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "id_collision_stream.db")
+    session_id = "s-id-collision-stream"
+
+    team1 = _build_id_collision_team(SqliteDb(db_file=db_file), resuming=False)
+    run1 = team1.run("Email a@example.com", session_id=session_id)
+    assert run1.is_paused
+
+    team2 = _build_id_collision_team(SqliteDb(db_file=db_file), resuming=True)
+    final = None
+    for event in team2.continue_run(
+        run_id=run1.run_id,
+        session_id=session_id,
+        requirements=_wire_requirements(run1.requirements),
+        stream=True,
+        yield_run_output=True,
+    ):
+        if isinstance(event, TeamRunOutput):
+            final = event
+    assert final is not None
+    assert final.status == RunStatus.completed
+    assert _EXECUTED == ["a@example.com"]
+
+
+def test_deep_member_sharing_top_team_id_resumes_fresh_process(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "deep_id_collision.db")
+    session_id = "s-deep-id-collision"
+
+    outer1 = _build_deep_id_collision_team(SqliteDb(db_file=db_file), resuming=False)
+    run1 = outer1.run("Email a@example.com", session_id=session_id)
+    assert run1.is_paused
+    assert _EXECUTED == []
+
+    outer2 = _build_deep_id_collision_team(SqliteDb(db_file=db_file), resuming=True)
+    run2 = outer2.continue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+    )
+    assert run2.status == RunStatus.completed
+    assert _EXECUTED == ["a@example.com"]
+
+
+def test_member_sharing_team_name_resumes_fresh_process(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "name_collision.db")
+    session_id = "s-name-collision"
+
+    team1 = _build_name_collision_team(SqliteDb(db_file=db_file), resuming=False)
+    run1 = team1.run("Email a@example.com", session_id=session_id)
+    assert run1.is_paused
+    assert _EXECUTED == []
+
+    team2 = _build_name_collision_team(SqliteDb(db_file=db_file), resuming=True)
+    run2 = team2.continue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+    )
+    assert run2.status == RunStatus.completed
+    assert _EXECUTED == ["a@example.com"]
+
+
+# ---------------------------------------------------------------------------
 # When routing raises, the caller's in-memory run object must keep ALL its
 # requirements (the dispatch temporarily strips team-level ones for routing),
 # so a retry after fixing the team does not lose an approved tool.
