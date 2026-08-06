@@ -79,6 +79,40 @@ def test_missing_user_id_with_per_user_stores_warns_once(caplog) -> None:
     assert "user_profile" in warnings[0].getMessage() and "user_memory" in warnings[0].getMessage()
 
 
+def test_missing_user_id_warning_separates_disabled_tools_from_refusals(caplog) -> None:
+    """The two per-user stores degrade differently and one warning says both.
+
+    user_profile/user_memory return no tools without a user_id; entity memory
+    under namespace="user" still hands the model its four tools and refuses
+    every call, so wording that calls its tools disabled is false.
+    """
+    from agno.learn.config import EntityMemoryConfig
+    from agno.learn.stores.entity_memory import EntityMemoryStore
+
+    db = RecordingLearningDb()
+    machine = LearningMachine(  # type: ignore[arg-type]
+        db=db,
+        user_profile=True,
+        entity_memory=EntityMemoryStore(config=EntityMemoryConfig(db=db, namespace="user")),  # type: ignore[arg-type]
+    )
+    with caplog.at_level(logging.WARNING):
+        tools = machine.get_tools(user_id=None)
+        machine.get_tools(user_id=None)
+
+    warnings = [r.getMessage() for r in caplog.records if "no user_id" in r.getMessage()]
+    assert len(warnings) == 1, warnings
+    message = warnings[0]
+    assert "the tools and capture of user_profile are disabled" in message
+    assert 'entity_memory (namespace="user") keeps its tools exposed but refuses every call' in message
+
+    # The claim the message makes has to hold: the entity tools are still there.
+    tool_names = {getattr(t, "__name__", "") for t in tools}
+    assert {"remember_about", "link_entities", "search_entities", "forget"} <= tool_names
+    assert "nothing was recorded" in tools[[t.__name__ for t in tools].index("remember_about")](
+        entity="Acme", entity_type="company"
+    )
+
+
 def test_no_missing_user_id_warning_when_user_present_or_no_per_user_stores(caplog) -> None:
     machine = LearningMachine(db=RecordingLearningDb(), user_memory=True)  # type: ignore[arg-type]
     with caplog.at_level(logging.WARNING):

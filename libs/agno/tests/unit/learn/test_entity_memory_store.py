@@ -26,12 +26,15 @@ class RecordingLearningDb:
         entity_id = kwargs.get("entity_id")
         entity_type = kwargs.get("entity_type")
         namespace = kwargs.get("namespace")
+        user_id = kwargs.get("user_id")
         for row in self.rows.values():
             if (
                 row.get("learning_type") == learning_type
                 and row.get("entity_id") == entity_id
                 and row.get("entity_type") == entity_type
                 and row.get("namespace") == namespace
+                # None means unfiltered, like the real adapters' conditional WHERE.
+                and (user_id is None or row.get("user_id") == user_id)
             ):
                 return row
         return None
@@ -48,6 +51,7 @@ class RecordingLearningDb:
         entity_id = kwargs.get("entity_id")
         entity_type = kwargs.get("entity_type")
         namespace = kwargs.get("namespace")
+        user_id = kwargs.get("user_id")
         limit = kwargs.get("limit")
         rows = [
             row
@@ -56,6 +60,7 @@ class RecordingLearningDb:
             and (entity_id is None or row.get("entity_id") == entity_id)
             and (entity_type is None or row.get("entity_type") == entity_type)
             and (namespace is None or row.get("namespace") == namespace)
+            and (user_id is None or row.get("user_id") == user_id)
         ]
         rows.sort(key=lambda r: r.get("updated_at", 0), reverse=True)
         if limit is not None:
@@ -65,6 +70,9 @@ class RecordingLearningDb:
     def delete_learning(self, id: str) -> bool:
         return self.rows.pop(id, None) is not None
 
+    def get_learning_by_id(self, id: str) -> Optional[Dict[str, Any]]:
+        return self.rows.get(id)
+
     def search_learnings(self, query: str, **kwargs: Any) -> List[Dict[str, Any]]:
         import json
 
@@ -73,7 +81,6 @@ class RecordingLearningDb:
         kwargs.pop("session_id", None)
         kwargs.pop("agent_id", None)
         kwargs.pop("team_id", None)
-        kwargs.pop("user_id", None)
         candidates = self.get_learnings(**kwargs)
         variants = {query.lower(), query.lower().replace(" ", "_"), query.lower().replace("_", " ")}
         rows = [row for row in candidates if any(v in json.dumps(row.get("content", {})).lower() for v in variants)]

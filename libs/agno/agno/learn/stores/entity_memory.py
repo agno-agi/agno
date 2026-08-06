@@ -36,13 +36,13 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from os import getenv
 from textwrap import dedent
-from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tuple, Union, cast
+from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tuple, Union
 from weakref import WeakKeyDictionary
 
 from agno.learn.config import EntityMemoryConfig, LearningMode
 from agno.learn.schemas import EntityMemory
 from agno.learn.stores.protocol import LearningStore
-from agno.learn.utils import build_learning_id, values_match_query
+from agno.learn.utils import _parse_json, build_learning_id, legacy_entity_learning_id, values_match_query
 from agno.utils.log import (
     log_debug,
     log_info,
@@ -147,10 +147,11 @@ def _message_terms(message: str, max_terms: int = 8) -> List[str]:
     return terms
 
 
-# The DB key is entity_{namespace}_{entity_type}_{entity_id}, so type drift
-# splits entities exactly like name drift: "person" on Monday and "people" on
-# Friday is two Sarahs. Fold case and singularize against this canonical list;
-# anything else passes through lowercased.
+# The DB key is entity_{namespace}_{entity_type}_{entity_id} (with a digest of
+# the user id after "user" for that namespace), so type drift splits entities
+# exactly like name drift: "person" on Monday and "people" on Friday is two
+# Sarahs. Fold case and singularize against this canonical list; anything else
+# passes through lowercased.
 _CANONICAL_ENTITY_TYPES = frozenset({"person", "project", "company", "system", "product"})
 # The placeholder link_entities mints for an endpoint it has never been told
 # about; it is the one type that merges into a real one.
@@ -169,6 +170,98 @@ def _normalize_entity_type(entity_type: Optional[str]) -> Optional[str]:
     if normalized.endswith("s") and normalized[:-1] in _CANONICAL_ENTITY_TYPES:
         return normalized[:-1]
     return normalized
+
+
+def _fact_key(fact: Dict[str, Any]) -> Any:
+    return fact.get("id") or fact.get("content")
+
+
+def _event_key(event: Dict[str, Any]) -> Any:
+    return (event.get("content"), event.get("date"))
+
+
+def _rel_key(rel: Dict[str, Any]) -> Any:
+    # entity_type is part of edge identity: project/Harbor and company/Harbor
+    # are two different links.
+    return (rel.get("entity_id"), rel.get("entity_type"), rel.get("relation"), rel.get("direction"))
+
+
+def _collection_keys(items: Any, key: Callable[[Dict[str, Any]], Any]) -> Optional[set]:
+    """Identity keys of a content collection, or None if any entry is not a
+    dict - an entry this code cannot key cannot be proven carried anywhere."""
+    keys = set()
+    for item in items or []:
+        if not isinstance(item, dict):
+            return None
+        keys.add(key(item))
+    return keys
+
+
+def _legacy_content_subsumed(legacy_content: Dict[str, Any], entity: "EntityMemory") -> bool:
+    """Whether EVERYTHING in a legacy row's content is carried by the entity
+    about to replace it. This gates a hard delete, so every field counts:
+    facts/events/relationships by identity key, plus description, the
+    properties map (which carries the note pointer), the name and the aliases.
+
+    Facts compare by id (they are retired in place, never removed, so ids
+    persist through a merge); events by content+date (add_event is idempotent on
+    that pair); relationships by their endpoint triple plus entity type. A
+    collection holding a non-dict entry fails the check outright: an entry
+    that cannot be keyed cannot be proven carried.
+    """
+    saved = entity.to_dict() or {}
+
+    for field_name, key_fn in (("facts", _fact_key), ("events", _event_key), ("relationships", _rel_key)):
+        legacy_keys = _collection_keys(legacy_content.get(field_name), key_fn)
+        saved_keys = _collection_keys(saved.get(field_name), key_fn)
+        if legacy_keys is None or saved_keys is None or not legacy_keys <= saved_keys:
+            return False
+
+    legacy_description = legacy_content.get("description")
+    if legacy_description and legacy_description != saved.get("description"):
+        return False
+
+    legacy_properties = legacy_content.get("properties") or {}
+    saved_properties = saved.get("properties") or {}
+    if any(saved_properties.get(k) != v for k, v in legacy_properties.items()):
+        return False
+
+    saved_names = {_normalize_name(str(n)) for n in [saved.get("name"), *(saved.get("aliases") or [])] if n}
+    legacy_names = {
+        _normalize_name(str(n)) for n in [legacy_content.get("name"), *(legacy_content.get("aliases") or [])] if n
+    }
+    return legacy_names <= saved_names
+
+
+def _merge_legacy_into(entity: "EntityMemory", legacy: "EntityMemory") -> None:
+    """Union a gated legacy row's content into the user-scoped entity, in place.
+
+    The user-scoped side wins every conflict; the legacy side only fills gaps.
+    Collections union by the same identity keys the subsumption check uses, so
+    a merge followed by a save always subsumes what it read.
+    """
+    for field_name, key_fn in (("facts", _fact_key), ("events", _event_key), ("relationships", _rel_key)):
+        base_items = list(getattr(entity, field_name, None) or [])
+        base_keys = {key_fn(i) for i in base_items if isinstance(i, dict)}
+        for item in getattr(legacy, field_name, None) or []:
+            if isinstance(item, dict) and key_fn(item) not in base_keys:
+                base_items.append(item)
+                base_keys.add(key_fn(item))
+        setattr(entity, field_name, base_items)
+
+    if not getattr(entity, "description", None) and getattr(legacy, "description", None):
+        entity.description = legacy.description
+    entity.properties = {**(getattr(legacy, "properties", None) or {}), **(getattr(entity, "properties", None) or {})}
+
+    known = {_normalize_name(str(n)) for n in [entity.name, *(getattr(entity, "aliases", None) or [])] if n}
+    for candidate in [getattr(legacy, "name", None), *(getattr(legacy, "aliases", None) or [])]:
+        if candidate and _normalize_name(str(candidate)) not in known:
+            entity.aliases = [*(getattr(entity, "aliases", None) or []), str(candidate)]
+            known.add(_normalize_name(str(candidate)))
+
+    legacy_created = getattr(legacy, "created_at", None)
+    if legacy_created and (not entity.created_at or legacy_created < entity.created_at):
+        entity.created_at = legacy_created
 
 
 def _blank_to_none(value: Optional[str]) -> Optional[str]:
@@ -388,6 +481,15 @@ class EntityMemoryStore(LearningStore):
     # provider call stay outside it. Keyed weakly by event loop - see
     # _write_lock.
     _async_write_locks: Any = field(default_factory=WeakKeyDictionary, init=False)
+    # Pre-user-scoped-key row bookkeeping (see _read_user_row). Snapshots hold
+    # the legacy content a write's resolution read merged, keyed by legacy id,
+    # so the save path can retire exactly what it consumed. The absent set
+    # skips re-probing ids already seen missing or retired this process; the
+    # warned set bounds the cannot-absorb warning to once per row.
+    _legacy_snapshots: Dict[str, Any] = field(default_factory=dict, init=False)
+    _legacy_absent: Any = field(default_factory=set, init=False)
+    _legacy_warned: Any = field(default_factory=set, init=False)
+    _legacy_probe_supported: Optional[bool] = field(default=None, init=False)
 
     def __post_init__(self):
         self._schema = self.config.schema or EntityMemory
@@ -1132,6 +1234,22 @@ class EntityMemoryStore(LearningStore):
                 self.db.delete_learning(id=stale_row_key)
             except Exception as e:
                 log_warning(f"EntityMemoryStore.remember_about: failed to delete stale row {stale_row_key}: {e}")
+            if effective_namespace == "user" and user_id:
+                # A placeholder minted before the "user" namespace embedded the
+                # user carries the user-less key, which the stale delete above
+                # (new key shape, old type) never names.
+                db_sync = self._sync_db()
+                if db_sync is not None:
+                    self._drop_legacy_user_row(
+                        db_sync,
+                        entity_obj.entity_id,
+                        _UNKNOWN_ENTITY_TYPE,
+                        user_id,
+                        merged_into=entity_obj,
+                        saved_row_id=self._build_entity_db_id(
+                            entity_obj.entity_id, entity_obj.entity_type, effective_namespace, user_id=user_id
+                        ),
+                    )
             self._repair_far_edge_types(
                 entity_obj=entity_obj,
                 user_id=user_id,
@@ -1261,6 +1379,30 @@ class EntityMemoryStore(LearningStore):
                     self.db.delete_learning(id=stale_row_key)
             except Exception as e:
                 log_warning(f"EntityMemoryStore.aremember_about: failed to delete stale row {stale_row_key}: {e}")
+            if effective_namespace == "user" and user_id:
+                # See the sync twin: a pre-fix placeholder carries the
+                # user-less key the stale delete above never names.
+                saved_row_id = self._build_entity_db_id(
+                    entity_obj.entity_id, entity_obj.entity_type, effective_namespace, user_id=user_id
+                )
+                if isinstance(self.db, AsyncBaseDb):
+                    await self._adrop_legacy_user_row(
+                        self.db,
+                        entity_obj.entity_id,
+                        _UNKNOWN_ENTITY_TYPE,
+                        user_id,
+                        merged_into=entity_obj,
+                        saved_row_id=saved_row_id,
+                    )
+                else:
+                    self._drop_legacy_user_row(
+                        self.db,
+                        entity_obj.entity_id,
+                        _UNKNOWN_ENTITY_TYPE,
+                        user_id,
+                        merged_into=entity_obj,
+                        saved_row_id=saved_row_id,
+                    )
             await self._arepair_far_edge_types(
                 entity_obj=entity_obj,
                 user_id=user_id,
@@ -1602,7 +1744,9 @@ class EntityMemoryStore(LearningStore):
             # A minimal entity created by link_entities acquires its real type;
             # the row key embeds the type, so the old row must be replaced.
             if entity_obj.entity_type == _UNKNOWN_ENTITY_TYPE and normalized_type != _UNKNOWN_ENTITY_TYPE:
-                stale_row_key = self._build_entity_db_id(entity_obj.entity_id, entity_obj.entity_type, namespace)
+                stale_row_key = self._build_entity_db_id(
+                    entity_obj.entity_id, entity_obj.entity_type, namespace, user_id=user_id
+                )
                 entity_obj.entity_type = normalized_type
 
             # Remember the name variant this write arrived under, bounded so the
@@ -2078,7 +2222,9 @@ class EntityMemoryStore(LearningStore):
             if not saved:
                 return f"Failed to update {entity_obj.entity_type}/{entity_obj.entity_id}."
             if detached is not None:
-                self._detach_far_edge(entity_obj=entity_obj, edge=detached)
+                self._detach_far_edge(
+                    entity_obj=entity_obj, edge=detached, user_id=user_id, namespace=effective_namespace
+                )
             self.entity_updated = True
         return result
 
@@ -2123,7 +2269,9 @@ class EntityMemoryStore(LearningStore):
                 if not saved:
                     return f"Failed to update {entity_obj.entity_type}/{entity_obj.entity_id}."
                 if detached is not None:
-                    await self._adetach_far_edge(entity_obj=entity_obj, edge=detached)
+                    await self._adetach_far_edge(
+                        entity_obj=entity_obj, edge=detached, user_id=user_id, namespace=effective_namespace
+                    )
                 self.entity_updated = True
         return result
 
@@ -2454,17 +2602,22 @@ class EntityMemoryStore(LearningStore):
             return None
         return kept
 
-    def _detach_far_edge(self, entity_obj: EntityMemory, edge: Dict[str, Any]) -> None:
+    def _detach_far_edge(
+        self, entity_obj: EntityMemory, edge: Dict[str, Any], user_id: Optional[str], namespace: str
+    ) -> None:
         """Drop the reciprocal edge, so the graph does not go one-sided.
 
         Best effort: a far end that cannot be loaded or saved leaves a dangling
         incoming edge, which renders as a name and misleads nobody.
+
+        user_id and namespace are the run's values: under the "user" namespace
+        they are part of the far row's key, and a legacy row's content-recorded
+        user can differ from the row's owner.
         """
-        namespace = entity_obj.namespace or self.config.namespace
         far = self.get(
             entity_id=str(edge.get("entity_id", "")),
             entity_type=str(edge.get("entity_type", "")),
-            user_id=entity_obj.user_id,
+            user_id=user_id,
             namespace=namespace,
         )
         if far is None:
@@ -2476,23 +2629,24 @@ class EntityMemoryStore(LearningStore):
         far.updated_at = _utc_now_iso()
         self._save_entity(
             entity=far,
-            user_id=entity_obj.user_id,
+            user_id=user_id,
             agent_id=entity_obj.agent_id,
             team_id=entity_obj.team_id,
             namespace=namespace,
         )
 
-    async def _adetach_far_edge(self, entity_obj: EntityMemory, edge: Dict[str, Any]) -> None:
+    async def _adetach_far_edge(
+        self, entity_obj: EntityMemory, edge: Dict[str, Any], user_id: Optional[str], namespace: str
+    ) -> None:
         """Async version of _detach_far_edge.
 
         The sync helpers no-op against an AsyncBaseDb, which left the far end
         holding an edge the near end had already dropped.
         """
-        namespace = entity_obj.namespace or self.config.namespace
         far = await self.aget(
             entity_id=str(edge.get("entity_id", "")),
             entity_type=str(edge.get("entity_type", "")),
-            user_id=entity_obj.user_id,
+            user_id=user_id,
             namespace=namespace,
         )
         if far is None:
@@ -2504,7 +2658,7 @@ class EntityMemoryStore(LearningStore):
         far.updated_at = _utc_now_iso()
         await self._asave_entity(
             entity=far,
-            user_id=entity_obj.user_id,
+            user_id=user_id,
             agent_id=entity_obj.agent_id,
             team_id=entity_obj.team_id,
             namespace=namespace,
@@ -2527,7 +2681,9 @@ class EntityMemoryStore(LearningStore):
         normalized_type = _normalize_entity_type(entity_type)
 
         if normalized_type:
-            found = self.get(entity_id=slug, entity_type=normalized_type, user_id=user_id, namespace=namespace)
+            found = self._get_for_write(
+                entity_id=slug, entity_type=normalized_type, user_id=user_id, namespace=namespace
+            )
             if found is not None:
                 return found
 
@@ -2535,10 +2691,28 @@ class EntityMemoryStore(LearningStore):
         for row in rows:
             parsed = self.schema.from_dict(row.get("content"))
             if parsed is not None and _types_can_merge(normalized_type, getattr(parsed, "entity_type", None)):
-                return parsed
+                return self._canonical_for_write(parsed, user_id=user_id, namespace=namespace)
 
         candidates = self._name_candidates(entity=entity, user_id=user_id, namespace=namespace)
-        return self._match_name_or_alias(candidates=candidates, entity=entity, entity_type=normalized_type)
+        matched = self._match_name_or_alias(candidates=candidates, entity=entity, entity_type=normalized_type)
+        if matched is None:
+            return None
+        return self._canonical_for_write(matched, user_id=user_id, namespace=namespace)
+
+    def _canonical_for_write(self, parsed: EntityMemory, user_id: Optional[str], namespace: str) -> EntityMemory:
+        """Re-read a column-matched candidate through the keyed pair read.
+
+        A column-filtered match under the "user" namespace may have parsed the
+        legacy row while a user-scoped row also exists; mutating and saving it
+        would overwrite the user-scoped row's newer content. The keyed re-read
+        returns the merged pair instead.
+        """
+        if namespace != "user" or not user_id:
+            return parsed
+        canonical = self._get_for_write(
+            entity_id=parsed.entity_id, entity_type=parsed.entity_type, user_id=user_id, namespace=namespace
+        )
+        return canonical if canonical is not None else parsed
 
     async def _aresolve(
         self,
@@ -2552,7 +2726,9 @@ class EntityMemoryStore(LearningStore):
         normalized_type = _normalize_entity_type(entity_type)
 
         if normalized_type:
-            found = await self.aget(entity_id=slug, entity_type=normalized_type, user_id=user_id, namespace=namespace)
+            found = await self._aget_for_write(
+                entity_id=slug, entity_type=normalized_type, user_id=user_id, namespace=namespace
+            )
             if found is not None:
                 return found
 
@@ -2560,10 +2736,22 @@ class EntityMemoryStore(LearningStore):
         for row in rows:
             parsed = self.schema.from_dict(row.get("content"))
             if parsed is not None and _types_can_merge(normalized_type, getattr(parsed, "entity_type", None)):
-                return parsed
+                return await self._acanonical_for_write(parsed, user_id=user_id, namespace=namespace)
 
         candidates = await self._aname_candidates(entity=entity, user_id=user_id, namespace=namespace)
-        return self._match_name_or_alias(candidates=candidates, entity=entity, entity_type=normalized_type)
+        matched = self._match_name_or_alias(candidates=candidates, entity=entity, entity_type=normalized_type)
+        if matched is None:
+            return None
+        return await self._acanonical_for_write(matched, user_id=user_id, namespace=namespace)
+
+    async def _acanonical_for_write(self, parsed: EntityMemory, user_id: Optional[str], namespace: str) -> EntityMemory:
+        """Async version of _canonical_for_write."""
+        if namespace != "user" or not user_id:
+            return parsed
+        canonical = await self._aget_for_write(
+            entity_id=parsed.entity_id, entity_type=parsed.entity_type, user_id=user_id, namespace=namespace
+        )
+        return canonical if canonical is not None else parsed
 
     def _write_lock(self) -> Any:
         """The write lock for the running event loop.
@@ -2626,7 +2814,7 @@ class EntityMemoryStore(LearningStore):
                     if row_id not in seen_ids:
                         seen_ids.add(row_id)
                         rows.append(row)
-            return rows
+            return self._filter_user_ns_rows(rows, user_id=user_id, namespace=namespace)
         except NotImplementedError:
             self._log_degraded_search_once()
             return self._get_recent_rows(user_id=user_id, namespace=namespace, limit=50)
@@ -2664,7 +2852,7 @@ class EntityMemoryStore(LearningStore):
                     if row_id not in seen_ids:
                         seen_ids.add(row_id)
                         rows.append(row)
-            return rows
+            return self._filter_user_ns_rows(rows, user_id=user_id, namespace=namespace)
         except NotImplementedError:
             self._log_degraded_search_once()
             return await self._aget_recent_rows(user_id=user_id, namespace=namespace, limit=50)
@@ -2687,7 +2875,7 @@ class EntityMemoryStore(LearningStore):
                 user_id=user_id if namespace == "user" else None,
                 limit=limit,
             )
-            return rows or []
+            return self._filter_user_ns_rows(rows or [], user_id=user_id, namespace=namespace)
         except Exception as e:
             log_debug(f"EntityMemoryStore._get_recent_rows failed: {e}")
             return []
@@ -2708,7 +2896,7 @@ class EntityMemoryStore(LearningStore):
                     user_id=user_id if namespace == "user" else None,
                     limit=limit,
                 )
-            return rows or []
+            return self._filter_user_ns_rows(rows or [], user_id=user_id, namespace=namespace)
         except Exception as e:
             log_debug(f"EntityMemoryStore._aget_recent_rows failed: {e}")
             return []
@@ -2809,7 +2997,7 @@ class EntityMemoryStore(LearningStore):
                 namespace=namespace,
                 user_id=user_id if namespace == "user" else None,
             )
-            return self._order_rows(rows or [])
+            return self._filter_user_ns_rows(self._order_rows(rows or []), user_id=user_id, namespace=namespace)
         except Exception as e:
             log_debug(f"EntityMemoryStore._get_rows_by_entity_id failed: {e}")
             return []
@@ -2835,7 +3023,7 @@ class EntityMemoryStore(LearningStore):
                     namespace=namespace,
                     user_id=user_id if namespace == "user" else None,
                 )
-            return self._order_rows(rows or [])
+            return self._filter_user_ns_rows(self._order_rows(rows or []), user_id=user_id, namespace=namespace)
         except Exception as e:
             log_debug(f"EntityMemoryStore._aget_rows_by_entity_id failed: {e}")
             return []
@@ -2851,6 +3039,188 @@ class EntityMemoryStore(LearningStore):
             rows,
             key=lambda r: (-(r.get("updated_at") or r.get("created_at") or 0), str(r.get("learning_id") or "")),
         )
+
+    # =========================================================================
+    # Deterministic "user"-namespace reads over the legacy/user-scoped row pair
+    # =========================================================================
+
+    def _gate_legacy_row(
+        self, row: Optional[Dict[str, Any]], entity_id: str, entity_type: str, user_id: str
+    ) -> Tuple[str, Optional[EntityMemory]]:
+        """Classify a candidate legacy row for this user's entity.
+
+        "foreign": not this user's legacy row for this entity at all (absent,
+        wrong columns, or another owner) - leave it alone silently. "blocked":
+        it is, but its content cannot be safely absorbed: it does not parse,
+        it records another user (the pre-fix cross-user collision - migration
+        territory, never merged, never deleted, and excluded from this user's
+        reads), or it holds entries this code cannot key. "clean": parseable,
+        provably this user's; returned parsed.
+        """
+        if row is None or row.get("learning_type") != self.learning_type:
+            return "foreign", None
+        # The digest segment of a user-scoped id is indistinguishable from an
+        # entity_type segment, so a computed legacy id can name a user-scoped
+        # row. The columns disambiguate.
+        if row.get("namespace") != "user" or row.get("entity_id") != entity_id or row.get("entity_type") != entity_type:
+            return "foreign", None
+        if row.get("user_id") != user_id:
+            return "foreign", None
+        content = _parse_json(row.get("content"))
+        if content is None:
+            return "blocked", None
+        content_user = content.get("user_id")
+        if content_user is not None and content_user != user_id:
+            return "blocked", None
+        parsed = self.schema.from_dict(content)
+        if parsed is None:
+            return "blocked", None
+        for items in (parsed.facts, parsed.events, parsed.relationships):
+            if any(not isinstance(item, dict) for item in items or []):
+                return "blocked", None
+        return "clean", parsed
+
+    def _warn_legacy_blocked_once(self, legacy_id: str) -> None:
+        if legacy_id in self._legacy_warned:
+            return
+        self._legacy_warned.add(legacy_id)
+        log_warning(
+            f"EntityMemoryStore: pre-fix row {legacy_id} cannot be safely absorbed (unparseable, "
+            f"or it records another user's data) and is excluded from this user's reads; "
+            f"run agno.learn.migrations.rekey_user_entity_learnings to resolve it"
+        )
+
+    def _read_user_row(
+        self,
+        db: "BaseDb",
+        entity_id: str,
+        entity_type: str,
+        user_id: str,
+        record_snapshot: bool,
+    ) -> Tuple[Optional[EntityMemory], bool]:
+        """Read a "user"-namespace entity deterministically: both candidate row
+        ids by primary key, with the gated legacy row merged into the
+        user-scoped one. Ordering never depends on the backend's unordered
+        column-filtered fetch, which is what made coexisting rows lose writes.
+
+        record_snapshot is set on write-path reads: the merged legacy content
+        is snapshotted so the save path retires exactly the row it consumed
+        (including after a forget, whose removals make subsumption fail on
+        purpose).
+
+        Returns (entity, True) when the by-id surface answered, or (None,
+        False) when the backend has no get_learning_by_id - the caller falls
+        back to the column-filtered read.
+        """
+        if self._legacy_probe_supported is False:
+            return None, False
+        row_id = self._build_entity_db_id(entity_id, entity_type, "user", user_id=user_id)
+        if row_id is None:
+            return None, True
+        legacy_id = legacy_entity_learning_id(entity_id, entity_type, "user")
+        try:
+            row = db.get_learning_by_id(row_id)
+            legacy_row = None if legacy_id in self._legacy_absent else db.get_learning_by_id(legacy_id)
+        except NotImplementedError:
+            self._note_legacy_probe_unsupported()
+            return None, False
+        except Exception as e:
+            log_debug(f"EntityMemoryStore._read_user_row failed for {entity_type}/{entity_id}: {e}")
+            return None, True
+        self._legacy_probe_supported = True
+        return self._combine_user_rows(
+            row, legacy_row, entity_id, entity_type, user_id, legacy_id, record_snapshot
+        ), True
+
+    async def _aread_user_row(
+        self,
+        entity_id: str,
+        entity_type: str,
+        user_id: str,
+        record_snapshot: bool,
+    ) -> Tuple[Optional[EntityMemory], bool]:
+        """Async version of _read_user_row (handles a sync db behind the async API)."""
+        if self._legacy_probe_supported is False:
+            return None, False
+        row_id = self._build_entity_db_id(entity_id, entity_type, "user", user_id=user_id)
+        if row_id is None:
+            return None, True
+        legacy_id = legacy_entity_learning_id(entity_id, entity_type, "user")
+        try:
+            if isinstance(self.db, AsyncBaseDb):
+                row = await self.db.get_learning_by_id(row_id)
+                legacy_row = None if legacy_id in self._legacy_absent else await self.db.get_learning_by_id(legacy_id)
+            else:
+                row = self.db.get_learning_by_id(row_id)  # type: ignore[union-attr]
+                legacy_row = None if legacy_id in self._legacy_absent else self.db.get_learning_by_id(legacy_id)  # type: ignore[union-attr]
+        except NotImplementedError:
+            self._note_legacy_probe_unsupported()
+            return None, False
+        except Exception as e:
+            log_debug(f"EntityMemoryStore._aread_user_row failed for {entity_type}/{entity_id}: {e}")
+            return None, True
+        self._legacy_probe_supported = True
+        return self._combine_user_rows(
+            row, legacy_row, entity_id, entity_type, user_id, legacy_id, record_snapshot
+        ), True
+
+    def _combine_user_rows(
+        self,
+        row: Optional[Dict[str, Any]],
+        legacy_row: Optional[Dict[str, Any]],
+        entity_id: str,
+        entity_type: str,
+        user_id: str,
+        legacy_id: str,
+        record_snapshot: bool,
+    ) -> Optional[EntityMemory]:
+        entity = self.schema.from_dict(row.get("content")) if row and row.get("content") else None
+        legacy_entity: Optional[EntityMemory] = None
+        if legacy_row is None:
+            self._legacy_absent.add(legacy_id)
+        else:
+            gate, parsed = self._gate_legacy_row(legacy_row, entity_id, entity_type, user_id)
+            if gate == "clean":
+                legacy_entity = parsed
+                if record_snapshot:
+                    self._legacy_snapshots[legacy_id] = _parse_json(legacy_row.get("content"))
+            elif gate == "blocked":
+                self._warn_legacy_blocked_once(legacy_id)
+        if entity is not None and legacy_entity is not None:
+            _merge_legacy_into(entity, legacy_entity)
+            return entity
+        return entity if entity is not None else legacy_entity
+
+    def _note_legacy_probe_unsupported(self) -> None:
+        if self._legacy_probe_supported is None:
+            log_debug(
+                "EntityMemoryStore: this db backend has no get_learning_by_id; pre-fix "
+                "namespace='user' rows cannot be detected or retired on this backend"
+            )
+        self._legacy_probe_supported = False
+
+    def _get_for_write(
+        self, entity_id: str, entity_type: str, user_id: Optional[str], namespace: str
+    ) -> Optional[EntityMemory]:
+        """Keyed read on the write path: deterministic pair read under the
+        "user" namespace (with the merge snapshot recorded), plain get elsewhere."""
+        if namespace == "user" and user_id:
+            db = self._sync_db()
+            if db is not None:
+                entity, supported = self._read_user_row(db, entity_id, entity_type, user_id, record_snapshot=True)
+                if supported:
+                    return entity
+        return self.get(entity_id=entity_id, entity_type=entity_type, user_id=user_id, namespace=namespace)
+
+    async def _aget_for_write(
+        self, entity_id: str, entity_type: str, user_id: Optional[str], namespace: str
+    ) -> Optional[EntityMemory]:
+        """Async version of _get_for_write."""
+        if namespace == "user" and user_id and self.db is not None:
+            entity, supported = await self._aread_user_row(entity_id, entity_type, user_id, record_snapshot=True)
+            if supported:
+                return entity
+        return await self.aget(entity_id=entity_id, entity_type=entity_type, user_id=user_id, namespace=namespace)
 
     # =========================================================================
     # Data API: get / list / search / delete
@@ -2881,6 +3251,14 @@ class EntityMemoryStore(LearningStore):
             return None
 
         effective_namespace = namespace or self.config.namespace
+        if effective_namespace == "user" and not user_id:
+            log_warning("EntityMemoryStore.get: namespace='user' requires user_id")
+            return None
+
+        if effective_namespace == "user" and user_id:
+            entity, supported = self._read_user_row(db, entity_id, entity_type, user_id, record_snapshot=False)
+            if supported:
+                return entity
 
         try:
             result = db.get_learning(
@@ -2892,6 +3270,8 @@ class EntityMemoryStore(LearningStore):
             )
 
             if result and result.get("content"):  # type: ignore[union-attr]
+                if effective_namespace == "user" and user_id:
+                    return self._parse_column_read(result, entity_id, entity_type, user_id)
                 return self.schema.from_dict(result["content"])  # type: ignore[index]
 
             return None
@@ -2899,6 +3279,22 @@ class EntityMemoryStore(LearningStore):
         except Exception as e:
             log_debug(f"EntityMemoryStore.get failed for {entity_type}/{entity_id}: {e}")
             return None
+
+    def _parse_column_read(
+        self, result: Dict[str, Any], entity_id: str, entity_type: str, user_id: str
+    ) -> Optional[EntityMemory]:
+        """Parse a column-filtered single-row read under the "user" namespace.
+
+        Only reached when the backend has no get_learning_by_id. A legacy-keyed
+        row still goes through the gate so a pre-fix cross-user collision is
+        never handed to this user's reads.
+        """
+        if result.get("learning_id") == legacy_entity_learning_id(entity_id, entity_type, "user"):
+            gate, parsed = self._gate_legacy_row(result, entity_id, entity_type, user_id)
+            if gate == "blocked":
+                self._warn_legacy_blocked_once(str(result.get("learning_id")))
+            return parsed if gate == "clean" else None
+        return self.schema.from_dict(result.get("content"))
 
     async def aget(
         self,
@@ -2912,6 +3308,9 @@ class EntityMemoryStore(LearningStore):
             return None
 
         effective_namespace = namespace or self.config.namespace
+        if effective_namespace == "user" and not user_id:
+            log_warning("EntityMemoryStore.aget: namespace='user' requires user_id")
+            return None
 
         try:
             if isinstance(self.db, AsyncBaseDb):
@@ -2969,7 +3368,9 @@ class EntityMemoryStore(LearningStore):
                     limit=fetch,
                 )
                 rows = results or []
-                entities = self._parse_rows(rows, limit=limit, include_archived=include_archived)
+                entities = self._parse_rows(
+                    rows, limit=limit, include_archived=include_archived, user_id=user_id, namespace=effective_namespace
+                )
                 if len(entities) >= limit or len(rows) < fetch:
                     return entities
             return entities
@@ -3014,7 +3415,9 @@ class EntityMemoryStore(LearningStore):
                         limit=fetch,
                     )
                 rows = results or []
-                entities = self._parse_rows(rows, limit=limit, include_archived=include_archived)
+                entities = self._parse_rows(
+                    rows, limit=limit, include_archived=include_archived, user_id=user_id, namespace=effective_namespace
+                )
                 if len(entities) >= limit or len(rows) < fetch:
                     return entities
             return entities
@@ -3088,7 +3491,15 @@ class EntityMemoryStore(LearningStore):
             merged.append(entity)
         return merged[:limit]
 
-    def _parse_rows(self, rows: List[Dict[str, Any]], limit: int, include_archived: bool) -> List[EntityMemory]:
+    def _parse_rows(
+        self,
+        rows: List[Dict[str, Any]],
+        limit: int,
+        include_archived: bool,
+        user_id: Optional[str] = None,
+        namespace: Optional[str] = None,
+    ) -> List[EntityMemory]:
+        rows = self._filter_user_ns_rows(rows, user_id=user_id, namespace=namespace)
         entities: List[EntityMemory] = []
         for row in rows:
             entity = self.schema.from_dict(row.get("content"))
@@ -3100,6 +3511,38 @@ class EntityMemoryStore(LearningStore):
             if len(entities) >= limit:
                 break
         return entities
+
+    def _filter_user_ns_rows(
+        self, rows: List[Dict[str, Any]], user_id: Optional[str], namespace: Optional[str]
+    ) -> List[Dict[str, Any]]:
+        """Drop "user"-namespace rows a multi-row read must not surface: a
+        legacy-keyed row that fails the gate (a pre-fix cross-user collision
+        must not reach this user's listings, searches or prompt context), and
+        a legacy-keyed row shadowed by its user-scoped replacement (one entity,
+        one directory entry)."""
+        if namespace != "user" or not user_id:
+            return rows
+        scoped_pairs = set()
+        for row in rows:
+            entity_id, entity_type = row.get("entity_id"), row.get("entity_type")
+            if not (entity_id and entity_type):
+                continue
+            if row.get("learning_id") != legacy_entity_learning_id(entity_id, entity_type, "user"):
+                scoped_pairs.add((entity_id, entity_type))
+        filtered = []
+        for row in rows:
+            entity_id, entity_type = row.get("entity_id"), row.get("entity_type")
+            if entity_id and entity_type:
+                legacy_id = legacy_entity_learning_id(entity_id, entity_type, "user")
+                if row.get("learning_id") == legacy_id:
+                    gate, _ = self._gate_legacy_row(row, entity_id, entity_type, user_id)
+                    if gate == "blocked":
+                        self._warn_legacy_blocked_once(legacy_id)
+                        continue
+                    if gate != "clean" or (entity_id, entity_type) in scoped_pairs:
+                        continue
+            filtered.append(row)
+        return filtered
 
     def search(
         self,
@@ -3161,7 +3604,14 @@ class EntityMemoryStore(LearningStore):
                     limit=fetch,
                 )
                 rows = rows or []
-                entities = self._filter_rows_by_query(rows, query=query, limit=limit, include_archived=include_archived)
+                entities = self._filter_rows_by_query(
+                    rows,
+                    query=query,
+                    limit=limit,
+                    include_archived=include_archived,
+                    user_id=user_id,
+                    namespace=effective_namespace,
+                )
                 if len(entities) >= limit or len(rows) < fetch:
                     break
         except NotImplementedError:
@@ -3237,7 +3687,14 @@ class EntityMemoryStore(LearningStore):
                         limit=fetch,
                     )
                 rows = rows or []
-                entities = self._filter_rows_by_query(rows, query=query, limit=limit, include_archived=include_archived)
+                entities = self._filter_rows_by_query(
+                    rows,
+                    query=query,
+                    limit=limit,
+                    include_archived=include_archived,
+                    user_id=user_id,
+                    namespace=effective_namespace,
+                )
                 if len(entities) >= limit or len(rows) < fetch:
                     break
         except NotImplementedError:
@@ -3318,7 +3775,14 @@ class EntityMemoryStore(LearningStore):
         except Exception as e:
             log_debug(f"EntityMemoryStore._search_client_side failed: {e}")
             return []
-        return self._filter_rows_by_query(results or [], query=query, limit=limit, include_archived=include_archived)
+        return self._filter_rows_by_query(
+            results or [],
+            query=query,
+            limit=limit,
+            include_archived=include_archived,
+            user_id=user_id,
+            namespace=namespace,
+        )
 
     async def _asearch_client_side(
         self,
@@ -3350,11 +3814,25 @@ class EntityMemoryStore(LearningStore):
         except Exception as e:
             log_debug(f"EntityMemoryStore._asearch_client_side failed: {e}")
             return []
-        return self._filter_rows_by_query(results or [], query=query, limit=limit, include_archived=include_archived)
+        return self._filter_rows_by_query(
+            results or [],
+            query=query,
+            limit=limit,
+            include_archived=include_archived,
+            user_id=user_id,
+            namespace=namespace,
+        )
 
     def _filter_rows_by_query(
-        self, rows: List[Dict[str, Any]], query: str, limit: int, include_archived: bool
+        self,
+        rows: List[Dict[str, Any]],
+        query: str,
+        limit: int,
+        include_archived: bool,
+        user_id: Optional[str] = None,
+        namespace: Optional[str] = None,
     ) -> List[EntityMemory]:
+        rows = self._filter_user_ns_rows(rows, user_id=user_id, namespace=namespace)
         entities: List[EntityMemory] = []
         for row in rows:
             try:
@@ -3390,15 +3868,32 @@ class EntityMemoryStore(LearningStore):
         entity_id: str,
         entity_type: str,
         namespace: Optional[str] = None,
+        *,
+        user_id: Optional[str] = None,
     ) -> bool:
-        """Hard-delete an entity from the store (data API - not exposed as a tool)."""
+        """Hard-delete an entity from the store (data API - not exposed as a tool).
+
+        Under namespace "user", user_id names whose entity to delete; without it
+        the call is refused rather than allowed to touch another user's row. It is
+        keyword-only because get() places user_id third, and a positional user id
+        here would silently be read as a namespace.
+        """
         db = self._sync_db()
         if db is None:
             return False
 
         effective_namespace = namespace or self.config.namespace
+        if effective_namespace == "user" and not user_id:
+            log_warning("EntityMemoryStore.delete: namespace='user' requires user_id")
+            return False
+        row_id = self._build_entity_db_id(entity_id, entity_type, effective_namespace, user_id=user_id)
+        if row_id is None:
+            return False
         try:
-            return bool(db.delete_learning(id=self._build_entity_db_id(entity_id, entity_type, effective_namespace)))
+            deleted = bool(db.delete_learning(id=row_id))
+            if effective_namespace == "user" and user_id:
+                deleted = self._drop_legacy_user_row(db, entity_id, entity_type, user_id) or deleted
+            return deleted
         except Exception as e:
             log_debug(f"EntityMemoryStore.delete failed: {e}")
             return False
@@ -3408,22 +3903,30 @@ class EntityMemoryStore(LearningStore):
         entity_id: str,
         entity_type: str,
         namespace: Optional[str] = None,
+        *,
+        user_id: Optional[str] = None,
     ) -> bool:
         """Async version of delete."""
         if not self.db:
             return False
 
         effective_namespace = namespace or self.config.namespace
+        if effective_namespace == "user" and not user_id:
+            log_warning("EntityMemoryStore.adelete: namespace='user' requires user_id")
+            return False
+        row_id = self._build_entity_db_id(entity_id, entity_type, effective_namespace, user_id=user_id)
+        if row_id is None:
+            return False
         try:
             if isinstance(self.db, AsyncBaseDb):
-                return bool(
-                    await self.db.delete_learning(
-                        id=self._build_entity_db_id(entity_id, entity_type, effective_namespace)
-                    )
-                )
-            return bool(
-                self.db.delete_learning(id=self._build_entity_db_id(entity_id, entity_type, effective_namespace))
-            )
+                deleted = bool(await self.db.delete_learning(id=row_id))
+                if effective_namespace == "user" and user_id:
+                    deleted = await self._adrop_legacy_user_row(self.db, entity_id, entity_type, user_id) or deleted
+                return deleted
+            deleted = bool(self.db.delete_learning(id=row_id))
+            if effective_namespace == "user" and user_id:
+                deleted = self._drop_legacy_user_row(self.db, entity_id, entity_type, user_id) or deleted
+            return deleted
         except Exception as e:
             log_debug(f"EntityMemoryStore.adelete failed: {e}")
             return False
@@ -3446,6 +3949,10 @@ class EntityMemoryStore(LearningStore):
             return False
 
         effective_namespace = namespace or self.config.namespace
+        row_id = self._build_entity_db_id(entity.entity_id, entity.entity_type, effective_namespace, user_id=user_id)
+        if row_id is None:
+            log_warning("EntityMemoryStore._save_entity: namespace='user' requires user_id; nothing was saved")
+            return False
 
         try:
             content = entity.to_dict()
@@ -3453,7 +3960,7 @@ class EntityMemoryStore(LearningStore):
                 return False
 
             db.upsert_learning(
-                id=self._build_entity_db_id(entity.entity_id, entity.entity_type, effective_namespace),
+                id=row_id,
                 learning_type=self.learning_type,
                 entity_id=entity.entity_id,
                 entity_type=entity.entity_type,
@@ -3463,6 +3970,11 @@ class EntityMemoryStore(LearningStore):
                 team_id=team_id,
                 content=content,
             )
+
+            if effective_namespace == "user" and user_id:
+                self._drop_legacy_user_row(
+                    db, entity.entity_id, entity.entity_type, user_id, merged_into=entity, saved_row_id=row_id
+                )
 
             return True
 
@@ -3483,6 +3995,10 @@ class EntityMemoryStore(LearningStore):
             return False
 
         effective_namespace = namespace or self.config.namespace
+        row_id = self._build_entity_db_id(entity.entity_id, entity.entity_type, effective_namespace, user_id=user_id)
+        if row_id is None:
+            log_warning("EntityMemoryStore._asave_entity: namespace='user' requires user_id; nothing was saved")
+            return False
 
         try:
             content = entity.to_dict()
@@ -3491,7 +4007,7 @@ class EntityMemoryStore(LearningStore):
 
             if isinstance(self.db, AsyncBaseDb):
                 await self.db.upsert_learning(
-                    id=self._build_entity_db_id(entity.entity_id, entity.entity_type, effective_namespace),
+                    id=row_id,
                     learning_type=self.learning_type,
                     entity_id=entity.entity_id,
                     entity_type=entity.entity_type,
@@ -3501,9 +4017,13 @@ class EntityMemoryStore(LearningStore):
                     team_id=team_id,
                     content=content,
                 )
+                if effective_namespace == "user" and user_id:
+                    await self._adrop_legacy_user_row(
+                        self.db, entity.entity_id, entity.entity_type, user_id, merged_into=entity, saved_row_id=row_id
+                    )
             else:
                 self.db.upsert_learning(
-                    id=self._build_entity_db_id(entity.entity_id, entity.entity_type, effective_namespace),
+                    id=row_id,
                     learning_type=self.learning_type,
                     entity_id=entity.entity_id,
                     entity_type=entity.entity_type,
@@ -3513,12 +4033,160 @@ class EntityMemoryStore(LearningStore):
                     team_id=team_id,
                     content=content,
                 )
+                if effective_namespace == "user" and user_id:
+                    self._drop_legacy_user_row(
+                        self.db, entity.entity_id, entity.entity_type, user_id, merged_into=entity, saved_row_id=row_id
+                    )
 
             return True
 
         except Exception as e:
             log_debug(f"EntityMemoryStore._asave_entity failed: {e}")
             return False
+
+    def _legacy_row_verdict(
+        self,
+        row: Optional[Dict[str, Any]],
+        entity_id: str,
+        entity_type: str,
+        user_id: str,
+        merged_into: Optional[EntityMemory],
+        legacy_id: str,
+    ) -> str:
+        """Decide what to do with a candidate legacy row: "drop", "skip", or "keep".
+
+        "keep" means the row is not this user's legacy row for this entity at
+        all (wrong columns, wrong owner, or absent). "skip" means it is, but
+        deleting it would destroy information: its content records another user
+        (the cross-user collision the migration quarantines), it failed to
+        parse, or it holds content the replacing row provably does not carry.
+
+        A row is safe to drop on three grounds: this write's own resolution
+        read merged exactly this content (the snapshot matches - this is what
+        retires the row after a forget, whose removals are intentional), the
+        replacing row subsumes it field by field, or the caller is executing
+        the user's delete of this very entity (merged_into is None).
+        """
+        gate, _ = self._gate_legacy_row(row, entity_id, entity_type, user_id)
+        if gate == "foreign":
+            return "keep"
+        if gate == "blocked":
+            return "skip"
+        if merged_into is None:
+            return "drop"
+        content = _parse_json(row.get("content")) if row else None
+        snapshot = self._legacy_snapshots.get(legacy_id)
+        if snapshot is not None and snapshot == content:
+            return "drop"
+        if content is not None and _legacy_content_subsumed(content, merged_into):
+            return "drop"
+        return "skip"
+
+    def _drop_legacy_user_row(
+        self,
+        db: "BaseDb",
+        entity_id: str,
+        entity_type: str,
+        user_id: str,
+        merged_into: Optional[EntityMemory] = None,
+        saved_row_id: Optional[str] = None,
+    ) -> bool:
+        """Retire this user's pre-user-scoped-key row for the entity, if it is safe.
+
+        Rows written before the "user"-namespace key embedded the user carry the
+        user-less id and keep matching the owner's column-filtered reads alongside
+        the new row, so every read of this entity would see duplicates. The row is
+        only dropped when its content is fully carried by the row that replaces it
+        (see _legacy_row_verdict) and, on the save path, when the replacing row
+        verifiably exists -- the adapters' upsert_learning swallows failures, and
+        a drop after a silently failed save would destroy the only copy.
+        """
+        legacy_id = legacy_entity_learning_id(entity_id, entity_type, "user")
+        if self._legacy_probe_supported is False:
+            return False
+        if legacy_id in self._legacy_absent and legacy_id not in self._legacy_snapshots:
+            return False
+        try:
+            row = db.get_learning_by_id(legacy_id)
+        except NotImplementedError:
+            self._note_legacy_probe_unsupported()
+            return False
+        except Exception as e:
+            log_debug(f"EntityMemoryStore: could not probe legacy row {legacy_id}: {e}")
+            return False
+        try:
+            verdict = self._legacy_row_verdict(row, entity_id, entity_type, user_id, merged_into, legacy_id)
+            if verdict == "skip":
+                self._warn_legacy_skipped_once(legacy_id)
+                return False
+            if verdict != "drop":
+                if row is None:
+                    self._legacy_absent.add(legacy_id)
+                return False
+            if saved_row_id is not None and db.get_learning_by_id(saved_row_id) is None:
+                log_warning(f"EntityMemoryStore: save of {saved_row_id} did not land; keeping legacy row {legacy_id}")
+                return False
+            dropped = bool(db.delete_learning(id=legacy_id))
+            if dropped:
+                self._legacy_absent.add(legacy_id)
+                self._legacy_snapshots.pop(legacy_id, None)
+            return dropped
+        except Exception as e:
+            log_warning(f"EntityMemoryStore: could not retire legacy row {legacy_id}: {e}")
+        return False
+
+    def _warn_legacy_skipped_once(self, legacy_id: str) -> None:
+        if legacy_id in self._legacy_warned:
+            return
+        self._legacy_warned.add(legacy_id)
+        log_warning(
+            f"EntityMemoryStore: legacy row {legacy_id} left in place (content not fully carried "
+            f"by its replacement); run agno.learn.migrations.rekey_user_entity_learnings"
+        )
+
+    async def _adrop_legacy_user_row(
+        self,
+        db: "AsyncBaseDb",
+        entity_id: str,
+        entity_type: str,
+        user_id: str,
+        merged_into: Optional[EntityMemory] = None,
+        saved_row_id: Optional[str] = None,
+    ) -> bool:
+        """Async version of _drop_legacy_user_row."""
+        legacy_id = legacy_entity_learning_id(entity_id, entity_type, "user")
+        if self._legacy_probe_supported is False:
+            return False
+        if legacy_id in self._legacy_absent and legacy_id not in self._legacy_snapshots:
+            return False
+        try:
+            row = await db.get_learning_by_id(legacy_id)
+        except NotImplementedError:
+            self._note_legacy_probe_unsupported()
+            return False
+        except Exception as e:
+            log_debug(f"EntityMemoryStore: could not probe legacy row {legacy_id}: {e}")
+            return False
+        try:
+            verdict = self._legacy_row_verdict(row, entity_id, entity_type, user_id, merged_into, legacy_id)
+            if verdict == "skip":
+                self._warn_legacy_skipped_once(legacy_id)
+                return False
+            if verdict != "drop":
+                if row is None:
+                    self._legacy_absent.add(legacy_id)
+                return False
+            if saved_row_id is not None and await db.get_learning_by_id(saved_row_id) is None:
+                log_warning(f"EntityMemoryStore: save of {saved_row_id} did not land; keeping legacy row {legacy_id}")
+                return False
+            dropped = bool(await db.delete_learning(id=legacy_id))
+            if dropped:
+                self._legacy_absent.add(legacy_id)
+                self._legacy_snapshots.pop(legacy_id, None)
+            return dropped
+        except Exception as e:
+            log_warning(f"EntityMemoryStore: could not retire legacy row {legacy_id}: {e}")
+        return False
 
     # =========================================================================
     # Private Helpers
@@ -3529,11 +4197,16 @@ class EntityMemoryStore(LearningStore):
         entity_id: str,
         entity_type: str,
         namespace: str,
-    ) -> str:
-        """Build unique DB ID for entity."""
-        return cast(
-            str,
-            build_learning_id("entity_memory", entity_id=entity_id, entity_type=entity_type, namespace=namespace),
+        user_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """Build unique DB ID for entity.
+
+        Under namespace "user" the id embeds the user, so user_id is required
+        there; returns None when it is missing, and callers must refuse the
+        operation rather than let a None id reach the database.
+        """
+        return build_learning_id(
+            "entity_memory", entity_id=entity_id, entity_type=entity_type, namespace=namespace, user_id=user_id
         )
 
     def _format_entity_basic(self, entity: Any) -> str:

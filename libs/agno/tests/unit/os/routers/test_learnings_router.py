@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from agno.db.base import BaseDb
+from agno.learn.utils import _user_key_segment, build_learning_id, legacy_entity_learning_id
 from agno.os.routers.learnings import get_learnings_router
 from agno.os.settings import AgnoAPISettings
 
@@ -242,6 +243,226 @@ class TestCreateLearning:
     def test_create_missing_learning_type_is_422(self, client):
         resp = client.post("/learnings", json={"content": {}})
         assert resp.status_code == 422
+
+    def test_create_entity_user_namespace_without_user_id_is_422(self, client, mock_db):
+        # The entity key embeds the user under namespace="user"; without a
+        # user_id no id can be derived and the row would be unreachable.
+        resp = client.post(
+            "/learnings",
+            json={
+                "learning_type": "entity_memory",
+                "content": {},
+                "entity_id": "acme",
+                "entity_type": "company",
+                "namespace": "user",
+            },
+        )
+        assert resp.status_code == 422
+        mock_db.upsert_learning.assert_not_called()
+
+    def test_create_entity_user_namespace_422_names_user_id(self, client, mock_db):
+        # The caller supplied both entity fields, so the generic "provide the required
+        # field(s)" wording reads as already satisfied; the message has to say user_id.
+        resp = client.post(
+            "/learnings",
+            json={
+                "learning_type": "entity_memory",
+                "content": {},
+                "entity_id": "acme",
+                "entity_type": "company",
+                "namespace": "user",
+            },
+        )
+        assert resp.status_code == 422
+        detail = resp.json()["detail"]
+        assert "user_id" in detail
+        assert 'namespace="user"' in detail
+
+    def test_create_entity_defaults_stored_namespace_to_global(self, client, mock_db):
+        # The derived key defaults a missing namespace to "global"; the stored
+        # column must agree or the store's namespace-filtered reads never find
+        # the row.
+        created = _make_learning(
+            learning_id="entity_global_company_acme",
+            learning_type="entity_memory",
+            entity_id="acme",
+            entity_type="company",
+        )
+        mock_db.get_learning_by_id = MagicMock(side_effect=[None, created])
+        resp = client.post(
+            "/learnings",
+            json={
+                "learning_type": "entity_memory",
+                "content": {},
+                "entity_id": "acme",
+                "entity_type": "company",
+            },
+        )
+        assert resp.status_code == 201
+        kwargs = mock_db.upsert_learning.call_args[1]
+        assert kwargs["id"] == "entity_global_company_acme"
+        assert kwargs["namespace"] == "global"
+
+    def test_create_entity_empty_namespace_defaults_to_global(self, client, mock_db):
+        # The derived key treats any falsy namespace as "global", so an empty string
+        # must land in the column as "global" too -- storing "" would key the row
+        # global while filtering it under "", which no read ever asks for.
+        created = _make_learning(
+            learning_id="entity_global_company_acme",
+            learning_type="entity_memory",
+            entity_id="acme",
+            entity_type="company",
+        )
+        mock_db.get_learning_by_id = MagicMock(side_effect=[None, created])
+        resp = client.post(
+            "/learnings",
+            json={
+                "learning_type": "entity_memory",
+                "content": {},
+                "entity_id": "acme",
+                "entity_type": "company",
+                "namespace": "",
+            },
+        )
+        assert resp.status_code == 201
+        kwargs = mock_db.upsert_learning.call_args[1]
+        assert kwargs["namespace"] == "global"
+        assert kwargs["id"] == build_learning_id("entity_memory", entity_id="acme", entity_type="company", namespace="")
+
+    def test_create_entity_rejects_digest_shaped_namespace(self, client, mock_db):
+        # "user_<16 hex>" reaches the generic branch of the key builder and
+        # reproduces the victim's namespace="user" key byte for byte.
+        forged_namespace = "user_" + _user_key_segment("victim")
+        assert build_learning_id(
+            "entity_memory", entity_id="acme", entity_type="company", namespace=forged_namespace
+        ) == build_learning_id(
+            "entity_memory", user_id="victim", entity_id="acme", entity_type="company", namespace="user"
+        )
+        resp = client.post(
+            "/learnings",
+            json={
+                "learning_type": "entity_memory",
+                "content": {"stolen": True},
+                "entity_id": "acme",
+                "entity_type": "company",
+                "namespace": forged_namespace,
+            },
+        )
+        assert resp.status_code == 422
+        assert "reserved" in resp.json()["detail"]
+        mock_db.upsert_learning.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "namespace",
+        [
+            "user_team",
+            "user_c6c289e49e9c05",
+            "user_C6C289E49E9C05B2",
+            "user_c6c289e49e9c05b2x",
+            "global",
+            "workspace",
+        ],
+    )
+    def test_create_entity_allows_ordinary_namespaces(self, client, mock_db, namespace):
+        # Only the exact digest shape is reserved; anything else is a custom
+        # namespace and keeps working.
+        expected_id = build_learning_id("entity_memory", entity_id="acme", entity_type="company", namespace=namespace)
+        created = _make_learning(
+            learning_id=expected_id,
+            learning_type="entity_memory",
+            namespace=namespace,
+            entity_id="acme",
+            entity_type="company",
+        )
+        mock_db.get_learning_by_id = MagicMock(side_effect=[None, created])
+        resp = client.post(
+            "/learnings",
+            json={
+                "learning_type": "entity_memory",
+                "content": {},
+                "entity_id": "acme",
+                "entity_type": "company",
+                "namespace": namespace,
+            },
+        )
+        assert resp.status_code == 201
+        kwargs = mock_db.upsert_learning.call_args[1]
+        assert kwargs["id"] == expected_id
+        assert kwargs["namespace"] == namespace
+
+    def test_create_entity_conflicts_with_callers_own_legacy_row(self, client, mock_db):
+        # A pre-rekey row for this user under the user-less id: writing the
+        # user-scoped row would leave the same user holding two rows for the entity.
+        legacy_id = legacy_entity_learning_id("acme", "company", "user")
+        legacy_row = _make_learning(
+            learning_id=legacy_id,
+            learning_type="entity_memory",
+            namespace="user",
+            user_id="user-1",
+            entity_id="acme",
+            entity_type="company",
+        )
+        mock_db.get_learning_by_id = MagicMock(side_effect=lambda id: legacy_row if id == legacy_id else None)
+        resp = client.post(
+            "/learnings",
+            json={
+                "learning_type": "entity_memory",
+                "content": {},
+                "entity_id": "acme",
+                "entity_type": "company",
+                "namespace": "user",
+                "user_id": "user-1",
+            },
+        )
+        assert resp.status_code == 409
+        assert "rekey_user_entity_learnings" in resp.json()["detail"]
+        mock_db.upsert_learning.assert_not_called()
+
+    def test_create_entity_allowed_when_legacy_row_belongs_to_another_user(self, client, mock_db):
+        # Another user's legacy row is not this caller's duplicate; the rekey
+        # migration will move it to its own owner's key.
+        legacy_id = legacy_entity_learning_id("acme", "company", "user")
+        legacy_row = _make_learning(
+            learning_id=legacy_id,
+            learning_type="entity_memory",
+            namespace="user",
+            user_id="other-user",
+            entity_id="acme",
+            entity_type="company",
+        )
+        new_id = build_learning_id(
+            "entity_memory", user_id="user-1", entity_id="acme", entity_type="company", namespace="user"
+        )
+        created = _make_learning(
+            learning_id=new_id,
+            learning_type="entity_memory",
+            namespace="user",
+            user_id="user-1",
+            entity_id="acme",
+            entity_type="company",
+        )
+        new_id_lookups = {"count": 0}
+
+        def lookup(id):
+            if id == legacy_id:
+                return legacy_row
+            new_id_lookups["count"] += 1
+            return None if new_id_lookups["count"] == 1 else created
+
+        mock_db.get_learning_by_id = MagicMock(side_effect=lookup)
+        resp = client.post(
+            "/learnings",
+            json={
+                "learning_type": "entity_memory",
+                "content": {},
+                "entity_id": "acme",
+                "entity_type": "company",
+                "namespace": "user",
+                "user_id": "user-1",
+            },
+        )
+        assert resp.status_code == 201
+        assert mock_db.upsert_learning.call_args[1]["id"] == new_id
 
     def test_create_failure_when_get_returns_none(self, client, mock_db):
         # identity record absent (None on existence) and readback also None -> 500
