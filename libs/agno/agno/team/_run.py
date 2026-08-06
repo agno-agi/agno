@@ -5412,9 +5412,8 @@ def _resolve_member_run_output_for_continue(
     is the sub-team's paused TeamRunOutput (the sub-team's own continue_run
     routes deeper from there). Sources, in order:
 
-    1. The ``_member_run_response`` reference stored by _propagate_member_pause
-       (avoids a session/DB lookup, which fails without a database since
-       initialize_team clears the cached session). The reference is validated
+    1. The ``_member_run_response`` reference stored by _propagate_member_pause,
+       which resolves without a session or DB lookup. The reference is validated
        by IDENTITY against the routed member: each propagation level points it
        at the run that surfaced the pause AT that level, so below the top level
        it references an ancestor team run, not the routed member's run. An
