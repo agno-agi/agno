@@ -3042,13 +3042,14 @@ class RedisDb(BaseDb):
         except WatchError:
             return False
 
-    def fail_swept_job(self, job_id: str, worker_id: str, error: str = "worker lost") -> bool:
-        """Ownership-keyed terminal write: only the sweeper holding the lock
-        (via acquire_sweep) may fail the job. Replaces the old staleness
-        recheck - after acquire_sweep refreshed locked_at, staleness can no
-        longer serve as the fence."""
+    def settle_swept_job(self, job_id: str, worker_id: str, status: str, error: Optional[str] = None) -> bool:
+        """Ownership-keyed settle for the sweeper - see the in-memory store's
+        docstring: the sweep reconciles the ticket with what the run row
+        says (completed/cancelled/paused/failed), never blind-fails it."""
         from redis.exceptions import WatchError
 
+        if status not in ("completed", "cancelled", "paused", "failed"):
+            return False
         job_key = self._q_job_key(job_id)
         now = int(time.time())
         try:
@@ -3062,9 +3063,7 @@ class RedisDb(BaseDb):
                 if job["status"] != "running" or job.get("locked_by") != worker_id:
                     pipe.unwatch()
                     return False
-                job.update(
-                    status="failed", error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now
-                )
+                job.update(status=status, error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now)
                 pipe.multi()
                 self._q_save_job_in_pipe(pipe, job)
                 pipe.zrem(self._q_key("running"), job_id)
@@ -3072,6 +3071,12 @@ class RedisDb(BaseDb):
                 return True
         except WatchError:
             return False
+
+    def fail_swept_job(self, job_id: str, worker_id: str, error: str = "worker lost") -> bool:
+        """Ownership-keyed terminal write: only the sweeper holding the lock
+        (via acquire_sweep) may fail the job. Thin wrapper over
+        settle_swept_job."""
+        return self.settle_swept_job(job_id, worker_id, "failed", error)
 
     def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
         return self._q_load_job(job_id)
