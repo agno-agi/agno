@@ -9,7 +9,7 @@ session reload.
 """
 
 import json
-from typing import Any, AsyncIterator, Dict, Iterator, List
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -2019,8 +2019,14 @@ def right_send_email(to: str) -> str:
     return f"RIGHT sent to {to}"
 
 
-def _build_sibling_dup_leaf_teams(db: SqliteDb, resuming: bool, delegate_to_both: bool) -> Team:
-    def make_subteam(side: str, send_tool, to: str) -> Team:
+def _build_sibling_dup_leaf_teams(
+    db: SqliteDb,
+    resuming: bool,
+    delegate_to_both: bool,
+    omit_right: bool = False,
+    duplicate_right: bool = False,
+) -> Team:
+    def make_subteam(side: str, send_tool, to: str, team_id: Optional[str] = None) -> Team:
         agent_script = (
             [("content", "Email sent.")]
             if resuming
@@ -2044,7 +2050,7 @@ def _build_sibling_dup_leaf_teams(db: SqliteDb, resuming: bool, delegate_to_both
         )
         return Team(
             name=f"{side} Team",
-            id=f"{side}-team",
+            id=team_id or f"{side}-team",
             model=_ScriptedModel(f"m-{side}", sub_script),
             members=[member],
             db=db,
@@ -2061,16 +2067,18 @@ def _build_sibling_dup_leaf_teams(db: SqliteDb, resuming: bool, delegate_to_both
         )
     else:
         leader_turn = ("tool", "delegate_task_to_member", {"member_id": "right-team", "task": "send right"}, "tc-outer")
+    members = [make_subteam("left", left_send_email, "left@example.com")]
+    if not omit_right:
+        members.append(make_subteam("right", right_send_email, "right@example.com"))
+    if duplicate_right:
+        members.append(make_subteam("right2", right_send_email, "right2@example.com", team_id="right-team"))
     return Team(
         name="Org Team",
         id="org-team",
         model=_ScriptedModel(
             "m-outer", [("content", "All done.")] if resuming else [leader_turn, ("content", "All done.")]
         ),
-        members=[
-            make_subteam("left", left_send_email, "left@example.com"),
-            make_subteam("right", right_send_email, "right@example.com"),
-        ],
+        members=members,
         db=db,
         telemetry=False,
     )
@@ -2134,6 +2142,192 @@ def test_duplicate_leaf_id_both_siblings_paused_each_executes_own(tmp_path):
     assert run2.status == RunStatus.completed
     assert _LEFT_EXECUTED == ["left@example.com"]
     assert _RIGHT_EXECUTED == ["right@example.com"]
+
+
+# ---------------------------------------------------------------------------
+# Requirements arrive from the wire, so their routing fields are unverified
+# client input. The stored session requirement is the authority: on a unique
+# match its provenance overwrites the payload's; an ambiguous payload (two
+# stored requirements share a tool_call_id, no requirement ids to tell them
+# apart) is refused with the run left paused, never guessed.
+# ---------------------------------------------------------------------------
+
+
+def test_ambiguous_stripped_payload_refuses_then_recovers(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "ambiguous_payload.db")
+    session_id = "s-ambiguous-payload"
+
+    team1 = _build_same_member_twice_same_tool_call_id(SqliteDb(db_file=db_file), resuming=False)
+    run1 = team1.run("Email both", session_id=session_id)
+    assert run1.is_paused
+
+    team2 = _build_same_member_twice_same_tool_call_id(SqliteDb(db_file=db_file), resuming=True)
+    with pytest.raises(RunNotContinuableError):
+        team2.continue_run(
+            run_id=run1.run_id,
+            session_id=session_id,
+            requirements=_wire_requirements_stripped(run1.requirements, "id", "member_run_id"),
+        )
+    assert _EXECUTED == []
+    stored = [r for r in _reload_runs(db_file, session_id) if getattr(r, "run_id", None) == run1.run_id]
+    assert stored and stored[0].status == RunStatus.paused
+
+    # With the requirement ids included the same minimal payload resumes.
+    team3 = _build_same_member_twice_same_tool_call_id(SqliteDb(db_file=db_file), resuming=True)
+    run3 = team3.continue_run(
+        run_id=run1.run_id,
+        session_id=session_id,
+        requirements=_wire_requirements_stripped(run1.requirements, "member_run_id"),
+    )
+    assert run3.status == RunStatus.completed
+    assert sorted(_EXECUTED) == ["a@x.com", "b@x.com"]
+
+
+def test_lied_member_run_id_is_overwritten_by_stored(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "lied_run_id.db")
+    session_id = "s-lied-run-id"
+
+    team1 = _build_id_collision_team(SqliteDb(db_file=db_file), resuming=False)
+    run1 = team1.run("Email a@example.com", session_id=session_id)
+    assert run1.is_paused
+
+    lied = []
+    for data in [r.to_dict() for r in run1.requirements or []]:
+        data["member_run_id"] = run1.run_id
+        req = RunRequirement.from_dict(data)
+        req.confirm()
+        lied.append(req)
+
+    team2 = _build_id_collision_team(SqliteDb(db_file=db_file), resuming=True)
+    run2 = team2.continue_run(run_id=run1.run_id, session_id=session_id, requirements=lied)
+    assert run2.status == RunStatus.completed
+    assert _EXECUTED == ["a@example.com"]
+
+
+def test_lied_member_agent_id_is_overwritten_by_stored(tmp_path):
+    _LEFT_EXECUTED.clear()
+    _RIGHT_EXECUTED.clear()
+    db_file = str(tmp_path / "lied_agent_id.db")
+    session_id = "s-lied-agent-id"
+
+    def build(resuming: bool) -> Team:
+        def make_agent(side: str, send_tool, to: str) -> Agent:
+            script = (
+                [("content", "Email sent.")]
+                if resuming
+                else [("tool", "send_email", {"to": to}, f"tc-send-{side}"), ("content", "Email sent.")]
+            )
+            return Agent(
+                name=f"{side} Agent",
+                id=f"agent-{side}",
+                model=_ScriptedModel(f"m-lied-{side}", script),
+                tools=[send_tool],
+                db=db,
+                telemetry=False,
+            )
+
+        db = SqliteDb(db_file=db_file)
+        return Team(
+            name="Comms Team",
+            id="comms-team",
+            model=_ScriptedModel(
+                "m-lied-leader",
+                [("content", "All done.")]
+                if resuming
+                else [
+                    ("tool", "delegate_task_to_member", {"member_id": "agent-right", "task": "send it"}, "tc-deleg"),
+                    ("content", "All done."),
+                ],
+            ),
+            members=[
+                make_agent("left", left_send_email, "left@example.com"),
+                make_agent("right", right_send_email, "right@example.com"),
+            ],
+            db=db,
+            telemetry=False,
+        )
+
+    team1 = build(resuming=False)
+    run1 = team1.run("Email right", session_id=session_id)
+    assert run1.is_paused
+
+    lied = []
+    for data in [r.to_dict() for r in run1.requirements or []]:
+        data["member_agent_id"] = "agent-left"
+        data["member_agent_name"] = "left Agent"
+        req = RunRequirement.from_dict(data)
+        req.confirm()
+        lied.append(req)
+
+    team2 = build(resuming=True)
+    run2 = team2.continue_run(run_id=run1.run_id, session_id=session_id, requirements=lied)
+    assert run2.status == RunStatus.completed
+    assert _RIGHT_EXECUTED == ["right@example.com"]
+    assert _LEFT_EXECUTED == []
+
+
+# ---------------------------------------------------------------------------
+# The owner of the resolved paused run must resolve to exactly one direct
+# member of the continuing team. A removed owner or several direct members
+# sharing the owner's id refuse the continue and leave the run paused.
+# ---------------------------------------------------------------------------
+
+
+def test_removed_owner_refuses_and_recovers(tmp_path):
+    _LEFT_EXECUTED.clear()
+    _RIGHT_EXECUTED.clear()
+    db_file = str(tmp_path / "removed_owner.db")
+    session_id = "s-removed-owner"
+
+    outer1 = _build_sibling_dup_leaf_teams(SqliteDb(db_file=db_file), resuming=False, delegate_to_both=False)
+    run1 = outer1.run("Email right", session_id=session_id)
+    assert run1.is_paused
+
+    without_owner = _build_sibling_dup_leaf_teams(
+        SqliteDb(db_file=db_file), resuming=True, delegate_to_both=False, omit_right=True
+    )
+    with pytest.raises(RunNotContinuableError):
+        without_owner.continue_run(
+            run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+        )
+    assert _LEFT_EXECUTED == [] and _RIGHT_EXECUTED == []
+    stored = [r for r in _reload_runs(db_file, session_id) if getattr(r, "run_id", None) == run1.run_id]
+    assert stored and stored[0].status == RunStatus.paused
+
+    # With the owner back in the team the same continue succeeds.
+    restored = _build_sibling_dup_leaf_teams(SqliteDb(db_file=db_file), resuming=True, delegate_to_both=False)
+    run3 = restored.continue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+    )
+    assert run3.status == RunStatus.completed
+    assert _RIGHT_EXECUTED == ["right@example.com"]
+    assert _LEFT_EXECUTED == []
+
+
+def test_ambiguous_owner_id_refuses(tmp_path):
+    _LEFT_EXECUTED.clear()
+    _RIGHT_EXECUTED.clear()
+    db_file = str(tmp_path / "ambiguous_owner.db")
+    session_id = "s-ambiguous-owner"
+
+    outer1 = _build_sibling_dup_leaf_teams(
+        SqliteDb(db_file=db_file), resuming=False, delegate_to_both=False, duplicate_right=True
+    )
+    run1 = outer1.run("Email right", session_id=session_id)
+    assert run1.is_paused
+
+    outer2 = _build_sibling_dup_leaf_teams(
+        SqliteDb(db_file=db_file), resuming=True, delegate_to_both=False, duplicate_right=True
+    )
+    with pytest.raises(RunNotContinuableError):
+        outer2.continue_run(
+            run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+        )
+    assert _LEFT_EXECUTED == [] and _RIGHT_EXECUTED == []
+    stored = [r for r in _reload_runs(db_file, session_id) if getattr(r, "run_id", None) == run1.run_id]
+    assert stored and stored[0].status == RunStatus.paused
 
 
 # ---------------------------------------------------------------------------

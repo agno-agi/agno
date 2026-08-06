@@ -5328,13 +5328,18 @@ def _backfill_approval_to_requirements(
        entries that have no approval_type. The original session requirements carry it.
 
     Member provenance (member_agent_id, member_agent_name, member_run_id) is
-    restored from old_requirements the same way: to_dict() strips None values,
-    so a wire payload may omit any of them, and routing then cannot find the
-    paused member run — nor tell a member's requirement from the team's own
-    lifted one when the two share an id (see _reclaim_own_requirements). Old
-    requirements are matched by requirement id first, then tool_call_id: two
-    member runs paused in one turn can carry the same tool_call_id, and a
-    tool_call_id-only match would hand both the same member_run_id.
+    taken from the stored requirement as the authority: requirements arrive
+    from the wire (to_dict() strips None values, raw dicts are accepted), so
+    absent fields are ordinary and present fields are unverified client
+    input — routing on either mis-dispatches or skips the confirmed tool.
+    The stored requirement is matched by requirement id first, then by
+    tool_call_id when exactly one stored requirement carries it: two member
+    runs paused in one turn can share a tool_call_id (from_dict mints a
+    fresh id for a payload without one, so such a payload is ambiguous), and
+    guessing would silently drop one confirmed run.
+
+    Raises RunNotContinuableError for an ambiguous payload — the run stays
+    paused and can be continued again with the requirement ids included.
     """
     reqs = getattr(run_response, "requirements", None)
     if not reqs:
@@ -5343,7 +5348,7 @@ def _backfill_approval_to_requirements(
     # Build lookups from both sources
     by_id: Dict[str, Any] = {}
     old_by_req_id: Dict[str, Any] = {}
-    old_by_tool_call_id: Dict[str, Any] = {}
+    old_by_tool_call_id: Dict[str, List[Any]] = {}
     # Old requirements first (lower priority)
     if old_requirements:
         for old_req in old_requirements:
@@ -5353,7 +5358,7 @@ def _backfill_approval_to_requirements(
             old_te = getattr(old_req, "tool_execution", None)
             if old_te and old_te.tool_call_id:
                 by_id[old_te.tool_call_id] = old_te
-                old_by_tool_call_id[old_te.tool_call_id] = old_req
+                old_by_tool_call_id.setdefault(old_te.tool_call_id, []).append(old_req)
     # run_response.tools second (higher priority, overwrites)
     for t in getattr(run_response, "tools", None) or []:
         if t.tool_call_id and getattr(t, "approval_type", None) is not None:
@@ -5367,12 +5372,24 @@ def _backfill_approval_to_requirements(
                 if getattr(te, attr, None) is None and getattr(src, attr, None) is not None:
                     setattr(te, attr, getattr(src, attr))
         old_req = old_by_req_id.get(getattr(req, "id", None) or "")
+        if old_req is not None and te is not None and te.tool_call_id:
+            old_te = getattr(old_req, "tool_execution", None)
+            if old_te is not None and old_te.tool_call_id and old_te.tool_call_id != te.tool_call_id:
+                old_req = None
         if old_req is None and te is not None and te.tool_call_id:
-            old_req = old_by_tool_call_id.get(te.tool_call_id)
+            candidates = old_by_tool_call_id.get(te.tool_call_id, [])
+            if len(candidates) == 1:
+                old_req = candidates[0]
+            elif len(candidates) > 1:
+                raise RunNotContinuableError(
+                    f"Cannot continue run {getattr(run_response, 'run_id', None)}: the requirement for "
+                    f"tool call '{te.tool_call_id}' matches {len(candidates)} stored requirements and "
+                    f"carries no matching requirement id. Resend the requirements with their original "
+                    f"'id' values. The run remains paused."
+                )
         if old_req is not None:
             for attr in ("member_agent_id", "member_agent_name", "member_run_id"):
-                if getattr(req, attr, None) is None and getattr(old_req, attr, None) is not None:
-                    setattr(req, attr, getattr(old_req, attr))
+                setattr(req, attr, getattr(old_req, attr, None))
 
 
 def _reclaim_own_requirements(team: "Team", requirements: List[Any], continuing_run_id: Optional[str]) -> None:
@@ -5559,11 +5576,15 @@ def _group_requirements_for_continue(
     the first match in member order while the paused run lives under another
     sibling. The resolved run's owner is authoritative for where the continue
     dispatches — following the leaf-id pick would hand one sibling's paused
-    run to the other and execute the wrong tool implementation.
+    run to the other and execute the wrong tool implementation. When the
+    owner cannot be resolved to exactly one direct member (it was removed
+    from the team, or several direct members share its id), the continue is
+    refused and the run stays paused.
 
     Returns entries of (routed_member, resolved_target_run_or_None, requirements).
     """
     from agno.team._tools import _find_member_route_by_id
+    from agno.utils.callables import get_resolved_members
     from agno.utils.team import get_member_id
 
     member_reqs: Dict[Tuple[str, Optional[str]], List["RunRequirement"]] = {}
@@ -5584,9 +5605,21 @@ def _group_requirements_for_continue(
         _, member = route_result
         target = _resolve_member_run_output_for_continue(member, reqs, run_response, session)
         if isinstance(target, TeamRunOutput) and target.team_id is not None and target.team_id != get_member_id(member):
-            owner_route = _find_member_route_by_id(team, target.team_id, run_context=run_context)
-            if owner_route is not None and get_member_id(owner_route[1]) == target.team_id:
-                member = owner_route[1]
+            owners = [m for m in get_resolved_members(team, run_context) or [] if get_member_id(m) == target.team_id]
+            if len(owners) == 1:
+                member = owners[0]
+            elif not owners:
+                raise RunNotContinuableError(
+                    f"Cannot continue run {run_response.run_id}: the paused run for requirement "
+                    f"'{member_id}' belongs to member '{target.team_id}', which is not a member of "
+                    f"team '{team.name or team.id}'. The run remains paused."
+                )
+            else:
+                raise RunNotContinuableError(
+                    f"Cannot continue run {run_response.run_id}: the paused run for requirement "
+                    f"'{member_id}' belongs to member id '{target.team_id}', which matches "
+                    f"{len(owners)} members of team '{team.name or team.id}'. The run remains paused."
+                )
         merged = False
         if target is not None:
             for existing_member, existing_target, existing_reqs in entries:
