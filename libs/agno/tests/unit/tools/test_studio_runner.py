@@ -1719,3 +1719,22 @@ class TestMemberStructureFidelity:
         runner = StudioRunnerTools(registry=registry, db=db)
         error = _loads(runner.run_agent("Dup", "x", _agno_run_context=_context()))["error"]
         assert "Ambiguous" in error and "a1" in error and "a2" in error
+
+    def test_a_null_member_id_still_loads_for_reads_and_edits(self, db):
+        """The refusal is what stops the run; it must not also stop the component
+        loading, or the bad reference can never be seen and repaired. Same split
+        _require_faithful_rebuild uses."""
+        config = {"id": "squad", "name": "Squad", "members": [{"agent_id": None, "name": "Ghost"}]}
+        runner = StudioRunnerTools(db=db)
+
+        # Dispatch refuses.
+        with pytest.raises(Exception) as excinfo:
+            runner._require_resolvable_member_ids("team", "squad", config)
+        assert "no id" in str(excinfo.value)
+
+        # The read path does not call it at all.
+        import inspect
+
+        source = inspect.getsource(StudioRunnerTools._load_team_from_db)
+        before_call = source.split("_require_resolvable_member_ids")[0]
+        assert "if for_dispatch:" in before_call

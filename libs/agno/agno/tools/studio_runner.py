@@ -612,7 +612,10 @@ class StudioRunnerTools(Toolkit):
         Serialization writes the referenced component's id even when it is
         None, and a lookup by None matches the first component that also has
         no id, which is rarely the one that was configured. No registry makes
-        the reference resolvable, so the refusal does not depend on one."""
+        the reference resolvable, so the refusal does not depend on one.
+
+        Dispatch only: reads and edits load the component so the reference can
+        be seen and repaired, the same split _require_faithful_rebuild uses."""
         key = "members" if component_type == "team" else "steps"
         if component_type not in ("team", "workflow") or not _references_idless_components(config.get(key)):
             return
@@ -914,7 +917,10 @@ class StudioRunnerTools(Toolkit):
         config = self._load_config_from_db(team_id, version=version, component_type=ComponentType.TEAM)
         if config is None:
             return None
-        self._require_resolvable_member_ids("team", team_id, config)
+        if for_dispatch:
+            # Dispatch only: a null reference cannot be resolved, but the component
+            # still has to load so the bad reference can be seen and repaired.
+            self._require_resolvable_member_ids("team", team_id, config)
         self._require_registry_for("team", team_id, config)
         from agno.team.team import Team
 
@@ -940,7 +946,10 @@ class StudioRunnerTools(Toolkit):
         config = self._load_config_from_db(workflow_id, version=version, component_type=ComponentType.WORKFLOW)
         if config is None:
             return None
-        self._require_resolvable_member_ids("workflow", workflow_id, config)
+        if for_dispatch:
+            # Dispatch only: a null reference cannot be resolved, but the component
+            # still has to load so the bad reference can be seen and repaired.
+            self._require_resolvable_member_ids("workflow", workflow_id, config)
         self._require_registry_for("workflow", workflow_id, config)
         from agno.workflow.workflow import Workflow
 
