@@ -45,6 +45,8 @@ class PgVector(VectorDb):
     vector data in a PostgreSQL database using the pgvector extension.
     """
 
+    supports_namespaced_knowledge: bool = True
+
     def __init__(
         self,
         table_name: str,
@@ -298,6 +300,19 @@ class PgVector(VectorDb):
         """
         return self._record_exists(self.table.c.content_hash, content_hash)
 
+    def content_hash_is_indexed(self, content_hash: str, expected_count: int = 1) -> bool:
+        """Check that a content hash has exactly the expected non-NULL vectors."""
+        try:
+            stmt = select(func.count()).where(
+                self.table.c.content_hash == content_hash,
+                self.table.c.embedding.is_not(None),
+            )
+            with self.Session() as sess:
+                return sess.execute(stmt).scalar_one() == expected_count
+        except Exception as e:
+            log_error(f"Error checking indexed content hash: {str(e)}")
+            return False
+
     def _clean_content(self, content: str) -> str:
         """
         Clean the content by replacing null characters.
@@ -436,7 +451,8 @@ class PgVector(VectorDb):
         """
         try:
             if self.content_hash_exists(content_hash):
-                self._delete_by_content_hash(content_hash)
+                if not self._delete_by_content_hash(content_hash):
+                    raise RuntimeError(f"Could not replace existing content hash: {content_hash}")
             self._upsert(content_hash, documents, filters, batch_size)
         except Exception as e:
             log_error(f"Error upserting documents by content hash: {str(e)}")
@@ -627,7 +643,8 @@ class PgVector(VectorDb):
         """Upsert documents asynchronously by running in a thread."""
         try:
             if self.content_hash_exists(content_hash):
-                self._delete_by_content_hash(content_hash)
+                if not self._delete_by_content_hash(content_hash):
+                    raise RuntimeError(f"Could not replace existing content hash: {content_hash}")
             await self._async_upsert(content_hash, documents, filters, batch_size)
         except Exception as e:
             log_error(f"Error upserting documents by content hash: {str(e)}")

@@ -3,10 +3,13 @@
 Tests that knowledge instances with isolate_vector_search=True filter by linked_to.
 """
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import pytest
 
+from agno.db.in_memory import InMemoryDb
+from agno.db.schemas.knowledge import KnowledgeRow
+from agno.knowledge.content import Content, ContentStatus, FileData
 from agno.knowledge.document import Document
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.base import VectorDb
@@ -18,6 +21,9 @@ class MockVectorDb(VectorDb):
     def __init__(self):
         self.search_calls: List[Dict[str, Any]] = []
         self.inserted_documents: List[Document] = []
+        self.upsert_calls: List[Dict[str, Any]] = []
+        self.updated_metadata: List[Dict[str, Any]] = []
+        self.deleted_content_ids: List[str] = []
 
     def create(self) -> None:
         pass
@@ -44,10 +50,10 @@ class MockVectorDb(VectorDb):
         self.inserted_documents.extend(documents)
 
     def upsert(self, content_hash: str, documents: List[Document], filters=None) -> None:
-        pass
+        self.upsert_calls.append({"content_hash": content_hash, "documents": documents, "filters": filters})
 
     async def async_upsert(self, content_hash: str, documents: List[Document], filters=None) -> None:
-        pass
+        self.upsert_calls.append({"content_hash": content_hash, "documents": documents, "filters": filters})
 
     def upsert_available(self) -> bool:
         return True
@@ -85,13 +91,49 @@ class MockVectorDb(VectorDb):
         return True
 
     def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
-        pass
+        self.updated_metadata.append({"content_id": content_id, "metadata": metadata})
 
     def delete_by_content_id(self, content_id: str) -> bool:
+        self.deleted_content_ids.append(content_id)
         return True
 
     def get_supported_search_types(self) -> List[str]:
         return ["vector"]
+
+
+def _upsert_content_row(
+    contents_db: InMemoryDb,
+    content_id: str,
+    linked_to: Optional[str],
+    *,
+    name: Optional[str] = None,
+) -> None:
+    contents_db.upsert_knowledge_content(
+        KnowledgeRow(
+            id=content_id,
+            name=name or content_id,
+            description="",
+            metadata={"seed": content_id},
+            linked_to=linked_to,
+            status=ContentStatus.COMPLETED,
+        )
+    )
+
+
+def _build_isolated_knowledge() -> tuple[Knowledge, InMemoryDb, MockVectorDb]:
+    contents_db = InMemoryDb()
+    vector_db = MockVectorDb()
+    _upsert_content_row(contents_db, "owned", "scope-a")
+    _upsert_content_row(contents_db, "foreign", "scope-b")
+    _upsert_content_row(contents_db, "legacy", None)
+    knowledge = Knowledge(
+        name="scope-a",
+        contents_db=contents_db,
+        vector_db=vector_db,
+        isolate_vector_search=True,
+    )
+    knowledge._enforce_content_isolation = True
+    return knowledge, contents_db, vector_db
 
 
 class TestKnowledgeIsolation:
@@ -289,3 +331,194 @@ class TestLinkedToMetadata:
 
         # The knowledge's name should override since we set it after metadata merge
         assert result[0].meta_data["linked_to"] == "New KB"
+
+
+class TestSharedTableIsolationHardening:
+    def test_isolated_namespaces_have_distinct_content_and_document_hashes(self):
+        vector_db = MockVectorDb()
+        scope_a = Knowledge(name="scope-a", vector_db=vector_db, isolate_vector_search=True)
+        scope_b = Knowledge(name="scope-b", vector_db=vector_db, isolate_vector_search=True)
+        scope_a._enforce_content_isolation = True
+        scope_b._enforce_content_isolation = True
+        unisolated_a = Knowledge(name="scope-a", vector_db=vector_db)
+        unisolated_b = Knowledge(name="scope-b", vector_db=vector_db)
+        content = Content(url="https://example.com/docs")
+        document = Document(content="same text", meta_data={"url": "https://example.com/docs/page"})
+
+        assert scope_a._build_content_hash(content) != scope_b._build_content_hash(content)
+        assert scope_a._build_document_content_hash(document, content) != scope_b._build_document_content_hash(
+            document, content
+        )
+        assert unisolated_a._build_content_hash(content) == unisolated_b._build_content_hash(content)
+        assert unisolated_a._build_document_content_hash(
+            document, content
+        ) == unisolated_b._build_document_content_hash(document, content)
+
+    def test_isolated_vector_metadata_reserves_linked_to(self):
+        vector_db = MockVectorDb()
+        knowledge = Knowledge(name="scope-a", vector_db=vector_db, isolate_vector_search=True)
+        knowledge._enforce_content_isolation = True
+        content = Content(
+            id="content-id",
+            content_hash="content-hash",
+            metadata={"category": "docs", "linked_to": "scope-b"},
+        )
+        documents = [Document(content="content", meta_data={"linked_to": "scope-b"})]
+
+        knowledge._prepare_documents_for_insert(documents, "content-id", metadata=content.metadata)
+        knowledge._handle_vector_db_insert(content, documents, upsert=True)
+
+        assert documents[0].meta_data["linked_to"] == "scope-a"
+        assert vector_db.upsert_calls[0]["filters"] == {"category": "docs", "linked_to": "scope-a"}
+
+    def test_unisolated_vector_metadata_is_unchanged(self):
+        vector_db = MockVectorDb()
+        knowledge = Knowledge(name="scope-a", vector_db=vector_db)
+        content = Content(
+            id="content-id",
+            content_hash="content-hash",
+            metadata={"category": "docs", "linked_to": "scope-b"},
+        )
+
+        knowledge._handle_vector_db_insert(content, [Document(content="content")], upsert=True)
+
+        assert vector_db.upsert_calls[0]["filters"] == {"category": "docs", "linked_to": "scope-b"}
+
+    def test_text_content_size_uses_utf8_bytes(self, monkeypatch):
+        knowledge = Knowledge(vector_db=MockVectorDb())
+        knowledge._enforce_content_isolation = True
+        captured: Dict[str, Content] = {}
+
+        def capture_content(content: Content, *args, **kwargs) -> None:
+            captured["content"] = content
+
+        monkeypatch.setattr(knowledge, "_load_content", capture_content)
+        knowledge.insert(text_content="café")
+
+        content = captured["content"]
+        assert content.file_data == FileData(content="café", type="Text", size=5)
+        assert knowledge._build_knowledge_row(content).size == 5
+
+    def test_static_knowledge_preserves_legacy_character_size(self, monkeypatch):
+        knowledge = Knowledge(vector_db=MockVectorDb())
+        captured: Dict[str, Content] = {}
+
+        def capture_content(content: Content, *args, **kwargs) -> None:
+            captured["content"] = content
+
+        monkeypatch.setattr(knowledge, "_load_content", capture_content)
+        knowledge.insert(text_content="café")
+
+        content = captured["content"]
+        assert content.file_data == FileData(content="café", type="Text")
+        assert knowledge._build_knowledge_row(content).size == 4
+
+    def test_sync_content_id_operations_fail_closed_outside_namespace(self):
+        knowledge, contents_db, vector_db = _build_isolated_knowledge()
+
+        assert knowledge.get_content_by_id("owned") is not None
+        assert knowledge.get_content_by_id("foreign") is None
+        assert knowledge.get_content_by_id("legacy") is None
+        assert knowledge.get_content_status("owned") == (ContentStatus.COMPLETED, None)
+        assert knowledge.get_content_status("foreign") == (None, "Content not found")
+        assert knowledge.get_content_status("legacy") == (None, "Content not found")
+
+        assert knowledge.patch_content(Content(id="foreign", name="changed")) is None
+        assert knowledge.patch_content(Content(id="legacy", name="changed")) is None
+        assert contents_db.get_knowledge_content("foreign").name == "foreign"  # type: ignore[union-attr]
+        assert contents_db.get_knowledge_content("legacy").name == "legacy"  # type: ignore[union-attr]
+        assert vector_db.updated_metadata == []
+
+        updated = knowledge.patch_content(Content(id="owned", metadata={"category": "updated", "linked_to": "scope-b"}))
+        assert updated is not None
+        owned_row = contents_db.get_knowledge_content("owned")
+        assert owned_row is not None
+        assert owned_row.linked_to == "scope-a"
+        assert owned_row.metadata == {"seed": "owned", "category": "updated"}
+        assert vector_db.updated_metadata == [
+            {
+                "content_id": "owned",
+                "metadata": {"category": "updated", "linked_to": "scope-a"},
+            }
+        ]
+
+        knowledge.remove_content_by_id("foreign")
+        knowledge.remove_content_by_id("legacy")
+        assert contents_db.get_knowledge_content("foreign") is not None
+        assert contents_db.get_knowledge_content("legacy") is not None
+        assert vector_db.deleted_content_ids == []
+
+        knowledge.remove_content_by_id("owned")
+        assert contents_db.get_knowledge_content("owned") is None
+        assert vector_db.deleted_content_ids == ["owned"]
+
+    @pytest.mark.asyncio
+    async def test_async_content_id_operations_fail_closed_outside_namespace(self):
+        knowledge, contents_db, vector_db = _build_isolated_knowledge()
+
+        assert await knowledge.aget_content_by_id("foreign") is None
+        assert await knowledge.aget_content_by_id("legacy") is None
+        assert await knowledge.aget_content_status("foreign") == (None, "Content not found")
+        assert await knowledge.aget_content_status("legacy") == (None, "Content not found")
+        assert await knowledge.apatch_content(Content(id="foreign", name="changed")) is None
+        assert await knowledge.apatch_content(Content(id="legacy", name="changed")) is None
+
+        updated = await knowledge.apatch_content(Content(id="owned", name="updated"))
+        assert updated is not None
+        assert contents_db.get_knowledge_content("owned").name == "updated"  # type: ignore[union-attr]
+
+        await knowledge.aremove_content_by_id("foreign")
+        await knowledge.aremove_content_by_id("legacy")
+        assert contents_db.get_knowledge_content("foreign") is not None
+        assert contents_db.get_knowledge_content("legacy") is not None
+        assert vector_db.deleted_content_ids == []
+
+        await knowledge.aremove_content_by_id("owned")
+        assert contents_db.get_knowledge_content("owned") is None
+        assert vector_db.deleted_content_ids == ["owned"]
+
+    @pytest.mark.asyncio
+    async def test_content_id_operations_preserve_unisolated_behavior(self):
+        contents_db = InMemoryDb()
+        vector_db = MockVectorDb()
+        _upsert_content_row(contents_db, "foreign", "scope-b")
+        _upsert_content_row(contents_db, "legacy", None)
+        knowledge = Knowledge(name="scope-a", contents_db=contents_db, vector_db=vector_db)
+
+        assert knowledge.get_content_by_id("foreign") is not None
+        assert await knowledge.aget_content_by_id("legacy") is not None
+        assert knowledge.get_content_status("legacy") == (ContentStatus.COMPLETED, None)
+        assert await knowledge.aget_content_status("foreign") == (ContentStatus.COMPLETED, None)
+        assert knowledge.patch_content(Content(id="foreign", name="sync-updated")) is not None
+        assert await knowledge.apatch_content(Content(id="legacy", name="async-updated")) is not None
+
+        knowledge.remove_content_by_id("foreign")
+        await knowledge.aremove_content_by_id("legacy")
+        assert contents_db.get_knowledge_content("foreign") is None
+        assert contents_db.get_knowledge_content("legacy") is None
+        assert vector_db.deleted_content_ids == ["foreign", "legacy"]
+
+    def test_isolated_delete_without_contents_db_fails_closed(self):
+        vector_db = MockVectorDb()
+        knowledge = Knowledge(name="scope-a", vector_db=vector_db, isolate_vector_search=True)
+        knowledge._enforce_content_isolation = True
+
+        knowledge.remove_content_by_id("unknown")
+
+        assert vector_db.deleted_content_ids == []
+
+    def test_existing_vector_isolation_keeps_legacy_content_ids_and_crud_semantics(self):
+        contents_db = InMemoryDb()
+        vector_db = MockVectorDb()
+        _upsert_content_row(contents_db, "foreign", "scope-b")
+        scope_a = Knowledge(
+            name="scope-a",
+            contents_db=contents_db,
+            vector_db=vector_db,
+            isolate_vector_search=True,
+        )
+        scope_b = Knowledge(name="scope-b", vector_db=vector_db, isolate_vector_search=True)
+        content = Content(url="https://example.com/docs")
+
+        assert scope_a._build_content_hash(content) == scope_b._build_content_hash(content)
+        assert scope_a.get_content_by_id("foreign") is not None

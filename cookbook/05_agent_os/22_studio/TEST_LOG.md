@@ -3,6 +3,11 @@
 Tested live on 2026-07-24 against Agno source commit
 `45bfff9f2aa6ec11b7386c3cd3bf6d1141d005dc`.
 
+The five live entries below belong to that run. The newer
+`per_agent_knowledge.py` entry records source-only validation against
+uncommitted feature work based on `03d2bf051bfdd3d4a04becce6977712070b30c4d`;
+it does not claim a live PostgreSQL, embedding, or model run.
+
 Every process loaded Agno from this worktree through
 `PYTHONPATH=/Users/ab/code/worktrees/agno-agent-os-rewrite/libs/agno`.
 Provider credentials were loaded with `direnv exec .`; no credential values
@@ -93,10 +98,38 @@ with HTTP 404.
 
 ---
 
+### per_agent_knowledge.py
+
+**Status:** PASS
+
+**Test mode:** CONSTRUCTION_SMOKE
+
+**Description:** Ran targeted Ruff formatting and checks plus worktree-pinned
+Python compilation for the new per-Agent knowledge example. A no-service smoke
+loaded the module from this worktree with `PgVector.exists()` and `create()`
+stubbed, then checked the registry entry, namespace template, exposed functions,
+and `StudioTools` resolution of `agent_knowledge`.
+
+**Result:** The file formatted cleanly, Ruff reported no findings, and
+`py_compile` and the construction smoke succeeded. The development environment
+lacks the optional `pgvector` package, so the smoke used `.venvs/demo`, where
+that cookbook dependency is installed. No PostgreSQL service, OpenAI embedding
+request, model run, content write, or isolation search was executed, so this
+entry makes no live isolation claim.
+
+---
+
 ## Validation
 
-- All five Python targets passed worktree-pinned compilation and targeted Ruff
-  format/check.
+### 2026-08-06 static validation
+
+- `per_agent_knowledge.py` passed targeted Ruff format/check, Python
+  compilation, and a no-service construction smoke on 2026-08-06.
+
+### 2026-07-24 live validation
+
+- The original five Python targets passed worktree-pinned compilation and
+  targeted Ruff format/check.
 - Recursive inventory and pattern validation checked exactly five Python files
   with zero violations.
 - The focused StudioTools, Registry-router, and Components-router unit suites

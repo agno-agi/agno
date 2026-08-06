@@ -910,6 +910,18 @@ class ToolMetadata(BaseModel):
     functions: Optional[List[CallableMetadata]] = Field(
         None, description="Functions in the toolkit (if is_toolkit=True)"
     )
+    namespace_template: Optional[str] = Field(
+        None, description="Namespace template resolved by a context-aware toolkit"
+    )
+    template_placeholders: Optional[List[str]] = Field(
+        None, description="Framework context placeholders required by the namespace template"
+    )
+    is_templated: Optional[bool] = Field(None, description="Whether the toolkit namespace requires context resolution")
+    knowledge_class: Optional[str] = Field(None, description="Class of the knowledge instance owned by the toolkit")
+    vector_db_class: Optional[str] = Field(None, description="Class of the toolkit knowledge vector database")
+    contents_db_class: Optional[str] = Field(None, description="Class of the toolkit knowledge contents database")
+    max_content_bytes: Optional[int] = Field(None, description="Maximum bytes accepted for one knowledge item")
+    max_namespace_bytes: Optional[int] = Field(None, description="Maximum source bytes accepted for one namespace")
 
     # Fields for non-toolkit tools (Function or raw callable)
     module: Optional[str] = Field(None, description="Module where the callable is defined")

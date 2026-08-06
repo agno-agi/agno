@@ -56,6 +56,32 @@ def _create_mock_model_class():
     return type("MockModel", (Model,), abstract_methods)
 
 
+class _BackingContentsDb:
+    pass
+
+
+class _BackingVectorDb:
+    pass
+
+
+class _BackingKnowledge:
+    def __init__(self):
+        self.contents_db = _BackingContentsDb()
+        self.vector_db = _BackingVectorDb()
+
+
+class _TemplatedKnowledgeToolkit(Toolkit):
+    """KnowledgeTools-like shape proving registry metadata stays generic."""
+
+    def __init__(self):
+        super().__init__(name="agent_knowledge", tools=[])
+        self.namespace = "agent-knowledge/{agent_id}"
+        self.template_placeholders = ("agent_id",)
+        self.max_content_bytes = 1_000_000
+        self.max_namespace_bytes = 20_000_000
+        self.knowledge = _BackingKnowledge()
+
+
 @pytest.fixture
 def settings():
     """Create test settings with auth disabled (no security key = auth disabled)."""
@@ -211,6 +237,33 @@ class TestListRegistryWithTools:
         assert len(tools) >= 1
         tool_names = [t["name"] for t in tools]
         assert "simple_function" in tool_names
+
+    def test_templated_knowledge_toolkit_metadata(self, settings):
+        """Template/backing metadata is exposed without a global knowledge resource."""
+        toolkit = _TemplatedKnowledgeToolkit()
+        registry = Registry(tools=[toolkit])
+
+        app = FastAPI()
+        router = get_registry_router(registry=registry, settings=settings)
+        app.include_router(router)
+        client = TestClient(app)
+
+        response = client.get("/registry")
+
+        assert response.status_code == 200
+        data = response.json()
+        tools = [resource for resource in data["data"] if resource["type"] == "tool"]
+        assert len(tools) == 1
+        metadata = tools[0]["metadata"]
+        assert metadata["namespace_template"] == "agent-knowledge/{agent_id}"
+        assert metadata["template_placeholders"] == ["agent_id"]
+        assert metadata["is_templated"] is True
+        assert metadata["knowledge_class"] == f"{_BackingKnowledge.__module__}.{_BackingKnowledge.__name__}"
+        assert metadata["contents_db_class"] == f"{_BackingContentsDb.__module__}.{_BackingContentsDb.__name__}"
+        assert metadata["vector_db_class"] == f"{_BackingVectorDb.__module__}.{_BackingVectorDb.__name__}"
+        assert metadata["max_content_bytes"] == 1_000_000
+        assert metadata["max_namespace_bytes"] == 20_000_000
+        assert not [resource for resource in data["data"] if resource["type"] == "knowledge"]
 
 
 # =============================================================================

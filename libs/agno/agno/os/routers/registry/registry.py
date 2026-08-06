@@ -213,10 +213,35 @@ def attach_routes(router: APIRouter, registry: Registry) -> APIRouter:
                             )
                         )
 
+                    namespace_template = _safe_str(getattr(tool, "namespace", None))
+                    raw_placeholders = getattr(tool, "template_placeholders", None)
+                    template_placeholders: Optional[List[str]] = None
+                    if isinstance(raw_placeholders, (list, tuple)):
+                        template_placeholders = []
+                        for placeholder in raw_placeholders:
+                            placeholder_name = _safe_str(placeholder)
+                            if placeholder_name is not None:
+                                template_placeholders.append(placeholder_name)
+
+                    has_namespace_metadata = namespace_template is not None or bool(template_placeholders)
+                    knowledge = getattr(tool, "knowledge", None) if has_namespace_metadata else None
+                    vector_db = getattr(knowledge, "vector_db", None) if knowledge is not None else None
+                    contents_db = getattr(knowledge, "contents_db", None) if knowledge is not None else None
+
                     toolkit_metadata = ToolMetadata(
                         class_path=_class_path(tool),
                         is_toolkit=True,
                         functions=function_details,
+                        namespace_template=namespace_template if has_namespace_metadata else None,
+                        template_placeholders=template_placeholders if has_namespace_metadata else None,
+                        is_templated=bool(template_placeholders) if has_namespace_metadata else None,
+                        knowledge_class=_class_path(knowledge) if knowledge is not None else None,
+                        vector_db_class=_class_path(vector_db) if vector_db is not None else None,
+                        contents_db_class=_class_path(contents_db) if contents_db is not None else None,
+                        max_content_bytes=getattr(tool, "max_content_bytes", None) if has_namespace_metadata else None,
+                        max_namespace_bytes=getattr(tool, "max_namespace_bytes", None)
+                        if has_namespace_metadata
+                        else None,
                     )
                     resources.append(
                         RegistryContentResponse(
