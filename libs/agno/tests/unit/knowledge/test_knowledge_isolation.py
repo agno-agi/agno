@@ -7,6 +7,7 @@ from typing import Any, Dict, List
 
 import pytest
 
+from agno.knowledge.content import Content
 from agno.knowledge.document import Document
 from agno.knowledge.knowledge import Knowledge
 from agno.vectordb.base import VectorDb
@@ -289,3 +290,72 @@ class TestLinkedToMetadata:
 
         # The knowledge's name should override since we set it after metadata merge
         assert result[0].meta_data["linked_to"] == "New KB"
+
+
+class MergingMockVectorDb(MockVectorDb):
+    """Mocks how real adapters (LanceDB/PgVector/Qdrant) merge the
+    ``filters`` argument over each document's ``meta_data`` at insert time."""
+
+    def insert(self, content_hash: str, documents: List[Document], filters=None) -> None:
+        for document in documents:
+            if filters:
+                meta_data = document.meta_data.copy() if document.meta_data else {}
+                meta_data.update(filters)
+                document.meta_data = meta_data
+        self.inserted_documents.extend(documents)
+
+    async def async_insert(self, content_hash: str, documents: List[Document], filters=None) -> None:
+        self.insert(content_hash, documents, filters)
+
+
+class TestLinkedToOverride:
+    """User metadata must not override linked_to isolation."""
+
+    @staticmethod
+    def _prepared_documents(knowledge: Knowledge, user_metadata: Dict[str, Any]) -> List[Document]:
+        """Merge user metadata, then stamp authoritative linked_to."""
+        documents = [Document(name="doc1", content="content")]
+        return knowledge._prepare_documents_for_insert(documents, "content-id", metadata=user_metadata)
+
+    def test_user_metadata_cannot_override_linked_to_on_insert(self):
+        """An attacker inserting into "tenant-a" with metadata={"linked_to": "tenant-b"}
+        must not have their document stored as belonging to tenant-b.
+        """
+        mock_db = MergingMockVectorDb()
+        knowledge = Knowledge(
+            name="tenant-a",
+            vector_db=mock_db,
+            isolate_vector_search=True,
+        )
+
+        user_metadata = {"linked_to": "tenant-b"}
+        documents = self._prepared_documents(knowledge, user_metadata)
+        content = Content(name="doc", metadata=user_metadata)
+        content.content_hash = "hash"
+
+        knowledge._handle_vector_db_insert(content, documents, upsert=False)
+
+        assert len(mock_db.inserted_documents) == 1
+        stored = mock_db.inserted_documents[0]
+        assert stored.meta_data["linked_to"] == "tenant-a"
+
+    @pytest.mark.asyncio
+    async def test_user_metadata_cannot_override_linked_to_on_ainsert(self):
+        """Async variant of the cross-tenant override regression test."""
+        mock_db = MergingMockVectorDb()
+        knowledge = Knowledge(
+            name="tenant-a",
+            vector_db=mock_db,
+            isolate_vector_search=True,
+        )
+
+        user_metadata = {"linked_to": "tenant-b"}
+        documents = self._prepared_documents(knowledge, user_metadata)
+        content = Content(name="doc", metadata=user_metadata)
+        content.content_hash = "hash"
+
+        await knowledge._ahandle_vector_db_insert(content, documents, upsert=False)
+
+        assert len(mock_db.inserted_documents) == 1
+        stored = mock_db.inserted_documents[0]
+        assert stored.meta_data["linked_to"] == "tenant-a"

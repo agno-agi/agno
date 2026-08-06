@@ -185,9 +185,21 @@ class TestStripAgnoMetadata:
         strip_agno_metadata(metadata)
         assert "_agno" in metadata
 
+    def test_strips_linked_to_key(self):
+        """linked_to is reserved for isolation and must be stripped from user metadata (issue #8664)."""
+        metadata = {"user_key": "value", "linked_to": "victim-kb"}
+        result = strip_agno_metadata(metadata)
+        assert result == {"user_key": "value"}
+        assert "linked_to" not in result
+
+    def test_strips_all_reserved_keys_together(self):
+        metadata = {"user_key": "value", "_agno": {"source_type": "s3"}, "linked_to": "victim-kb"}
+        result = strip_agno_metadata(metadata)
+        assert result == {"user_key": "value"}
+
 
 # =============================================================================
-# RESERVED_AGNO_KEY constant
+# Reserved key constants
 # =============================================================================
 
 
