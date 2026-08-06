@@ -1148,7 +1148,7 @@ def _hydrate_from_graph(
         member_type = link_meta.get("type")
 
         if member_type == "agent":
-            agent = Agent.from_dict(child_config)
+            agent = Agent.from_dict(child_config, registry=registry)
             agent.id = child_graph["component"]["component_id"]
             if agent.db is None:
                 agent.db = db

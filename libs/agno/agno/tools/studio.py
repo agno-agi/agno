@@ -63,7 +63,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 from agno.run import RunContext
 from agno.tools.function import Function
-from agno.tools.studio_runner import AmbiguousComponentNameError, StudioRunnerTools, _slugify
+from agno.tools.studio_runner import AmbiguousComponentNameError, StudioRunnerError, StudioRunnerTools, _slugify
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_debug, logger
 
@@ -800,7 +800,7 @@ class StudioTools(Toolkit):
         """
         try:
             agent = self._find_agent(agent_id)
-        except AmbiguousComponentNameError as e:
+        except StudioRunnerError as e:
             return json.dumps({"error": str(e) or type(e).__name__})
         except Exception as e:
             logger.exception("Failed to resolve agent")
@@ -832,7 +832,7 @@ class StudioTools(Toolkit):
         """
         try:
             team = self._find_team(team_id)
-        except AmbiguousComponentNameError as e:
+        except StudioRunnerError as e:
             return json.dumps({"error": str(e) or type(e).__name__})
         except Exception as e:
             logger.exception("Failed to resolve team")
@@ -865,7 +865,7 @@ class StudioTools(Toolkit):
         """
         try:
             wf = self._find_workflow(workflow_id)
-        except AmbiguousComponentNameError as e:
+        except StudioRunnerError as e:
             return json.dumps({"error": str(e) or type(e).__name__})
         except Exception as e:
             logger.exception("Failed to resolve workflow")
@@ -1177,7 +1177,7 @@ class StudioTools(Toolkit):
                     }
                 )
             agent = self._find_agent_for_edit(agent_id)
-        except AmbiguousComponentNameError as e:
+        except StudioRunnerError as e:
             return json.dumps({"error": str(e) or type(e).__name__})
         except Exception as e:
             logger.exception("Failed to resolve agent")
@@ -1268,7 +1268,7 @@ class StudioTools(Toolkit):
                     }
                 )
             team = self._find_team_for_edit(team_id)
-        except AmbiguousComponentNameError as e:
+        except StudioRunnerError as e:
             return json.dumps({"error": str(e) or type(e).__name__})
         except Exception as e:
             logger.exception("Failed to resolve team")
@@ -1374,7 +1374,7 @@ class StudioTools(Toolkit):
                     }
                 )
             wf = self._find_workflow_for_edit(workflow_id)
-        except AmbiguousComponentNameError as e:
+        except StudioRunnerError as e:
             return json.dumps({"error": str(e) or type(e).__name__})
         except Exception as e:
             logger.exception("Failed to resolve workflow")
