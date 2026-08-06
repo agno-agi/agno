@@ -834,7 +834,7 @@ def from_dict(
     if "tools" in config and config["tools"]:
         if registry:
             rehydrated_tools = registry.rehydrate_functions(config["tools"])
-            unresolved_tools = [f.name for f in rehydrated_tools if f.entrypoint is None]
+            unresolved_tools = [f.name for f in rehydrated_tools if isinstance(f, Function) and f.entrypoint is None]
             if unresolved_tools and strict:
                 raise ComponentRehydrationError(
                     f"{component_label} references tools not resolvable from the registry: "
