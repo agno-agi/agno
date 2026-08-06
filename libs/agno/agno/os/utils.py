@@ -597,6 +597,8 @@ DOCUMENT_MIME_TYPES = {
     "application/vnd.ms-powerpoint",  # .ppt
     "application/vnd.ms-excel",  # .xls
     "application/vnd.ms-outlook",  # .msg
+    "application/zip",  # .zip
+    "message/rfc822",  # .eml
     "text/javascript",
     "application/x-python",
     "text/x-python",
@@ -624,6 +626,8 @@ EXTENSION_CATEGORY: Dict[str, str] = {
     "xlsx": "document",
     "xls": "document",
     "msg": "document",
+    "zip": "document",
+    "eml": "document",
     "py": "document",
     "txt": "document",
     "html": "document",
@@ -728,6 +732,8 @@ _DOCUMENT_EXTENSION_MIME: Dict[str, str] = {
     "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "xls": "application/vnd.ms-excel",
     "msg": "application/vnd.ms-outlook",
+    "zip": "application/zip",
+    "eml": "message/rfc822",
     "py": "text/x-python",
     "txt": "text/plain",
     "html": "text/html",
