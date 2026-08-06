@@ -2,6 +2,7 @@
 
 from agno.reasoning.anthropic import is_anthropic_reasoning_model
 from agno.reasoning.azure_ai_foundry import is_ai_foundry_reasoning_model
+from agno.reasoning.dashscope import is_dashscope_reasoning_model
 from agno.reasoning.deepseek import is_deepseek_reasoning_model
 from agno.reasoning.gemini import is_gemini_reasoning_model
 from agno.reasoning.groq import is_groq_reasoning_model
@@ -561,6 +562,77 @@ def test_deepseek_non_deepseek_model():
 
 
 # ============================================================================
+# DashScope Reasoning Model Tests
+# ============================================================================
+
+
+def test_dashscope_with_qwen_max():
+    """Test DashScope model with qwen-max ID returns True."""
+    model = MockModel(
+        class_name="DashScope",
+        model_id="qwen-max",
+    )
+    assert is_dashscope_reasoning_model(model) is True
+
+
+def test_dashscope_with_qwen_plus():
+    """Test DashScope model with qwen-plus ID returns True."""
+    model = MockModel(
+        class_name="DashScope",
+        model_id="qwen-plus",
+    )
+    assert is_dashscope_reasoning_model(model) is True
+
+
+def test_dashscope_with_enable_thinking():
+    """Test DashScope model with enable_thinking=True returns True."""
+    model = MockModel(
+        class_name="DashScope",
+        model_id="qwen-turbo",
+        enable_thinking=True,
+    )
+    assert is_dashscope_reasoning_model(model) is True
+
+
+def test_dashscope_with_both_qwen_and_thinking():
+    """Test DashScope model with both qwen ID and enable_thinking returns True."""
+    model = MockModel(
+        class_name="DashScope",
+        model_id="qwen-max",
+        enable_thinking=True,
+    )
+    assert is_dashscope_reasoning_model(model) is True
+
+
+def test_dashscope_without_qwen_or_thinking():
+    """Test DashScope model without qwen ID or enable_thinking returns False."""
+    model = MockModel(
+        class_name="DashScope",
+        model_id="some-other-model",
+    )
+    assert is_dashscope_reasoning_model(model) is False
+
+
+def test_dashscope_with_thinking_false():
+    """Test DashScope model with enable_thinking=False and no qwen ID returns False."""
+    model = MockModel(
+        class_name="DashScope",
+        model_id="other-model",
+        enable_thinking=False,
+    )
+    assert is_dashscope_reasoning_model(model) is False
+
+
+def test_dashscope_non_dashscope_model():
+    """Test non-DashScope model with qwen ID returns False."""
+    model = MockModel(
+        class_name="OpenAIChat",
+        model_id="qwen-max",
+    )
+    assert is_dashscope_reasoning_model(model) is False
+
+
+# ============================================================================
 # Groq Reasoning Model Tests
 # ============================================================================
 
@@ -749,6 +821,7 @@ def test_all_checkers_return_false_for_non_reasoning_model():
     assert is_anthropic_reasoning_model(model) is False
     assert is_vertexai_reasoning_model(model) is False
     assert is_deepseek_reasoning_model(model) is False
+    assert is_dashscope_reasoning_model(model) is False
     assert is_groq_reasoning_model(model) is False
     assert is_ollama_reasoning_model(model) is False
     assert is_ai_foundry_reasoning_model(model) is False
