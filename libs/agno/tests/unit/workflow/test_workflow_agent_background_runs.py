@@ -117,7 +117,7 @@ async def test_background_workflow_agent_cancel_lands_a_run_row(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_background_workflow_agent_run_visible_while_executing(monkeypatch):
-    """Phase-4 item 17: the 202'd run id must be poll-visible from acceptance,
+    """The 202'd run id must be poll-visible from acceptance,
     not only after execution writes. The skip removed with the 9079 safety net
     made non-durable WorkflowAgent background runs fully invisible while
     queued/executing - polls 404ed and tenant-scoped cancel had nothing to

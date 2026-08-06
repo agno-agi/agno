@@ -271,7 +271,7 @@ class TestQueueAdminGate:
 
 
 class TestUnfencedSessionStoreWarning:
-    """Phase-6 item 24-as-A: a durable queue over a session store without the
+    """A durable queue over a session store without the
     atomic run-persistence primitives must degrade LOUDLY - the fencing
     architecture silently does not exist there. Option B (implement the
     primitive family per adapter) is parked, evidence-gated."""
@@ -320,7 +320,7 @@ class TestUnfencedSessionStoreWarning:
 
 
 class TestQueueLifespanCleanup:
-    """Phase-7 item 27: an exception in the app body must not leak a running
+    """An exception in the app body must not leak a running
     worker or a stale active-worker registration - the inline-door admission
     gate consults that registration, and a leaked one points at a dead
     worker's store forever."""

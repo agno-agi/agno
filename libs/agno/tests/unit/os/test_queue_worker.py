@@ -1015,17 +1015,16 @@ class TestConfigValidation:
             with pytest.raises(ValueError):
                 QueueConfig(durable=True, **{k: v for k, v in kwargs.items() if k != "durable"})
 
-    def test_multi_attempt_requires_experimental_opt_in(self):
-        """The interim two-producer guard, config half: re-execution reaches
-        the unfenced happy-path-save and stream-write races (P1 items), so
-        max_attempts > 1 is an explicit experimental opt-in - a log warning
-        is not a control."""
+    def test_multi_attempt_is_first_class(self):
+        """The interim experimental opt-in is GONE: the save and stream fences closed the
+        two-producer races (run-row saves and stream writes), so
+        max_attempts > 1 constructs plainly. The at-most-once default is
+        untouched - retries are a choice, not a surprise."""
         from agno.job_queue.config import QueueConfig
 
-        with pytest.raises(ValueError, match="allow_multi_attempt_experimental"):
-            QueueConfig(durable=True, max_attempts=3)
-        config = QueueConfig(durable=True, max_attempts=3, allow_multi_attempt_experimental=True)
+        config = QueueConfig(durable=True, max_attempts=3)
         assert config.max_attempts == 3
+        assert not hasattr(config, "allow_multi_attempt_experimental"), "the flag must be fully deleted"
         assert QueueConfig(durable=True).max_attempts == 1  # default untouched
 
 
@@ -1761,7 +1760,7 @@ class TestForegroundCancelPersistGuard:
 
 
 class TestWorkerEnsuresRunRow:
-    """Phase-3 item 9 (lean): a claimed run's row is guaranteed durable BEFORE
+    """A claimed run's row is guaranteed durable BEFORE
     execution - the accepting request's prepare can fail or die after the
     ticket committed, and the old worker executed rowless (pollers 404ed a
     real run until its terminal save; the accept grace only narrowed the
@@ -1953,7 +1952,7 @@ class TestClosingLedger:
 
 
 class TestWorkerPathIndexStamp:
-    """Phase-5 item 21 tripwire: the DB-fallback substrate assumes the events
+    """Tripwire: the DB-fallback substrate assumes the events
     the worker PUBLISHES are the same objects the component ACCUMULATES for
     its session save. If that shared-reference assumption ever breaks (a
     copy, a reconstruction), indices silently stop reaching storage and the
@@ -2023,7 +2022,7 @@ class TestWorkerPathIndexStamp:
 
 
 class TestWorkerRedriveSeedsExpiredCounter:
-    """Phase-5 item 20, durable door: the worker's continuation reopen seeds
+    """Durable door: the worker's continuation reopen seeds
     an EXPIRED counter from the run row before the leg's first event - the
     seam's accept-time reopen is deliberately floorless (nothing publishes
     before the worker's reopen), so this is the one seat that must seed."""
@@ -2093,7 +2092,7 @@ class TestWorkerRedriveSeedsExpiredCounter:
 
 
 class TestDrainLifecycle:
-    """Phase-7 item 29: the drain's three defects - heartbeat dying at drain
+    """The drain's three defects - heartbeat dying at drain
     start (peer sweeps a healthily-draining run as dead), the double-cancel
     (a second cancel landing inside except CancelledError interrupts the
     drain's own shielded persist-before-requeue), and the warned-not-enforced

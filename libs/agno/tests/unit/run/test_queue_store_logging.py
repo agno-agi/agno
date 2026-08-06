@@ -1,4 +1,4 @@
-"""Phase-7 item 30: a dead database must be LOUD, not indistinguishable from
+"""A dead database must be LOUD, not indistinguishable from
 an empty queue. The queue sections' catches logged at DEBUG - production logs
 showed nothing while every claim, heartbeat, and settlement silently failed.
 Claims and fenced/terminal writes now log at ERROR, pure reads at WARNING,

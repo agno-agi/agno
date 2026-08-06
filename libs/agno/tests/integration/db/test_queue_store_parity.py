@@ -1,4 +1,4 @@
-"""Phase-6 item 26: the store-contract PARITY matrix.
+"""The store-contract PARITY matrix.
 
 One scenario set, executed identically against every queue store: in-memory,
 Redis over fakeredis, Redis over a REAL server (the WATCH-sensitive rows -

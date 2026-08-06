@@ -1,4 +1,4 @@
-"""Behavioral tests for the acceptance invariant (phase-3 item 10).
+"""Behavioral tests for the acceptance invariant.
 
 After the queue ticket commits, every response must either ACKNOWLEDGE the
 durable acceptance (202/tail) or first make the ticket permanently
@@ -178,14 +178,17 @@ class TestHelperUnits:
         assert await aticket_poll_fallback(worker, "r1", "s1", "agent", "a1", "bob") is None
 
 
-class TestBackgroundContinueRequiresDurableDoor:
-    """Phase-7 item 32: continue(background=true, stream=false) previously
-    diverged three ways - 202 with a ticket, a silent INLINE-BLOCKING 200 on
-    agents/teams without one, and a 409 on workflows. The silent inline run
-    was the lie: the caller asked for background semantics and got a request
-    that blocked for the whole continuation leg. Now all three components
-    refuse identically without a ticket; the durable 202 body was already
-    uniform (cbeb8e8)."""
+class TestBackgroundContinueCompatFallthrough:
+    """continue(background=true, stream=false) without a durable ticket.
+
+    Agents and teams keep their PRE-QUEUE behavior for back-compat: the
+    background form param predates the durable queue on those endpoints and
+    its non-stream branch always ran the continuation INLINE-BLOCKING, so
+    existing clients depend on it. The fallthrough now logs a loud warning
+    pointing at QueueConfig(durable=True) - real background continuation is
+    the durable door. Workflows differ deliberately: their continue endpoint
+    never had the param, so the durable door is its only contract and it
+    refuses with 409 instead."""
 
     @pytest.fixture()
     def continue_harness(self, tmp_path):
@@ -195,38 +198,121 @@ class TestBackgroundContinueRequiresDurableDoor:
         from agno.db.sqlite import SqliteDb
         from agno.os import AgentOS
         from agno.team import Team
+        from agno.workflow import Workflow
 
         db = SqliteDb(db_file=str(tmp_path / "t.db"))
         agent = Agent(id="qa-agent", name="QA Agent", db=db)
         team = Team(id="qa-team", name="QA Team", members=[], db=db)
-        app = AgentOS(agents=[agent], teams=[team], telemetry=False).get_app()
+        workflow = Workflow(id="qa-wf", name="QA Workflow", db=db, steps=[])
+        app = AgentOS(agents=[agent], teams=[team], workflows=[workflow], telemetry=False).get_app()
         return TestClient(app, raise_server_exceptions=False)
 
-    def test_agent_background_continue_without_ticket_409s(self, continue_harness):
-        resp = continue_harness.post(
-            "/agents/qa-agent/runs/r-nope/continue",
-            data={"background": "true", "stream": "false", "session_id": "s1"},
-        )
-        assert resp.status_code == 409, (
-            f"got {resp.status_code} - the old fallthrough ran the continuation inline while "
-            "claiming background semantics"
-        )
-        assert "durably-submitted" in resp.json()["detail"]
+    def test_agent_background_continue_without_ticket_runs_inline(self, continue_harness, caplog):
+        import logging
 
-    def test_team_background_continue_without_ticket_409s(self, continue_harness):
+        with caplog.at_level(logging.WARNING, logger="agno"):
+            resp = continue_harness.post(
+                "/agents/qa-agent/runs/r-nope/continue",
+                data={"background": "true", "stream": "false", "session_id": "s1"},
+            )
+        assert resp.status_code != 409, (
+            f"got 409 - the legacy inline fallthrough must survive for back-compat: {resp.json()}"
+        )
+        assert any("INLINE-BLOCKING" in r.message for r in caplog.records), (
+            "the compat fallthrough must warn that background semantics are not real here"
+        )
+
+    def test_team_background_continue_without_ticket_runs_inline(self, continue_harness, caplog):
+        import logging
+
+        with caplog.at_level(logging.WARNING, logger="agno"):
+            resp = continue_harness.post(
+                "/teams/qa-team/runs/r-nope/continue",
+                data={"background": "true", "stream": "false", "session_id": "s1"},
+            )
+        assert resp.status_code != 409
+        assert any("INLINE-BLOCKING" in r.message for r in caplog.records)
+
+    def test_workflow_background_continue_without_ticket_409s(self, continue_harness, tmp_path):
+        """The workflow continue endpoint gained the background param WITH
+        the durable queue - there is no legacy client to protect, so the
+        honest refusal stands. A real PAUSED run is seeded (the endpoint
+        404s nonexistent runs before the gate)."""
+        import json as _json
+        import time as _time
+
+        from agno.db.sqlite import SqliteDb
+
+        seed_db = SqliteDb(db_file=str(tmp_path / "t.db"))
+        sessions_table = seed_db._get_table(table_type="sessions", create_table_if_not_found=True)
+        runs_table = seed_db._get_table(table_type="runs", create_table_if_not_found=True)
+        with seed_db.Session() as sess, sess.begin():
+            sess.execute(
+                sessions_table.insert().values(session_id="s1", session_type="workflow", created_at=int(_time.time()))
+            )
+            sess.execute(
+                runs_table.insert().values(
+                    run_id="r-paused",
+                    session_id="s1",
+                    run_type="workflow",
+                    workflow_id="qa-wf",
+                    status="PAUSED",
+                    run_index=0,
+                    run_data=_json.dumps(
+                        {"run_id": "r-paused", "session_id": "s1", "workflow_id": "qa-wf", "status": "PAUSED"}
+                    ),
+                    created_at=int(_time.time()),
+                )
+            )
+
         resp = continue_harness.post(
-            "/teams/qa-team/runs/r-nope/continue",
+            "/workflows/qa-wf/runs/r-paused/continue",
             data={"background": "true", "stream": "false", "session_id": "s1"},
         )
-        assert resp.status_code == 409
+        assert resp.status_code == 409, f"got {resp.status_code}: {resp.json()}"
         assert "durably-submitted" in resp.json()["detail"]
 
     def test_inline_continue_without_background_is_not_refused(self, continue_harness):
-        """background=false continues keep the inline path: whatever the
-        inline machinery does with this run, the durable-door refusal must
-        not fire - it is scoped strictly to the background flag."""
+        """background=false continues keep the inline path untouched - no
+        warning, no refusal keyed on the durable door."""
         resp = continue_harness.post(
             "/agents/qa-agent/runs/r-nope/continue",
             data={"background": "false", "stream": "false", "session_id": "s1"},
         )
-        assert resp.status_code != 409, f"the 409 must key on background=true only: {resp.json()}"
+        assert resp.status_code != 409, f"nothing here should 409: {resp.json()}"
+
+
+class TestSubmitBackgroundBodyParity:
+    """background=true + stream=false submits answer with the SAME body shape
+    whether or not the durable queue is wired: 202 and exactly
+    {run_id, session_id, status}. The durable seam's body is pinned by
+    TestPrepareFailureTruthfulness/TestTicketPollFallback above; this pins
+    the NON-durable detached path for all three components, so a client
+    written against one deployment mode works unchanged on the other."""
+
+    @pytest.fixture()
+    def submit_harness(self, tmp_path):
+        from fastapi.testclient import TestClient
+
+        from agno.agent import Agent
+        from agno.db.sqlite import SqliteDb
+        from agno.os import AgentOS
+        from agno.team import Team
+        from agno.workflow import Workflow
+
+        db = SqliteDb(db_file=str(tmp_path / "t.db"))
+        agent = Agent(id="qa-agent", name="QA Agent", db=db)
+        team = Team(id="qa-team", name="QA Team", members=[], db=db)
+        workflow = Workflow(id="qa-wf", name="QA Workflow", db=db, steps=[])
+        app = AgentOS(agents=[agent], teams=[team], workflows=[workflow], telemetry=False).get_app()
+        return TestClient(app, raise_server_exceptions=False)
+
+    @pytest.mark.parametrize("path", ["/agents/qa-agent/runs", "/teams/qa-team/runs", "/workflows/qa-wf/runs"])
+    def test_non_durable_body_matches_durable_contract(self, submit_harness, path):
+        resp = submit_harness.post(path, data={"message": "hi", "stream": "false", "background": "true"})
+        assert resp.status_code == 202, f"{path}: {resp.status_code} {resp.text[:200]}"
+        body = resp.json()
+        assert set(body.keys()) == {"run_id", "session_id", "status"}, (
+            f"{path}: the non-durable 202 body must match the durable seam's shape exactly, got {body}"
+        )
+        assert body["status"] in ("PENDING", "RUNNING")

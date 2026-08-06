@@ -1,4 +1,4 @@
-"""Phase-7 commit #1: the interim two-producer guard, requeue half.
+"""The requeue zombie gate.
 
 A job FAILED within the last lock_grace was, in the worst case, swept while
 its worker was actually alive (a sweep proves lost heartbeats, not stopped

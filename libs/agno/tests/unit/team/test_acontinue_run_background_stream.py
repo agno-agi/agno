@@ -464,7 +464,7 @@ class TestQueuedCancelWithoutRunResponse:
 
 
 class TestRunIdOnlyContinuePersistsStatus:
-    """Phase-4 item 16 (team twin): run-ID-only continues must persist
+    """Team twin of the agent test: run-ID-only continues must persist
     PENDING then RUNNING from the session-loaded run; the dispatch still
     receives run_response=None. See the agent twin for the full story."""
 

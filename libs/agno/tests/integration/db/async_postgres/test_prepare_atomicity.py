@@ -1,6 +1,6 @@
 """Integration tests for the atomic queued-run prepare on real Postgres.
 
-Phase-3 item 9 (lean): aprepare_queued_run must never whole-session-save.
+aprepare_queued_run must never whole-session-save.
 The fresh-session path used to be an unlocked read-check-save, and a worker
 that claimed, created the session, and COMPLETED the run inside that window
 was clobbered back to PENDING by the accepting request's stale save. The

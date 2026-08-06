@@ -1486,19 +1486,22 @@ def get_agent_router(
         else:
             if background:
                 # background=true + stream=false reached the NON-durable path
-                # (no paused ticket - or fork/regenerate/remote/factory). The
-                # old fallthrough silently ran the continuation INLINE,
-                # blocking the request for the entire leg while the caller
-                # asked for background semantics - a lie that only held until
-                # a proxy or client timeout killed the connection mid-leg.
-                # Workflow-door parity: background non-stream continues are
-                # the durable door, full stop (the background param is new in
-                # this PR - no back-compat cost).
-                raise HTTPException(
-                    status_code=409,
-                    detail="background=true continuation is only available for durably-submitted "
-                    "runs (no paused ticket for this run). Continue without background, or "
-                    "submit with background=true and a durable queue.",
+                # (no paused ticket - or fork/regenerate/remote/factory).
+                # Pre-queue clients rely on this exact fallthrough (the
+                # background form param predates the durable queue, and its
+                # non-stream branch always ran inline), so it stays for
+                # back-compat: the continuation executes INLINE-BLOCKING on
+                # this replica and the response returns when the leg
+                # finishes. That is not real background semantics - it does
+                # not survive client disconnect - hence the warning; a
+                # durable queue (QueueConfig(durable=True)) is the real
+                # background door. Workflows differ deliberately: their
+                # continue endpoint never had the param, so the durable door
+                # is its only contract there and refuses instead.
+                log_warning(
+                    f"background=true continue for run {run_id} has no durable ticket: executing "
+                    "INLINE-BLOCKING on this replica (legacy behavior; does not survive client "
+                    "disconnect). Enable QueueConfig(durable=True) for durable background continuation."
                 )
             # Build extra kwargs for remote agent auth
             extra_kwargs: dict = {}

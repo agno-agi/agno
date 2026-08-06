@@ -1638,6 +1638,12 @@ class Workflow:
         if not self.db:
             return
         try:
+            from agno.run.status_persist import persist_worker_owned_run
+
+            # Queue-worker-owned runs save through the attempt-fenced
+            # primitive; a zombie attempt's write is refused, not applied
+            if persist_worker_owned_run(self.db, run, session_id=session_id, user_id=user_id):
+                return
             self.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
         except NotImplementedError:
             log_debug(f"{type(self.db).__name__} does not implement upsert_run; skipping per-run write")
@@ -1655,6 +1661,12 @@ class Workflow:
         if not self.db:
             return
         try:
+            from agno.run.status_persist import apersist_worker_owned_run
+
+            # Queue-worker-owned runs save through the attempt-fenced
+            # primitive; a zombie attempt's write is refused, not applied
+            if await apersist_worker_owned_run(self.db, run, session_id=session_id, user_id=user_id):
+                return
             if self._has_async_db():
                 await self.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr,misc]
             else:

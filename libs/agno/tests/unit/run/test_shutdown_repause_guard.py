@@ -1,4 +1,4 @@
-"""Phase-4 item 14: task-level shutdown must not destroy a paused run.
+"""Task-level shutdown must not destroy a paused run.
 
 A run that PAUSED for human input parked valid, continuable HITL state, and
 the leg's own persistence wrote the PAUSED row. The shutdown branches in the

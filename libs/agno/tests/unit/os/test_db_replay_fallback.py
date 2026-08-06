@@ -1,4 +1,4 @@
-"""Phase-5 item 21: the DB replay fallback (PATH-3) must honor the client's
+"""The DB replay fallback (PATH-3) must honor the client's
 last_event_index using the events' REAL stream indices.
 
 Substrate: the event stream stamps event_index onto the event OBJECT at

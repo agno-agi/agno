@@ -579,8 +579,8 @@ class TestAcceptSideEffects:
         await acancel_run("r1")
 
         endpoint, request = self._requeue_endpoint(store)
-        # force=True: the job JUST failed, and the zombie gate (phase-7
-        # guard) refuses fresh failures without it - orthogonal to the
+        # force=True: the job JUST failed, and the requeue zombie gate
+        # refuses fresh failures without it - orthogonal to the
         # intent semantics this test pins
         result = await endpoint(request, "r1", force=True)
         assert result["status"] == "queued"
@@ -644,8 +644,8 @@ class TestAcceptSideEffects:
         await acancel_run("r1")
 
         endpoint, request = self._requeue_endpoint(store)
-        # force=True: fresh failure, zombie gate refused otherwise (phase-7
-        # guard) - orthogonal to the clear-failure semantics under test
+        # force=True: fresh failure, the requeue zombie gate refuses
+        # otherwise - orthogonal to the clear-failure semantics under test
         with patch("agno.run.cancel.acleanup_run", side_effect=RuntimeError("redis down")):
             with pytest.raises(HTTPException) as exc:
                 await endpoint(request, "r1", clear_cancellation=True, force=True)
@@ -723,7 +723,7 @@ class TestContinueStreamEventsPrecedence:
 
 
 class TestInlineContinueReopensStream:
-    """Phase-4 item 15: the INLINE continue path (amark_continue_stream_running)
+    """The INLINE continue path (amark_continue_stream_running)
     must invalidate the settled pause the same way the durable path does.
     PAUSED is tail-terminal in the stream twice over - the status key AND a
     sentinel event - and the old helper only rewrote the status: a client
@@ -801,7 +801,7 @@ class TestInlineContinueReopensStream:
 
 
 class TestInlineContinueSeedsExpiredCounter:
-    """Phase-5 item 20, inline door: an inline continue of a paused run whose
+    """Inline door: an inline continue of a paused run whose
     stream state expired (deploy/restart) must seed the counter from the run
     row's stored indices - the floor read happens ONLY when the counter is
     gone, never on the hot path."""

@@ -254,6 +254,12 @@ def upsert_run(
     try:
         if not agent.db:
             return
+        from agno.run.status_persist import persist_worker_owned_run
+
+        # Queue-worker-owned runs save through the attempt-fenced primitive;
+        # a zombie attempt's write is refused instead of clobbering the row
+        if persist_worker_owned_run(agent.db, run, session_id=session_id, user_id=user_id):
+            return
         agent.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
     except NotImplementedError:
         # Adapter has not been ported to v3 storage; runs are persisted inline
@@ -293,6 +299,12 @@ async def aupsert_run(
 
     try:
         if not agent.db:
+            return
+        from agno.run.status_persist import apersist_worker_owned_run
+
+        # Queue-worker-owned runs save through the attempt-fenced primitive;
+        # a zombie attempt's write is refused instead of clobbering the row
+        if await apersist_worker_owned_run(agent.db, run, session_id=session_id, user_id=user_id):
             return
         if _init.has_async_db(agent):
             await agent.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr,misc]

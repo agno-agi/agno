@@ -235,7 +235,7 @@ class TestRePausedContinueFinalStatus:
 
 
 class TestRunIdOnlyContinuePersistsStatus:
-    """Phase-4 item 16: HITL continues arrive with run_response=None (the
+    """HITL continues arrive with run_response=None (the
     router passes only run_id), and both persistence points sat behind
     `if run_response:` - the run executed fine while the DB read PAUSED for
     the entire leg. The producer must load the run from the session it
