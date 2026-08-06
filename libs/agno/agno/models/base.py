@@ -91,6 +91,20 @@ def _log_messages(messages: List[Message]) -> None:
         m.log(metrics=False)
 
 
+def _has_usable_stream_output(response: ModelResponse) -> bool:
+    return bool(
+        response.content
+        or response.reasoning_content
+        or response.redacted_reasoning_content
+        or response.tool_calls
+        or response.audio
+        or response.images
+        or response.videos
+        or response.audios
+        or response.files
+    )
+
+
 def _handle_agent_exception(a_exc: AgentRunException, additional_input: Optional[List[Message]] = None) -> None:
     """Handle AgentRunException and collect additional messages."""
     if additional_input is None:
@@ -330,14 +344,26 @@ class Model(ABC):
         Invoke the model stream with retry logic for ModelProviderError.
 
         This method wraps the invoke_stream() call and retries on ModelProviderError
-        with optional exponential backoff. Note that retries restart the entire stream.
+        with optional exponential backoff. Empty completed streams also consume a retry when retries are enabled.
         """
         last_exception: Optional[ModelProviderError] = None
         retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
 
         for attempt in range(self.retries + 1):
+            has_usable_output = False
             try:
-                yield from self.invoke_stream(**kwargs)
+                for response in self.invoke_stream(**kwargs):
+                    has_usable_output = has_usable_output or _has_usable_stream_output(response)
+                    yield response
+                if self.retries > 0 and not has_usable_output:
+                    log_warning(
+                        f"Model stream completed without usable output (attempt {attempt + 1}/{self.retries + 1})."
+                    )
+                    if attempt < self.retries:
+                        delay = self._get_retry_delay(attempt)
+                        log_warning(f"Retrying in {delay}s...")
+                        sleep(delay)
+                        continue
                 return  # Success, exit the retry loop
             except ModelProviderError as e:
                 last_exception = self.classify_error(e)
@@ -382,15 +408,26 @@ class Model(ABC):
         Asynchronously invoke the model stream with retry logic for ModelProviderError.
 
         This method wraps the ainvoke_stream() call and retries on ModelProviderError
-        with optional exponential backoff. Note that retries restart the entire stream.
+        with optional exponential backoff. Empty completed streams also consume a retry when retries are enabled.
         """
         last_exception: Optional[ModelProviderError] = None
         retries_with_guidance_count = kwargs.pop("retries_with_guidance_count", 0)
 
         for attempt in range(self.retries + 1):
+            has_usable_output = False
             try:
                 async for response in self.ainvoke_stream(**kwargs):
+                    has_usable_output = has_usable_output or _has_usable_stream_output(response)
                     yield response
+                if self.retries > 0 and not has_usable_output:
+                    log_warning(
+                        f"Model stream completed without usable output (attempt {attempt + 1}/{self.retries + 1})."
+                    )
+                    if attempt < self.retries:
+                        delay = self._get_retry_delay(attempt)
+                        log_warning(f"Retrying in {delay}s...")
+                        await asyncio.sleep(delay)
+                        continue
                 return  # Success, exit the retry loop
             except ModelProviderError as e:
                 last_exception = self.classify_error(e)
