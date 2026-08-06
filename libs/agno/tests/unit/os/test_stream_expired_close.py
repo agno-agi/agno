@@ -1,4 +1,4 @@
-"""Phase-5 item 19-lite: the honest close.
+"""The honest close.
 
 A tail that ends because the stream state expired (run queued past the TTL,
 or a dead producer) while the durable ticket still vouches for the run used

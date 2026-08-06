@@ -589,7 +589,7 @@ class TestDeadProducerGate:
 
 
 class TestEventCountExcludesMarkers:
-    """Phase-5 item 23: coordination markers - pause/terminal sentinels and
+    """Coordination markers - pause/terminal sentinels and
     reopen markers, including stale mid-stream ones - are stream entries but
     not client-facing events. The old XLEN-minus-trailing-sentinel count
     inflated by 2+ per pause/continue cycle; anything consuming the count for
@@ -620,7 +620,7 @@ class TestEventCountExcludesMarkers:
 
 
 class TestBatchBoundarySentinel:
-    """Phase-5 item 22: XREAD reads count-bounded batches (100), and the old
+    """XREAD reads count-bounded batches (100), and the old
     tail honored a sentinel that was merely BATCH-final - a lagging consumer
     whose batch happened to end exactly on a stale pause sentinel was closed
     even though the reopen marker and continuation events sat in the very
@@ -674,7 +674,7 @@ class TestBatchBoundarySentinel:
 
 
 class TestReopenSeedsCounterFromFloor:
-    """Phase-5 item 20: a paused run outliving the TTL (HITL across a
+    """A paused run outliving the TTL (HITL across a
     deploy) loses its counter; reopen_run accepted the missing state and
     INCR restarted indices at 0 - resuming clients, which dedup by index,
     silently discarded every post-approval event."""
@@ -728,7 +728,7 @@ class TestReopenSeedsCounterFromFloor:
 
 
 class TestClusterRejection:
-    """Phase-6 item 25: the stream's per-run keys are not hash-tagged, so its
+    """The stream's per-run keys are not hash-tagged, so its
     WATCH/MULTI and multi-key pipelines are cross-slot - reject cluster
     clients at construction like the job-queue store does, instead of
     failing confusingly at runtime mid-continuation. The cancellation
@@ -746,7 +746,7 @@ class TestClusterRejection:
 
 
 class TestIdleProbeResilience:
-    """Phase-7 item 28: the status probe on the idle path was the one
+    """The status probe on the idle path was the one
     unguarded call in the tail loop - a Redis blip there escaped the loop
     (client sees an error close) instead of riding through like the same
     outage one line earlier at the XREAD. And when a connection fails FAST,

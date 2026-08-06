@@ -112,19 +112,21 @@ def get_queue_router(os: "AgentOS", settings: AgnoAPISettings = AgnoAPISettings(
     )
     async def requeue_job(request: Request, job_id: str, clear_cancellation: bool = False, force: bool = False):
         store = _get_store(request)
-        # Live-zombie gate (the other half of the multi-attempt experimental
-        # gate): a job FAILED within the last lock_grace was, in the worst
+        # Live-zombie gate, kept as OPS HYGIENE now that the write fences
+        # exist: a job FAILED within the last lock_grace was, in the worst
         # case, swept while its worker was actually alive - the sweep only
         # proves heartbeats stopped, not that execution did (the documented
-        # event-loop-starvation mode). Requeueing inside that window can put
-        # a second live producer on the same run row and event stream, whose
-        # writes are not yet generation-fenced. Refuse with 409 until the
-        # grace elapses, unless the operator explicitly forces. Heuristic by
-        # construction: completed_at is DB time on Postgres and this compares
-        # against app time, so clock skew shifts the refusal window - never
-        # ownership, which does not depend on this gate. Cancelled jobs skip
-        # the gate: cancellation only tombstones waiting tickets, so no
-        # zombie attempt can exist.
+        # event-loop-starvation mode). The fences make a requeue inside that
+        # window SAFE (the zombie's row/stream writes are refused once the
+        # new attempt begins), but not free: it burns an attempt re-running
+        # work that may be about to finish, and the finished-work-wins
+        # outcome the operator probably wants arrives by simply waiting.
+        # Refuse with 409 until the grace elapses, unless the operator
+        # explicitly forces. Heuristic by construction: completed_at is DB
+        # time on Postgres and this compares against app time, so clock skew
+        # shifts the refusal window - never ownership, which does not depend
+        # on this gate. Cancelled jobs skip the gate: cancellation only
+        # tombstones waiting tickets, so no zombie attempt can exist.
         gate_job = await store.get_job(job_id)
         if gate_job is not None and gate_job.get("status") == "failed" and not force:
             import time as _time

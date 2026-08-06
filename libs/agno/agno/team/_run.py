@@ -4763,7 +4763,7 @@ def flush_in_flight_messages_on_error_team(
     KNOWN GAP (tombstone): see the agent twin - the detached background
     wrappers never had run_messages in scope, their locals().get calls were
     no-ops and are deleted; wrapper-level errors persist without in-flight
-    conversation (item-33 test target).
+    conversation. Threading the real flush out is a known follow-up.
     """
     if run_messages is None:
         return

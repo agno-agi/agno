@@ -7,9 +7,11 @@ falling back to the fresh-read + whole-session save mitigation otherwise.
 
 This is the write path for status TRANSITIONS (RUNNING, CANCELLED, ERROR)
 made outside a run's own execution: background task bodies, the queue
-worker's sweep and error persists. A run's own final save (inside arun's
-cleanup) still writes the full session; fencing that path end-to-end is the
-remaining scope documented in the design note.
+worker's sweep and error persists. A run's OWN saves are fenced too when
+the run executes under the queue worker: ``apersist_worker_owned_run`` /
+``persist_worker_owned_run`` intercept the per-run save helpers while the
+worker's ownership registration is live, so a zombie attempt's writes are
+refused by the primitive instead of clobbering through bare upsert_run.
 """
 
 import asyncio
@@ -187,3 +189,150 @@ async def apersist_run_transition(
         else:
             component.save_run(run=run_response, session_id=session_id, user_id=user_id)
             component.save_session(session=workflow_session)
+
+
+def _coerce_outcome(result: Any, expected_attempt: Optional[int]) -> "RunPersistOutcome":
+    """Map a legacy bool-returning third-party adapter onto the typed
+    outcomes, using the same historical decisions as apersist_run_status."""
+    if isinstance(result, RunPersistOutcome):
+        return result
+    if result is True:
+        return RunPersistOutcome.UPDATED
+    if expected_attempt is not None:
+        return RunPersistOutcome.STALE_ATTEMPT
+    return RunPersistOutcome.MISSING
+
+
+async def _acall_update(method: Any, kwargs: Dict[str, Any]) -> Any:
+    if inspect.iscoroutinefunction(method):
+        return await method(**kwargs)
+    return await asyncio.to_thread(method, **kwargs)
+
+
+async def apersist_worker_owned_run(
+    db: Any,
+    run: Any,
+    session_id: str,
+    user_id: Optional[str] = None,
+) -> bool:
+    """Fence a worker-owned run's save through the atomic primitive.
+
+    The queue worker registers (worker_id, attempt) for exactly the span of
+    each execution (agno.run.concurrency.worker_managed_execution). While
+    that registration is live, every per-run DB save in this process for
+    that run_id carries the attempt fence: a zombie attempt's write - a late
+    terminal save OR a mid-run flush landing after a newer attempt claimed
+    the row - is refused by the row-locked primitive instead of clobbering
+    wholesale through bare ``upsert_run``. This closes the "run's own final
+    save is unfenced" gap the module docstring describes.
+
+    Returns True when the save was handled here: applied, or finally refused
+    by the fence/terminal guard (refusals are dropped by design - retrying
+    them unfenced is exactly the clobber the fence exists to stop). Returns
+    False when the caller should fall through to the unfenced ``upsert_run``:
+    the run is not worker-owned in this process, the adapter lacks the
+    primitive (the unfenced-store startup warning covers that deployment),
+    or neither the row nor its session exists yet.
+    """
+    from agno.run.concurrency import get_worker_ownership
+    from agno.utils.log import log_warning
+
+    run_id = getattr(run, "run_id", None)
+    if run_id is None or db is None:
+        return False
+    ownership = get_worker_ownership(run_id)
+    if ownership is None or not ownership.attempt:
+        return False
+    method = getattr(db, "update_run_in_session", None)
+    if not callable(method):
+        return False
+    fields = dict(run.to_dict())
+    kwargs: Dict[str, Any] = dict(
+        session_id=session_id,
+        run_id=run_id,
+        fields=fields,
+        expected_attempt=ownership.attempt,
+        user_id=user_id,
+    )
+    outcome = _coerce_outcome(await _acall_update(method, kwargs), ownership.attempt)
+    if outcome is RunPersistOutcome.MISSING:
+        append = getattr(db, "append_run_to_session_if_absent", None)
+        if not callable(append):
+            return False
+        run_dict = dict(fields)
+        # Keep the fresh row fence-stamped: without the attempt on it, the
+        # next fence compare passes vacuously against stored None
+        run_dict["queue_attempt"] = ownership.attempt
+        if inspect.iscoroutinefunction(append):
+            appended = await append(session_id=session_id, run_dict=run_dict, user_id=user_id)
+        else:
+            appended = await asyncio.to_thread(append, session_id=session_id, run_dict=run_dict, user_id=user_id)
+        if appended is None:
+            return False  # no session row / no primitive: the legacy path decides
+        if appended is True:
+            return True
+        # A concurrent writer landed the row between check and append:
+        # re-drive the fenced update once against it
+        outcome = _coerce_outcome(await _acall_update(method, kwargs), ownership.attempt)
+        if outcome is RunPersistOutcome.MISSING:
+            return False
+    if outcome in (RunPersistOutcome.STALE_ATTEMPT, RunPersistOutcome.TERMINAL_REFUSED):
+        log_warning(
+            f"Dropped fenced-out run save: run {run_id} attempt {ownership.attempt} "
+            f"({outcome.value}) - a newer attempt or a terminal row owns it"
+        )
+    return True
+
+
+def persist_worker_owned_run(
+    db: Any,
+    run: Any,
+    session_id: str,
+    user_id: Optional[str] = None,
+) -> bool:
+    """Sync twin of ``apersist_worker_owned_run`` for the sync save helpers.
+
+    Async-only adapters return False here (the sync-save-with-async-db guard
+    raises upstream before this matters).
+    """
+    from agno.run.concurrency import get_worker_ownership
+    from agno.utils.log import log_warning
+
+    run_id = getattr(run, "run_id", None)
+    if run_id is None or db is None:
+        return False
+    ownership = get_worker_ownership(run_id)
+    if ownership is None or not ownership.attempt:
+        return False
+    method = getattr(db, "update_run_in_session", None)
+    if not callable(method) or inspect.iscoroutinefunction(method):
+        return False
+    fields = dict(run.to_dict())
+    kwargs: Dict[str, Any] = dict(
+        session_id=session_id,
+        run_id=run_id,
+        fields=fields,
+        expected_attempt=ownership.attempt,
+        user_id=user_id,
+    )
+    outcome = _coerce_outcome(method(**kwargs), ownership.attempt)
+    if outcome is RunPersistOutcome.MISSING:
+        append = getattr(db, "append_run_to_session_if_absent", None)
+        if not callable(append) or inspect.iscoroutinefunction(append):
+            return False
+        run_dict = dict(fields)
+        run_dict["queue_attempt"] = ownership.attempt
+        appended = append(session_id=session_id, run_dict=run_dict, user_id=user_id)
+        if appended is None:
+            return False
+        if appended is True:
+            return True
+        outcome = _coerce_outcome(method(**kwargs), ownership.attempt)
+        if outcome is RunPersistOutcome.MISSING:
+            return False
+    if outcome in (RunPersistOutcome.STALE_ATTEMPT, RunPersistOutcome.TERMINAL_REFUSED):
+        log_warning(
+            f"Dropped fenced-out run save: run {run_id} attempt {ownership.attempt} "
+            f"({outcome.value}) - a newer attempt or a terminal row owns it"
+        )
+    return True

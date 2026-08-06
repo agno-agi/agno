@@ -553,6 +553,18 @@ class QueueWorker:
         payload = job.get("payload") or {}
         is_continuation = bool(payload.get("continue"))
 
+        stream_generation = job.get("attempt", 1)
+        with contextlib.suppress(Exception):
+            # This attempt takes the stream's writer generation FIRST,
+            # before any stream mutation. A zombie attempt still publishing
+            # from an older claim is refused per-mutation by the backend - its
+            # events cannot interleave, its sentinel cannot close this leg's
+            # tails, and (if it stalled before its own leg entry) its reset
+            # cannot delete this leg's events. Continuation legs pass their
+            # ticket attempt too: each continue CASes the SAME ticket to a
+            # new attempt, so the generation stays monotonic per run.
+            await event_stream.begin_attempt(job_id, stream_generation)
+
         if job.get("attempt", 1) > 1 and not is_continuation:
             # Drop the contradicted attempt's events but keep the index
             # counter: reconnecting clients filter by last_event_index, and a
@@ -563,7 +575,7 @@ class QueueWorker:
             # leave the crashed leg-attempt's partial events in the view - the
             # stream is the best-effort view, the run row stays authoritative.
             with contextlib.suppress(Exception):
-                await event_stream.reset_run_events(job_id)
+                await event_stream.reset_run_events(job_id, generation=stream_generation)
         if is_continuation:
             # Belt-and-braces sentinel invalidation (the seam already reopened
             # on accept, fail-open): covers a seam-side Redis blip AND the
@@ -589,7 +601,7 @@ class QueueWorker:
             # Fail-open: a Redis blip here must not burn the attempt budget -
             # execution can proceed; tails degrade to the DB view
             await event_stream.register_run(job_id, RunStatus.pending)
-            await event_stream.set_run_status(job_id, RunStatus.running)
+            await event_stream.set_run_status(job_id, RunStatus.running, generation=stream_generation)
 
         final_output: Any = None
         is_workflow = job.get("component_type") == "workflow"
@@ -638,7 +650,7 @@ class QueueWorker:
                     final_output = event  # the terminal RunOutput
                     continue
                 with contextlib.suppress(Exception):
-                    await event_stream.add_event(job_id, event)
+                    await event_stream.add_event(job_id, event, generation=stream_generation)
             if final_output is None and is_workflow:
                 with contextlib.suppress(Exception):
                     final_output = await component.aget_run_output(
@@ -666,7 +678,7 @@ class QueueWorker:
             will_retry = status == RunStatus.error and job.get("attempt", 1) < job.get("max_attempts", 1)
             if not will_retry:
                 with contextlib.suppress(Exception):
-                    await asyncio.shield(event_stream.complete_run(job_id, status))
+                    await asyncio.shield(event_stream.complete_run(job_id, status, generation=stream_generation))
         return final_output
 
     async def _terminate_stream_view(self, job: Dict[str, Any], status: str = "error") -> None:
@@ -680,10 +692,14 @@ class QueueWorker:
         from agno.run.base import RunStatus
 
         # The TRUE status: a cancelled run's SSE terminal must not claim ERROR
-        # while the poll surface says CANCELLED
+        # while the poll surface says CANCELLED. Stamped with the SWEPT
+        # attempt's generation: if that attempt is actually alive (a false
+        # death diagnosis), its own later terminal carries the same
+        # generation and passes - finished-work-wins - while a reclaim at a
+        # newer attempt fences this close out entirely.
         terminal = RunStatus.cancelled if status == "cancelled" else RunStatus.error
         with contextlib.suppress(Exception):
-            await asyncio.shield(get_event_stream().complete_run(job["id"], terminal))
+            await asyncio.shield(get_event_stream().complete_run(job["id"], terminal, generation=job.get("attempt")))
 
     async def _persist_run_error(self, job: Dict[str, Any], error: str, status: str = "error") -> bool:
         """Persist a terminal status on the run row so pollers see it, never a
@@ -1888,7 +1904,7 @@ async def aticket_poll_fallback(
 
 def warn_unfenced_session_stores(agent_os: Any) -> None:
     """Loud-degrade for durable queues over session stores without the atomic
-    run-persistence primitives (phase-6 item 24, option A).
+    run-persistence primitives.
 
     The fencing architecture - zombie/attempt fences, the worker's RUNNING
     and attempt stamps, the terminal-row guard's atomic path - lives in the
