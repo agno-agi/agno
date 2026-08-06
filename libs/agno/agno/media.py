@@ -420,6 +420,7 @@ class Video(BaseMedia):
             "video/webm",
             "video/wmv",
             "video/3gp",
+            "video/3gpp",
         }
 
     def get_content_bytes(self) -> Optional[bytes]:

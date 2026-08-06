@@ -50,6 +50,12 @@ def test_video_validate_content_type_rejects_documents():
     assert Video.validate_content_type("application/pdf") is None
 
 
+def test_video_accepts_3gpp_alias():
+    # Codex review: browsers may send video/3gpp (not video/3gp); both must route
+    assert "video/3gpp" in Video.allowed_mime_types()
+    assert Video.validate_content_type("VIDEO/3GPP") == "video/3gpp"
+
+
 def test_file_validator_normalizes_mime_type():
     f = File(content=b"x", mime_type="APPLICATION/PDF; charset=utf-8")
     assert f.mime_type == "application/pdf"
