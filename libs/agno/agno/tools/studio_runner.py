@@ -358,7 +358,8 @@ class StudioRunnerTools(Toolkit):
         or fail to rebuild entirely, and the field-level copier keeps the
         original value for a field whose own copy raised. The copy is
         dispatched when it is a distinct instance of the same class that kept
-        its id, name, model, instructions, and distinct members."""
+        its id, name, model and instructions, and whose copyable members were
+        themselves copied (see _shared_member)."""
         label = getattr(component, "id", None) or getattr(component, "name", None) or component.__class__.__name__
         copier = getattr(component, "deep_copy", None)
         if not callable(copier):
@@ -389,18 +390,42 @@ class StudioRunnerTools(Toolkit):
                 or (original is not None and copied is None)
                 or (attribute in ("id", "name") and original != copied)
             )
-        original_members = getattr(component, "members", None)
-        copied_members = getattr(fresh, "members", None)
-        if isinstance(original_members, list) and isinstance(copied_members, list):
-            lost = lost or any(
-                any(member is original_member for original_member in original_members) for member in copied_members
-            )
         if lost:
             raise DispatchCopyError(
                 f"deep_copy of '{label}' lost its identity. "
                 "Give the class a deep_copy that rebuilds it, or store the component in the database."
             )
+        shared = StudioRunnerTools._shared_member(component, fresh)
+        if shared is not None:
+            shared_label = getattr(shared, "id", None) or getattr(shared, "name", None) or type(shared).__name__
+            raise DispatchCopyError(
+                f"deep_copy of '{label}' still shares member '{shared_label}' with the original. "
+                "Give that member's class a deep_copy that rebuilds it, or store the component in the database."
+            )
         return fresh
+
+    @staticmethod
+    def _shared_member(original: Any, fresh: Any) -> Optional[Any]:
+        """The first copyable member the copy still shares with the original,
+        searched through nested member lists, else None.
+
+        A member without deep_copy is shared by design: a remote proxy holds no
+        per-run state to isolate. A member that could have been copied and was
+        not is a failed copy, and dispatching it would let per-run mutation
+        cross callers."""
+        original_members = getattr(original, "members", None)
+        fresh_members = getattr(fresh, "members", None)
+        if not isinstance(original_members, list) or not isinstance(fresh_members, list):
+            return None
+        if len(original_members) != len(fresh_members):
+            return None
+        for original_member, fresh_member in zip(original_members, fresh_members):
+            if fresh_member is original_member and callable(getattr(original_member, "deep_copy", None)):
+                return fresh_member
+            nested = StudioRunnerTools._shared_member(original_member, fresh_member)
+            if nested is not None:
+                return nested
+        return None
 
     def _agent_for_run(self, agent_id: str) -> Optional["Agent"]:
         agent = self._find_agent(agent_id)

@@ -1248,3 +1248,51 @@ class TestResultMedia:
     def test_no_media_key_when_the_run_produced_none(self):
         payload = _loads(StudioRunnerTools._run_payload("agent_id", "stub", _StubRunOutput()))
         assert "media" not in payload
+
+
+class TestMemberIsolation:
+    def test_member_without_deep_copy_is_shared_by_design(self, db):
+        # A remote proxy holds no per-run state, so Team.deep_copy shares it.
+        # The dispatch guard must not read that as a failed copy.
+        from agno.agent.agent import Agent as AgentClass
+        from agno.agent.remote import RemoteAgent
+        from agno.team.team import Team as TeamClass
+
+        remote = RemoteAgent(base_url="http://remote:7777", agent_id="explorer", timeout=60.0)
+        local = AgentClass(id="summarizer", name="Summarizer", model=OpenAIResponses(id="gpt-5.4"))
+        team = TeamClass(
+            id="distributed-crew", name="Distributed Crew", model=OpenAIResponses(id="gpt-5.4"), members=[local, remote]
+        )
+
+        fresh = StudioRunnerTools._fresh_copy(team)
+        assert fresh is not team
+        assert fresh.members[1] is remote
+
+    def test_shared_member_nested_in_a_team_of_teams_refuses_dispatch(self, db):
+        # An inner team whose own member copy failed comes back as a new object
+        # holding the shared grandchild, so the check has to descend.
+        from agno.agent.agent import Agent as AgentClass
+        from agno.team.team import Team as TeamClass
+
+        class _UncopyableAgent(AgentClass):
+            def __init__(self, topic, **kwargs):
+                self.topic = topic
+                super().__init__(**kwargs)
+
+        grandchild = _UncopyableAgent("ai", id="grandchild", name="Grandchild", model=OpenAIResponses(id="gpt-5.4"))
+        inner = TeamClass(id="inner", name="Inner", model=OpenAIResponses(id="gpt-5.4"), members=[grandchild])
+        outer = TeamClass(id="outer", name="Outer", model=OpenAIResponses(id="gpt-5.4"), members=[inner])
+
+        out = _loads(StudioRunnerTools(db=db, teams_list=[outer]).run_team("outer", "hi"))
+        assert "still shares member 'grandchild'" in out["error"]
+
+    def test_healthy_nested_team_dispatches(self, db):
+        from agno.agent.agent import Agent as AgentClass
+        from agno.team.team import Team as TeamClass
+
+        grandchild = AgentClass(id="gc", name="GC", model=OpenAIResponses(id="gpt-5.4"))
+        inner = TeamClass(id="inner-ok", name="Inner Ok", model=OpenAIResponses(id="gpt-5.4"), members=[grandchild])
+        outer = TeamClass(id="outer-ok", name="Outer Ok", model=OpenAIResponses(id="gpt-5.4"), members=[inner])
+
+        fresh = StudioRunnerTools._fresh_copy(outer)
+        assert fresh.members[0].members[0] is not grandchild
