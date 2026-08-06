@@ -214,3 +214,17 @@ def test_multiple_dict_types():
     assert "rating" not in required_fields
     assert "scores" not in required_fields
     assert "metadata" not in required_fields
+
+
+def test_generic_provider_omits_additional_properties_false():
+    """Generic normalization must not inject the OpenAI-only `additionalProperties: false`.
+
+    OpenAI-compatible providers (e.g. OpenRouter routing to xAI/Grok) reject that
+    constraint, so the non-"openai" normalization path must leave it out while the
+    "openai" path still sets it. Regression guard for issue #7455.
+    """
+    openai_schema = get_response_schema_for_provider(SimpleModel, "openai")
+    generic_schema = get_response_schema_for_provider(SimpleModel, "generic")
+
+    assert openai_schema.get("additionalProperties") is False
+    assert "additionalProperties" not in generic_schema
