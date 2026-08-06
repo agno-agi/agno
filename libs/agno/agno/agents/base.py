@@ -664,6 +664,8 @@ class BaseExternalAgent:
                     existing = tool_map.get(event.tool.tool_call_id or "")
                     if existing:
                         existing.result = event.tool.result
+                        existing.structured_content = event.tool.structured_content
+                        existing.meta = event.tool.meta
                     else:
                         accumulated_tools.append(event.tool)
                 yield event

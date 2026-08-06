@@ -689,6 +689,8 @@ def run_tool(
                 tool_execution = call_result.tool_executions[0]
                 tool.result = tool_execution.result
                 tool.tool_call_error = tool_execution.tool_call_error
+                tool.structured_content = tool_execution.structured_content
+                tool.meta = tool_execution.meta
                 if stream_events:
                     if team_mode:
                         yield handle_event(  # type: ignore
@@ -803,6 +805,8 @@ async def arun_tool(
                 tool_execution = call_result.tool_executions[0]
                 tool.result = tool_execution.result
                 tool.tool_call_error = tool_execution.tool_call_error
+                tool.structured_content = tool_execution.structured_content
+                tool.meta = tool_execution.meta
                 if stream_events:
                     if team_mode:
                         yield handle_event(  # type: ignore

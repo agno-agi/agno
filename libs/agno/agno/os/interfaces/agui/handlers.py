@@ -195,6 +195,13 @@ def on_tool_call_completed(chunk: BaseRunOutputEvent, state: StreamState) -> Lis
 
     if tool.result is not None:
         content = to_json_str(tool.result)
+        # Forward Host-only MCP fields when present. ToolCallResultEvent allows
+        # extras (extra="allow"); assistant-ui reads structuredContent / _meta.
+        host_fields: Dict[str, Any] = {}
+        if getattr(tool, "structured_content", None) is not None:
+            host_fields["structuredContent"] = tool.structured_content
+        if getattr(tool, "meta", None) is not None:
+            host_fields["_meta"] = tool.meta
         events.append(
             ToolCallResultEvent(
                 type=EventType.TOOL_CALL_RESULT,
@@ -203,6 +210,7 @@ def on_tool_call_completed(chunk: BaseRunOutputEvent, state: StreamState) -> Lis
                 role="tool",
                 # Use tool_call_id as message_id so frontend can link result to the tool call
                 message_id=tool.tool_call_id,
+                **host_fields,
             )
         )
 
