@@ -162,6 +162,10 @@ you-com = []
 youtube = ["youtube_transcript_api"]
 zep = ["zep-cloud"]
 
+# Dependencies for Lark (Feishu) integration
+lark = []
+lark-crypto = ["cryptography>=41.0"]
+
 # Dependencies for Storage
 async-mongo = ["pymongo>=4.9", "motor"]
 async-postgres = ["asyncpg"]
@@ -511,6 +515,7 @@ module = [
   "clickhouse_connect.*",
   "clip.*",
   "cohere.*",
+  "cryptography.*",
   "crawl4ai.*",
   "daytona.*",
   "daytona_api_client.*",
