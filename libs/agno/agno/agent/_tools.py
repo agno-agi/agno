@@ -742,14 +742,25 @@ def run_tool(
 def reject_tool_call(
     agent: Agent, run_messages: RunMessages, tool: ToolExecution, functions: Optional[Dict[str, Function]] = None
 ):
+    """Append a rejection result for the exact persisted HITL proposal.
+
+    Rejection is a terminal control decision and does not execute the function.
+    Callable tool factories may expose a different surface when a paused run
+    resumes, so the result must come from the stored ToolExecution rather than
+    the current function registry.
+    """
     agent.model = cast(Model, agent.model)
-    function_call = agent.model.get_function_call_to_run_from_tool_execution(tool, functions)
-    function_call.error = tool.confirmation_note or "Function call was rejected by the user"
-    function_call_result = agent.model.create_function_call_result(
-        function_call=function_call,
-        success=False,
+    run_messages.messages.append(
+        Message(
+            role=agent.model.tool_message_role,
+            content=tool.confirmation_note or "Function call was rejected by the user",
+            tool_call_id=tool.tool_call_id,
+            tool_name=tool.tool_name,
+            tool_args=tool.tool_args,
+            tool_call_error=True,
+            stop_after_tool_call=tool.stop_after_tool_call,
+        )
     )
-    run_messages.messages.append(function_call_result)
 
 
 async def arun_tool(
@@ -861,7 +872,11 @@ def handle_tool_call_updates(
 
     for _t in run_response.tools or []:
         # Case 1: Handle confirmed tools and execute them
-        if _t.requires_confirmation is not None and _t.requires_confirmation is True and _functions:
+        if (
+            _t.requires_confirmation is not None
+            and _t.requires_confirmation is True
+            and (_functions or _t.confirmed is False)
+        ):
             # Tool is confirmed and hasn't been run before
             if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
                 # Consume the generator without yielding
@@ -913,7 +928,11 @@ def handle_tool_call_updates_stream(
 
     for _t in run_response.tools or []:
         # Case 1: Handle confirmed tools and execute them
-        if _t.requires_confirmation is not None and _t.requires_confirmation is True and _functions:
+        if (
+            _t.requires_confirmation is not None
+            and _t.requires_confirmation is True
+            and (_functions or _t.confirmed is False)
+        ):
             # Tool is confirmed and hasn't been run before
             if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
                 yield from run_tool(
@@ -963,7 +982,11 @@ async def ahandle_tool_call_updates(
 
     for _t in run_response.tools or []:
         # Case 1: Handle confirmed tools and execute them
-        if _t.requires_confirmation is not None and _t.requires_confirmation is True and _functions:
+        if (
+            _t.requires_confirmation is not None
+            and _t.requires_confirmation is True
+            and (_functions or _t.confirmed is False)
+        ):
             # Tool is confirmed and hasn't been run before
             if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
                 async for _ in arun_tool(agent, run_response, run_messages, _t, functions=_functions):
@@ -1014,7 +1037,11 @@ async def ahandle_tool_call_updates_stream(
 
     for _t in run_response.tools or []:
         # Case 1: Handle confirmed tools and execute them
-        if _t.requires_confirmation is not None and _t.requires_confirmation is True and _functions:
+        if (
+            _t.requires_confirmation is not None
+            and _t.requires_confirmation is True
+            and (_functions or _t.confirmed is False)
+        ):
             # Tool is confirmed and hasn't been run before
             if _t.confirmed is not None and _t.confirmed is True and _t.result is None:
                 async for event in arun_tool(
