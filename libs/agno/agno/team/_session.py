@@ -198,8 +198,12 @@ def save_session(team: "Team", session: TeamSession) -> None:
             for run in session.runs:
                 if hasattr(run, "member_responses"):
                     if not team.store_member_responses:
-                        # Remove all member responses
-                        run.member_responses = []
+                        # Remove member responses, sparing paused ones: a paused
+                        # member run is the resume state for continue_run after a
+                        # session reload, and the save after it completes scrubs it.
+                        run.member_responses = [
+                            m for m in (run.member_responses or []) if getattr(m, "is_paused", False)
+                        ]
                     else:
                         # Scrub individual member responses based on their storage flags
                         _scrub_member_responses(team, run.member_responses)
@@ -229,8 +233,12 @@ async def asave_session(team: "Team", session: TeamSession) -> None:
             for run in session.runs:
                 if hasattr(run, "member_responses"):
                     if not team.store_member_responses:
-                        # Remove all member responses
-                        run.member_responses = []
+                        # Remove member responses, sparing paused ones: a paused
+                        # member run is the resume state for continue_run after a
+                        # session reload, and the save after it completes scrubs it.
+                        run.member_responses = [
+                            m for m in (run.member_responses or []) if getattr(m, "is_paused", False)
+                        ]
                     else:
                         # Scrub individual member responses based on their storage flags
                         _scrub_member_responses(team, run.member_responses)

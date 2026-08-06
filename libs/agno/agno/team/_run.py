@@ -134,6 +134,8 @@ _MEMBER_CANCEL_BYPASS_EVENT_TYPES = (
 )
 
 if TYPE_CHECKING:
+    from agno.agent import Agent
+    from agno.run.requirement import RunRequirement
     from agno.team._run_options import ResolvedRunOptions
     from agno.team.team import Team
 
@@ -5383,6 +5385,89 @@ def _member_continue_kwargs_from_run_context(run_context: Optional[RunContext]) 
     return kwargs
 
 
+def _team_run_references_member_run(team_run: TeamRunOutput, member_run_id: str) -> bool:
+    """True if the team run owns member_run_id — as a run in its
+    member-response subtree or as a requirement it carries."""
+    stack: List[Union[TeamRunOutput, RunOutput]] = list(team_run.member_responses or [])
+    while stack:
+        candidate = stack.pop()
+        if getattr(candidate, "run_id", None) == member_run_id:
+            return True
+        stack.extend(getattr(candidate, "member_responses", None) or [])
+    for req in team_run.requirements or []:
+        if getattr(req, "member_run_id", None) == member_run_id:
+            return True
+    return False
+
+
+def _resolve_member_run_output_for_continue(
+    member: Union["Agent", "Team"],
+    reqs: List["RunRequirement"],
+    run_response: TeamRunOutput,
+    session: TeamSession,
+) -> Optional[Union[RunOutput, TeamRunOutput]]:
+    """Resolve the paused run output to hand to the routed member's continue_run.
+
+    For an agent member this is its paused RunOutput; for a sub-team member it
+    is the sub-team's paused TeamRunOutput (the sub-team's own continue_run
+    routes deeper from there). Sources, in order:
+
+    1. The ``_member_run_response`` reference stored by _propagate_member_pause
+       (avoids a session/DB lookup, which fails without a database since
+       initialize_team clears the cached session). The reference is validated
+       against the routed member: each propagation level points it at the run
+       that surfaced the pause AT that level, so one level down it references
+       the containing team run, not the deep member's run.
+    2. Same-process resume: the paused member output still held on the live
+       team run's member_responses.
+    3. After process restart: the team session's sibling runs persisted in the
+       DB (member_responses is only assembled at runtime).
+    4. Sub-team members only: the direct child team run that owns the
+       requirement — the deep member's paused run lives inside it, persisted
+       there by save_session's paused-run exemption.
+    """
+    from agno.team.team import Team
+
+    member_run_output = getattr(reqs[0], "_member_run_response", None) if reqs else None
+    member_run_id = reqs[0].member_run_id if reqs else None
+    routed_to_team = isinstance(member, Team)
+
+    if member_run_output is not None and member_run_id is not None:
+        if routed_to_team:
+            valid = isinstance(member_run_output, TeamRunOutput) and (
+                member_run_output.run_id == member_run_id
+                or _team_run_references_member_run(member_run_output, member_run_id)
+            )
+        else:
+            valid = getattr(member_run_output, "run_id", None) == member_run_id
+        if not valid:
+            member_run_output = None
+
+    if member_run_output is None and member_run_id:
+        if run_response.member_responses:
+            for sibling_response in run_response.member_responses:
+                if getattr(sibling_response, "run_id", None) == member_run_id:
+                    member_run_output = sibling_response
+                    break
+        if member_run_output is None and session is not None and session.runs:
+            for session_run in session.runs:
+                if getattr(session_run, "run_id", None) == member_run_id:
+                    member_run_output = session_run  # type: ignore[assignment]
+                    break
+        if member_run_output is None and routed_to_team:
+            candidates: List[Union[TeamRunOutput, RunOutput]] = list(run_response.member_responses or [])
+            if session is not None and session.runs:
+                candidates.extend(r for r in session.runs if getattr(r, "parent_run_id", None) == run_response.run_id)
+            for candidate in candidates:
+                if not isinstance(candidate, TeamRunOutput) or candidate.run_id == run_response.run_id:
+                    continue
+                if _team_run_references_member_run(candidate, member_run_id):
+                    member_run_output = candidate
+                    break
+
+    return member_run_output
+
+
 def _route_requirements_to_members(
     team: "Team",
     run_response: TeamRunOutput,
@@ -5397,7 +5482,6 @@ def _route_requirements_to_members(
     Returns:
         List of member result strings.
     """
-    from agno.run.requirement import RunRequirement
     from agno.team._tools import _find_member_route_by_id
 
     # Group requirements by member
@@ -5418,27 +5502,9 @@ def _route_requirements_to_members(
 
         _, member = route_result
 
-        # Get the member's paused RunOutput from the requirement.
-        # This is stored by _propagate_member_pause and avoids needing a
-        # session/DB lookup (which fails without a database since
-        # initialize_team clears the cached session).
-        member_run_output = getattr(reqs[0], "_member_run_response", None)
+        # Get the member's paused run output — see _resolve_member_run_output_for_continue.
+        member_run_output = _resolve_member_run_output_for_continue(member, reqs, run_response, session)
         member_run_id = reqs[0].member_run_id if reqs else None
-
-        if member_run_output is None and member_run_id:
-            # Same-process resume: the paused member output is still held on the live team run.
-            if run_response.member_responses:
-                for sibling_response in run_response.member_responses:
-                    if getattr(sibling_response, "run_id", None) == member_run_id:
-                        member_run_output = sibling_response
-                        break
-            # After process restart: member_responses is empty (it's only assembled at runtime),
-            # so fall back to the team session's sibling runs persisted in the DB.
-            if member_run_output is None and session is not None and session.runs:
-                for session_run in session.runs:
-                    if getattr(session_run, "run_id", None) == member_run_id:
-                        member_run_output = session_run  # type: ignore[assignment]
-                        break
 
         member_run_id = getattr(member_run_output, "run_id", None) if member_run_output is not None else member_run_id
         if member_run_id and run_response.run_id is not None:
@@ -5514,7 +5580,6 @@ def _route_requirements_to_members_stream(
     Yields:
         Member streaming events (RunOutputEvent, TeamRunOutputEvent).
     """
-    from agno.run.requirement import RunRequirement
     from agno.team._tools import _find_member_route_by_id
 
     # Group requirements by member
@@ -5533,23 +5598,8 @@ def _route_requirements_to_members_stream(
 
         _, member = route_result
 
-        member_run_output = getattr(reqs[0], "_member_run_response", None)
+        member_run_output = _resolve_member_run_output_for_continue(member, reqs, run_response, session)
         member_run_id = reqs[0].member_run_id if reqs else None
-
-        if member_run_output is None and member_run_id:
-            # Same-process resume: the paused member output is still held on the live team run.
-            if run_response.member_responses:
-                for sibling_response in run_response.member_responses:
-                    if getattr(sibling_response, "run_id", None) == member_run_id:
-                        member_run_output = sibling_response
-                        break
-            # After process restart: member_responses is empty (it's only assembled at runtime),
-            # so fall back to the team session's sibling runs persisted in the DB.
-            if member_run_output is None and session is not None and session.runs:
-                for session_run in session.runs:
-                    if getattr(session_run, "run_id", None) == member_run_id:
-                        member_run_output = session_run  # type: ignore[assignment]
-                        break
 
         member_run_id = getattr(member_run_output, "run_id", None) if member_run_output is not None else member_run_id
         if member_run_id and run_response.run_id is not None:
@@ -5639,7 +5689,6 @@ async def _aroute_requirements_to_members(
     Returns:
         List of member result strings.
     """
-    from agno.run.requirement import RunRequirement
     from agno.team._tools import _find_member_route_by_id
 
     # Group requirements by member
@@ -5659,23 +5708,8 @@ async def _aroute_requirements_to_members(
             return f"[{member_id}]: Could not route requirement — member not found"
 
         _, member = route_result
-        member_run_output = getattr(reqs[0], "_member_run_response", None)
+        member_run_output = _resolve_member_run_output_for_continue(member, reqs, run_response, session)
         member_run_id = reqs[0].member_run_id if reqs else None
-
-        if member_run_output is None and member_run_id:
-            # Same-process resume: the paused member output is still held on the live team run.
-            if run_response.member_responses:
-                for sibling_response in run_response.member_responses:
-                    if getattr(sibling_response, "run_id", None) == member_run_id:
-                        member_run_output = sibling_response
-                        break
-            # After process restart: member_responses is empty (it's only assembled at runtime),
-            # so fall back to the team session's sibling runs persisted in the DB.
-            if member_run_output is None and session is not None and session.runs:
-                for session_run in session.runs:
-                    if getattr(session_run, "run_id", None) == member_run_id:
-                        member_run_output = session_run  # type: ignore[assignment]
-                        break
 
         member_run_id = getattr(member_run_output, "run_id", None) if member_run_output is not None else member_run_id
         if member_run_id and run_response.run_id is not None:
@@ -5761,7 +5795,6 @@ async def _aroute_requirements_to_members_stream(
     Yields:
         Member streaming events (RunOutputEvent, TeamRunOutputEvent).
     """
-    from agno.run.requirement import RunRequirement
     from agno.team._tools import _find_member_route_by_id
 
     # Group requirements by member
@@ -5780,23 +5813,8 @@ async def _aroute_requirements_to_members_stream(
 
         _, member = route_result
 
-        member_run_output = getattr(reqs[0], "_member_run_response", None)
+        member_run_output = _resolve_member_run_output_for_continue(member, reqs, run_response, session)
         member_run_id = reqs[0].member_run_id if reqs else None
-
-        if member_run_output is None and member_run_id:
-            # Same-process resume: the paused member output is still held on the live team run.
-            if run_response.member_responses:
-                for sibling_response in run_response.member_responses:
-                    if getattr(sibling_response, "run_id", None) == member_run_id:
-                        member_run_output = sibling_response
-                        break
-            # After process restart: member_responses is empty (it's only assembled at runtime),
-            # so fall back to the team session's sibling runs persisted in the DB.
-            if member_run_output is None and session is not None and session.runs:
-                for session_run in session.runs:
-                    if getattr(session_run, "run_id", None) == member_run_id:
-                        member_run_output = session_run  # type: ignore[assignment]
-                        break
 
         member_run_id = getattr(member_run_output, "run_id", None) if member_run_output is not None else member_run_id
         if member_run_id and run_response.run_id is not None:
