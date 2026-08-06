@@ -11,7 +11,13 @@ from agno.models.metrics import RunMetrics
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent, run_output_event_from_dict
-from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
+from agno.run.base import (
+    BaseRunOutputEvent,
+    MessageReferences,
+    RunStatus,
+    get_dynamic_fields,
+    init_event_with_dynamic_fields,
+)
 from agno.run.requirement import RunRequirement
 from agno.utils.log import log_error
 from agno.utils.media import (
@@ -633,8 +639,12 @@ class CustomEvent(BaseTeamRunEvent):
 
     def __init__(self, **kwargs):
         # Store arbitrary attributes directly on the instance
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+        init_event_with_dynamic_fields(self, kwargs)
+
+    def to_dict(self) -> Dict[str, Any]:
+        _dict = super().to_dict()
+        _dict.update({k: v for k, v in get_dynamic_fields(self).items() if v is not None})
+        return _dict
 
 
 TeamRunOutputEvent = Union[
