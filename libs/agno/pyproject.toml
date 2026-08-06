@@ -110,6 +110,7 @@ cel = ["cel-python"]
 agentql = ["agentql"]
 apify = ["apify-client"]
 arxiv = ["arxiv"]
+azure-devops = ["azure-devops", "msrest"]
 brave = ["brave-search"]
 browserbase = ["browserbase", "playwright"]
 cartesia = ["cartesia"]
@@ -260,6 +261,7 @@ tools = [
   "agno[agentql]",
   "agno[apify]",
   "agno[arxiv]",
+  "agno[azure-devops]",
   # "agno[brave]",  # Excluded: brave-search 0.2.0 ships invalid metadata (bad httpx specifier) that uv cannot parse; test_setup.sh installs it with --no-deps
   "agno[browserbase]",
   "agno[cartesia]",
@@ -496,6 +498,8 @@ module = [
   "atlassian.*",
   "azure.ai.inference.*",
   "azure.core.*",
+  "azure.devops.*",
+  "msrest.*",
   "boto3.*",
   "botocore.*",
   "bs4.*",
