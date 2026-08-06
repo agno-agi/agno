@@ -914,7 +914,7 @@ def _run_tasks_stream(
                     store_events=team.store_events,
                 )
             try:
-                team.session_summary_manager.create_session_summary(session=session)
+                team.session_summary_manager.create_session_summary(session=session, run_metrics=run_response.metrics)
             except Exception as e:
                 log_warning(f"Error in session summary creation: {str(e)}")
             if stream_events:
@@ -2801,7 +2801,9 @@ async def _arun_tasks_stream(
                     store_events=team.store_events,
                 )
             try:
-                await team.session_summary_manager.acreate_session_summary(session=team_session)
+                await team.session_summary_manager.acreate_session_summary(
+                    session=team_session, run_metrics=run_response.metrics
+                )
             except Exception as e:
                 log_warning(f"Error in session summary creation: {str(e)}")
             if stream_events:
