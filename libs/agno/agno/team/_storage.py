@@ -748,7 +748,7 @@ def from_dict(
     db: Optional["BaseDb"] = None,
     registry: Optional["Registry"] = None,
     links: Optional[List[Dict[str, Any]]] = None,
-    strict: bool = True,
+    strict: bool = False,
 ) -> "Team":
     """
     Create a Team from a dictionary.
@@ -1200,7 +1200,7 @@ def _hydrate_from_graph(
     *,
     db: "BaseDb",
     registry: Optional["Registry"] = None,
-    strict: bool = True,
+    strict: bool = False,
 ) -> Optional["Team"]:
     """
     Hydrate a team and its members from an already-loaded component graph.
@@ -1291,7 +1291,7 @@ def load(
     registry: Optional["Registry"] = None,
     label: Optional[str] = None,
     version: Optional[int] = None,
-    strict: bool = True,
+    strict: bool = False,
 ) -> Optional["Team"]:
     """
     Load a team by id, with hydrated members.

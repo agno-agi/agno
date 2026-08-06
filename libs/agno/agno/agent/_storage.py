@@ -773,7 +773,7 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
 
 
 def from_dict(
-    cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registry] = None, strict: bool = True
+    cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registry] = None, strict: bool = False
 ) -> Agent:
     """
     Create an agent from a dictionary.
@@ -1133,7 +1133,7 @@ def load(
     registry: Optional[Registry] = None,
     label: Optional[str] = None,
     version: Optional[int] = None,
-    strict: bool = True,
+    strict: bool = False,
 ) -> Optional[Agent]:
     """
     Load an agent by id.

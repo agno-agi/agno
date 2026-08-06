@@ -1558,7 +1558,7 @@ class Team:
         db: Optional["BaseDb"] = None,
         registry: Optional["Registry"] = None,
         links: Optional[List[Dict[str, Any]]] = None,
-        strict: bool = True,
+        strict: bool = False,
     ) -> "Team":
         return _storage.from_dict(cls, data=data, db=db, registry=registry, links=links, strict=strict)
 
@@ -1581,7 +1581,7 @@ class Team:
         registry: Optional["Registry"] = None,
         label: Optional[str] = None,
         version: Optional[int] = None,
-        strict: bool = True,
+        strict: bool = False,
     ) -> Optional["Team"]:
         return _storage.load(cls, id=id, db=db, registry=registry, label=label, version=version, strict=strict)
 
@@ -1792,7 +1792,7 @@ def get_team_by_id(
     version: Optional[int] = None,
     label: Optional[str] = None,
     registry: Optional["Registry"] = None,
-    strict: bool = True,
+    strict: bool = False,
 ) -> Optional["Team"]:
     """
     Get a Team by id from the database.

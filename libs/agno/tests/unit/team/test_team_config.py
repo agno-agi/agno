@@ -489,7 +489,7 @@ class TestTeamFromDict:
         }
 
         with pytest.raises(ComponentRehydrationError, match="no registry"):
-            Team.from_dict(config)
+            Team.from_dict(config, strict=True)
 
     def test_from_dict_without_registry_removes_tools_when_lenient(self):
         """Test strict=False preserves the old drop-and-warn behavior."""
@@ -515,7 +515,7 @@ class TestTeamFromDict:
             mock_agent = MagicMock()
             mock_get_agent.return_value = mock_agent
 
-            team = Team.from_dict(config, db=mock_db)
+            team = Team.from_dict(config, db=mock_db, strict=True)
 
             mock_get_agent.assert_called_once_with(id="agent-1", db=mock_db, version=None, registry=None, strict=True)
             assert team.members == [mock_agent]
@@ -569,7 +569,7 @@ class TestTeamFromDict:
 
         with patch("agno.agent.get_agent_by_id", return_value=None):
             with pytest.raises(ComponentRehydrationError, match="ghost-agent"):
-                Team.from_dict(config, db=mock_db, registry=registry)
+                Team.from_dict(config, db=mock_db, registry=registry, strict=True)
 
     def test_from_dict_unknown_member_is_dropped_when_lenient(self, mock_db):
         """Test strict=False drops a member that is in neither db nor registry."""

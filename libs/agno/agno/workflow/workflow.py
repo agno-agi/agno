@@ -325,7 +325,7 @@ def _step_from_dict(
     registry: Optional["Registry"] = None,
     db: Optional["BaseDb"] = None,
     links: Optional[List[Dict[str, Any]]] = None,
-    strict: bool = True,
+    strict: bool = False,
 ) -> Union[Step, Steps, Loop, Parallel, Condition, Router]:
     """
     Deserialize a step from a dictionary based on its type.
@@ -935,7 +935,7 @@ class Workflow:
         db: Optional["BaseDb"] = None,
         links: Optional[List[Dict[str, Any]]] = None,
         registry: Optional[Registry] = None,
-        strict: bool = True,
+        strict: bool = False,
     ) -> "Workflow":
         """
         Create a Workflow from a dictionary.
@@ -967,13 +967,12 @@ class Workflow:
             resolved = resolve_db_from_config(config["db"], registry=registry)
             if resolved is not None:
                 config["db"] = resolved
-            elif strict:
-                raise ComponentRehydrationError(
-                    f"{component_label} has a serialized db config that could not be resolved from "
-                    "the registry or rebuilt. Register the db, or pass strict=False to load the "
-                    "component without persistence."
-                )
             else:
+                # Only postgres, sqlite and clickhouse serialize a type, so most
+                # backends cannot be rebuilt from config alone. The caller supplies
+                # the db it holds; refusing here would make every component on the
+                # other backends unloadable.
+                log_warning(f"{component_label} has a serialized db config that could not be resolved.")
                 del config["db"]
 
         # --- Handle Schema reconstruction ---
@@ -1147,7 +1146,7 @@ class Workflow:
         registry: Optional["Registry"] = None,
         label: Optional[str] = None,
         version: Optional[int] = None,
-        strict: bool = True,
+        strict: bool = False,
     ) -> Optional["Workflow"]:
         """
         Load a workflow by id.
@@ -10777,7 +10776,7 @@ def get_workflow_by_id(
     version: Optional[int] = None,
     label: Optional[str] = None,
     registry: Optional["Registry"] = None,
-    strict: bool = True,
+    strict: bool = False,
 ) -> Optional["Workflow"]:
     """
     Get a Workflow by id from the database (new entities/configs schema).

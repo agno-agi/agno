@@ -136,7 +136,7 @@ class Steps:
         registry: Optional["Registry"] = None,
         db: Optional[Any] = None,
         links: Optional[List[Dict[str, Any]]] = None,
-        strict: bool = True,
+        strict: bool = False,
     ) -> "Steps":
         from agno.workflow.condition import Condition
         from agno.workflow.loop import Loop

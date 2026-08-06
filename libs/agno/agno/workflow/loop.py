@@ -236,7 +236,7 @@ class Loop:
         registry: Optional["Registry"] = None,
         db: Optional[Any] = None,
         links: Optional[List[Dict[str, Any]]] = None,
-        strict: bool = True,
+        strict: bool = False,
     ) -> "Loop":
         from agno.workflow.condition import Condition
         from agno.workflow.parallel import Parallel

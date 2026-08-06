@@ -307,7 +307,7 @@ class Step:
         registry: Optional[Registry] = None,
         db: Optional["BaseDb"] = None,
         links: Optional[List[Dict[str, Any]]] = None,
-        strict: bool = True,
+        strict: bool = False,
     ) -> "Step":
         """
         Create a Step from a dictionary.

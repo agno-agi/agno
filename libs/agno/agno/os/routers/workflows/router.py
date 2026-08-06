@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from agno.db.base import BaseDb
-from agno.exceptions import InputCheckError, OutputCheckError
+from agno.exceptions import ComponentRehydrationError, InputCheckError, OutputCheckError
 from agno.factory import FactoryContextRequired
 from agno.os.auth import (
     get_auth_token_from_request,
@@ -1104,6 +1104,9 @@ def get_workflow_router(
                 create_fresh=True,
                 version=version,
             )  # type: ignore[assignment]
+        except ComponentRehydrationError:
+            # A broken reference is a client-visible 422, not a server fault.
+            raise
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
@@ -1511,6 +1514,9 @@ def get_workflow_router(
             workflow = get_workflow_by_id(
                 workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
             )  # type: ignore[assignment]
+        except ComponentRehydrationError:
+            # A broken reference is a client-visible 422, not a server fault.
+            raise
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
@@ -1667,6 +1673,9 @@ def get_workflow_router(
                 workflow = get_workflow_by_id(
                     workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
                 )  # type: ignore[assignment]
+            except ComponentRehydrationError:
+                # A broken reference is a client-visible 422, not a server fault.
+                raise
             except Exception as e:
                 logger.error(f"Error resolving workflow '{workflow_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")

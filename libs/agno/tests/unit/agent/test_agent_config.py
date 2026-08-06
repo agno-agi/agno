@@ -442,7 +442,7 @@ class TestAgentFromDict:
         }
 
         with pytest.raises(ComponentRehydrationError, match="no registry"):
-            Agent.from_dict(config)
+            Agent.from_dict(config, strict=True)
 
     def test_from_dict_missing_tool_in_registry_raises(self):
         """Test from_dict fails loudly when the registry lacks a referenced tool."""
@@ -454,7 +454,7 @@ class TestAgentFromDict:
         }
 
         with pytest.raises(ComponentRehydrationError, match="search"):
-            Agent.from_dict(config, registry=Registry())
+            Agent.from_dict(config, registry=Registry(), strict=True)
 
     def test_from_dict_without_registry_removes_tools_when_lenient(self):
         """Test strict=False preserves the old drop-and-warn behavior."""
@@ -551,7 +551,7 @@ class TestAgentKnowledgeRoundtrip:
         config = agent.to_dict()
 
         with pytest.raises(ComponentRehydrationError, match="Docs KB"):
-            Agent.from_dict(config, registry=None)
+            Agent.from_dict(config, registry=None, strict=True)
 
     def test_from_dict_without_registry_drops_knowledge_when_lenient(self):
         """strict=False preserves the old drop-and-warn behavior."""

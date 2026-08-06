@@ -897,7 +897,7 @@ def get_agent_by_id(
         from agno.agent.agent import get_agent_by_id as get_agent_by_id_db
 
         try:
-            db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry)
+            db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry, strict=True)
             return db_agent
         except ComponentRehydrationError:
             # Broken is not "not found": let the app-level handler surface it.
@@ -946,7 +946,7 @@ async def get_agent_by_id_async(
         from agno.agent.agent import get_agent_by_id as get_agent_by_id_db
 
         try:
-            db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry)
+            db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry, strict=True)
             return db_agent
         except ComponentRehydrationError:
             # Broken is not "not found": let the app-level handler surface it.
@@ -1005,7 +1005,7 @@ def get_team_by_id(
         from agno.team.team import get_team_by_id as get_team_by_id_db
 
         try:
-            db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry)
+            db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry, strict=True)
             return db_team
         except ComponentRehydrationError:
             # Broken is not "not found": let the app-level handler surface it.
@@ -1048,7 +1048,7 @@ async def get_team_by_id_async(
         from agno.team.team import get_team_by_id as get_team_by_id_db
 
         try:
-            db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry)
+            db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry, strict=True)
             return db_team
         except ComponentRehydrationError:
             # Broken is not "not found": let the app-level handler surface it.
@@ -1112,7 +1112,7 @@ def get_workflow_by_id(
         from agno.workflow.workflow import get_workflow_by_id as get_workflow_by_id_db
 
         try:
-            db_workflow = get_workflow_by_id_db(db=db, id=workflow_id, version=version, registry=registry)
+            db_workflow = get_workflow_by_id_db(db=db, id=workflow_id, version=version, registry=registry, strict=True)
             return db_workflow
         except ComponentRehydrationError:
             # Broken is not "not found": let the app-level handler surface it.
@@ -1157,7 +1157,7 @@ async def get_workflow_by_id_async(
         from agno.workflow.workflow import get_workflow_by_id as get_workflow_by_id_db
 
         try:
-            db_workflow = get_workflow_by_id_db(db=db, id=workflow_id, version=version, registry=registry)
+            db_workflow = get_workflow_by_id_db(db=db, id=workflow_id, version=version, registry=registry, strict=True)
             return db_workflow
         except ComponentRehydrationError:
             # Broken is not "not found": let the app-level handler surface it.

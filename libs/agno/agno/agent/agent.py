@@ -952,7 +952,7 @@ class Agent:
         return _storage.to_dict(self)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], registry: Optional[Registry] = None, strict: bool = True) -> "Agent":
+    def from_dict(cls, data: Dict[str, Any], registry: Optional[Registry] = None, strict: bool = False) -> "Agent":
         return _storage.from_dict(cls, data=data, registry=registry, strict=strict)
 
     def save(
@@ -974,7 +974,7 @@ class Agent:
         registry: Optional["Registry"] = None,
         label: Optional[str] = None,
         version: Optional[int] = None,
-        strict: bool = True,
+        strict: bool = False,
     ) -> Optional["Agent"]:
         return _storage.load(cls, id=id, db=db, registry=registry, label=label, version=version, strict=strict)
 
@@ -1747,7 +1747,7 @@ def get_agent_by_id(
     version: Optional[int] = None,
     label: Optional[str] = None,
     registry: Optional["Registry"] = None,
-    strict: bool = True,
+    strict: bool = False,
 ) -> Optional["Agent"]:
     """
     Get an Agent by id from the database (new entities/configs schema).

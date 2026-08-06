@@ -21,7 +21,13 @@ from agno.agent.factory import AgentFactory
 from agno.agent.protocol import AgentProtocol
 from agno.agent.remote import RemoteAgent
 from agno.db.base import BaseDb
-from agno.exceptions import InputCheckError, OutputCheckError, RunNotContinuableError, RunNotFoundError
+from agno.exceptions import (
+    ComponentRehydrationError,
+    InputCheckError,
+    OutputCheckError,
+    RunNotContinuableError,
+    RunNotFoundError,
+)
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.auth import (
@@ -862,6 +868,9 @@ def get_agent_router(
             agent = get_agent_by_id(
                 agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
             )  # type: ignore[assignment]
+        except ComponentRehydrationError:
+            # A broken reference is a client-visible 422, not a server fault.
+            raise
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -1030,6 +1039,9 @@ def get_agent_router(
                 agent = get_agent_by_id(
                     agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
                 )  # type: ignore[assignment]
+            except ComponentRehydrationError:
+                # A broken reference is a client-visible 422, not a server fault.
+                raise
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -1199,6 +1211,9 @@ def get_agent_router(
             agent = get_agent_by_id(
                 agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
             )
+        except ComponentRehydrationError:
+            # A broken reference is a client-visible 422, not a server fault.
+            raise
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -1374,6 +1389,9 @@ def get_agent_router(
             agent = get_agent_by_id(
                 agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
             )  # type: ignore[assignment]
+        except ComponentRehydrationError:
+            # A broken reference is a client-visible 422, not a server fault.
+            raise
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -1428,6 +1446,9 @@ def get_agent_router(
                 agent = get_agent_by_id(
                     agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
                 )  # type: ignore[assignment]
+            except ComponentRehydrationError:
+                # A broken reference is a client-visible 422, not a server fault.
+                raise
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -1496,6 +1517,9 @@ def get_agent_router(
                 agent = get_agent_by_id(
                     agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
                 )  # type: ignore[assignment]
+            except ComponentRehydrationError:
+                # A broken reference is a client-visible 422, not a server fault.
+                raise
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -1557,6 +1581,9 @@ def get_agent_router(
                 agent = get_agent_by_id(
                     agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
                 )  # type: ignore[assignment]
+            except ComponentRehydrationError:
+                # A broken reference is a client-visible 422, not a server fault.
+                raise
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -1707,6 +1734,9 @@ def get_agent_router(
                 agent = get_agent_by_id(
                     agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
                 )  # type: ignore[assignment]
+            except ComponentRehydrationError:
+                # A broken reference is a client-visible 422, not a server fault.
+                raise
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")

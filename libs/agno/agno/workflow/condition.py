@@ -242,7 +242,7 @@ class Condition:
         registry: Optional["Registry"] = None,
         db: Optional[Any] = None,
         links: Optional[List[Dict[str, Any]]] = None,
-        strict: bool = True,
+        strict: bool = False,
     ) -> "Condition":
         from agno.workflow.loop import Loop
         from agno.workflow.parallel import Parallel

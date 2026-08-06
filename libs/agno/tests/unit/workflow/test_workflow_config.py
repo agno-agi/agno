@@ -723,7 +723,7 @@ class TestWorkflowStrictThreading:
 
         # The step agent exists but its tools cannot be rehydrated without a registry
         with pytest.raises(ComponentRehydrationError):
-            Workflow.from_dict(config, db=db)
+            Workflow.from_dict(config, db=db, strict=True)
 
     def test_lenient_from_dict_degrades_step_agent_instead_of_raising(self, tmp_path):
         from agno.db.sqlite import SqliteDb

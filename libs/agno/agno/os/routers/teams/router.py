@@ -17,7 +17,13 @@ from fastapi import (
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.db.base import BaseDb
-from agno.exceptions import InputCheckError, OutputCheckError, RunNotContinuableError, RunNotFoundError
+from agno.exceptions import (
+    ComponentRehydrationError,
+    InputCheckError,
+    OutputCheckError,
+    RunNotContinuableError,
+    RunNotFoundError,
+)
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.auth import (
@@ -837,6 +843,9 @@ def get_team_router(
 
         try:
             team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+        except ComponentRehydrationError:
+            # A broken reference is a client-visible 422, not a server fault.
+            raise
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -1040,6 +1049,9 @@ def get_team_router(
         else:
             try:
                 team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+            except ComponentRehydrationError:
+                # A broken reference is a client-visible 422, not a server fault.
+                raise
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -1202,6 +1214,9 @@ def get_team_router(
 
         try:
             team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
+        except ComponentRehydrationError:
+            # A broken reference is a client-visible 422, not a server fault.
+            raise
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -1442,6 +1457,9 @@ def get_team_router(
 
         try:
             team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+        except ComponentRehydrationError:
+            # A broken reference is a client-visible 422, not a server fault.
+            raise
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -1486,6 +1504,9 @@ def get_team_router(
         else:
             try:
                 team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+            except ComponentRehydrationError:
+                # A broken reference is a client-visible 422, not a server fault.
+                raise
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -1549,6 +1570,9 @@ def get_team_router(
         else:
             try:
                 team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+            except ComponentRehydrationError:
+                # A broken reference is a client-visible 422, not a server fault.
+                raise
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -1608,6 +1632,9 @@ def get_team_router(
         else:
             try:
                 team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+            except ComponentRehydrationError:
+                # A broken reference is a client-visible 422, not a server fault.
+                raise
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -1667,6 +1694,9 @@ def get_team_router(
         else:
             try:
                 team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+            except ComponentRehydrationError:
+                # A broken reference is a client-visible 422, not a server fault.
+                raise
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")

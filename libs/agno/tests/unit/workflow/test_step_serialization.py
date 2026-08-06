@@ -233,7 +233,7 @@ class TestStepFromDict:
         with patch("agno.agent.agent.get_agent_by_id") as mock_get_agent:
             mock_get_agent.return_value = mock_db_agent
             mock_db = MagicMock()
-            step = Step.from_dict(data, registry=registry, db=mock_db)
+            step = Step.from_dict(data, registry=registry, db=mock_db, strict=True)
 
             mock_get_agent.assert_called_once_with(db=mock_db, id="db-agent", registry=registry, strict=True)
             assert step.agent is mock_db_agent
@@ -272,7 +272,7 @@ class TestStepFromDict:
         }
 
         with pytest.raises(ComponentRehydrationError, match="nonexistent-agent"):
-            Step.from_dict(data)
+            Step.from_dict(data, strict=True)
 
     def test_from_dict_unresolvable_agent_raises_when_lenient(self):
         """With strict=False the step still fails executor validation, as before."""
@@ -296,7 +296,7 @@ class TestStepFromDict:
         }
 
         with pytest.raises(ComponentRehydrationError, match="nonexistent-team"):
-            Step.from_dict(data)
+            Step.from_dict(data, strict=True)
 
     def test_from_dict_unresolvable_team_raises_when_lenient(self):
         """With strict=False the step still fails executor validation, as before."""
