@@ -438,7 +438,7 @@ def _run(
                 # 4. Execute pre-hooks
                 run_input = cast(RunInput, run_response.input)
                 agent.model = cast(Model, agent.model)
-                if agent.pre_hooks is not None:
+                if attempt == 0 and agent.pre_hooks is not None:
                     # Can modify the run input
                     pre_hook_iterator = execute_pre_hooks(
                         agent,
@@ -850,7 +850,7 @@ def _run_stream(
                 # 4. Execute pre-hooks
                 run_input = cast(RunInput, run_response.input)
                 agent.model = cast(Model, agent.model)
-                if agent.pre_hooks is not None:
+                if attempt == 0 and agent.pre_hooks is not None:
                     # Can modify the run input
                     pre_hook_iterator = execute_pre_hooks(
                         agent,
@@ -1574,7 +1574,7 @@ async def _arun(
                 # 4. Execute pre-hooks
                 run_input = cast(RunInput, run_response.input)
                 agent.model = cast(Model, agent.model)
-                if agent.pre_hooks is not None:
+                if attempt == 0 and agent.pre_hooks is not None:
                     # Can modify the run input
                     pre_hook_iterator = aexecute_pre_hooks(
                         agent,
@@ -2256,7 +2256,7 @@ async def _arun_stream(
                 # 4. Execute pre-hooks
                 run_input = cast(RunInput, run_response.input)
                 agent.model = cast(Model, agent.model)
-                if agent.pre_hooks is not None:
+                if attempt == 0 and agent.pre_hooks is not None:
                     pre_hook_iterator = aexecute_pre_hooks(
                         agent,
                         hooks=agent.pre_hooks,  # type: ignore
@@ -3611,7 +3611,7 @@ def _continue_run(
     8. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
     """
     # Register run for cancellation tracking
-    from agno.agent._hooks import execute_post_hooks
+    from agno.agent._hooks import execute_post_hooks, execute_pre_hooks
     from agno.agent._init import disconnect_connectable_tools
     from agno.agent._response import (
         convert_response_to_structured_format,
@@ -3627,7 +3627,36 @@ def _continue_run(
 
     agent.model = cast(Model, agent.model)
 
-    # 1. Handle the updated tools
+    # 1. Execute pre-hooks
+    run_input = cast(RunInput, run_response.input)
+    if agent.pre_hooks is not None:
+        try:
+            pre_hook_iterator = execute_pre_hooks(
+                agent,
+                hooks=agent.pre_hooks,  # type: ignore
+                run_response=run_response,
+                run_input=run_input,
+                run_context=run_context,
+                session=session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                background_tasks=background_tasks,
+                is_continue=True,
+                **kwargs,
+            )
+            deque(pre_hook_iterator, maxlen=0)
+        except (InputCheckError, OutputCheckError) as e:
+            run_response.status = RunStatus.error
+            flush_in_flight_messages_on_error(run_response, run_messages)
+            if run_response.content is None:
+                run_response.content = str(e)
+            log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
+            cleanup_and_store(
+                agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
+            )
+            return run_response
+
+    # 2. Handle the updated tools
     handle_tool_call_updates(agent, run_response=run_response, run_messages=run_messages, tools=tools)
 
     try:
@@ -3832,7 +3861,7 @@ def _continue_run_stream(
     6. Cleanup and store the run response and session
     """
 
-    from agno.agent._hooks import execute_post_hooks
+    from agno.agent._hooks import execute_post_hooks, execute_pre_hooks
     from agno.agent._init import disconnect_connectable_tools
     from agno.agent._response import (
         generate_followups_stream,
@@ -3844,12 +3873,45 @@ def _continue_run_stream(
 
     register_run(run_response.run_id)  # type: ignore
 
+    # 1. Execute pre-hooks
+    run_input = cast(RunInput, run_response.input)
+    if agent.pre_hooks is not None:
+        try:
+            pre_hook_iterator = execute_pre_hooks(
+                agent,
+                hooks=agent.pre_hooks,  # type: ignore
+                run_response=run_response,
+                run_input=run_input,
+                run_context=run_context,
+                session=session,
+                user_id=user_id,
+                debug_mode=debug_mode,
+                stream_events=stream_events,
+                background_tasks=background_tasks,
+                is_continue=True,
+                **kwargs,
+            )
+            for event in pre_hook_iterator:
+                yield event
+        except (InputCheckError, OutputCheckError) as e:
+            run_response.status = RunStatus.error
+            flush_in_flight_messages_on_error(run_response, run_messages)
+            if run_response.content is None:
+                run_response.content = str(e)
+            log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
+            cleanup_and_store(
+                agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
+            )
+            if yield_run_output:
+                yield run_response
+            return
+
     # Set up retry logic
     num_attempts = agent.retries + 1
     try:
         for attempt in range(num_attempts):
             try:
-                # 1. Resolve dependencies
+                # 2. Resolve dependencies
                 if run_context.dependencies is not None:
                     resolve_run_dependencies(agent, run_context=run_context)
 
@@ -3862,7 +3924,7 @@ def _continue_run_stream(
                         store_events=agent.store_events,
                     )
 
-                # 2. Handle the updated tools
+                # 3. Handle the updated tools
                 for event in handle_tool_call_updates_stream(
                     agent,
                     run_response=run_response,
@@ -4513,7 +4575,7 @@ async def _acontinue_run(
     13. Create session summary
     14. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
     """
-    from agno.agent._hooks import aexecute_post_hooks
+    from agno.agent._hooks import aexecute_post_hooks, aexecute_pre_hooks
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
     from agno.agent._messages import get_continue_run_messages
     from agno.agent._response import (
@@ -4728,6 +4790,41 @@ async def _acontinue_run(
 
                 # Register run for cancellation tracking
                 await aregister_run(run_response.run_id)  # type: ignore
+
+                # Execute pre-hooks
+                run_input = cast(RunInput, run_response.input)
+                if attempt == 0 and agent.pre_hooks is not None:
+                    try:
+                        pre_hook_iterator = aexecute_pre_hooks(
+                            agent,
+                            hooks=agent.pre_hooks,  # type: ignore
+                            run_response=run_response,
+                            run_input=run_input,
+                            run_context=run_context,
+                            session=agent_session,
+                            user_id=user_id,
+                            debug_mode=debug_mode,
+                            background_tasks=background_tasks,
+                            is_continue=True,
+                            **kwargs,
+                        )
+                        # Consume the async iterator without yielding
+                        async for _ in pre_hook_iterator:
+                            pass
+                    except (InputCheckError, OutputCheckError) as e:
+                        run_response.status = RunStatus.error
+                        flush_in_flight_messages_on_error(run_response, run_messages)
+                        if run_response.content is None:
+                            run_response.content = str(e)
+                        log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
+                        await acleanup_and_store(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+                        return run_response
 
                 # 7. Handle the updated tools
                 await ahandle_tool_call_updates(
@@ -5006,7 +5103,7 @@ async def _acontinue_run_stream(
     10. Execute post-hooks
     11. Cleanup and store the run response and session
     """
-    from agno.agent._hooks import aexecute_post_hooks
+    from agno.agent._hooks import aexecute_post_hooks, aexecute_pre_hooks
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
     from agno.agent._messages import get_continue_run_messages
     from agno.agent._response import (
@@ -5219,6 +5316,43 @@ async def _acontinue_run_stream(
 
                 # Register run for cancellation tracking
                 await aregister_run(run_response.run_id)  # type: ignore
+
+                # Execute pre-hooks
+                run_input = cast(RunInput, run_response.input)
+                if attempt == 0 and agent.pre_hooks is not None:
+                    try:
+                        pre_hook_iterator = aexecute_pre_hooks(
+                            agent,
+                            hooks=agent.pre_hooks,  # type: ignore
+                            run_response=run_response,
+                            run_input=run_input,
+                            run_context=run_context,
+                            session=agent_session,
+                            user_id=user_id,
+                            debug_mode=debug_mode,
+                            stream_events=stream_events,
+                            background_tasks=background_tasks,
+                            is_continue=True,
+                            **kwargs,
+                        )
+                        async for event in pre_hook_iterator:
+                            yield event
+                    except (InputCheckError, OutputCheckError) as e:
+                        run_response.status = RunStatus.error
+                        flush_in_flight_messages_on_error(run_response, run_messages)
+                        if run_response.content is None:
+                            run_response.content = str(e)
+                        log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
+                        await acleanup_and_store(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        )
+                        if yield_run_output:
+                            yield run_response
+                        return
 
                 # Start the Run by yielding a RunContinued event
                 if stream_events:
