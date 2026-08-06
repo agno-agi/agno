@@ -56,7 +56,13 @@ class Reader:
         except ValueError as e:
             raise ValueError(f"Failed to set chunking strategy: {e}")
 
-    def read(self, obj: Any, name: Optional[str] = None, password: Optional[str] = None) -> List[Document]:
+    def read(
+        self,
+        obj: Any,
+        name: Optional[str] = None,
+        password: Optional[str] = None,
+        content_id: Optional[str] = None,
+    ) -> List[Document]:
         """Read ``obj`` and return the resulting documents.
 
         Subclasses must honor ``self.chunk``. When ``self.chunk``
@@ -64,10 +70,22 @@ class Reader:
         when False, return whole documents unchanged. Ingestion does not chunk on
         the reader's behalf, so a reader that ignores ``self.chunk`` will silently
         drop the caller's chunking preference.
+
+        ``content_id`` is the Knowledge content id for this insert. Readers that
+        preserve images (or otherwise need a stable content-scoped id) should use
+        it. Callers that still use an older ``read`` signature without
+        ``content_id`` continue to work: Knowledge only passes the argument when
+        it is present on the method signature.
         """
         raise NotImplementedError
 
-    async def async_read(self, obj: Any, name: Optional[str] = None, password: Optional[str] = None) -> List[Document]:
+    async def async_read(
+        self,
+        obj: Any,
+        name: Optional[str] = None,
+        password: Optional[str] = None,
+        content_id: Optional[str] = None,
+    ) -> List[Document]:
         """Async variant of :meth:`read`. Subclasses must honor ``self.chunk`` (see :meth:`read`)."""
         raise NotImplementedError
 
