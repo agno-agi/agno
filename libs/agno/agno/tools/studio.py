@@ -155,6 +155,11 @@ class StudioTools(Toolkit):
             agents_list=agents_list,
             teams_list=teams_list,
             workflows_list=workflows_list,
+            # The Studio holds the registry as its build palette and its run_* are
+            # the smoke test for what it just composed, so its reach over registry
+            # components is the point rather than an accident. A standalone runner
+            # mounted on a router gets the narrower default.
+            include_all_components=True,
             list_limit=list_limit,
         )
 
