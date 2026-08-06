@@ -1827,6 +1827,316 @@ def test_member_sharing_team_name_resumes_fresh_process(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# to_dict() strips None values, so a wire payload may omit member provenance
+# (member_run_id and friends). The dispatch backfill restores it from the
+# stored session requirements; routing and the own-requirement reclaim must
+# then behave exactly as with a complete payload.
+# ---------------------------------------------------------------------------
+
+
+def _wire_requirements_stripped(requirements, *fields: str) -> List[RunRequirement]:
+    """Wire round-trip like _wire_requirements, but with the given payload keys
+    deleted, the way a client that only echoes HITL-relevant fields sends them."""
+    confirmed = []
+    for data in [r.to_dict() for r in requirements or []]:
+        for field in fields:
+            data.pop(field, None)
+        req = RunRequirement.from_dict(data)
+        req.confirm()
+        confirmed.append(req)
+    return confirmed
+
+
+def test_stripped_member_run_id_collision_still_routes(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "stripped_collision.db")
+    session_id = "s-stripped-collision"
+
+    team1 = _build_id_collision_team(SqliteDb(db_file=db_file), resuming=False)
+    run1 = team1.run("Email a@example.com", session_id=session_id)
+    assert run1.is_paused
+
+    team2 = _build_id_collision_team(SqliteDb(db_file=db_file), resuming=True)
+    run2 = team2.continue_run(
+        run_id=run1.run_id,
+        session_id=session_id,
+        requirements=_wire_requirements_stripped(run1.requirements, "member_run_id"),
+    )
+    assert run2.status == RunStatus.completed
+    assert _EXECUTED == ["a@example.com"]
+
+
+def test_stripped_member_run_id_ordinary_team_routes(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "stripped_flat.db")
+    session_id = "s-stripped-flat"
+
+    team1 = _build_flat_team(SqliteDb(db_file=db_file), resuming=False)
+    run1 = team1.run("Email a@example.com", session_id=session_id)
+    assert run1.is_paused
+
+    team2 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
+    run2 = team2.continue_run(
+        run_id=run1.run_id,
+        session_id=session_id,
+        requirements=_wire_requirements_stripped(run1.requirements, "member_run_id"),
+    )
+    assert run2.status == RunStatus.completed
+    assert _EXECUTED == ["a@example.com"]
+
+
+def test_stripped_member_run_id_subteam_own_tool_still_reclaims(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "stripped_own_tool.db")
+    session_id = "s-stripped-own-tool"
+
+    outer1 = _build_subteam_own_tool(SqliteDb(db_file=db_file), resuming=False, mixed=False)
+    run1 = outer1.run("Publish the release", session_id=session_id)
+    assert run1.is_paused
+
+    outer2 = _build_subteam_own_tool(SqliteDb(db_file=db_file), resuming=True, mixed=False)
+    run2 = outer2.continue_run(
+        run_id=run1.run_id,
+        session_id=session_id,
+        requirements=_wire_requirements_stripped(run1.requirements, "member_run_id"),
+    )
+    assert run2.status == RunStatus.completed
+    assert _EXECUTED == ["pub:release"]
+
+
+def test_unrecoverable_provenance_collision_fails_loudly(tmp_path):
+    """A collision payload whose provenance cannot be restored (no matching
+    stored requirement) must raise, never complete with the tool skipped."""
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "unrecoverable.db")
+    session_id = "s-unrecoverable"
+
+    team1 = _build_id_collision_team(SqliteDb(db_file=db_file), resuming=False)
+    run1 = team1.run("Email a@example.com", session_id=session_id)
+    assert run1.is_paused
+
+    mangled = []
+    for data in [r.to_dict() for r in run1.requirements or []]:
+        data.pop("member_run_id", None)
+        data["id"] = "req-unknown"
+        data["tool_execution"]["tool_call_id"] = "tc-unknown"
+        req = RunRequirement.from_dict(data)
+        req.confirm()
+        mangled.append(req)
+
+    team2 = _build_id_collision_team(SqliteDb(db_file=db_file), resuming=True)
+    with pytest.raises(ValueError):
+        team2.continue_run(run_id=run1.run_id, session_id=session_id, requirements=mangled)
+    assert _EXECUTED == []
+
+
+def _build_same_member_twice_same_tool_call_id(db: SqliteDb, resuming: bool) -> Team:
+    _SHARED_CURSORS.pop("m-emailer-shared-tcid", None)
+    emailer = Agent(
+        name="Emailer",
+        id="emailer",
+        model=_SharedCursorModel(
+            "m-emailer-shared-tcid",
+            [("content", "Email sent."), ("content", "Email sent.")]
+            if resuming
+            else [
+                ("tool", "send_email", {"to": "a@x.com"}, "tc-shared"),
+                ("tool", "send_email", {"to": "b@x.com"}, "tc-shared"),
+            ],
+        ),
+        tools=[send_email],
+        db=db,
+        telemetry=False,
+    )
+    return Team(
+        name="Comms Team",
+        id="comms-team",
+        model=_ScriptedModel(
+            "m-leader-shared-tcid",
+            [("content", "All done.")]
+            if resuming
+            else [
+                (
+                    "tools",
+                    [
+                        ("delegate_task_to_member", {"member_id": "emailer", "task": "task A"}, "tc-da"),
+                        ("delegate_task_to_member", {"member_id": "emailer", "task": "task B"}, "tc-db"),
+                    ],
+                ),
+                ("content", "All done."),
+            ],
+        ),
+        members=[emailer],
+        db=db,
+        telemetry=False,
+    )
+
+
+def test_stripped_payload_same_tool_call_id_both_runs_execute(tmp_path):
+    """Two paused runs of one member can share a tool_call_id, so provenance
+    restore must match by requirement id — a tool_call_id match hands both
+    requirements the same member_run_id and strands one of the runs."""
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "stripped_same_tcid.db")
+    session_id = "s-stripped-same-tcid"
+
+    team1 = _build_same_member_twice_same_tool_call_id(SqliteDb(db_file=db_file), resuming=False)
+    run1 = team1.run("Email both", session_id=session_id)
+    assert run1.is_paused
+    assert len(run1.requirements or []) == 2
+    assert len({r.member_run_id for r in run1.requirements}) == 2
+
+    team2 = _build_same_member_twice_same_tool_call_id(SqliteDb(db_file=db_file), resuming=True)
+    run2 = team2.continue_run(
+        run_id=run1.run_id,
+        session_id=session_id,
+        requirements=_wire_requirements_stripped(run1.requirements, "member_run_id"),
+    )
+    assert run2.status == RunStatus.completed
+    assert sorted(_EXECUTED) == ["a@x.com", "b@x.com"]
+
+
+# ---------------------------------------------------------------------------
+# Sibling sub-teams may contain members with the same leaf id. The leaf-id
+# route picks the first sibling in member order; the continue must dispatch
+# to the sibling that owns the paused run, and each sibling's own tool
+# implementation must execute with its own arguments.
+# ---------------------------------------------------------------------------
+
+_LEFT_EXECUTED: List[str] = []
+_RIGHT_EXECUTED: List[str] = []
+
+
+@tool(name="send_email", requires_confirmation=True)
+def left_send_email(to: str) -> str:
+    _LEFT_EXECUTED.append(to)
+    return f"LEFT sent to {to}"
+
+
+@tool(name="send_email", requires_confirmation=True)
+def right_send_email(to: str) -> str:
+    _RIGHT_EXECUTED.append(to)
+    return f"RIGHT sent to {to}"
+
+
+def _build_sibling_dup_leaf_teams(db: SqliteDb, resuming: bool, delegate_to_both: bool) -> Team:
+    def make_subteam(side: str, send_tool, to: str) -> Team:
+        agent_script = (
+            [("content", "Email sent.")]
+            if resuming
+            else [("tool", "send_email", {"to": to}, f"tc-send-{side}"), ("content", "Email sent.")]
+        )
+        sub_script = (
+            [("content", f"{side} done.")]
+            if resuming
+            else [
+                ("tool", "delegate_task_to_member", {"member_id": "dup", "task": "send it"}, f"tc-deleg-{side}"),
+                ("content", f"{side} done."),
+            ]
+        )
+        member = Agent(
+            name="Dup",
+            id="dup",
+            model=_ScriptedModel(f"m-agent-{side}", agent_script),
+            tools=[send_tool],
+            db=db,
+            telemetry=False,
+        )
+        return Team(
+            name=f"{side} Team",
+            id=f"{side}-team",
+            model=_ScriptedModel(f"m-{side}", sub_script),
+            members=[member],
+            db=db,
+            telemetry=False,
+        )
+
+    if delegate_to_both:
+        leader_turn = (
+            "tools",
+            [
+                ("delegate_task_to_member", {"member_id": "left-team", "task": "send left"}, "tc-outer-left"),
+                ("delegate_task_to_member", {"member_id": "right-team", "task": "send right"}, "tc-outer-right"),
+            ],
+        )
+    else:
+        leader_turn = ("tool", "delegate_task_to_member", {"member_id": "right-team", "task": "send right"}, "tc-outer")
+    return Team(
+        name="Org Team",
+        id="org-team",
+        model=_ScriptedModel(
+            "m-outer", [("content", "All done.")] if resuming else [leader_turn, ("content", "All done.")]
+        ),
+        members=[
+            make_subteam("left", left_send_email, "left@example.com"),
+            make_subteam("right", right_send_email, "right@example.com"),
+        ],
+        db=db,
+        telemetry=False,
+    )
+
+
+def test_duplicate_leaf_id_across_siblings_routes_to_owning_subteam(tmp_path):
+    _LEFT_EXECUTED.clear()
+    _RIGHT_EXECUTED.clear()
+    db_file = str(tmp_path / "sibling_dup.db")
+    session_id = "s-sibling-dup"
+
+    outer1 = _build_sibling_dup_leaf_teams(SqliteDb(db_file=db_file), resuming=False, delegate_to_both=False)
+    run1 = outer1.run("Email right", session_id=session_id)
+    assert run1.is_paused
+    assert _LEFT_EXECUTED == [] and _RIGHT_EXECUTED == []
+
+    outer2 = _build_sibling_dup_leaf_teams(SqliteDb(db_file=db_file), resuming=True, delegate_to_both=False)
+    run2 = outer2.continue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+    )
+    assert run2.status == RunStatus.completed
+    assert _RIGHT_EXECUTED == ["right@example.com"]
+    assert _LEFT_EXECUTED == []
+
+
+@pytest.mark.asyncio
+async def test_duplicate_leaf_id_across_siblings_routes_to_owning_subteam_async(tmp_path):
+    _LEFT_EXECUTED.clear()
+    _RIGHT_EXECUTED.clear()
+    db_file = str(tmp_path / "sibling_dup_async.db")
+    session_id = "s-sibling-dup-async"
+
+    outer1 = _build_sibling_dup_leaf_teams(SqliteDb(db_file=db_file), resuming=False, delegate_to_both=False)
+    run1 = await outer1.arun("Email right", session_id=session_id)
+    assert run1.is_paused
+
+    outer2 = _build_sibling_dup_leaf_teams(SqliteDb(db_file=db_file), resuming=True, delegate_to_both=False)
+    run2 = await outer2.acontinue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+    )
+    assert run2.status == RunStatus.completed
+    assert _RIGHT_EXECUTED == ["right@example.com"]
+    assert _LEFT_EXECUTED == []
+
+
+def test_duplicate_leaf_id_both_siblings_paused_each_executes_own(tmp_path):
+    _LEFT_EXECUTED.clear()
+    _RIGHT_EXECUTED.clear()
+    db_file = str(tmp_path / "sibling_dup_both.db")
+    session_id = "s-sibling-dup-both"
+
+    outer1 = _build_sibling_dup_leaf_teams(SqliteDb(db_file=db_file), resuming=False, delegate_to_both=True)
+    run1 = outer1.run("Email both sides", session_id=session_id)
+    assert run1.is_paused
+    assert len(run1.requirements or []) == 2
+
+    outer2 = _build_sibling_dup_leaf_teams(SqliteDb(db_file=db_file), resuming=True, delegate_to_both=True)
+    run2 = outer2.continue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+    )
+    assert run2.status == RunStatus.completed
+    assert _LEFT_EXECUTED == ["left@example.com"]
+    assert _RIGHT_EXECUTED == ["right@example.com"]
+
+
+# ---------------------------------------------------------------------------
 # When routing raises, the caller's in-memory run object must keep ALL its
 # requirements (the dispatch temporarily strips team-level ones for routing),
 # so a retry after fixing the team does not lose an approved tool.

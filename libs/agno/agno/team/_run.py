@@ -5315,7 +5315,7 @@ def _backfill_approval_to_requirements(
     run_response: Any,
     old_requirements: Optional[List[Any]] = None,
 ) -> None:
-    """Restore approval metadata on requirements' tool_execution objects after a continue payload merge.
+    """Restore approval metadata and member provenance on requirements after a continue payload merge.
 
     During continue_run the client's requirements replace the session originals,
     but approval_type/approval_id are typically absent from the client payload.
@@ -5326,19 +5326,34 @@ def _backfill_approval_to_requirements(
     2. old_requirements (the pre-overwrite session requirements) — covers member-level
        approval tools where run_response.tools only contains delegate_task_to_member
        entries that have no approval_type. The original session requirements carry it.
+
+    Member provenance (member_agent_id, member_agent_name, member_run_id) is
+    restored from old_requirements the same way: to_dict() strips None values,
+    so a wire payload may omit any of them, and routing then cannot find the
+    paused member run — nor tell a member's requirement from the team's own
+    lifted one when the two share an id (see _reclaim_own_requirements). Old
+    requirements are matched by requirement id first, then tool_call_id: two
+    member runs paused in one turn can carry the same tool_call_id, and a
+    tool_call_id-only match would hand both the same member_run_id.
     """
     reqs = getattr(run_response, "requirements", None)
     if not reqs:
         return
 
-    # Build lookup from both sources
+    # Build lookups from both sources
     by_id: Dict[str, Any] = {}
+    old_by_req_id: Dict[str, Any] = {}
+    old_by_tool_call_id: Dict[str, Any] = {}
     # Old requirements first (lower priority)
     if old_requirements:
         for old_req in old_requirements:
+            old_req_id = getattr(old_req, "id", None)
+            if old_req_id:
+                old_by_req_id[old_req_id] = old_req
             old_te = getattr(old_req, "tool_execution", None)
             if old_te and old_te.tool_call_id:
                 by_id[old_te.tool_call_id] = old_te
+                old_by_tool_call_id[old_te.tool_call_id] = old_req
     # run_response.tools second (higher priority, overwrites)
     for t in getattr(run_response, "tools", None) or []:
         if t.tool_call_id and getattr(t, "approval_type", None) is not None:
@@ -5351,6 +5366,13 @@ def _backfill_approval_to_requirements(
             for attr in ("approval_type", "approval_id"):
                 if getattr(te, attr, None) is None and getattr(src, attr, None) is not None:
                     setattr(te, attr, getattr(src, attr))
+        old_req = old_by_req_id.get(getattr(req, "id", None) or "")
+        if old_req is None and te is not None and te.tool_call_id:
+            old_req = old_by_tool_call_id.get(te.tool_call_id)
+        if old_req is not None:
+            for attr in ("member_agent_id", "member_agent_name", "member_run_id"):
+                if getattr(req, attr, None) is None and getattr(old_req, attr, None) is not None:
+                    setattr(req, attr, getattr(old_req, attr))
 
 
 def _reclaim_own_requirements(team: "Team", requirements: List[Any], continuing_run_id: Optional[str]) -> None:
@@ -5368,7 +5390,11 @@ def _reclaim_own_requirements(team: "Team", requirements: List[Any], continuing_
     The requirement is the team's own only if it also points at the run being
     continued at this dispatch level — _propagate_member_pause stamps
     member_run_id alongside member_agent_id, and for a member's requirement
-    that is the member's run id, never this team's."""
+    that is the member's run id, never this team's. A requirement without
+    member_run_id is never reclaimed: to_dict() strips None values, so a wire
+    payload may omit the field, and _backfill_approval_to_requirements
+    restores it from the stored session requirements before dispatch reaches
+    this function."""
     from agno.utils.team import get_member_id
 
     if not any(getattr(req, "member_agent_id", None) is not None for req in requirements):
@@ -5380,7 +5406,7 @@ def _reclaim_own_requirements(team: "Team", requirements: List[Any], continuing_
         if getattr(req, "member_agent_id", None) != own_id:
             continue
         member_run_id = getattr(req, "member_run_id", None)
-        if member_run_id is not None and member_run_id != continuing_run_id:
+        if member_run_id is None or member_run_id != continuing_run_id:
             continue
         req.member_agent_id = None
         req.member_agent_name = None
@@ -5528,9 +5554,17 @@ def _group_requirements_for_continue(
     that is not in the team: the run stays paused and resumable instead of
     completing with the approved tool silently skipped.
 
+    The leaf-id route and run ownership can disagree: sibling sub-teams may
+    contain members with the same leaf id, and _find_member_route_by_id picks
+    the first match in member order while the paused run lives under another
+    sibling. The resolved run's owner is authoritative for where the continue
+    dispatches — following the leaf-id pick would hand one sibling's paused
+    run to the other and execute the wrong tool implementation.
+
     Returns entries of (routed_member, resolved_target_run_or_None, requirements).
     """
     from agno.team._tools import _find_member_route_by_id
+    from agno.utils.team import get_member_id
 
     member_reqs: Dict[Tuple[str, Optional[str]], List["RunRequirement"]] = {}
     for req in run_response.requirements or []:
@@ -5549,6 +5583,10 @@ def _group_requirements_for_continue(
             )
         _, member = route_result
         target = _resolve_member_run_output_for_continue(member, reqs, run_response, session)
+        if isinstance(target, TeamRunOutput) and target.team_id is not None and target.team_id != get_member_id(member):
+            owner_route = _find_member_route_by_id(team, target.team_id, run_context=run_context)
+            if owner_route is not None and get_member_id(owner_route[1]) == target.team_id:
+                member = owner_route[1]
         merged = False
         if target is not None:
             for existing_member, existing_target, existing_reqs in entries:
