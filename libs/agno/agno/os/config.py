@@ -121,6 +121,8 @@ class MCPServerConfig(BaseModel):
 class AuthorizationConfig(BaseModel):
     """Configuration for the JWT middleware"""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     verification_keys: Optional[List[str]] = None
     jwks_file: Optional[str] = None
     algorithm: Optional[str] = None
@@ -137,6 +139,15 @@ class AuthorizationConfig(BaseModel):
     # When False (default) JWT/RBAC still apply, but routes operate on the
     # unscoped DB and don't add per-user ownership gates on top of RBAC.
     user_isolation: bool = False
+    # Claim-mapping / token-source options forwarded to AuthMiddleware / JWTValidator.
+    # ``validate_token`` accepts the alias ``validate`` for AuthorizationConfig(...).
+    validate_token: Optional[bool] = Field(default=None, alias="validate")
+    token_source: Optional[Literal["header", "cookie", "both"]] = None
+    scopes_claim: Optional[str] = None
+    user_id_claim: Optional[str] = None
+    session_id_claim: Optional[str] = None
+    dependencies_claims: Optional[List[str]] = None
+    session_state_claims: Optional[List[str]] = None
 
 
 class EvalsDomainConfig(BaseModel):

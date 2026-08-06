@@ -417,6 +417,13 @@ def build_jwt_middleware_kwargs(
     audience = None
     admin_scope: Optional[str] = None
     user_isolation = False
+    validate: Optional[bool] = None
+    token_source: Optional[str] = None
+    scopes_claim: Optional[str] = None
+    user_id_claim: Optional[str] = None
+    session_id_claim: Optional[str] = None
+    dependencies_claims: Optional[List[str]] = None
+    session_state_claims: Optional[List[str]] = None
 
     if authorization_config:
         algorithm = authorization_config.algorithm or "RS256"
@@ -426,6 +433,13 @@ def build_jwt_middleware_kwargs(
         audience = authorization_config.audience
         admin_scope = authorization_config.admin_scope
         user_isolation = authorization_config.user_isolation
+        validate = authorization_config.validate_token
+        token_source = authorization_config.token_source
+        scopes_claim = authorization_config.scopes_claim
+        user_id_claim = authorization_config.user_id_claim
+        session_id_claim = authorization_config.session_id_claim
+        dependencies_claims = authorization_config.dependencies_claims
+        session_state_claims = authorization_config.session_state_claims
 
     kwargs: Dict[str, Any] = {
         "verification_keys": verification_keys,
@@ -441,6 +455,20 @@ def build_jwt_middleware_kwargs(
         kwargs["admin_scope"] = admin_scope
     if user_isolation:
         kwargs["user_isolation"] = True
+    if validate is not None:
+        kwargs["validate"] = validate
+    if token_source:
+        kwargs["token_source"] = token_source
+    if scopes_claim:
+        kwargs["scopes_claim"] = scopes_claim
+    if user_id_claim:
+        kwargs["user_id_claim"] = user_id_claim
+    if session_id_claim:
+        kwargs["session_id_claim"] = session_id_claim
+    if dependencies_claims:
+        kwargs["dependencies_claims"] = dependencies_claims
+    if session_state_claims:
+        kwargs["session_state_claims"] = session_state_claims
     if service_account_verifier is not None:
         kwargs["service_account_verifier"] = service_account_verifier
     return kwargs
