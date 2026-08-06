@@ -429,7 +429,7 @@ class TestAgentFromDict:
 
         agent = Agent.from_dict(config, registry=mock_registry)
 
-        mock_registry.rehydrate_functions.assert_called_once_with(tool_dicts)
+        mock_registry.rehydrate_functions.assert_called_once_with(tool_dicts, strict=False)
         assert agent.tools == mock_tools
 
     def test_from_dict_without_registry_raises_for_tools(self):

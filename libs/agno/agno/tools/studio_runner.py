@@ -875,7 +875,7 @@ class StudioRunnerTools(Toolkit):
                 {
                     str(getattr(tool, "name", None) or "?")
                     for tool in rebuilt_tools
-                    if isinstance(tool, Function) and tool.entrypoint is None
+                    if isinstance(tool, Function) and tool.entrypoint is None and not tool.external_execution
                 }
             )
             if unresolved:
@@ -1098,7 +1098,7 @@ class StudioRunnerTools(Toolkit):
                 {
                     str(getattr(tool, "name", None) or "?")
                     for tool in (child_tools if isinstance(child_tools, list) else [])
-                    if isinstance(tool, Function) and tool.entrypoint is None
+                    if isinstance(tool, Function) and tool.entrypoint is None and not tool.external_execution
                 }
             )
             if unresolved:

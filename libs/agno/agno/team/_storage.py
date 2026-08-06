@@ -886,8 +886,14 @@ def from_dict(
     # --- Handle tools reconstruction ---
     if "tools" in config and config["tools"]:
         if registry:
-            rehydrated_tools = registry.rehydrate_functions(config["tools"])
-            unresolved_tools = [f.name for f in rehydrated_tools if isinstance(f, Function) and f.entrypoint is None]
+            rehydrated_tools = registry.rehydrate_functions(config["tools"], strict=strict)
+            # External-execution tools run on the client and never carry a
+            # server entrypoint, so they are not unresolved references.
+            unresolved_tools = [
+                f"{f.owning_toolkit}.{f.name}" if f.owning_toolkit else f.name
+                for f in rehydrated_tools
+                if isinstance(f, Function) and f.entrypoint is None and not f.external_execution
+            ]
             if unresolved_tools and strict:
                 raise ComponentRehydrationError(
                     f"{component_label} references tools not resolvable from the registry: "

@@ -842,36 +842,22 @@ class AgentOS:
                 existing_teams[team_id] = team
 
     def _populate_registry_knowledge(self) -> None:
-        """Add discovered knowledge instances to the registry.
+        """Add knowledge instances to the registry so stored components resolve them by name.
 
-        Sources are the knowledge instances collected by
-        ``_auto_discover_knowledge_instances`` (agents, teams, the AgentOS
-        ``knowledge`` param, and ``registry.knowledge``). That discovery only
-        keeps instances backed by a ``contents_db``, so a ``contents_db`` is
-        required for a knowledge base to be resolvable from a Studio/Builder
-        component config (vector-search-only knowledge is not registered).
+        Sources are the contents_db-backed instances collected by
+        ``_auto_discover_knowledge_instances`` (which also feed the knowledge
+        routes) plus every named instance handed to the AgentOS ``knowledge``
+        param: registry resolution is by name and needs no ``contents_db``.
+        Agent- and team-attached knowledge is added by the component walk in
+        ``_populate_registry_components``.
         """
         if self.registry is None:
             self.registry = Registry()
 
-        if self.knowledge_instances:
-            existing_knowledge = {
-                name: k for k in self.registry.knowledge if (name := getattr(k, "name", None)) is not None
-            }
-            for kb in self.knowledge_instances:
-                kb_name = getattr(kb, "name", None)
-                if kb_name is None:
-                    continue
-                existing = existing_knowledge.get(kb_name)
-                if existing is not None:
-                    if existing is not kb:
-                        log_warning(
-                            f"Registry: multiple distinct knowledge instances share name '{kb_name}'; "
-                            "keeping the first. Give them distinct names to avoid one shadowing the other."
-                        )
-                    continue
-                self.registry.knowledge.append(kb)
-                existing_knowledge[kb_name] = kb
+        for kb in self.knowledge_instances or []:
+            self.registry.add_knowledge(kb)
+        for kb in self.knowledge or []:
+            self.registry.add_knowledge(kb)
 
     def _populate_registry_managers(self) -> None:
         """Add memory and session summary managers from agents/teams to the registry.

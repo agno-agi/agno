@@ -183,8 +183,14 @@ class Registry:
             and "input_schema" not in func_dict
         )
 
-    def rehydrate_functions(self, func_dicts: List[Dict[str, Any]]) -> List[Union[Function, Dict[str, Any]]]:
+    def rehydrate_functions(
+        self, func_dicts: List[Dict[str, Any]], strict: bool = False
+    ) -> List[Union[Function, Dict[str, Any]]]:
         """Rehydrate a batch of persisted tool dicts, sharing one cache-rebuild budget.
+
+        With strict=True a toolkit-qualified reference resolves only from its
+        own toolkit; the flat-name fallback that may bind a same-named function
+        from a different toolkit is reserved for lenient loads.
 
         A component load rehydrates every tool in its config; one rebuild of the
         entrypoint lookup per batch is enough to pick up late-registered
@@ -205,7 +211,7 @@ class Registry:
                 rehydrated.append(func_dict)
                 continue
             try:
-                rehydrated.append(self._rehydrate_function(func_dict, rebuild_state))
+                rehydrated.append(self._rehydrate_function(func_dict, rebuild_state, strict=strict))
             except ValidationError as e:
                 log_warning(
                     f"Registry: tool dict '{func_dict.get('name')}' looks like a serialized "
@@ -215,7 +221,9 @@ class Registry:
                 rehydrated.append(func_dict)
         return rehydrated
 
-    def _rehydrate_function(self, func_dict: Dict[str, Any], rebuild_state: Dict[str, Any]) -> Function:
+    def _rehydrate_function(
+        self, func_dict: Dict[str, Any], rebuild_state: Dict[str, Any], strict: bool = False
+    ) -> Function:
         func = Function.from_dict(func_dict)
         toolkit_name = func_dict.get("toolkit")
         if isinstance(toolkit_name, str) and toolkit_name:
@@ -257,7 +265,9 @@ class Registry:
             # toolkit while the right one simply hasn't populated the cache yet.
             source, source_owner = lookup((func.owning_toolkit, func.name))
             resolved_as_recorded = source is not None
-        if source is None:
+        # A strict load keeps a qualified reference bound to its own toolkit:
+        # a same-named function from another toolkit is a different tool.
+        if source is None and (func.owning_toolkit is None or not strict):
             source, source_owner = lookup(func.name)
             if source is not None and func.owning_toolkit is not None:
                 # The recorded toolkit could not be honored, so the flat slot's
@@ -428,6 +438,44 @@ class Registry:
         elif any(v is vector_db for v in self.vector_dbs):
             return
         self.vector_dbs.append(vector_db)
+
+    def add_knowledge(self, knowledge: Any) -> None:
+        """Add a knowledge instance unless one with the same name is already present.
+
+        Knowledge resolves by name at rehydration, so only named instances are
+        registrable. The first instance under a name wins; a distinct
+        same-named instance is reported, since it would be shadowed.
+        """
+        name = getattr(knowledge, "name", None)
+        if knowledge is None or name is None:
+            return
+        existing = self.get_knowledge(name)
+        if existing is not None:
+            if existing is not knowledge:
+                log_warning(
+                    f"Registry: multiple distinct knowledge instances share name '{name}'; "
+                    "keeping the first. Give them distinct names to avoid one shadowing the other."
+                )
+            return
+        self.knowledge.append(knowledge)
+
+    def add_schema(self, schema: Any) -> None:
+        """Add an input/output schema class unless one with the same name is already present.
+
+        Schemas resolve by class name at rehydration. Inline dict schemas are
+        not registrable and ride through serialization on their own.
+        """
+        if not (isinstance(schema, type) and issubclass(schema, BaseModel)):
+            return
+        existing = self.get_schema(schema.__name__)
+        if existing is not None:
+            if existing is not schema:
+                log_warning(
+                    f"Registry: multiple distinct schema classes share the name '{schema.__name__}'; "
+                    "keeping the first. Rename one to avoid it being shadowed."
+                )
+            return
+        self.schemas.append(schema)
 
     def get_schema(self, name: str) -> Optional[Type[BaseModel]]:
         """Get a schema by name."""

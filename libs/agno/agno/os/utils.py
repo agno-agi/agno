@@ -1605,7 +1605,7 @@ def _collect_fallback_models(owner: Any, registry: Registry) -> None:
 
 
 def _collect_components_from_knowledge(knowledge: Any, registry: Registry) -> None:
-    """Add the vector db and contents db backing a knowledge instance to the registry.
+    """Add a knowledge instance and its backing vector/contents dbs to the registry.
 
     ``knowledge`` may be a Knowledge instance, a custom KnowledgeProtocol
     implementation, or a callable factory. Attribute access is guarded so any
@@ -1613,12 +1613,13 @@ def _collect_components_from_knowledge(knowledge: Any, registry: Registry) -> No
     """
     if knowledge is None:
         return
+    registry.add_knowledge(knowledge)
     registry.add_vector_db(getattr(knowledge, "vector_db", None))
     registry.add_db(getattr(knowledge, "contents_db", None))
 
 
 def collect_components_from_agent(agent: Any, registry: Registry, visited: Set[int]) -> None:
-    """Add the models, tools, db and vector db referenced by an agent to the registry.
+    """Add the models, tools, schemas, db and vector db referenced by an agent to the registry.
 
     ``visited`` tracks already-walked agents/teams/workflows (by object id) to
     avoid redundant work and infinite recursion on cyclic composition graphs.
@@ -1638,6 +1639,8 @@ def collect_components_from_agent(agent: Any, registry: Registry, visited: Set[i
         for tool in tools:
             registry.add_tool(tool)
 
+    registry.add_schema(getattr(agent, "input_schema", None))
+    registry.add_schema(getattr(agent, "output_schema", None))
     registry.add_db(getattr(agent, "db", None))
     _collect_components_from_knowledge(getattr(agent, "knowledge", None), registry)
 
@@ -1659,6 +1662,8 @@ def collect_components_from_team(team: Any, registry: Registry, visited: Set[int
         for tool in tools:
             registry.add_tool(tool)
 
+    registry.add_schema(getattr(team, "input_schema", None))
+    registry.add_schema(getattr(team, "output_schema", None))
     registry.add_db(getattr(team, "db", None))
     _collect_components_from_knowledge(getattr(team, "knowledge", None), registry)
 
@@ -1677,6 +1682,7 @@ def collect_components_from_workflow(workflow: Any, registry: Registry, visited:
         return
     visited.add(id(workflow))
 
+    registry.add_schema(getattr(workflow, "input_schema", None))
     registry.add_db(getattr(workflow, "db", None))
 
     # Agentic workflow coordinator (WorkflowAgent is an Agent subclass)
