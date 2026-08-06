@@ -302,7 +302,7 @@ class PineconeDb(VectorDb):
                 metadata[self.USER_ID_KEY] = user_id
 
             # Fold the owner into the id so two owners' identical content get distinct ids.
-            vector_id = document.id if user_id is None else hash_string_sha256(f"{document.id}_{user_id}")
+            vector_id = self._record_id(document.id, user_id)
             data_to_upsert = {
                 "id": vector_id,
                 "values": document.embedding,
@@ -427,7 +427,7 @@ class PineconeDb(VectorDb):
                 metadata[self.USER_ID_KEY] = user_id
 
             # Fold the owner into the id so two owners' identical content get distinct ids.
-            vector_id = doc.id if user_id is None else hash_string_sha256(f"{doc.id}_{user_id}")
+            vector_id = self._record_id(doc.id, user_id)
             data_to_upsert = {
                 "id": vector_id,
                 "values": doc.embedding,
@@ -716,7 +716,9 @@ class PineconeDb(VectorDb):
         Args:
             content_hash (str): The content hash to check.
             user_id (Optional[str]): Scope the check to the owner's chunks. None checks the
-                shared bucket (no user_id field).
+                shared bucket (no user_id field) - this is the guard half of the upsert
+                dedup pair, so None addresses the shared bucket alone rather than every
+                owner, the same bucket _delete_by_content_hash clears for None.
 
         Returns:
             bool: True if documents with the content hash exist, False otherwise.
@@ -821,6 +823,18 @@ class PineconeDb(VectorDb):
         except Exception:
             logger.exception(f"Error updating metadata for content_id '{content_id}'")
             raise
+
+    def _record_id(self, base_id: Optional[str], user_id: Optional[str]) -> Optional[str]:
+        """Fold the owner into the vector id so two owners' identical content get
+        distinct ids. The shared bucket (user_id=None) keeps the base id.
+
+        The base id is caller-controlled and variable length, so it is collapsed to a
+        fixed-length digest before the owner is folded in - otherwise the '_' boundary
+        moves and ('doc_1', 'alice') and ('doc', '1_alice') fold to the same vector id.
+        """
+        if user_id is None:
+            return base_id
+        return hash_string_sha256(f"{hash_string_sha256(str(base_id))}_{user_id}")
 
     def _user_scope_filter(self, user_id: Optional[str]) -> Optional[Dict[str, Any]]:
         """Own-OR-shared scope predicate; user_id=None returns None (no scope)."""

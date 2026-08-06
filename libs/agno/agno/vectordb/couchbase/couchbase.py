@@ -715,16 +715,18 @@ class CouchbaseSearch(VectorDb):
     def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Check if a document exists in the bucket based on its content hash.
 
-        With user_id set the check is scoped to the caller's own chunks; None is the
-        unscoped existence gate matching any owner.
+        The owner is bound exactly (real id, or the shared sentinel for None). This is
+        the guard half of the upsert dedup pair, so None addresses the shared bucket
+        alone rather than every owner - the same bucket _delete_by_content_hash clears
+        for None.
         """
         try:
             # Use N1QL query to check if document with given content_hash exists
-            named_parameters: Dict[str, Any] = {"content_hash": content_hash}
-            where_clause = "content_hash = $content_hash"
-            if user_id is not None:
-                where_clause += f" AND {self.USER_ID_FIELD} = $user_id"
-                named_parameters["user_id"] = user_id
+            named_parameters: Dict[str, Any] = {
+                "content_hash": content_hash,
+                "user_id": user_id if user_id is not None else self.SHARED_USER_ID,
+            }
+            where_clause = f"content_hash = $content_hash AND {self.USER_ID_FIELD} = $user_id"
             query = f"SELECT content_hash FROM {self.bucket_name}.{self.scope_name}.{self.collection_name} WHERE {where_clause} LIMIT 1"
             result = self.scope.query(
                 query,

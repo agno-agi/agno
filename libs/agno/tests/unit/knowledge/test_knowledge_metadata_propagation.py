@@ -6,7 +6,7 @@ when using path in add_content_async/ainsert.
 
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from unittest.mock import patch
 
 import pytest
@@ -39,7 +39,7 @@ class MockVectorDb(VectorDb):
     def id_exists(self, id: str) -> bool:
         return False
 
-    def content_hash_exists(self, content_hash: str) -> bool:
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         return False
 
     def insert(self, content_hash: str, documents: List[Document], filters=None, user_id=None) -> None:
@@ -141,10 +141,7 @@ def test_prepare_documents_for_insert_with_metadata():
     # Call _prepare_documents_for_insert with metadata
     result = knowledge._prepare_documents_for_insert(documents, "content-id-1", metadata=metadata)
 
-    # Verify metadata was merged. ``linked_to`` is always added; ``user_id`` is
-    # the caller-provided owner (or ``None`` for shared / org-wide content).
-    # No sentinel substitution — each vector backend decides how to represent
-    # "no owner" in its native storage.
+    # Verify metadata was merged (linked_to is always added, empty string for unnamed knowledge)
     assert result[0].meta_data == {
         "existing": "value1",
         "document_id": "123",
@@ -319,8 +316,7 @@ def test_load_from_path_without_metadata(temp_text_file, mock_vector_db):
     ):
         knowledge._load_from_path(content, upsert=False, skip_if_exists=False)
 
-    # Verify documents were inserted with original metadata preserved (linked_to
-    # + user_id are always added; user_id defaults to the shared sentinel).
+    # Verify documents were inserted with original metadata preserved (only linked_to is added)
     assert len(mock_vector_db.inserted_documents) == 1
     doc = mock_vector_db.inserted_documents[0]
     assert doc.meta_data == {"original": "data", "linked_to": ""}

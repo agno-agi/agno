@@ -218,7 +218,10 @@ class UpstashVectorDb(VectorDb):
 
         Args:
             content_hash (str): The content hash to check.
-            user_id (Optional[str]): Restrict the check to the owner's chunks. None checks all.
+            user_id (Optional[str]): Restrict the check to the owner's chunks. None checks
+                the shared bucket (HAS NOT FIELD user_id) - this is the guard half of the
+                upsert dedup pair, so None addresses the shared bucket alone rather than
+                every owner, the same bucket _delete_by_content_hash clears for None.
 
         Returns:
             bool: True if documents with the content hash exist, False otherwise.
@@ -302,10 +305,14 @@ class UpstashVectorDb(VectorDb):
     def _record_id(self, base_id: str, user_id: Optional[str]) -> str:
         """Fold the owner into the deterministic id so two users uploading the same
         content get distinct keys. The shared bucket (user_id=None) keeps the base id.
+
+        The base id is caller-controlled and variable length, so it is collapsed to a
+        fixed-length digest before the owner is folded in - otherwise the '_' boundary
+        moves and ('doc_1', 'alice') and ('doc', '1_alice') fold to the same record id.
         """
         if user_id is None:
             return base_id
-        return hash_string_sha256(f"{base_id}_{user_id}")
+        return hash_string_sha256(f"{hash_string_sha256(base_id)}_{user_id}")
 
     def upsert(
         self,

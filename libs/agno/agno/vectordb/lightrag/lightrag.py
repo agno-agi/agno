@@ -67,44 +67,79 @@ class LightRag(VectorDb):
         """Check if a document with the given ID exists"""
         return False
 
-    def content_hash_exists(self, content_hash: str) -> bool:
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Check if content with the given hash exists"""
         return False
 
-    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """Insert documents into the vector database"""
         pass
 
     async def async_insert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """Async insert documents into the vector database"""
         pass
 
-    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """Upsert documents into the vector database"""
         pass
 
-    def delete_by_content_id(self, content_id: str) -> None:
+    def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> None:
         """Delete documents by content ID"""
         pass
 
-    async def async_upsert(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    async def async_upsert(
+        self,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """Async upsert documents into the vector database"""
         pass
 
     def search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
-        result = asyncio.run(self.async_search(query, limit=limit, filters=filters))
+        result = asyncio.run(self.async_search(query, limit=limit, filters=filters, user_id=user_id))
         return result if result is not None else []
 
     async def async_search(
-        self, query: str, limit: Optional[int] = None, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: Optional[int] = None,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[List[Document]]:
         mode: str = "hybrid"  # Default mode, can be "local", "global", or "hybrid"
         if filters is not None:
             log_warning("Filters are not supported in LightRAG. No filters will be applied.")
+
+        if user_id is not None:
+            log_warning(
+                "Per-user isolation is not supported in LightRAG. The LightRAG server owns these chunks, "
+                "so results are not scoped to the caller."
+            )
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(

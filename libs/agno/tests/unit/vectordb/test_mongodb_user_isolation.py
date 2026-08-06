@@ -421,14 +421,24 @@ class TestDeleteByContentIdIsolation:
 
 class TestContentHashExistsIsScoped:
     """content_hash_exists is scoped so one owner's upload is not judged a
-    duplicate of another's identical content; None/omitted sees everything."""
+    duplicate of another's identical content. It is the guard half of the upsert
+    dedup pair, so None/omitted addresses the shared bucket alone."""
 
     def test_hash_scoped_to_owner(self, mongo_db):
         mongo_db.insert(content_hash="hx", documents=_alice_docs(), user_id="alice")
         assert mongo_db.content_hash_exists("hx", user_id="alice") is True
         assert mongo_db.content_hash_exists("hx", user_id="bob") is False
-        # Admin / unscoped check still sees it.
+
+    def test_none_check_sees_the_shared_row(self, mongo_db):
+        mongo_db.insert(content_hash="hx", documents=_shared_docs(), user_id=None)
         assert mongo_db.content_hash_exists("hx") is True
+
+    def test_none_check_does_not_see_a_privately_owned_row(self, mongo_db):
+        """Alice privately holds this content. If None matched her row, a shared
+        publish of the same bytes would be judged a duplicate and silently skipped,
+        and the shared bucket would never receive it."""
+        mongo_db.insert(content_hash="hx", documents=_alice_docs(), user_id="alice")
+        assert mongo_db.content_hash_exists("hx") is False
 
 
 class TestUpdateMetadataPreservesOwner:

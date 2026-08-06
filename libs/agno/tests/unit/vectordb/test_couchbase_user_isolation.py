@@ -357,12 +357,29 @@ class TestContentHashDedupScope:
         assert "content_hash = $content_hash AND user_id = $user_id" in n1ql
         assert params == {"content_hash": "h1", "user_id": "alice"}
 
-    def test_content_hash_exists_unscoped_matches_any_owner(self, couchbase_db, recorder):
+    def test_content_hash_exists_none_binds_shared_sentinel(self, couchbase_db, recorder):
+        """The regression. ``None`` used to drop the owner predicate entirely and
+        match any owner, so a hash alice privately held read as a duplicate and a
+        later shared publish under ``skip_if_exists`` was swallowed. It binds the
+        ``__shared__`` sentinel now — the same bucket ``_delete_by_content_hash``
+        clears for ``None``, which is the other half of this pair."""
         couchbase_db.content_hash_exists("h1", user_id=None)
         n1ql, params = recorder.queries[-1]
-        assert "content_hash = $content_hash" in n1ql
-        assert "user_id" not in n1ql
-        assert params == {"content_hash": "h1"}
+        assert "content_hash = $content_hash AND user_id = $user_id" in n1ql
+        assert params == {"content_hash": "h1", "user_id": CouchbaseSearch.SHARED_USER_ID}
+
+    def test_the_bound_predicate_cannot_match_a_private_row(self, couchbase_db, recorder):
+        """The behaviour behind the shape, evaluated against the body alice's
+        write really stored: the content_hash arm matches, the owner arm does
+        not, so the gate answers False and the shared publish goes ahead."""
+        couchbase_db.insert(content_hash="h1", documents=[_embedded("d", "secret")], user_id="alice")
+        alice_row = next(iter(recorder.inserted[-1].values()))
+
+        couchbase_db.content_hash_exists("h1", user_id=None)
+        _, params = recorder.queries[-1]
+
+        assert alice_row["content_hash"] == params["content_hash"]
+        assert alice_row[CouchbaseSearch.USER_ID_FIELD] != params["user_id"]
 
     def test_upsert_dedup_delete_scoped_to_writing_owner(self, couchbase_db, recorder):
         """When the writer's own chunk already exists, the pre-delete binds

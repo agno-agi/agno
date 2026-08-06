@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -29,7 +29,7 @@ class MockVectorDb(VectorDb):
     def id_exists(self, id: str) -> bool:
         return False
 
-    def content_hash_exists(self, content_hash: str) -> bool:
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         return self.content_exists
 
     def insert(self, content_hash: str, documents: List[Document], filters=None) -> None:
@@ -108,7 +108,7 @@ def test_load_from_topics_continues_after_skip(mock_reader):
     skip_pattern = [True, False, False]
     skip_index = [0]
 
-    def mock_should_skip(content_hash, skip_if_exists):
+    def mock_should_skip(content_hash, skip_if_exists, user_id=None):
         result = skip_pattern[skip_index[0] % len(skip_pattern)]
         skip_index[0] += 1
         return result
@@ -135,7 +135,7 @@ async def test_aload_from_topics_continues_after_skip():
     skip_pattern = [True, False, False]
     skip_index = [0]
 
-    def mock_should_skip(content_hash, skip_if_exists):
+    def mock_should_skip(content_hash, skip_if_exists, user_id=None):
         result = skip_pattern[skip_index[0] % len(skip_pattern)]
         skip_index[0] += 1
         return result
@@ -168,7 +168,7 @@ def test_load_from_topics_multiple_skips():
     skip_pattern = [True, True, False, True, False]
     skip_index = [0]
 
-    def mock_should_skip(content_hash, skip_if_exists):
+    def mock_should_skip(content_hash, skip_if_exists, user_id=None):
         result = skip_pattern[skip_index[0] % len(skip_pattern)]
         skip_index[0] += 1
         return result

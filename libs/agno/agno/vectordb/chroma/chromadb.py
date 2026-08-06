@@ -25,6 +25,12 @@ from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
 
+# Collection metadata key stamped on every per-user collection, holding the base
+# collection name it belongs to. The unscoped read and ``drop`` match on it
+# instead of on the ``{collection_name}__`` name prefix, which a sibling
+# knowledge base can hold by coincidence.
+BASE_COLLECTION_METADATA_KEY = "agno_base_collection"
+
 
 def reciprocal_rank_fusion(
     ranked_lists: List[List[Tuple[str, float]]],
@@ -169,7 +175,8 @@ class ChromaDb(VectorDb):
     # Naming:
     #   - ``user_id`` is a non-empty string  → ``{collection_name}__{user_id}``
     #   - ``user_id`` is None or ``""``      → ``self.collection_name`` (base,
-    #     unscoped / backwards-compatible path)
+    #     backwards-compatible path). Only ``None`` is the UNSCOPED read;
+    #     ``""`` is an owner that happens to resolve to the base collection.
     #   - Admin uploads with no owner go to the BASE collection. Scoped
     #     searches always read both the caller's collection AND the base
     #     collection so org-wide content stays discoverable. That's why
@@ -191,11 +198,7 @@ class ChromaDb(VectorDb):
         candidate = user_id
         # Reserve enough budget for the base ``{collection_name}__`` prefix.
         suffix_budget = 63 - len(self.collection_name) - 2  # "__"
-        if (
-            self._CHROMA_NAME_RE.match(candidate)
-            and len(candidate) <= suffix_budget
-            and ".." not in candidate
-        ):
+        if self._CHROMA_NAME_RE.match(candidate) and len(candidate) <= suffix_budget and ".." not in candidate:
             return candidate
         # Fallback: 16-char hex hash. Stable per-user across processes.
         return md5(user_id.encode("utf-8")).hexdigest()[:16]
@@ -226,9 +229,12 @@ class ChromaDb(VectorDb):
 
         # Create-or-get. ``get_or_create_collection`` handles both branches
         # atomically — we don't have to call ``exists`` first.
-        collection = self.client.get_or_create_collection(
-            name=name, metadata={"hnsw:space": self.distance.value}
-        )
+        metadata: Dict[str, Any] = {"hnsw:space": self.distance.value}
+        if name != self.collection_name:
+            # Tag per-user collections so the unscoped read and ``drop`` can
+            # tell them from a sibling knowledge base named ``{base}__...``.
+            metadata[BASE_COLLECTION_METADATA_KEY] = self.collection_name
+        collection = self.client.get_or_create_collection(name=name, metadata=metadata)
         if name == self.collection_name:
             self._collection = collection
         else:
@@ -591,8 +597,8 @@ class ChromaDb(VectorDb):
             user_id (Optional[str]): See ``insert``.
         """
         try:
-            if self.content_hash_exists(content_hash):
-                self._delete_by_content_hash(content_hash)
+            if self.content_hash_exists(content_hash, user_id=user_id):
+                self._delete_by_content_hash(content_hash, user_id=user_id)
             self._upsert(content_hash, documents, filters, user_id=user_id)
         except Exception:
             logger.exception("Error upserting documents by content hash")
@@ -789,48 +795,86 @@ class ChromaDb(VectorDb):
         ``user_id`` routes the write to the per-user collection (see ``insert``).
         """
         try:
-            if self.content_hash_exists(content_hash):
-                self._delete_by_content_hash(content_hash)
+            if self.content_hash_exists(content_hash, user_id=user_id):
+                self._delete_by_content_hash(content_hash, user_id=user_id)
             await self._async_upsert(content_hash, documents, filters, user_id=user_id)
         except Exception:
             logger.exception("Error upserting documents by content hash")
             raise
 
+    def _user_collection_names(self) -> List[str]:
+        """The per-user collections this knowledge base created.
+
+        Matched on the ``BASE_COLLECTION_METADATA_KEY`` tag rather than on the
+        ``{collection_name}__`` name prefix, so a sibling knowledge base that
+        happens to be named that way is left alone. The prefix is still a
+        cheap pre-filter before reading each candidate's metadata.
+        """
+        prefix = f"{self.collection_name}__"
+        names: List[str] = []
+        for entry in self.client.list_collections():
+            name = entry if isinstance(entry, str) else entry.name
+            if not name.startswith(prefix):
+                continue
+            # Older Chroma hands back Collection objects, newer ones names.
+            metadata = entry.metadata if not isinstance(entry, str) else self.client.get_collection(name=name).metadata
+            if (metadata or {}).get(BASE_COLLECTION_METADATA_KEY) == self.collection_name:
+                names.append(name)
+        return names
+
+    def _all_owner_collections(self) -> List[Collection]:
+        """Every collection belonging to this knowledge base: the shared base
+        one plus ``{base}__{user}`` for each owner that has written."""
+        result: List[Collection] = []
+        try:
+            for name in self._user_collection_names():
+                result.append(self.client.get_collection(name=name))
+        except Exception:
+            log_debug("Could not list collections for an unscoped query")
+
+        try:
+            result.append(self._get_or_create_collection(None))
+        except Exception:
+            log_debug("Base collection unavailable for an unscoped query")
+
+        return result
+
     def _collections_to_query(self, user_id: Optional[str]) -> List[Collection]:
         """Build the list of collections to query for a scoped search.
 
-        ``user_id`` is ``None`` → just the base collection (legacy / admin
-        view, sees everything in the unscoped collection).
+        ``user_id`` is ``None`` → every collection this knowledge base owns:
+        the base one plus one per user. That matches the ``user_id`` contract
+        in ``vectordb/base.py`` — an unscoped read sees everything, the same
+        as dropping the owner predicate does on the column-based backends.
 
         ``user_id`` is set → caller's collection PLUS the base collection.
         The base holds admin / org-wide content uploaded with no owner;
         scoped retrieval includes it so shared content stays discoverable
-        alongside the caller's own chunks.
+        alongside the caller's own chunks. ``""`` is a scope like any other:
+        it resolves to the base collection alone, never to the unscoped read.
 
         Collections that don't exist yet are skipped silently (no rows yet
         for that user is the same as zero results).
         """
-        if not user_id:
-            try:
-                return [self._get_or_create_collection(None)]
-            except Exception:
-                return []
+        if user_id is None:
+            return self._all_owner_collections()
 
         result: List[Collection] = []
-        # Caller's own collection (may not exist yet — that's fine).
-        try:
-            user_name = self._collection_name_for(user_id)
-            cached = self._user_collections.get(user_name)
-            if cached is not None:
-                result.append(cached)
-            else:
-                # Use ``get_collection`` (not get_or_create) so we don't
-                # spuriously create empty collections on every query.
-                result.append(self.client.get_collection(name=user_name))
-                # Cache for next time.
-                self._user_collections[user_name] = result[-1]
-        except Exception:
-            log_debug(f"No collection yet for user_id={user_id!r}; only shared scope will be queried")
+        user_name = self._collection_name_for(user_id)
+        if user_name != self.collection_name:
+            # Caller's own collection (may not exist yet — that's fine).
+            try:
+                cached = self._user_collections.get(user_name)
+                if cached is not None:
+                    result.append(cached)
+                else:
+                    # Use ``get_collection`` (not get_or_create) so we don't
+                    # spuriously create empty collections on every query.
+                    result.append(self.client.get_collection(name=user_name))
+                    # Cache for next time.
+                    self._user_collections[user_name] = result[-1]
+            except Exception:
+                log_debug(f"No collection yet for user_id={user_id!r}; only shared scope will be queried")
 
         # Base/shared collection — always queried alongside.
         try:
@@ -860,8 +904,9 @@ class ChromaDb(VectorDb):
                 - $and, $or: Logical operators
             user_id (Optional[str]): Per-user RAG isolation scope. When set,
                 results are restricted to the caller's per-user collection
-                plus the base (shared) collection. When ``None``, only the
-                base collection is queried (admin / unscoped behaviour).
+                plus the base (shared) collection. When ``None``, every
+                collection this knowledge base owns is queried (admin /
+                unscoped behaviour).
         Returns:
             List[Document]: List of search results.
         """
@@ -1425,22 +1470,18 @@ class ChromaDb(VectorDb):
         its base name. Without the latter, dropping ``my_kb`` would leave
         ``my_kb__alice`` / ``my_kb__bob`` etc. as orphans on disk."""
         # Per-user collections live alongside the base, named
-        # ``{collection_name}__{...}``. Walk the client and drop any that
-        # match. Use list_collections to discover them; in older Chroma
-        # versions this returns Collection objects, in newer ones it
-        # returns names — handle both.
-        prefix = f"{self.collection_name}__"
+        # ``{collection_name}__{...}``. Only the ones this knowledge base
+        # tagged are ours to delete — a sibling knowledge base can hold that
+        # name prefix by coincidence.
         try:
-            collections = self.client.list_collections()
+            names = self._user_collection_names()
         except Exception:
-            collections = []
-        for item in collections:
-            name = getattr(item, "name", item)
-            if isinstance(name, str) and name.startswith(prefix):
-                try:
-                    self.client.delete_collection(name=name)
-                except Exception:
-                    log_debug(f"Could not delete per-user collection {name!r}")
+            names = []
+        for name in names:
+            try:
+                self.client.delete_collection(name=name)
+            except Exception:
+                log_debug(f"Could not delete per-user collection {name!r}")
         # Drop the user-collection cache too — the underlying objects are
         # gone.
         self._user_collections.clear()
@@ -1585,9 +1626,7 @@ class ChromaDb(VectorDb):
             try:
                 collection: Collection = self.client.get_collection(name=collection_name)
             except Exception:
-                log_debug(
-                    f"No collection {collection_name!r} for content_id={content_id!r} delete; treating as no-op"
-                )
+                log_debug(f"No collection {collection_name!r} for content_id={content_id!r} delete; treating as no-op")
                 return False
 
             # Find all documents with the given content_id
@@ -1600,34 +1639,47 @@ class ChromaDb(VectorDb):
 
             # Delete all matching documents
             collection.delete(ids=ids_to_delete)
-            log_info(
-                f"Deleted {len(ids_to_delete)} documents with content_id '{content_id}' from {collection_name!r}"
-            )
+            log_info(f"Deleted {len(ids_to_delete)} documents with content_id '{content_id}' from {collection_name!r}")
             return True
         except Exception:
             logger.exception(f"Error deleting documents by content_id '{content_id}'")
             return False
 
-    def _delete_by_content_hash(self, content_hash: str) -> bool:
-        """Delete documents by content hash."""
+    def _delete_by_content_hash(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        """Delete documents by content hash, scoped to ``user_id`` when set.
+
+        With ``user_id``: only the caller's per-user collection is touched, the
+        same physical scope ``delete_by_content_id`` uses. ``None`` deletes from
+        the base collection only — the shared bucket — so a re-upsert of content
+        one owner already holds never wipes another owner's identical chunks.
+        """
         if not self.client:
             log_error("Client not initialized")
             return False
 
         try:
-            collection: Collection = self.client.get_collection(name=self.collection_name)
+            collection_name = self._collection_name_for(user_id)
+            # ``get_collection`` raises if the collection doesn't exist.
+            # Treat that as "nothing to delete" rather than an error —
+            # consistent with the "no rows found" branch below.
+            try:
+                collection: Collection = self.client.get_collection(name=collection_name)
+            except Exception:
+                return False
 
             # Find all documents with the given content_hash
             result = collection.get(where=cast(Any, {"content_hash": {"$eq": content_hash}}))
             ids_to_delete = result.get("ids", [])
 
             if not ids_to_delete:
-                log_info(f"No documents found with content_hash '{content_hash}'")
+                log_info(f"No documents found with content_hash '{content_hash}' in {collection_name!r}")
                 return False
 
             # Delete all matching documents
             collection.delete(ids=ids_to_delete)
-            log_info(f"Deleted {len(ids_to_delete)} documents with content_hash '{content_hash}'")
+            log_info(
+                f"Deleted {len(ids_to_delete)} documents with content_hash '{content_hash}' from {collection_name!r}"
+            )
             return True
         except Exception:
             logger.exception(f"Error deleting documents by content_hash '{content_hash}'")
@@ -1658,14 +1710,30 @@ class ChromaDb(VectorDb):
             logger.exception(f"Error checking if ID '{id}' exists")
             return False
 
-    def content_hash_exists(self, content_hash: str) -> bool:
-        """Check if documents with the given content hash exist."""
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        """Check if documents with the given content hash exist.
+
+        Chroma has no owner column, so the scope is a collection rather than a
+        predicate: with ``user_id`` only the caller's own collection is checked,
+        the same physical scope ``delete_by_content_id`` uses — another owner's
+        identical upload is not judged a duplicate. ``None`` reads the base
+        collection alone — the shared bucket — because this is the guard half of
+        the upsert dedup pair and has to see exactly what
+        ``_delete_by_content_hash`` clears for ``None``.
+        """
         if not self.client:
             log_error("Client not initialized")
             return False
 
         try:
-            collection: Collection = self.client.get_collection(name=self.collection_name)
+            collection_name = self._collection_name_for(user_id)
+            # ``get_collection`` raises when nothing has been written under that
+            # name yet. No collection is the same as no rows, so answer False
+            # rather than fail the whole check.
+            try:
+                collection: Collection = self.client.get_collection(name=collection_name)
+            except Exception:
+                return False
 
             # Try to query for documents with the given content_hash
             try:
@@ -1684,8 +1752,7 @@ class ChromaDb(VectorDb):
                 elif isinstance(found_ids, int):
                     # Some ChromaDB versions might return a count instead of a list
                     return found_ids > 0
-                else:
-                    return False
+                return False
 
             except TypeError as te:
                 if "object of type 'int' has no len()" in str(te):

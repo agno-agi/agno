@@ -1,5 +1,7 @@
 """Tests for Knowledge.get_readers() method, specifically testing list to dict conversion."""
 
+from typing import Optional
+
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.reader.text_reader import TextReader
@@ -24,7 +26,7 @@ class MockVectorDb(VectorDb):
     def id_exists(self, id: str) -> bool:
         return False
 
-    def content_hash_exists(self, content_hash: str) -> bool:
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         return False
 
     def insert(self, content_hash: str, documents, filters=None) -> None:

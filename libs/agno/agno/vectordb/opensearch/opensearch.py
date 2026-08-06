@@ -22,6 +22,12 @@ from agno.vectordb.distance import Distance
 from agno.vectordb.opensearch.index import Engine, SpaceType
 from agno.vectordb.search import SearchType
 
+# Per-user RAG isolation. A top-level keyword field records the owner of each chunk.
+# * Inserts with user_id stamp the field; user_id=None leaves it absent (the shared bucket).
+# * Searches with user_id=X match own OR absent; user_id=None applies no scope (admin view).
+# * Deletes with user_id=X match own only; the shared bucket takes an unscoped delete.
+USER_ID_FIELD = "user_id"
+
 
 class OpenSearch(VectorDb):
     """
@@ -296,6 +302,9 @@ class OpenSearch(VectorDb):
                     # Fixed-length hash: indexed as an exact-match keyword with no length
                     # cap, since ignore_above would silently drop it from the index.
                     "content_hash": {"type": "keyword"},
+                    # Owner of the chunk. Keyword rather than text so the scope filter
+                    # matches the id exactly instead of its analyzed tokens.
+                    USER_ID_FIELD: {"type": "keyword"},
                 },
             },
         }
@@ -663,13 +672,14 @@ class OpenSearch(VectorDb):
             logger.error(f"Error checking if ID exists: {e}")
             return False
 
-    def _check_field_exists(self, field: str, value: str) -> bool:
+    def _check_field_exists(self, field: str, value: str, scope: Optional[Dict[str, Any]] = None) -> bool:
         """
         Check if a document with a specific field value exists.
 
         Args:
             field: Field name to search in
             value: Value to search for
+            scope: Optional per-user clause to AND with the field match
 
         Returns:
             bool: True if document with field value exists, False otherwise
@@ -680,7 +690,9 @@ class OpenSearch(VectorDb):
                 log_debug("Index does not exist, returning False")
                 return False
 
-            search_query = {"query": {"term": {field: value}}, "size": 1}
+            term: Dict[str, Any] = {"term": {field: value}}
+            query: Dict[str, Any] = term if scope is None else {"bool": {"filter": [term, scope]}}
+            search_query = {"query": query, "size": 1}
             response = self.client.search(index=self.index_name, body=search_query)
             exists = response["hits"]["total"]["value"] > 0
             log_debug(f"Field {field} with value '{value}' exists: {exists}")
@@ -715,12 +727,13 @@ class OpenSearch(VectorDb):
             logger.error(f"Error checking if field exists: {e}")
             return False
 
-    def _build_doc_id(self, doc: Document) -> str:
+    def _build_doc_id(self, doc: Document, user_id: Optional[str] = None) -> str:
         """
         Build a deterministic OpenSearch _id for a document.
 
         Args:
             doc: Document to build an ID for
+            user_id: Owner of the document, or None for the shared bucket
 
         Returns:
             str: Stable document ID
@@ -728,19 +741,32 @@ class OpenSearch(VectorDb):
         Note:
             Derived from the document's explicit id (or a hash of its content) combined
             with the content_hash, so re-indexing the same document resolves to the same
-            _id and upserts update in place instead of creating duplicates.
+            _id and upserts update in place instead of creating duplicates. The owner is
+            folded in as well, otherwise two users ingesting the same bytes would resolve
+            to one _id and the second write would silently take ownership of the first.
+            user_id=None keeps the pre-isolation _id so existing documents still update
+            in place.
+
+            The base id is caller-controlled and variable length, so it is collapsed to a
+            fixed-length digest before the owner is folded in - otherwise the '_' boundary
+            moves and ('doc_1', 'alice') and ('doc', '1_alice') fold to the same _id,
+            letting one owner overwrite the other's chunk.
         """
         cleaned_content = (doc.content or "").replace("\x00", "�")
         base_id = doc.id or md5(cleaned_content.encode()).hexdigest()
         content_hash = (doc.meta_data or {}).get("content_hash", "")
-        return md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+        doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+        if user_id is None:
+            return doc_id
+        return md5(f"{doc_id}_{user_id}".encode()).hexdigest()
 
-    def _prepare_document_for_indexing(self, doc: Document) -> Dict[str, Any]:
+    def _prepare_document_for_indexing(self, doc: Document, user_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Prepare a document for indexing by ensuring proper structure and embeddings.
 
         Args:
             doc: Document to prepare
+            user_id: Owner stamped onto the indexed document, or None for the shared bucket
 
         Returns:
             Dict[str, Any]: Document structure ready for indexing
@@ -761,7 +787,7 @@ class OpenSearch(VectorDb):
         self._validate_embedding_dimensions(doc)
 
         # Build index document
-        index_doc = self._build_index_document(doc)
+        index_doc = self._build_index_document(doc, user_id)
 
         log_debug(f"Document {doc.id} prepared for indexing with {len(index_doc)} fields")
         return index_doc
@@ -815,12 +841,13 @@ class OpenSearch(VectorDb):
 
         log_debug(f"Document {doc.id} embedding dimension check passed: {len(embedding)}")
 
-    def _build_index_document(self, doc: Document) -> Dict[str, Any]:
+    def _build_index_document(self, doc: Document, user_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Build the document structure for indexing.
 
         Args:
             doc: Document to build index structure for
+            user_id: Owner stamped onto the indexed document, or None for the shared bucket
 
         Returns:
             Dict[str, Any]: Document structure ready for OpenSearch indexing
@@ -848,6 +875,12 @@ class OpenSearch(VectorDb):
         content_hash = (doc.meta_data or {}).get("content_hash")
         if content_hash is not None:
             index_doc["content_hash"] = content_hash
+
+        # Stamp the owner. Leaving the field off for user_id=None is what puts the
+        # document in the shared bucket, which the scope filter matches with must_not
+        # exists - the same state every pre-isolation document is already in.
+        if user_id is not None:
+            index_doc[USER_ID_FIELD] = user_id
 
         return index_doc
 
@@ -906,7 +939,13 @@ class OpenSearch(VectorDb):
                 doc.meta_data.update(filters)
             doc.meta_data["content_hash"] = content_hash
 
-    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """
         Insert documents into the index.
 
@@ -914,15 +953,22 @@ class OpenSearch(VectorDb):
             content_hash: Content hash for the documents
             documents: List of documents to insert
             filters: Optional filters merged into each document's metadata
+            user_id: Owner of these chunks for per-user isolation. None (default)
+                writes to the shared bucket.
 
         Note:
             Creates index if it doesn't exist. Skips documents that fail preparation.
         """
+        self._validate_user_id(user_id)
         self._apply_content_hash_and_filters(documents, content_hash, filters)
-        self._execute_bulk_operation("insert", documents, self._prepare_bulk_insert_data)
+        self._execute_bulk_operation("insert", documents, self._prepare_bulk_insert_data, user_id=user_id)
 
     async def async_insert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """
         Insert documents into the index asynchronously.
@@ -931,14 +977,17 @@ class OpenSearch(VectorDb):
             content_hash: Content hash for the documents
             documents: List of documents to insert
             filters: Optional filters merged into each document's metadata
+            user_id: Owner of these chunks for per-user isolation. None (default)
+                writes to the shared bucket.
 
         Note:
             Creates index if it doesn't exist. Skips documents that fail preparation.
             Uses batch embedding for improved performance.
         """
+        self._validate_user_id(user_id)
         self._apply_content_hash_and_filters(documents, content_hash, filters)
         await self._async_execute_bulk_operation(
-            "insert", documents, self._prepare_bulk_insert_data, use_batch_embed=True
+            "insert", documents, self._prepare_bulk_insert_data, use_batch_embed=True, user_id=user_id
         )
 
     def upsert_available(self) -> bool:
@@ -954,7 +1003,13 @@ class OpenSearch(VectorDb):
         log_debug("Upsert operations are supported for OpenSearch")
         return True
 
-    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """
         Upsert documents in the index (insert if new, update if exists).
 
@@ -962,15 +1017,22 @@ class OpenSearch(VectorDb):
             content_hash: Content hash for the documents
             documents: List of documents to upsert
             filters: Optional filters merged into each document's metadata
+            user_id: Owner of these chunks for per-user isolation. The owner is part
+                of the _id, so an upsert only ever updates that owner's copy.
 
         Note:
             Creates index if it doesn't exist. Skips documents that fail preparation.
         """
+        self._validate_user_id(user_id)
         self._apply_content_hash_and_filters(documents, content_hash, filters)
-        self._execute_bulk_operation("upsert", documents, self._prepare_bulk_upsert_data)
+        self._execute_bulk_operation("upsert", documents, self._prepare_bulk_upsert_data, user_id=user_id)
 
     async def async_upsert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """
         Upsert documents in the index asynchronously (insert if new, update if exists).
@@ -979,14 +1041,17 @@ class OpenSearch(VectorDb):
             content_hash: Content hash for the documents
             documents: List of documents to upsert
             filters: Optional filters merged into each document's metadata
+            user_id: Owner of these chunks for per-user isolation. The owner is part
+                of the _id, so an upsert only ever updates that owner's copy.
 
         Note:
             Creates index if it doesn't exist. Skips documents that fail preparation.
             Uses batch embedding for improved performance.
         """
+        self._validate_user_id(user_id)
         self._apply_content_hash_and_filters(documents, content_hash, filters)
         await self._async_execute_bulk_operation(
-            "upsert", documents, self._prepare_bulk_upsert_data, use_batch_embed=True
+            "upsert", documents, self._prepare_bulk_upsert_data, use_batch_embed=True, user_id=user_id
         )
 
     def get_document_by_id(self, document_id: str) -> Optional[Document]:
@@ -1121,7 +1186,9 @@ class OpenSearch(VectorDb):
             logger.error(f"Error executing bulk delete operation: {e}")
             raise
 
-    def _execute_bulk_operation(self, operation: str, documents: List[Document], prepare_func) -> None:
+    def _execute_bulk_operation(
+        self, operation: str, documents: List[Document], prepare_func, user_id: Optional[str] = None
+    ) -> None:
         """
         Execute bulk operation with comprehensive error handling.
 
@@ -1129,6 +1196,7 @@ class OpenSearch(VectorDb):
             operation: Name of the operation (for logging)
             documents: List of documents to process
             prepare_func: Function to prepare bulk data
+            user_id: Owner stamped onto every document in the batch
 
         Note:
             Creates index if it doesn't exist and handles errors gracefully.
@@ -1145,7 +1213,7 @@ class OpenSearch(VectorDb):
             self.create()
 
         try:
-            bulk_data, prepared_count = prepare_func(documents)
+            bulk_data, prepared_count = prepare_func(documents, user_id)
             if bulk_data:
                 self._execute_bulk_request(bulk_data, operation, prepared_count)
         except Exception as e:
@@ -1156,7 +1224,12 @@ class OpenSearch(VectorDb):
             log_debug(f"Bulk {operation} operation took {end_time - start_time:.2f} seconds")
 
     async def _async_execute_bulk_operation(
-        self, operation: str, documents: List[Document], prepare_func, use_batch_embed: bool = False
+        self,
+        operation: str,
+        documents: List[Document],
+        prepare_func,
+        use_batch_embed: bool = False,
+        user_id: Optional[str] = None,
     ) -> None:
         """
         Execute bulk operation asynchronously with comprehensive error handling.
@@ -1166,6 +1239,7 @@ class OpenSearch(VectorDb):
             documents: List of documents to process
             prepare_func: Function to prepare bulk data
             use_batch_embed: Whether to use batch embedding (default: False)
+            user_id: Owner stamped onto every document in the batch
 
         Note:
             Creates index if it doesn't exist and handles errors gracefully.
@@ -1187,7 +1261,7 @@ class OpenSearch(VectorDb):
             if use_batch_embed:
                 await self._async_embed_documents(documents)
 
-            bulk_data, prepared_count = prepare_func(documents)
+            bulk_data, prepared_count = prepare_func(documents, user_id)
             if bulk_data:
                 await self._async_execute_bulk_request(bulk_data, operation, prepared_count)
         except Exception as e:
@@ -1197,12 +1271,15 @@ class OpenSearch(VectorDb):
             end_time = time.time()
             log_debug(f"Async bulk {operation} operation took {end_time - start_time:.2f} seconds")
 
-    def _prepare_bulk_insert_data(self, documents: List[Document]) -> Tuple[List[Dict[str, Any]], int]:
+    def _prepare_bulk_insert_data(
+        self, documents: List[Document], user_id: Optional[str] = None
+    ) -> Tuple[List[Dict[str, Any]], int]:
         """
         Prepare bulk insert data for OpenSearch.
 
         Args:
             documents: List of documents to prepare
+            user_id: Owner stamped onto every document in the batch
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: Bulk data and count of prepared documents
@@ -1215,8 +1292,10 @@ class OpenSearch(VectorDb):
 
         for doc in documents:
             try:
-                index_doc = self._prepare_document_for_indexing(doc)
-                bulk_data.extend([{"index": {"_index": self.index_name, "_id": self._build_doc_id(doc)}}, index_doc])
+                index_doc = self._prepare_document_for_indexing(doc, user_id)
+                bulk_data.extend(
+                    [{"index": {"_index": self.index_name, "_id": self._build_doc_id(doc, user_id)}}, index_doc]
+                )
                 prepared_count += 1
             except Exception as e:
                 logger.error(f"Error preparing document {doc.id} for indexing: {e}")
@@ -1225,12 +1304,15 @@ class OpenSearch(VectorDb):
         log_debug(f"Prepared {prepared_count}/{len(documents)} documents for bulk insert")
         return bulk_data, prepared_count
 
-    def _prepare_bulk_upsert_data(self, documents: List[Document]) -> Tuple[List[Dict[str, Any]], int]:
+    def _prepare_bulk_upsert_data(
+        self, documents: List[Document], user_id: Optional[str] = None
+    ) -> Tuple[List[Dict[str, Any]], int]:
         """
         Prepare bulk upsert data for OpenSearch.
 
         Args:
             documents: List of documents to prepare
+            user_id: Owner stamped onto every document in the batch
 
         Returns:
             Tuple[List[Dict[str, Any]], int]: Bulk data and count of prepared documents
@@ -1243,10 +1325,10 @@ class OpenSearch(VectorDb):
 
         for doc in documents:
             try:
-                index_doc = self._prepare_document_for_indexing(doc)
+                index_doc = self._prepare_document_for_indexing(doc, user_id)
                 bulk_data.extend(
                     [
-                        {"update": {"_index": self.index_name, "_id": self._build_doc_id(doc)}},
+                        {"update": {"_index": self.index_name, "_id": self._build_doc_id(doc, user_id)}},
                         {"doc": index_doc, "doc_as_upsert": True},
                     ]
                 )
@@ -1399,7 +1481,13 @@ class OpenSearch(VectorDb):
             embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents if doc.embedding is None]
             await asyncio.gather(*embed_tasks, return_exceptions=True)
 
-    def search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def search(
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> List[Document]:
         """
         Search for documents based on configured search type.
 
@@ -1407,6 +1495,8 @@ class OpenSearch(VectorDb):
             query: Search query string
             limit: Maximum number of results to return
             filters: Optional filters to apply to search
+            user_id: Restrict results to the caller's chunks plus the shared bucket.
+                None means no scope (admin view).
 
         Returns:
             List[Document]: List of matching documents
@@ -1414,6 +1504,7 @@ class OpenSearch(VectorDb):
         Note:
             Uses the search type configured during initialization (vector, keyword, or hybrid).
         """
+        self._validate_user_id(user_id)
         search_methods = {
             SearchType.vector: self.vector_search,
             SearchType.keyword: self.keyword_search,
@@ -1425,10 +1516,14 @@ class OpenSearch(VectorDb):
             logger.error(f"Invalid search type '{self.search_type}'")
             return []
 
-        return search_method(query, limit, filters)
+        return search_method(query, limit, filters, user_id)
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """
         Search for documents asynchronously based on configured search type.
@@ -1437,6 +1532,8 @@ class OpenSearch(VectorDb):
             query: Search query string
             limit: Maximum number of results to return
             filters: Optional filters to apply to search
+            user_id: Restrict results to the caller's chunks plus the shared bucket.
+                None means no scope (admin view).
 
         Returns:
             List[Document]: List of matching documents
@@ -1446,10 +1543,20 @@ class OpenSearch(VectorDb):
             async client. The search path also embeds the query and optionally reranks the
             results, both of which are synchronous, so there is little to gain from an
             async round trip. Offloading to a thread keeps the event loop free.
-        """
-        return await asyncio.to_thread(self.search, query, limit, filters)
 
-    def vector_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+            The owner is validated by search() rather than here: it is the same argument
+            checked before any request is built, and the ValueError travels back out of
+            the await.
+        """
+        return await asyncio.to_thread(self.search, query, limit, filters, user_id)
+
+    def vector_search(
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> List[Document]:
         """
         Perform vector similarity search using embeddings.
 
@@ -1457,6 +1564,7 @@ class OpenSearch(VectorDb):
             query: Search query string (will be embedded)
             limit: Maximum number of results to return
             filters: Optional filters to apply to search
+            user_id: Restrict results to the caller's chunks plus the shared bucket
 
         Returns:
             List[Document]: List of documents ordered by similarity score
@@ -1464,15 +1572,24 @@ class OpenSearch(VectorDb):
         Note:
             Generates query embedding and performs KNN search.
         """
-        return self._execute_search_with_timing("vector", query, limit, self._build_vector_query, filters)
+        self._validate_user_id(user_id)
+        return self._execute_search_with_timing("vector", query, limit, self._build_vector_query, filters, user_id)
 
-    def keyword_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def keyword_search(
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> List[Document]:
         """
         Perform keyword-based text search.
 
         Args:
             query: Search query string
             limit: Maximum number of results to return
+            filters: Optional filters to apply to search
+            user_id: Restrict results to the caller's chunks plus the shared bucket
 
         Returns:
             List[Document]: List of documents ordered by text relevance score
@@ -1480,15 +1597,24 @@ class OpenSearch(VectorDb):
         Note:
             Uses multi-match query on content and name fields.
         """
-        return self._execute_search_with_timing("keyword", query, limit, self._build_keyword_query, filters)
+        self._validate_user_id(user_id)
+        return self._execute_search_with_timing("keyword", query, limit, self._build_keyword_query, filters, user_id)
 
-    def hybrid_search(self, query: str, limit: int = 5, filters: Optional[Dict[str, Any]] = None) -> List[Document]:
+    def hybrid_search(
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> List[Document]:
         """
         Perform hybrid search combining vector and keyword search.
 
         Args:
             query: Search query string
             limit: Maximum number of results to return
+            filters: Optional filters to apply to search
+            user_id: Restrict results to the caller's chunks plus the shared bucket
 
         Returns:
             List[Document]: List of documents ordered by combined similarity and relevance scores
@@ -1496,10 +1622,17 @@ class OpenSearch(VectorDb):
         Note:
             Combines vector similarity (70% weight) and keyword relevance (30% weight).
         """
-        return self._execute_search_with_timing("hybrid", query, limit, self._build_hybrid_query, filters)
+        self._validate_user_id(user_id)
+        return self._execute_search_with_timing("hybrid", query, limit, self._build_hybrid_query, filters, user_id)
 
     def _execute_search_with_timing(
-        self, search_type: str, query: str, limit: int, query_builder, filters: Optional[Dict[str, Any]]
+        self,
+        search_type: str,
+        query: str,
+        limit: int,
+        query_builder,
+        filters: Optional[Dict[str, Any]],
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """
         Execute search with timing and comprehensive error handling.
@@ -1510,6 +1643,7 @@ class OpenSearch(VectorDb):
             limit: Maximum number of results
             query_builder: Function to build search query
             filters: Optional filters to apply
+            user_id: Owner scope applied to the built query
 
         Returns:
             List[Document]: Search results with optional reranking applied
@@ -1525,7 +1659,7 @@ class OpenSearch(VectorDb):
             return []
 
         try:
-            search_query = query_builder(query, limit, filters)
+            search_query = query_builder(query, limit, filters, user_id)
             log_debug(f"Executing {search_type} search query")
             response = self.client.search(index=self.index_name, body=search_query)
 
@@ -1546,7 +1680,9 @@ class OpenSearch(VectorDb):
             end_time = time.time()
             log_debug(f"Total {search_type} search operation took {end_time - start_time:.2f} seconds")
 
-    def _build_vector_query(self, query: str, limit: int, filters: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    def _build_vector_query(
+        self, query: str, limit: int, filters: Optional[Dict[str, Any]], user_id: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Build vector search query for OpenSearch.
 
@@ -1554,33 +1690,50 @@ class OpenSearch(VectorDb):
             query: Search query string (will be embedded)
             limit: Maximum number of results
             filters: Optional filters to apply
+            user_id: Owner scope to apply alongside the filters
 
         Returns:
             Dict[str, Any]: OpenSearch KNN query structure
 
         Note:
-            Generates query embedding and optionally applies filters.
+            Generates query embedding and optionally applies filters. A scoped search
+            moves the filters inside the knn clause so OpenSearch prunes before
+            traversing the graph: the bool form below filters the k nearest neighbours
+            afterwards, which returns nothing at all when those k all belong to another
+            owner. NMSLIB rejects a filter inside the knn clause, so it keeps the bool
+            form and its reduced recall.
         """
         query_embedding, usage = self._get_query_embedding(query)
+        filter_conditions = self._scoped_filter_conditions(filters, user_id)
 
-        search_query = {"size": limit, "query": {"knn": {"embedding": {"vector": query_embedding, "k": limit}}}}
+        if not filter_conditions:
+            return {"size": limit, "query": {"knn": {"embedding": {"vector": query_embedding, "k": limit}}}}
 
-        if filters:
-            filter_conditions = self._build_filter_conditions(filters)
-            if filter_conditions:
-                search_query = {
-                    "size": limit,
-                    "query": {
-                        "bool": {
-                            "must": [{"knn": {"embedding": {"vector": query_embedding, "k": limit}}}],
-                            "filter": filter_conditions,
-                        }
-                    },
+        if user_id is not None and self.supports_knn_filter:
+            knn_clause: Dict[str, Any] = {
+                "knn": {
+                    "embedding": {
+                        "vector": query_embedding,
+                        "k": limit,
+                        "filter": {"bool": {"filter": filter_conditions}},
+                    }
                 }
+            }
+            return {"size": limit, "query": knn_clause}
 
-        return search_query
+        return {
+            "size": limit,
+            "query": {
+                "bool": {
+                    "must": [{"knn": {"embedding": {"vector": query_embedding, "k": limit}}}],
+                    "filter": filter_conditions,
+                }
+            },
+        }
 
-    def _build_keyword_query(self, query: str, limit: int, filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def _build_keyword_query(
+        self, query: str, limit: int, filters: Optional[Dict[str, Any]] = None, user_id: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Build keyword search query for OpenSearch.
 
@@ -1588,6 +1741,7 @@ class OpenSearch(VectorDb):
             query: Search query string.
             limit: Maximum number of results.
             filters: Optional filters to apply.
+            user_id: Owner scope to apply alongside the filters.
 
         Returns:
             Dict[str, Any]: OpenSearch multi-match query structure.
@@ -1599,14 +1753,15 @@ class OpenSearch(VectorDb):
 
         search_query: Dict[str, Any] = {"size": limit, "query": base_query}
 
-        if filters:
-            filter_conditions = self._build_filter_conditions(filters)
-            if filter_conditions:
-                search_query["query"] = {"bool": {"must": [base_query], "filter": filter_conditions}}
+        filter_conditions = self._scoped_filter_conditions(filters, user_id)
+        if filter_conditions:
+            search_query["query"] = {"bool": {"must": [base_query], "filter": filter_conditions}}
 
         return search_query
 
-    def _build_hybrid_query(self, query: str, limit: int, filters: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    def _build_hybrid_query(
+        self, query: str, limit: int, filters: Optional[Dict[str, Any]], user_id: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Build hybrid search query combining vector and keyword search.
 
@@ -1614,21 +1769,31 @@ class OpenSearch(VectorDb):
             query: Search query string
             limit: Maximum number of results
             filters: Optional filters to apply
+            user_id: Owner scope to apply alongside the filters
 
         Returns:
             Dict[str, Any]: OpenSearch boolean query with vector and keyword components
 
         Note:
-            Combines KNN search (70% boost) with multi-match search (30% boost).
+            Combines KNN search (70% boost) with multi-match search (30% boost). The
+            filters are attached to the bool clause, which scopes both halves. A scoped
+            search repeats them inside the knn clause as well, so its k nearest
+            neighbours are drawn from the scoped set instead of being truncated to
+            another owner's documents first.
         """
         query_embedding, usage = self._get_query_embedding(query)
+        knn_options: Dict[str, Any] = {"vector": query_embedding, "k": limit, "boost": 0.7}
+
+        filter_conditions = self._scoped_filter_conditions(filters, user_id)
+        if filter_conditions and user_id is not None and self.supports_knn_filter:
+            knn_options["filter"] = {"bool": {"filter": filter_conditions}}
 
         search_query: Dict[str, Any] = {
             "size": limit,
             "query": {
                 "bool": {
                     "should": [
-                        {"knn": {"embedding": {"vector": query_embedding, "k": limit, "boost": 0.7}}},
+                        {"knn": {"embedding": knn_options}},
                         {
                             "multi_match": {
                                 "query": query,
@@ -1642,12 +1807,133 @@ class OpenSearch(VectorDb):
             },
         }
 
-        if filters:
-            filter_conditions = self._build_filter_conditions(filters)
-            if filter_conditions:
-                search_query["query"]["bool"]["filter"] = filter_conditions
+        if filter_conditions:
+            search_query["query"]["bool"]["filter"] = filter_conditions
 
         return search_query
+
+    @property
+    def supports_knn_filter(self) -> bool:
+        """
+        Whether the configured KNN engine can filter inside the knn clause.
+
+        Returns:
+            bool: True for every engine except nmslib
+
+        Note:
+            NMSLIB answers a filtered knn query with "Engine [NMSLIB] does not support
+            filters", so those indexes have to filter the neighbours afterwards instead.
+        """
+        return self.engine != Engine.nmslib
+
+    def _validate_user_id(self, user_id: Optional[str]) -> None:
+        """
+        Reject a user_id the field-absence contract cannot express.
+
+        Args:
+            user_id: Owner to validate, or None for the shared bucket
+
+        Raises:
+            ValueError: If the owner is empty or whitespace-only
+
+        Note:
+            The shared bucket is the absence of the field, not a value, so an empty
+            string is a third bucket rather than the shared one: it is indexed as a
+            keyword term, so must_not exists steps over it and no named owner's term
+            clause matches it. Its chunks are then unreadable by every other caller,
+            unreachable by content_hash_exists(user_id=None) - which probes the shared
+            bucket alone - and untouchable by every scoped delete. A whitespace-only
+            owner is the same accident wearing an identity nobody can see or retype.
+            Both are what an unset form field or a stripped token claim hands over,
+            so they are refused rather than stored. Use None for shared/unscoped access.
+        """
+        if user_id is not None and user_id.strip() == "":
+            raise ValueError("user_id must not be empty or whitespace-only; use None for shared/unscoped access")
+
+    def _owner_filter(self, user_id: str) -> Dict[str, Any]:
+        """
+        Build the exact-owner scope for a delete.
+
+        Args:
+            user_id: Owner to scope to
+
+        Returns:
+            Dict[str, Any]: OpenSearch clause matching only the owner's chunks
+
+        Note:
+            There is no must_not exists arm here: a caller may read the shared bucket
+            but may not delete out of it, and that arm would hand every owner the
+            admin-uploaded content plus every document written before this field
+            existed.
+        """
+        return {"term": {USER_ID_FIELD: user_id}}
+
+    def _shared_bucket_filter(self) -> Dict[str, Any]:
+        """
+        Build the shared-bucket scope.
+
+        Returns:
+            Dict[str, Any]: OpenSearch clause matching only chunks that have no owner
+
+        Note:
+            The shared bucket is the absence of the field, not a sentinel value, so it
+            also covers every document written before this field existed.
+        """
+        return {"bool": {"must_not": {"exists": {"field": USER_ID_FIELD}}}}
+
+    def _user_scope_filter(self, user_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        """
+        Build the per-user read scope for a search.
+
+        Args:
+            user_id: Owner to scope to, or None for no scope
+
+        Returns:
+            Optional[Dict[str, Any]]: OpenSearch clause matching the owner's chunks plus
+            the shared bucket, or None when no scope applies
+
+        Note:
+            Documents written without an owner have no user_id field, so must_not exists
+            is what keeps admin-uploaded content discoverable by every caller - including
+            every document written before this field existed.
+        """
+        if user_id is None:
+            return None
+
+        return {
+            "bool": {
+                "should": [
+                    {"term": {USER_ID_FIELD: user_id}},
+                    self._shared_bucket_filter(),
+                ],
+                "minimum_should_match": 1,
+            }
+        }
+
+    def _scoped_filter_conditions(
+        self, filters: Optional[Dict[str, Any]], user_id: Optional[str]
+    ) -> List[Dict[str, Any]]:
+        """
+        Combine the caller's metadata filters with the per-user scope.
+
+        Args:
+            filters: Dictionary of filter conditions, or None
+            user_id: Owner to scope to, or None for no scope
+
+        Returns:
+            List[Dict[str, Any]]: Filter conditions to AND together
+
+        Note:
+            The scope is a nested bool rather than another term, because it is an OR of
+            the caller's bucket and the shared bucket.
+        """
+        conditions = self._build_filter_conditions(filters) if filters else []
+
+        scope = self._user_scope_filter(user_id)
+        if scope is not None:
+            conditions.append(scope)
+
+        return conditions
 
     def _get_query_embedding(self, query: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
         """
@@ -1839,17 +2125,29 @@ class OpenSearch(VectorDb):
             end_time = time.time()
             log_debug(f"{operation} operation took {end_time - start_time:.2f} seconds")
 
-    def content_hash_exists(self, content_hash: str) -> bool:
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """
         Check if a document with the given content hash exists.
 
         Args:
             content_hash: Content hash to check
+            user_id: Restrict the check to the owner's chunks plus the shared bucket.
+                None restricts it to the shared bucket alone.
 
         Returns:
             bool: True if document exists, False otherwise
+
+        Note:
+            The scope is the same own-or-shared clause searches use, so an
+            upload another owner made no longer reads as a duplicate - without it
+            skip_if_exists denies the second owner a copy they cannot see. This is the
+            guard half of the upsert dedup pair, so None addresses the shared bucket
+            alone rather than every owner: a private copy one tenant already holds must
+            not silently swallow a later shared publish.
         """
-        return self._check_field_exists("content_hash", content_hash)
+        self._validate_user_id(user_id)
+        scope = self._user_scope_filter(user_id) if user_id is not None else self._shared_bucket_filter()
+        return self._check_field_exists("content_hash", content_hash, scope)
 
     def delete_by_id(self, id: str) -> bool:
         """
@@ -1928,17 +2226,33 @@ class OpenSearch(VectorDb):
         filter_conditions = self._build_filter_conditions(metadata)
         return self._delete_by_query({"bool": {"filter": filter_conditions}}, f"metadata {metadata}")
 
-    def delete_by_content_id(self, content_id: str) -> bool:
+    def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
         """
         Delete documents by content ID.
 
         Args:
             content_id: Content ID to delete
+            user_id: Restrict the delete to the owner's own chunks. None deletes
+                across all owners.
 
         Returns:
             bool: True if successful, False otherwise
+
+        Note:
+            The scope is the exact-owner clause, not the own-or-shared clause reads use:
+            a caller can view shared content but cannot delete it, so removing shared
+            chunks takes an unscoped call.
         """
-        return self._delete_by_query({"term": {"content_id.keyword": content_id}}, f"content_id '{content_id}'")
+        self._validate_user_id(user_id)
+        content_id_term = {"term": {"content_id.keyword": content_id}}
+
+        if user_id is None:
+            return self._delete_by_query(content_id_term, f"content_id '{content_id}'")
+
+        return self._delete_by_query(
+            {"bool": {"filter": [content_id_term, self._owner_filter(user_id)]}},
+            f"content_id '{content_id}' (user_id={user_id})",
+        )
 
     def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
         """

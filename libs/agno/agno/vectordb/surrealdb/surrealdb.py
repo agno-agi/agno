@@ -41,19 +41,20 @@ class SurrealDb(VectorDb):
 
     ID_EXISTS_QUERY: Final[str] = """
         SELECT * FROM {collection}
-        WHERE id = $id
+        WHERE id = type::record($table, $record_id)
         LIMIT 1
     """
 
     CONTENT_HASH_EXISTS_QUERY: Final[str] = """
         SELECT * FROM {collection}
         WHERE meta_data.content_hash = $content_hash
+        AND user_id = $user_id
         LIMIT 1
     """
 
     DELETE_BY_ID_QUERY: Final[str] = """
         DELETE FROM {collection}
-        WHERE id = $id
+        WHERE id = type::record($table, $record_id)
     """
 
     DELETE_BY_NAME_QUERY: Final[str] = """
@@ -276,22 +277,36 @@ class SurrealDb(VectorDb):
 
         """
         log_debug(f"Checking if document exists by ID: {id}")
-        result = self.client.query(self.ID_EXISTS_QUERY.format(collection=self.collection), {"id": id})
+        # Bind the record id via type::record, the same way the upsert writes it -
+        # a string never compares equal to a record link, so a plain $id matched nothing.
+        result = self.client.query(
+            self.ID_EXISTS_QUERY.format(collection=self.collection),
+            {"table": self.collection, "record_id": id},
+        )
         return bool(self._extract_result(result))
 
-    def content_hash_exists(self, content_hash: str) -> bool:
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Check if a document exists by its content hash.
 
         Args:
             content_hash: The content hash of the document to check.
+            user_id: The owner to check, so another owner's identical upload is
+                not judged a duplicate. This is the guard half of the upsert
+                dedup pair, so None (default) addresses the shared (NONE) bucket
+                alone rather than every owner - the same bucket a None-scoped
+                delete clears.
 
         Returns:
             True if the document exists, False otherwise.
 
         """
         log_debug(f"Checking if document exists by content hash: {content_hash}")
+        # Bind the owner exactly as the write path stores it: None lands as NONE,
+        # so the shared bucket is addressed and no owned row can answer for it.
+        params: Dict[str, Any] = {"content_hash": content_hash, "user_id": user_id}
         result = self.client.query(
-            self.CONTENT_HASH_EXISTS_QUERY.format(collection=self.collection), {"content_hash": content_hash}
+            self.CONTENT_HASH_EXISTS_QUERY.format(collection=self.collection),
+            params,
         )
         return bool(self._extract_result(result))
 
@@ -463,12 +478,20 @@ class SurrealDb(VectorDb):
             id: The ID of the document to delete.
 
         Returns:
-            True if the document was deleted, False otherwise.
+            True if the delete completed, False otherwise. A DELETE answers with
+            an empty list whether or not it matched, so ``bool(result)`` reported
+            failure on every successful delete; the sibling backends report
+            "no error" here, and so does ``delete``.
 
         """
         log_debug(f"Deleting document by ID: {id}")
-        result = self.client.query(self.DELETE_BY_ID_QUERY.format(collection=self.collection), {"id": id})
-        return bool(result)
+        # Bind the record id via type::record, the same way the upsert writes it -
+        # a string never compares equal to a record link, so a plain $id matched nothing.
+        self.client.query(
+            self.DELETE_BY_ID_QUERY.format(collection=self.collection),
+            {"table": self.collection, "record_id": id},
+        )
+        return True
 
     def delete_by_name(self, name: str) -> bool:
         """Delete documents by their name.
@@ -528,6 +551,12 @@ class SurrealDb(VectorDb):
     def _extract_result(query_result: Any) -> Union[List[Any], Dict[str, Any]]:
         """Extract the actual result from SurrealDB query response.
 
+        The connection classes imported at module scope only exist in surrealdb
+        >= 1.0, which hands back the rows themselves: a list for a SELECT, a dict
+        for INFO FOR DB. The legacy {"status", "time", "result"} envelope can no
+        longer reach here, and unwrapping it turned every returned row into {},
+        which is why the existence checks answered False for rows that existed.
+
         Args:
             query_result: The query result from SurrealDB.
 
@@ -536,12 +565,8 @@ class SurrealDb(VectorDb):
 
         """
         log_debug(f"Query result: {query_result}")
-        if isinstance(query_result, dict):
+        if isinstance(query_result, (dict, list)):
             return query_result
-        if isinstance(query_result, list):
-            if len(query_result) > 0:
-                return query_result[0].get("result", {})
-            return []
         return []
 
     async def async_create(self) -> None:

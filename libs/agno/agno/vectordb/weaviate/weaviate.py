@@ -199,13 +199,18 @@ class Weaviate(VectorDb):
 
         Args:
             content_hash (str): The content hash to check.
-            user_id (Optional[str]): When set, restrict the check to the owner's chunks.
+            user_id (Optional[str]): The owner to check. This is the guard half of
+                the upsert dedup pair, so None scopes to the shared (null) bucket
+                alone rather than every owner - the same bucket
+                ``_delete_by_content_hash`` clears for None.
         """
         self._validate_user_id(user_id)
         collection = self.get_client().collections.get(self.collection)
         where = Filter.by_property("content_hash").equal(content_hash)
         if user_id is not None:
             where = where & Filter.by_property(self.USER_ID_KEY).equal(user_id)
+        else:
+            where = where & Filter.by_property(self.USER_ID_KEY).is_none(True)
         result = collection.query.fetch_objects(limit=1, filters=where)
         return len(result.objects) > 0
 
@@ -277,8 +282,7 @@ class Weaviate(VectorDb):
             # Include content_hash in ID to ensure uniqueness across different content hashes
             base_id = document.id or md5(cleaned_content.encode()).hexdigest()
             # Fold the owner into the id so two users' identical content get distinct uuids; None keeps the base id.
-            seed = f"{base_id}_{content_hash}" if user_id is None else f"{base_id}_{content_hash}_{user_id}"
-            record_id = md5(seed.encode()).hexdigest()
+            record_id = self._scoped_record_id(base_id, content_hash, user_id)
             doc_uuid = uuid.UUID(hex=record_id[:32])
 
             # Merge filters with metadata
@@ -381,8 +385,7 @@ class Weaviate(VectorDb):
                     # Include content_hash in ID to ensure uniqueness across different content hashes
                     base_id = document.id or md5(cleaned_content.encode()).hexdigest()
                     # Fold the owner into the id so two users' identical content get distinct uuids; None keeps the base id.
-                    seed = f"{base_id}_{content_hash}" if user_id is None else f"{base_id}_{content_hash}_{user_id}"
-                    record_id = md5(seed.encode()).hexdigest()
+                    record_id = self._scoped_record_id(base_id, content_hash, user_id)
                     doc_uuid = uuid.UUID(hex=record_id[:32])
 
                     # Merge filters with metadata (parity with sync insert)
@@ -917,15 +920,16 @@ class Weaviate(VectorDb):
             logger.exception(f"Error deleting documents by content_id '{content_id}'")
             return False
 
-    def delete_by_content_hash(self, content_hash: str) -> bool:
-        """Delete content by content hash using direct filter deletion."""
-        try:
-            collection = self.get_client().collections.get(self.collection)
-            collection.data.delete_many(where=Filter.by_property("content_hash").equal(content_hash))
-            return True
-        except Exception:
-            logger.exception(f"Error deleting documents by content_hash '{content_hash}'")
-            return False
+    def delete_by_content_hash(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        """Delete content by content hash using direct filter deletion.
+
+        Args:
+            content_hash (str): The content hash to delete.
+            user_id (Optional[str]): Restrict the delete to the owner's bucket. None
+                scopes to the shared bucket only so it can't wipe every owner.
+        """
+        self._validate_user_id(user_id)
+        return self._delete_by_content_hash(content_hash, user_id=user_id)
 
     def get_vector_index_config(self, index_type: VectorIndex, distance_metric: Distance):
         """
@@ -1038,6 +1042,20 @@ class Weaviate(VectorDb):
         """
         if user_id is not None and user_id.strip() == "":
             raise ValueError("user_id must not be empty or whitespace-only; use None for unscoped access")
+
+    def _scoped_record_id(self, base_id: str, content_hash: str, user_id: Optional[str]) -> str:
+        """Fold the owner into the deterministic record id so two users inserting the
+        same content get distinct uuids. None keeps the stable base id.
+
+        The base id is collapsed to a fixed-length digest here, before the owner is
+        folded in, so the owner cannot slide across the '_' boundary - otherwise
+        ('doc_1', 'alice') and ('doc', '1_alice') would fold to the same uuid and one
+        owner would overwrite the other's chunk.
+        """
+        record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+        if user_id is None:
+            return record_id
+        return md5(f"{record_id}_{user_id}".encode()).hexdigest()
 
     def _user_scope_filter(self, user_id: Optional[str]):
         """Build the per-user read scope: user_id == X OR user_id IS NULL; only None (admin) returns no scope."""

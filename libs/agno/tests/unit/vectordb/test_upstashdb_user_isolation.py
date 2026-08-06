@@ -123,6 +123,40 @@ class TestDeleteByContentIdIsolation:
         assert upstash_db.index.delete.call_args.kwargs["filter"] == 'content_id = "c1"'
 
 
+class TestContentHashExistsScope:
+    """``content_hash_exists`` is the guard half of the upsert dedup pair, so it
+    means what ``_delete_by_content_hash`` means: a set owner checks that owner's
+    chunks, ``None`` checks the shared bucket alone. A ``None`` that matched any
+    owner would let one tenant's private copy silently skip a shared publish."""
+
+    def test_scoped_check_ands_the_owner(self, upstash_db):
+        upstash_db.content_hash_exists("h1", user_id="alice")
+        assert upstash_db.index.query.call_args.kwargs["filter"] == 'content_hash = "h1" AND user_id = "alice"'
+
+    def test_none_check_is_shared_bucket_only(self, upstash_db):
+        upstash_db.content_hash_exists("h1", user_id=None)
+        assert upstash_db.index.query.call_args.kwargs["filter"] == 'content_hash = "h1" AND HAS NOT FIELD user_id'
+
+    def test_none_check_sees_the_shared_row(self, upstash_db):
+        """The store holds one shared row, which carries no owner field, so only
+        the ``HAS NOT FIELD`` arm can reach it — a fake that answered every filter
+        would hold even if the predicate were inverted."""
+        upstash_db.index.query.side_effect = lambda **kwargs: (
+            [Mock(metadata={})] if "HAS NOT FIELD user_id" in kwargs["filter"] else []
+        )
+        assert upstash_db.content_hash_exists("h1", user_id=None) is True
+        assert upstash_db.content_hash_exists("h1", user_id="alice") is False
+
+    def test_none_check_does_not_see_a_privately_owned_row(self, upstash_db):
+        """HAS NOT FIELD user_id cannot match a row that carries an owner, so a
+        shared publish is never skipped on the strength of alice's private copy."""
+        upstash_db.index.query.side_effect = lambda **kwargs: (
+            [] if "HAS NOT FIELD user_id" in kwargs["filter"] else [Mock(metadata={"user_id": "alice"})]
+        )
+        assert upstash_db.content_hash_exists("h1", user_id=None) is False
+        assert upstash_db.content_hash_exists("h1", user_id="alice") is True
+
+
 class TestStealPreventionOwnerFoldedId:
     """Two owners uploading identical content must not collide: the owner is
     folded into the vector id, so one owner's write can never overwrite (steal)
@@ -140,6 +174,24 @@ class TestStealPreventionOwnerFoldedId:
         upstash_db.upsert(content_hash="h1", documents=_docs(), user_id=None)
         ids = [v.id for v in upstash_db.index.upsert.call_args[0][0]]
         assert ids == ["doc_1", "doc_2"]
+
+    def test_owner_boundary_cannot_be_shifted(self, upstash_db):
+        """The base id is caller-controlled, so it is collapsed to a fixed-length
+        digest before the owner is folded in. Without that, ("doc_1", "alice") and
+        ("doc", "1_alice") both join to "doc_1_alice" and land on ONE record id —
+        and every agno chunk id ends in "_<n>", so a caller passing
+        user_id="1_alice" overwrites alice's chunk 1."""
+        assert upstash_db._record_id("doc_1", "alice") != upstash_db._record_id("doc", "1_alice")
+
+    def test_shifted_boundary_write_does_not_overwrite_the_owner(self, upstash_db):
+        """The consequence on the write path: the crafted owner's vector id is not
+        alice's, so her record survives."""
+        alice = Document(content="c", name="d", id="doc_1")
+        crafted = Document(content="c", name="d", id="doc")
+        upstash_db.upsert(content_hash="h1", documents=[alice], user_id="alice")
+        alice_id = upstash_db.index.upsert.call_args[0][0][0].id
+        upstash_db.upsert(content_hash="h1", documents=[crafted], user_id="1_alice")
+        assert upstash_db.index.upsert.call_args[0][0][0].id != alice_id
 
 
 class TestFilterInjectionBlocked:

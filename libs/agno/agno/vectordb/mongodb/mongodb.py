@@ -541,17 +541,20 @@ class MongoDb(VectorDb):
 
         Args:
             content_hash (str): The content hash to check.
-            user_id (Optional[str]): Restrict the check to the owner's chunks so a
-                different owner's identical upload is not judged a duplicate.
+            user_id (Optional[str]): The owner to check, so a different owner's
+                identical upload is not judged a duplicate. This is the guard half
+                of the upsert dedup pair, so ``None`` addresses the shared bucket
+                alone (``user_id`` is null) rather than every owner - the same
+                bucket a ``None``-scoped delete clears.
 
         Returns:
             bool: True if documents with the content hash exist, False otherwise.
         """
         try:
             collection = self._get_collection()
-            query: Dict[str, Any] = {"content_hash": content_hash}
-            if user_id is not None:
-                query[USER_ID_FIELD] = user_id
+            # Direct null equality, the same primitive ``_user_scope_filter`` uses:
+            # ``None`` matches the shared bucket and no owned row.
+            query: Dict[str, Any] = {"content_hash": content_hash, USER_ID_FIELD: user_id}
             result = collection.find_one(query)
             exists = result is not None
             log_debug(f"Document with content_hash '{content_hash}' {'exists' if exists else 'does not exist'}")
@@ -611,6 +614,13 @@ class MongoDb(VectorDb):
         """
         log_info(f"Upserting {len(documents)} documents")
         collection = self._get_collection()
+
+        # The ``_id`` is content-derived, so a re-upsert of edited content writes new
+        # rows instead of replacing the old ones. Clear the caller's prior chunks for
+        # this content_hash first, or a document that shrinks leaves stale chunks
+        # behind and they keep answering searches.
+        if self.content_hash_exists(content_hash, user_id=user_id):
+            self._delete_by_content_hash(content_hash, user_id=user_id)
 
         for document in documents:
             try:
@@ -1200,6 +1210,10 @@ class MongoDb(VectorDb):
         log_info(f"Upserting {len(documents)} documents asynchronously")
         collection = await self._get_async_collection()
 
+        # See the matching comment in ``upsert``.
+        if self.content_hash_exists(content_hash, user_id=user_id):
+            self._delete_by_content_hash(content_hash, user_id=user_id)
+
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
             # Use batch embedding when enabled and supported
             try:
@@ -1448,18 +1462,18 @@ class MongoDb(VectorDb):
             logger.exception(f"Error deleting documents with metadata '{metadata}'")
             return False
 
-    def _delete_by_content_hash(self, content_hash: str) -> bool:
-        """Delete documents by content hash.
+    def _delete_by_content_hash(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        """Delete documents by content hash, scoped to ``user_id`` when set.
 
         Args:
             content_hash (str): The content hash to delete.
-
-        Returns:
-            bool: True if documents were deleted successfully, False otherwise.
+            user_id (Optional[str]): Owner to scope the delete to; ``None`` scopes to
+                the shared bucket (``user_id`` is null) so a shared re-upsert never
+                wipes a scoped owner's identical-content chunks.
         """
         try:
             collection = self._get_collection()
-            result = collection.delete_many({"content_hash": content_hash})
+            result = collection.delete_many({"content_hash": content_hash, USER_ID_FIELD: user_id})
             log_info(f"Deleted {result.deleted_count} documents with content_hash '{content_hash}'")
             return True
         except Exception:

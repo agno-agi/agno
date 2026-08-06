@@ -33,19 +33,19 @@ class CapturingVectorDb(VectorDb):
     def id_exists(self, id: str) -> bool:
         return False
 
-    def content_hash_exists(self, content_hash: str) -> bool:
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         return False
 
-    def insert(self, content_hash: str, documents, filters=None) -> None:
+    def insert(self, content_hash: str, documents, filters=None, user_id=None) -> None:
         self.inserted_documents.extend(documents)
 
-    async def async_insert(self, content_hash: str, documents, filters=None) -> None:
+    async def async_insert(self, content_hash: str, documents, filters=None, user_id=None) -> None:
         self.inserted_documents.extend(documents)
 
-    def upsert(self, content_hash: str, documents, filters=None) -> None:
+    def upsert(self, content_hash: str, documents, filters=None, user_id=None) -> None:
         self.inserted_documents.extend(documents)
 
-    async def async_upsert(self, content_hash: str, documents, filters=None) -> None:
+    async def async_upsert(self, content_hash: str, documents, filters=None, user_id=None) -> None:
         self.inserted_documents.extend(documents)
 
     def upsert_available(self) -> bool:

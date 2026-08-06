@@ -11,8 +11,7 @@ collection plus the base one and merge by distance.
 
 - Search as Alice: her chunks plus shared content, never Bob's
 - Search as Bob: his chunks plus shared content, never Alice's
-- Search with user_id=None: the shared base collection only (collection
-  model - to audit across users, iterate per user_id)
+- Search with user_id=None: every collection, the unscoped / admin view
 
 Requirements: pip install chromadb (embedded, no server) and OPENAI_API_KEY
 Run: python cookbook/07_knowledge/04_advanced/07_per_user_isolation/chroma_db.py
@@ -108,9 +107,12 @@ async def main() -> None:
     for d in bob_holidays:
         print(f"  - {d.content[:80]}")
 
-    # On Chroma, user_id=None sees the shared base collection only.
+    # user_id=None is the unscoped read: every owner's collection plus the base.
     admin_view = await knowledge.asearch(query="anything", user_id=None)
     print(f"\nAdmin asks about everything (user_id=None) -> {len(admin_view)} results")
+    assert len(admin_view) >= len(alice_salary), (
+        "admin must not see less than a scoped user"
+    )
     for d in admin_view:
         print(f"  - {d.content[:80]}")
 

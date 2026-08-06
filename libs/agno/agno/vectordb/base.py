@@ -57,27 +57,34 @@ class VectorDb(ABC):
     def id_exists(self, id: str) -> bool:
         raise NotImplementedError
 
-    @abstractmethod
-    def content_hash_exists(self, content_hash: str) -> bool:
-        raise NotImplementedError
-
     # ---- ``user_id`` semantics for per-user RAG isolation ----
     #
-    # ``user_id`` is a first-class parameter on every insert / upsert /
-    # search method below. It identifies the OWNER of the chunks. Backends
-    # translate it into their native primitive: pgvector writes a column,
-    # Chroma routes to a per-user collection, Pinecone uses a namespace,
-    # etc.
+    # ``user_id`` is a first-class parameter on every existence / insert /
+    # upsert / search method below. It identifies the OWNER of the chunks.
+    # Backends translate it into their native primitive: pgvector writes a
+    # column, Chroma routes to a per-user collection, Pinecone uses a
+    # namespace, etc.
     #
     # ``None`` means "shared / org-wide / unscoped" — chunks become
     # visible to every caller, and searches with ``user_id=None`` see
     # everything (admin / RBAC-off view).
+    #
+    # ``content_hash_exists`` is the exception: there ``None`` addresses the
+    # shared bucket alone. It guards the upsert dedup pair, following a True
+    # with ``_delete_by_content_hash`` under the same ``user_id``, and that
+    # delete is shared-only — a guard matching every owner would let one
+    # tenant's private copy silently skip a shared publish, leaving the
+    # shared bucket empty.
     #
     # Backends that don't yet implement isolation must still accept the
     # parameter (no-op) so the Knowledge wrapper can pass it uniformly.
     # When you wire up a new backend, write a smoke test that proves the
     # native primitive actually isolates (alice's search doesn't surface
     # bob's chunks) before claiming support.
+
+    @abstractmethod
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        raise NotImplementedError
 
     @abstractmethod
     def insert(

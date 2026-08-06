@@ -822,6 +822,9 @@ class Clickhouse(VectorDb):
         Args:
             content_hash (str): Content hash to check
             user_id (Optional[str]): Owner to scope the check to (shared owner "" for None).
+                This is the guard half of the upsert dedup pair, so None addresses the
+                shared bucket alone rather than every owner - the same bucket
+                _delete_by_content_hash clears for None.
         """
         self._validate_user_id(user_id)
         parameters = self._get_base_parameters()

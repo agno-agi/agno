@@ -182,10 +182,10 @@ def cassandra_db():
         yield db
 
 
-def _doc(name: str, content: str, content_id: Optional[str] = None) -> Document:
+def _doc(name: str, content: str, content_id: Optional[str] = None, doc_id: Optional[str] = None) -> Document:
     doc = Document(name=name, content=content)
     # Knowledge always assigns a stable id (derived from content) before insert.
-    doc.id = hashlib.md5(content.encode()).hexdigest()
+    doc.id = doc_id if doc_id is not None else hashlib.md5(content.encode()).hexdigest()
     doc.content_id = content_id
     return doc
 
@@ -256,8 +256,8 @@ class TestRowIdFolding:
         bob_id = cassandra_db.table.put_calls[1]["row_id"]
         assert alice_id != bob_id
         base_id = hashlib.md5(b"same text").hexdigest()
-        assert alice_id == hash_string_sha256(f"{base_id}_alice")
-        assert bob_id == hash_string_sha256(f"{base_id}_bob")
+        assert alice_id == hash_string_sha256(f"{hash_string_sha256(base_id)}_alice")
+        assert bob_id == hash_string_sha256(f"{hash_string_sha256(base_id)}_bob")
 
     def test_shared_row_keeps_base_id(self, cassandra_db):
         cassandra_db.insert(content_hash="h", documents=[_doc("s", "same text")], user_id=None)
@@ -277,8 +277,22 @@ class TestRowIdFolding:
         cassandra_db.insert(content_hash="h", documents=[doc], user_id="alice")
         base_id = hashlib.md5(b"unindexed body").hexdigest()
         row_id = cassandra_db.table.put_calls[0]["row_id"]
-        assert row_id == hash_string_sha256(f"{base_id}_alice")
+        assert row_id == hash_string_sha256(f"{hash_string_sha256(base_id)}_alice")
         assert row_id
+
+    def test_owner_boundary_cannot_be_shifted(self, cassandra_db):
+        """The base id is caller-controlled, so it is collapsed to a fixed-length
+        digest before the owner is folded in. Without that, ("doc_1", "alice") and
+        ("doc", "1_alice") both join to "doc_1_alice" and land on ONE row_id — and
+        every agno chunk id ends in "_<n>", so a caller passing user_id="1_alice"
+        overwrites alice's chunk 1."""
+        # The owner is folded into ``doc.id``, so the crafted split has to be on the
+        # document id -- varying content_id here would leave the base id untouched.
+        cassandra_db.insert(content_hash="h", documents=[_doc("alice-doc", "body", doc_id="doc_1")], user_id="alice")
+        cassandra_db.insert(content_hash="h", documents=[_doc("crafted", "other", doc_id="doc")], user_id="1_alice")
+        row_ids = [c["row_id"] for c in cassandra_db.table.put_calls]
+        assert row_ids[0] != row_ids[1]
+        assert len(cassandra_db.session.rows) == 2
 
 
 class TestSearchScopeFilter:
@@ -387,6 +401,34 @@ class TestDeleteByContentHashIsolation:
         assert _owners(populated_db) == ["alice", "bob"]
 
 
+class TestContentHashExistsScope:
+    """``content_hash_exists`` is the guard half of the upsert dedup pair, so it
+    means what ``delete_by_content_hash`` means: a set owner checks that owner's
+    rows, ``None`` checks the shared bucket alone — never every owner's rows."""
+
+    @pytest.fixture
+    def populated_db(self, cassandra_db):
+        cassandra_db.insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
+        cassandra_db.insert(content_hash="hs", documents=_shared_docs(), user_id=None)
+        return cassandra_db
+
+    def test_scoped_check_only_sees_own(self, populated_db):
+        assert populated_db.content_hash_exists("ha", user_id="alice") is True
+        assert populated_db.content_hash_exists("ha", user_id="bob") is False
+
+    def test_none_check_sees_the_shared_row(self, populated_db):
+        assert populated_db.content_hash_exists("hs", user_id=None) is True
+
+    def test_none_check_does_not_see_a_privately_owned_row(self, populated_db):
+        """Alice privately holds this content. If ``None`` matched her row, a shared
+        publish of the same bytes would be judged a duplicate and silently skipped,
+        and the shared bucket would never receive it."""
+        assert populated_db.content_hash_exists("ha", user_id=None) is False
+
+    def test_none_check_is_false_for_an_absent_hash(self, populated_db):
+        assert populated_db.content_hash_exists("nope", user_id=None) is False
+
+
 class TestUpsertDedupIsolation:
     """``upsert`` re-ingest dedups within the caller's bucket only, so two
     owners' copies of identical content never collide and a shared re-ingest
@@ -413,7 +455,7 @@ class TestUpsertDedupIsolation:
         cassandra_db.upsert(content_hash="h", documents=[_doc("shared", "same text")], user_id=None)
         assert _owners(cassandra_db) == [SHARED_USER_ID_VALUE, "alice"]
         base_id = hashlib.md5(b"same text").hexdigest()
-        alice_row_id = hash_string_sha256(f"{base_id}_alice")
+        alice_row_id = hash_string_sha256(f"{hash_string_sha256(base_id)}_alice")
         assert alice_row_id not in cassandra_db.session.deleted_row_ids
         assert cassandra_db.session.deleted_row_ids == [base_id]
 

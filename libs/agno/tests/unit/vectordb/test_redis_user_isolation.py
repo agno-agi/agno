@@ -150,11 +150,28 @@ class TestIdFolding:
 
     def test_scoped_key_is_owner_folded_hash(self, redis_db):
         redis_db.insert(content_hash="h", documents=[_embedded("a", "x", doc_id="doc-1")], user_id="alice")
-        assert _loaded_docs(redis_db)[0]["id"] == hash_string_sha256("doc-1_alice")
+        assert _loaded_docs(redis_db)[0]["id"] == hash_string_sha256(f"{hash_string_sha256('doc-1')}_alice")
 
     def test_shared_keeps_legacy_id(self, redis_db):
         redis_db.insert(content_hash="h", documents=[_embedded("a", "x", doc_id="doc-1")], user_id=None)
         assert _loaded_docs(redis_db)[0]["id"] == "doc-1"
+
+    def test_owner_boundary_cannot_be_shifted(self, redis_db):
+        """The base id is caller-controlled, so it is collapsed to a fixed-length
+        digest before the owner is folded in. Without that, ("doc_1", "alice") and
+        ("doc", "1_alice") both join to "doc_1_alice" and land on ONE key — and
+        every agno chunk id ends in "_<n>", so a caller passing user_id="1_alice"
+        overwrites alice's chunk 1."""
+        assert redis_db._scoped_doc_id("doc_1", "alice") != redis_db._scoped_doc_id("doc", "1_alice")
+
+    def test_shifted_boundary_write_does_not_overwrite_the_owner(self, redis_db):
+        """The consequence on the write path: alice's chunk key and the crafted
+        owner's key are different keys, so neither write clobbers the other."""
+        redis_db.insert(content_hash="h", documents=[_embedded("a", "x", doc_id="doc_1")], user_id="alice")
+        alice_key = _loaded_docs(redis_db)[0]["id"]
+        redis_db.index.load.reset_mock()
+        redis_db.insert(content_hash="h", documents=[_embedded("a", "x", doc_id="doc")], user_id="1_alice")
+        assert _loaded_docs(redis_db)[0]["id"] != alice_key
 
 
 class TestReadScope:
@@ -178,6 +195,44 @@ class TestReadScope:
     async def test_async_search_scopes_identically(self, redis_db):
         await redis_db.async_search(query="secret salary", limit=10, user_id="alice")
         assert _queried_filter(redis_db) == "@user_id:{alice|__shared__}"
+
+
+class TestContentHashExists:
+    """``content_hash_exists`` is the guard half of the upsert dedup pair, so it
+    has to mean exactly what the dedup delete means: a set owner checks that
+    owner's chunks, ``None`` checks the shared bucket alone. A ``None`` matching
+    any owner would let one tenant's private copy skip a shared publish."""
+
+    def test_scoped_check_ands_the_owner(self, redis_db):
+        redis_db.content_hash_exists("h1", user_id="alice")
+        assert _queried_filter(redis_db) == "(@content_hash:{h1} @user_id:{alice})"
+
+    def test_none_check_scopes_to_the_shared_bucket(self, redis_db):
+        redis_db.content_hash_exists("h1", user_id=None)
+        assert _queried_filter(redis_db) == "(@content_hash:{h1} @user_id:{__shared__})"
+
+    def test_check_matches_the_dedup_delete_bucket(self, redis_db):
+        """The two halves are one guard: the check reuses ``_dedupe_filter``, so
+        they can never drift onto different buckets."""
+        for owner in ("alice", None):
+            redis_db.content_hash_exists("h1", user_id=owner)
+            assert _queried_filter(redis_db) == str(redis_db._dedupe_filter("h1", owner))
+
+    def test_none_check_does_not_see_a_privately_owned_row(self, redis_db):
+        """Alice privately holds this content. If ``None`` matched her chunk, a
+        shared publish of the same bytes would be judged a duplicate and silently
+        skipped, and the shared bucket would never receive it."""
+        redis_db.index.query.side_effect = lambda query: (
+            [{"id": "k"}] if "@user_id:{alice}" in str(query.filter) else []
+        )
+        assert redis_db.content_hash_exists("h1", user_id=None) is False
+        assert redis_db.content_hash_exists("h1", user_id="alice") is True
+
+    def test_none_check_sees_the_shared_row(self, redis_db):
+        redis_db.index.query.side_effect = lambda query: (
+            [{"id": "k"}] if f"@user_id:{{{SHARED}}}" in str(query.filter) else []
+        )
+        assert redis_db.content_hash_exists("h1", user_id=None) is True
 
 
 class TestScopedDedupe:

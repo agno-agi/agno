@@ -103,19 +103,28 @@ class Cassandra(VectorDb):
     def _scoped_row_id(self, doc: Document, user_id: Optional[str]) -> str:
         """Deterministic primary key. Falls back to a content hash when the document
         has no id, and folds in the owner so two users uploading identical content get
-        distinct primary keys. Shared rows (user_id None) keep the base id."""
+        distinct primary keys. Shared rows (user_id None) keep the base id.
+
+        The base id is caller-controlled and variable length, so it is collapsed to a
+        fixed-length digest before the owner is folded in - otherwise the '_' boundary
+        moves and ('doc_1', 'alice') and ('doc', '1_alice') land on the same row_id."""
         base_id = doc.id or md5((doc.content or "").encode()).hexdigest()
         if user_id is None:
             return base_id
-        return hash_string_sha256(f"{base_id}_{user_id}")
+        return hash_string_sha256(f"{hash_string_sha256(base_id)}_{user_id}")
 
     def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Check if a document exists by content hash, scoped to the owner; None scopes
-        to the shared bucket only so it never matches another user's owned row."""
+        to the shared bucket only so it never matches another user's owned row.
+
+        This is the guard half of the upsert dedup pair, so None addresses the shared
+        bucket alone rather than every owner - the same bucket delete_by_content_hash
+        clears for None.
+        """
         owner = user_id if user_id is not None else SHARED_USER_ID_VALUE
         query = (
             f"SELECT COUNT(*) FROM {self.keyspace}.{self.table_name} "
-            "WHERE metadata_s['content_hash'] = %s AND metadata_s['user_id'] = %s ALLOW FILTERING"
+            f"WHERE metadata_s['content_hash'] = %s AND metadata_s['{USER_ID_METADATA_KEY}'] = %s ALLOW FILTERING"
         )
         result = self.session.execute(query, (content_hash, owner))
         return result.one()[0] > 0

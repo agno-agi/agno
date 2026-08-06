@@ -1,4 +1,4 @@
-from typing import List, Set
+from typing import List, Optional, Set
 
 import pytest
 
@@ -24,7 +24,7 @@ class MockVectorDb(VectorDb):
     def id_exists(self, id: str) -> bool:
         return False
 
-    def content_hash_exists(self, content_hash: str) -> bool:
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         return False
 
     def insert(self, content_hash: str, documents: List[Document], filters=None) -> None:

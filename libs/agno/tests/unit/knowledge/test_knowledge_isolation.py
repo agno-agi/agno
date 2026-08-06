@@ -3,7 +3,7 @@
 Tests that knowledge instances with isolate_vector_search=True filter by linked_to.
 """
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import pytest
 
@@ -34,7 +34,7 @@ class MockVectorDb(VectorDb):
     def id_exists(self, id: str) -> bool:
         return False
 
-    def content_hash_exists(self, content_hash: str) -> bool:
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         return False
 
     def insert(self, content_hash: str, documents: List[Document], filters=None, user_id=None) -> None:
@@ -53,17 +53,11 @@ class MockVectorDb(VectorDb):
         return True
 
     def search(self, query: str, limit: int = 5, filters=None, user_id=None) -> List[Document]:
-        self.search_calls.append(
-            {"query": query, "limit": limit, "filters": filters, "user_id": user_id}
-        )
+        self.search_calls.append({"query": query, "limit": limit, "filters": filters, "user_id": user_id})
         return [Document(name="test", content="test content")]
 
-    async def async_search(
-        self, query: str, limit: int = 5, filters=None, user_id=None
-    ) -> List[Document]:
-        self.search_calls.append(
-            {"query": query, "limit": limit, "filters": filters, "user_id": user_id}
-        )
+    async def async_search(self, query: str, limit: int = 5, filters=None, user_id=None) -> List[Document]:
+        self.search_calls.append({"query": query, "limit": limit, "filters": filters, "user_id": user_id})
         return [Document(name="test", content="test content")]
 
     def drop(self) -> None:

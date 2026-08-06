@@ -163,10 +163,15 @@ class RedisDB(VectorDb):
     def _scoped_doc_id(self, base_id: str, user_id: Optional[str]) -> str:
         """Fold the owner into the deterministic id so two users uploading the
         same content get distinct keys. The shared bucket keeps the legacy id.
+
+        The base id is caller-controlled and variable length, so it is collapsed
+        to a fixed-length digest before the owner is folded in - otherwise the
+        '_' boundary moves and ('doc_1', 'alice') and ('doc', '1_alice') fold to
+        the same key, letting one owner overwrite the other's chunk.
         """
         if user_id is None:
             return base_id
-        return hash_string_sha256(f"{base_id}_{user_id}")
+        return hash_string_sha256(f"{hash_string_sha256(base_id)}_{user_id}")
 
     def _owner_tag(self, user_id: str) -> str:
         """Tag clause matching the given owner."""
@@ -306,12 +311,22 @@ class RedisDB(VectorDb):
             log_error(f"Error checking if ID exists: {str(e)}")
             return False
 
-    def content_hash_exists(self, content_hash: str) -> bool:
-        """Check if a document with the given content hash exists."""
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        """Check if a document with the given content hash exists.
+
+        user_id set  -> only the caller's own chunks count, so another owner's
+        identical upload is not judged a duplicate. None -> the shared bucket
+        alone (the sentinel owner tag), never every owner.
+
+        This is the guard half of the upsert dedup pair, so it matches exactly
+        the bucket ``_dedupe_filter`` clears and never an owned row: otherwise a
+        shared publish is judged a duplicate on the strength of one tenant's
+        private copy and the shared bucket never receives it.
+        """
         try:
-            content_hash_filter = Tag("content_hash") == content_hash
+            self._validate_user_id(user_id)
             query = FilterQuery(
-                filter_expression=content_hash_filter,
+                filter_expression=self._dedupe_filter(content_hash, user_id),
                 return_fields=["id"],
                 num_results=1,
             )

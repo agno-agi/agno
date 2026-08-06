@@ -293,10 +293,15 @@ class ValkeyDB(VectorDb):
     def _scoped_doc_id(self, base_id: str, user_id: Optional[str]) -> str:
         """Fold the owner into the deterministic id so two users uploading the
         same content get distinct keys. The shared bucket keeps the legacy id.
+
+        The base id is caller-controlled and variable length, so it is collapsed
+        to a fixed-length digest before the owner is folded in - otherwise the
+        '_' boundary moves and ('doc_1', 'alice') and ('doc', '1_alice') fold to
+        the same key, letting one owner overwrite the other's chunk.
         """
         if user_id is None:
             return base_id
-        return hash_string_sha256(f"{base_id}_{user_id}")
+        return hash_string_sha256(f"{hash_string_sha256(base_id)}_{user_id}")
 
     def _parse_hash(self, doc: Document, user_id: Optional[str] = None) -> Dict[str, Any]:
         """Create a dict serializable into a Valkey HASH structure.
@@ -458,11 +463,22 @@ class ValkeyDB(VectorDb):
             log_error(f"Error checking if ID exists: {str(e)}")
             return False
 
-    def content_hash_exists(self, content_hash: str) -> bool:
-        """Check if a document with the given content hash exists."""
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        """Check if a document with the given content hash exists.
+
+        user_id set  -> only the caller's own chunks count, so another owner's
+        identical upload is not judged a duplicate. None -> the shared bucket
+        alone (the sentinel owner tag), never every owner.
+
+        This is the guard half of the upsert dedupe pair, so it matches exactly
+        the bucket ``_dedupe_query`` clears and never an owned chunk: otherwise a
+        shared publish is judged a duplicate on the strength of one tenant's
+        private copy and the shared bucket never receives it.
+        """
         try:
+            self._validate_user_id(user_id)
             client = self._get_client()
-            query = f"@content_hash:{{{_escape_tag_value(content_hash)}}}"
+            query = self._dedupe_query(content_hash, user_id)
             options = FtSearchOptions(
                 limit=FtSearchLimit(0, 0),
             )
@@ -932,14 +948,14 @@ class ValkeyDB(VectorDb):
         return []
 
     def _delete_by_tag_filter(self, tag_field: str, tag_value: str) -> bool:
-        """Delete all documents matching a tag filter in a single batch call."""
-        keys = self._find_keys_by_tag(tag_field, tag_value)
-        if not keys:
-            return False
-        client = self._get_client()
-        deleted = client.delete(cast(List[Union[str, bytes, bytearray, memoryview]], keys))
-        log_debug(f"Deleted {deleted} documents with {tag_field}='{tag_value}'")
-        return deleted is not None and int(deleted) > 0
+        """Delete all documents matching a tag filter.
+
+        Deletes through ``_delete_by_query`` so the matches are paged to
+        exhaustion: a single FT.SEARCH page would leave every match past the
+        page behind while still reporting the delete succeeded, and those
+        survivors keep their owner tag and stay visible to every scoped reader.
+        """
+        return self._delete_by_query(f"@{tag_field}:{{{_escape_tag_value(tag_value)}}}")
 
     def _delete_by_query(self, query: str) -> bool:
         """Delete all documents matching an FT.SEARCH query.

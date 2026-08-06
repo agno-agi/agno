@@ -129,12 +129,12 @@ def test_create(surrealdb_vector, mock_surrealdb_client):
 def test_exists(surrealdb_vector, mock_surrealdb_client):
     """Test exists method"""
     # Test when collection exists
-    mock_surrealdb_client.query.return_value = [{"result": {"tables": {"test_collection": {}}}}]
+    mock_surrealdb_client.query.return_value = {"tables": {"test_collection": {}}}
 
     assert surrealdb_vector.exists() is True
 
     # Test when collection doesn't exist
-    mock_surrealdb_client.query.return_value = [{"result": {"tables": {}}}]
+    mock_surrealdb_client.query.return_value = {"tables": {}}
 
     assert surrealdb_vector.exists() is False
 
@@ -142,12 +142,12 @@ def test_exists(surrealdb_vector, mock_surrealdb_client):
 def test_name_exists(surrealdb_vector, mock_surrealdb_client):
     """Test name existence check"""
     # Test when name exists
-    mock_surrealdb_client.query.return_value = [{"result": [{"name": "tom_kha"}]}]
+    mock_surrealdb_client.query.return_value = [{"meta_data": {"name": "tom_kha"}}]
 
     assert surrealdb_vector.name_exists("tom_kha") is True
 
     # Test when name doesn't exist
-    mock_surrealdb_client.query.return_value = [{"result": []}]
+    mock_surrealdb_client.query.return_value = []
 
     assert surrealdb_vector.name_exists("nonexistent") is False
 
@@ -247,9 +247,12 @@ def test_delete(surrealdb_vector, mock_surrealdb_client):
 
 def test_extract_result(surrealdb_vector):
     """Test extract result method"""
-    query_result = [{"result": [{"id": 1}, {"id": 2}]}]
-    result = surrealdb_vector._extract_result(query_result)
-    assert result == [{"id": 1}, {"id": 2}]
+    # surrealdb >= 1.0 hands back the rows themselves - a list for a SELECT,
+    # a dict for INFO FOR DB - not the legacy {"status", "time", "result"} envelope.
+    assert surrealdb_vector._extract_result([{"id": 1}, {"id": 2}]) == [{"id": 1}, {"id": 2}]
+    assert surrealdb_vector._extract_result([]) == []
+    assert surrealdb_vector._extract_result({"tables": {}}) == {"tables": {}}
+    assert surrealdb_vector._extract_result(None) == []
 
 
 def test_upsert_available(surrealdb_vector):
@@ -274,13 +277,13 @@ async def test_async_create(async_surrealdb_vector, mock_async_surrealdb_client)
 async def test_async_name_exists(async_surrealdb_vector, mock_async_surrealdb_client):
     """Test async name existence check"""
     # Test when name exists
-    mock_async_surrealdb_client.query.return_value = [{"result": [{"name": "tom_kha"}]}]
+    mock_async_surrealdb_client.query.return_value = [{"meta_data": {"name": "tom_kha"}}]
 
     result = await async_surrealdb_vector.async_name_exists("tom_kha")
     assert result is True
 
     # Test when name doesn't exist
-    mock_async_surrealdb_client.query.return_value = [{"result": []}]
+    mock_async_surrealdb_client.query.return_value = []
 
     result = await async_surrealdb_vector.async_name_exists("nonexistent")
     assert result is False
@@ -372,13 +375,13 @@ async def test_async_drop(async_surrealdb_vector, mock_async_surrealdb_client):
 async def test_async_exists(async_surrealdb_vector: SurrealDb, mock_async_surrealdb_client: MagicMock) -> None:
     """Test async exists method"""
     # Test when collection exists
-    mock_async_surrealdb_client.query.return_value = [{"result": {"tables": {"test_collection": {}}}}]
+    mock_async_surrealdb_client.query.return_value = {"tables": {"test_collection": {}}}
 
     result = await async_surrealdb_vector.async_exists()
     assert result is True
 
     # Test when collection doesn't exist
-    mock_async_surrealdb_client.query.return_value = [{"result": {"tables": {}}}]
+    mock_async_surrealdb_client.query.return_value = {"tables": {}}
 
     result = await async_surrealdb_vector.async_exists()
     assert result is False

@@ -110,9 +110,7 @@ class KnowledgeTools(Toolkit):
             # from ``Agent.user_id`` or per-call ``agent.run(user_id=...)``)
             # — ``None`` means no owner / admin-equivalent retrieval (see
             # Knowledge.search docstring).
-            relevant_docs: List[Document] = self.knowledge.search(
-                query=query, user_id=run_context.user_id
-            )
+            relevant_docs: List[Document] = self.knowledge.search(query=query, user_id=run_context.user_id)
             if len(relevant_docs) == 0:
                 return "No documents found"
             return json.dumps([doc.to_dict() for doc in relevant_docs])

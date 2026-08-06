@@ -12,12 +12,13 @@ user_id == X or user_id is null into the search expression.
 - Search as Bob: his chunks plus shared content, never Alice's
 - Search with user_id=None: admin view, sees everything
 
-Note: Milvus Lite (local-file uri) does not return dynamic scalar fields
-on this read path, so retrieved content comes back empty and the demo
-verifies isolation by result counts. A full Milvus server also returns
-populated content with the same code.
+This needs a real Milvus server. Milvus Lite (the local-file uri) drops the
+scalar fields on the search read path, so retrieved content comes back empty
+and the content checks below cannot run against it.
 
-Requirements: pip install "pymilvus[milvus-lite]" (embedded) and OPENAI_API_KEY
+Requirements: a Milvus standalone server on localhost:19530 and OPENAI_API_KEY
+  curl -sfL https://raw.githubusercontent.com/milvus-io/milvus/master/scripts/standalone_embed.sh -o standalone_embed.sh
+  bash standalone_embed.sh start
 Run: python cookbook/07_knowledge/04_advanced/07_per_user_isolation/milvus_db.py
 """
 
@@ -38,11 +39,11 @@ def _write_temp_doc(name: str, body: str) -> str:
 
 
 async def main() -> None:
-    # Milvus Lite does not implement the async index-creation path, so
-    # create the collection with the sync client.
+    # Start clean: a collection created before the user_id field was declared
+    # keeps its old schema, and there scoped reads never match shared chunks.
     vector_db = Milvus(
         collection="per_user_isolation_demo",
-        uri="/tmp/milvus_per_user_isolation.db",
+        uri="http://localhost:19530",
     )
     vector_db.drop()
     vector_db.create()
@@ -83,34 +84,49 @@ async def main() -> None:
 
     print("\n=== Direct asearch tests ===\n")
 
-    admin_view = await knowledge.asearch(query="salary", user_id=None)
-    print(f"Admin (user_id=None) -> {len(admin_view)} results (whole corpus)")
-
     alice_view = await knowledge.asearch(query="salary", user_id="alice")
-    print(f"Alice (scoped)        -> {len(alice_view)} results (own + shared)")
+    print(f"Alice (scoped) -> {len(alice_view)} results")
+    for d in alice_view:
+        print(f"  - {d.content[:80]}")
+
+    alice_text = " ".join(d.content for d in alice_view)
+    assert "180,000" in alice_text, (
+        "Alice's own chunk came back without content - is this a Milvus server, or Milvus Lite?"
+    )
+    assert "January 1" in alice_text, (
+        "Isolation broken: the shared holidays chunk is unreachable from Alice's scoped view"
+    )
+    assert "215,000" not in alice_text, (
+        "Isolation broken: Alice's scoped view leaked Bob's salary"
+    )
+    print("  Alice sees her own chunk plus the shared one, and not Bob's")
 
     bob_view = await knowledge.asearch(query="salary", user_id="bob")
-    print(f"Bob (scoped)          -> {len(bob_view)} results (own + shared)")
+    print(f"\nBob (scoped) -> {len(bob_view)} results")
+    for d in bob_view:
+        print(f"  - {d.content[:80]}")
 
-    # Count-based checks (see the Milvus Lite note in the module docstring):
-    # each scoped view drops exactly the other user's private chunk.
-    assert alice_view, "expected Alice's own results, got none"
-    assert len(admin_view) == 3, (
-        f"Admin should see the whole corpus, got {len(admin_view)}"
+    bob_text = " ".join(d.content for d in bob_view)
+    assert "215,000" in bob_text, "expected Bob's own results, got none"
+    assert "January 1" in bob_text, (
+        "Isolation broken: the shared holidays chunk is unreachable from Bob's scoped view"
     )
-    assert len(alice_view) == len(admin_view) - 1, (
-        "Isolation broken: Alice's scoped view should drop exactly Bob's chunk"
+    assert "180,000" not in bob_text, (
+        "Isolation broken: Bob's scoped view leaked Alice's salary"
     )
-    assert len(bob_view) == len(admin_view) - 1, (
-        "Isolation broken: Bob's scoped view should drop exactly Alice's chunk"
-    )
-    print("  isolation holds: neither user's scope includes the other's chunk")
+    print("  Bob sees his own chunk plus the shared one, and not Alice's")
 
-    bob_holidays = await knowledge.asearch(
-        query="When is the company closed?", user_id="bob"
-    )
-    print(f"\nBob asks about holidays -> {len(bob_holidays)} results")
-    assert bob_holidays, "Bob should still see the shared holidays doc"
+    admin_view = await knowledge.asearch(query="salary", user_id=None)
+    print(f"\nAdmin (user_id=None) -> {len(admin_view)} results")
+    for d in admin_view:
+        print(f"  - {d.content[:80]}")
+
+    admin_text = " ".join(d.content for d in admin_view)
+    for expected in ("180,000", "215,000", "January 1"):
+        assert expected in admin_text, (
+            f"Admin view should see the whole corpus, missing {expected}"
+        )
+    print("  Admin sees the whole corpus")
 
     print("\n=== Agent-mediated test ===\n")
 

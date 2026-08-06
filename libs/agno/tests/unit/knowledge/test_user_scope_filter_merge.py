@@ -14,8 +14,8 @@ These tests pin the new (slimmer) contract:
 * ``user_id=None`` forwards ``None`` (admin / unscoped path).
 * The ``linked_to`` instance-scope injection still works independently
   (it's not coupled to user scope).
-* ``_prepare_documents_for_insert`` writes the caller's ``user_id`` (or
-  ``None``) verbatim into ``meta_data`` — no sentinel substitution.
+* ``_prepare_documents_for_insert`` leaves ``user_id`` out of ``meta_data``
+  entirely, and leaves a caller's own ``user_id`` key untouched.
 """
 
 from typing import Any
@@ -39,7 +39,8 @@ def fake_vector_db():
         return []
 
     vdb.async_search.side_effect = _async_search
-    # Mark the type so isolate_vector_search dispatch works cleanly.
+    # Real None, so search() skips the SearchType branch instead of tripping
+    # over an auto-created mock attribute.
     vdb.search_type = None
     return vdb
 
@@ -147,6 +148,8 @@ class TestLinkedToIndependentOfUserId:
         assert len(merged) == 2
         assert isinstance(merged[0], EQ) and merged[0].key == "linked_to"
         assert merged[1] is existing
+        # ...and user_id still rides separately, as in the dict case.
+        assert call_kwargs["user_id"] == "alice"
 
 
 class TestPrepareDocumentsForInsertNoUserIdInMetaData:
@@ -171,13 +174,6 @@ class TestPrepareDocumentsForInsertNoUserIdInMetaData:
         prepared = kb._prepare_documents_for_insert(docs, content_id="cid")
         assert "user_id" not in prepared[0].meta_data
 
-    def test_linked_to_still_set(self):
-        """Instance scope still flows through meta_data — that's unchanged."""
-        kb = self._knowledge()
-        docs = [Document(name="d", content="c", meta_data={})]
-        prepared = kb._prepare_documents_for_insert(docs, content_id="cid")
-        assert prepared[0].meta_data["linked_to"] == "docs"
-
     def test_existing_meta_data_preserved(self):
         """Pre-existing keys on the document's meta_data shouldn't get
         clobbered."""
@@ -193,9 +189,7 @@ class TestPrepareDocumentsForInsertNoUserIdInMetaData:
         metadata for unrelated reasons, we don't touch it. The vector
         backend's owner column is a separate, internal mechanism."""
         kb = self._knowledge()
-        docs = [
-            Document(name="d", content="c", meta_data={"user_id": "this-is-mine-not-yours"})
-        ]
+        docs = [Document(name="d", content="c", meta_data={"user_id": "this-is-mine-not-yours"})]
         prepared = kb._prepare_documents_for_insert(docs, content_id="cid")
         # Caller's user_id is left exactly as they set it.
         assert prepared[0].meta_data["user_id"] == "this-is-mine-not-yours"

@@ -1,5 +1,7 @@
 """Tests for Knowledge._build_content_hash() method, verifying hash includes name and description."""
 
+from typing import Optional
+
 from agno.knowledge.content import Content, FileData
 from agno.knowledge.document.base import Document
 from agno.knowledge.knowledge import Knowledge
@@ -24,7 +26,7 @@ class MockVectorDb(VectorDb):
     def id_exists(self, id: str) -> bool:
         return False
 
-    def content_hash_exists(self, content_hash: str) -> bool:
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         return False
 
     def insert(self, content_hash: str, documents, filters=None) -> None:
