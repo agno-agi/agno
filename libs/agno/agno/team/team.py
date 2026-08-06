@@ -48,6 +48,7 @@ from agno.run.team import (
 from agno.session import SessionSummaryManager, TeamSession
 from agno.session.summary import SessionSummary
 from agno.skills import Skills
+from agno.skills.executor import SkillExecutor
 from agno.team import (
     _cli,
     _default_tools,
@@ -1548,8 +1549,9 @@ class Team:
         data: Dict[str, Any],
         db: Optional["BaseDb"] = None,
         registry: Optional["Registry"] = None,
+        skill_executor: Optional[SkillExecutor] = None,
     ) -> "Team":
-        return _storage.from_dict(cls, data=data, db=db, registry=registry)
+        return _storage.from_dict(cls, data=data, db=db, registry=registry, skill_executor=skill_executor)
 
     def save(
         self,
@@ -1570,8 +1572,11 @@ class Team:
         registry: Optional["Registry"] = None,
         label: Optional[str] = None,
         version: Optional[int] = None,
+        skill_executor: Optional[SkillExecutor] = None,
     ) -> Optional["Team"]:
-        return _storage.load(cls, id=id, db=db, registry=registry, label=label, version=version)
+        return _storage.load(
+            cls, id=id, db=db, registry=registry, label=label, version=version, skill_executor=skill_executor
+        )
 
     def delete(
         self,

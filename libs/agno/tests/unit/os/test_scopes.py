@@ -244,3 +244,70 @@ class TestResourceContextAnchoring:
         result = check_route_scopes(["agents:a1:read"], get_default_scope_mappings(), "GET", "/agents")
         assert result.allowed is True
         assert result.accessible_resource_ids == {"a1"}
+
+
+class TestSkillsScopeMappings:
+    def test_skills_endpoints_have_scope_mappings(self):
+        mappings = get_default_scope_mappings()
+        assert mappings["GET /skills"] == ["skills:read"]
+        assert mappings["GET /skills/*"] == ["skills:read"]
+        assert mappings["POST /skills"] == ["skills:write"]
+        assert mappings["PATCH /skills/*"] == ["skills:write"]
+        assert mappings["DELETE /skills/*"] == ["skills:delete"]
+
+
+class TestSkillsRouteScopeResolution:
+    """The skills routes must not be left unmapped -- an unmapped route requires no scopes and
+    would let any authenticated token bypass RBAC. A stored skill's scripts execute on the host,
+    so an unmapped write is remote code execution for anyone holding any token at all."""
+
+    def _required(self, method, path):
+        from agno.os.middleware.jwt import JWTMiddleware
+
+        mw = JWTMiddleware.__new__(JWTMiddleware)
+        mw.scope_mappings = get_default_scope_mappings()
+        return mw._get_required_scopes(method, path)
+
+    def test_all_skills_routes_require_a_skills_scope(self):
+        assert self._required("GET", "/skills") == ["skills:read"]
+        assert self._required("GET", "/skills/demo-skill") == ["skills:read"]
+        assert self._required("POST", "/skills") == ["skills:write"]
+        assert self._required("PATCH", "/skills/demo-skill") == ["skills:write"]
+        assert self._required("DELETE", "/skills/demo-skill") == ["skills:delete"]
+
+    def test_run_only_token_is_denied_on_every_skills_route(self):
+        # The reported hole: a run-only service-account token could CRUD skills because the
+        # routes resolved to no required scopes at all.
+        mappings = get_default_scope_mappings()
+        for method, path in (
+            ("GET", "/skills"),
+            ("GET", "/skills/demo-skill"),
+            ("POST", "/skills"),
+            ("PATCH", "/skills/demo-skill"),
+            ("DELETE", "/skills/demo-skill"),
+        ):
+            result = check_route_scopes(["agents:run"], mappings, method, path)
+            assert result.allowed is False, f"{method} {path} allowed a run-only token"
+
+    def test_read_scope_cannot_write_or_delete(self):
+        mappings = get_default_scope_mappings()
+        assert check_route_scopes(["skills:read"], mappings, "GET", "/skills").allowed is True
+        assert check_route_scopes(["skills:read"], mappings, "GET", "/skills/demo").allowed is True
+        assert check_route_scopes(["skills:read"], mappings, "POST", "/skills").allowed is False
+        assert check_route_scopes(["skills:read"], mappings, "PATCH", "/skills/demo").allowed is False
+        assert check_route_scopes(["skills:read"], mappings, "DELETE", "/skills/demo").allowed is False
+
+    def test_write_scope_creates_and_updates_but_does_not_delete(self):
+        mappings = get_default_scope_mappings()
+        assert check_route_scopes(["skills:write"], mappings, "POST", "/skills").allowed is True
+        assert check_route_scopes(["skills:write"], mappings, "PATCH", "/skills/demo").allowed is True
+        assert check_route_scopes(["skills:write"], mappings, "DELETE", "/skills/demo").allowed is False
+
+    def test_delete_scope_deletes(self):
+        mappings = get_default_scope_mappings()
+        assert check_route_scopes(["skills:delete"], mappings, "DELETE", "/skills/demo").allowed is True
+
+    def test_admin_scope_reaches_every_skills_route(self):
+        mappings = get_default_scope_mappings()
+        for method, path in (("GET", "/skills"), ("POST", "/skills"), ("DELETE", "/skills/demo")):
+            assert check_route_scopes(["agent_os:admin"], mappings, method, path).allowed is True

@@ -287,10 +287,12 @@ def _build_trailing_sections(
     run_context: Optional[RunContext] = None,
     session_state: Optional[Dict[str, Any]] = None,
     add_session_state_to_context: Optional[bool] = None,
+    skills_snippet: Optional[str],
 ) -> str:
     """Build media, additional info, tool instructions, and other trailing sections.
 
-    Shared between sync and async system-message builders.
+    Shared between sync and async system-message builders. The skills snippet is
+    built by each caller, so the async one can await the refresh behind it.
     """
     content = ""
 
@@ -331,10 +333,8 @@ def _build_trailing_sections(
         content += f"<additional_context>\n{team.additional_context.strip()}\n</additional_context>\n\n"
 
     # Add skills to the system prompt
-    if team.skills is not None:
-        skills_snippet = team.skills.get_system_prompt_snippet()
-        if skills_snippet:
-            content += f"\n{skills_snippet}\n"
+    if skills_snippet:
+        content += f"\n{skills_snippet}\n"
 
     if add_session_state_to_context and session_state is not None:
         content += _get_formatted_session_state_for_system_message(team, session_state)
@@ -588,6 +588,7 @@ def get_system_message(
         run_context=run_context,
         session_state=session_state,
         add_session_state_to_context=add_session_state_to_context,
+        skills_snippet=team.skills.get_system_prompt_snippet(user_id=user_id) if team.skills is not None else None,
     )
 
     # Format the full system message with dependencies and session state variables
@@ -829,6 +830,9 @@ async def aget_system_message(
         run_context=run_context,
         session_state=session_state,
         add_session_state_to_context=add_session_state_to_context,
+        skills_snippet=await team.skills.aget_system_prompt_snippet(user_id=user_id)
+        if team.skills is not None
+        else None,
     )
 
     # Format the full system message with dependencies and session state variables

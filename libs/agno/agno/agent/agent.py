@@ -58,6 +58,7 @@ from agno.run.requirement import RunRequirement
 from agno.session import AgentSession, SessionSummaryManager, TeamSession, WorkflowSession
 from agno.session.summary import SessionSummary
 from agno.skills import Skills
+from agno.skills.executor import SkillExecutor
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.log import log_warning
@@ -934,8 +935,17 @@ class Agent:
         return _storage.to_dict(self)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], registry: Optional[Registry] = None) -> "Agent":
-        return _storage.from_dict(cls, data=data, registry=registry)
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        registry: Optional[Registry] = None,
+        *,
+        db: Optional["BaseDb"] = None,
+        skill_executor: Optional[SkillExecutor] = None,
+    ) -> "Agent":
+        # registry keeps its pre-existing second positional slot; db is keyword-only
+        # so external Agent.from_dict(config, registry) calls do not mis-bind it.
+        return _storage.from_dict(cls, data=data, db=db, registry=registry, skill_executor=skill_executor)
 
     def save(
         self,
@@ -956,8 +966,11 @@ class Agent:
         registry: Optional["Registry"] = None,
         label: Optional[str] = None,
         version: Optional[int] = None,
+        skill_executor: Optional[SkillExecutor] = None,
     ) -> Optional["Agent"]:
-        return _storage.load(cls, id=id, db=db, registry=registry, label=label, version=version)
+        return _storage.load(
+            cls, id=id, db=db, registry=registry, label=label, version=version, skill_executor=skill_executor
+        )
 
     def delete(
         self,
@@ -1748,7 +1761,7 @@ def get_agent_by_id(
         if cfg is None:
             raise ValueError(f"Invalid config found for agent {id}")
 
-        agent = Agent.from_dict(cfg, registry=registry)
+        agent = Agent.from_dict(cfg, db=db, registry=registry)
         agent.id = id
 
         return agent
@@ -1784,7 +1797,7 @@ def get_agents(
                         component_id = component["component_id"]
                         if "id" not in agent_config:
                             agent_config["id"] = component_id
-                        agent = Agent.from_dict(agent_config, registry=registry)
+                        agent = Agent.from_dict(agent_config, db=db, registry=registry)
                         agent.id = component_id
                         agent._version = component.get("current_version")
                         agent._stage = config.get("stage")

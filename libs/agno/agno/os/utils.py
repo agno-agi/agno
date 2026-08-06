@@ -297,6 +297,8 @@ async def get_db(
             and db.eval_table_name == table_name
             or hasattr(db, "knowledge_table_name")
             and db.knowledge_table_name == table_name
+            or hasattr(db, "skills_table_name")
+            and db.skills_table_name == table_name
         )
 
         if not is_configured:

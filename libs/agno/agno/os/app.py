@@ -59,6 +59,7 @@ from agno.os.routers.registry import get_registry_router
 from agno.os.routers.schedules import get_schedule_router
 from agno.os.routers.service_accounts import get_service_accounts_router
 from agno.os.routers.session import get_session_router
+from agno.os.routers.skills import get_skills_router
 from agno.os.routers.teams import get_team_router
 from agno.os.routers.traces import get_traces_router
 from agno.os.routers.workflows import get_workflow_router
@@ -573,6 +574,7 @@ class AgentOS:
             get_session_router(dbs=self.dbs),
             get_memory_router(dbs=self.dbs),
             get_learnings_router(dbs=self.dbs, settings=self.settings),
+            get_skills_router(dbs=self.dbs, settings=self.settings),
             get_eval_router(
                 dbs=self.dbs,
                 agents=self._agents or None,  # type: ignore[arg-type]
@@ -1109,6 +1111,7 @@ class AgentOS:
             get_session_router(dbs=self.dbs),
             get_memory_router(dbs=self.dbs),
             get_learnings_router(dbs=self.dbs, settings=self.settings),
+            get_skills_router(dbs=self.dbs, settings=self.settings),
             get_eval_router(
                 dbs=self.dbs,
                 agents=self._agents or None,  # type: ignore[arg-type]
