@@ -226,6 +226,25 @@ def _install_worker_tracing() -> None:
 
         _claim = store.claim_job
         _complete = store.complete_job
+        _enqueue = store.enqueue_job
+
+        async def _traced_enqueue(job, *ca, **ck):
+            # Fires for EVERY durable submit regardless of transport - HTTP/SSE
+            # (agents/teams) and WebSocket (workflows default). The uvicorn
+            # access log only shows the HTTP "POST /...runs" submits; WS submits
+            # ride a single "/workflows/ws" socket with no per-run line, so this
+            # is the only place a WS workflow run's submit is visible with its
+            # run_id. component_type tells you which surface it came from.
+            res = await _enqueue(job, *ca, **ck)
+            # enqueue_job receives the job as a dict (QueuedJob.to_dict()), not
+            # the dataclass - so read keys, not attributes.
+            j = job if isinstance(job, dict) else getattr(job, "__dict__", {})
+            print(
+                f"[{WORKER_LABEL}] ENQUEUED  run={j.get('id')} "
+                f"component={j.get('component_id')} type={j.get('component_type')}",
+                flush=True,
+            )
+            return res
 
         async def _traced_claim(*ca, **ck):
             job = await _claim(*ca, **ck)
@@ -248,6 +267,7 @@ def _install_worker_tracing() -> None:
 
         # only wrap once per store instance
         if not getattr(store, "_ui_traced", False):
+            store.enqueue_job = _traced_enqueue  # type: ignore[assignment]
             store.claim_job = _traced_claim  # type: ignore[assignment]
             store.complete_job = _traced_complete  # type: ignore[assignment]
             store._ui_traced = True  # type: ignore[attr-defined]
@@ -255,7 +275,33 @@ def _install_worker_tracing() -> None:
     _jq.QueueWorker.__init__ = _init  # type: ignore[assignment]
 
 
+# --- WebSocket subscribe/resume tracing -------------------------------------
+# Workflows stream over a WebSocket by default (not SSE), so a UI refresh
+# reconnects by opening a NEW socket and SUBSCRIBING to the existing run - it
+# does NOT call the HTTP POST /resume route. uvicorn only logs the bare socket
+# ("WebSocket /workflows/ws [accepted]" / "connection open") with no run_id, so
+# the reconnect is otherwise invisible. Wrap the WS tail pump - which fires on
+# every subscribe AND every resume, and receives run_id + from_index - to print
+# a line that mirrors the HTTP /resume trace. from_index != None means the
+# client is RESUMING (replay from that index); None means a fresh subscribe.
+def _install_ws_subscribe_tracing() -> None:
+    from agno.os.routers.workflows import router as _wfr
+
+    _orig_pump = _wfr._pump_event_stream_to_websocket
+
+    async def _traced_pump(websocket, run_id, from_index, *a, **k):
+        kind = "WS-RESUME   " if from_index is not None else "WS-SUBSCRIBE"
+        print(
+            f"[{WORKER_LABEL}] {kind} run={run_id} from_index={from_index}",
+            flush=True,
+        )
+        return await _orig_pump(websocket, run_id, from_index, *a, **k)
+
+    _wfr._pump_event_stream_to_websocket = _traced_pump  # type: ignore[assignment]
+
+
 _install_worker_tracing()
+_install_ws_subscribe_tracing()
 
 
 if __name__ == "__main__":

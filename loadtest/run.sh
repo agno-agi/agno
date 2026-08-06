@@ -38,9 +38,12 @@ case "${1:-}" in
   trace)
     # Live combined worker log: each replica prints [replicaN] CLAIMED/COMPLETED
     # run=<id>, so you see which worker handled each background run in real time.
+    # Covers BOTH transports: HTTP/SSE (agents/teams default) via "POST /..." and
+    # WebSocket (workflows default) via the "WebSocket /...ws [accepted]" +
+    # "connection open/closed" + WebSocketDisconnect lines uvicorn emits.
     echo "=== live worker trace (Ctrl-C to stop) ==="
     docker compose -f "$CF" logs -f replica1 replica2 2>&1 \
-      | grep --line-buffered -E "CLAIMED|COMPLETED|Job queue worker|PAUSED|resume|continue|cancel|POST /(agents|teams|workflows)" ;;
+      | grep --line-buffered -E "ENQUEUED|CLAIMED|COMPLETED|WS-SUBSCRIBE|WS-RESUME|Job queue worker|PAUSED|resume|continue|cancel|POST /(agents|teams|workflows)|WebSocket |connection (open|closed)|WebSocketDisconnect" ;;
   phase)
     phase="${2:?phase}"; n="${3:-500}"; c="${4:-200}"
     echo "=== driving phase=$phase n=$n concurrency=$c ==="
