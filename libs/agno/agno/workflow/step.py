@@ -476,8 +476,7 @@ class Step:
                         "strict=False to load the workflow without it."
                     )
                 log_warning(
-                    f"Could not resolve executor_ref='{executor_ref}' from the registry for step "
-                    f"'{config.get('name')}'"
+                    f"Could not resolve executor_ref='{executor_ref}' from the registry for step '{config.get('name')}'"
                 )
 
         # HITL config
