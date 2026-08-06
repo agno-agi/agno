@@ -17,7 +17,7 @@ import pytest
 from pydantic import BaseModel
 
 from agno.registry.registry import Registry
-from agno.tools.function import Function
+from agno.tools.function import RUNTIME_ONLY_FIELDS, SERIALIZED_FIELDS, Function
 from agno.tools.toolkit import Toolkit
 
 # =============================================================================
@@ -736,6 +736,106 @@ class TestToolkitQualifiedRehydration:
 
         assert len(warnings) == 1
         assert "read_file" in warnings[0]
+
+
+class TestRuntimeOnlyFieldRestoration:
+    """Behavior the storage layer never writes comes back from the live Function."""
+
+    def test_every_unserialized_field_is_restored(self):
+        """The invariant, so a new Function field cannot be silently dropped on
+        reload: every field to_dict() omits is either restored from the live
+        source or handled explicitly."""
+        explicit = {"entrypoint", "owning_toolkit", "source_toolkit"}
+
+        unaccounted = set(Function.model_fields) - set(SERIALIZED_FIELDS) - explicit - set(RUNTIME_ONLY_FIELDS)
+
+        assert unaccounted == set(), (
+            f"Function fields {sorted(unaccounted)} are neither serialized by to_dict() nor "
+            "restored by RUNTIME_ONLY_FIELDS, so they are lost on reload."
+        )
+
+    def test_user_input_settings_survive_a_round_trip(self):
+        """Without these, process_entrypoint stops excluding the user-supplied
+        field, so the model is handed a `required` entry the schema never
+        defines and nothing is left to collect it."""
+
+        def send_email(to: str, subject: str, body: str) -> str:
+            """Send an email."""
+            return "sent"
+
+        live = Function.from_callable(send_email)
+        live.requires_user_input = True
+        live.user_input_fields = ["body"]
+        live.process_entrypoint()
+        assert sorted(live.parameters["required"]) == ["subject", "to"]
+
+        reg = Registry(tools=[live])
+        rehydrated = reg.rehydrate_function(live.to_dict())
+        rehydrated.process_entrypoint()
+
+        assert rehydrated.requires_user_input is True
+        assert rehydrated.user_input_fields == ["body"]
+        assert set(rehydrated.parameters["required"]) <= set(rehydrated.parameters["properties"])
+
+    def test_control_flow_and_cache_settings_survive_a_round_trip(self):
+        def note(text: str) -> str:
+            """Note."""
+            return text
+
+        live = Function.from_callable(note)
+        live.show_result = True
+        live.stop_after_tool_call = True
+        live.external_execution_silent = True
+        live.cache_results = True
+        live.cache_dir = "/tmp/agno-cache"
+        live.cache_ttl = 60
+
+        rehydrated = Registry(tools=[live]).rehydrate_function(live.to_dict())
+
+        assert rehydrated.show_result is True
+        assert rehydrated.stop_after_tool_call is True
+        assert rehydrated.external_execution_silent is True
+        assert rehydrated.cache_results is True
+        assert rehydrated.cache_dir == "/tmp/agno-cache"
+        assert rehydrated.cache_ttl == 60
+
+    def test_hooks_are_restored_by_reference(self):
+        """Hooks are callables the storage layer cannot write at all."""
+
+        def note(text: str) -> str:
+            """Note."""
+            return text
+
+        def a_hook(function_call):
+            return None
+
+        live = Function.from_callable(note)
+        live.pre_hook = a_hook
+        live.post_hook = a_hook
+        live.tool_hooks = [a_hook]
+
+        rehydrated = Registry(tools=[live]).rehydrate_function(live.to_dict())
+
+        assert rehydrated.pre_hook is a_hook
+        assert rehydrated.post_hook is a_hook
+        assert rehydrated.tool_hooks == [a_hook]
+
+    def test_serialized_fields_keep_the_saved_value(self):
+        """The saved config owns what to_dict() carries: a later registry edit
+        to those must not silently rewrite an existing component."""
+
+        def note(text: str) -> str:
+            """Note."""
+            return text
+
+        live = Function.from_callable(note)
+        live.requires_confirmation = True
+        func_dict = live.to_dict()
+
+        live.requires_confirmation = False
+        rehydrated = Registry(tools=[live]).rehydrate_function(func_dict)
+
+        assert rehydrated.requires_confirmation is True
 
 
 class TestRehydrateFunctionsBatch:

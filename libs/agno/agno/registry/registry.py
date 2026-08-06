@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from agno.db.base import BaseDb
 from agno.models.base import Model
-from agno.tools.function import Function
+from agno.tools.function import RUNTIME_ONLY_FIELDS, Function
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_warning
 from agno.vectordb.base import VectorDb
@@ -208,15 +208,11 @@ class Registry:
                 )
         if isinstance(source, Function):
             func.entrypoint = source.entrypoint
-            # Instruction settings are intentionally not serialized. Restore
-            # them from the live registry Function so registry edits apply on
-            # the next component load.
-            func.instructions = source.instructions
-            func.add_instructions = source.add_instructions
-            # Entrypoints built for a fixed schema (e.g. MCP call proxies) must
-            # not be re-introspected at run time: processing would rebuild the
-            # schema's `required` list from the proxy's signature.
-            func.skip_entrypoint_processing = source.skip_entrypoint_processing
+            # Behavior the storage layer never writes comes from the live
+            # registry Function, so registry-side edits apply on the next
+            # component load. See RUNTIME_ONLY_FIELDS for what and why.
+            for field_name in RUNTIME_ONLY_FIELDS:
+                setattr(func, field_name, getattr(source, field_name))
             # Only when the bound function is the one the config named, or the
             # config named no toolkit at all. A config whose recorded toolkit
             # has left the registry binds the flat slot, which may belong to a

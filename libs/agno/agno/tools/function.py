@@ -134,6 +134,50 @@ class UserFeedbackQuestion:
         )
 
 
+# What Function.to_dict() writes and from_dict() reads back: the choices that
+# belong to the saved component, so a later registry edit must not rewrite them.
+SERIALIZED_FIELDS = (
+    "name",
+    "description",
+    "parameters",
+    "strict",
+    "requires_confirmation",
+    "external_execution",
+    "approval_type",
+)
+
+# Fields Function.to_dict() deliberately omits and from_dict() cannot rebuild.
+# They describe how the tool behaves rather than what the saved component chose,
+# and several hold callables that do not serialize at all. Registry rehydration
+# copies them back from the live Function, so a reloaded component behaves like
+# the tool it was built from and picks up registry-side edits. The fields
+# to_dict() *does* carry stay as persisted: the saved config owns those.
+# Consumed by Registry._rehydrate_function.
+RUNTIME_ONLY_FIELDS = (
+    "instructions",
+    "add_instructions",
+    # Entrypoints built for a fixed schema (e.g. MCP call proxies) must not be
+    # re-introspected at run time: processing would rebuild the schema's
+    # `required` list from the proxy's signature.
+    "skip_entrypoint_processing",
+    "show_result",
+    "stop_after_tool_call",
+    "pre_hook",
+    "post_hook",
+    "tool_hooks",
+    # Without these, process_entrypoint stops excluding the user-supplied
+    # fields, so `required` lists a property the schema never defines and the
+    # gate that would have collected it is gone.
+    "requires_user_input",
+    "user_input_fields",
+    "user_input_schema",
+    "external_execution_silent",
+    "cache_results",
+    "cache_dir",
+    "cache_ttl",
+)
+
+
 class Function(BaseModel):
     """Model for storing functions that can be called by an agent."""
 
@@ -223,18 +267,7 @@ class Function(BaseModel):
     _files: Optional[Sequence[File]] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return self.model_dump(
-            exclude_none=True,
-            include={
-                "name",
-                "description",
-                "parameters",
-                "strict",
-                "requires_confirmation",
-                "external_execution",
-                "approval_type",
-            },
-        )
+        return self.model_dump(exclude_none=True, include=set(SERIALIZED_FIELDS))
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Function":
