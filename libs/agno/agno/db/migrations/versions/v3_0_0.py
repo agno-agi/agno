@@ -21,9 +21,12 @@ rows keep a NULL user_id, so they stay visible to admins and to unscoped
 deployments while a scoped caller sees none of them. Document backends store
 these records as documents and pick the field up without a schema change.
 
-To isolate another table, declare user_id on that table in each adapter schema
-and add its table type to ``USER_ID_TABLE_TYPES`` — the per-backend functions
-read the column type from the schema, so they need no change.
+To isolate another table, declare user_id on that table in the adapter schemas
+that have it, register the table type in ``MigrationManager`` and add it to
+``USER_ID_TABLE_TYPES`` — the per-backend functions read the column type from
+the schema, so they need no change. A backend whose schema does not declare the
+column is skipped, so a table type that only some adapters support is safe to
+list here.
 """
 
 import json
@@ -45,9 +48,9 @@ BATCH_SIZE = 50
 
 
 # Table types that get a user_id column and index, so AgentOS can scope them per user.
-# Extend this tuple to isolate another table whose schema already declares user_id;
-# the per-backend functions need no change.
-USER_ID_TABLE_TYPES = ("evals",)
+# Extend this tuple to isolate another table; the per-backend functions need no change,
+# and backends whose schema does not declare the column skip it.
+USER_ID_TABLE_TYPES = ("evals", "components")
 
 
 def up(db: BaseDb, table_type: str, table_name: str) -> bool:
@@ -981,13 +984,14 @@ def _migrate_mysql_like_sessions(db: BaseDb, table_name: str) -> bool:
 
 async def _migrate_async_mysql_sessions(db: AsyncBaseDb, table_name: str) -> bool:
     """Async MySQL variant of :func:`_migrate_mysql_like_sessions`."""
-    db_schema = db.db_schema or "agno"  # type: ignore
-
     runs_table = await db._get_table(table_type="runs", create_table_if_not_found=True)  # type: ignore
     if runs_table is None:
         return False
 
     async with db.async_session_factory() as sess, sess.begin():  # type: ignore
+        # SingleStore leaves db_schema as None and uses the connection's database
+        db_schema = db.db_schema or (await sess.execute(text("SELECT DATABASE()"))).scalar()  # type: ignore
+
         table_exists = (
             await sess.execute(
                 text(
@@ -1108,10 +1112,12 @@ def _revert_mysql_like_sessions(db: BaseDb, table_name: str) -> bool:
 
 async def _revert_async_mysql_sessions(db: AsyncBaseDb, table_name: str) -> bool:
     """Async MySQL variant of :func:`_revert_mysql_like_sessions`."""
-    db_schema = db.db_schema or "agno"  # type: ignore
     runs_table_name = db.runs_table_name  # type: ignore
 
     async with db.async_session_factory() as sess, sess.begin():  # type: ignore
+        # SingleStore leaves db_schema as None and uses the connection's database
+        db_schema = db.db_schema or (await sess.execute(text("SELECT DATABASE()"))).scalar()  # type: ignore
+
         runs_table_exists = (
             await sess.execute(
                 text(
@@ -2127,11 +2133,16 @@ def _revert_surrealdb(db: BaseDb, table_type: str, table_name: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _user_id_column_ddl(db, table_type: str) -> str:
+def _user_id_column_ddl(db, table_type: str) -> Optional[str]:
     """Compile the user_id column type from the adapter's own schema for this table.
 
     Keeps a migrated table identical to one created fresh from the schema, so a
     later migration reading INFORMATION_SCHEMA sees the same type either way.
+
+    Returns None when this adapter's schema has no such table, or has it without a
+    user_id column. Not every table type exists on every backend, and the SQL
+    adapters report an unknown table as version 2.0.0 rather than None, so the
+    migration is attempted there and has to bow out on its own.
     """
     db_type = type(db).__name__
 
@@ -2145,7 +2156,10 @@ def _user_id_column_ddl(db, table_type: str) -> str:
     else:
         from agno.db.sqlite import schemas
 
-    column_type = schemas.get_table_schema_definition(table_type)["user_id"]["type"]
+    try:
+        column_type = schemas.get_table_schema_definition(table_type)["user_id"]["type"]
+    except (ValueError, KeyError):
+        return None
     return column_type().compile(dialect=db.db_engine.dialect)
 
 
@@ -2157,6 +2171,8 @@ def _migrate_postgres_user_id(db: BaseDb, table_type: str, table_name: str) -> b
     full_table = f"{quoted_schema}.{quote_db_identifier(db_type, table_name)}"
     index_name = f"idx_{table_name}_user_id"
     column_ddl = _user_id_column_ddl(db, table_type)
+    if column_ddl is None:
+        return False
 
     with db.Session() as sess, sess.begin():  # type: ignore
         table_exists = sess.execute(
@@ -2195,6 +2211,8 @@ async def _migrate_async_postgres_user_id(db: AsyncBaseDb, table_type: str, tabl
     full_table = f"{quoted_schema}.{quote_db_identifier(db_type, table_name)}"
     index_name = f"idx_{table_name}_user_id"
     column_ddl = _user_id_column_ddl(db, table_type)
+    if column_ddl is None:
+        return False
 
     async with db.async_session_factory() as sess, sess.begin():  # type: ignore
         result = await sess.execute(
@@ -2232,6 +2250,8 @@ def _migrate_mysql_like_user_id(db: BaseDb, table_type: str, table_name: str) ->
     db_type = type(db).__name__
     index_name = f"idx_{table_name}_user_id"
     column_ddl = _user_id_column_ddl(db, table_type)
+    if column_ddl is None:
+        return False
 
     with db.Session() as sess, sess.begin():  # type: ignore
         # SingleStore leaves db_schema as None and uses the connection's database
@@ -2272,6 +2292,8 @@ async def _migrate_async_mysql_user_id(db: AsyncBaseDb, table_type: str, table_n
     db_type = type(db).__name__
     index_name = f"idx_{table_name}_user_id"
     column_ddl = _user_id_column_ddl(db, table_type)
+    if column_ddl is None:
+        return False
 
     async with db.async_session_factory() as sess, sess.begin():  # type: ignore
         db_schema = db.db_schema or (await sess.execute(text("SELECT DATABASE()"))).scalar()  # type: ignore
@@ -2316,6 +2338,8 @@ def _migrate_sqlite_user_id(db: BaseDb, table_type: str, table_name: str) -> boo
     quoted_table = quote_db_identifier(db_type, table_name)
     index_name = f"idx_{table_name}_user_id"
     column_ddl = _user_id_column_ddl(db, table_type)
+    if column_ddl is None:
+        return False
 
     with db.Session() as sess, sess.begin():  # type: ignore
         table_exists = sess.execute(
@@ -2349,6 +2373,8 @@ async def _migrate_async_sqlite_user_id(db: AsyncBaseDb, table_type: str, table_
     quoted_table = quote_db_identifier(db_type, table_name)
     index_name = f"idx_{table_name}_user_id"
     column_ddl = _user_id_column_ddl(db, table_type)
+    if column_ddl is None:
+        return False
 
     async with db.async_session_factory() as sess, sess.begin():  # type: ignore
         result = await sess.execute(

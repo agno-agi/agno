@@ -222,6 +222,31 @@ def test_adding_a_table_type_needs_no_backend_changes(monkeypatch):
     assert v3_0_0.down(db, "memories", "agno_memories") is True
 
 
+def test_table_type_the_backend_does_not_have_is_skipped(monkeypatch):
+    """A table type only some adapters support must be skipped, not raise.
+
+    The SQL adapters report an unknown table as version 2.0.0 rather than None, so
+    MigrationManager runs the migration anyway and it has to bow out on its own.
+    """
+    from agno.db.migrations.versions import v3_0_0
+
+    db, _ = _new_db()
+    monkeypatch.setattr(v3_0_0, "USER_ID_TABLE_TYPES", ("evals", "not_a_real_table"))
+
+    assert v3_0_0.up(db, "not_a_real_table", "agno_not_a_real_table") is False
+    assert v3_0_0.down(db, "not_a_real_table", "agno_not_a_real_table") is False
+
+
+@pytest.mark.asyncio
+async def test_async_adapters_can_migrate_a_components_table():
+    """MigrationManager reads the table name off the db, so the async adapters need it
+    even though they cannot read or write components themselves."""
+    db = AsyncSqliteDb(db_file=os.path.join(tempfile.mkdtemp(), "test_components.db"))
+    assert db.components_table_name == "agno_components"
+
+    await MigrationManager(db).up()
+
+
 def test_document_backend_is_a_noop():
     """Document backends carry user_id without a schema change."""
     from agno.db.json import JsonDb

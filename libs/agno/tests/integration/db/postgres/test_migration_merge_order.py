@@ -44,7 +44,7 @@ def cleanup_e2e_tables(postgres_db_real: PostgresDb):
     seeds raw SQL, so we can't rely on ORM-level cleanup."""
 
     def _wipe():
-        for table in ("test_sessions", "agno_runs"):
+        for table in ("test_sessions", postgres_db_real.runs_table_name):
             with postgres_db_real.Session() as sess:
                 try:
                     sess.execute(
@@ -124,7 +124,7 @@ def _delete_runs_from_table(postgres_db_real: PostgresDb, run_ids: List[str]) ->
         return
     with postgres_db_real.Session() as sess:
         sess.execute(
-            text("DELETE FROM test_schema.agno_runs WHERE run_id = ANY(:rids)"),
+            text(f"DELETE FROM test_schema.{postgres_db_real.runs_table_name} WHERE run_id = ANY(:rids)"),
             {"rids": run_ids},
         )
         sess.commit()
@@ -133,7 +133,10 @@ def _delete_runs_from_table(postgres_db_real: PostgresDb, run_ids: List[str]) ->
 def _get_runs_table_ids(postgres_db_real: PostgresDb) -> List[str]:
     with postgres_db_real.Session() as sess:
         rows = sess.execute(
-            text("SELECT run_id FROM test_schema.agno_runs WHERE session_id = :sid ORDER BY run_index"),
+            text(
+                f"SELECT run_id FROM test_schema.{postgres_db_real.runs_table_name} "
+                "WHERE session_id = :sid ORDER BY run_index"
+            ),
             {"sid": SESSION_ID},
         ).fetchall()
     return [r[0] for r in rows]
@@ -158,7 +161,10 @@ def _read_merged_runs(postgres_db_real: PostgresDb) -> List[dict]:
     on the ORM schema surfacing the (legacy) ``runs`` column."""
     with postgres_db_real.Session() as sess:
         table_rows = sess.execute(
-            text("SELECT run_data FROM test_schema.agno_runs WHERE session_id = :sid ORDER BY run_index"),
+            text(
+                f"SELECT run_data FROM test_schema.{postgres_db_real.runs_table_name} "
+                "WHERE session_id = :sid ORDER BY run_index"
+            ),
             {"sid": SESSION_ID},
         ).fetchall()
         table_runs = [r[0] for r in table_rows]
@@ -227,8 +233,8 @@ class TestPartialMigrationMergeOrder:
         with postgres_db_real.Session() as sess:
             sess.execute(
                 text(
-                    """
-                    INSERT INTO test_schema.agno_runs
+                    f"""
+                    INSERT INTO test_schema.{postgres_db_real.runs_table_name}
                     (run_id, session_id, run_type, agent_id, user_id, status, run_index, run_data, created_at, updated_at)
                     VALUES (:rid, :sid, 'agent', :aid, :uid, 'COMPLETED', 2, CAST(:data AS jsonb), :now, :now)
                     """
@@ -257,7 +263,7 @@ class TestPartialMigrationMergeOrder:
         with postgres_db_real.Session() as sess:
             sess.execute(
                 text(
-                    "UPDATE test_schema.agno_runs "
+                    f"UPDATE test_schema.{postgres_db_real.runs_table_name} "
                     "SET run_data = jsonb_set(run_data, '{content}', '\"table-fresh\"'::jsonb) "
                     "WHERE run_id = 'r1'"
                 )
