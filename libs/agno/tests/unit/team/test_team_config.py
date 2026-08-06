@@ -18,6 +18,7 @@ import pytest
 
 from agno.agent.agent import Agent
 from agno.db.base import BaseDb, ComponentType
+from agno.db.sqlite import SqliteDb
 from agno.registry import Registry
 from agno.session import TeamSession
 from agno.team.team import Team, get_team_by_id, get_teams
@@ -290,6 +291,88 @@ class TestTeamToDict:
         assert config["mode"] == "coordinate"
         assert "max_iterations" not in config  # default=10 should not be serialized
 
+    def test_to_dict_records_owning_toolkit(self):
+        """Functions flattened from a toolkit carry the toolkit's name so
+        rehydration can re-bind same-named functions to the right toolkit
+        (see Registry.rehydrate_function). Plain tools stay unqualified."""
+        from agno.tools.toolkit import Toolkit
+
+        def read_file(path: str) -> str:
+            """Read a file."""
+            return path
+
+        def plain_tool(x: int) -> int:
+            """A plain callable tool."""
+            return x
+
+        toolkit = Toolkit(name="agent_files", tools=[read_file])
+        team = Team(
+            id="toolkit-team",
+            members=[],
+            tools=[toolkit, plain_tool],
+        )
+
+        config = team.to_dict()
+
+        tools_by_name = {t["name"]: t for t in config["tools"]}
+        assert tools_by_name["read_file"]["toolkit"] == "agent_files"
+        assert "toolkit" not in tools_by_name["plain_tool"]
+
+    def test_to_dict_round_trip_preserves_toolkit(self):
+        """A rehydrated team holds bare Functions, not Toolkits; their
+        owning_toolkit re-stamps the "toolkit" key so the attribution
+        survives load -> save (e.g. a Studio edit)."""
+        from agno.registry import Registry
+        from agno.tools.toolkit import Toolkit
+
+        def read_file(path: str) -> str:
+            """Read a file."""
+            return path
+
+        toolkit = Toolkit(name="agent_files", tools=[read_file])
+        team = Team(id="round-trip-team", members=[], tools=[toolkit])
+        registry = Registry(tools=[toolkit])
+
+        config = team.to_dict()
+        assert config["tools"][0]["toolkit"] == "agent_files"
+
+        loaded = Team.from_dict(config, registry=registry)
+        assert loaded.tools[0].entrypoint is read_file
+
+        config_resaved = loaded.to_dict()
+
+        tools_by_name = {t["name"]: t for t in config_resaved["tools"]}
+        assert tools_by_name["read_file"]["toolkit"] == "agent_files"
+
+    def test_to_dict_serializes_per_get_functions(self):
+        """The team serializer reads get_functions() -- what the team runtime
+        exposes -- so a toolkit subclass hiding a member never persists it."""
+        from agno.tools.toolkit import Toolkit
+
+        def only_a(x: str) -> str:
+            """Tool a."""
+            return x
+
+        def _make_search(tag):
+            def search(q: str) -> str:
+                """Search."""
+                return f"{tag}:{q}"
+
+            return search
+
+        class GatedToolkit(Toolkit):
+            def get_functions(self):
+                return {name: f for name, f in self.functions.items() if name != "search"}
+
+        alpha = GatedToolkit(name="alpha", tools=[only_a, _make_search("alpha")])
+        beta = Toolkit(name="beta", tools=[_make_search("beta")])
+        team = Team(id="gated-team", members=[], tools=[alpha, beta])
+
+        config = team.to_dict()
+
+        serialized = {(t["name"], t.get("toolkit")) for t in config["tools"]}
+        assert serialized == {("only_a", "alpha"), ("search", "beta")}
+
 
 # =============================================================================
 # from_dict() Tests
@@ -378,20 +461,23 @@ class TestTeamFromDict:
             assert team.db == mock_db
 
     def test_from_dict_with_registry_tools(self):
-        """Test from_dict uses registry to rehydrate tools."""
-        config = {
-            "id": "tools-team",
-            "tools": [{"name": "search", "description": "Search the web"}],
-        }
+        """from_dict rehydrates the whole tools list in ONE batch call, so a
+        component load shares a single lookup-rebuild budget."""
+        tool_dicts = [
+            {"name": "search", "description": "Search the web"},
+            {"name": "read_file", "description": "Read a file"},
+            {"name": "write_file", "description": "Write a file"},
+        ]
+        config = {"id": "tools-team", "tools": list(tool_dicts)}
 
         mock_registry = MagicMock()
-        mock_tool = MagicMock()
-        mock_registry.rehydrate_function.return_value = mock_tool
+        mock_tools = [MagicMock(), MagicMock(), MagicMock()]
+        mock_registry.rehydrate_functions.return_value = mock_tools
 
         team = Team.from_dict(config, registry=mock_registry)
 
-        mock_registry.rehydrate_function.assert_called_once()
-        assert team.tools == [mock_tool]
+        mock_registry.rehydrate_functions.assert_called_once_with(tool_dicts)
+        assert team.tools == mock_tools
 
     def test_from_dict_without_registry_removes_tools(self):
         """Test from_dict removes tools when no registry is provided."""
@@ -421,6 +507,56 @@ class TestTeamFromDict:
 
             mock_get_agent.assert_called_once_with(id="agent-1", db=mock_db, registry=None)
             assert team.members == [mock_agent]
+
+    def test_from_dict_falls_back_to_registry_for_member_agent(self, mock_db, member_agent):
+        """Test from_dict resolves a code-defined member agent via the registry.
+
+        Regression test for teams created via the AgentOS UI whose members are
+        code-defined agents (not persisted as DB components). The DB lookup
+        returns None, so the registry fallback must find the agent instead of
+        silently dropping it.
+        """
+        config = {
+            "id": "members-team",
+            "members": [{"type": "agent", "agent_id": "member-agent"}],
+        }
+        registry = Registry(agents=[member_agent])
+
+        # DB has no such component -> get_agent_by_id returns None
+        with patch("agno.agent.get_agent_by_id", return_value=None):
+            team = Team.from_dict(config, db=mock_db, registry=registry)
+
+        assert len(team.members) == 1
+        assert team.members[0].id == "member-agent"
+        # A deep copy is used so the shared registry singleton is not mutated on run
+        assert team.members[0] is not member_agent
+
+    def test_from_dict_member_registry_fallback_without_db(self, member_agent):
+        """Test from_dict resolves a registry member even when db is None."""
+        config = {
+            "id": "members-team",
+            "members": [{"type": "agent", "agent_id": "member-agent"}],
+        }
+        registry = Registry(agents=[member_agent])
+
+        team = Team.from_dict(config, db=None, registry=registry)
+
+        assert len(team.members) == 1
+        assert team.members[0].id == "member-agent"
+        assert team.members[0] is not member_agent
+
+    def test_from_dict_unknown_member_is_dropped(self, mock_db):
+        """Test from_dict drops a member that is in neither db nor registry."""
+        config = {
+            "id": "members-team",
+            "members": [{"type": "agent", "agent_id": "ghost-agent"}],
+        }
+        registry = Registry(agents=[])
+
+        with patch("agno.agent.get_agent_by_id", return_value=None):
+            team = Team.from_dict(config, db=mock_db, registry=registry)
+
+        assert team.members == []
 
     def test_from_dict_roundtrip(self, team_with_settings):
         """Test that to_dict -> from_dict preserves team configuration."""
@@ -662,6 +798,75 @@ class TestTeamLoad:
         assert len(team.members) == 1
         assert team.members[0].id == "agent-1"
 
+    def test_load_preserves_registry_members_without_graph_children(self, mock_db, member_agent):
+        """Test load keeps registry-resolved members when the graph has no children.
+
+        Code-defined member agents are not DB components, so the loaded graph has
+        no children for them. _hydrate_from_graph must not clobber the members
+        that from_dict resolved via the registry.
+        """
+        mock_db.load_component_graph.return_value = {
+            "component": {"component_id": "team-with-registry-member"},
+            "config": {
+                "config": {
+                    "id": "team-with-registry-member",
+                    "name": "Team",
+                    "members": [{"type": "agent", "agent_id": "member-agent"}],
+                }
+            },
+            "children": [],
+        }
+        registry = Registry(agents=[member_agent])
+
+        with patch("agno.agent.get_agent_by_id", return_value=None):
+            team = Team.load(id="team-with-registry-member", db=mock_db, registry=registry)
+
+        assert team is not None
+        assert len(team.members) == 1
+        assert team.members[0].id == "member-agent"
+
+    def test_load_merges_graph_and_registry_members(self, mock_db, member_agent):
+        """Test load merges DB-persisted graph children with registry members."""
+        mock_db.load_component_graph.return_value = {
+            "component": {"component_id": "mixed-team"},
+            "config": {
+                "config": {
+                    "id": "mixed-team",
+                    "name": "Mixed Team",
+                    "members": [
+                        {"type": "agent", "agent_id": "member-agent"},
+                        {"type": "agent", "agent_id": "db-agent"},
+                    ],
+                }
+            },
+            "children": [
+                {
+                    "link": {"meta": {"type": "agent"}},
+                    "graph": {
+                        "component": {"component_id": "db-agent"},
+                        "config": {"config": {"id": "db-agent", "name": "DB Agent"}},
+                    },
+                }
+            ],
+        }
+        registry = Registry(agents=[member_agent])
+
+        # DB lookup only resolves the graph-backed member; registry resolves the other
+        def fake_get_agent(id, db, registry):  # noqa: A002
+            if id == "db-agent":
+                agent = Agent(id="db-agent", name="DB Agent")
+                return agent
+            return None
+
+        with patch("agno.agent.get_agent_by_id", side_effect=fake_get_agent):
+            team = Team.load(id="mixed-team", db=mock_db, registry=registry)
+
+        assert team is not None
+        member_ids = [m.id for m in team.members]
+        assert "member-agent" in member_ids
+        assert "db-agent" in member_ids
+        assert len(team.members) == 2
+
     def test_load_returns_none_when_not_found(self, mock_db):
         """Test load returns None when team not found."""
         mock_db.load_component_graph.return_value = None
@@ -694,6 +899,25 @@ class TestTeamLoad:
 
         assert team is not None
         assert team.db == mock_db
+
+    def test_load_round_trips_on_real_sqlite_db(self, tmp_path):
+        """Test save/load round-trips on a real SqliteDb.
+
+        The mock_db fixture accepts any call signature, so only a real backend
+        catches an override whose signature diverges from BaseDb (SqliteDb's
+        load_component_graph rejected the label kwarg that load() always passes).
+        """
+        db = SqliteDb(db_file=str(tmp_path / "team_load.db"))
+        team = Team(id="rt-team", name="Round Trip Team", members=[Agent(id="rt-agent", name="Round Trip Agent")])
+        team.save(db=db)
+
+        loaded = Team.load(id="rt-team", db=db)
+
+        assert loaded is not None
+        assert loaded.id == "rt-team"
+        assert loaded.name == "Round Trip Team"
+        assert len(loaded.members) == 1
+        assert loaded.members[0].id == "rt-agent"
 
 
 # =============================================================================
@@ -801,7 +1025,7 @@ class TestGetTeamById:
         mock_db.get_config.return_value = {"config": {"id": "registry-team", "tools": [{"name": "calc"}]}}
 
         mock_registry = MagicMock()
-        mock_registry.rehydrate_function.return_value = MagicMock()
+        mock_registry.rehydrate_functions.return_value = [MagicMock()]
 
         team = get_team_by_id(db=mock_db, id="registry-team", registry=mock_registry)
 
@@ -889,7 +1113,7 @@ class TestGetTeams:
         mock_db.get_config.return_value = {"config": {"id": "tools-team", "tools": [{"name": "search"}]}}
 
         mock_registry = MagicMock()
-        mock_registry.rehydrate_function.return_value = MagicMock()
+        mock_registry.rehydrate_functions.return_value = [MagicMock()]
 
         teams = get_teams(db=mock_db, registry=mock_registry)
 

@@ -262,14 +262,24 @@ class BasePDFReader(Reader):
         # Use provided password or fall back to instance password
         # Note: Empty string "" is a valid password for PDFs with blank user password
         pdf_password = self.password if password is None else password
+
+        # If no password provided, try blank password first
+        # Many PDFs are "encrypted" with empty user password (for edit/print restrictions only)
         if pdf_password is None:
+            try:
+                if doc_reader.decrypt(""):
+                    log_debug(f'Successfully decrypted PDF file "{doc_name}"')
+                    return True
+            except Exception:
+                pass
             log_error(f'PDF file "{doc_name}" is password protected but no password provided')
             return False
 
+        # Try the provided password
         try:
             decrypted_pdf = doc_reader.decrypt(pdf_password)
             if decrypted_pdf:
-                log_debug(f'Successfully decrypted PDF file "{doc_name}" with user password')
+                log_debug(f'Successfully decrypted PDF file "{doc_name}" with provided password')
                 return True
             else:
                 log_error(f'Failed to decrypt PDF file "{doc_name}": incorrect password')
