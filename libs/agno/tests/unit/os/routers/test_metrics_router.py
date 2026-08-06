@@ -6,8 +6,9 @@ caller (admin, or any caller when ``user_isolation`` is off) sees the legacy
 one-row-per-day aggregate.
 """
 
+import logging
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -259,18 +260,47 @@ class TestAggregationEdges:
 
         assert resp.json()["metrics"][0]["id"] == "2026-01-01_daily"
 
-    def test_unhashable_date_is_skipped_not_a_500(self, client, mock_db, alice_row):
-        """Key-value backends can hold a record whose date never keys a bucket."""
+    def test_malformed_date_is_skipped_and_logged(self, client, mock_db, alice_row, caplog):
+        """Key-value backends can hold a record whose date is not a day.
+
+        It cannot be rendered, so it is skipped -- but an unscoped read that
+        quietly returns fewer runs than the owner's own read has to say so.
+        """
         poison = _make_metric("bob", runs=3)
         poison["date"] = {"broken": True}
         mock_db.get_metrics.return_value = ([alice_row, poison], int(time.time()))
-        with _scope(None):
+        with _scope(None), caplog.at_level(logging.WARNING):
             resp = client.get("/metrics")
 
         assert resp.status_code == 200
         metrics = resp.json()["metrics"]
         assert len(metrics) == 1
         assert metrics[0]["agent_runs_count"] == 2
+        assert "is not a day" in caplog.text
+
+    def test_one_day_stored_in_mixed_types_folds_into_one_bucket(self, client, mock_db):
+        """The same day arrives as a date, a datetime or a string per backend."""
+        rows = [_make_metric("alice", runs=2), _make_metric("bob", runs=3), _make_metric("carol", runs=4)]
+        rows[1]["date"] = datetime.fromisoformat(f"{rows[1]['date']}T00:00:00")
+        rows[2]["date"] = date.fromisoformat(rows[2]["date"])
+        mock_db.get_metrics.return_value = (rows, int(time.time()))
+        with _scope(None):
+            resp = client.get("/metrics")
+
+        metrics = resp.json()["metrics"]
+        assert len(metrics) == 1
+        assert metrics[0]["agent_runs_count"] == 9
+
+    def test_mixed_timestamp_types_do_not_fail_the_read(self, client, mock_db, alice_row):
+        """One row stamped with a datetime must not break the epoch comparison."""
+        other = _make_metric("bob", runs=3)
+        other["created_at"] = datetime.fromisoformat("2026-01-01T00:00:00")
+        mock_db.get_metrics.return_value = ([alice_row, other], int(time.time()))
+        with _scope(None):
+            resp = client.get("/metrics")
+
+        assert resp.status_code == 200
+        assert resp.json()["metrics"][0]["agent_runs_count"] == 5
 
     def test_ids_are_unique_across_buckets(self, client, mock_db, alice_row):
         """Every synthesised id keys exactly one returned bucket."""

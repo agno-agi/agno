@@ -167,7 +167,7 @@ def _schedule_owner_from_header(request: Request) -> Optional[str]:
     survives the hop but carries no usable identity is refused rather than
     treated as "unowned", which would widen the call to every user's data.
     """
-    from agno.os.auth import SCHEDULE_OWNER_HEADER
+    from agno.db.schemas.scheduler import SCHEDULE_OWNER_HEADER
     from agno.os.middleware.jwt import is_reserved_principal
 
     raw = request.headers.get(SCHEDULE_OWNER_HEADER)

@@ -2268,7 +2268,7 @@ class AsyncMongoDb(AsyncBaseDb):
             raise e
 
     # -- Knowledge methods --
-    # The owner-scope predicate is consistently "rows I own, plus rows nobody
+    # The owner-scope predicate for reads is "rows I own, plus rows nobody
     # owns (admin / org-wide shared content)". When ``user_id`` is ``None``
     # the predicate is dropped entirely (admin / RBAC-off / single-user view).
 
@@ -2283,7 +2283,8 @@ class AsyncMongoDb(AsyncBaseDb):
         Args:
             id (str): The ID of the knowledge row to delete.
             user_id (Optional[str]): Owner-scoping filter. When set, only
-                deletes if the row is owned by ``user_id`` OR is unowned (NULL).
+                deletes if the row is owned by ``user_id``. Unowned rows are
+                shared content and are not the caller's to delete.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -2294,9 +2295,8 @@ class AsyncMongoDb(AsyncBaseDb):
                 return
 
             query: Dict[str, Any] = {"id": id}
-            scope = self._knowledge_user_scope_filter(user_id)
-            if scope is not None:
-                query = {"$and": [query, scope]}
+            if user_id is not None:
+                query["user_id"] = user_id
             await collection.delete_one(query)
 
             log_debug(f"Deleted knowledge content with id '{id}'")

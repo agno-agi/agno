@@ -107,18 +107,18 @@ class TestManagerList:
     def test_list_all(self, mgr, mock_db):
         result = mgr.list()
         assert len(result) == 1
-        mock_db.get_schedules.assert_called_once_with(enabled=None, limit=100, page=1)
+        mock_db.get_schedules.assert_called_once_with(enabled=None, limit=100, page=1, user_id=None)
 
     def test_list_with_filters(self, mgr, mock_db):
         mgr.list(enabled=True, limit=10, page=2)
-        mock_db.get_schedules.assert_called_once_with(enabled=True, limit=10, page=2)
+        mock_db.get_schedules.assert_called_once_with(enabled=True, limit=10, page=2, user_id=None)
 
 
 class TestManagerGet:
     def test_get_found(self, mgr, mock_db):
         result = mgr.get("sched-1")
         assert result.id == "sched-1"
-        mock_db.get_schedule.assert_called_once_with("sched-1")
+        mock_db.get_schedule.assert_called_once_with("sched-1", user_id=None)
 
     def test_get_not_found(self, mgr, mock_db):
         mock_db.get_schedule = MagicMock(return_value=None)
@@ -129,13 +129,13 @@ class TestManagerUpdate:
     def test_update(self, mgr, mock_db):
         result = mgr.update("sched-1", description="Updated")
         assert result is not None
-        mock_db.update_schedule.assert_called_once_with("sched-1", description="Updated")
+        mock_db.update_schedule.assert_called_once_with("sched-1", user_id=None, description="Updated")
 
 
 class TestManagerDelete:
     def test_delete(self, mgr, mock_db):
         assert mgr.delete("sched-1") is True
-        mock_db.delete_schedule.assert_called_once_with("sched-1")
+        mock_db.delete_schedule.assert_called_once_with("sched-1", user_id=None)
 
 
 class TestManagerEnable:
@@ -157,7 +157,7 @@ class TestManagerDisable:
     def test_disable(self, mgr, mock_db):
         result = mgr.disable("sched-1")
         assert result is not None
-        mock_db.update_schedule.assert_called_once_with("sched-1", enabled=False)
+        mock_db.update_schedule.assert_called_once_with("sched-1", user_id=None, enabled=False)
 
 
 class TestManagerTrigger:
@@ -170,7 +170,7 @@ class TestManagerGetRuns:
     def test_get_runs(self, mgr, mock_db):
         result = mgr.get_runs("sched-1", limit=5, page=2)
         assert result == []
-        mock_db.get_schedule_runs.assert_called_once_with("sched-1", limit=5, page=2)
+        mock_db.get_schedule_runs.assert_called_once_with("sched-1", limit=5, page=2, user_id=None)
 
 
 class TestManagerCallMissingMethod:

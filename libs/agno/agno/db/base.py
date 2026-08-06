@@ -426,8 +426,9 @@ class BaseDb(ABC):
     # ``user_id`` semantics:
     # - ``None``: no scoping. Single-user / admin / RBAC-off behaviour — sees
     #   every row including those owned by other users.
-    # - non-empty string: scope to "rows owned by this user OR shared rows
-    #   (user_id IS NULL)". This is what non-admin authenticated routes pass.
+    # - non-empty string: reads scope to "rows owned by this user OR shared
+    #   rows (user_id IS NULL)". This is what non-admin authenticated routes
+    #   pass. Deletes are stricter — see ``delete_knowledge_content``.
     #
     # The "shared bucket" semantics (NULL = visible to all) lets admins
     # publish org-wide knowledge by leaving the owner unset, while per-user
@@ -440,9 +441,10 @@ class BaseDb(ABC):
         Args:
             id (str): The ID of the knowledge row to delete.
             user_id (Optional[str]): When set, only delete if the row is owned
-                by this user (or is shared / NULL-owned, which a non-admin
-                cannot delete — the route layer decides whether to allow
-                that). When None, no ownership check.
+                by this user. Shared / NULL-owned rows are readable by every
+                scoped caller but deletable by none of them: removing shared
+                content is the unscoped (admin) path. When None, no ownership
+                check.
         """
         raise NotImplementedError
 

@@ -63,9 +63,14 @@ def _merge_timestamp(current: Any, candidate: Any, *, latest: bool) -> Any:
         return current
     if current is None:
         return candidate
-    if latest:
-        return candidate if candidate > current else current
-    return candidate if candidate < current else current
+    try:
+        if latest:
+            return candidate if candidate > current else current
+        return candidate if candidate < current else current
+    except TypeError:
+        # Adapters store epoch ints; a row carrying a datetime cannot be ordered
+        # against one, and a metrics read should not fail over it.
+        return current
 
 
 def _aggregate_metrics_by_date(rows: List[dict]) -> List[dict]:
@@ -77,27 +82,35 @@ def _aggregate_metrics_by_date(rows: List[dict]) -> List[dict]:
     read. Scoped callers bypass this and receive only their own bucket.
 
     The aggregate carries a synthesised id: the stored per-user ids embed the owner
-    on the key-value backends ({date}_{user_id}_daily) and rows arrive in no
-    particular order, so keeping one member's id would both leak that owner and
-    make the response unstable between calls.
+    on most key-value backends ({date}_{user_id}_daily, {date}|{user_id} on
+    SurrealDB) and rows arrive in no particular order, so keeping one member's id
+    would both leak that owner and make the response unstable between calls.
     """
     by_bucket: Dict[Any, dict] = {}
     for row in rows:
-        # A period-less row belongs in the daily bucket, and the same value has to
-        # reach the id, or two buckets can end up sharing one id.
+        # A period-less row belongs in the daily bucket, and both halves of the
+        # bucket key have to be the values that reach the id, or two buckets can
+        # end up sharing one id.
         period = row.get("aggregation_period") or "daily"
         day = row.get("date")
-        bucket = (day, period)
-        try:
-            hash(bucket)
-        except TypeError:
-            continue  # a malformed stored date must not fail the whole read
+        # The date arrives as a date, a datetime or a string; the key is a day.
+        if isinstance(day, datetime):
+            day = day.date()
+        if isinstance(day, date):
+            day_key = day.isoformat()
+        elif isinstance(day, str):
+            day_key = day
+        else:
+            # The response carries a day, so a record whose date is not one
+            # cannot be returned at all. Skip it rather than fail every other
+            # user's row, and say so -- an unscoped read that quietly returned
+            # fewer runs than the owner's own read would be worse.
+            logger.warning("Skipping metrics record %s: date %r is not a day", row.get("id"), day)
+            continue
+        bucket = (day_key, period)
         agg = by_bucket.get(bucket)
         if agg is None:
-            # The date arrives as a date, a datetime or a string; the id is a day.
-            if isinstance(day, datetime):
-                day = day.date()
-            agg = {**row, "id": f"{day.isoformat() if isinstance(day, date) else day}_{period}"}
+            agg = {**row, "id": f"{day_key}_{period}"}
             agg["token_metrics"] = dict(row.get("token_metrics") or {})
             agg["model_metrics"] = [dict(m) for m in (row.get("model_metrics") or [])]
             by_bucket[bucket] = agg
@@ -235,7 +248,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             )
 
         except HTTPException:
-            raise  # scoping and db lookup carry their own status
+            raise
         except Exception as e:
             logger.exception("GET /metrics failed")
             raise HTTPException(status_code=500, detail=f"Error getting metrics: {str(e)}")

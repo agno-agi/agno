@@ -1980,7 +1980,8 @@ class FirestoreDb(BaseDb):
         Args:
             id (str): The ID of the knowledge row to delete.
             user_id (Optional[str]): Owner-scoping filter. When set, only
-                deletes if the row is owned by ``user_id`` OR is unowned.
+                deletes if the row is owned by ``user_id``. Unowned rows are
+                shared content and are not the caller's to delete.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -1992,8 +1993,7 @@ class FirestoreDb(BaseDb):
             for doc in docs:
                 if user_id is not None:
                     data = doc.to_dict() or {}
-                    owner = data.get("user_id")
-                    if owner is not None and owner != user_id:
+                    if data.get("user_id") != user_id:
                         continue
                 doc.reference.delete()
 

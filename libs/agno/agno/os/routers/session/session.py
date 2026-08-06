@@ -123,7 +123,7 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
         try:
             db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
         except HTTPException:
-            raise  # scoping and db lookup carry their own status
+            raise
         except Exception as e:
             raise HTTPException(status_code=404, detail=f"{e}")
 

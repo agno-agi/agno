@@ -1,6 +1,6 @@
 # Test Log: 07_security
 
-Last updated: 2026-07-24
+Last updated: 2026-08-07
 
 Server verification used `.venvs/demo` with the pinned worktree library on
 `PYTHONPATH`. The eight local server examples (`basic_scopes.py`,
@@ -107,6 +107,23 @@ became session state.
 
 **Result:** The spoofed owner was replaced by the JWT subject. Each caller saw
 exactly its own session, while the admin response included both.
+
+---
+
+### user_isolation_knowledge.py
+
+**Status:** PASS
+
+**Test mode:** LIVE
+
+**Description:** Seeded one shared content row and one row per JWT subject
+while `user_isolation=True`, then drove the knowledge routes as a non-admin and
+as an admin.
+
+**Result:** The non-admin listing held its own row plus the shared one. `PATCH`
+and `DELETE` on the shared row returned 403, `DELETE` on the other subject's row
+returned 404, and the bulk delete cleared only the caller's own row. The admin
+delete of the shared row returned 200.
 
 ---
 

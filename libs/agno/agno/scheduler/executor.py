@@ -7,9 +7,7 @@ from typing import Any, Dict, List, Optional, Union
 from urllib.parse import quote
 from uuid import uuid4
 
-from agno.db.schemas.scheduler import Schedule
-from agno.os.auth import SCHEDULE_OWNER_HEADER
-from agno.os.routers.schedules.schema import RUN_ENDPOINT_RE
+from agno.db.schemas.scheduler import RUN_ENDPOINT_RE, SCHEDULE_OWNER_HEADER, Schedule
 from agno.utils.log import log_error, log_info, log_warning
 
 try:
@@ -267,7 +265,7 @@ class ScheduleExecutor:
         # The internal token identifies the executor, not a user. Carry the
         # owner so the route scopes the call to them: a schedule can name any
         # endpoint, so an owned schedule must not reach another user's data.
-        if schedule.user_id:
+        if schedule.user_id is not None:
             # Percent-encoded: a header value must be latin-1 while an owner id
             # can be any unicode, and encoding also keeps a padded id distinct
             # from a bare one once the hop strips surrounding whitespace.
@@ -288,7 +286,7 @@ class ScheduleExecutor:
             # form-field user_id when the caller authenticates as the internal
             # service (see ``agents/router.py``).
             form_payload.pop("user_id", None)
-            if schedule.user_id:
+            if schedule.user_id is not None:
                 form_payload["user_id"] = schedule.user_id
 
             resource_type = match.group(1)

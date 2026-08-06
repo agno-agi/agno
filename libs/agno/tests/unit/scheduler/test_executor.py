@@ -396,7 +396,7 @@ class TestScheduleOwnerAttribution:
 
     @pytest.mark.asyncio
     async def test_owner_header_is_sent_on_run_endpoints(self, executor):
-        from agno.os.auth import SCHEDULE_OWNER_HEADER
+        from agno.db.schemas.scheduler import SCHEDULE_OWNER_HEADER
 
         schedule = self._schedule(user_id="alice", payload={"message": "hi"})
         with patch.object(executor, "_background_run", new=AsyncMock(return_value={})) as bg:
@@ -407,7 +407,7 @@ class TestScheduleOwnerAttribution:
     @pytest.mark.asyncio
     async def test_owner_header_is_sent_on_non_run_endpoints(self, executor):
         """A schedule can name any endpoint, so the owner has to ride along there too."""
-        from agno.os.auth import SCHEDULE_OWNER_HEADER
+        from agno.db.schemas.scheduler import SCHEDULE_OWNER_HEADER
 
         schedule = self._schedule(user_id="alice", endpoint="/schedules/someone-elses", method="DELETE")
         captured = await self._capture(executor, schedule)
@@ -416,7 +416,7 @@ class TestScheduleOwnerAttribution:
 
     @pytest.mark.asyncio
     async def test_unowned_schedule_sends_no_owner_header(self, executor):
-        from agno.os.auth import SCHEDULE_OWNER_HEADER
+        from agno.db.schemas.scheduler import SCHEDULE_OWNER_HEADER
 
         schedule = self._schedule(user_id=None, endpoint="/schedules/someone-elses", method="DELETE")
         captured = await self._capture(executor, schedule)

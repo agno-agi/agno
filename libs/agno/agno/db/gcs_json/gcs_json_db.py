@@ -1293,14 +1293,15 @@ class GcsJsonDb(BaseDb):
         Args:
             id (str): The ID of the knowledge row to delete.
             user_id (Optional[str]): Owner-scoping filter. When set, only
-                deletes if the row is owned by ``user_id`` OR is unowned.
+                deletes if the row is owned by ``user_id``. Unowned rows are
+                shared content and are not the caller's to delete.
         """
         try:
             knowledge_items = self._read_json_file(self.knowledge_table_name)
             knowledge_items = [
                 item
                 for item in knowledge_items
-                if not (item.get("id") == id and self._knowledge_item_is_visible(item, user_id))
+                if not (item.get("id") == id and (user_id is None or item.get("user_id") == user_id))
             ]
             self._write_json_file(self.knowledge_table_name, knowledge_items)
         except Exception as e:

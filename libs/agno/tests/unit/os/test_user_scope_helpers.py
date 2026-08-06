@@ -12,7 +12,8 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import HTTPException
 
-from agno.os.auth import INTERNAL_SCHEDULER_USER_ID, SCHEDULE_OWNER_HEADER
+from agno.db.schemas.scheduler import SCHEDULE_OWNER_HEADER
+from agno.os.auth import INTERNAL_SCHEDULER_USER_ID
 from agno.os.middleware.user_scope import (
     apply_scope_to_kwargs,
     enforce_owner_on_entity,

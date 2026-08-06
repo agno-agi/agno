@@ -1581,7 +1581,8 @@ class RedisDb(BaseDb):
         Args:
             id (str): The ID of the knowledge row to delete.
             user_id (Optional[str]): Owner-scoping filter. When set, only
-                deletes if the row is owned by ``user_id`` OR is unowned.
+                deletes if the row is owned by ``user_id``. Unowned rows are
+                shared content and are not the caller's to delete.
 
         Raises:
             Exception: If any error occurs while deleting the knowledge content.
@@ -1589,7 +1590,7 @@ class RedisDb(BaseDb):
         try:
             if user_id is not None:
                 existing = self._get_record("knowledge", id)
-                if existing is not None and not self._knowledge_doc_is_visible(existing, user_id):
+                if existing is None or existing.get("user_id") != user_id:
                     log_debug(f"Skipping delete of knowledge content {id}: not owned by {user_id}")
                     return
             self._delete_record("knowledge", id)

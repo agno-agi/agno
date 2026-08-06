@@ -724,37 +724,47 @@ class Knowledge(RemoteKnowledge):
         from agno.vectordb import VectorDb
 
         self.vector_db = cast(VectorDb, self.vector_db)
+        content = self.get_content_by_id(content_id, user_id=user_id) if user_id is not None else None
+        if user_id is not None and (content is None or self._content_is_shared(content, user_id)):
+            # Not the caller's row to remove, so the contents-db delete would
+            # match nothing. ``delete_by_content_id`` takes no owner, so going
+            # ahead would strip another owner's vectors and leave their row
+            # behind pointing at nothing.
+            log_debug(f"Skipping delete of content {content_id}: not owned by {user_id}")
+            return
+
         if self.vector_db is not None:
             if self.vector_db.__class__.__name__ == "LightRag":
-                # For LightRAG, get the content first to find the external_id
-                content = self.get_content_by_id(content_id, user_id=user_id)
+                # For LightRAG, delete by the external_id on the row
+                if content is None:
+                    content = self.get_content_by_id(content_id, user_id=user_id)
                 if content and content.external_id:
                     self.vector_db.delete_by_external_id(content.external_id)  # type: ignore
                 else:
                     log_warning(f"No external_id found for content {content_id}, cannot delete from LightRAG")
             else:
-                # NOTE (K2 follow-up): vector_db.delete_by_content_id does not
-                # currently take user_id. If user_isolation is on and the
-                # caller is not the owner of this content_id, the contents-db
-                # delete below will short-circuit (rowcount=0) and the vector
-                # rows stay orphaned. Live with this until K2 wires user_id
-                # into vector backends.
                 self.vector_db.delete_by_content_id(content_id)
 
         if self.contents_db is not None:
             self.contents_db.delete_knowledge_content(content_id, user_id=user_id)
 
     async def aremove_content_by_id(self, content_id: str, user_id: Optional[str] = None):
+        content = await self.aget_content_by_id(content_id, user_id=user_id) if user_id is not None else None
+        if user_id is not None and (content is None or self._content_is_shared(content, user_id)):
+            # See the matching guard in ``remove_content_by_id``.
+            log_debug(f"Skipping delete of content {content_id}: not owned by {user_id}")
+            return
+
         if self.vector_db is not None:
             if self.vector_db.__class__.__name__ == "LightRag":
-                # For LightRAG, get the content first to find the external_id
-                content = await self.aget_content_by_id(content_id, user_id=user_id)
+                # For LightRAG, delete by the external_id on the row
+                if content is None:
+                    content = await self.aget_content_by_id(content_id, user_id=user_id)
                 if content and content.external_id:
                     self.vector_db.delete_by_external_id(content.external_id)  # type: ignore
                 else:
                     log_warning(f"No external_id found for content {content_id}, cannot delete from LightRAG")
             else:
-                # See K2 follow-up note in ``remove_content_by_id``.
                 self.vector_db.delete_by_content_id(content_id)
 
         if self.contents_db is not None:
@@ -2278,7 +2288,7 @@ class Knowledge(RemoteKnowledge):
         # Owner first: the id derived from this hash is the row key, so leaving the
         # owner out lets a second uploader overwrite the first one's row. Unowned
         # content (isolation off, admin/system uploads) hashes exactly as before.
-        if content.user_id:
+        if content.user_id is not None:
             hash_parts.append(content.user_id)
         if content.name:
             hash_parts.append(content.name)
@@ -2349,6 +2359,12 @@ class Knowledge(RemoteKnowledge):
         """
         hash_parts = []
 
+        # Owner first, same as ``_build_content_hash``: the per-source id is
+        # derived from this hash and ``_should_skip`` dedups on it against every
+        # owner's vectors, so leaving the owner out makes a second user's crawl
+        # of the same source look like one that is already indexed.
+        if content.user_id is not None:
+            hash_parts.append(content.user_id)
         if content.name:
             hash_parts.append(content.name)
         if content.description:

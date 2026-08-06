@@ -2070,7 +2070,8 @@ class DynamoDb(BaseDb):
         Args:
             id (str): The ID of the knowledge row to delete.
             user_id (Optional[str]): Owner-scoping filter. When set, only
-                deletes if the row is owned by ``user_id`` OR is unowned.
+                deletes if the row is owned by ``user_id``. Unowned rows are
+                shared content and are not the caller's to delete.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -2078,18 +2079,16 @@ class DynamoDb(BaseDb):
         try:
             table_name = self._get_table("knowledge")
 
+            kwargs: Dict[str, Any] = {"TableName": table_name, "Key": {"id": {"S": id}}}
             if user_id is not None:
-                # No conditional delete with OR-NULL on the row's user_id, so
-                # read-then-delete. The race window is tolerable: ownership
-                # cannot change concurrently in any code path we ship.
-                existing = self.get_knowledge_content(id)
-                if existing is not None and not self._knowledge_row_is_visible(existing, user_id):
-                    log_debug(f"Skipping delete of knowledge content {id}: not owned by {user_id}")
-                    return
-
-            self.client.delete_item(TableName=table_name, Key={"id": {"S": id}})
+                kwargs["ConditionExpression"] = "user_id = :user_id"
+                kwargs["ExpressionAttributeValues"] = {":user_id": {"S": user_id}}
+            self.client.delete_item(**kwargs)
 
             log_debug(f"Deleted knowledge content {id}")
+
+        except self.client.exceptions.ConditionalCheckFailedException:
+            log_debug(f"Skipping delete of knowledge content {id}: not owned by {user_id}")
 
         except Exception as e:
             log_error(f"Failed to delete knowledge content {id}: {str(e)}")

@@ -1,7 +1,23 @@
+import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from agno.utils.dttm import now_epoch_s, to_epoch_s
+
+# Header the scheduler executor stamps with the schedule's owner. The internal
+# service token says *who is calling*; this says *whose work it is*, so routes
+# scope a scheduled call to the owner instead of running it unscoped. Only
+# honoured for callers that already authenticated with the internal token.
+SCHEDULE_OWNER_HEADER: str = "X-Schedule-Owner"
+
+# Matches a run endpoint and captures resource type + ID. ``\Z`` rather than
+# ``$`` so a trailing newline can't slip past the run-endpoint check.
+RUN_ENDPOINT_RE = re.compile(r"^/(agents|teams|workflows)/([^/]+)/runs/?\Z")
+
+# The header and the pattern live here, next to ``Schedule``, because the
+# executor and the schedules router both classify the same endpoint and agree
+# on the same header. ``agno[scheduler]`` does not depend on fastapi, so the
+# executor cannot reach them through ``agno.os``.
 
 
 @dataclass

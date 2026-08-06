@@ -7,11 +7,10 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from agno.os.auth import build_insufficient_permissions_detail
+from agno.db.schemas.scheduler import RUN_ENDPOINT_RE
 from agno.os.middleware.jwt import is_reserved_principal
 from agno.os.middleware.user_scope import get_scoped_user_id
 from agno.os.routers.schedules.schema import (
-    RUN_ENDPOINT_RE,
     ScheduleCreate,
     ScheduleResponse,
     ScheduleRunResponse,
@@ -64,18 +63,13 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         is an arbitrary first-party call, so it is admin-only. ``method`` is part
         of the target because the executor only treats POST as a run.
         """
+        from agno.os.auth import build_insufficient_permissions_detail
+
         # Only check authorization if it's enabled
         if not getattr(request.state, "authorization_enabled", False):
             return
 
-        caller_scopes = getattr(request.state, "scopes", None)
-        if caller_scopes is None:
-            # No scope context: a trusted root authenticated by the OS security
-            # key, which is unscoped by definition and may schedule anything.
-            # (The internal service token carries INTERNAL_SERVICE_SCOPES, so it
-            # is not None here.)
-            return
-
+        caller_scopes = getattr(request.state, "scopes", [])
         admin_scope_raw = getattr(request.state, "admin_scope", None) or getattr(request.app.state, "admin_scope", None)
         admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
 
@@ -300,7 +294,7 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
 
         # Re-arming a schedule puts its endpoint back on the poller, so it needs
         # the same permission as creating it. Disabling never needs the check.
-        _require_endpoint_permission(request, existing["endpoint"], existing.get("method", "POST"))
+        _require_endpoint_permission(request, existing["endpoint"], existing.get("method") or "POST")
 
         _check_scheduler_deps()
         from agno.scheduler.cron import compute_next_run
@@ -347,7 +341,7 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         # Firing a stored schedule runs its endpoint under the internal service
         # token, so the caller needs the same permission creating it would have
         # required -- otherwise ``schedules:write`` alone reaches any target.
-        _require_endpoint_permission(request, existing["endpoint"], existing.get("method", "POST"))
+        _require_endpoint_permission(request, existing["endpoint"], existing.get("method") or "POST")
 
         executor = getattr(request.app.state, "scheduler_executor", None)
         if executor is not None:
