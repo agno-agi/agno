@@ -79,6 +79,7 @@ from agno.os.utils import (
 from agno.registry import Registry
 from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.team import RemoteTeam, Team, TeamFactory
+from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id, generate_id_from_name
 from agno.workflow import RemoteWorkflow, Workflow, WorkflowFactory
@@ -1561,7 +1562,7 @@ class AgentOS:
         }
 
     def _auto_discover_databases(self) -> None:
-        """Auto-discover and initialize the databases used by all contextual agents, teams and workflows."""
+        """Auto-discover databases used by contextual resources and registered toolkits."""
 
         dbs: Dict[str, List[Union[BaseDb, AsyncBaseDb, RemoteDb]]] = {}
         knowledge_dbs: Dict[
@@ -1606,6 +1607,27 @@ class AgentOS:
         for knowledge_base in self.knowledge or []:
             if knowledge_base.contents_db:
                 self._register_db_with_validation(knowledge_dbs, knowledge_base.contents_db)
+
+        # A registry-owned context-bound knowledge toolkit is the Studio
+        # building block. Its shared contents DB must be provisioned even when
+        # no code-defined agent directly owns the Knowledge instance. Do not add
+        # that Knowledge to ``knowledge_instances``: global knowledge routes do
+        # not have the runtime context required to resolve its namespace.
+        if self.registry is not None:
+            for tool in self.registry.tools:
+                if not isinstance(tool, Toolkit):
+                    continue
+                if getattr(tool, "namespace", None) is None:
+                    continue
+                try:
+                    toolkit_knowledge = getattr(tool, "knowledge", None)
+                    toolkit_contents_db = (
+                        getattr(toolkit_knowledge, "contents_db", None) if toolkit_knowledge is not None else None
+                    )
+                    if toolkit_contents_db:
+                        self._register_db_with_validation(knowledge_dbs, toolkit_contents_db)
+                except Exception as e:
+                    log_debug(f"Database auto-discovery: skipped toolkit knowledge due to error: {e}")
 
         for interface in self.interfaces or []:
             if interface.agent and interface.agent.db:

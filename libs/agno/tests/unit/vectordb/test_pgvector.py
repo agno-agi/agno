@@ -15,6 +15,10 @@ TEST_TABLE = f"test_vectors_{uuid.uuid4().hex[:8]}"
 TEST_SCHEMA = "test_schema"
 
 
+def test_supports_namespaced_knowledge():
+    assert PgVector.supports_namespaced_knowledge is True
+
+
 @pytest.fixture
 def mock_engine():
     """Create a mock SQLAlchemy engine with inspect attribute."""
@@ -194,6 +198,22 @@ def test_id_exists(mock_pgvector):
         assert mock_pgvector.id_exists("test_id") is False
 
 
+def test_content_hash_is_indexed_requires_non_null_vector(mock_pgvector):
+    session = MagicMock()
+    mock_pgvector.Session.return_value.__enter__.return_value = session
+
+    with patch("agno.vectordb.pgvector.pgvector.select") as mock_select:
+        statement = MagicMock()
+        statement.where.return_value = statement
+        mock_select.return_value = statement
+
+        session.execute.return_value.scalar_one.return_value = 2
+        assert mock_pgvector.content_hash_is_indexed("content-hash", expected_count=2) is True
+
+        session.execute.return_value.scalar_one.return_value = 1
+        assert mock_pgvector.content_hash_is_indexed("content-hash", expected_count=2) is False
+
+
 def test_insert(mock_pgvector):
     """Test insert method with patched insert functionality."""
     docs = create_test_documents()
@@ -210,6 +230,18 @@ def test_upsert(mock_pgvector):
     # Bypass the SQLAlchemy-specific parts by patching the upsert method directly
     with patch.object(mock_pgvector, "upsert", wraps=lambda content_hash, documents, **kwargs: None):
         mock_pgvector.upsert(content_hash="test_hash", documents=docs)
+
+
+def test_upsert_stops_when_existing_content_cannot_be_deleted(mock_pgvector):
+    with (
+        patch.object(mock_pgvector, "content_hash_exists", return_value=True),
+        patch.object(mock_pgvector, "_delete_by_content_hash", return_value=False),
+        patch.object(mock_pgvector, "_upsert") as mock_upsert,
+    ):
+        with pytest.raises(RuntimeError, match="Could not replace existing content hash"):
+            mock_pgvector.upsert("content-hash", create_test_documents())
+
+        mock_upsert.assert_not_called()
 
 
 def test_insert_builds_records_and_uses_expected_ids(mock_pgvector, mock_embedder):
@@ -458,6 +490,19 @@ async def test_async_upsert(mock_pgvector):
 
                     # Verify the insert was attempted
                     mock_insert.assert_called_once_with(mock_pgvector.table)
+
+
+@pytest.mark.asyncio
+async def test_async_upsert_stops_when_existing_content_cannot_be_deleted(mock_pgvector):
+    with (
+        patch.object(mock_pgvector, "content_hash_exists", return_value=True),
+        patch.object(mock_pgvector, "_delete_by_content_hash", return_value=False),
+        patch.object(mock_pgvector, "_async_upsert") as mock_upsert,
+    ):
+        with pytest.raises(RuntimeError, match="Could not replace existing content hash"):
+            await mock_pgvector.async_upsert("content-hash", create_test_documents())
+
+        mock_upsert.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -1702,13 +1702,15 @@ def collect_components_from_os(
     workflows: Optional[List[Any]],
     registry: Registry,
 ) -> None:
-    """Walk all agents, teams and workflows of an AgentOS and add their components to ``registry``.
+    """Walk all AgentOS resources and add their backing components to ``registry``.
 
     The registry owns deduplication (see ``Registry.add_*``), so components are
     added directly during the walk. Each top-level node is walked inside its own
     guard, so a single malformed agent/team/workflow degrades to "not collected"
-    rather than failing the whole walk. Remote and factory components are skipped
-    because they expose no locally-walkable instances.
+    rather than failing the whole walk. Registered toolkits are inspected after
+    the walk so toolkit-owned knowledge contributes its backing databases without
+    registering that knowledge as a global resource. Remote and factory components
+    are skipped because they expose no locally-walkable instances.
     """
     visited: Set[int] = set()
 
@@ -1735,6 +1737,21 @@ def collect_components_from_os(
             collect_components_from_workflow(workflow, registry, visited)
         except Exception as e:
             log_debug(f"Registry auto-population: skipped workflow due to error: {e}")
+
+    # Registry tools include both user-declared building blocks and toolkits
+    # discovered while walking agents, teams and workflows. A context-bound
+    # knowledge toolkit owns a shared backing Knowledge object, but that object
+    # is deliberately not a global knowledge resource: global knowledge routes
+    # have no agent/team/run context with which to resolve its namespace.
+    for tool in registry.tools:
+        if not isinstance(tool, Toolkit):
+            continue
+        if getattr(tool, "namespace", None) is None:
+            continue
+        try:
+            _collect_components_from_knowledge(getattr(tool, "knowledge", None), registry)
+        except Exception as e:
+            log_debug(f"Registry auto-population: skipped toolkit knowledge due to error: {e}")
 
 
 def _get_python_type_from_json_schema(field_schema: Dict[str, Any], field_name: str = "NestedModel") -> Type:

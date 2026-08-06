@@ -1,15 +1,16 @@
 # Studio
 
 `StudioTools` lets an Agent compose persisted Agents, Teams, and Workflows from
-the live objects in an AgentOS `Registry`. This lesson separates four concerns:
-standalone composition, composition served by AgentOS, human-in-the-loop
-control, and the Registry/Components HTTP contracts.
+the live objects in an AgentOS `Registry`. This lesson covers standalone and
+AgentOS-served composition, per-Agent knowledge, human-in-the-loop control, and
+the Registry/Components HTTP contracts.
 
 ## Files
 
 | File | What it teaches |
 |---|---|
 | `standalone_studio_agent.py` | Create, edit, inspect, and publish a versioned Agent without starting AgentOS. |
+| `per_agent_knowledge.py` | Register one knowledge template and attach it to multiple Studio-created Agents with isolated corpora. |
 | `studio_tools_agent.py` | Serve a Studio Agent beside code-defined Agents and create a component over HTTP. |
 | `studio_hitl_agent.py` | Resolve structured feedback, free-text input, and confirmation pauses in a console process. |
 | `studio_hitl_agent_os.py` | Resolve the same pauses through AgentOS run and continuation endpoints. |
@@ -25,7 +26,8 @@ export OPENAI_API_KEY=...
 export ANTHROPIC_API_KEY=...
 ```
 
-All examples use synchronous `SqliteDb` databases under `22_studio/tmp/`.
+Most examples use synchronous `SqliteDb` databases under `22_studio/tmp/`.
+`per_agent_knowledge.py` uses PostgreSQL for both content metadata and vectors.
 StudioTools persistence and the `/components` router require a synchronous
 `BaseDb`. If AgentOS receives an async database, it exposes a disabled
 `/components` surface instead. `GET /registry` is independent of component
@@ -43,6 +45,39 @@ out a full published-v1 to draft-v2 to published-v2 lifecycle:
 `versions=True` is opt-in. With it, `edit_agent`, `edit_team`, and
 `edit_workflow` write a draft that `publish_component` must promote. Without
 versioning, edits publish a new current version immediately.
+
+## Give Studio-created Agents isolated knowledge
+
+Start the cookbook PostgreSQL service, then build two persisted Agents from one
+registered knowledge toolkit:
+
+```bash
+./cookbook/scripts/run_pgvector.sh
+.venvs/demo/bin/python cookbook/05_agent_os/22_studio/per_agent_knowledge.py
+```
+
+The Registry declares `agent_knowledge` once. Both calls to
+`StudioTools.create_agent()` attach it through
+`tool_names=["agent_knowledge"]`; tool calls resolve
+`corpora/{agent_id}` separately for each created Agent. The vector table and
+content table stay shared, while the resolved namespace scopes each Agent's
+writes and searches.
+
+The setup command only creates component records. It does not embed or search
+text. Set `OPENAI_API_KEY` before running a created Agent so
+`OpenAIEmbedder()` can use the same provider key as the platform. Set
+`DATABASE_URL` to override the default local cookbook PostgreSQL URL.
+
+Use a printed id to add or search text through the reloaded Studio component:
+
+```bash
+export OPENAI_API_KEY=...
+.venvs/demo/bin/python cookbook/05_agent_os/22_studio/per_agent_knowledge.py \
+  --agent-id <printed-id> \
+  --message "Remember this text: the launch codename is Lark."
+```
+
+Run a search prompt against each printed id to observe the namespace boundary.
 
 ## Run the AgentOS Studio Agent
 

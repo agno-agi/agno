@@ -53,6 +53,16 @@ def _model(model_id, provider="openai"):
     return model
 
 
+class _KnowledgeOwningToolkit(Toolkit):
+    """Generic toolkit shape used to prove discovery is attribute-based."""
+
+    def __init__(self, knowledge: Knowledge):
+        self.knowledge = knowledge
+        self.namespace = "agent-knowledge/{agent_id}"
+        self.template_placeholders = ("agent_id",)
+        super().__init__(name="context_bound_knowledge", tools=[])
+
+
 # =============================================================================
 # _populate_registry_managers()
 # =============================================================================
@@ -299,6 +309,66 @@ class TestPopulateRegistryComponentsAgents:
         os = AgentOS(agents=[agent], telemetry=False)
 
         assert vector_db in os.registry.vector_dbs
+
+
+class TestPopulateRegistryComponentsToolkitKnowledge:
+    """Registered toolkit knowledge contributes backings, not global routes."""
+
+    def test_backings_collected_without_registering_global_knowledge(self, tmp_path):
+        vector_db = _mock_vector_db_class()()
+        contents_db = SqliteDb(db_file=str(tmp_path / "toolkit-kb.db"), id="toolkit-kb")
+        knowledge = Knowledge(name="Unresolved template backing", contents_db=contents_db, vector_db=vector_db)
+        toolkit = _KnowledgeOwningToolkit(knowledge)
+        registry = Registry(tools=[toolkit])
+
+        os = AgentOS(
+            agents=[Agent(name="Studio host", id="studio-host", telemetry=False)], registry=registry, telemetry=False
+        )
+
+        assert contents_db in os.registry.dbs
+        assert vector_db in os.registry.vector_dbs
+        assert os.registry.knowledge == []
+        assert os.knowledge_instances == []
+
+        # Re-running global knowledge discovery must not surface toolkit-owned
+        # knowledge through /knowledge routes.
+        os._auto_discover_knowledge_instances()
+        assert os.registry.knowledge == []
+        assert os.knowledge_instances == []
+
+    def test_contents_db_is_discovered_and_initialized_at_boot(self, tmp_path, monkeypatch):
+        contents_db = SqliteDb(db_file=str(tmp_path / "toolkit-kb.db"), id="toolkit-kb")
+        create_tables = MagicMock()
+        monkeypatch.setattr(contents_db, "_create_all_tables", create_tables)
+        knowledge = Knowledge(name="Unresolved template backing", contents_db=contents_db, vector_db=MagicMock())
+        registry = Registry(tools=[_KnowledgeOwningToolkit(knowledge)])
+        os = AgentOS(
+            agents=[Agent(name="Studio host", id="studio-host", telemetry=False)], registry=registry, telemetry=False
+        )
+
+        os._auto_discover_databases()
+
+        assert os.knowledge_dbs[contents_db.id] == [contents_db]
+        os._initialize_sync_databases()
+        create_tables.assert_called_once_with()
+
+    def test_static_toolkit_knowledge_is_not_newly_auto_registered(self, tmp_path):
+        vector_db = _mock_vector_db_class()()
+        contents_db = SqliteDb(db_file=str(tmp_path / "static-toolkit-kb.db"), id="static-toolkit-kb")
+        toolkit = _KnowledgeOwningToolkit(
+            Knowledge(name="Static toolkit knowledge", contents_db=contents_db, vector_db=vector_db)
+        )
+        toolkit.namespace = None
+        registry = Registry(tools=[toolkit])
+
+        os = AgentOS(
+            agents=[Agent(name="Studio host", id="studio-host", telemetry=False)], registry=registry, telemetry=False
+        )
+        os._auto_discover_databases()
+
+        assert contents_db not in os.registry.dbs
+        assert vector_db not in os.registry.vector_dbs
+        assert contents_db.id not in os.knowledge_dbs
 
 
 class TestPopulateRegistryComponentsDedup:

@@ -9,6 +9,11 @@ from agno.utils.string import generate_id
 class VectorDb(ABC):
     """Base class for Vector Databases"""
 
+    # Context-bound KnowledgeTools requires exact metadata filtering on insert,
+    # search, update, and delete. Backends must opt in only after proving that
+    # contract; PgVector is the first supported backend.
+    supports_namespaced_knowledge: bool = False
+
     def __init__(
         self,
         *,
@@ -60,6 +65,14 @@ class VectorDb(ABC):
     @abstractmethod
     def content_hash_exists(self, content_hash: str) -> bool:
         raise NotImplementedError
+
+    def content_hash_is_indexed(self, content_hash: str, expected_count: int = 1) -> bool:
+        """Return whether a content hash has the expected usable index records.
+
+        Backends opting into namespaced knowledge must override this with an
+        exact count. The fallback preserves existing backend behavior.
+        """
+        return expected_count > 0 and self.content_hash_exists(content_hash)
 
     @abstractmethod
     def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:

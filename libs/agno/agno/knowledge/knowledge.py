@@ -3,7 +3,7 @@ import hashlib
 import io
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from io import BytesIO
 from os.path import basename
@@ -55,6 +55,11 @@ class Knowledge(RemoteKnowledge):
     # Requires re-indexing existing data to add linked_to metadata.
     # Default is False for backwards compatibility with existing data.
     isolate_vector_search: bool = False
+    # Internal opt-in for strict content-id and contents-row isolation. This is
+    # enabled on the ephemeral views created by context-bound KnowledgeTools.
+    # Keeping it out of __init__ preserves the IDs and management semantics of
+    # existing static Knowledge(isolate_vector_search=True) instances.
+    _enforce_content_isolation: bool = field(default=False, init=False, repr=False, compare=False)
 
     def __post_init__(self):
         from agno.vectordb import VectorDb
@@ -64,6 +69,50 @@ class Knowledge(RemoteKnowledge):
             self.vector_db.create()
 
         self.construct_readers()
+
+    def _get_isolation_namespace(self) -> Optional[str]:
+        """Return the namespace that must own isolated content, if enabled."""
+        if self._enforce_content_isolation and self.isolate_vector_search and self.name:
+            return self.name
+        return None
+
+    def _is_content_row_accessible(self, content_row: KnowledgeRow) -> bool:
+        """Return whether a contents row belongs to this isolated Knowledge view."""
+        namespace = self._get_isolation_namespace()
+        return namespace is None or content_row.linked_to == namespace
+
+    def _remove_isolation_metadata_override(self, metadata: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Remove caller-controlled isolation metadata from an isolated view."""
+        if not metadata or self._get_isolation_namespace() is None or "linked_to" not in metadata:
+            return metadata
+        return {key: value for key, value in metadata.items() if key != "linked_to"}
+
+    def _prepare_vector_db_filters(self, metadata: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Apply the framework-owned namespace after caller-provided vector filters."""
+        namespace = self._get_isolation_namespace()
+        if namespace is None:
+            return metadata
+        return {**(metadata or {}), "linked_to": namespace}
+
+    def _get_content_size(self, content: Content) -> Optional[int]:
+        """Return source size, using exact UTF-8 bytes for strict views."""
+        if not self._enforce_content_isolation:
+            if content.size:
+                return content.size
+            if content.file_data and content.file_data.content:
+                return len(content.file_data.content)
+            return None
+        if content.size is not None:
+            return content.size
+        if content.file_data is None:
+            return None
+        if content.file_data.size is not None:
+            return content.file_data.size
+        if isinstance(content.file_data.content, str):
+            return len(content.file_data.content.encode("utf-8"))
+        if isinstance(content.file_data.content, bytes):
+            return len(content.file_data.content)
+        return None
 
     # ==========================================
     # PUBLIC API - INSERT METHODS
@@ -132,12 +181,14 @@ class Knowledge(RemoteKnowledge):
             return
 
         # Strip reserved _agno key from user-provided metadata
-        safe_metadata = strip_agno_metadata(metadata)
+        safe_metadata = self._remove_isolation_metadata_override(strip_agno_metadata(metadata))
 
         content = None
         file_data = None
         if text_content:
             file_data = FileData(content=text_content, type="Text")
+            if self._enforce_content_isolation:
+                file_data.size = len(text_content.encode("utf-8"))
 
         content = Content(
             name=name,
@@ -200,12 +251,14 @@ class Knowledge(RemoteKnowledge):
             return
 
         # Strip reserved _agno key from user-provided metadata
-        safe_metadata = strip_agno_metadata(metadata)
+        safe_metadata = self._remove_isolation_metadata_override(strip_agno_metadata(metadata))
 
         content = None
         file_data = None
         if text_content:
             file_data = FileData(content=text_content, type="Text")
+            if self._enforce_content_isolation:
+                file_data.size = len(text_content.encode("utf-8"))
 
         content = Content(
             name=name,
@@ -645,7 +698,7 @@ class Knowledge(RemoteKnowledge):
             )
 
         content_row = self.contents_db.get_knowledge_content(content_id)
-        if content_row is None:
+        if content_row is None or not self._is_content_row_accessible(content_row):
             return None
         return self._content_row_to_content(content_row)
 
@@ -658,7 +711,7 @@ class Knowledge(RemoteKnowledge):
         else:
             content_row = self.contents_db.get_knowledge_content(content_id)
 
-        if content_row is None:
+        if content_row is None or not self._is_content_row_accessible(content_row):
             return None
         return self._content_row_to_content(content_row)
 
@@ -672,7 +725,7 @@ class Knowledge(RemoteKnowledge):
             )
 
         content_row = self.contents_db.get_knowledge_content(content_id)
-        if content_row is None:
+        if content_row is None or not self._is_content_row_accessible(content_row):
             return None, "Content not found"
 
         return self._parse_content_status(content_row.status), content_row.status_message
@@ -686,7 +739,7 @@ class Knowledge(RemoteKnowledge):
         else:
             content_row = self.contents_db.get_knowledge_content(content_id)
 
-        if content_row is None:
+        if content_row is None or not self._is_content_row_accessible(content_row):
             return None, "Content not found"
 
         return self._parse_content_status(content_row.status), content_row.status_message
@@ -700,11 +753,28 @@ class Knowledge(RemoteKnowledge):
     def remove_content_by_id(self, content_id: str):
         from agno.vectordb import VectorDb
 
+        owned_content: Optional[Content] = None
+        if self._get_isolation_namespace() is not None:
+            if self.contents_db is None:
+                log_warning("Cannot verify content ownership without a contents db")
+                return
+            if isinstance(self.contents_db, AsyncBaseDb):
+                raise ValueError(
+                    "remove_content_by_id() is not supported for async databases. "
+                    "Please use aremove_content_by_id() instead."
+                )
+
+            content_row = self.contents_db.get_knowledge_content(content_id)
+            if content_row is None or not self._is_content_row_accessible(content_row):
+                log_warning(f"Content row not found for id: {content_id}, cannot remove content")
+                return
+            owned_content = self._content_row_to_content(content_row)
+
         self.vector_db = cast(VectorDb, self.vector_db)
         if self.vector_db is not None:
             if self.vector_db.__class__.__name__ == "LightRag":
                 # For LightRAG, get the content first to find the external_id
-                content = self.get_content_by_id(content_id)
+                content = owned_content or self.get_content_by_id(content_id)
                 if content and content.external_id:
                     self.vector_db.delete_by_external_id(content.external_id)  # type: ignore
                 else:
@@ -716,10 +786,25 @@ class Knowledge(RemoteKnowledge):
             self.contents_db.delete_knowledge_content(content_id)
 
     async def aremove_content_by_id(self, content_id: str):
+        owned_content: Optional[Content] = None
+        if self._get_isolation_namespace() is not None:
+            if self.contents_db is None:
+                log_warning("Cannot verify content ownership without a contents db")
+                return
+
+            if isinstance(self.contents_db, AsyncBaseDb):
+                content_row = await self.contents_db.get_knowledge_content(content_id)
+            else:
+                content_row = self.contents_db.get_knowledge_content(content_id)
+            if content_row is None or not self._is_content_row_accessible(content_row):
+                log_warning(f"Content row not found for id: {content_id}, cannot remove content")
+                return
+            owned_content = self._content_row_to_content(content_row)
+
         if self.vector_db is not None:
             if self.vector_db.__class__.__name__ == "LightRag":
                 # For LightRAG, get the content first to find the external_id
-                content = await self.aget_content_by_id(content_id)
+                content = owned_content or await self.aget_content_by_id(content_id)
                 if content and content.external_id:
                     self.vector_db.delete_by_external_id(content.external_id)  # type: ignore
                 else:
@@ -1639,13 +1724,19 @@ class Knowledge(RemoteKnowledge):
                 # Insert with per-document hash
                 if self.vector_db.upsert_available() and upsert:
                     try:
-                        await self.vector_db.async_upsert(doc_hash, source_docs, content.metadata)
+                        await self.vector_db.async_upsert(
+                            doc_hash, source_docs, self._prepare_vector_db_filters(content.metadata)
+                        )
                     except Exception as e:
                         log_error(f"Error upserting document from {source_url}: {str(e)}")
                         continue
                 else:
                     try:
-                        await self.vector_db.async_insert(doc_hash, documents=source_docs, filters=content.metadata)
+                        await self.vector_db.async_insert(
+                            doc_hash,
+                            documents=source_docs,
+                            filters=self._prepare_vector_db_filters(content.metadata),
+                        )
                     except Exception as e:
                         log_error(f"Error inserting document from {source_url}: {str(e)}")
                         continue
@@ -1794,13 +1885,17 @@ class Knowledge(RemoteKnowledge):
                 # Insert with per-document hash
                 if self.vector_db.upsert_available() and upsert:
                     try:
-                        self.vector_db.upsert(doc_hash, source_docs, content.metadata)
+                        self.vector_db.upsert(doc_hash, source_docs, self._prepare_vector_db_filters(content.metadata))
                     except Exception as e:
                         log_error(f"Error upserting document from {source_url}: {str(e)}")
                         continue
                 else:
                     try:
-                        self.vector_db.insert(doc_hash, documents=source_docs, filters=content.metadata)
+                        self.vector_db.insert(
+                            doc_hash,
+                            documents=source_docs,
+                            filters=self._prepare_vector_db_filters(content.metadata),
+                        )
                     except Exception as e:
                         log_error(f"Error inserting document from {source_url}: {str(e)}")
                         continue
@@ -2227,6 +2322,9 @@ class Knowledge(RemoteKnowledge):
           metadata to coexist instead of collapsing onto each other).
         """
         hash_parts = []
+        isolation_namespace = self._get_isolation_namespace()
+        if isolation_namespace is not None:
+            hash_parts.append(f"linked_to={isolation_namespace}")
         if content.name:
             hash_parts.append(content.name)
         if content.description:
@@ -2295,6 +2393,9 @@ class Knowledge(RemoteKnowledge):
             A unique hash string for this specific document
         """
         hash_parts = []
+        isolation_namespace = self._get_isolation_namespace()
+        if isolation_namespace is not None:
+            hash_parts.append(f"linked_to={isolation_namespace}")
 
         if content.name:
             hash_parts.append(content.name)
@@ -2391,13 +2492,9 @@ class Knowledge(RemoteKnowledge):
             id=content.id,
             name=self._ensure_string_field(content.name, "content.name", default=""),
             description=self._ensure_string_field(content.description, "content.description", default=""),
-            metadata=content.metadata,
+            metadata=self._remove_isolation_metadata_override(content.metadata),
             type=file_type,
-            size=content.size
-            if content.size
-            else len(content.file_data.content)
-            if content.file_data and content.file_data.content
-            else None,
+            size=self._get_content_size(content),
             linked_to=self.name if self.name else "",
             access_count=0,
             status=content.status if content.status else ContentStatus.PROCESSING,
@@ -2453,9 +2550,10 @@ class Knowledge(RemoteKnowledge):
             await self._aupdate_content(content)
             return
 
+        vector_db_filters = self._prepare_vector_db_filters(content.metadata)
         if self.vector_db.upsert_available() and upsert:
             try:
-                await self.vector_db.async_upsert(content.content_hash, read_documents, content.metadata)  # type: ignore[arg-type]
+                await self.vector_db.async_upsert(content.content_hash, read_documents, vector_db_filters)  # type: ignore[arg-type]
             except Exception as e:
                 log_error(f"Error upserting document: {str(e)}")
                 content.status = ContentStatus.FAILED
@@ -2467,7 +2565,7 @@ class Knowledge(RemoteKnowledge):
                 await self.vector_db.async_insert(
                     content.content_hash,  # type: ignore[arg-type]
                     documents=read_documents,
-                    filters=content.metadata,  # type: ignore[arg-type]
+                    filters=vector_db_filters,
                 )
             except Exception as e:
                 log_error(f"Error inserting document: {str(e)}")
@@ -2492,9 +2590,10 @@ class Knowledge(RemoteKnowledge):
             self._update_content(content)
             return
 
+        vector_db_filters = self._prepare_vector_db_filters(content.metadata)
         if self.vector_db.upsert_available() and upsert:
             try:
-                self.vector_db.upsert(content.content_hash, read_documents, content.metadata)  # type: ignore[arg-type]
+                self.vector_db.upsert(content.content_hash, read_documents, vector_db_filters)  # type: ignore[arg-type]
             except Exception as e:
                 log_error(f"Error upserting document: {str(e)}")
                 content.status = ContentStatus.FAILED
@@ -2506,7 +2605,7 @@ class Knowledge(RemoteKnowledge):
                 self.vector_db.insert(
                     content.content_hash,  # type: ignore[arg-type]
                     documents=read_documents,
-                    filters=content.metadata,  # type: ignore[arg-type]
+                    filters=vector_db_filters,
                 )
             except Exception as e:
                 log_error(f"Error inserting document: {str(e)}")
@@ -2536,9 +2635,11 @@ class Knowledge(RemoteKnowledge):
 
             # TODO: we shouldn't check for content here, we should trust the upsert method to handle conflicts
             content_row = self.contents_db.get_knowledge_content(content.id)
-            if content_row is None:
+            if content_row is None or not self._is_content_row_accessible(content_row):
                 log_warning(f"Content row not found for id: {content.id}, cannot update status")
                 return None
+
+            safe_metadata = self._remove_isolation_metadata_override(content.metadata)
 
             # Apply safe string handling for updates as well
             if content.name is not None:
@@ -2547,8 +2648,8 @@ class Knowledge(RemoteKnowledge):
                 content_row.description = self._ensure_string_field(
                     content.description, "content.description", default=""
                 )
-            if content.metadata is not None:
-                content_row.metadata = merge_user_metadata(content_row.metadata, content.metadata)
+            if safe_metadata is not None:
+                content_row.metadata = merge_user_metadata(content_row.metadata, safe_metadata)
             if content.status is not None:
                 content_row.status = content.status
             if content.status_message is not None:
@@ -2564,8 +2665,11 @@ class Knowledge(RemoteKnowledge):
 
             if self.vector_db:
                 # Strip _agno from metadata sent to vector_db — only user fields should be searchable
-                user_metadata = strip_agno_metadata(content.metadata) or {}
-                self.vector_db.update_metadata(content_id=content.id, metadata=user_metadata)
+                user_metadata = strip_agno_metadata(safe_metadata) or {}
+                self.vector_db.update_metadata(
+                    content_id=content.id,
+                    metadata=self._prepare_vector_db_filters(user_metadata) or {},
+                )
 
             return content_row.to_dict()
 
@@ -2583,9 +2687,11 @@ class Knowledge(RemoteKnowledge):
                 content_row = await self.contents_db.get_knowledge_content(content.id)
             else:
                 content_row = self.contents_db.get_knowledge_content(content.id)
-            if content_row is None:
+            if content_row is None or not self._is_content_row_accessible(content_row):
                 log_warning(f"Content row not found for id: {content.id}, cannot update status")
                 return None
+
+            safe_metadata = self._remove_isolation_metadata_override(content.metadata)
 
             # Apply safe string handling for updates
             if content.name is not None:
@@ -2594,8 +2700,8 @@ class Knowledge(RemoteKnowledge):
                 content_row.description = self._ensure_string_field(
                     content.description, "content.description", default=""
                 )
-            if content.metadata is not None:
-                content_row.metadata = merge_user_metadata(content_row.metadata, content.metadata)
+            if safe_metadata is not None:
+                content_row.metadata = merge_user_metadata(content_row.metadata, safe_metadata)
             if content.status is not None:
                 content_row.status = content.status
             if content.status_message is not None:
@@ -2615,8 +2721,11 @@ class Knowledge(RemoteKnowledge):
 
             if self.vector_db:
                 # Strip _agno from metadata sent to vector_db — only user fields should be searchable
-                user_metadata = strip_agno_metadata(content.metadata) or {}
-                self.vector_db.update_metadata(content_id=content.id, metadata=user_metadata)
+                user_metadata = strip_agno_metadata(safe_metadata) or {}
+                self.vector_db.update_metadata(
+                    content_id=content.id,
+                    metadata=self._prepare_vector_db_filters(user_metadata) or {},
+                )
 
             return content_row.to_dict()
 
