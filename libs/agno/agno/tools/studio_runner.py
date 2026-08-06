@@ -992,10 +992,16 @@ class StudioRunnerTools(Toolkit):
         component dispatched directly is refused."""
         if self.db is None:
             return
-        self._check_references(component, config, component_type, component_id, set())
+        self._check_references(component, config, component_type, component_id, set(), {})
 
     def _check_references(
-        self, component: Any, config: Dict[str, Any], component_type: str, component_id: str, seen: set
+        self,
+        component: Any,
+        config: Dict[str, Any],
+        component_type: str,
+        component_id: str,
+        seen: set,
+        configs: Dict[tuple, Optional[Dict[str, Any]]],
     ) -> None:
         """Check this component's references, then theirs, down to the leaves.
 
@@ -1033,7 +1039,11 @@ class StudioRunnerTools(Toolkit):
                 continue
             # A db read that fails is not evidence of fidelity, so it must not
             # pass as one: let it reach the caller's handler.
-            ref_config = self._load_config_from_db(ref_id, component_type=stored_type)
+            if (ref_type, ref_id) in configs:
+                ref_config = configs[(ref_type, ref_id)]
+            else:
+                ref_config = self._load_config_from_db(ref_id, component_type=stored_type)
+                configs[(ref_type, ref_id)] = ref_config
             if ref_config is None:
                 # A code-defined reference has no stored config to compare
                 # against, and _require_registry_for covers an absent registry.
@@ -1043,7 +1053,7 @@ class StudioRunnerTools(Toolkit):
                 self._require_reference_type_matches(ref_type, ref_id, component_type, component_id)
                 continue
             self._require_faithful_rebuild(target, ref_config, ref_type, ref_id)
-            self._check_references(target, ref_config, ref_type, ref_id, seen)
+            self._check_references(target, ref_config, ref_type, ref_id, seen, configs)
 
     @staticmethod
     def _components_by_id(node: Any) -> Dict[tuple, Any]:
