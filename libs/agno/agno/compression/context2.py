@@ -206,16 +206,21 @@ class ContextCompactionManager:
         if self.model is None:
             return None
 
-        prompt_text = self._format_messages_for_llm(messages, prev_summary)
         system_prompt = self.instructions or DEFAULT_COMPACTION_PROMPT
 
-        try:
-            response = self.model.response(
-                messages=[
-                    Message(role="system", content=system_prompt),
-                    Message(role="user", content=prompt_text),
-                ]
+        # Build message list: system prompt + optional previous summary + messages to summarize
+        summary_messages: List[Message] = [Message(role="system", content=system_prompt)]
+        if prev_summary:
+            summary_messages.append(
+                Message(role="user", content=f"Previous summary to update:\n{prev_summary}")
             )
+        summary_messages.extend(messages)
+        summary_messages.append(
+            Message(role="user", content="Now provide a concise summary of the conversation above.")
+        )
+
+        try:
+            response = self.model.response(messages=summary_messages)
 
             if run_metrics is not None:
                 from agno.metrics import ModelType, accumulate_model_metrics
@@ -226,27 +231,6 @@ class ContextCompactionManager:
         except Exception as e:
             log_error(f"Compaction LLM call failed: {e}")
             return None
-
-    def _format_messages_for_llm(self, messages: List[Message], prev_summary: Optional[str]) -> str:
-        """Format messages as text for summarization LLM."""
-        parts = []
-
-        if prev_summary:
-            parts.append(f"[PREVIOUS SUMMARY]\n{prev_summary}\n\n[NEW MESSAGES]")
-
-        for msg in messages:
-            content = msg.compressed_content or msg.content or ""
-            if isinstance(content, list):
-                content = str(content)
-
-            if msg.role == "tool":
-                content = content[:500] + "..." if len(content) > 500 else content
-                parts.append(f"[TOOL:{msg.tool_name}] {content}")
-            else:
-                parts.append(f"[{msg.role.upper()}] {content}")
-
-        prefix = "Update the summary with new messages:\n\n" if prev_summary else "Summarize:\n\n"
-        return prefix + "\n".join(parts)
 
     def _compress_large_tool_results(
         self, messages: List[Message], run_metrics: Optional["RunMetrics"]
@@ -341,16 +325,21 @@ class ContextCompactionManager:
         if self.model is None:
             return None
 
-        prompt_text = self._format_messages_for_llm(messages, prev_summary)
         system_prompt = self.instructions or DEFAULT_COMPACTION_PROMPT
 
-        try:
-            response = await self.model.aresponse(
-                messages=[
-                    Message(role="system", content=system_prompt),
-                    Message(role="user", content=prompt_text),
-                ]
+        # Build message list: system prompt + optional previous summary + messages to summarize
+        summary_messages: List[Message] = [Message(role="system", content=system_prompt)]
+        if prev_summary:
+            summary_messages.append(
+                Message(role="user", content=f"Previous summary to update:\n{prev_summary}")
             )
+        summary_messages.extend(messages)
+        summary_messages.append(
+            Message(role="user", content="Now provide a concise summary of the conversation above.")
+        )
+
+        try:
+            response = await self.model.aresponse(messages=summary_messages)
 
             if run_metrics is not None:
                 from agno.metrics import ModelType, accumulate_model_metrics
