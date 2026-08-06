@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
 from agno.models.base import Model
 from agno.models.message import Message
@@ -48,13 +48,7 @@ SUMMARY_PREFIX = dedent("""\
 
 @dataclass
 class CompactionState:
-    """Tracks context compaction state for a session.
-
-    The compacted_message_ids field stores IDs of all messages that have been summarized.
-    This solves the "marks on copies" problem: history messages are deepcopy'd at load time,
-    so marking them with is_compacted=True doesn't persist. By storing IDs centrally in
-    session.compaction (which IS persisted), we can filter by ID on next load.
-    """
+    """Tracks context compaction state for a session."""
 
     summary: str = ""
     compacted_message_ids: Set[str] = field(default_factory=set)
@@ -90,23 +84,14 @@ class CompactionState:
 
 
 @dataclass
-class CompactionResult:
-    """Result of context compaction."""
-
-    view: List[Message]
-    summary: Optional[str] = None
-
-
-@dataclass
 class ContextCompactionManager:
-    """Manages context compaction — summarizing old conversation history."""
+    """Compacts conversation history to fit within context limits."""
 
     model: Optional[Model] = None
     message_limit: Optional[int] = None
     token_limit: Optional[int] = None
     keep_recent: int = 10
     instructions: Optional[str] = None
-    stats: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if self.model is not None:
@@ -114,304 +99,265 @@ class ContextCompactionManager:
         if self.message_limit is None and self.token_limit is None:
             self.message_limit = 50
 
+    def should_compact(self, messages: List[Message]) -> bool:
+        """Check if messages exceed compaction threshold."""
+        if self.token_limit is not None and self.model is not None:
+            if self.model.count_tokens(messages) >= self.token_limit:
+                return True
+        if self.message_limit is not None:
+            if len(messages) >= self.message_limit:
+                return True
+        return False
+
     def compact(
         self,
         messages: List[Message],
         session: Optional["AgentSession"] = None,
         run_metrics: Optional["RunMetrics"] = None,
-    ) -> CompactionResult:
-        """Compact messages into a shorter context view.
+    ) -> Tuple[List[Message], Optional[str]]:
+        """Compact messages if threshold exceeded.
 
-        Two-phase compaction:
-        1. Summarize old history messages (preserves recent messages verbatim)
-        2. If still over token_limit, compress large tool results
-
-        Returns CompactionResult with the compacted view. Session state is updated
-        in-place (persisted when session is saved).
+        Returns:
+            Tuple of (compacted_compacted_messages, new_summary). If no compaction needed,
+            returns (original_messages, None).
         """
-        # 1. Early exit if no model configured
-        if self.model is None:
-            return CompactionResult(view=messages)
+        # 1. Check if compaction needed
+        if self.model is None or not self.should_compact(messages):
+            return messages, None
 
-        # 2. Get stored summary for incremental compaction
-        stored_summary = self._get_stored_summary(session)
-
-        # 3. Check threshold — skip if under limit
-        # Note: messages already filtered by _messages.py via skip_compacted_messages=True
-        if not self._needs_compaction(messages):
-            return CompactionResult(view=messages)
-
-        # 4. Separate system messages (always kept at top)
+        # 2. Split messages into groups
         system_msgs = [m for m in messages if m.role == "system"]
         non_system = [m for m in messages if m.role != "system"]
+        old_messages, preserved_user, recent_messages = self._split_messages(non_system)
 
-        # 5. Partition non-system messages:
-        #    - to_compact: older messages to summarize
-        #    - preserved_user: recent user messages (kept verbatim for intent)
-        #    - keep_verbatim: last N messages (tool-pair safe via safe_truncation_index)
-        to_compact, preserved_user, keep_verbatim = self._partition(non_system)
+        if not old_messages:
+            return messages, None
 
-        # 6. Nothing to compact — all messages are in keep_verbatim
-        if not to_compact:
-            return CompactionResult(view=messages)
+        # 3. Summarize old messages (merges with existing summary if available)
+        existing_summary = session.compaction.summary if session and session.compaction else None
+        new_summary = self._summarize(old_messages, existing_summary, run_metrics)
 
-        # 7. Generate summary via LLM (merges with previous summary if exists)
-        summary = self._summarize(to_compact, stored_summary, run_metrics)
-        if not summary:
-            return CompactionResult(view=messages)
+        if not new_summary:
+            return messages, None
 
-        # 8. Build compacted view: [system] + [summary] + [preserved_user] + [keep_verbatim]
-        view = system_msgs + [self._make_summary_msg(summary)] + preserved_user + keep_verbatim
-        log_info(f"[COMPACTION] Compacted {len(to_compact)} messages ({len(summary)} chars)")
+        # 4. Build compacted compacted_messages: system + new summary + preserved user + recent
+        summary_msg = Message(role="user", content=SUMMARY_PREFIX + new_summary, from_history=True)
+        compacted_messages = system_msgs + [summary_msg] + preserved_user + recent_messages
+        log_info(f"[COMPACTION] Compacted {len(old_messages)} messages ({len(new_summary)} chars)")
 
-        # 9. Phase 2: If still over token_limit, compress large tool results in keep_verbatim
-        if self.token_limit is not None:
-            view_tokens = self.model.count_tokens(view)
-            if view_tokens > self.token_limit:
-                keep_verbatim = self._compress_tool_results(keep_verbatim, run_metrics)
-                view = system_msgs + [self._make_summary_msg(summary)] + preserved_user + keep_verbatim
-                log_info(f"[COMPACTION] Compressed tool results, now {self.model.count_tokens(view)} tokens")
+        # 5. Compress large tool results if still over token limit
+        if self.token_limit and self.model.count_tokens(compacted_messages) > self.token_limit:
+            self._compress_tool_results(recent_messages, run_metrics)
+            compacted_messages = system_msgs + [summary_msg] + preserved_user + recent_messages
+            log_info(f"[COMPACTION] Compressed tool results, now {self.model.count_tokens(compacted_messages)} tokens")
 
-        # 10. Update session compaction state (persisted when session is saved)
-        if session is not None:
-            prev = session.compaction
-            new_ids = {msg.id for msg in to_compact if msg.id}
-            all_ids = new_ids.union(prev.compacted_message_ids if prev else set())
+        # 6. Update session state
+        self._update_session_state(session, old_messages, new_summary)
 
-            session.compaction = CompactionState(
-                summary=summary,
-                compacted_message_ids=all_ids,
-                compacted_count=(prev.compacted_count if prev else 0) + len(to_compact),
-                total_compactions=(prev.total_compactions if prev else 0) + 1,
-                updated_at=datetime.now(),
+        return compacted_messages, new_summary
+
+    def _split_messages(
+        self, messages: List[Message]
+    ) -> Tuple[List[Message], List[Message], List[Message]]:
+        """Split messages into: old_messages (to summarize), preserved_user, recent_messages."""
+        if not messages:
+            return [], [], []
+
+        # Keep last N messages as recent (tool-pair safe)
+        keep_count = min(self.keep_recent, len(messages))
+        split_idx = safe_truncation_index(messages, len(messages) - keep_count)
+        recent_messages = messages[split_idx:]
+        older = messages[:split_idx]
+
+        if not older:
+            return [], [], recent_messages
+
+        # Extract recent user messages from older portion (preserve intent)
+        preserved_user, preserved_indices = self._extract_user_messages(older)
+        old_messages = [m for i, m in enumerate(older) if i not in preserved_indices]
+
+        return old_messages, preserved_user, recent_messages
+
+    def _extract_user_messages(self, messages: List[Message]) -> Tuple[List[Message], Set[int]]:
+        """Extract recent user messages up to token budget."""
+        budget = max(100, (self.message_limit or 50) * 20)
+        preserved: List[Message] = []
+        indices: Set[int] = set()
+        used = 0
+
+        for i in range(len(messages) - 1, -1, -1):
+            msg = messages[i]
+            if msg.role == "user":
+                tokens = self.model.count_tokens([msg]) if self.model else len(str(msg.content or "")) // 4
+                if used + tokens <= budget:
+                    preserved.insert(0, msg)
+                    indices.add(i)
+                    used += tokens
+                else:
+                    break
+
+        return preserved, indices
+
+    def _summarize(
+        self,
+        old_messages: List[Message],
+        existing_summary: Optional[str],
+        run_metrics: Optional["RunMetrics"],
+    ) -> Optional[str]:
+        """Generate summary of old messages via LLM."""
+        if self.model is None:
+            return None
+
+        system_prompt = self.instructions or DEFAULT_COMPACTION_PROMPT
+
+        # Build prompt: system + existing summary (if any) + old messages + instruction
+        prompt_messages: List[Message] = [Message(role="system", content=system_prompt)]
+        if existing_summary:
+            prompt_messages.append(
+                Message(role="user", content=f"Previous summary to update:\n{existing_summary}")
             )
+        prompt_messages.extend(old_messages)
+        prompt_messages.append(
+            Message(role="user", content="Now provide a concise summary of the conversation above.")
+        )
 
-        return CompactionResult(view=view, summary=summary)
+        try:
+            response = self.model.response(messages=prompt_messages)
+
+            if run_metrics is not None:
+                from agno.metrics import ModelType, accumulate_model_metrics
+
+                accumulate_model_metrics(response, self.model, ModelType.COMPRESSION_MODEL, run_metrics)
+
+            return response.content
+        except Exception as e:
+            log_error(f"Compaction LLM call failed: {e}")
+            return None
+
+    def _compress_tool_results(
+        self, messages: List[Message], run_metrics: Optional["RunMetrics"]
+    ) -> None:
+        """Compress large tool results using CompressionManager."""
+        from agno.compression.manager import CompressionManager
+
+        cm = CompressionManager(model=self.model)
+        cm.compress(messages, run_metrics)
+
+    def _update_session_state(
+        self,
+        session: Optional["AgentSession"],
+        old_messages: List[Message],
+        new_summary: str,
+    ) -> None:
+        """Update session.compaction with new state."""
+        if session is None:
+            return
+
+        prev = session.compaction
+        new_ids = {msg.id for msg in old_messages if msg.id}
+        all_ids = new_ids.union(prev.compacted_message_ids if prev else set())
+
+        session.compaction = CompactionState(
+            summary=new_summary,
+            compacted_message_ids=all_ids,
+            compacted_count=(prev.compacted_count if prev else 0) + len(old_messages),
+            total_compactions=(prev.total_compactions if prev else 0) + 1,
+            updated_at=datetime.now(),
+        )
+
+    async def ashould_compact(self, messages: List[Message]) -> bool:
+        """Async version of should_compact()."""
+        if self.token_limit is not None and self.model is not None:
+            if await self.model.acount_tokens(messages) >= self.token_limit:
+                return True
+        if self.message_limit is not None:
+            if len(messages) >= self.message_limit:
+                return True
+        return False
 
     async def acompact(
         self,
         messages: List[Message],
         session: Optional["AgentSession"] = None,
         run_metrics: Optional["RunMetrics"] = None,
-    ) -> CompactionResult:
-        """Async version of compact(). See compact() for detailed documentation."""
-        # 1. Early exit if no model configured
-        if self.model is None:
-            return CompactionResult(view=messages)
+    ) -> Tuple[List[Message], Optional[str]]:
+        """Async version of compact()."""
+        # 1. Check if compaction needed
+        if self.model is None or not await self.ashould_compact(messages):
+            return messages, None
 
-        # 2. Get stored summary for incremental compaction
-        stored_summary = self._get_stored_summary(session)
-
-        # 3. Check threshold — skip if under limit
-        # Note: messages already filtered by _messages.py via skip_compacted_messages=True
-        if not await self._aneeds_compaction(messages):
-            return CompactionResult(view=messages)
-
-        # 4. Separate system messages (always kept at top)
+        # 2. Split messages into groups
         system_msgs = [m for m in messages if m.role == "system"]
         non_system = [m for m in messages if m.role != "system"]
+        old_messages, preserved_user, recent_messages = self._split_messages(non_system)
 
-        # 5. Partition non-system messages
-        to_compact, preserved_user, keep_verbatim = self._partition(non_system)
+        if not old_messages:
+            return messages, None
 
-        # 6. Nothing to compact — all messages are in keep_verbatim
-        if not to_compact:
-            return CompactionResult(view=messages)
+        # 3. Summarize old messages (merges with existing summary if available)
+        existing_summary = session.compaction.summary if session and session.compaction else None
+        new_summary = await self._asummarize(old_messages, existing_summary, run_metrics)
 
-        # 7. Generate summary via LLM (merges with previous summary if exists)
-        summary = await self._asummarize(to_compact, stored_summary, run_metrics)
-        if not summary:
-            return CompactionResult(view=messages)
+        if not new_summary:
+            return messages, None
 
-        # 8. Build compacted view: [system] + [summary] + [preserved_user] + [keep_verbatim]
-        view = system_msgs + [self._make_summary_msg(summary)] + preserved_user + keep_verbatim
-        log_info(f"[COMPACTION] Compacted {len(to_compact)} messages ({len(summary)} chars)")
+        # 4. Build compacted compacted_messages: system + new summary + preserved user + recent
+        summary_msg = Message(role="user", content=SUMMARY_PREFIX + new_summary, from_history=True)
+        compacted_messages = system_msgs + [summary_msg] + preserved_user + recent_messages
+        log_info(f"[COMPACTION] Compacted {len(old_messages)} messages ({len(new_summary)} chars)")
 
-        # 9. Phase 2: If still over token_limit, compress large tool results in keep_verbatim
-        if self.token_limit is not None:
-            view_tokens = await self.model.acount_tokens(view)
-            if view_tokens > self.token_limit:
-                keep_verbatim = await self._acompress_tool_results(keep_verbatim, run_metrics)
-                view = system_msgs + [self._make_summary_msg(summary)] + preserved_user + keep_verbatim
-                log_info(f"[COMPACTION] Compressed tool results, now {await self.model.acount_tokens(view)} tokens")
+        # 5. Compress large tool results if still over token limit
+        if self.token_limit and await self.model.acount_tokens(compacted_messages) > self.token_limit:
+            await self._acompress_tool_results(recent_messages, run_metrics)
+            compacted_messages = system_msgs + [summary_msg] + preserved_user + recent_messages
+            log_info(f"[COMPACTION] Compressed tool results, now {await self.model.acount_tokens(compacted_messages)} tokens")
 
-        # 10. Update session compaction state (persisted when session is saved)
-        if session is not None:
-            prev = session.compaction
-            new_ids = {msg.id for msg in to_compact if msg.id}
-            all_ids = new_ids.union(prev.compacted_message_ids if prev else set())
+        # 6. Update session state
+        self._update_session_state(session, old_messages, new_summary)
 
-            session.compaction = CompactionState(
-                summary=summary,
-                compacted_message_ids=all_ids,
-                compacted_count=(prev.compacted_count if prev else 0) + len(to_compact),
-                total_compactions=(prev.total_compactions if prev else 0) + 1,
-                updated_at=datetime.now(),
-            )
-
-        return CompactionResult(view=view, summary=summary)
-
-    # --- Private ---
-
-    def _needs_compaction(self, active: List[Message]) -> bool:
-        if self.token_limit is not None and self.model is not None:
-            if self.model.count_tokens(active) >= self.token_limit:
-                return True
-        if self.message_limit is not None:
-            if len(active) >= self.message_limit:
-                return True
-        return False
-
-    async def _aneeds_compaction(self, active: List[Message]) -> bool:
-        if self.token_limit is not None and self.model is not None:
-            if await self.model.acount_tokens(active) >= self.token_limit:
-                return True
-        if self.message_limit is not None:
-            if len(active) >= self.message_limit:
-                return True
-        return False
-
-    def _get_stored_summary(self, session: Optional["AgentSession"]) -> Optional[str]:
-        if session is None:
-            return None
-        compaction = getattr(session, "compaction", None)
-        return compaction.summary if compaction and compaction.summary else None
-
-    def _partition(self, messages: List[Message]) -> tuple:
-        """Split non-system messages into three groups for compaction.
-
-        Returns (to_compact, preserved_user, keep_verbatim):
-        - to_compact: Older messages that will be summarized by LLM
-        - preserved_user: Recent user messages kept verbatim (preserves intent)
-        - keep_verbatim: Last N messages kept verbatim (tool-pair safe)
-
-        Visual:
-            [m1, m2, ..., m35, m36(user), m37, m38(user), m39, m40, ..., m50]
-             └── to_compact ──┘ └─ preserved_user ─┘ └──── keep_verbatim ────┘
-        """
-        if not messages:
-            return [], [], []
-
-        # 1. Keep last N messages verbatim (default: 10)
-        #    safe_truncation_index snaps boundary to avoid breaking tool pairs
-        keep_count = min(self.keep_recent, len(messages))
-        split_idx = safe_truncation_index(messages, len(messages) - keep_count)
-        keep_verbatim = messages[split_idx:]
-        remaining = messages[:split_idx]
-
-        if not remaining:
-            return [], [], keep_verbatim
-
-        # 2. From remaining (older) messages, preserve recent user messages
-        #    User messages often contain critical intent/corrections
-        #    Budget: ~1000 tokens (roughly 2-5 user messages)
-        limit = self.message_limit or len(messages)
-        user_budget = max(100, limit * 20)
-        preserved_user: List[Message] = []
-        budget_used = 0
-        preserved_indices = set()
-
-        # Walk backwards to get most recent user messages first
-        for i in range(len(remaining) - 1, -1, -1):
-            msg = remaining[i]
-            if msg.role == "user":
-                tokens = self.model.count_tokens([msg]) if self.model else len(str(msg.content or "")) // 4
-                if budget_used + tokens <= user_budget:
-                    preserved_user.insert(0, msg)
-                    preserved_indices.add(i)
-                    budget_used += tokens
-                else:
-                    break
-
-        # 3. Everything else gets summarized
-        to_compact = [m for i, m in enumerate(remaining) if i not in preserved_indices]
-        return to_compact, preserved_user, keep_verbatim
-
-    def _make_summary_msg(self, summary: str) -> Message:
-        # from_history=True prevents duplication on history reload
-        # NOT temporary=True — that would strip summary from fallback models
-        return Message(role="user", content=SUMMARY_PREFIX + summary, from_history=True)
-
-    def _summarize(
-        self, to_compact: List[Message], prev_summary: Optional[str], run_metrics: Optional["RunMetrics"]
-    ) -> Optional[str]:
-        prompt = self.instructions or DEFAULT_COMPACTION_PROMPT
-        content = self._format_for_summary(to_compact, prev_summary)
-        return self._call_llm(prompt, content, run_metrics)
+        return compacted_messages, new_summary
 
     async def _asummarize(
-        self, to_compact: List[Message], prev_summary: Optional[str], run_metrics: Optional["RunMetrics"]
+        self,
+        old_messages: List[Message],
+        existing_summary: Optional[str],
+        run_metrics: Optional["RunMetrics"],
     ) -> Optional[str]:
-        prompt = self.instructions or DEFAULT_COMPACTION_PROMPT
-        content = self._format_for_summary(to_compact, prev_summary)
-        return await self._acall_llm(prompt, content, run_metrics)
-
-    def _format_for_summary(self, to_compact: List[Message], prev_summary: Optional[str]) -> str:
-        parts = []
-        if prev_summary:
-            parts.append(f"[PREVIOUS SUMMARY]\n{prev_summary}\n\n[NEW MESSAGES]")
-
-        for msg in to_compact:
-            content = msg.compressed_content or msg.content or ""
-            if isinstance(content, list):
-                content = str(content)
-            if msg.role == "tool":
-                content = content[:500] + "..." if len(content) > 500 else content
-                parts.append(f"[TOOL:{msg.tool_name}] {content}")
-            else:
-                parts.append(f"[{msg.role.upper()}] {content}")
-
-        prefix = "Update the summary with new messages:\n\n" if prev_summary else "Summarize:\n\n"
-        return prefix + "\n".join(parts)
-
-    def _call_llm(self, system_prompt: str, user_content: str, run_metrics: Optional["RunMetrics"]) -> Optional[str]:
+        """Async version of _summarize()."""
         if self.model is None:
             return None
-        try:
-            response = self.model.response(
-                messages=[Message(role="system", content=system_prompt), Message(role="user", content=user_content)]
+
+        system_prompt = self.instructions or DEFAULT_COMPACTION_PROMPT
+
+        # Build prompt: system + existing summary (if any) + old messages + instruction
+        prompt_messages: List[Message] = [Message(role="system", content=system_prompt)]
+        if existing_summary:
+            prompt_messages.append(
+                Message(role="user", content=f"Previous summary to update:\n{existing_summary}")
             )
+        prompt_messages.extend(old_messages)
+        prompt_messages.append(
+            Message(role="user", content="Now provide a concise summary of the conversation above.")
+        )
+
+        try:
+            response = await self.model.aresponse(messages=prompt_messages)
+
             if run_metrics is not None:
                 from agno.metrics import ModelType, accumulate_model_metrics
 
                 accumulate_model_metrics(response, self.model, ModelType.COMPRESSION_MODEL, run_metrics)
+
             return response.content
         except Exception as e:
             log_error(f"Compaction LLM call failed: {e}")
             return None
-
-    async def _acall_llm(
-        self, system_prompt: str, user_content: str, run_metrics: Optional["RunMetrics"]
-    ) -> Optional[str]:
-        if self.model is None:
-            return None
-        try:
-            response = await self.model.aresponse(
-                messages=[Message(role="system", content=system_prompt), Message(role="user", content=user_content)]
-            )
-            if run_metrics is not None:
-                from agno.metrics import ModelType, accumulate_model_metrics
-
-                accumulate_model_metrics(response, self.model, ModelType.COMPRESSION_MODEL, run_metrics)
-            return response.content
-        except Exception as e:
-            log_error(f"Compaction LLM call failed: {e}")
-            return None
-
-    def _compress_tool_results(self, messages: List[Message], run_metrics: Optional["RunMetrics"]) -> List[Message]:
-        """Compress large tool results using CompressionManager."""
-        from agno.compression.manager import CompressionManager
-
-        cm = CompressionManager(model=self.model)
-        cm.compress(messages, run_metrics)
-        return messages
 
     async def _acompress_tool_results(
         self, messages: List[Message], run_metrics: Optional["RunMetrics"]
-    ) -> List[Message]:
-        """Async version of _compress_tool_results."""
+    ) -> None:
+        """Async version of _compress_tool_results()."""
         from agno.compression.manager import CompressionManager
 
         cm = CompressionManager(model=self.model)
         await cm.acompress(messages, run_metrics)
-        return messages
