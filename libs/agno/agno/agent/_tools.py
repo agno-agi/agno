@@ -554,6 +554,15 @@ def handle_external_execution_update(agent: Agent, run_messages: RunMessages, to
 
 def handle_user_input_update(agent: Agent, tool: ToolExecution):
     for field in tool.user_input_schema or []:
+        # A None value means the agent omitted this parameter and the user did
+        # not supply it (user_input_schema contains every non-framework param,
+        # not just user_input_fields). Writing None here would override the
+        # function's own default (e.g. priority="normal" -> None) and raise
+        # validation errors when the tool is executed on continue. Explicit
+        # None values the agent actually passed already live in tool_args (they
+        # come from fc.arguments), so skipping preserves them.
+        if field.value is None:
+            continue
         if not tool.tool_args:
             tool.tool_args = {}
         tool.tool_args[field.name] = field.value

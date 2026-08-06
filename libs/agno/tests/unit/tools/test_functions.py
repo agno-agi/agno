@@ -313,6 +313,131 @@ def test_user_input_with_run_context_execution():
     assert run_context.session_state["sent"] == 1
 
 
+def _build_paused_tool_execution(func: Function, agent_args: Dict[str, Any], user_values: Dict[str, Any]):
+    """Reproduce the paused ToolExecution the model layer builds for a HITL tool.
+
+    Mirrors agno.models.base: user_input_schema is the function's full schema and
+    each field value is populated from the arguments the agent actually passed;
+    user_values are then applied as if provided on continue.
+    """
+    from agno.models.response import ToolExecution
+
+    schema = func.user_input_schema or []
+    for field in schema:
+        if field.name in agent_args:
+            field.value = agent_args[field.name]
+    for field in schema:
+        if field.name in user_values:
+            field.value = user_values[field.name]
+    return ToolExecution(
+        tool_call_id="call_1",
+        tool_name=func.name,
+        tool_args=dict(agent_args),
+        user_input_schema=schema,
+    )
+
+
+def test_handle_user_input_update_skips_omitted_defaulted_params():
+    """Omitted defaulted params must not be forced to None on continue (issue #6870)."""
+    from agno.agent._tools import handle_user_input_update
+
+    @tool(requires_user_input=True, user_input_fields=["to_address"])
+    def send_email(subject: str, body: str, to_address: str, priority: str = "normal", cc: Optional[str] = None) -> str:
+        """Send an email.
+
+        Args:
+            subject (str): The subject.
+            body (str): The body.
+            to_address (str): The recipient.
+            priority (str): Delivery priority.
+            cc (str): Optional CC address.
+        """
+        return f"to={to_address} priority={priority} cc={cc}"
+
+    send_email.process_entrypoint()
+
+    # Agent provided subject/body only; user supplies the single user_input_field.
+    tool_execution = _build_paused_tool_execution(
+        send_email,
+        agent_args={"subject": "Hi", "body": "Hello"},
+        user_values={"to_address": "a@b.com"},
+    )
+
+    handle_user_input_update(None, tool_execution)  # type: ignore[arg-type]  # agent is unused
+
+    # Agent-provided and user-filled values are written back.
+    assert tool_execution.tool_args["subject"] == "Hi"
+    assert tool_execution.tool_args["body"] == "Hello"
+    assert tool_execution.tool_args["to_address"] == "a@b.com"
+    # Omitted defaulted params are left out so the function defaults apply.
+    assert "priority" not in tool_execution.tool_args
+    assert "cc" not in tool_execution.tool_args
+
+
+def test_handle_user_input_update_continue_executes_with_defaults():
+    """After continue, executing the tool uses the function default for omitted params (issue #6870)."""
+    from agno.agent._tools import handle_user_input_update
+
+    @tool(requires_user_input=True, user_input_fields=["to_address"])
+    def send_email(subject: str, body: str, to_address: str, priority: str = "normal") -> str:
+        """Send an email.
+
+        Args:
+            subject (str): The subject.
+            body (str): The body.
+            to_address (str): The recipient.
+            priority (str): Delivery priority.
+        """
+        # priority.upper() would raise AttributeError if it were forced to None.
+        return f"to={to_address} priority={priority.upper()}"
+
+    send_email.process_entrypoint()
+
+    tool_execution = _build_paused_tool_execution(
+        send_email,
+        agent_args={"subject": "Hi", "body": "Hello"},
+        user_values={"to_address": "a@b.com"},
+    )
+
+    handle_user_input_update(None, tool_execution)  # type: ignore[arg-type]
+
+    fc = FunctionCall(function=send_email, arguments=tool_execution.tool_args)
+    result = fc.execute()
+    assert result.status == "success"
+    assert result.result == "to=a@b.com priority=NORMAL"
+
+
+def test_handle_user_input_update_preserves_explicit_agent_none():
+    """An explicit None the agent passed for a defaulted param is preserved (issue #6870)."""
+    from agno.agent._tools import handle_user_input_update
+
+    @tool(requires_user_input=True, user_input_fields=["to_address"])
+    def send_email(subject: str, to_address: str, cc: Optional[str] = None) -> str:
+        """Send an email.
+
+        Args:
+            subject (str): The subject.
+            to_address (str): The recipient.
+            cc (str): Optional CC address.
+        """
+        return f"to={to_address} cc={cc}"
+
+    send_email.process_entrypoint()
+
+    # Agent explicitly passed cc=None (a valid value); it already lives in tool_args.
+    tool_execution = _build_paused_tool_execution(
+        send_email,
+        agent_args={"subject": "Hi", "cc": None},
+        user_values={"to_address": "a@b.com"},
+    )
+
+    handle_user_input_update(None, tool_execution)  # type: ignore[arg-type]
+
+    assert tool_execution.tool_args["to_address"] == "a@b.com"
+    assert "cc" in tool_execution.tool_args
+    assert tool_execution.tool_args["cc"] is None
+
+
 def test_function_process_entrypoint_skip_processing():
     """Test that entrypoint processing is skipped when skip_entrypoint_processing is True."""
 
