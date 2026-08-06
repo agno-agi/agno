@@ -145,6 +145,10 @@ class TestTeamBackgroundLifecycle:
                 for run in session.runs:
                     persisted_statuses.append(run.status)
 
+        async def fake_asave_run(team, run=None, session_id=None, user_id=None, run_index=None):
+            if run is not None:
+                persisted_statuses.append(run.status)
+
         async def fake_arun(team, run_response, run_context, **kwargs):
             run_response.status = RunStatus.completed
             return run_response
@@ -152,6 +156,7 @@ class TestTeamBackgroundLifecycle:
         monkeypatch.setattr(_storage, "_aread_or_create_session", fake_aread_or_create_session)
         monkeypatch.setattr(_storage, "_update_metadata", lambda team, session=None: None)
         monkeypatch.setattr("agno.team._session.asave_session", fake_asave_session)
+        monkeypatch.setattr("agno.team._session.asave_run", fake_asave_run)
         monkeypatch.setattr(_run, "_arun", fake_arun)
 
         run_response = TeamRunOutput(run_id="bg-run-2", session_id="test-session")
@@ -188,12 +193,17 @@ class TestTeamBackgroundLifecycle:
                 for run in session.runs:
                     final_statuses.append(run.status)
 
+        async def fake_asave_run(team, run=None, session_id=None, user_id=None, run_index=None):
+            if run is not None:
+                final_statuses.append(run.status)
+
         async def fake_arun_that_fails(team, run_response, run_context, **kwargs):
             raise RuntimeError("model call failed")
 
         monkeypatch.setattr(_storage, "_aread_or_create_session", fake_aread_or_create_session)
         monkeypatch.setattr(_storage, "_update_metadata", lambda team, session=None: None)
         monkeypatch.setattr("agno.team._session.asave_session", fake_asave_session)
+        monkeypatch.setattr("agno.team._session.asave_run", fake_asave_run)
         monkeypatch.setattr(_run, "_arun", fake_arun_that_fails)
 
         run_response = TeamRunOutput(run_id="bg-run-err", session_id="test-session")
