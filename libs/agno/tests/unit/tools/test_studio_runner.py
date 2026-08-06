@@ -1704,6 +1704,32 @@ class TestMemberStructureFidelity:
         with pytest.raises(Exception):
             runner._require_isolated_steps(type("W", (), {"steps": [step]})(), "wf")
 
+    def test_callable_factory_members_and_tools_do_not_crash_the_graph_walk(self):
+        """members= and tools= accept callable factories, so the nested-tools walk
+        must skip what it cannot iterate instead of crashing dispatch."""
+        from agno.agent import Agent
+        from agno.team import Team
+
+        with_tool_factory = Team(id="t", name="T", members=[Agent(id="m", name="M", tools=lambda: [])])
+        assert StudioRunnerTools._unresolved_below(with_tool_factory) is None
+
+        lazy_members = Team(id="t2", name="T2", members=lambda: [Agent(id="m2", name="M2")])
+        with_member_factory = Team(id="outer", name="Outer", members=[lazy_members])
+        assert StudioRunnerTools._unresolved_below(with_member_factory) is None
+
+    def test_step_executor_with_callable_factory_members_passes_the_isolation_check(self, db):
+        """The isolation walk descends through member lists; a member team whose
+        members= is a callable factory must be skipped, not iterated."""
+        from agno.agent import Agent
+        from agno.registry import Registry
+        from agno.team import Team
+
+        registered = Agent(id="registered", name="Registered")
+        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db], agents=[registered]), db=db)
+        lazy = Team(id="lazy", name="Lazy", members=lambda: [Agent(id="m", name="M")])
+        step = type("S", (), {"name": "s", "agent": None, "team": Team(id="t", name="T", members=[lazy])})()
+        runner._require_isolated_steps(type("W", (), {"steps": [step]})(), "wf")
+
     def test_copy_refusal_reaches_the_caller_as_its_own_message(self, db):
         """DispatchCopyError is a deliberate refusal with an actionable message, so it
         must not be wrapped as a resolve failure and logged with a traceback."""

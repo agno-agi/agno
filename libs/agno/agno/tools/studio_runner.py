@@ -770,20 +770,26 @@ class StudioRunnerTools(Toolkit):
             return None
         seen.add(id(node))
 
-        children: List[Any] = list(getattr(node, "members", None) or [])
-        for step in getattr(node, "steps", None) or []:
+        # members=, steps= and tools= accept callable factories; only a
+        # materialized list can be walked.
+        members = getattr(node, "members", None)
+        children: List[Any] = list(members) if isinstance(members, list) else []
+        steps = getattr(node, "steps", None)
+        for step in steps if isinstance(steps, list) else []:
             for attribute in ("agent", "team"):
                 child = getattr(step, attribute, None)
                 if child is not None:
                     children.append(child)
             for nested_attribute in ("steps", "else_steps", "choices"):
-                children.extend(getattr(step, nested_attribute, None) or [])
+                nested = getattr(step, nested_attribute, None)
+                children.extend(nested if isinstance(nested, list) else [])
 
         for child in children:
+            child_tools = getattr(child, "tools", None)
             unresolved = sorted(
                 {
                     str(getattr(tool, "name", None) or "?")
-                    for tool in (getattr(child, "tools", None) or [])
+                    for tool in (child_tools if isinstance(child_tools, list) else [])
                     if isinstance(tool, Function) and tool.entrypoint is None
                 }
             )
@@ -864,7 +870,10 @@ class StudioRunnerTools(Toolkit):
             is_shared = any(node is instance for instance in shared)
             if is_shared and (depth == 0 or callable(getattr(node, "deep_copy", None))):
                 return node
-            for member in getattr(node, "members", None) or []:
+            # members= accepts a callable factory; only a materialized list can
+            # be walked.
+            members = getattr(node, "members", None)
+            for member in members if isinstance(members, list) else []:
                 found = shared_within(member, depth + 1)
                 if found is not None:
                     return found
