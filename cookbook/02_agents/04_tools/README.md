@@ -7,6 +7,7 @@ Examples for callable tool factories, tool choice, and tool call limits.
 - `02_session_state_tools.py` - Use session_state directly as a parameter with caching disabled.
 - `03_team_callable_members.py` - Assemble team members dynamically.
 - `04_tools_with_literal_type_param.py` - Use typing.Literal for tool parameters with predefined values.
+- `05_runtime_tool_registry.py` - Register a tool during a run and expose it on the next model step.
 - `tool_call_limit.py` - Limit the number of tool calls per run.
 - `tool_choice.py` - Control which tool the agent selects.
 

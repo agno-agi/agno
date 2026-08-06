@@ -75,6 +75,7 @@ from agno.run.cancel import (
 from agno.run.messages import RunMessages
 from agno.run.requirement import RunRequirement
 from agno.session import AgentSession
+from agno.tools import ToolRegistry
 from agno.tools.function import Function
 from agno.utils.agent import (
     await_for_open_threads,
@@ -548,6 +549,13 @@ def _run(
                         run_messages=run_messages,
                         run_context=run_context,
                     ),
+                    **model_tool_registry_kwargs(
+                        agent,
+                        run_response=run_response,
+                        session=agent_session,
+                        run_context=run_context,
+                        user_id=user_id,
+                    ),
                 )
 
                 # Check for cancellation after model call
@@ -965,6 +973,13 @@ def _run_stream(
                         stream_events=stream_events,
                         session_state=run_context.session_state,
                         run_context=run_context,
+                        **model_tool_registry_kwargs(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        ),
                     ):
                         if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -985,6 +1000,13 @@ def _run_stream(
                         stream_events=stream_events,
                         session_state=run_context.session_state,
                         run_context=run_context,
+                        **model_tool_registry_kwargs(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        ),
                     ):
                         if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                             raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -1689,6 +1711,13 @@ async def _arun(
                         run_messages=run_messages,
                         run_context=run_context,
                     ),
+                    **amodel_tool_registry_kwargs(
+                        agent,
+                        run_response=run_response,
+                        session=agent_session,
+                        run_context=run_context,
+                        user_id=user_id,
+                    ),
                 )
 
                 # Check for cancellation after model call
@@ -2368,6 +2397,13 @@ async def _arun_stream(
                         stream_events=stream_events,
                         session_state=run_context.session_state,
                         run_context=run_context,
+                        **amodel_tool_registry_kwargs(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        ),
                     ):
                         if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -2388,6 +2424,13 @@ async def _arun_stream(
                         stream_events=stream_events,
                         session_state=run_context.session_state,
                         run_context=run_context,
+                        **amodel_tool_registry_kwargs(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        ),
                     ):
                         if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -3657,6 +3700,13 @@ def _continue_run(
                         run_messages=run_messages,
                         run_context=run_context,
                     ),
+                    **model_tool_registry_kwargs(
+                        agent,
+                        run_response=run_response,
+                        session=session,
+                        run_context=run_context,
+                        user_id=user_id,
+                    ),
                 )
 
                 # Check for cancellation after model processing
@@ -3885,6 +3935,13 @@ def _continue_run_stream(
                     stream_events=stream_events,
                     session_state=run_context.session_state,
                     run_context=run_context,
+                    **model_tool_registry_kwargs(
+                        agent,
+                        run_response=run_response,
+                        session=session,
+                        run_context=run_context,
+                        user_id=user_id,
+                    ),
                 ):
                     if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                         raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -4753,6 +4810,13 @@ async def _acontinue_run(
                         run_messages=run_messages,
                         run_context=run_context,
                     ),
+                    **amodel_tool_registry_kwargs(
+                        agent,
+                        run_response=run_response,
+                        session=agent_session,
+                        run_context=run_context,
+                        user_id=user_id,
+                    ),
                 )
                 # Check for cancellation after model call
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -5252,6 +5316,13 @@ async def _acontinue_run_stream(
                         response_format=response_format,
                         stream_events=stream_events,
                         run_context=run_context,
+                        **amodel_tool_registry_kwargs(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        ),
                     ):
                         if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -5271,6 +5342,13 @@ async def _acontinue_run_stream(
                         response_format=response_format,
                         stream_events=stream_events,
                         run_context=run_context,
+                        **amodel_tool_registry_kwargs(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_context=run_context,
+                            user_id=user_id,
+                        ),
                     ):
                         if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -6054,6 +6132,134 @@ def build_after_tool_results_callback(
         checkpoint_run(agent, run_response, session, run_context)
 
     return _callback
+
+
+def agent_tool_registry(agent: Agent) -> Optional[ToolRegistry]:
+    """Return the Agent's runtime registry, if one is configured."""
+    return agent.tools if isinstance(agent.tools, ToolRegistry) else None
+
+
+def model_tool_registry_kwargs(
+    agent: Agent,
+    *,
+    run_response: RunOutput,
+    session: AgentSession,
+    run_context: RunContext,
+    user_id: Optional[str] = None,
+) -> dict:
+    """Kwargs for model calls that support versioned runtime tool snapshots."""
+    return {
+        "tools_resolver": build_tool_registry_resolver(
+            agent,
+            run_response=run_response,
+            session=session,
+            run_context=run_context,
+            user_id=user_id,
+        ),
+    }
+
+
+def amodel_tool_registry_kwargs(
+    agent: Agent,
+    *,
+    run_response: RunOutput,
+    session: AgentSession,
+    run_context: RunContext,
+    user_id: Optional[str] = None,
+) -> dict:
+    """Async runs — same surface as :func:`model_tool_registry_kwargs`."""
+    return {
+        "tools_resolver": abuild_tool_registry_resolver(
+            agent,
+            run_response=run_response,
+            session=session,
+            run_context=run_context,
+            user_id=user_id,
+        ),
+    }
+
+
+def build_tool_registry_resolver(
+    agent: Agent,
+    run_response: RunOutput,
+    session: AgentSession,
+    run_context: RunContext,
+    user_id: Optional[str] = None,
+) -> Optional[Any]:
+    """Build a resolver that refreshes only after a registry version changes."""
+    registry = agent_tool_registry(agent)
+    if registry is None:
+        return None
+
+    from agno.agent._tools import determine_tools_for_model
+
+    last_version = registry.version
+
+    def _resolver() -> Optional[List[Union[Function, dict]]]:
+        nonlocal last_version
+        current_version = registry.version
+        if current_version == last_version:
+            return None
+        processed_tools = agent.get_tools(
+            run_response=run_response,
+            run_context=run_context,
+            session=session,
+            user_id=user_id,
+        )
+        resolved_tools = determine_tools_for_model(
+            agent,
+            model=cast(Model, agent.model),
+            processed_tools=processed_tools,
+            run_response=run_response,
+            session=session,
+            run_context=run_context,
+        )
+        last_version = current_version
+        return resolved_tools
+
+    return _resolver
+
+
+def abuild_tool_registry_resolver(
+    agent: Agent,
+    run_response: RunOutput,
+    session: AgentSession,
+    run_context: RunContext,
+    user_id: Optional[str] = None,
+) -> Optional[Any]:
+    """Async variant of :func:`build_tool_registry_resolver`."""
+    registry = agent_tool_registry(agent)
+    if registry is None:
+        return None
+
+    from agno.agent._tools import determine_tools_for_model
+
+    last_version = registry.version
+
+    async def _resolver() -> Optional[List[Union[Function, dict]]]:
+        nonlocal last_version
+        current_version = registry.version
+        if current_version == last_version:
+            return None
+        processed_tools = await agent.aget_tools(
+            run_response=run_response,
+            run_context=run_context,
+            session=session,
+            user_id=user_id,
+        )
+        resolved_tools = determine_tools_for_model(
+            agent,
+            model=cast(Model, agent.model),
+            processed_tools=processed_tools,
+            run_response=run_response,
+            run_context=run_context,
+            session=session,
+            async_mode=True,
+        )
+        last_version = current_version
+        return resolved_tools
+
+    return _resolver
 
 
 def abuild_after_tool_results_callback(
