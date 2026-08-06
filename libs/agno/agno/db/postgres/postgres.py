@@ -3695,7 +3695,7 @@ class PostgresDb(BaseDb):
                         table.insert().values(
                             component_id=component_id,
                             component_type=component_type.value,
-                            name=name,
+                            name=name or component_id,
                             description=description,
                             current_version=None,
                             metadata=metadata,
