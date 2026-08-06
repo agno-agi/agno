@@ -177,9 +177,11 @@ def _is_bare_media_typed(hint: Any) -> bool:
 
 def _is_schema_excluded(hint: Any) -> bool:
     """True when process_entrypoint keeps the parameter out of the model-facing
-    schema and a model-supplied value for it is dropped: the identity types
-    (which _build_entrypoint_args binds) plus bare media types (which only the
-    reserved names can receive)."""
+    schema: the identity types plus bare media types.
+
+    Exclusion only. Framework OWNERSHIP is _is_framework_typed, a strictly
+    smaller set: an owned parameter is bound by _build_entrypoint_args and a
+    value supplied for it is dropped, neither of which is true of media."""
     return _is_framework_typed(hint) or _is_bare_media_typed(hint)
 
 
@@ -195,8 +197,8 @@ def _warn_hidden_media(function_name: str, param_name: str) -> None:
     _hidden_media_warned.add(key)
     log_warning(
         f"Parameter '{param_name}' of function '{function_name}' has a media type but not a "
-        "reserved media name: it is hidden from the model and never auto-filled. Rename it to "
-        "images/videos/audios/files to receive the run's media."
+        "reserved media name: the run's media never lands there, and it is hidden from the "
+        "model-facing schema. Rename it to images/videos/audios/files to receive the run's media."
     )
 
 
@@ -625,7 +627,13 @@ class Function(BaseModel):
         found = {name for name in sig.parameters if name in reserved}
         try:
             for param_name, hint in get_type_hints(self.entrypoint).items():
-                if param_name in sig.parameters and _is_schema_excluded(hint):
+                # Identity only, not _is_schema_excluded. A bare media parameter is
+                # hidden from the schema, but dropping a value supplied for it
+                # displaces nothing: media is injected by reserved name alone, so the
+                # caller's own media never lands there under any behaviour. Dropping
+                # would only make the parameter unfillable by anything, which v2.8.7
+                # did not do.
+                if param_name in sig.parameters and _is_framework_typed(hint):
                     found.add(param_name)
         except Exception:
             pass

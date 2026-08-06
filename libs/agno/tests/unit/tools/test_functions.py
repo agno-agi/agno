@@ -1978,12 +1978,16 @@ def _media_agent():
     return Agent(id="real-host", name="Host")
 
 
-def test_bare_media_typed_param_is_hidden_on_the_process_entrypoint_path():
+def test_bare_media_typed_param_is_hidden_but_not_dropped_on_the_process_entrypoint_path():
     """Media is injected by reserved NAME only (images/videos/audios/files), so on
     the Toolkit/@tool path a bare media-typed parameter under any other name is
-    hidden from the model, as at 2.8.7. Exposing it would let the model fabricate
-    the object -- choosing whose data the tool reads -- and the schema it emits is
-    invalid under strict mode, failing the whole request rather than one call."""
+    hidden from the model, as at 2.8.7: exposing it emits an Image schema that is
+    invalid under strict mode, failing the whole request rather than one call.
+
+    Hidden is where it stops. The parameter must NOT join _framework_params, or
+    the argument guard drops a value supplied for it -- and since the caller's own
+    media never lands on this parameter under any behaviour, that displaces
+    nothing and leaves it unfillable by anything. v2.8.7 kept the value."""
     from agno.media import Image
 
     def caption(image: Image, style: str = "short") -> str:
@@ -1994,18 +1998,17 @@ def test_bare_media_typed_param_is_hidden_on_the_process_entrypoint_path():
 
     assert set((func.parameters or {})["properties"]) == {"style"}
     assert "image" not in ((func.parameters or {}).get("required") or [])
-    assert "image" in (func._framework_params or set())
+    assert "image" not in (func._framework_params or set())
 
-    # A model-supplied value for the hidden parameter is dropped; with nothing
-    # to fill it, the required parameter fails the call loudly.
     func._agent = _media_agent()
     result = FunctionCall(function=func, arguments={"image": {"url": "http://x/a.png"}, "style": "long"}).execute()
-    assert result.status == "failure"
+    assert result.status == "success"
+    assert result.result == "http://x/a.png|long"
 
 
-def test_bare_media_typed_param_with_a_default_keeps_it_on_the_process_entrypoint_path():
-    """The default-carrying case of the same rule: the hidden parameter cannot be
-    claimed by the model, and the call runs with the parameter's own default."""
+def test_bare_media_typed_param_with_a_default_is_not_dropped_either():
+    """The default-carrying case of the same rule, and the silent half of the
+    regression it guards: a dropped value reports success with the default."""
     from agno.media import Image
 
     def search(query: str, pic: Image = None) -> str:  # type: ignore[assignment]
@@ -2014,11 +2017,11 @@ def test_bare_media_typed_param_with_a_default_keeps_it_on_the_process_entrypoin
     func = Function(name="search", entrypoint=search)
     func.process_entrypoint()
     assert "pic" not in (func.parameters or {})["properties"]
-    assert "pic" in (func._framework_params or set())
+    assert "pic" not in (func._framework_params or set())
 
     result = FunctionCall(function=func, arguments={"query": "cats", "pic": {"url": "http://x/b.png"}}).execute()
     assert result.status == "success"
-    assert result.result == "cats|None"
+    assert result.result == "cats|http://x/b.png"
 
 
 def test_bare_media_typed_param_stays_model_fillable_on_the_plain_callable_path():
