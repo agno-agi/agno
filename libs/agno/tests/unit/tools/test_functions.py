@@ -1,3 +1,4 @@
+import sys
 from typing import Any, Callable, Dict, List, Optional
 
 import pytest
@@ -1448,7 +1449,9 @@ def test_type_excluded_spoof_is_dropped_for_a_decorated_toolkit_method():
     )
     result = call.execute()
     assert result.status == "success"
-    assert result.result == "caller=None"
+    # The spoof is dropped and the parameter receives the caller's real context:
+    # a name excluded from the schema is filled by the framework, never left dead.
+    assert result.result == "caller=real-user"
 
 
 def test_schema_declared_media_name_keeps_the_model_value_on_both_paths():
@@ -1651,7 +1654,8 @@ def test_framework_params_survive_the_per_run_function_copy():
         )
         result = call.execute()
         assert result.status == "success"
-        assert result.result == "ctx_user=None"
+        # The copy keeps the guard: the spoof is dropped and the real context injected.
+        assert result.result == "ctx_user=real-user"
 
 
 @pytest.mark.asyncio
@@ -1772,8 +1776,8 @@ def test_type_excluded_identity_is_protected_on_the_from_callable_path(with_hook
     )
     result = call.execute()
     assert result.status == "success"
-    # Framework never injects RunContext by type, so the spoof is dropped and ctx defaults.
-    assert seen["user_id"] is None
+    # The spoof is dropped and the caller's real context is injected in its place.
+    assert seen["user_id"] == "real-user"
     assert call.arguments == {"query": "q"}
 
 
@@ -1956,3 +1960,193 @@ def test_optional_agent_param_registers_and_is_excluded():
     properties = (function.parameters or {}).get("properties") or {}
     assert set(properties) == {"query"}
     assert "owner" in (function._framework_params or set())
+
+
+# ----------------------------------------------------------------------------
+# Exclusion and injection must name the same annotations.
+#
+# _is_framework_typed decides what to hide from the model; _build_entrypoint_args
+# decides what to fill. An annotation hidden by the first and skipped by the second
+# is filled by nobody: a required parameter raises on every call, and one with a
+# default silently keeps it forever.
+# ----------------------------------------------------------------------------
+
+
+def _media_agent():
+    from agno.agent.agent import Agent
+
+    return Agent(id="real-host", name="Host")
+
+
+@pytest.mark.parametrize("path", ["from_callable", "process_entrypoint"])
+def test_media_typed_param_under_its_own_name_stays_model_fillable(path):
+    """Media is injected by reserved NAME only (images/videos/audios/files), so a
+    media-typed parameter under any other name has to stay model-fillable. Hiding it
+    would leave it unfillable by anything."""
+    from agno.media import Image
+
+    def caption(image: Image, style: str = "short") -> str:
+        return f"{getattr(image, 'url', image)}|{style}"
+
+    if path == "from_callable":
+        func = Function.from_callable(caption)
+    else:
+        func = Function(name="caption", entrypoint=caption)
+        func.process_entrypoint()
+
+    assert set((func.parameters or {})["properties"]) == {"image", "style"}
+    assert "image" in ((func.parameters or {}).get("required") or [])
+    assert "image" not in (func._framework_params or set())
+
+    func._agent = _media_agent()
+    result = FunctionCall(function=func, arguments={"image": {"url": "http://x/a.png"}, "style": "long"}).execute()
+    assert result.status == "success"
+    assert result.result == "http://x/a.png|long"
+
+
+def test_media_typed_param_with_a_default_is_not_silently_dropped():
+    """The silent half of the same defect: success is reported, the value is gone."""
+    from agno.media import Image
+
+    def search(query: str, pic: Image = None) -> str:  # type: ignore[assignment]
+        return f"{query}|{getattr(pic, 'url', pic)}"
+
+    func = Function.from_callable(search)
+    assert "pic" in (func.parameters or {})["properties"]
+
+    result = FunctionCall(function=func, arguments={"query": "cats", "pic": {"url": "http://x/b.png"}}).execute()
+    assert result.status == "success"
+    assert result.result == "cats|http://x/b.png"
+
+
+def test_union_naming_agent_beside_an_ordinary_type_stays_model_fillable():
+    """`owner: Union[str, Agent]` keeps a half the model can legitimately fill. The
+    model can only ever send JSON, so it receives a string, never a live Agent."""
+    from typing import Union as Un
+
+    from agno.agent.agent import Agent
+
+    def assign(task: str, owner: Un[str, Agent]) -> str:
+        return f"{task}->{owner}"
+
+    func = Function(name="assign", entrypoint=assign)
+    func.process_entrypoint()
+    assert set((func.parameters or {})["properties"]) == {"task", "owner"}
+
+    func._agent = _media_agent()
+    result = FunctionCall(function=func, arguments={"task": "ship", "owner": "alice"}).execute()
+    assert result.status == "success"
+    assert result.result == "ship->alice"
+
+
+def test_identity_only_union_is_excluded_and_injected():
+    """`Optional[Agent]` has no model-fillable half, so it is hidden -- and therefore
+    has to be injected, or a required parameter would raise on every call."""
+    from typing import Optional as Opt
+
+    from agno.agent.agent import Agent
+
+    seen: Dict[str, Any] = {}
+
+    def notify(msg: str, owner: Opt[Agent]) -> str:
+        seen["owner_id"] = getattr(owner, "id", None)
+        return msg
+
+    func = Function(name="notify", entrypoint=notify)
+    func.process_entrypoint()
+    assert set((func.parameters or {})["properties"]) == {"msg"}
+
+    func._agent = _media_agent()
+    result = FunctionCall(function=func, arguments={"msg": "m", "owner": {"id": "ATTACKER"}}).execute()
+    assert result.status == "success"
+    assert seen["owner_id"] == "real-host"
+
+
+def test_run_context_union_is_excluded_even_beside_an_ordinary_type():
+    """RunContext is the one identity type pydantic can build from a model dict:
+    validate_call is skipped for Agent/Team parameters but not for this one. An
+    exposed `Union[str, RunContext]` would coerce {"user_id": ...} into a live
+    RunContext and hand the model the caller's identity."""
+    from typing import Union as Un
+
+    seen: Dict[str, Any] = {}
+
+    def fetch(query: str, ctx: Un[str, RunContext] = "none") -> str:
+        seen["type"] = type(ctx).__name__
+        seen["user_id"] = getattr(ctx, "user_id", None)
+        return query
+
+    func = Function(name="fetch", entrypoint=fetch)
+    func.process_entrypoint()
+    assert set((func.parameters or {})["properties"]) == {"query"}
+
+    func._run_context = RunContext(run_id="r1", session_id="s1", user_id="real-user")
+    result = FunctionCall(
+        function=func,
+        arguments={"query": "q", "ctx": {"run_id": "r9", "session_id": "s9", "user_id": "ATTACKER"}},
+    ).execute()
+    assert result.status == "success"
+    # The spoof is dropped and the caller's own context is injected in its place.
+    assert seen["type"] == "RunContext"
+    assert seen["user_id"] == "real-user"
+
+
+def test_run_context_typed_param_under_its_own_name_is_injected():
+    """A bare `ctx: RunContext` is excluded by type, so it must be filled by type too."""
+    seen: Dict[str, Any] = {}
+
+    def audit(note: str, ctx: RunContext = None) -> str:  # type: ignore[assignment]
+        seen["user_id"] = getattr(ctx, "user_id", None)
+        return note
+
+    func = Function.from_callable(audit)
+    assert set((func.parameters or {})["properties"]) == {"note"}
+
+    func._run_context = RunContext(run_id="r1", session_id="s1", user_id="real-user")
+    assert FunctionCall(function=func, arguments={"note": "n"}).execute().status == "success"
+    assert seen["user_id"] == "real-user"
+
+
+def test_return_annotation_is_never_injected_as_an_argument():
+    """get_type_hints reports the return annotation under "return". It is not a
+    parameter, and passing it as a keyword would raise."""
+    from typing import Optional as Opt
+
+    from agno.agent.agent import Agent
+
+    def spawn(count: int) -> Opt[Agent]:
+        return None
+
+    func = Function(name="spawn", entrypoint=spawn)
+    func.process_entrypoint()
+    func._agent = _media_agent()
+    call = FunctionCall(function=func, arguments={"count": 2})
+    assert "return" not in call._build_entrypoint_args()
+    assert call.execute().status == "success"
+
+
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 type alias syntax needs 3.12")
+def test_nested_type_alias_inside_a_union_is_still_identity():
+    """A PEP 695 alias nested inside a union is a TypeAliasType, not a type. Unless
+    each union member is unwrapped before the check, `type C = RunContext;
+    type M = C | None` slips past both the schema exclusion and the injection guard,
+    and pydantic coerces a model-supplied dict into a live RunContext."""
+    namespace: Dict[str, Any] = {"RunContext": RunContext}
+    exec("type Ctx = RunContext\ntype MaybeCtx = Ctx | None", namespace)
+    exec(
+        "def fetch(query: str, ctx: MaybeCtx = None) -> str:\n"
+        "    return f\"{type(ctx).__name__}:{getattr(ctx, 'user_id', ctx)}\"",
+        namespace,
+    )
+
+    func = Function(name="fetch", entrypoint=namespace["fetch"])
+    func.process_entrypoint()
+    assert set((func.parameters or {})["properties"]) == {"query"}
+
+    func._run_context = RunContext(run_id="r1", session_id="s1", user_id="real-user")
+    result = FunctionCall(
+        function=func,
+        arguments={"query": "q", "ctx": {"run_id": "r9", "session_id": "s9", "user_id": "ATTACKER"}},
+    ).execute()
+    assert result.status == "success"
+    assert result.result == "RunContext:real-user"

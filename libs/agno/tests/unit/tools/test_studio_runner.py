@@ -7,7 +7,7 @@ stream kwargs the runner threads through.
 """
 
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import pytest
 from pydantic import BaseModel
@@ -46,6 +46,13 @@ def _loads(s: str) -> Dict[str, Any]:
 
 def _context(user_id: Optional[str] = "ash", session_id: str = "caller-sess") -> RunContext:
     return RunContext(run_id="caller-run", session_id=session_id, user_id=user_id)
+
+
+def _sub_session(component_type: str, component_id: str, caller_session: str = "caller-sess") -> Optional[str]:
+    """The sub-session the runner derives for a caller. A digest, so the tests
+    assert the derivation rather than a literal; see TestSubSessionDerivation for
+    the properties that derivation has to hold."""
+    return StudioRunnerTools._sub_session_id(_context(session_id=caller_session), component_type, component_id)
 
 
 class _StubRunOutput:
@@ -208,7 +215,7 @@ class TestIdentityThreading:
             "message": "hi",
             "stream": False,
             "user_id": "ash",
-            "session_id": "caller-sess--agent--stub",
+            "session_id": _sub_session("agent", "stub"),
         }
         assert out == {
             "agent_id": "stub",
@@ -218,19 +225,18 @@ class TestIdentityThreading:
             "content": "done",
         }
 
-    def test_sessionless_run_gets_a_fresh_session_per_call(self, db):
-        # Forwarding session_id=None would collapse every sessionless caller
-        # into the target's sticky per-instance session; the REST and MCP run
-        # planes mint a fresh session the same way.
+    def test_sessionless_run_uses_the_components_own_session(self, db):
+        # A caller with no session of its own -- a direct Python call, which takes
+        # no session argument -- leaves session_id unset so the component runs on
+        # its own default session. Minting one per call would make every call in a
+        # script a cold start, with no way to opt out.
         stub = _StubAgent()
         runner = StudioRunnerTools(db=db, agents_list=[stub])
         out = _loads(runner.run_agent("stub", "hi"))
         assert stub.seen is not None and stub.seen["user_id"] is None
-        first_session = stub.seen["session_id"]
+        assert stub.seen["session_id"] is None
         runner.run_agent("stub", "hi")
-        assert stub.seen is not None
-        second_session = stub.seen["session_id"]
-        assert first_session and second_session and first_session != second_session
+        assert stub.seen is not None and stub.seen["session_id"] is None
         assert out["status"] == "COMPLETED"
 
     def test_run_agent_resolves_code_defined_by_name(self, db):
@@ -240,7 +246,7 @@ class TestIdentityThreading:
         assert "error" not in out
         # The payload and the derived session both carry the component's real id.
         assert out["agent_id"] == "stub"
-        assert stub.seen is not None and stub.seen["session_id"] == "caller-sess--agent--stub"
+        assert stub.seen is not None and stub.seen["session_id"] == _sub_session("agent", "stub")
 
     def test_run_team_threads_identity(self, db):
         stub = _StubTeam()
@@ -250,7 +256,7 @@ class TestIdentityThreading:
             "message": "hi",
             "stream": False,
             "user_id": "ash",
-            "session_id": "caller-sess--team--stub-team",
+            "session_id": _sub_session("team", "stub-team"),
         }
         assert out["team_id"] == "stub-team"
 
@@ -262,7 +268,7 @@ class TestIdentityThreading:
             "input": "go",
             "stream": False,
             "user_id": "ash",
-            "session_id": "caller-sess--workflow--stub-wf",
+            "session_id": _sub_session("workflow", "stub-wf"),
         }
         assert out["workflow_id"] == "stub-wf"
 
@@ -275,7 +281,7 @@ class TestIdentityThreading:
             "message": "hi",
             "stream": False,
             "user_id": "ash",
-            "session_id": "caller-sess--agent--stub",
+            "session_id": _sub_session("agent", "stub"),
         }
         assert out["status"] == "COMPLETED"
 
@@ -379,7 +385,7 @@ class TestInjectionGuard:
         assert result.status == "success"
         assert stub.seen is not None
         assert stub.seen["user_id"] == "ash"
-        assert stub.seen["session_id"] == "caller-sess--agent--stub"
+        assert stub.seen["session_id"] == _sub_session("agent", "stub")
 
     def test_spoofed_context_is_dropped_without_hooks(self, db):
         stub = _StubAgent()
@@ -638,8 +644,8 @@ class TestDispatchIsolation:
         runner.run_agent("shared", "hi", _agno_run_context=_context())
         runner.run_team("shared", "hi", _agno_run_context=_context())
         assert agent.seen is not None and team.seen is not None
-        assert agent.seen["session_id"] == "caller-sess--agent--shared"
-        assert team.seen["session_id"] == "caller-sess--team--shared"
+        assert agent.seen["session_id"] == _sub_session("agent", "shared")
+        assert team.seen["session_id"] == _sub_session("team", "shared")
 
     def test_bad_deep_copy_refuses_dispatch(self, db):
         # deep_copy rebuilds via __init__ and can blank a subclass or raise.
@@ -803,13 +809,32 @@ class TestStudioEmbedding:
         out = _loads(await studio.arun_agent("stub", "hi"))
         assert out["agent_id"] == "stub"
 
-    def test_studio_registers_runner_bound_methods(self, registry, db):
+    def test_studio_registers_its_own_run_methods(self, registry, db):
+        # The registered tool must be StudioTools' own method, not the embedded
+        # runner's bound method, or a subclass override never sits on the path the
+        # model takes.
         studio = StudioTools(registry=registry, db=db, teams=True, workflows=True)
         for name in ("run_agent", "run_team", "run_workflow"):
             entrypoint = studio.functions[name].entrypoint
-            assert getattr(entrypoint, "__self__", None) is studio._runner_tools
+            assert getattr(entrypoint, "__self__", None) is studio
             async_entrypoint = studio.async_functions[name].entrypoint
-            assert getattr(async_entrypoint, "__self__", None) is studio._runner_tools
+            assert getattr(async_entrypoint, "__self__", None) is studio
+
+    def test_studio_subclass_override_is_what_the_model_calls(self, registry, db):
+        calls: List[str] = []
+
+        class Guarded(StudioTools):
+            def run_agent(self, agent_id, message, _agno_run_context=None):
+                calls.append(agent_id)
+                return super().run_agent(agent_id, message, _agno_run_context)
+
+        stub = _StubAgent()
+        studio = Guarded(registry=registry, db=db, agents_list=[stub])
+        out = _loads(studio.functions["run_agent"].entrypoint("stub", "hi", _agno_run_context=_context()))
+        assert calls == ["stub"]
+        assert out["agent_id"] == "stub"
+        # The compat alias survives the override.
+        assert out["id"] == "stub"
 
     def test_identity_threads_through_studio_registered_tool(self, registry, db):
         stub = _StubAgent()
@@ -819,7 +844,7 @@ class TestStudioEmbedding:
             "message": "hi",
             "stream": False,
             "user_id": "ash",
-            "session_id": "caller-sess--agent--stub",
+            "session_id": _sub_session("agent", "stub"),
         }
         assert out["agent_id"] == "stub"
 
@@ -1167,3 +1192,59 @@ class TestStudioEmbedding:
         instructions = studio.instructions or ""
         assert "sequentially" in instructions
         assert "ambiguous display name" in instructions.lower()
+
+
+class TestSubSessionDerivation:
+    """The derived id keys one session per component per calling conversation, so
+    it has to be stable, injective and bounded."""
+
+    def test_same_caller_and_component_reuse_one_session(self):
+        assert _sub_session("agent", "a1") == _sub_session("agent", "a1")
+
+    def test_caller_component_and_type_each_change_the_session(self):
+        base = _sub_session("agent", "a1")
+        assert base != _sub_session("agent", "a1", caller_session="other-sess")
+        assert base != _sub_session("agent", "a2")
+        # Ids are unique per type only, so an agent and a team sharing one id must
+        # not share a session row.
+        assert base != _sub_session("team", "a1")
+
+    def test_delimiter_in_a_part_cannot_forge_another_pair(self):
+        # Joining is not injective once a part can contain the delimiter, and a
+        # runner dispatched by a runner produces exactly that. Joined, both of
+        # these would read "a--agent--b--agent--c" and each component would load
+        # the other's history.
+        assert _sub_session("agent", "c", caller_session="a--agent--b") != _sub_session(
+            "agent", "b--agent--c", caller_session="a"
+        )
+
+    def test_length_is_bounded_however_long_the_inputs(self):
+        # MySQL and SingleStore cap session_id at 128 characters, and nested
+        # dispatch grows a joined id without limit.
+        derived = _sub_session("workflow", "w" * 4000, caller_session="s" * 4000)
+        assert derived is not None and len(derived) <= 128
+
+    def test_sessionless_caller_gets_no_session(self):
+        assert StudioRunnerTools._sub_session_id(None, "agent", "a1") is None
+        assert StudioRunnerTools._sub_session_id(_context(session_id=""), "agent", "a1") is None
+
+
+class TestResultMedia:
+    def test_response_audio_is_reported(self):
+        """A voice run puts its whole answer in response_audio and leaves content
+        empty. Without this the result reads as a successful run that said nothing."""
+
+        class _VoiceRunOutput:
+            run_id = "run-v"
+            session_id = "sub-sess-v"
+            status = RunStatus.completed
+            content = None
+            response_audio = object()
+
+        payload = _loads(StudioRunnerTools._run_payload("agent_id", "voice", _VoiceRunOutput()))
+        assert payload["status"] == "COMPLETED"
+        assert payload["media"] == {"response_audio": 1}
+
+    def test_no_media_key_when_the_run_produced_none(self):
+        payload = _loads(StudioRunnerTools._run_payload("agent_id", "stub", _StubRunOutput()))
+        assert "media" not in payload

@@ -24,7 +24,7 @@ from agno.tools.studio import StudioTools
 from agno.tools.studio_runner import StudioRunnerTools
 
 # ---------------------------------------------------------------------------
-# Build two components: one plain, one with registry-backed tools
+# Create two components: one plain, one with registry-backed tools
 # ---------------------------------------------------------------------------
 
 DB_DIR = Path(__file__).parent / "tmp"
@@ -56,6 +56,11 @@ builder.create_agent(
     model_id="gpt-5.5",
     tool_names=["calculator"],
 )
+
+
+# ---------------------------------------------------------------------------
+# Run them as plain methods
+# ---------------------------------------------------------------------------
 
 
 def main() -> None:

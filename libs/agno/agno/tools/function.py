@@ -45,21 +45,17 @@ AGNO_INJECTED_PARAMS = ("_agno_agent", "_agno_team", "_agno_run_context")
 IDENTITY_INJECTED_PARAMS = ("agent", "team", "run_context", *AGNO_INJECTED_PARAMS)
 
 
-def _framework_injected_types() -> tuple:
-    """Types kept out of the model-facing schema when they appear as a bare
-    parameter annotation. Agent and Team are injected by type; RunContext and
-    the media types are injected by parameter name (see
-    FunctionCall._build_entrypoint_args), so a differently-named parameter of
-    those types is hidden from the model and keeps its own default."""
-    from agno.agent.agent import Agent
-    from agno.team.team import Team
-
-    return (Agent, Team, RunContext, Image, Video, Audio, File)
-
-
 def _identity_injected_types() -> tuple:
     """The identity-bearing types: a model-supplied value for a parameter of
-    one of these types would choose the framework object a tool receives."""
+    one of these types would choose the framework object a tool receives.
+
+    These are the only types that hide a parameter from the model. Agent and
+    Team are injected by type, RunContext by parameter name, so an excluded
+    parameter is still filled or keeps its own default. The media types are
+    injected by parameter name ALONE (images/videos/audios/files, see
+    FunctionCall._build_entrypoint_args), so excluding a media-typed parameter
+    under any other name would leave it unfillable by anything: hidden from the
+    model and filled by no one."""
     from agno.agent.agent import Agent
     from agno.team.team import Team
 
@@ -72,32 +68,82 @@ def _unwrap_annotation(hint: Any) -> Any:
     return getattr(hint, "__value__", hint)
 
 
-def _union_names_type(hint: Any, wanted: tuple) -> bool:
-    """True when the annotation is a union (Optional[...], X | None) with a
-    member among the wanted types, nested unions and type aliases included."""
-    hint = _unwrap_annotation(hint)
+def _is_union(hint: Any) -> bool:
     origin = get_origin(hint)
-    if origin is not Union and origin is not getattr(types, "UnionType", None):
+    return origin is Union or origin is getattr(types, "UnionType", None)
+
+
+def _union_names_type(hint: Any, wanted: tuple) -> bool:
+    """True when the annotation is a union with a member among the wanted types,
+    nested unions and type aliases included. Asks whether the type is mentioned
+    at all, unlike _union_is_only.
+
+    Used to decide whether pydantic's validate_call can introspect the
+    signature: one Agent/Team member anywhere in a union is enough to break it.
+    """
+    hint = _unwrap_annotation(hint)
+    if not _is_union(hint):
         return False
-    return any(
-        (isinstance(arg, type) and issubclass(arg, wanted)) or _union_names_type(arg, wanted)
-        for arg in get_args(hint)
-        if arg is not type(None)
-    )
+    return any(_member_names_type(arg, wanted) for arg in get_args(hint) if arg is not type(None))
+
+
+def _member_names_type(arg: Any, wanted: tuple) -> bool:
+    """Whether one union member names a wanted type. The member is unwrapped first:
+    a PEP 695 alias nested inside a union (``type C = RunContext; type M = C | None``)
+    is a TypeAliasType, not a type, and would otherwise slip past both checks."""
+    arg = _unwrap_annotation(arg)
+    return (isinstance(arg, type) and issubclass(arg, wanted)) or _union_names_type(arg, wanted)
+
+
+def _union_is_only(hint: Any, wanted: tuple) -> bool:
+    """True when the annotation is a union (Optional[...], X | None) whose every
+    non-None member is one of the wanted types, nested unions and type aliases
+    included.
+
+    "Only" is the point. A union that also names an ordinary type
+    (owner: Union[str, Agent]) keeps a half the model can legitimately fill --
+    the model can send a string, never a live Agent -- so it stays in the
+    schema. Optional[Agent] has no such half."""
+    hint = _unwrap_annotation(hint)
+    if not _is_union(hint):
+        return False
+    members = [arg for arg in get_args(hint) if arg is not type(None)]
+    if not members:
+        return False
+    return all(_member_is_only(arg, wanted) for arg in members)
+
+
+def _member_is_only(arg: Any, wanted: tuple) -> bool:
+    """Whether one union member is a wanted type, unwrapping a nested PEP 695 alias
+    first for the same reason as _member_names_type."""
+    arg = _unwrap_annotation(arg)
+    return (isinstance(arg, type) and issubclass(arg, wanted)) or _union_is_only(arg, wanted)
 
 
 def _is_framework_typed(hint: Any) -> bool:
-    """True when the annotation keeps the parameter out of the model-facing
-    schema: a bare framework type, or a union naming an identity type
-    (Optional[RunContext], RunContext | None, owner: Optional[Agent]).
+    """True when the framework owns the parameter: it is kept out of the
+    model-facing schema and filled by _build_entrypoint_args instead.
 
-    Media types inside a union (Optional[Image], Union[str, File]) stay
-    model-fillable: media is injected by parameter name, so excluding them
-    would leave the parameter unfillable by anything."""
+    Excluded:
+      * a bare identity type (owner: Agent, ctx: RunContext);
+      * a union of identity types alone (Optional[Agent], RunContext | None),
+        which has no half a model could legitimately fill;
+      * ANY union naming RunContext (ctx: Union[str, RunContext]). RunContext is
+        the one identity type pydantic can build from a model-supplied dict --
+        validate_call is skipped for Agent/Team parameters but not for this one,
+        so an exposed union coerces {"user_id": ...} into a live RunContext and
+        hands the model the caller's identity.
+
+    Model-fillable, because hiding these would leave the parameter unfillable:
+      * media in any spelling (image: Image, Optional[Image], Union[str, File]),
+        which is injected by parameter name alone;
+      * a union naming Agent or Team beside an ordinary type
+        (owner: Union[str, Agent]). The model can only ever send JSON, so such a
+        parameter receives a plain dict or string, never a live Agent."""
     hint = _unwrap_annotation(hint)
     if isinstance(hint, type):
-        return issubclass(hint, _framework_injected_types())
-    return _union_names_type(hint, _identity_injected_types())
+        return issubclass(hint, _identity_injected_types())
+    return _union_names_type(hint, (RunContext,)) or _union_is_only(hint, _identity_injected_types())
 
 
 @lru_cache(maxsize=1)
@@ -1076,22 +1122,40 @@ class FunctionCall(BaseModel):
         if "files" in sig.parameters:
             entrypoint_args["files"] = self.function._files
 
-        # Also inject Agent/Team instances based on TYPE, not just name.
-        # This handles cases like `my_agent: Agent` or `custom_team: Team`.
+        # Also inject the identity objects based on TYPE, not just name, for
+        # cases like `my_agent: Agent`, `custom_team: Team` or `ctx: RunContext`.
         # See issue #6344.
+        #
+        # Every annotation _is_framework_typed hides from the model-facing schema
+        # is filled here, union spellings included (owner: Optional[Agent],
+        # ctx: Union[str, RunContext]). What exclusion hides and injection skips
+        # is filled by nobody: a required parameter would raise on every call,
+        # and one with a default would silently keep it forever.
         try:
             from agno.agent.agent import Agent
             from agno.team.team import Team
 
             hints = get_type_hints(self.function.entrypoint)  # type: ignore
             for param_name, hint in hints.items():
-                if param_name in entrypoint_args:
-                    continue  # Already handled by name-based injection
-                if isinstance(hint, type):
-                    if issubclass(hint, Agent) and self.function._agent is not None:
-                        entrypoint_args[param_name] = self.function._agent
-                    elif issubclass(hint, Team) and self.function._team is not None:
-                        entrypoint_args[param_name] = self.function._team
+                # get_type_hints reports the return annotation under "return"; it is
+                # not a parameter, and passing it as a keyword would raise.
+                if param_name not in sig.parameters or param_name in entrypoint_args:
+                    continue  # Not a parameter, or already handled by name-based injection
+                if not _is_framework_typed(hint):
+                    continue
+                hint = _unwrap_annotation(hint)
+                for wanted, injected in (
+                    ((Agent,), self.function._agent),
+                    ((Team,), self.function._team),
+                    ((RunContext,), self.function._run_context),
+                ):
+                    names_type = (isinstance(hint, type) and issubclass(hint, wanted)) or _union_names_type(
+                        hint, wanted
+                    )
+                    if names_type:
+                        if injected is not None:
+                            entrypoint_args[param_name] = injected
+                        break
         except Exception:
             pass
 

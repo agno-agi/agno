@@ -61,6 +61,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
+from agno.run import RunContext
 from agno.tools.function import Function
 from agno.tools.studio_runner import AmbiguousComponentNameError, StudioRunnerTools, _slugify
 from agno.tools.toolkit import Toolkit
@@ -192,7 +193,7 @@ class StudioTools(Toolkit):
                     self.create_agent,
                     self.edit_agent,
                     self.delete_agent,
-                    self._runner_tools.run_agent,
+                    self.run_agent,
                 ]
             )
         if self.enable_teams:
@@ -202,7 +203,7 @@ class StudioTools(Toolkit):
                     self.create_team,
                     self.edit_team,
                     self.delete_team,
-                    self._runner_tools.run_team,
+                    self.run_team,
                 ]
             )
         if self.enable_workflows:
@@ -212,7 +213,7 @@ class StudioTools(Toolkit):
                     self.create_workflow,
                     self.edit_workflow,
                     self.delete_workflow,
-                    self._runner_tools.run_workflow,
+                    self.run_workflow,
                 ]
             )
 
@@ -259,7 +260,7 @@ class StudioTools(Toolkit):
                     (self.acreate_agent, "create_agent"),
                     (self.aedit_agent, "edit_agent"),
                     (self.adelete_agent, "delete_agent"),
-                    (self._runner_tools.arun_agent, "run_agent"),
+                    (self.arun_agent, "run_agent"),
                 ]
             )
         if self.enable_teams:
@@ -269,7 +270,7 @@ class StudioTools(Toolkit):
                     (self.acreate_team, "create_team"),
                     (self.aedit_team, "edit_team"),
                     (self.adelete_team, "delete_team"),
-                    (self._runner_tools.arun_team, "run_team"),
+                    (self.arun_team, "run_team"),
                 ]
             )
         if self.enable_workflows:
@@ -279,7 +280,7 @@ class StudioTools(Toolkit):
                     (self.acreate_workflow, "create_workflow"),
                     (self.aedit_workflow, "edit_workflow"),
                     (self.adelete_workflow, "delete_workflow"),
-                    (self._runner_tools.arun_workflow, "run_workflow"),
+                    (self.arun_workflow, "run_workflow"),
                 ]
             )
         if self.enable_versions:
@@ -1612,29 +1613,81 @@ class StudioTools(Toolkit):
                     return json.dumps(payload, default=str)
         return result
 
-    def run_agent(self, agent_id: str, message: str) -> str:
-        """Run an agent by id or display name. Forwards to StudioRunnerTools."""
-        return self._alias_runner_result(self._runner_tools.run_agent(agent_id, message))
+    # These are what the model calls, not the embedded runner's bound methods, so a
+    # subclass that overrides run_agent to add a policy gate still sits on the path.
+    # They carry the `_agno_run_context` channel for the same reason the runner does:
+    # the framework fills it, it is kept out of the model-facing schema, and a
+    # model-supplied value for it is dropped.
 
-    def run_team(self, team_id: str, message: str) -> str:
-        """Run a team by id or display name. Forwards to StudioRunnerTools."""
-        return self._alias_runner_result(self._runner_tools.run_team(team_id, message))
+    def run_agent(self, agent_id: str, message: str, _agno_run_context: Optional[RunContext] = None) -> str:
+        """Run an agent by id or display name. Forwards to StudioRunnerTools.
 
-    def run_workflow(self, workflow_id: str, message: str) -> str:
-        """Run a workflow by id or display name. Forwards to StudioRunnerTools."""
-        return self._alias_runner_result(self._runner_tools.run_workflow(workflow_id, message))
+        Args:
+            agent_id (str): Id of the agent to run (a display name or its slug also resolves).
+            message (str): The message to send.
 
-    async def arun_agent(self, agent_id: str, message: str) -> str:
-        """Async variant of run_agent."""
-        return self._alias_runner_result(await self._runner_tools.arun_agent(agent_id, message))
+        Returns:
+            str: JSON object with 'agent_id', 'id', 'run_id', 'session_id', 'status',
+                'content' and, when paused, 'requirements'.
+        """
+        return self._alias_runner_result(self._runner_tools.run_agent(agent_id, message, _agno_run_context))
 
-    async def arun_team(self, team_id: str, message: str) -> str:
-        """Async variant of run_team."""
-        return self._alias_runner_result(await self._runner_tools.arun_team(team_id, message))
+    def run_team(self, team_id: str, message: str, _agno_run_context: Optional[RunContext] = None) -> str:
+        """Run a team by id or display name. Forwards to StudioRunnerTools.
 
-    async def arun_workflow(self, workflow_id: str, message: str) -> str:
-        """Async variant of run_workflow."""
-        return self._alias_runner_result(await self._runner_tools.arun_workflow(workflow_id, message))
+        Args:
+            team_id (str): Id of the team to run (a display name or its slug also resolves).
+            message (str): The message to send.
+
+        Returns:
+            str: JSON object with 'team_id', 'id', 'run_id', 'session_id', 'status',
+                'content' and, when paused, 'requirements'.
+        """
+        return self._alias_runner_result(self._runner_tools.run_team(team_id, message, _agno_run_context))
+
+    def run_workflow(self, workflow_id: str, message: str, _agno_run_context: Optional[RunContext] = None) -> str:
+        """Run a workflow by id or display name. Forwards to StudioRunnerTools.
+
+        Args:
+            workflow_id (str): Id of the workflow to run (a display name or its slug also resolves).
+            message (str): Input to pass to the first step.
+
+        Returns:
+            str: JSON object with 'workflow_id', 'id', 'run_id', 'session_id', 'status',
+                'content' and, when paused, 'requirements'.
+        """
+        return self._alias_runner_result(self._runner_tools.run_workflow(workflow_id, message, _agno_run_context))
+
+    async def arun_agent(self, agent_id: str, message: str, _agno_run_context: Optional[RunContext] = None) -> str:
+        """Async variant of run_agent.
+
+        Args:
+            agent_id (str): Id of the agent to run (a display name or its slug also resolves).
+            message (str): The message to send.
+        """
+        return self._alias_runner_result(await self._runner_tools.arun_agent(agent_id, message, _agno_run_context))
+
+    async def arun_team(self, team_id: str, message: str, _agno_run_context: Optional[RunContext] = None) -> str:
+        """Async variant of run_team.
+
+        Args:
+            team_id (str): Id of the team to run (a display name or its slug also resolves).
+            message (str): The message to send.
+        """
+        return self._alias_runner_result(await self._runner_tools.arun_team(team_id, message, _agno_run_context))
+
+    async def arun_workflow(
+        self, workflow_id: str, message: str, _agno_run_context: Optional[RunContext] = None
+    ) -> str:
+        """Async variant of run_workflow.
+
+        Args:
+            workflow_id (str): Id of the workflow to run (a display name or its slug also resolves).
+            message (str): Input to pass to the first step.
+        """
+        return self._alias_runner_result(
+            await self._runner_tools.arun_workflow(workflow_id, message, _agno_run_context)
+        )
 
     # ------------------------------------------------------------------
     # Schedules (component-aware)

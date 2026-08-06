@@ -23,7 +23,7 @@ from agno.tools.studio import StudioTools
 from agno.tools.studio_runner import StudioRunnerTools
 
 # ---------------------------------------------------------------------------
-# Build a component with StudioTools
+# Create a component with StudioTools
 # ---------------------------------------------------------------------------
 
 DB_DIR = Path(__file__).parent / "tmp"
@@ -50,7 +50,7 @@ builder.create_agent(
 )
 
 # ---------------------------------------------------------------------------
-# Dispatch it from a runner-only Agent
+# Run it from a runner-only Agent
 # ---------------------------------------------------------------------------
 
 dispatcher = Agent(

@@ -21,7 +21,9 @@ Semantics:
       learning) lands on the human who asked, never on a service default.
     * Each target keeps one session per calling conversation
       ("<caller_session_id>--<component_type>--<component_id>"), so repeat
-      runs continue their context instead of starting cold.
+      runs continue their context instead of starting cold. A caller with no
+      session of its own (a direct Python call) leaves the session unset, so
+      the component runs on its own default session.
     * Code-defined components are dispatched on a fresh deep copy per run, so
       per-run mutation of a shared instance never bleeds across callers.
       DB-loaded components are reconstructed per call already.
@@ -61,7 +63,6 @@ from __future__ import annotations
 import asyncio
 import json
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
-from uuid import uuid4
 
 from agno.run import RunContext
 from agno.run.utils import run_status_string, serialized_paused_requirements
@@ -997,7 +998,7 @@ class StudioRunnerTools(Toolkit):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _sub_session_id(run_context: Optional[RunContext], component_type: str, component_id: str) -> str:
+    def _sub_session_id(run_context: Optional[RunContext], component_type: str, component_id: str) -> Optional[str]:
         """One session per component per calling conversation: repeat runs from the
         same caller session continue, different conversations stay separate.
 
@@ -1005,11 +1006,26 @@ class StudioRunnerTools(Toolkit):
         while ids are only unique per type, so an agent and a team sharing an id
         must not share a session row.
 
-        A caller without a session gets a fresh session per run -- the REST and
-        MCP run planes mint one for sessionless runs the same way."""
+        The key is a digest rather than the three parts joined by a delimiter.
+        Joining is not injective once a part can itself contain the delimiter --
+        a runner dispatched by a runner produces exactly that -- so
+        (`a--agent--b`, `c`) and (`a`, `b--agent--c`) would name one session and
+        each component would read the other's history. A digest is also bounded,
+        which the joined form is not: nested dispatch grows it without limit and
+        MySQL caps session_id at 128 characters.
+
+        A caller without a session gets None, so the component runs on its own
+        default session. That is what a direct Python call gets -- run_agent()
+        has no session argument -- and minting a session per call instead would
+        make every call in a script a cold start with no way to opt out."""
         if run_context is None or not getattr(run_context, "session_id", None):
-            return str(uuid4())
-        return f"{run_context.session_id}--{component_type}--{component_id}"
+            return None
+        from hashlib import sha256
+
+        parts = (str(run_context.session_id), component_type, component_id)
+        # Length-prefixed so no part can impersonate a boundary.
+        key = "|".join(f"{len(part)}:{part}" for part in parts)
+        return f"{component_type}-{sha256(key.encode()).hexdigest()[:32]}"
 
     @staticmethod
     def _run_payload(id_key: str, component_id: str, run_output: Any) -> str:
@@ -1040,6 +1056,11 @@ class StudioRunnerTools(Toolkit):
             for kind in ("images", "videos", "audio", "files")
             if (artifacts := getattr(run_output, kind, None))
         }
+        # response_audio is the model's spoken reply, a single object rather than a
+        # list. A voice run puts its whole answer there and leaves content empty, so
+        # without this the result reads as a successful run that said nothing.
+        if getattr(run_output, "response_audio", None) is not None:
+            media["response_audio"] = 1
         if media:
             payload["media"] = media
         return json.dumps(payload, default=str)
