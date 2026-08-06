@@ -1272,7 +1272,9 @@ class TestStudioEmbedding:
             db.upsert_component(component_id=component_id, component_type=component_type, name=component_id)
             db.upsert_config(component_id=component_id, config=config, stage="published")
 
-        assert "output_schema" in _loads(StudioRunnerTools(registry=registry, db=db).run_team("outer", "hi"))["error"]
+        # The refusal has to name the piece that went missing; which layer
+        # refuses it (this check, or a strict rehydration below it) may vary.
+        assert "Report" in _loads(StudioRunnerTools(registry=registry, db=db).run_team("outer", "hi"))["error"]
 
         registry.schemas = [Report]
         whole = StudioRunnerTools(registry=registry, db=db)._team_for_run("outer")
@@ -1487,8 +1489,10 @@ class TestStudioEmbedding:
         )
 
         thin = StudioRunnerTools(registry=registry, db=db)
-        assert "output_schema" in _loads(thin.run_agent("shaped", "hi")).get("error", "")
-        assert "output_schema" in _loads(thin.run_workflow("flow", "hi")).get("error", "")
+        # Naming the lost schema is the contract; the exact wording belongs to
+        # whichever layer refuses first.
+        assert "Report" in _loads(thin.run_agent("shaped", "hi")).get("error", "")
+        assert "Report" in _loads(thin.run_workflow("flow", "hi")).get("error", "")
 
         # The control matters as much as the refusal: a registry that does hold
         # the schema must still dispatch, or the check is just a wall.
