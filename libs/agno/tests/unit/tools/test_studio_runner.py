@@ -1408,6 +1408,13 @@ class TestSubSessionDerivation:
         assert StudioRunnerTools._sub_session_id(None, "agent", "a1") is None
         assert StudioRunnerTools._sub_session_id(_context(session_id=""), "agent", "a1") is None
 
+    def test_derivation_is_frozen(self):
+        # The derived id is persisted in session rows, so a change to the
+        # derivation orphans every existing sub-session. This literal is the
+        # contract: sha256 of the length-prefixed parts, first 32 hex chars,
+        # prefixed with the component type.
+        assert _sub_session("agent", "a1") == "agent-f08679ca57837826037ef1af09fc5b35"
+
 
 class TestResultMedia:
     def test_response_audio_is_reported(self):

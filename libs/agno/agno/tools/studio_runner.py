@@ -16,8 +16,10 @@ Typical use:
     )
 
 Mount it INSTEAD of StudioTools, not beside it. StudioTools embeds this same
-toolkit and already exposes list_agents/list_teams/list_workflows/run_agent, and
-agno's tool namespace is flat: co-mounting collapses the overlapping names to
+toolkit and already exposes list_agents/list_teams/list_workflows/run_agent,
+plus run_team and run_workflow once teams or workflows are enabled (an explicit
+agents_list enables both), and agno's tool namespace is flat: co-mounting
+collapses the overlapping names to
 whichever toolkit the tools list holds first, and a warning names the skipped
 one. Two runners scoped to different component lists collapse the same way, so
 the loser's allowlist becomes unreachable. ``name=`` names the toolkit, not its
