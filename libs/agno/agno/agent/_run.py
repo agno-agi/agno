@@ -536,7 +536,8 @@ def _run(
                         run_metrics=run_response.metrics,
                     )
                     if compaction_result.summary:
-                        run_messages.messages = compaction_result.compacted_messages
+                        run_messages.compacted_messages = compaction_result.compacted_messages
+                    # else: compacted_messages stays None (first run) or unchanged (resume)
 
                 # 7. Generate a response from the Model (includes running function calls)
                 agent.model = cast(Model, agent.model)
@@ -559,6 +560,7 @@ def _run(
                         run_messages=run_messages,
                         run_context=run_context,
                     ),
+                    run_messages=run_messages,
                 )
 
                 # Check for cancellation after model call
@@ -1690,7 +1692,8 @@ async def _arun(
                         run_metrics=run_response.metrics,
                     )
                     if compaction_result.summary:
-                        run_messages.messages = compaction_result.compacted_messages
+                        run_messages.compacted_messages = compaction_result.compacted_messages
+                    # else: compacted_messages stays None (first run) or unchanged (resume)
 
                 # 10. Generate a response from the Model (includes running function calls)
                 model_response: ModelResponse = await acall_model_with_fallback(
@@ -1711,6 +1714,7 @@ async def _arun(
                         run_messages=run_messages,
                         run_context=run_context,
                     ),
+                    run_messages=run_messages,
                 )
 
                 # Check for cancellation after model call
@@ -6090,14 +6094,19 @@ def build_after_tool_results_callback(
 
     def _callback(model_response: ModelResponse) -> None:
         # Mid-loop compaction: check threshold, compact if exceeded
+        # Pass compacted_messages if exists (staggered compression on smaller list)
+        # Otherwise pass full messages (first compaction)
         if agent.context_compaction_manager is not None:
+            messages_to_compact = run_messages.compacted_messages if run_messages.compacted_messages else run_messages.messages
             result = agent.context_compaction_manager.compact(
-                run_messages.messages,
+                messages_to_compact,
                 session=session,
                 run_metrics=run_response.metrics,
             )
+            # Only update when NEW compaction happens (new summary created)
+            # If no compaction needed, compacted_messages is already synced via base.py appends
             if result.summary:
-                run_messages.messages[:] = result.view  # In-place swap for loop to continue
+                run_messages.compacted_messages = result.compacted_messages
 
         if needs_checkpoint:
             _sync_run_response_with_model_response(run_response, run_messages, model_response)
@@ -6122,14 +6131,19 @@ def abuild_after_tool_results_callback(
 
     async def _callback(model_response: ModelResponse) -> None:
         # Mid-loop compaction: check threshold, compact if exceeded
+        # Pass compacted_messages if exists (staggered compression on smaller list)
+        # Otherwise pass full messages (first compaction)
         if agent.context_compaction_manager is not None:
+            messages_to_compact = run_messages.compacted_messages if run_messages.compacted_messages else run_messages.messages
             result = await agent.context_compaction_manager.acompact(
-                run_messages.messages,
+                messages_to_compact,
                 session=session,
                 run_metrics=run_response.metrics,
             )
+            # Only update when NEW compaction happens (new summary created)
+            # If no compaction needed, compacted_messages is already synced via base.py appends
             if result.summary:
-                run_messages.messages[:] = result.view  # In-place swap for loop to continue
+                run_messages.compacted_messages = result.compacted_messages
 
         if needs_checkpoint:
             _sync_run_response_with_model_response(run_response, run_messages, model_response)

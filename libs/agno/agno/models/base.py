@@ -27,6 +27,7 @@ from typing import (
 
 if TYPE_CHECKING:
     from agno.compression.manager import CompressionManager
+    from agno.run.messages import RunMessages
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -657,7 +658,8 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
-        after_tool_results: Optional[Callable[["ModelResponse"], None]] = None,
+        after_tool_results: Optional[Callable[["ModelResponse"], Optional[List[Message]]]] = None,
+        compacted_messages: Optional[List[Message]] = None,
     ) -> ModelResponse:
         """
         Generate a response from the model.
@@ -713,8 +715,12 @@ class Model(ABC):
             assistant_message = Message(role=self.assistant_message_role)
             # Initialize message metrics and start timer before model call
             self._ensure_message_metrics_initialized(assistant_message)
+            # Use compacted messages for model if available, otherwise use original
+            model_messages = messages
+            if compacted_messages:
+                model_messages = compacted_messages
             self._process_model_response(
-                messages=messages,
+                messages=model_messages,
                 assistant_message=assistant_message,
                 model_response=model_response,
                 response_format=response_format,
@@ -730,8 +736,10 @@ class Model(ABC):
 
                 accumulate_model_metrics(model_response, self, self.model_type, run_response.metrics)
 
-            # Add assistant message to messages
+            # Add assistant message to messages (and compacted_messages if exists)
             messages.append(assistant_message)
+            if compacted_messages is not None:
+                compacted_messages.append(assistant_message)
 
             # Log response and metrics
             assistant_message.log(metrics=True, use_compressed_content=_compress_tool_results)
@@ -813,13 +821,15 @@ class Model(ABC):
                 # Add a function call for each successful execution
                 function_call_count += len(function_call_results)
 
-                # Format and add results to messages
+                # Format and add results to messages (and compacted_messages if exists)
                 self.format_function_call_results(
                     messages=messages,
                     function_call_results=function_call_results,
                     compress_tool_results=_compress_tool_results,
                     **model_response.extra or {},
                 )
+                if compacted_messages is not None:
+                    compacted_messages.extend(function_call_results)
 
                 if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
                     # Handle function call media
@@ -889,6 +899,7 @@ class Model(ABC):
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], Awaitable[None]]] = None,
+        run_messages: Optional["RunMessages"] = None,
     ) -> ModelResponse:
         """
         Generate an asynchronous response from the model.
@@ -935,8 +946,12 @@ class Model(ABC):
             assistant_message = Message(role=self.assistant_message_role)
             # Initialize message metrics and start timer before model call
             self._ensure_message_metrics_initialized(assistant_message)
+            # Use compacted messages for model if available, otherwise use original
+            model_messages = messages
+            if compacted_messages:
+                model_messages = compacted_messages
             await self._aprocess_model_response(
-                messages=messages,
+                messages=model_messages,
                 assistant_message=assistant_message,
                 model_response=model_response,
                 response_format=response_format,
@@ -952,8 +967,10 @@ class Model(ABC):
 
                 accumulate_model_metrics(model_response, self, self.model_type, run_response.metrics)
 
-            # Add assistant message to messages
+            # Add assistant message to messages (and compacted_messages if exists)
             messages.append(assistant_message)
+            if compacted_messages is not None:
+                compacted_messages.append(assistant_message)
 
             # Log response and metrics
             assistant_message.log(metrics=True)
@@ -1034,13 +1051,15 @@ class Model(ABC):
                 # Add a function call for each successful execution
                 function_call_count += len(function_call_results)
 
-                # Format and add results to messages
+                # Format and add results to messages (and compacted_messages if exists)
                 self.format_function_call_results(
                     messages=messages,
                     function_call_results=function_call_results,
                     compress_tool_results=_compress_tool_results,
                     **model_response.extra or {},
                 )
+                if compacted_messages is not None:
+                    compacted_messages.extend(function_call_results)
 
                 if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
                     # Handle function call media
@@ -1371,6 +1390,7 @@ class Model(ABC):
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], None]] = None,
+        run_messages: Optional["RunMessages"] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate a streaming response from the model.
@@ -1432,6 +1452,11 @@ class Model(ABC):
             stream_data = MessageData()
             model_response = ModelResponse()
 
+            # Use compacted messages for model if available, otherwise use original
+            model_messages = messages
+            if compacted_messages:
+                model_messages = compacted_messages
+
             # Emit LLM request started event
             yield ModelResponse(event=ModelResponseEvent.model_request_started.value)
 
@@ -1444,7 +1469,7 @@ class Model(ABC):
                 # Generate response
                 try:
                     for response in self.process_response_stream(
-                        messages=messages,
+                        messages=model_messages,
                         assistant_message=assistant_message,
                         stream_data=stream_data,
                         response_format=response_format,
@@ -1469,7 +1494,7 @@ class Model(ABC):
                 # Initialize message metrics and start timer before model call
                 self._ensure_message_metrics_initialized(assistant_message)
                 self._process_model_response(
-                    messages=messages,
+                    messages=model_messages,
                     assistant_message=assistant_message,
                     model_response=model_response,
                     response_format=response_format,
@@ -1487,8 +1512,10 @@ class Model(ABC):
                     streaming_responses.append(model_response)
                 yield model_response
 
-            # Add assistant message to messages
+            # Add assistant message to messages (and compacted_messages if exists)
             messages.append(assistant_message)
+            if compacted_messages is not None:
+                compacted_messages.append(assistant_message)
             assistant_message.log(metrics=True)
 
             # Emit LLM request completed event with metrics
@@ -1526,7 +1553,7 @@ class Model(ABC):
                 # Add a function call for each successful execution
                 function_call_count += len(function_call_results)
 
-                # Format and add results to messages
+                # Format and add results to messages (and compacted_messages if exists)
                 if stream_data and stream_data.extra is not None:
                     self.format_function_call_results(
                         messages=messages,
@@ -1547,6 +1574,8 @@ class Model(ABC):
                         function_call_results=function_call_results,
                         compress_tool_results=_compress_tool_results,
                     )
+                if compacted_messages is not None:
+                    compacted_messages.extend(function_call_results)
 
                 # Handle function call media
                 if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
@@ -1650,6 +1679,7 @@ class Model(ABC):
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], Awaitable[None]]] = None,
+        run_messages: Optional["RunMessages"] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate an asynchronous streaming response from the model.
@@ -1711,6 +1741,11 @@ class Model(ABC):
             stream_data = MessageData()
             model_response = ModelResponse()
 
+            # Use compacted messages for model if available, otherwise use original
+            model_messages = messages
+            if compacted_messages:
+                model_messages = compacted_messages
+
             # Emit LLM request started event
             yield ModelResponse(event=ModelResponseEvent.model_request_started.value)
 
@@ -1723,7 +1758,7 @@ class Model(ABC):
                 # Generate response
                 try:
                     async for model_response_delta in self.aprocess_response_stream(
-                        messages=messages,
+                        messages=model_messages,
                         assistant_message=assistant_message,
                         stream_data=stream_data,
                         response_format=response_format,
@@ -1748,7 +1783,7 @@ class Model(ABC):
                 # Initialize message metrics and start timer before model call
                 self._ensure_message_metrics_initialized(assistant_message)
                 await self._aprocess_model_response(
-                    messages=messages,
+                    messages=model_messages,
                     assistant_message=assistant_message,
                     model_response=model_response,
                     response_format=response_format,
@@ -1766,8 +1801,10 @@ class Model(ABC):
                     streaming_responses.append(model_response)
                 yield model_response
 
-            # Add assistant message to messages
+            # Add assistant message to messages (and compacted_messages if exists)
             messages.append(assistant_message)
+            if compacted_messages is not None:
+                compacted_messages.append(assistant_message)
             assistant_message.log(metrics=True)
 
             # Emit LLM request completed event with metrics
@@ -1805,7 +1842,7 @@ class Model(ABC):
                 # Add a function call for each successful execution
                 function_call_count += len(function_call_results)
 
-                # Format and add results to messages
+                # Format and add results to messages (and compacted_messages if exists)
                 if stream_data and stream_data.extra is not None:
                     self.format_function_call_results(
                         messages=messages,
@@ -1826,6 +1863,8 @@ class Model(ABC):
                         function_call_results=function_call_results,
                         compress_tool_results=_compress_tool_results,
                     )
+                if compacted_messages is not None:
+                    compacted_messages.extend(function_call_results)
 
                 # Handle function call media
                 if any(msg.images or msg.videos or msg.audio or msg.files for msg in function_call_results):
