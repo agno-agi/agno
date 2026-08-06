@@ -1367,6 +1367,9 @@ class AgentOS:
             self.authorization_config,
             authorization=self.authorization,
             service_account_verifier=self._get_service_account_verifier(),
+            excluded_route_paths=(
+                self.authorization_config.excluded_route_paths if self.authorization_config is not None else None
+            ),
         )
         middleware_kwargs["security_key"] = security_key
         algorithm = middleware_kwargs["algorithm"]
@@ -1416,8 +1419,8 @@ class AgentOS:
         # BaseInterface.authenticates_own_requests) are excluded from the central auth
         # layer alongside the public routes. Interfaces that do NOT self-authenticate
         # (e.g. A2A) stay behind AuthMiddleware, so enabling authentication protects them
-        # too. Passing excluded_route_paths replaces the middleware defaults, so the
-        # defaults are repeated here.
+        # too. Passing excluded_route_paths replaces the middleware defaults, so custom,
+        # interface, and MCP exclusions are merged with the defaults here.
         excluded_route_paths: Optional[List[str]] = None
         interface_prefixes: List[str] = []
         if self.interfaces:
@@ -1437,19 +1440,23 @@ class AgentOS:
             from agno.os.mcp_auth import mcp_auth_route_paths
 
             mcp_auth_paths = mcp_auth_route_paths(mcp_auth_provider)
-        if interface_prefixes or mcp_auth_paths:
-            excluded_route_paths = (
-                [
-                    "/",
-                    "/health",
-                    "/info",
-                    "/docs",
-                    "/redoc",
-                    "/openapi.json",
-                    "/docs/oauth2-redirect",
-                ]
-                + interface_prefixes
-                + mcp_auth_paths
+        custom_excluded_paths = middleware_kwargs["excluded_route_paths"]
+        if custom_excluded_paths or interface_prefixes or mcp_auth_paths:
+            excluded_route_paths = list(
+                dict.fromkeys(
+                    [
+                        "/",
+                        "/health",
+                        "/info",
+                        "/docs",
+                        "/redoc",
+                        "/openapi.json",
+                        "/docs/oauth2-redirect",
+                    ]
+                    + (custom_excluded_paths or [])
+                    + interface_prefixes
+                    + mcp_auth_paths
+                )
             )
 
         middleware_kwargs["excluded_route_paths"] = excluded_route_paths

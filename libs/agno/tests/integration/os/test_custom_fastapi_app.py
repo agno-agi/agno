@@ -11,6 +11,8 @@ from starlette.middleware.cors import CORSMiddleware
 from agno.agent.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.os import AgentOS
+from agno.os.config import AuthorizationConfig
+from agno.os.middleware import JWTMiddleware
 from agno.team.team import Team
 from agno.tools.mcp import MCPTools
 from agno.workflow.workflow import Workflow
@@ -280,6 +282,39 @@ def test_custom_app_middleware_preservation(test_agent: Agent):
     assert response.status_code == 200
     assert custom_middleware_called is True
     assert response.headers["X-Custom-Header"] == "present"
+
+
+def test_authorization_config_extends_default_route_exclusions(test_agent: Agent):
+    """Custom public routes should compose with AgentOS's default JWT exclusions."""
+    custom_app = FastAPI(title="Custom App")
+
+    @custom_app.get("/public")
+    async def public_endpoint():
+        return {"message": "public"}
+
+    app = AgentOS(
+        agents=[test_agent],
+        base_app=custom_app,
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=["test-secret"],
+            algorithm="HS256",
+            excluded_route_paths=["/public"],
+        ),
+    ).get_app()
+
+    assert sum(middleware.cls is JWTMiddleware for middleware in app.user_middleware) == 1
+    client = TestClient(app)
+
+    public_response = client.get("/public")
+    assert public_response.status_code == 200
+    assert public_response.json() == {"message": "public"}
+
+    default_exclusion_response = client.get("/health")
+    assert default_exclusion_response.status_code == 200
+
+    protected_response = client.get("/sessions")
+    assert protected_response.status_code == 401
 
 
 def test_available_endpoints_with_custom_app(test_agent: Agent, test_team: Team, test_workflow: Workflow):
