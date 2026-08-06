@@ -109,29 +109,39 @@ class Registry:
                 register(tool.__name__, tool)
         return lookup
 
-    def _live_toolkit_for(self, source: EntrypointSource, name: str) -> Tuple[Optional[Toolkit], bool]:
+    def _live_toolkit_for(
+        self, source: EntrypointSource, name: str, toolkit_name: Optional[str] = None
+    ) -> Tuple[Optional[Toolkit], bool]:
         """Locate the live Toolkit that currently exposes ``source`` under ``name``.
 
-        Returns ``(toolkit, stale)``. Matching is by object identity, so it
-        works for a config saved before tool names were toolkit-qualified and
-        for one whose toolkit was renamed: neither carries a name to match on.
+        Returns ``(toolkit, stale)``. Matching is by object identity, so owner
+        resolution works for a config saved before tool names were
+        toolkit-qualified and for one whose toolkit was renamed: neither carries
+        a name to match on.
 
         ``stale`` marks a resolved source that no Toolkit owns any more while a
         Toolkit does expose ``name`` with a different Function object. That is
         what a toolkit which rebuilt its functions dict looks like: MCP toolkits
         replace every Function on connect, and the cache entry written before
         the rebuild still *hits*, so a miss-only check cannot catch it.
+
+        ``toolkit_name`` narrows the search to same-named toolkits, for a
+        resolution that came from a toolkit-qualified key. Such a config named
+        the toolkit it wants, so only that toolkit can say whether the cached
+        entry is still fresh.
         """
         if not isinstance(source, Function):
             return None, False
 
         shadowed = False
+        registered_directly = False
         for tool in self.tools:
             if tool is source:
-                # Registered directly as a registry tool, so no toolkit owns it
-                # and a same-named toolkit member does not make it stale.
-                return None, False
+                registered_directly = True
+                continue
             if not isinstance(tool, Toolkit):
+                continue
+            if toolkit_name is not None and tool.name != toolkit_name:
                 continue
             current = tool.get_functions().get(name)
             if current is None:
@@ -139,6 +149,15 @@ class Registry:
             if current is source:
                 return tool, False
             shadowed = True
+
+        # A Function registered as a registry tool in its own right owns the
+        # flat slot legitimately, so a same-named toolkit member does not make
+        # it stale. That only holds for an unqualified resolution: a config that
+        # named a toolkit is asking that toolkit, and a standalone registration
+        # of the same object says nothing about whether the toolkit still holds
+        # it.
+        if toolkit_name is None and registered_directly:
+            return None, False
         return None, shadowed
 
     def rehydrate_function(self, func_dict: Dict[str, Any]) -> Function:
@@ -179,8 +198,13 @@ class Registry:
             # toolkit that rebuilds its functions dict leaves the cache holding
             # Function objects it no longer owns, and that entry still resolves.
             # Rebuild once for either and retry.
+            # A qualified key is a question addressed to one toolkit, so its
+            # freshness is that toolkit's to answer.
+            qualified_toolkit = key[0] if isinstance(key, tuple) else None
             found = self._entrypoint_lookup.get(key)
-            if not rebuild_state["rebuilt"] and (found is None or self._live_toolkit_for(found, func.name)[1]):
+            if not rebuild_state["rebuilt"] and (
+                found is None or self._live_toolkit_for(found, func.name, qualified_toolkit)[1]
+            ):
                 self.__dict__.pop("_entrypoint_lookup", None)
                 rebuild_state["rebuilt"] = True
                 found = self._entrypoint_lookup.get(key)

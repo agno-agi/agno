@@ -718,6 +718,31 @@ class TestToolkitQualifiedRehydration:
         assert rehydrated.instructions == "Fresh guidance."
         assert rehydrated.source_toolkit is toolkit
 
+    def test_direct_registration_does_not_mask_a_rebuilt_toolkit(self):
+        """A Function can be both a toolkit member and a registry tool in its
+        own right. A qualified config named the toolkit, so the toolkit alone
+        decides whether the cached entry is still fresh -- the standalone
+        registration must not vouch for it."""
+        toolkit = Toolkit(name="agno_docs", instructions="Toolkit guidance.", add_instructions=True)
+        member = Function(name="search_docs", entrypoint=search_function)
+        toolkit.functions["search_docs"] = member
+        # The same object, registered both ways.
+        reg = Registry(tools=[toolkit, member])
+
+        func_dict = member.to_dict()
+        func_dict["toolkit"] = toolkit.name
+        reg.rehydrate_function(dict(func_dict))  # warms the cached lookup
+
+        def rebuilt_entrypoint() -> str:
+            return "rebuilt"
+
+        toolkit.functions["search_docs"] = Function(name="search_docs", entrypoint=rebuilt_entrypoint)
+
+        rehydrated = reg.rehydrate_function(dict(func_dict))
+
+        assert rehydrated.entrypoint is rebuilt_entrypoint
+        assert rehydrated.source_toolkit is toolkit
+
     def test_same_named_toolkits_warn_once_per_collision(self, monkeypatch):
         """Two same-named toolkits sharing a member name collide on both the
         flat and the qualified slot, but only the flat registration warns --
