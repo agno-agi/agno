@@ -990,7 +990,7 @@ class TestStudioEmbedding:
         assert "knowledge" in out.get("error", "")
         assert "registry" in out.get("error", "")
 
-    def test_registry_less_runner_refuses_team_with_idless_member(self, registry, db):
+    def test_runner_refuses_team_with_idless_member(self, registry, db):
         # A code-defined member that never ran serializes as agent_id null;
         # only the registry can supply it, so the rebuild must refuse.
         from agno.agent.agent import Agent as AgentClass
@@ -1000,9 +1000,13 @@ class TestStudioEmbedding:
         created = _loads(studio.create_team(name="crew", instructions="i", member_ids=["Helper"], model_id="gpt-5.4"))
         assert "error" not in created
 
-        out = _loads(StudioRunnerTools(db=db).run_team("crew", "hi"))
-        assert "registry" in out.get("error", "")
-        assert "not found" not in out.get("error", "")
+        # No registry makes a null reference resolvable, so the refusal does
+        # not depend on one: a lookup by None matches the first component that
+        # also has no id.
+        for runner in (StudioRunnerTools(db=db), StudioRunnerTools(registry=registry, db=db)):
+            out = _loads(runner.run_team("crew", "hi"))
+            assert "had no id when it was saved" in out.get("error", "")
+            assert "not found" not in out.get("error", "")
 
     def test_unrebuildable_db_reference_warns_and_falls_back(self, db):
         # A declared db that neither db_from_dict nor the registry can supply
@@ -1250,6 +1254,54 @@ class TestResultMedia:
         assert "media" not in payload
 
 
+class TestMemberIsolation:
+    def test_member_without_deep_copy_is_shared_by_design(self, db):
+        # A remote proxy holds no per-run state, so Team.deep_copy shares it.
+        # The dispatch guard must not read that as a failed copy.
+        from agno.agent.agent import Agent as AgentClass
+        from agno.agent.remote import RemoteAgent
+        from agno.team.team import Team as TeamClass
+
+        remote = RemoteAgent(base_url="http://remote:7777", agent_id="explorer", timeout=60.0)
+        local = AgentClass(id="summarizer", name="Summarizer", model=OpenAIResponses(id="gpt-5.4"))
+        team = TeamClass(
+            id="distributed-crew", name="Distributed Crew", model=OpenAIResponses(id="gpt-5.4"), members=[local, remote]
+        )
+
+        fresh = StudioRunnerTools._fresh_copy(team)
+        assert fresh is not team
+        assert fresh.members[1] is remote
+
+    def test_shared_member_nested_in_a_team_of_teams_refuses_dispatch(self, db):
+        # An inner team whose own member copy failed comes back as a new object
+        # holding the shared grandchild, so the check has to descend.
+        from agno.agent.agent import Agent as AgentClass
+        from agno.team.team import Team as TeamClass
+
+        class _UncopyableAgent(AgentClass):
+            def __init__(self, topic, **kwargs):
+                self.topic = topic
+                super().__init__(**kwargs)
+
+        grandchild = _UncopyableAgent("ai", id="grandchild", name="Grandchild", model=OpenAIResponses(id="gpt-5.4"))
+        inner = TeamClass(id="inner", name="Inner", model=OpenAIResponses(id="gpt-5.4"), members=[grandchild])
+        outer = TeamClass(id="outer", name="Outer", model=OpenAIResponses(id="gpt-5.4"), members=[inner])
+
+        out = _loads(StudioRunnerTools(db=db, teams_list=[outer]).run_team("outer", "hi"))
+        assert "still shares member 'grandchild'" in out["error"]
+
+    def test_healthy_nested_team_dispatches(self, db):
+        from agno.agent.agent import Agent as AgentClass
+        from agno.team.team import Team as TeamClass
+
+        grandchild = AgentClass(id="gc", name="GC", model=OpenAIResponses(id="gpt-5.4"))
+        inner = TeamClass(id="inner-ok", name="Inner Ok", model=OpenAIResponses(id="gpt-5.4"), members=[grandchild])
+        outer = TeamClass(id="outer-ok", name="Outer Ok", model=OpenAIResponses(id="gpt-5.4"), members=[inner])
+
+        fresh = StudioRunnerTools._fresh_copy(outer)
+        assert fresh.members[0].members[0] is not grandchild
+
+
 class TestIncludeAllComponents:
     """run_* dispatch what list_* report. Code-defined components arrive through
     the registry, which is passed so persisted components can rehydrate, so
@@ -1273,14 +1325,12 @@ class TestIncludeAllComponents:
 
     def test_flag_admits_the_registry_component(self, registry_with_agent, db):
         runner = StudioRunnerTools(registry=registry_with_agent, db=db, include_all_components=True)
-        out = _loads(runner.run_agent("stub", "hi", _agno_run_context=_context()))
-        assert out["agent_id"] == "stub"
+        assert _loads(runner.run_agent("stub", "hi", _agno_run_context=_context()))["agent_id"] == "stub"
         assert registry_with_agent.agents[0].seen is not None
 
     def test_explicit_list_needs_no_flag(self, db):
         # Passing the component IS the allowlist.
-        stub = _StubAgent()
-        runner = StudioRunnerTools(db=db, agents_list=[stub])
+        runner = StudioRunnerTools(db=db, agents_list=[_StubAgent()])
         assert _loads(runner.run_agent("stub", "hi", _agno_run_context=_context()))["agent_id"] == "stub"
 
     def test_reads_still_see_the_registry_component(self, registry_with_agent, db):
@@ -1291,15 +1341,14 @@ class TestIncludeAllComponents:
 
     def test_studio_tools_keeps_its_reach(self, registry_with_agent, db):
         # StudioTools holds the registry as its build palette, so its run_* are unchanged.
-        studio = StudioTools(registry=registry_with_agent, db=db, agents_list=None)
-        assert studio._runner_tools.include_all_components is True
+        assert StudioTools(registry=registry_with_agent, db=db)._runner_tools.include_all_components is True
 
 
 class TestPartialRegistryFailsClosed:
     """A registry that is present but incomplete degrades silently in from_dict:
     an unresolved tool binds to entrypoint=None, a missing schema is deleted."""
 
-    def _agent_config(self, **overrides):
+    def _config(self, **overrides):
         config = {"id": "rep", "name": "Rep", "instructions": "help"}
         config.update(overrides)
         return config
@@ -1307,121 +1356,55 @@ class TestPartialRegistryFailsClosed:
     def test_unresolved_tool_refuses_dispatch(self, db):
         from agno.tools.function import Function
 
-        runner = StudioRunnerTools(db=db)
         component = type("C", (), {"tools": [Function(name="secret_tool", entrypoint=None)]})()
         with pytest.raises(Exception) as excinfo:
-            runner._require_faithful_rebuild(
-                component, self._agent_config(tools=[{"name": "secret_tool"}]), "agent", "rep"
+            StudioRunnerTools(db=db)._require_faithful_rebuild(
+                component, self._config(tools=[{"name": "secret_tool"}]), "agent", "rep"
             )
         assert "secret_tool" in str(excinfo.value)
 
     def test_dropped_knowledge_refuses_dispatch(self, db):
-        runner = StudioRunnerTools(db=db)
         component = type("C", (), {"knowledge": None})()
         with pytest.raises(Exception) as excinfo:
-            runner._require_faithful_rebuild(
-                component, self._agent_config(knowledge={"name": "handbook"}), "agent", "rep"
+            StudioRunnerTools(db=db)._require_faithful_rebuild(
+                component, self._config(knowledge={"name": "handbook"}), "agent", "rep"
             )
         assert "handbook" in str(excinfo.value)
 
     def test_dropped_output_schema_refuses_dispatch(self, db):
-        runner = StudioRunnerTools(db=db)
         component = type("C", (), {"output_schema": None})()
         with pytest.raises(Exception) as excinfo:
-            runner._require_faithful_rebuild(component, self._agent_config(output_schema="Report"), "agent", "rep")
+            StudioRunnerTools(db=db)._require_faithful_rebuild(
+                component, self._config(output_schema="Report"), "agent", "rep"
+            )
         assert "Report" in str(excinfo.value)
 
     def test_inline_dict_schema_is_not_a_registry_reference(self, db):
         # Only the string form is a reference; an inline schema carries itself.
-        runner = StudioRunnerTools(db=db)
         component = type("C", (), {"output_schema": None})()
-        runner._require_faithful_rebuild(
-            component, self._agent_config(output_schema={"type": "object"}), "agent", "rep"
+        StudioRunnerTools(db=db)._require_faithful_rebuild(
+            component, self._config(output_schema={"type": "object"}), "agent", "rep"
         )
 
     def test_faithful_rebuild_passes(self, db):
         from agno.tools.function import Function
 
-        runner = StudioRunnerTools(db=db)
         component = type(
             "C",
             (),
             {"tools": [Function(name="ok", entrypoint=lambda: None)], "knowledge": object(), "output_schema": dict},
         )()
-        runner._require_faithful_rebuild(
+        StudioRunnerTools(db=db)._require_faithful_rebuild(
             component,
-            self._agent_config(tools=[{"name": "ok"}], knowledge={"name": "kb"}, output_schema="Report"),
+            self._config(tools=[{"name": "ok"}], knowledge={"name": "kb"}, output_schema="Report"),
             "agent",
             "rep",
         )
-
-
-class TestNestedCopyFidelity:
-    """A grandchild shared with the original leaks per-run mutation just as a
-    shared direct member does, and a copier that swaps a member has not produced
-    the component that was asked for."""
-
-    def test_shared_grandchild_is_refused(self):
-        from agno.agent import Agent
-        from agno.team import Team
-
-        leaf = Agent(id="leaf", name="Leaf")
-
-        class SharesGrandchild(Team):
-            def deep_copy(self, **kwargs):
-                return SharesGrandchild(
-                    id=self.id, name=self.name, members=[Team(id="inner", name="Inner", members=[leaf])]
-                )
-
-        original = SharesGrandchild(id="outer", name="Outer", members=[Team(id="inner", name="Inner", members=[leaf])])
-        with pytest.raises(Exception) as excinfo:
-            StudioRunnerTools._fresh_copy(original)
-        assert "leaf" in str(excinfo.value)
-
-    def test_swapped_member_is_refused(self):
-        from agno.agent import Agent
-        from agno.team import Team
-
-        class SwapsMember(Team):
-            def deep_copy(self, **kwargs):
-                return SwapsMember(id=self.id, name=self.name, members=[Agent(id="impostor", name="Impostor")])
-
-        original = SwapsMember(id="t", name="T", members=[Agent(id="real", name="Real")])
-        with pytest.raises(Exception) as excinfo:
-            StudioRunnerTools._fresh_copy(original)
-        assert "real" in str(excinfo.value)
-
-    def test_healthy_nested_team_is_accepted_and_fully_isolated(self):
-        from agno.agent import Agent
-        from agno.team import Team
-
-        original = Team(id="g", name="G", members=[Team(id="gi", name="GI", members=[Agent(id="ga", name="GA")])])
-        copied = StudioRunnerTools._fresh_copy(original)
-        assert copied is not original
-        assert copied.members[0] is not original.members[0]
-        assert copied.members[0].members[0] is not original.members[0].members[0]
-        assert copied.members[0].members[0].id == "ga"
-
-    def test_workflow_step_whose_team_holds_a_shared_member_is_refused(self, db):
-        from agno.agent import Agent
-        from agno.registry import Registry
-        from agno.team import Team
-
-        shared_member = Agent(id="shared", name="Shared")
-        registry = Registry(name="R", dbs=[db], agents=[shared_member])
-        runner = StudioRunnerTools(registry=registry, db=db)
-
-        step = type("S", (), {"name": "s", "agent": None, "team": Team(id="t", name="T", members=[shared_member])})()
-        workflow = type("W", (), {"steps": [step]})()
-        with pytest.raises(Exception) as excinfo:
-            runner._require_isolated_steps(workflow, "wf")
-        assert "shared" in str(excinfo.value)
 
     def test_dispatch_of_a_stored_component_refuses_on_a_partial_registry(self, db):
         """End to end through run_agent, so the check is wired into the load path and
         not merely available: a tool-bearing component built against a full registry
         must refuse to run against one that lost the tool, while reads keep working."""
-        from agno.models.openai import OpenAIResponses
         from agno.registry import Registry
         from agno.tools.calculator import CalculatorTools
 
@@ -1440,12 +1423,71 @@ class TestNestedCopyFidelity:
         assert _loads(StudioTools(registry=partial, db=db).get_agent("calc-agent"))["id"] == "calc-agent"
 
     def test_a_component_without_registry_references_is_unaffected(self, db):
-        from agno.models.openai import OpenAIResponses
         from agno.registry import Registry
 
         registry = Registry(name="r", dbs=[db], models=[OpenAIResponses(id="gpt-5.4")])
         StudioTools(registry=registry, db=db, default_model_id="gpt-5.4").create_agent(
             name="Plain", instructions="hi", model_id="gpt-5.4"
         )
-        runner = StudioRunnerTools(registry=registry, db=db)
-        assert runner._find_agent("plain", for_dispatch=True) is not None
+        assert StudioRunnerTools(registry=registry, db=db)._find_agent("plain", for_dispatch=True) is not None
+
+
+class TestMemberStructureFidelity:
+    """Whether a member is aliased is _shared_member's question (TestMemberIsolation).
+    This is the other half: whether the copy holds the same members at all."""
+
+    def test_swapped_member_is_refused(self):
+        from agno.agent import Agent
+        from agno.team import Team
+
+        class SwapsMember(Team):
+            def deep_copy(self, **kwargs):
+                return SwapsMember(id=self.id, name=self.name, members=[Agent(id="impostor", name="Impostor")])
+
+        with pytest.raises(Exception) as excinfo:
+            StudioRunnerTools._fresh_copy(SwapsMember(id="t", name="T", members=[Agent(id="real", name="Real")]))
+        assert "real" in str(excinfo.value)
+
+    def test_dropped_member_is_refused(self):
+        from agno.agent import Agent
+        from agno.team import Team
+
+        class DropsMember(Team):
+            def deep_copy(self, **kwargs):
+                return DropsMember(id=self.id, name=self.name, members=[Agent(id="a", name="A")])
+
+        original = DropsMember(id="t", name="T", members=[Agent(id="a", name="A"), Agent(id="b", name="B")])
+        with pytest.raises(Exception) as excinfo:
+            StudioRunnerTools._fresh_copy(original)
+        assert "member count changed" in str(excinfo.value)
+
+    def test_swap_nested_below_the_first_level_is_refused(self):
+        from agno.agent import Agent
+        from agno.team import Team
+
+        class SwapsGrandchild(Team):
+            def deep_copy(self, **kwargs):
+                inner = Team(id="inner", name="Inner", members=[Agent(id="impostor", name="Impostor")])
+                return SwapsGrandchild(id=self.id, name=self.name, members=[inner])
+
+        original = SwapsGrandchild(
+            id="outer", name="Outer", members=[Team(id="inner", name="Inner", members=[Agent(id="real", name="Real")])]
+        )
+        with pytest.raises(Exception) as excinfo:
+            StudioRunnerTools._fresh_copy(original)
+        assert "real" in str(excinfo.value)
+
+    def test_workflow_step_whose_executor_holds_a_shared_member_is_refused(self, db):
+        """A step whose team is a fresh copy still leaks if one of that team's own
+        members is the registry singleton, so the check descends into the executor."""
+        from agno.agent import Agent
+        from agno.registry import Registry
+        from agno.team import Team
+
+        shared_member = Agent(id="shared", name="Shared")
+        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db], agents=[shared_member]), db=db)
+
+        step = type("S", (), {"name": "s", "agent": None, "team": Team(id="t", name="T", members=[shared_member])})()
+        with pytest.raises(Exception) as excinfo:
+            runner._require_isolated_steps(type("W", (), {"steps": [step]})(), "wf")
+        assert "shared" in str(excinfo.value)

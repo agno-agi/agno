@@ -48,11 +48,11 @@ Semantics:
       is checked against its own config before dispatch, so an unresolved tool
       or a dropped schema stops the run rather than quietly changing what it
       does. Reads and edits load it either way, so it stays repairable.
-      Member references resolve at their current published version. Model
-      connection settings, credentials and a declared db are not fully
-      persisted, so a rebuild can fall back to provider defaults and to the
-      catalog db; the runner logs a warning for the dispatched agent's or
-      team's own model and for a dropped db.
+      Member references resolve at their current
+      published version. Model connection settings, credentials and a
+      declared db are not fully persisted, so a rebuild can fall back to
+      provider defaults and to the catalog db; the runner logs a warning for
+      the dispatched agent's or team's own model and for a dropped db.
     * list_* read the database only (id, name, description, newest first), and
       run_* dispatch that same set: a component you cannot list is a component
       you cannot run. Code-defined components arrive through the registry,
@@ -303,11 +303,7 @@ class StudioRunnerTools(Toolkit):
 
         Split into an exact tier and a name tier so cross-type callers
         (StudioTools._resolve_members) can try exact ids across both types
-        before any name matching.
-
-        ``for_dispatch`` narrows the code-defined candidates to the ones this
-        runner may run (see _iter_agents) and makes a rebuild that lost its
-        registry-backed pieces refuse rather than degrade."""
+        before any name matching."""
         agent = self._find_agent_by_exact_id(agent_id, for_dispatch=for_dispatch)
         if agent is not None:
             return agent
@@ -396,7 +392,8 @@ class StudioRunnerTools(Toolkit):
         or fail to rebuild entirely, and the field-level copier keeps the
         original value for a field whose own copy raised. The copy is
         dispatched when it is a distinct instance of the same class that kept
-        its id, name, model, instructions, and distinct members."""
+        its id, name, model and instructions, and whose copyable members were
+        themselves copied (see _shared_member)."""
         label = getattr(component, "id", None) or getattr(component, "name", None) or component.__class__.__name__
         copier = getattr(component, "deep_copy", None)
         if not callable(copier):
@@ -432,11 +429,14 @@ class StudioRunnerTools(Toolkit):
                 f"deep_copy of '{label}' lost its identity. "
                 "Give the class a deep_copy that rebuilds it, or store the component in the database."
             )
-        # Members are checked to the bottom of the tree, not just the first level:
-        # a team of teams whose grandchild is shared leaks per-run mutation just as
-        # a shared direct member does, and a copier that swaps one member for
-        # another is not the component that was asked for.
-        divergence = StudioRunnerTools._member_tree_divergence(component, fresh)
+        shared = StudioRunnerTools._shared_member(component, fresh)
+        if shared is not None:
+            shared_label = getattr(shared, "id", None) or getattr(shared, "name", None) or type(shared).__name__
+            raise DispatchCopyError(
+                f"deep_copy of '{label}' still shares member '{shared_label}' with the original. "
+                "Give that member's class a deep_copy that rebuilds it, or store the component in the database."
+            )
+        divergence = StudioRunnerTools._member_divergence(component, fresh)
         if divergence is not None:
             raise DispatchCopyError(
                 f"deep_copy of '{label}' did not reproduce its members: {divergence}. "
@@ -445,28 +445,56 @@ class StudioRunnerTools(Toolkit):
         return fresh
 
     @staticmethod
-    def _member_tree_divergence(original: Any, fresh: Any, depth: int = 0) -> Optional[str]:
-        """What differs between the two member trees, or None when the copy mirrors
-        the original. Checks non-aliasing and structural fidelity at every level."""
-        if depth > 12:  # A cycle or a pathological nesting depth; stop rather than recurse forever.
+    def _member_divergence(original: Any, fresh: Any, depth: int = 0) -> Optional[str]:
+        """How the copy's member list differs in shape from the original's, else None.
+
+        Whether a member is aliased is _shared_member's question; this one is
+        whether the copy holds the same members at all. A copier that drops a
+        member or rebuilds it as a different component has not produced the
+        component that was asked for, and neither shows up as sharing."""
+        if depth > 12:  # A cycle or pathological nesting; stop rather than recurse forever.
             return None
         original_members = getattr(original, "members", None)
         if not isinstance(original_members, list):
             return None
-        copied_members = getattr(fresh, "members", None)
-        if not isinstance(copied_members, list) or len(copied_members) != len(original_members):
-            copied_count = len(copied_members) if isinstance(copied_members, list) else "none"
-            return f"member count changed ({len(original_members)} -> {copied_count})"
-        for original_member, copied_member in zip(original_members, copied_members):
+        fresh_members = getattr(fresh, "members", None)
+        if not isinstance(fresh_members, list) or len(fresh_members) != len(original_members):
+            found = len(fresh_members) if isinstance(fresh_members, list) else "none"
+            return f"member count changed ({len(original_members)} -> {found})"
+        for original_member, fresh_member in zip(original_members, fresh_members):
+            if fresh_member is original_member:
+                # Shared by design, or already reported by _shared_member.
+                continue
             member_label = getattr(original_member, "id", None) or getattr(original_member, "name", None) or "?"
-            if copied_member is original_member:
-                return f"member '{member_label}' is the shared instance"
-            if type(copied_member) is not type(original_member):
-                return f"member '{member_label}' changed class"
+            if type(fresh_member) is not type(original_member):
+                return f"member '{member_label}' came back as {type(fresh_member).__name__}"
             for attribute in ("id", "name"):
-                if getattr(original_member, attribute, None) != getattr(copied_member, attribute, None):
+                if getattr(original_member, attribute, None) != getattr(fresh_member, attribute, None):
                     return f"member '{member_label}' lost its {attribute}"
-            nested = StudioRunnerTools._member_tree_divergence(original_member, copied_member, depth + 1)
+            nested = StudioRunnerTools._member_divergence(original_member, fresh_member, depth + 1)
+            if nested is not None:
+                return nested
+        return None
+
+    @staticmethod
+    def _shared_member(original: Any, fresh: Any) -> Optional[Any]:
+        """The first copyable member the copy still shares with the original,
+        searched through nested member lists, else None.
+
+        A member without deep_copy is shared by design: a remote proxy holds no
+        per-run state to isolate. A member that could have been copied and was
+        not is a failed copy, and dispatching it would let per-run mutation
+        cross callers."""
+        original_members = getattr(original, "members", None)
+        fresh_members = getattr(fresh, "members", None)
+        if not isinstance(original_members, list) or not isinstance(fresh_members, list):
+            return None
+        if len(original_members) != len(fresh_members):
+            return None
+        for original_member, fresh_member in zip(original_members, fresh_members):
+            if fresh_member is original_member and callable(getattr(original_member, "deep_copy", None)):
+                return fresh_member
+            nested = StudioRunnerTools._shared_member(original_member, fresh_member)
             if nested is not None:
                 return nested
         return None
@@ -571,6 +599,22 @@ class StudioRunnerTools(Toolkit):
             return slug
         return None
 
+    @staticmethod
+    def _require_resolvable_member_ids(component_type: str, component_id: str, config: Dict[str, Any]) -> None:
+        """Refuse a config that references a member or step executor by a null id.
+
+        Serialization writes the referenced component's id even when it is
+        None, and a lookup by None matches the first component that also has
+        no id, which is rarely the one that was configured. No registry makes
+        the reference resolvable, so the refusal does not depend on one."""
+        key = "members" if component_type == "team" else "steps"
+        if component_type not in ("team", "workflow") or not _references_idless_components(config.get(key)):
+            return
+        raise ComponentNeedsRegistryError(
+            f"{component_type.capitalize()} '{component_id}' references a component that had no id when it was "
+            "saved, so the reference cannot be resolved. Give that component an id and save it again."
+        )
+
     def _require_registry_for(
         self,
         component_type: str,
@@ -600,12 +644,8 @@ class StudioRunnerTools(Toolkit):
             needs.append("knowledge")
         if isinstance(config.get("input_schema"), str) or isinstance(config.get("output_schema"), str):
             needs.append("schemas")
-        if component_type == "team" and _references_idless_components(config.get("members")):
-            needs.append("code-defined members without ids")
         if component_type == "workflow" and _references_executors(config.get("steps")):
             needs.append("function steps")
-        if component_type == "workflow" and _references_idless_components(config.get("steps")):
-            needs.append("code-defined step members without ids")
         if needs:
             raise ComponentNeedsRegistryError(
                 f"{component_type.capitalize()} '{component_id}' references registry-backed resources "
@@ -629,8 +669,8 @@ class StudioRunnerTools(Toolkit):
         """Refuse to dispatch a component whose config named registry-backed
         pieces this registry does not hold.
 
-        _require_registry_for covers the registry-ABSENT case. A registry that is
-        present but incomplete degrades instead of failing: rehydrate_functions
+        _require_registry_for covers the registry being ABSENT. A registry that
+        is present but incomplete degrades instead of failing: rehydrate_functions
         binds an unresolved tool to ``entrypoint=None``, and from_dict deletes a
         knowledge or schema reference it cannot resolve. Either way from_dict
         returns successfully and the component runs without the piece. Checking
@@ -738,8 +778,8 @@ class StudioRunnerTools(Toolkit):
 
         def shared_within(node: Any, depth: int = 0) -> Optional[Any]:
             """The shared registry instance held at or below this executor. A step
-            whose team is a fresh copy still leaks if one of that team's members is
-            the registry singleton."""
+            whose team is a fresh copy still leaks if one of that team's own
+            members is the registry singleton."""
             if node is None or depth > 12:
                 return None
             if any(node is instance for instance in shared):
@@ -814,6 +854,7 @@ class StudioRunnerTools(Toolkit):
         config = self._load_config_from_db(team_id, version=version, component_type=ComponentType.TEAM)
         if config is None:
             return None
+        self._require_resolvable_member_ids("team", team_id, config)
         self._require_registry_for("team", team_id, config)
         from agno.team.team import Team
 
@@ -839,6 +880,7 @@ class StudioRunnerTools(Toolkit):
         config = self._load_config_from_db(workflow_id, version=version, component_type=ComponentType.WORKFLOW)
         if config is None:
             return None
+        self._require_resolvable_member_ids("workflow", workflow_id, config)
         self._require_registry_for("workflow", workflow_id, config)
         from agno.workflow.workflow import Workflow
 
