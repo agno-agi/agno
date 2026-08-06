@@ -5353,6 +5353,28 @@ def _backfill_approval_to_requirements(
                     setattr(te, attr, getattr(src, attr))
 
 
+def _reclaim_own_requirements(team: "Team", requirements: List[Any]) -> None:
+    """Clear the member stamp from requirements that belong to this team itself.
+
+    When a sub-team's OWN tool pauses, _propagate_member_pause stamps the
+    sub-team's member id on the lifted requirement so the parent can route it
+    back down. Once the requirement arrives at the team it names, the stamp's
+    job is done: the requirement is this team's own, team-level requirement.
+    Without reclaiming it, member routing looks the team's own id up among
+    its members, finds nothing, and refuses the continue."""
+    from agno.utils.team import get_member_id
+
+    if not any(getattr(req, "member_agent_id", None) is not None for req in requirements):
+        return
+    own_id = get_member_id(team)
+    if not own_id:
+        return
+    for req in requirements:
+        if getattr(req, "member_agent_id", None) == own_id:
+            req.member_agent_id = None
+            req.member_agent_name = None
+
+
 def _has_member_requirements(requirements: List[Any]) -> bool:
     """Check if any requirements are for member agents (have member_agent_id set)."""
     return any(getattr(req, "member_agent_id", None) is not None for req in requirements)
@@ -6684,6 +6706,7 @@ def continue_run_dispatch(
         _did_snapshot_dispatch = True
 
     # Determine what kind of pause we're continuing from
+    _reclaim_own_requirements(team, run_response.requirements or [])
     has_member = _has_member_requirements(run_response.requirements or [])
     has_team_level = _has_team_level_requirements(run_response.requirements or [])
 
@@ -6711,12 +6734,18 @@ def continue_run_dispatch(
             )
         else:
             member_event_stream = None
-            member_results = _route_requirements_to_members(
-                team,
-                run_response=run_response,
-                session=team_session,
-                run_context=run_context,
-            )
+            try:
+                member_results = _route_requirements_to_members(
+                    team,
+                    run_response=run_response,
+                    session=team_session,
+                    run_context=run_context,
+                )
+            except Exception:
+                # Routing failed mid-flight; put the team-level requirements
+                # back so the caller's run object stays complete for a retry.
+                run_response.requirements = team_level_reqs + (run_response.requirements or [])
+                raise
 
         # For non-streaming, member routing is done eagerly above.
         # For streaming, we must consume member events lazily inside a returned generator.
@@ -6979,6 +7008,11 @@ def _continue_run_dispatch_stream_with_member_events(
         if opts.yield_run_output:
             yield run_response
         return
+    except Exception:
+        # Routing failed mid-flight; put the team-level requirements back so
+        # the caller's run object stays complete for a retry.
+        run_response.requirements = team_level_reqs + (run_response.requirements or [])
+        raise
 
     # Phase 2: After member routing completes, check for chained pauses
     newly_propagated = [r for r in (run_response.requirements or []) if id(r) not in original_member_req_ids]
@@ -8094,6 +8128,7 @@ async def _acontinue_run(
                     store_events=team.store_events,
                 )
 
+                _reclaim_own_requirements(team, run_response.requirements or [])
                 has_member = _has_member_requirements(run_response.requirements or [])
                 has_team_level = _has_team_level_requirements(run_response.requirements or [])
 
@@ -8108,12 +8143,18 @@ async def _acontinue_run(
                     ]
                     original_member_req_ids = {id(r) for r in member_reqs}
                     run_response.requirements = member_reqs
-                    member_results = await _aroute_requirements_to_members(
-                        team,
-                        run_response=run_response,
-                        session=team_session,
-                        run_context=run_context,
-                    )
+                    try:
+                        member_results = await _aroute_requirements_to_members(
+                            team,
+                            run_response=run_response,
+                            session=team_session,
+                            run_context=run_context,
+                        )
+                    except Exception:
+                        # Routing failed mid-flight; put the team-level requirements
+                        # back so the caller's run object stays complete for a retry.
+                        run_response.requirements = team_level_reqs + (run_response.requirements or [])
+                        raise
                     # Merge: keep team-level reqs + any newly propagated member reqs (chained HITL)
                     newly_propagated = [
                         r for r in (run_response.requirements or []) if id(r) not in original_member_req_ids
@@ -8521,6 +8562,7 @@ async def _acontinue_run_stream(
 
                 await aregister_run(run_response.run_id)  # type: ignore
 
+                _reclaim_own_requirements(team, run_response.requirements or [])
                 has_member = _has_member_requirements(run_response.requirements or [])
                 has_team_level = _has_team_level_requirements(run_response.requirements or [])
 
@@ -8535,16 +8577,22 @@ async def _acontinue_run_stream(
                     ]
                     original_member_req_ids = {id(r) for r in member_reqs}
                     run_response.requirements = member_reqs
-                    # Streaming: use the async generator variant that yields member events
-                    async for event in _aroute_requirements_to_members_stream(
-                        team,
-                        run_response=run_response,
-                        session=team_session,
-                        member_results=member_results,
-                        run_context=run_context,
-                        stream_events=stream_events,
-                    ):
-                        yield event
+                    try:
+                        # Streaming: use the async generator variant that yields member events
+                        async for event in _aroute_requirements_to_members_stream(
+                            team,
+                            run_response=run_response,
+                            session=team_session,
+                            member_results=member_results,
+                            run_context=run_context,
+                            stream_events=stream_events,
+                        ):
+                            yield event
+                    except Exception:
+                        # Routing failed mid-flight; put the team-level requirements
+                        # back so the caller's run object stays complete for a retry.
+                        run_response.requirements = team_level_reqs + (run_response.requirements or [])
+                        raise
                     # Merge: keep team-level reqs + any newly propagated member reqs (chained HITL)
                     newly_propagated = [
                         r for r in (run_response.requirements or []) if id(r) not in original_member_req_ids

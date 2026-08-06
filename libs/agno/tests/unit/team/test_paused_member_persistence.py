@@ -1535,3 +1535,203 @@ async def test_unroutable_requirement_raises_and_run_stays_paused_async(tmp_path
     team_runs = [r for r in _reload_runs(db_file, session_id) if isinstance(r, TeamRunOutput)]
     assert team_runs[0].is_paused, "the stored run must stay paused and resumable"
     assert any(not r.is_resolved() for r in (team_runs[0].requirements or []))
+
+
+# ---------------------------------------------------------------------------
+# A sub-team's OWN gated tool: _propagate_member_pause stamps the sub-team's
+# id on the lifted requirement so the parent can route it down; the sub-team
+# must reclaim it as its own team-level requirement, both alone and mixed
+# with a deep member requirement in the same turn.
+# ---------------------------------------------------------------------------
+
+
+@tool(requires_confirmation=True)
+def publish(item: str) -> str:
+    _EXECUTED.append(f"pub:{item}")
+    return f"Published {item}"
+
+
+def _build_subteam_own_tool(db: SqliteDb, resuming: bool, mixed: bool) -> Team:
+    inner_pause_turn = (
+        (
+            "tools",
+            [
+                ("delegate_task_to_member", {"member_id": "emailer", "task": "send it"}, "tc-inner-deleg"),
+                ("publish", {"item": "release"}, "tc-pub"),
+            ],
+        )
+        if mixed
+        else ("tool", "publish", {"item": "release"}, "tc-pub")
+    )
+    inner = Team(
+        name="Comms Team",
+        id="comms-team",
+        model=_ScriptedModel(
+            "m-inner", [("content", "Inner done.")] if resuming else [inner_pause_turn, ("content", "Inner done.")]
+        ),
+        tools=[publish],
+        members=[_emailer_agent(db, resuming)],
+        db=db,
+        telemetry=False,
+    )
+    return Team(
+        name="Org Team",
+        id="org-team",
+        model=_ScriptedModel(
+            "m-outer",
+            [("content", "All done.")]
+            if resuming
+            else [
+                ("tool", "delegate_task_to_member", {"member_id": "comms-team", "task": "handle comms"}, "tc-outer"),
+                ("content", "All done."),
+            ],
+        ),
+        members=[inner],
+        db=db,
+        telemetry=False,
+    )
+
+
+@pytest.mark.parametrize("mixed", [False, True], ids=["alone", "with_member_requirement"])
+def test_subteam_own_gated_tool_executes_on_continue(tmp_path, mixed):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "own_tool.db")
+    session_id = "s-own-tool"
+
+    outer1 = _build_subteam_own_tool(SqliteDb(db_file=db_file), resuming=False, mixed=mixed)
+    run1 = outer1.run("Publish the release", session_id=session_id)
+    assert run1.is_paused
+    expected = ["publish", "send_email"] if mixed else ["publish"]
+    assert sorted(r.tool_execution.tool_name for r in run1.requirements or []) == sorted(expected)
+
+    outer2 = _build_subteam_own_tool(SqliteDb(db_file=db_file), resuming=True, mixed=mixed)
+    run2 = outer2.continue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+    )
+    assert run2.status == RunStatus.completed
+    assert sorted(_EXECUTED) == (["a@example.com", "pub:release"] if mixed else ["pub:release"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mixed", [False, True], ids=["alone", "with_member_requirement"])
+async def test_subteam_own_gated_tool_executes_on_continue_async(tmp_path, mixed):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "own_tool_async.db")
+    session_id = "s-own-tool-async"
+
+    outer1 = _build_subteam_own_tool(SqliteDb(db_file=db_file), resuming=False, mixed=mixed)
+    run1 = await outer1.arun("Publish the release", session_id=session_id)
+    assert run1.is_paused
+
+    outer2 = _build_subteam_own_tool(SqliteDb(db_file=db_file), resuming=True, mixed=mixed)
+    run2 = await outer2.acontinue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+    )
+    assert run2.status == RunStatus.completed
+    assert sorted(_EXECUTED) == (["a@example.com", "pub:release"] if mixed else ["pub:release"])
+
+
+# ---------------------------------------------------------------------------
+# When routing raises, the caller's in-memory run object must keep ALL its
+# requirements (the dispatch temporarily strips team-level ones for routing),
+# so a retry after fixing the team does not lose an approved tool.
+# ---------------------------------------------------------------------------
+
+
+def _build_leader_tool_and_member(db: SqliteDb, member_id: str) -> Team:
+    member = Agent(
+        name="Emailer",
+        id=member_id,
+        model=_ScriptedModel("m-emailer", [("tool", "send_email", {"to": "a@x.com"}, "tc-send"), ("content", "Sent.")]),
+        tools=[send_email],
+        db=db,
+        telemetry=False,
+    )
+    return Team(
+        name="Comms Team",
+        id="comms-team",
+        model=_ScriptedModel(
+            "m-leader",
+            [
+                (
+                    "tools",
+                    [
+                        ("delegate_task_to_member", {"member_id": "emailer", "task": "send it"}, "tc-deleg"),
+                        ("publish", {"item": "release"}, "tc-pub"),
+                    ],
+                ),
+                ("content", "All done."),
+            ],
+        ),
+        tools=[publish],
+        members=[member],
+        db=db,
+        telemetry=False,
+    )
+
+
+def test_unroutable_raise_preserves_caller_requirements(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "preserve.db")
+    session_id = "s-preserve"
+
+    team1 = _build_leader_tool_and_member(SqliteDb(db_file=db_file), member_id="emailer")
+    run1 = team1.run("Email and publish", session_id=session_id)
+    assert run1.is_paused
+    assert sorted(r.tool_execution.tool_name for r in run1.requirements or []) == ["publish", "send_email"]
+
+    for req in run1.requirements or []:
+        req.confirm()
+
+    # The member id changed underneath the caller's live run object.
+    team2 = _build_leader_tool_and_member(SqliteDb(db_file=db_file), member_id="emailer2")
+    with pytest.raises(RunNotContinuableError, match="emailer"):
+        team2.continue_run(run_response=run1, session_id=session_id)
+
+    names = sorted(r.tool_execution.tool_name for r in run1.requirements or [])
+    assert names == ["publish", "send_email"], "the raise must not strip the caller's requirements"
+
+
+# ---------------------------------------------------------------------------
+# An unresolved team-level requirement on a streaming continue must yield the
+# final paused TeamRunOutput (the dispatch-entry pause exit), exactly once.
+# ---------------------------------------------------------------------------
+
+
+def test_team_level_pause_streaming_continue_yields_final_output(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "team_level_stream.db")
+    session_id = "s-team-level-stream"
+
+    db = SqliteDb(db_file=db_file)
+    team1 = Team(
+        name="Comms Team",
+        id="comms-team",
+        model=_ScriptedModel("m-leader", [("tool", "publish", {"item": "release"}, "tc-pub"), ("content", "Done.")]),
+        tools=[publish],
+        members=[_emailer_agent(db, resuming=False)],
+        db=db,
+        telemetry=False,
+    )
+    run1 = team1.run("Publish the release", session_id=session_id)
+    assert run1.is_paused
+
+    # Continue WITHOUT resolving the requirement: the run must re-pause and
+    # the stream must yield exactly one final TeamRunOutput.
+    team2 = Team(
+        name="Comms Team",
+        id="comms-team",
+        model=_ScriptedModel("m-leader2", [("content", "Done.")]),
+        tools=[publish],
+        members=[_emailer_agent(SqliteDb(db_file=db_file), resuming=True)],
+        db=SqliteDb(db_file=db_file),
+        telemetry=False,
+    )
+    finals = [
+        event
+        for event in team2.continue_run(run_id=run1.run_id, session_id=session_id, stream=True, yield_run_output=True)
+        if isinstance(event, TeamRunOutput)
+    ]
+    assert len(finals) == 1, "exactly one final TeamRunOutput must be yielded on a team-level re-pause"
+    assert finals[0].is_paused
+    assert _EXECUTED == []
