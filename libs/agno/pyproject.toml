@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.8.7"
+version = "3.0.0a1"
 description = "The programming language for agentic software."
 requires-python = ">=3.9,<4"
 readme = "README.md"
@@ -169,7 +169,7 @@ firestore = ["google-cloud-firestore"]
 gcs = ["google-cloud-storage"]
 mysql = ["pymysql", "asyncmy"]
 postgres = ["psycopg-binary"]
-redis = ["redis", "redisvl>=0.12.1"]
+redis = ["redis>=4.5.4", "redisvl>=0.12.1"]  # >=4.5.4: safe cancellation of blocking commands (XREAD in event stream tail)
 sql = ["sqlalchemy"]
 sqlite = ["sqlalchemy", "aiosqlite"]
 valkey = ["valkey-glide-sync>=2.1.0"]

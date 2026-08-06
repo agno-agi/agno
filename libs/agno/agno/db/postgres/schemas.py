@@ -22,11 +22,49 @@ SESSION_TABLE_SCHEMA = {
     "team_data": {"type": JSONB, "nullable": True},
     "workflow_data": {"type": JSONB, "nullable": True},
     "metadata": {"type": JSONB, "nullable": True},
-    "runs": {"type": JSONB, "nullable": True},
     "summary": {"type": JSONB, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
 }
+
+
+def _get_run_table_schema(session_table_name: str = "agno_sessions") -> dict[str, Any]:
+    """Runs table schema; ``session_id`` foreign-keyed to sessions with
+    ON DELETE CASCADE.
+
+    Factory (not module-level dict) so the FK reference binds to the
+    caller-configured ``session_table`` name at build time. Matches the
+    pattern used by ``_get_schedule_runs_table_schema``.
+    """
+    return {
+        "run_id": {"type": String, "primary_key": True, "nullable": False},
+        "session_id": {
+            "type": String,
+            "nullable": False,
+            "index": True,
+            # Use the concrete table name so the FK reference works uniformly
+            # across adapters (some have a logical-name resolver, some don't).
+            "foreign_key": f"{session_table_name}.session_id",
+            "ondelete": "CASCADE",
+        },
+        "run_type": {"type": String, "nullable": False, "index": True},
+        "agent_id": {"type": String, "nullable": True, "index": True},
+        "team_id": {"type": String, "nullable": True, "index": True},
+        "workflow_id": {"type": String, "nullable": True, "index": True},
+        "user_id": {"type": String, "nullable": True, "index": True},
+        "parent_run_id": {"type": String, "nullable": True},
+        "status": {"type": String, "nullable": True, "index": True},
+        "run_index": {"type": BigInteger, "nullable": True},
+        "run_data": {"type": JSONB, "nullable": False},
+        "created_at": {"type": BigInteger, "nullable": False, "index": True},
+        "updated_at": {"type": BigInteger, "nullable": True},
+        # Composite index so "most recent N runs of a session"
+        # (WHERE session_id=? ORDER BY run_index DESC LIMIT N) is index-served.
+        "__composite_indexes__": [
+            {"name": "agno_runs_session_id_run_index", "columns": ["session_id", "run_index"]},
+        ],
+    }
+
 
 MEMORY_TABLE_SCHEMA = {
     "memory_id": {"type": String, "primary_key": True, "nullable": False},
@@ -53,6 +91,7 @@ EVAL_TABLE_SCHEMA = {
     "model_id": {"type": String, "nullable": True},
     "model_provider": {"type": String, "nullable": True},
     "evaluated_component_name": {"type": String, "nullable": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
 }
@@ -279,6 +318,58 @@ def _get_schedule_runs_table_schema(
     }
 
 
+JOBS_TABLE_SCHEMA = {
+    # id == run_id, so poll/resume endpoints key identically
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "component_type": {"type": String, "nullable": False},  # agent | team | workflow
+    "job_type": {"type": String, "nullable": False},  # "run" today; future: other AgentOS job types
+    # Claim affinity: NULL = any worker; set = only workers whose
+    # QueueConfig.deployment_id matches (filtered in the claim predicate)
+    "deployment_id": {"type": String, "nullable": True},
+    "component_id": {"type": String, "nullable": False, "index": True},
+    "session_id": {"type": String, "nullable": False, "index": True},
+    "user_id": {"type": String, "nullable": True},
+    "payload": {"type": JSONB, "nullable": False},  # serialized run params
+    # queued | running | completed | failed | cancelled
+    "status": {"type": String, "nullable": False, "index": True},
+    "attempt": {"type": BigInteger, "nullable": False},  # doubles as fencing generation
+    "max_attempts": {"type": BigInteger, "nullable": False},
+    "idempotency_key": {"type": String, "nullable": True},
+    "available_at": {"type": BigInteger, "nullable": False},
+    "locked_by": {"type": String, "nullable": True},
+    "locked_at": {"type": BigInteger, "nullable": True},  # heartbeat-refreshed
+    "error": {"type": Text, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "completed_at": {"type": BigInteger, "nullable": True},
+    "__composite_indexes__": [
+        {"name": "status_available_at", "columns": ["status", "available_at"]},
+    ],
+    # Client-supplied dedup key (Stripe pattern): duplicate submits return the
+    # existing run instead of enqueueing twice. Unique only when set.
+    "_partial_unique_indexes": [
+        {
+            "name": "uq_jobs_idempotency_key",
+            # user_id scopes the dedup namespace: a second tenant reusing a
+            # key must not attach to (and observe) the first tenant's run
+            "columns": ["idempotency_key", "user_id"],
+            "where": "idempotency_key IS NOT NULL",
+        },
+        {
+            "name": "uq_jobs_idempotency_key_anon",
+            # Anonymous submits (user_id IS NULL) need their own index: the
+            # composite index above treats every NULL user_id as distinct, so
+            # two CONCURRENT anonymous submits with the same key both insert
+            # (the IS NOT DISTINCT FROM pre-check only catches the sequential
+            # case). A single-column partial index is used instead of
+            # NULLS NOT DISTINCT, which requires PG15+.
+            "columns": ["idempotency_key"],
+            "where": "idempotency_key IS NOT NULL AND user_id IS NULL",
+        },
+    ],
+}
+
+
 APPROVAL_TABLE_SCHEMA = {
     "id": {"type": String, "primary_key": True, "nullable": False},
     "run_id": {"type": String, "nullable": False, "index": True},
@@ -349,6 +440,7 @@ def get_table_schema_definition(
     traces_table_name: str = "agno_traces",
     db_schema: str = "agno",
     schedules_table_name: str = "agno_schedules",
+    session_table_name: str = "agno_sessions",
 ) -> dict[str, Any]:
     """
     Get the expected schema definition for the given table.
@@ -357,6 +449,8 @@ def get_table_schema_definition(
         table_type (str): The type of table to get the schema for.
         traces_table_name (str): The name of the traces table (used for spans foreign key).
         db_schema (str): The database schema name (used for spans foreign key).
+        session_table_name (str): The name of the sessions table (used for the
+            runs table's ``session_id`` foreign key).
 
     Returns:
         Dict[str, Any]: Dictionary containing column definitions for the table
@@ -366,9 +460,12 @@ def get_table_schema_definition(
         return _get_span_table_schema(traces_table_name, db_schema)
     if table_type == "schedule_runs":
         return _get_schedule_runs_table_schema(schedules_table_name, db_schema)
+    if table_type == "runs":
+        return _get_run_table_schema(session_table_name)
 
     schemas = {
         "sessions": SESSION_TABLE_SCHEMA,
+        # "runs" is handled by _get_run_table_schema above (needs session_table_name)
         "evals": EVAL_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
         "memories": MEMORY_TABLE_SCHEMA,
@@ -381,6 +478,7 @@ def get_table_schema_definition(
         "component_links": COMPONENT_LINKS_TABLE_SCHEMA,
         "learnings": LEARNINGS_TABLE_SCHEMA,
         "schedules": SCHEDULE_TABLE_SCHEMA,
+        "jobs": JOBS_TABLE_SCHEMA,
         "approvals": APPROVAL_TABLE_SCHEMA,
         "auth_tokens": AUTH_TOKEN_TABLE_SCHEMA,
         "service_accounts": SERVICE_ACCOUNT_TABLE_SCHEMA,

@@ -28,7 +28,20 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.utils import deserialize_session, deserialize_session_json_fields, deserialize_sessions
+from agno.db.utils import (
+    HISTORY_SKIP_STATUSES,
+    build_single_run_row,
+    deserialize_run,
+    deserialize_session,
+    deserialize_session_json_fields,
+    deserialize_sessions,
+    filter_context_runs,
+    merge_runs_table_with_legacy_blob,
+)
+from agno.run.agent import RunOutput
+from agno.run.base import RunStatus
+from agno.run.team import TeamRunOutput
+from agno.run.workflow import WorkflowRunOutput
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
@@ -147,6 +160,7 @@ class AsyncMongoDb(AsyncBaseDb):
         db_name: Optional[str] = None,
         db_url: Optional[str] = None,
         session_collection: Optional[str] = None,
+        runs_collection: Optional[str] = None,
         memory_collection: Optional[str] = None,
         metrics_collection: Optional[str] = None,
         eval_collection: Optional[str] = None,
@@ -198,6 +212,7 @@ class AsyncMongoDb(AsyncBaseDb):
         super().__init__(
             id=id,
             session_table=session_collection,
+            runs_table=runs_collection,
             memory_table=memory_collection,
             metrics_table=metrics_collection,
             eval_table=eval_collection,
@@ -252,6 +267,7 @@ class AsyncMongoDb(AsyncBaseDb):
         """Create all configured MongoDB collections if they don't exist."""
         collections_to_create = [
             ("sessions", self.session_table_name),
+            ("runs", self.runs_table_name),
             ("memories", self.memory_table_name),
             ("metrics", self.metrics_table_name),
             ("evals", self.eval_table_name),
@@ -394,6 +410,17 @@ class AsyncMongoDb(AsyncBaseDb):
                     create_collection_if_not_found=create_collection_if_not_found,
                 )
             return self.session_collection
+
+        if table_type == "runs":
+            if reset_cache or getattr(self, "runs_collection", None) is None:
+                if self.runs_table_name is None:
+                    raise ValueError("Runs collection was not provided on initialization")
+                self.runs_collection = await self._get_or_create_collection(
+                    collection_name=self.runs_table_name,
+                    collection_type="runs",
+                    create_collection_if_not_found=create_collection_if_not_found,
+                )
+            return self.runs_collection
 
         if table_type == "memories":
             if reset_cache or getattr(self, "memory_collection", None) is None:
@@ -548,13 +575,266 @@ class AsyncMongoDb(AsyncBaseDb):
             aggregate_cursor_or_coro = await aggregate_cursor_or_coro
         return await aggregate_cursor_or_coro.to_list(length=length)
 
-    def get_latest_schema_version(self):
-        """Get the latest version of the database schema."""
+    def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
+        """Get the latest version of the database schema.
+
+        ``table_name`` is accepted for parity with the SQL adapters and the
+        ``BaseDb`` contract; MongoDB is schemaless so it is ignored.
+        """
+        return None
+
+    def upsert_schema_version(self, table_name: str = "", version: str = "") -> None:
+        """Upsert the schema version. ``table_name`` is ignored — see
+        ``get_latest_schema_version``."""
         pass
 
-    def upsert_schema_version(self, version: str) -> None:
-        """Upsert the schema version into the database."""
-        pass
+    async def cleanup_legacy_runs_field(self, force: bool = False) -> bool:
+        """Unset the legacy ``runs`` field from session documents.
+
+        See :meth:`MongoDb.cleanup_legacy_runs_field` for the contract.
+        """
+        collection = await self._get_collection(table_type="sessions")
+        if collection is None:
+            log_info(f"{self.session_table_name} collection does not exist, nothing to clean up")
+            return False
+
+        if not force:
+            pending = await collection.count_documents({"runs": {"$exists": True, "$ne": None, "$not": {"$size": 0}}})
+            if pending > 0:
+                raise RuntimeError(
+                    f"Refusing to unset {self.session_table_name}.runs: {pending} session(s) still have "
+                    "non-null `runs` content. Run MigrationManager(db).up() first, or pass force=True."
+                )
+
+        log_info(f"Unsetting legacy runs field from {self.session_table_name} documents")
+        result = await collection.update_many(
+            {"runs": {"$exists": True}},
+            {"$unset": {"runs": ""}},
+        )
+        log_info(f"Unset runs on {result.modified_count} session document(s)")
+        return result.modified_count > 0 or result.matched_count > 0
+
+    # -- Run methods --
+    async def _get_session_runs_docs(
+        self, runs_collection: AsyncMongoCollectionType, session_id: str, limit: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Get the raw run_data dicts for the given session, in insertion order.
+
+        When ``limit`` is set, push "most recent N context-relevant runs" down to
+        the DB: drop member sub-runs (``parent_run_id`` set) and terminal-skip
+        statuses, sort newest-first, take N, then reverse back to chronological
+        order. ``$nin``/``None`` in Mongo also match a null or missing field, so
+        this keeps runs whose ``status`` is null/absent — mirroring the SQL
+        ``status IS NULL OR status NOT IN (...)`` fast path.
+        """
+        if limit is not None:
+            pipeline: List[Dict[str, Any]] = [
+                {
+                    "$match": {
+                        "session_id": session_id,
+                        "parent_run_id": None,
+                        "status": {"$nin": HISTORY_SKIP_STATUSES},
+                    }
+                },
+                {
+                    "$addFields": {
+                        "_ri": {"$ifNull": ["$run_index", 0]},
+                        "_ca": {"$ifNull": ["$created_at", 0]},
+                    }
+                },
+                {"$sort": {"_ri": -1, "_ca": -1}},
+                {"$limit": limit},
+            ]
+            docs = await runs_collection.aggregate(pipeline).to_list(length=limit)
+            run_docs = [doc["run_data"] for doc in docs if "run_data" in doc]
+            run_docs.reverse()  # back to chronological order
+            return run_docs
+
+        pipeline = [
+            {"$match": {"session_id": session_id}},
+            {"$addFields": {"_ri": {"$ifNull": ["$run_index", 0]}, "_ca": {"$ifNull": ["$created_at", 0]}}},
+            {"$sort": {"_ri": 1, "_ca": 1}},
+        ]
+        docs = await runs_collection.aggregate(pipeline).to_list(length=None)
+        return [doc["run_data"] for doc in docs if "run_data" in doc]
+
+    async def _get_sessions_runs_docs(
+        self, runs_collection: AsyncMongoCollectionType, session_ids: List[str]
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        if not session_ids:
+            return {}
+        cursor = runs_collection.find({"session_id": {"$in": session_ids}}).sort(
+            [("session_id", 1), ("run_index", 1), ("created_at", 1)]
+        )
+        runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
+        async for doc in cursor:
+            sid = doc.get("session_id")
+            run_data = doc.get("run_data")
+            if sid is None or run_data is None:
+                continue
+            runs_by_session.setdefault(sid, []).append(run_data)
+        return runs_by_session
+
+    async def upsert_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> None:
+        """Upsert a single run document into the runs collection (O(1) operation).
+
+        Optimized for updating existing runs (e.g., status changes in HITL or
+        background mode) without re-upserting all runs in the session.
+
+        For new runs, ``run_index`` should be provided or will be read from
+        ``run_data``. For updates to existing runs, ``run_index`` is preserved
+        from the original insert.
+
+        Args:
+            run: The run object or dictionary to upsert.
+            session_id: The session ID this run belongs to.
+            user_id: Optional user ID to associate with the run.
+            run_index: Optional run index for new runs.
+
+        Raises:
+            ValueError: If the run has no run_id.
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            runs_collection = await self._get_collection(table_type="runs", create_collection_if_not_found=True)
+            if runs_collection is None:
+                return
+
+            row = build_single_run_row(
+                run=run,
+                session_id=session_id,
+                user_id=user_id,
+                run_index=run_index,
+            )
+
+            existing = await runs_collection.find_one({"run_id": row["run_id"]}, {"run_index": 1})
+            if existing is not None and "run_index" in existing:
+                row["run_index"] = existing["run_index"]
+
+            await runs_collection.replace_one({"run_id": row["run_id"]}, row, upsert=True)
+        except Exception as e:
+            log_error(f"Exception upserting run into runs collection: {str(e)}")
+            raise e
+
+    async def get_run(
+        self, run_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]]]:
+        try:
+            collection = await self._get_collection(table_type="runs")
+            if collection is None:
+                return None
+            doc = await collection.find_one({"run_id": run_id})
+            if doc is None:
+                return None
+            if not deserialize:
+                return doc
+            return deserialize_run(doc.get("run_type"), doc["run_data"])
+        except Exception as e:
+            log_error(f"Exception reading from runs collection: {str(e)}")
+            raise e
+
+    async def get_runs(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[RunStatus] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
+        try:
+            collection = await self._get_collection(table_type="runs")
+            if collection is None:
+                return [] if deserialize else ([], 0)
+
+            query: Dict[str, Any] = {}
+            if session_id is not None:
+                query["session_id"] = session_id
+            if user_id is not None:
+                query["user_id"] = user_id
+            if agent_id is not None:
+                query["agent_id"] = agent_id
+            if team_id is not None:
+                query["team_id"] = team_id
+            if workflow_id is not None:
+                query["workflow_id"] = workflow_id
+            if status is not None:
+                query["status"] = status.value if isinstance(status, RunStatus) else status
+
+            total_count = await collection.count_documents(query)
+
+            cursor = collection.find(query)
+            sort_criteria = apply_sorting({}, sort_by, sort_order)
+            if sort_criteria:
+                cursor = cursor.sort(sort_criteria)
+            else:
+                cursor = cursor.sort([("run_index", 1), ("created_at", 1)])
+
+            query_args = apply_pagination({}, limit, page)
+            if query_args.get("skip"):
+                cursor = cursor.skip(query_args["skip"])
+            if query_args.get("limit"):
+                cursor = cursor.limit(query_args["limit"])
+
+            run_rows = await cursor.to_list(length=None)
+
+            if not deserialize:
+                return run_rows, total_count
+            return [deserialize_run(doc.get("run_type"), doc["run_data"]) for doc in run_rows]
+        except Exception as e:
+            log_error(f"Exception reading from runs collection: {str(e)}")
+            raise e
+
+    async def _ascrub_run_ids_from_legacy_blob(self, run_ids: List[str]) -> None:
+        """Remove ``run_ids`` from every session document's legacy ``runs``
+        array (partial-migration hygiene — see ``MongoDb`` for rationale)."""
+        if not run_ids:
+            return
+        try:
+            sessions = await self._get_collection(table_type="sessions")
+            if sessions is None:
+                return
+            await sessions.update_many(
+                {"runs.run_id": {"$in": list(run_ids)}},
+                {"$pull": {"runs": {"run_id": {"$in": list(run_ids)}}}},
+            )
+        except Exception:
+            log_debug("legacy-runs scrub failed; the primary delete still succeeded", exc_info=True)
+
+    async def delete_run(self, run_id: str) -> bool:
+        try:
+            collection = await self._get_collection(table_type="runs")
+            if collection is None:
+                return False
+            result = await collection.delete_one({"run_id": run_id})
+            await self._ascrub_run_ids_from_legacy_blob([run_id])
+            return result.deleted_count > 0
+        except Exception as e:
+            log_error(f"Error deleting run: {str(e)}")
+            raise e
+
+    async def delete_runs(self, run_ids: List[str]) -> None:
+        try:
+            collection = await self._get_collection(table_type="runs")
+            if collection is None:
+                return
+            result = await collection.delete_many({"run_id": {"$in": run_ids}})
+            await self._ascrub_run_ids_from_legacy_blob(run_ids)
+            log_debug(f"Successfully deleted {result.deleted_count} runs")
+        except Exception as e:
+            log_error(f"Error deleting runs: {str(e)}")
+            raise e
 
     # -- Session methods --
 
@@ -575,6 +855,7 @@ class AsyncMongoDb(AsyncBaseDb):
             collection = await self._get_collection(table_type="sessions")
             if collection is None:
                 return False
+            runs_collection = await self._get_collection(table_type="runs")
 
             query: Dict[str, Any] = {"session_id": session_id}
             if user_id is not None:
@@ -583,9 +864,12 @@ class AsyncMongoDb(AsyncBaseDb):
             if result.deleted_count == 0:
                 log_debug(f"No session found to delete with session_id: {session_id}")
                 return False
-            else:
-                log_debug(f"Successfully deleted session with session_id: {session_id}")
-                return True
+
+            if runs_collection is not None:
+                await runs_collection.delete_many({"session_id": session_id})
+
+            log_debug(f"Successfully deleted session with session_id: {session_id}")
+            return True
 
         except Exception as e:
             log_error(f"Error deleting session: {str(e)}")
@@ -602,11 +886,19 @@ class AsyncMongoDb(AsyncBaseDb):
             collection = await self._get_collection(table_type="sessions")
             if collection is None:
                 return
+            runs_collection = await self._get_collection(table_type="runs")
 
             query: Dict[str, Any] = {"session_id": {"$in": session_ids}}
             if user_id is not None:
                 query["user_id"] = user_id
             result = await collection.delete_many(query)
+
+            if runs_collection is not None:
+                runs_query: Dict[str, Any] = {"session_id": {"$in": session_ids}}
+                if user_id is not None:
+                    runs_query["user_id"] = user_id
+                await runs_collection.delete_many(runs_query)
+
             log_debug(f"Successfully deleted {result.deleted_count} sessions")
 
         except Exception as e:
@@ -619,6 +911,7 @@ class AsyncMongoDb(AsyncBaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """Read a session from the database.
 
@@ -640,6 +933,7 @@ class AsyncMongoDb(AsyncBaseDb):
             collection = await self._get_collection(table_type="sessions")
             if collection is None:
                 return None
+            runs_collection = await self._get_collection(table_type="runs")
 
             query = {"session_id": session_id}
             if user_id is not None:
@@ -650,6 +944,28 @@ class AsyncMongoDb(AsyncBaseDb):
                 return None
 
             session = deserialize_session_json_fields(result)
+
+            # Attach the runs stored in the runs collection, merged with any runs
+            # still sitting in the legacy `runs` field (so partially-migrated
+            # sessions don't silently lose history).
+            legacy_runs = session.get("runs")
+            if runs_collection is not None and runs_limit is not None and not legacy_runs:
+                # Fully migrated: push "most recent N" down to the DB.
+                session["runs"] = await self._get_session_runs_docs(runs_collection, session_id, limit=runs_limit)
+            elif runs_collection is not None:
+                # Full load + merge. Also the un-migrated fallback: the legacy blob
+                # holds the whole history in one field, so "last N" can't be pushed
+                # down — load all, merge, then filter+slice to match the migrated path.
+                runs_data = await self._get_session_runs_docs(runs_collection, session_id)
+                merged = merge_runs_table_with_legacy_blob(runs_data, legacy_runs)
+                if runs_limit is not None:
+                    merged = filter_context_runs(merged)[-runs_limit:]
+                session["runs"] = merged
+            elif runs_limit is not None:
+                # No runs collection yet (fully un-migrated): filter+slice the blob.
+                merged = merge_runs_table_with_legacy_blob([], legacy_runs)
+                session["runs"] = filter_context_runs(merged)[-runs_limit:]
+
             if not deserialize:
                 return session
 
@@ -700,6 +1016,7 @@ class AsyncMongoDb(AsyncBaseDb):
             collection = await self._get_collection(table_type="sessions")
             if collection is None:
                 return [] if deserialize else ([], 0)
+            runs_collection = await self._get_collection(table_type="runs")
 
             # Filtering
             query: Dict[str, Any] = {}
@@ -752,6 +1069,14 @@ class AsyncMongoDb(AsyncBaseDb):
                 return [] if deserialize else ([], 0)
             sessions_raw = [deserialize_session_json_fields(record) for record in records]
 
+            if runs_collection is not None and sessions_raw:
+                runs_by_session = await self._get_sessions_runs_docs(
+                    runs_collection, [s["session_id"] for s in sessions_raw]
+                )
+                for s in sessions_raw:
+                    runs_data = runs_by_session.get(s["session_id"], [])
+                    s["runs"] = merge_runs_table_with_legacy_blob(runs_data, s.get("runs"))
+
             if not deserialize:
                 return sessions_raw, total_count
 
@@ -790,6 +1115,7 @@ class AsyncMongoDb(AsyncBaseDb):
             collection = await self._get_collection(table_type="sessions")
             if collection is None:
                 return None
+            runs_collection = await self._get_collection(table_type="runs")
 
             query: Dict[str, Any] = {"session_id": session_id}
             if user_id is not None:
@@ -815,6 +1141,12 @@ class AsyncMongoDb(AsyncBaseDb):
                 return None
 
             deserialized_session = deserialize_session_json_fields(result)
+
+            if runs_collection is not None:
+                runs_data = await self._get_session_runs_docs(runs_collection, session_id)
+                deserialized_session["runs"] = merge_runs_table_with_legacy_blob(
+                    runs_data, deserialized_session.get("runs")
+                )
 
             if not deserialize:
                 return deserialized_session
@@ -845,9 +1177,11 @@ class AsyncMongoDb(AsyncBaseDb):
             if collection is None:
                 return None
 
-            session_dict = session.to_dict()
+            session_dict = session.to_dict(include_runs=False)
 
-            existing = await collection.find_one({"session_id": session_dict.get("session_id")}, {"user_id": 1})
+            existing = await collection.find_one(
+                {"session_id": session_dict.get("session_id")}, {"user_id": 1, "runs": 1}
+            )
             if existing:
                 existing_uid = existing.get("user_id")
                 if existing_uid is not None and existing_uid != session_dict.get("user_id"):
@@ -866,7 +1200,6 @@ class AsyncMongoDb(AsyncBaseDb):
                     "session_type": SessionType.AGENT.value,
                     "agent_id": session_dict.get("agent_id"),
                     "user_id": session_dict.get("user_id"),
-                    "runs": session_dict.get("runs"),
                     "agent_data": session_dict.get("agent_data"),
                     "session_data": session_dict.get("session_data"),
                     "summary": session_dict.get("summary"),
@@ -874,33 +1207,12 @@ class AsyncMongoDb(AsyncBaseDb):
                     "created_at": session_dict.get("created_at"),
                     "updated_at": int(time.time()),
                 }
-
-                try:
-                    result = await collection.find_one_and_replace(
-                        filter=upsert_filter,
-                        replacement=record,
-                        upsert=True,
-                        return_document=ReturnDocument.AFTER,
-                    )
-                except DuplicateKeyError:
-                    return None
-                if not result:
-                    return None
-
-                session = result  # type: ignore
-
-                if not deserialize:
-                    return session
-
-                return AgentSession.from_dict(session)  # type: ignore
-
             elif isinstance(session, TeamSession):
                 record = {
                     "session_id": session_dict.get("session_id"),
                     "session_type": SessionType.TEAM.value,
                     "team_id": session_dict.get("team_id"),
                     "user_id": session_dict.get("user_id"),
-                    "runs": session_dict.get("runs"),
                     "team_data": session_dict.get("team_data"),
                     "session_data": session_dict.get("session_data"),
                     "summary": session_dict.get("summary"),
@@ -908,34 +1220,12 @@ class AsyncMongoDb(AsyncBaseDb):
                     "created_at": session_dict.get("created_at"),
                     "updated_at": int(time.time()),
                 }
-
-                try:
-                    result = await collection.find_one_and_replace(
-                        filter=upsert_filter,
-                        replacement=record,
-                        upsert=True,
-                        return_document=ReturnDocument.AFTER,
-                    )
-                except DuplicateKeyError:
-                    return None
-                if not result:
-                    return None
-
-                # MongoDB stores native objects, no deserialization needed for document fields
-                session = result  # type: ignore
-
-                if not deserialize:
-                    return session
-
-                return TeamSession.from_dict(session)  # type: ignore
-
-            else:
+            elif isinstance(session, WorkflowSession):
                 record = {
                     "session_id": session_dict.get("session_id"),
                     "session_type": SessionType.WORKFLOW.value,
                     "workflow_id": session_dict.get("workflow_id"),
                     "user_id": session_dict.get("user_id"),
-                    "runs": session_dict.get("runs"),
                     "workflow_data": session_dict.get("workflow_data"),
                     "session_data": session_dict.get("session_data"),
                     "summary": session_dict.get("summary"),
@@ -943,25 +1233,34 @@ class AsyncMongoDb(AsyncBaseDb):
                     "created_at": session_dict.get("created_at"),
                     "updated_at": int(time.time()),
                 }
+            else:
+                raise ValueError(f"Invalid session type: {session.session_type}")
 
-                try:
-                    result = await collection.find_one_and_replace(
-                        filter=upsert_filter,
-                        replacement=record,
-                        upsert=True,
-                        return_document=ReturnDocument.AFTER,
-                    )
-                except DuplicateKeyError:
-                    return None
-                if not result:
-                    return None
+            # Preserve the legacy `runs` field as a frozen backup. find_one_and_replace
+            # replaces the whole document, so carry any existing legacy blob forward; runs
+            # now live in their own collection and only cleanup_legacy_runs_field() reclaims
+            # it. Dropping it here would lose history for sessions not yet migrated.
+            if existing and existing.get("runs") is not None:
+                record["runs"] = existing["runs"]
 
-                session = result  # type: ignore
+            try:
+                result = await collection.find_one_and_replace(
+                    filter=upsert_filter,
+                    replacement=record,
+                    upsert=True,
+                    return_document=ReturnDocument.AFTER,
+                )
+            except DuplicateKeyError:
+                return None
+            if not result:
+                return None
 
-                if not deserialize:
-                    return session
+            result["runs"] = [run if isinstance(run, dict) else run.to_dict() for run in session.runs or []]
 
-                return WorkflowSession.from_dict(session)  # type: ignore
+            if not deserialize:
+                return result
+
+            return deserialize_session(None, result)
 
         except Exception as e:
             log_error(f"Exception upserting session: {str(e)}")
@@ -998,17 +1297,30 @@ class AsyncMongoDb(AsyncBaseDb):
                     for result in [await self.upsert_session(session, deserialize=deserialize)]
                     if result is not None
                 ]
-
             from pymongo import ReplaceOne
 
             operations = []
             results: List[Union[Session, Dict[str, Any]]] = []
 
+            sessions_by_id: Dict[str, Session] = {s.session_id: s for s in sessions if s is not None}
+
+            # Preserve the legacy `runs` field as a frozen backup. ReplaceOne replaces the
+            # whole document, so fetch any existing legacy blobs up front and carry them
+            # forward; only cleanup_legacy_runs_field() reclaims them. Dropping them here
+            # would lose history for sessions not yet migrated to the runs collection.
+            legacy_runs_by_id: Dict[str, Any] = {}
+            if sessions_by_id:
+                async for doc in collection.find(
+                    {"session_id": {"$in": list(sessions_by_id.keys())}}, {"session_id": 1, "runs": 1}
+                ):
+                    if doc.get("runs") is not None:
+                        legacy_runs_by_id[doc["session_id"]] = doc["runs"]
+
             for session in sessions:
                 if session is None:
                     continue
 
-                session_dict = session.to_dict()
+                session_dict = session.to_dict(include_runs=False)
 
                 # Use preserved updated_at if flag is set and value exists, otherwise use current time
                 updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
@@ -1019,7 +1331,6 @@ class AsyncMongoDb(AsyncBaseDb):
                         "session_type": SessionType.AGENT.value,
                         "agent_id": session_dict.get("agent_id"),
                         "user_id": session_dict.get("user_id"),
-                        "runs": session_dict.get("runs"),
                         "agent_data": session_dict.get("agent_data"),
                         "session_data": session_dict.get("session_data"),
                         "summary": session_dict.get("summary"),
@@ -1033,7 +1344,6 @@ class AsyncMongoDb(AsyncBaseDb):
                         "session_type": SessionType.TEAM.value,
                         "team_id": session_dict.get("team_id"),
                         "user_id": session_dict.get("user_id"),
-                        "runs": session_dict.get("runs"),
                         "team_data": session_dict.get("team_data"),
                         "session_data": session_dict.get("session_data"),
                         "summary": session_dict.get("summary"),
@@ -1047,7 +1357,6 @@ class AsyncMongoDb(AsyncBaseDb):
                         "session_type": SessionType.WORKFLOW.value,
                         "workflow_id": session_dict.get("workflow_id"),
                         "user_id": session_dict.get("user_id"),
-                        "runs": session_dict.get("runs"),
                         "workflow_data": session_dict.get("workflow_data"),
                         "session_data": session_dict.get("session_data"),
                         "summary": session_dict.get("summary"),
@@ -1057,6 +1366,10 @@ class AsyncMongoDb(AsyncBaseDb):
                     }
                 else:
                     continue
+
+                legacy_runs = legacy_runs_by_id.get(session.session_id)
+                if legacy_runs is not None:
+                    record["runs"] = legacy_runs
 
                 operations.append(
                     ReplaceOne(filter={"session_id": record["session_id"]}, replacement=record, upsert=True)
@@ -1072,6 +1385,11 @@ class AsyncMongoDb(AsyncBaseDb):
 
                 async for doc in cursor:
                     session_dict = doc
+                    original_session = sessions_by_id.get(doc.get("session_id"))
+                    session_dict["runs"] = [
+                        run if isinstance(run, dict) else run.to_dict()
+                        for run in (original_session.runs if original_session else None) or []
+                    ]
 
                     if deserialize:
                         session_type = doc.get("session_type")
@@ -1764,6 +2082,7 @@ class AsyncMongoDb(AsyncBaseDb):
             collection = await self._get_collection(table_type="sessions")
             if collection is None:
                 return []
+            runs_collection = await self._get_collection(table_type="runs", create_collection_if_not_found=False)
 
             query = {}
             if start_timestamp is not None:
@@ -1775,6 +2094,7 @@ class AsyncMongoDb(AsyncBaseDb):
                     query["created_at"] = {"$lte": end_timestamp}
 
             projection = {
+                "session_id": 1,
                 "user_id": 1,
                 "session_data": 1,
                 "runs": 1,
@@ -1782,8 +2102,26 @@ class AsyncMongoDb(AsyncBaseDb):
                 "session_type": 1,
             }
 
-            results = await collection.find(query, projection).to_list(length=None)
-            return results
+            sessions = await collection.find(query, projection).to_list(length=None)
+
+            if runs_collection is not None and sessions:
+                session_ids = [s["session_id"] for s in sessions]
+                runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
+                async for doc in runs_collection.find(
+                    {"session_id": {"$in": session_ids}},
+                    {"session_id": 1, "run_data.model": 1, "run_data.model_provider": 1},
+                ):
+                    run_data = doc.get("run_data") or {}
+                    runs_by_session.setdefault(doc["session_id"], []).append(
+                        {"model": run_data.get("model"), "model_provider": run_data.get("model_provider")}
+                    )
+
+                for s in sessions:
+                    rb = runs_by_session.get(s["session_id"], [])
+                    if rb or not s.get("runs"):
+                        s["runs"] = rb
+
+            return sessions
 
         except Exception as e:
             log_error(f"Exception reading from sessions collection: {str(e)}")
@@ -2087,14 +2425,17 @@ class AsyncMongoDb(AsyncBaseDb):
             log_error(f"Error deleting eval run {eval_run_id}: {str(e)}")
             raise e
 
-    async def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+    async def delete_eval_runs(self, eval_run_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete multiple eval runs from the database."""
         try:
             collection = await self._get_collection(table_type="evals")
             if collection is None:
                 return
 
-            result = await collection.delete_many({"run_id": {"$in": eval_run_ids}})
+            query: Dict[str, Any] = {"run_id": {"$in": eval_run_ids}}
+            if user_id is not None:
+                query["user_id"] = user_id
+            result = await collection.delete_many(query)
 
             if result.deleted_count == 0:
                 log_debug(f"No eval runs found with IDs: {eval_run_ids}")
@@ -2120,13 +2461,14 @@ class AsyncMongoDb(AsyncBaseDb):
             raise e
 
     async def get_eval_run(
-        self, eval_run_id: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Get an eval run from the database.
 
         Args:
             eval_run_id (str): The ID of the eval run to get.
             deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            user_id (Optional[str]): If set, only return the run if owned by this user.
 
         Returns:
             Optional[Union[EvalRunRecord, Dict[str, Any]]]:
@@ -2141,7 +2483,10 @@ class AsyncMongoDb(AsyncBaseDb):
             if collection is None:
                 return None
 
-            eval_run_raw = await collection.find_one({"run_id": eval_run_id})
+            query: Dict[str, Any] = {"run_id": eval_run_id}
+            if user_id is not None:
+                query["user_id"] = user_id
+            eval_run_raw = await collection.find_one(query)
 
             if not eval_run_raw:
                 return None
@@ -2168,6 +2513,7 @@ class AsyncMongoDb(AsyncBaseDb):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.
 
@@ -2180,6 +2526,7 @@ class AsyncMongoDb(AsyncBaseDb):
             team_id (Optional[str]): The ID of the team to filter by.
             workflow_id (Optional[str]): The ID of the workflow to filter by.
             model_id (Optional[str]): The ID of the model to filter by.
+            user_id (Optional[str]): If set, only return runs owned by this user.
             eval_type (Optional[List[EvalType]]): The type of eval to filter by.
             filter_type (Optional[EvalFilterType]): The type of filter to apply.
             deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
@@ -2206,6 +2553,8 @@ class AsyncMongoDb(AsyncBaseDb):
                 query["workflow_id"] = workflow_id
             if model_id is not None:
                 query["model_id"] = model_id
+            if user_id is not None:
+                query["user_id"] = user_id
             if eval_type is not None and len(eval_type) > 0:
                 query["eval_type"] = {"$in": eval_type}
             if filter_type is not None:
@@ -2250,7 +2599,7 @@ class AsyncMongoDb(AsyncBaseDb):
             raise e
 
     async def rename_eval_run(
-        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Update the name of an eval run in the database.
 
@@ -2258,6 +2607,7 @@ class AsyncMongoDb(AsyncBaseDb):
             eval_run_id (str): The ID of the eval run to update.
             name (str): The new name of the eval run.
             deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            user_id (Optional[str]): If set, only rename the run if owned by this user.
 
         Returns:
             Optional[Union[EvalRunRecord, Dict[str, Any]]]:
@@ -2272,8 +2622,13 @@ class AsyncMongoDb(AsyncBaseDb):
             if collection is None:
                 return None
 
+            query: Dict[str, Any] = {"run_id": eval_run_id}
+            if user_id is not None:
+                query["user_id"] = user_id
             result = await collection.find_one_and_update(
-                {"run_id": eval_run_id}, {"$set": {"name": name, "updated_at": int(time.time())}}
+                query,
+                {"$set": {"name": name, "updated_at": int(time.time())}},
+                return_document=ReturnDocument.AFTER,
             )
 
             log_debug(f"Renamed eval run with id '{eval_run_id}' to '{name}'")
@@ -2285,6 +2640,24 @@ class AsyncMongoDb(AsyncBaseDb):
 
         except Exception as e:
             log_error(f"Error updating eval run name {eval_run_id}: {str(e)}")
+            raise e
+
+    async def update_eval_run_user_id(self, eval_run_id: str, user_id: str) -> None:
+        """Set the owner (user_id) on an existing eval run.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            user_id (str): The owner to set.
+        """
+        try:
+            collection = await self._get_collection(table_type="evals")
+            if collection is None:
+                return
+
+            await collection.update_one({"run_id": eval_run_id}, {"$set": {"user_id": user_id}})
+
+        except Exception as e:
+            log_error(f"Error setting owner on eval run {eval_run_id}: {str(e)}")
             raise e
 
     # --- Traces ---
