@@ -1094,7 +1094,7 @@ def handle_model_response_stream(
             run_messages=run_messages,
             run_context=run_context,
         ),
-        run_messages=run_messages,
+        compacted_messages=run_messages.compacted_messages,
     ):
         # Handle LLM request events and compression events from ModelResponse
         if isinstance(model_response_event, ModelResponse):
@@ -1255,7 +1255,7 @@ async def ahandle_model_response_stream(
             run_messages=run_messages,
             run_context=run_context,
         ),
-        run_messages=run_messages,
+        compacted_messages=run_messages.compacted_messages,
     )  # type: ignore
 
     async for model_response_event in model_response_stream:  # type: ignore

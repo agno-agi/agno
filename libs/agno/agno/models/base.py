@@ -27,7 +27,6 @@ from typing import (
 
 if TYPE_CHECKING:
     from agno.compression.manager import CompressionManager
-    from agno.run.messages import RunMessages
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -715,7 +714,8 @@ class Model(ABC):
             assistant_message = Message(role=self.assistant_message_role)
             # Initialize message metrics and start timer before model call
             self._ensure_message_metrics_initialized(assistant_message)
-            # Use compacted messages for model if available, otherwise use original
+            # Two-list architecture: send compressed view to model if available
+            # compacted_messages = [summary, recent...], messages = full history
             model_messages = messages
             if compacted_messages:
                 model_messages = compacted_messages
@@ -736,7 +736,7 @@ class Model(ABC):
 
                 accumulate_model_metrics(model_response, self, self.model_type, run_response.metrics)
 
-            # Add assistant message to messages (and compacted_messages if exists)
+            # Append to BOTH lists to keep them in sync (same object in both)
             messages.append(assistant_message)
             if compacted_messages is not None:
                 compacted_messages.append(assistant_message)
@@ -821,7 +821,7 @@ class Model(ABC):
                 # Add a function call for each successful execution
                 function_call_count += len(function_call_results)
 
-                # Format and add results to messages (and compacted_messages if exists)
+                # Append tool results to BOTH lists (same objects in both)
                 self.format_function_call_results(
                     messages=messages,
                     function_call_results=function_call_results,
@@ -899,7 +899,7 @@ class Model(ABC):
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], Awaitable[None]]] = None,
-        run_messages: Optional["RunMessages"] = None,
+        compacted_messages: Optional[List[Message]] = None,
     ) -> ModelResponse:
         """
         Generate an asynchronous response from the model.
@@ -946,7 +946,8 @@ class Model(ABC):
             assistant_message = Message(role=self.assistant_message_role)
             # Initialize message metrics and start timer before model call
             self._ensure_message_metrics_initialized(assistant_message)
-            # Use compacted messages for model if available, otherwise use original
+            # Two-list architecture: send compressed view to model if available
+            # compacted_messages = [summary, recent...], messages = full history
             model_messages = messages
             if compacted_messages:
                 model_messages = compacted_messages
@@ -967,7 +968,7 @@ class Model(ABC):
 
                 accumulate_model_metrics(model_response, self, self.model_type, run_response.metrics)
 
-            # Add assistant message to messages (and compacted_messages if exists)
+            # Append to BOTH lists to keep them in sync (same object in both)
             messages.append(assistant_message)
             if compacted_messages is not None:
                 compacted_messages.append(assistant_message)
@@ -1051,7 +1052,7 @@ class Model(ABC):
                 # Add a function call for each successful execution
                 function_call_count += len(function_call_results)
 
-                # Format and add results to messages (and compacted_messages if exists)
+                # Append tool results to BOTH lists (same objects in both)
                 self.format_function_call_results(
                     messages=messages,
                     function_call_results=function_call_results,
@@ -1390,7 +1391,7 @@ class Model(ABC):
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], None]] = None,
-        run_messages: Optional["RunMessages"] = None,
+        compacted_messages: Optional[List[Message]] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate a streaming response from the model.
@@ -1452,7 +1453,8 @@ class Model(ABC):
             stream_data = MessageData()
             model_response = ModelResponse()
 
-            # Use compacted messages for model if available, otherwise use original
+            # Two-list architecture: send compressed view to model if available
+            # compacted_messages = [summary, recent...], messages = full history
             model_messages = messages
             if compacted_messages:
                 model_messages = compacted_messages
@@ -1512,7 +1514,7 @@ class Model(ABC):
                     streaming_responses.append(model_response)
                 yield model_response
 
-            # Add assistant message to messages (and compacted_messages if exists)
+            # Append to BOTH lists to keep them in sync (same object in both)
             messages.append(assistant_message)
             if compacted_messages is not None:
                 compacted_messages.append(assistant_message)
@@ -1553,7 +1555,7 @@ class Model(ABC):
                 # Add a function call for each successful execution
                 function_call_count += len(function_call_results)
 
-                # Format and add results to messages (and compacted_messages if exists)
+                # Append tool results to BOTH lists (same objects in both)
                 if stream_data and stream_data.extra is not None:
                     self.format_function_call_results(
                         messages=messages,
@@ -1679,7 +1681,7 @@ class Model(ABC):
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], Awaitable[None]]] = None,
-        run_messages: Optional["RunMessages"] = None,
+        compacted_messages: Optional[List[Message]] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate an asynchronous streaming response from the model.
@@ -1741,7 +1743,8 @@ class Model(ABC):
             stream_data = MessageData()
             model_response = ModelResponse()
 
-            # Use compacted messages for model if available, otherwise use original
+            # Two-list architecture: send compressed view to model if available
+            # compacted_messages = [summary, recent...], messages = full history
             model_messages = messages
             if compacted_messages:
                 model_messages = compacted_messages
@@ -1801,7 +1804,7 @@ class Model(ABC):
                     streaming_responses.append(model_response)
                 yield model_response
 
-            # Add assistant message to messages (and compacted_messages if exists)
+            # Append to BOTH lists to keep them in sync (same object in both)
             messages.append(assistant_message)
             if compacted_messages is not None:
                 compacted_messages.append(assistant_message)
@@ -1842,7 +1845,7 @@ class Model(ABC):
                 # Add a function call for each successful execution
                 function_call_count += len(function_call_results)
 
-                # Format and add results to messages (and compacted_messages if exists)
+                # Append tool results to BOTH lists (same objects in both)
                 if stream_data and stream_data.extra is not None:
                     self.format_function_call_results(
                         messages=messages,

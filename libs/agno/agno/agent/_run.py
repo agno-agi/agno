@@ -527,17 +527,24 @@ def _run(
                 # Check for cancellation before model call
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 6. Context compaction (if enabled and threshold exceeded)
-                compaction_result = None
+                # 6. Pre-loop compaction: compress history BEFORE first model call
+                # This handles session resume with large history from previous runs
+                # Two-list architecture:
+                #   - messages: canonical list for DB storage (always full history)
+                #   - compacted_messages: compressed view for model (summary + recent)
                 if agent.context_compaction_manager is not None:
                     compaction_result = agent.context_compaction_manager.compact(
                         run_messages.messages,
                         session=agent_session,
                         run_metrics=run_response.metrics,
                     )
-                    if compaction_result.summary:
+                    if compaction_result.summary and agent_session and agent_session.compaction:
+                        # 1. Insert summary into messages (canonical list for DB)
+                        summary_msg = agent_session.compaction.get_summary_message()
+                        insert_idx = next((i for i, m in enumerate(run_messages.messages) if m.role != "system"), 1)
+                        run_messages.messages.insert(insert_idx, summary_msg)
+                        # 2. Initialize compacted_messages with compressed view for model
                         run_messages.compacted_messages = compaction_result.compacted_messages
-                    # else: compacted_messages stays None (first run) or unchanged (resume)
 
                 # 7. Generate a response from the Model (includes running function calls)
                 agent.model = cast(Model, agent.model)
@@ -560,7 +567,7 @@ def _run(
                         run_messages=run_messages,
                         run_context=run_context,
                     ),
-                    run_messages=run_messages,
+                    compacted_messages=run_messages.compacted_messages,
                 )
 
                 # Check for cancellation after model call
@@ -1683,17 +1690,24 @@ async def _arun(
                 # Check for cancellation before model call
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 9. Context compaction (if enabled and threshold exceeded)
-                compaction_result = None
+                # 9. Pre-loop compaction: compress history BEFORE first model call
+                # This handles session resume with large history from previous runs
+                # Two-list architecture:
+                #   - messages: canonical list for DB storage (always full history)
+                #   - compacted_messages: compressed view for model (summary + recent)
                 if agent.context_compaction_manager is not None:
                     compaction_result = await agent.context_compaction_manager.acompact(
                         run_messages.messages,
                         session=agent_session,
                         run_metrics=run_response.metrics,
                     )
-                    if compaction_result.summary:
+                    if compaction_result.summary and agent_session and agent_session.compaction:
+                        # 1. Insert summary into messages (canonical list for DB)
+                        summary_msg = agent_session.compaction.get_summary_message()
+                        insert_idx = next((i for i, m in enumerate(run_messages.messages) if m.role != "system"), 1)
+                        run_messages.messages.insert(insert_idx, summary_msg)
+                        # 2. Initialize compacted_messages with compressed view for model
                         run_messages.compacted_messages = compaction_result.compacted_messages
-                    # else: compacted_messages stays None (first run) or unchanged (resume)
 
                 # 10. Generate a response from the Model (includes running function calls)
                 model_response: ModelResponse = await acall_model_with_fallback(
@@ -1714,7 +1728,7 @@ async def _arun(
                         run_messages=run_messages,
                         run_context=run_context,
                     ),
-                    run_messages=run_messages,
+                    compacted_messages=run_messages.compacted_messages,
                 )
 
                 # Check for cancellation after model call
@@ -3670,6 +3684,7 @@ def _continue_run(
                         run_messages=run_messages,
                         run_context=run_context,
                     ),
+                    compacted_messages=run_messages.compacted_messages,
                 )
 
                 # Check for cancellation after model processing
@@ -4744,6 +4759,7 @@ async def _acontinue_run(
                         run_messages=run_messages,
                         run_context=run_context,
                     ),
+                    compacted_messages=run_messages.compacted_messages,
                 )
                 # Check for cancellation after model call
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
@@ -6093,20 +6109,33 @@ def build_after_tool_results_callback(
         return None
 
     def _callback(model_response: ModelResponse) -> None:
-        # Mid-loop compaction: check threshold, compact if exceeded
-        # Pass compacted_messages if exists (staggered compression on smaller list)
-        # Otherwise pass full messages (first compaction)
+        # Mid-loop compaction: fires after each tool batch in base.py's tool loop
+        # Checks if context threshold exceeded, compacts if needed
         if agent.context_compaction_manager is not None:
-            messages_to_compact = run_messages.compacted_messages if run_messages.compacted_messages else run_messages.messages
+            # Staggered compression: compact the smaller list if it exists
+            # This builds summaries on summaries instead of re-summarizing full history
+            messages_to_compact = (
+                run_messages.compacted_messages if run_messages.compacted_messages else run_messages.messages
+            )
             result = agent.context_compaction_manager.compact(
                 messages_to_compact,
                 session=session,
                 run_metrics=run_response.metrics,
             )
-            # Only update when NEW compaction happens (new summary created)
-            # If no compaction needed, compacted_messages is already synced via base.py appends
-            if result.summary:
-                run_messages.compacted_messages = result.compacted_messages
+            if result.summary and session and session.compaction:
+                # 1. Insert summary into messages (canonical list for DB storage)
+                summary_msg = session.compaction.get_summary_message()
+                insert_idx = next((i for i, m in enumerate(run_messages.messages) if m.role != "system"), 1)
+                run_messages.messages.insert(insert_idx, summary_msg)
+
+                # 2. Update compacted_messages with new compressed view
+                # MUST use clear()+extend() to mutate in place, not assignment
+                # base.py holds a reference to this list; assignment would orphan it
+                if run_messages.compacted_messages is None:
+                    run_messages.compacted_messages = result.compacted_messages
+                else:
+                    run_messages.compacted_messages.clear()
+                    run_messages.compacted_messages.extend(result.compacted_messages)
 
         if needs_checkpoint:
             _sync_run_response_with_model_response(run_response, run_messages, model_response)
@@ -6130,20 +6159,33 @@ def abuild_after_tool_results_callback(
         return None
 
     async def _callback(model_response: ModelResponse) -> None:
-        # Mid-loop compaction: check threshold, compact if exceeded
-        # Pass compacted_messages if exists (staggered compression on smaller list)
-        # Otherwise pass full messages (first compaction)
+        # Mid-loop compaction: fires after each tool batch in base.py's tool loop
+        # Checks if context threshold exceeded, compacts if needed
         if agent.context_compaction_manager is not None:
-            messages_to_compact = run_messages.compacted_messages if run_messages.compacted_messages else run_messages.messages
+            # Staggered compression: compact the smaller list if it exists
+            # This builds summaries on summaries instead of re-summarizing full history
+            messages_to_compact = (
+                run_messages.compacted_messages if run_messages.compacted_messages else run_messages.messages
+            )
             result = await agent.context_compaction_manager.acompact(
                 messages_to_compact,
                 session=session,
                 run_metrics=run_response.metrics,
             )
-            # Only update when NEW compaction happens (new summary created)
-            # If no compaction needed, compacted_messages is already synced via base.py appends
-            if result.summary:
-                run_messages.compacted_messages = result.compacted_messages
+            if result.summary and session and session.compaction:
+                # 1. Insert summary into messages (canonical list for DB storage)
+                summary_msg = session.compaction.get_summary_message()
+                insert_idx = next((i for i, m in enumerate(run_messages.messages) if m.role != "system"), 1)
+                run_messages.messages.insert(insert_idx, summary_msg)
+
+                # 2. Update compacted_messages with new compressed view
+                # MUST use clear()+extend() to mutate in place, not assignment
+                # base.py holds a reference to this list; assignment would orphan it
+                if run_messages.compacted_messages is None:
+                    run_messages.compacted_messages = result.compacted_messages
+                else:
+                    run_messages.compacted_messages.clear()
+                    run_messages.compacted_messages.extend(result.compacted_messages)
 
         if needs_checkpoint:
             _sync_run_response_with_model_response(run_response, run_messages, model_response)
