@@ -123,6 +123,158 @@ class TestReformatToolCallIds:
 
 
 # ---------------------------------------------------------------------------
+# reformat_tool_call_ids — reasoning_details cross-reference (Gemini via OpenRouter)
+# ---------------------------------------------------------------------------
+
+
+class TestReformatReasoningDetailsLink:
+    """Gemini 3.x (via OpenRouter) emits ``reasoning_details`` entries whose
+    ``id`` field cross-references the tool_call ``id`` they correspond to.
+    When ``reformat_tool_call_ids`` rewrites tool_call ids to satisfy a
+    provider's prefix/length constraints, it must rewrite the matching
+    ``reasoning_details[i].id`` with the same map — otherwise Gemini sees
+    an orphaned signature on the next turn and returns
+    ``MALFORMED_FUNCTION_CALL`` / an empty body.
+    """
+
+    def _gemini_assistant(self, tool_calls, reasoning_details):
+        return Message(
+            role="assistant",
+            content="",
+            tool_calls=tool_calls,
+            provider_data={"reasoning_details": reasoning_details},
+        )
+
+    def _rd(self, tc_id, index=0, data="encrypted_blob_placeholder"):
+        return {
+            "type": "reasoning.encrypted",
+            "data": data,
+            "format": "google-gemini-v1",
+            "id": tc_id,
+            "index": index,
+        }
+
+    def test_reasoning_details_id_follows_tool_call_id(self):
+        """The cross-reference must survive an OpenAI-Chat-style remap."""
+        original_id = "tool_aggregate_project_tasks_PGIfDtr4xVoWH8JRq862"
+        msgs = [
+            self._gemini_assistant(
+                tool_calls=[_make_tool_call(original_id)],
+                reasoning_details=[self._rd(original_id, index=0, data="blob_abc")],
+            ),
+            _tool_msg(original_id),
+        ]
+        result = reformat_tool_call_ids(msgs, provider="openai_chat")
+        new_tc_id = result[0].tool_calls[0]["id"]
+        new_rd_id = result[0].provider_data["reasoning_details"][0]["id"]
+        # Tool_call rewrite happened.
+        assert new_tc_id.startswith("call_")
+        assert new_tc_id != original_id
+        # The crucial assertion — reasoning_details id tracked the rewrite.
+        assert new_rd_id == new_tc_id
+        # Tool result also tracks.
+        assert result[1].tool_call_id == new_tc_id
+        # Encrypted blob must NOT be touched.
+        assert result[0].provider_data["reasoning_details"][0]["data"] == "blob_abc"
+
+    def test_reasoning_details_parallel_tool_calls(self):
+        """Each reasoning_details entry follows its corresponding tool_call."""
+        id1 = "tool_aaaaaaaa_one"
+        id2 = "tool_bbbbbbbb_two"
+        msgs = [
+            self._gemini_assistant(
+                tool_calls=[_make_tool_call(id1), _make_tool_call(id2)],
+                reasoning_details=[
+                    self._rd(id1, index=0, data="blob1"),
+                    self._rd(id2, index=1, data="blob2"),
+                ],
+            ),
+            _tool_msg(id1),
+            _tool_msg(id2),
+        ]
+        result = reformat_tool_call_ids(msgs, provider="openai_chat")
+        tc1 = result[0].tool_calls[0]["id"]
+        tc2 = result[0].tool_calls[1]["id"]
+        rd1 = result[0].provider_data["reasoning_details"][0]["id"]
+        rd2 = result[0].provider_data["reasoning_details"][1]["id"]
+        assert tc1 != tc2  # remapped to distinct ids
+        assert tc1 == rd1  # entry 0 link preserved
+        assert tc2 == rd2  # entry 1 link preserved
+        # Blobs untouched.
+        assert result[0].provider_data["reasoning_details"][0]["data"] == "blob1"
+        assert result[0].provider_data["reasoning_details"][1]["data"] == "blob2"
+
+    def test_reasoning_details_noop_when_no_remap_needed(self):
+        """If tool_call ids already match the target prefix, reasoning_details
+        is left untouched (the early-return path)."""
+        good_id = "call_already_correct_id"
+        msgs = [
+            self._gemini_assistant(
+                tool_calls=[_make_tool_call(good_id)],
+                reasoning_details=[self._rd(good_id, data="blob_x")],
+            ),
+        ]
+        result = reformat_tool_call_ids(msgs, provider="openai_chat")
+        assert result[0].provider_data["reasoning_details"][0]["id"] == good_id
+        assert result[0].provider_data["reasoning_details"][0]["data"] == "blob_x"
+
+    def test_reasoning_details_not_mutated_in_original(self):
+        """Original message's reasoning_details must not be modified in-place."""
+        original_id = "tool_xyz_abcdefgh"
+        rd = self._rd(original_id, data="blob_orig")
+        msgs = [
+            self._gemini_assistant(
+                tool_calls=[_make_tool_call(original_id)],
+                reasoning_details=[rd],
+            ),
+            _tool_msg(original_id),
+        ]
+        reformat_tool_call_ids(msgs, provider="openai_chat")
+        # Original list is unchanged.
+        assert msgs[0].provider_data["reasoning_details"][0]["id"] == original_id
+        assert msgs[0].provider_data["reasoning_details"][0]["data"] == "blob_orig"
+        assert rd["id"] == original_id  # local reference also unchanged
+
+    def test_reasoning_details_without_tool_calls_passes_through(self):
+        """An assistant message that has reasoning_details but no tool_calls
+        is left untouched — there's no cross-reference to maintain."""
+        msgs = [
+            Message(
+                role="assistant",
+                content="just thinking out loud",
+                provider_data={"reasoning_details": [self._rd("orphan_id", data="blob_y")]},
+            ),
+        ]
+        result = reformat_tool_call_ids(msgs, provider="openai_chat")
+        # Pass-through: same object back, no rewriting attempted.
+        assert result[0].provider_data["reasoning_details"][0]["id"] == "orphan_id"
+
+    def test_reasoning_details_partial_remap_only_changes_matching_ids(self):
+        """If some tool_call ids are already valid (`call_*`) and others need
+        rewriting, only the rewritten ones should propagate to reasoning_details."""
+        good_id = "call_already_good"
+        bad_id = "tool_needs_rewrite"
+        msgs = [
+            self._gemini_assistant(
+                tool_calls=[_make_tool_call(good_id), _make_tool_call(bad_id)],
+                reasoning_details=[
+                    self._rd(good_id, index=0, data="blob_keep"),
+                    self._rd(bad_id, index=1, data="blob_swap"),
+                ],
+            ),
+        ]
+        result = reformat_tool_call_ids(msgs, provider="openai_chat")
+        # First entry untouched.
+        assert result[0].tool_calls[0]["id"] == good_id
+        assert result[0].provider_data["reasoning_details"][0]["id"] == good_id
+        # Second entry rewritten consistently on both sides.
+        new_id = result[0].tool_calls[1]["id"]
+        assert new_id.startswith("call_")
+        assert new_id != bad_id
+        assert result[0].provider_data["reasoning_details"][1]["id"] == new_id
+
+
+# ---------------------------------------------------------------------------
 # reformat_tool_call_ids — parallel tool calls
 # ---------------------------------------------------------------------------
 
