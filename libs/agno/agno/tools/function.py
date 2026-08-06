@@ -1152,9 +1152,11 @@ class FunctionCall(BaseModel):
                     names_type = (isinstance(hint, type) and issubclass(hint, wanted)) or _union_names_type(
                         hint, wanted
                     )
-                    if names_type:
-                        if injected is not None:
-                            entrypoint_args[param_name] = injected
+                    # Stop at the first type the framework can actually supply, not the
+                    # first one the annotation mentions: `Union[Agent, Team]` on a team
+                    # names Agent first, and stopping there would leave it unfilled.
+                    if names_type and injected is not None:
+                        entrypoint_args[param_name] = injected
                         break
         except Exception:
             pass

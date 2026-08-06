@@ -19,8 +19,8 @@ Semantics:
     * Runs execute as the current user: the wielding component's run_context is
       injected and its user_id passed through, so per-user state (memory,
       learning) lands on the human who asked, never on a service default.
-    * Each target keeps one session per calling conversation
-      ("<caller_session_id>--<component_type>--<component_id>"), so repeat
+    * Each target keeps one session per calling conversation, keyed on the
+      caller's session, the component type and the component id, so repeat
       runs continue their context instead of starting cold. A caller with no
       session of its own (a direct Python call) leaves the session unset, so
       the component runs on its own default session.

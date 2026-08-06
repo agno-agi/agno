@@ -2150,3 +2150,31 @@ def test_nested_type_alias_inside_a_union_is_still_identity():
     ).execute()
     assert result.status == "success"
     assert result.result == "RunContext:real-user"
+
+
+def test_union_of_two_identity_types_falls_through_to_the_one_available():
+    """The injection loop must stop at the first type the framework can supply, not
+    the first the annotation mentions. `Union[Agent, Team]` on a team names Agent
+    first; stopping there leaves the parameter hidden and unfilled, and a required
+    one raises on every call."""
+    from typing import Union as Un
+
+    from agno.agent.agent import Agent
+    from agno.team.team import Team
+
+    def dispatch(task: str, to: Un[Agent, Team]) -> str:
+        return type(to).__name__
+
+    func = Function(name="dispatch", entrypoint=dispatch)
+    func.process_entrypoint()
+    assert set((func.parameters or {})["properties"]) == {"task"}
+
+    # Only a team is available: the Agent arm names first but supplies nothing.
+    func._team = Team(id="t", name="T", members=[Agent(id="m", name="M")])
+    result = FunctionCall(function=func, arguments={"task": "x"}).execute()
+    assert result.status == "success"
+    assert result.result == "Team"
+
+    # With both, the first named arm still wins.
+    func._agent = Agent(id="a", name="A")
+    assert FunctionCall(function=func, arguments={"task": "x"}).execute().result == "Agent"
