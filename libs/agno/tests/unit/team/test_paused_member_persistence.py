@@ -2876,6 +2876,56 @@ def test_wire_schema_cannot_rewrite_an_argument_the_model_fixed(tmp_path):
     assert "attacker" not in [t["account_id"] for t in _TRANSFERRED]
 
 
+def test_user_input_answer_sent_only_on_the_tool_execution_reaches_the_tool(tmp_path):
+    """to_dict ships the schema at both levels, but a client may answer on
+    either one alone. Both lanes have to reach the stored tool execution."""
+    _TRANSFERRED.clear()
+    db_file = str(tmp_path / "te_only.db")
+    session_id = "s-te-only"
+
+    team1 = _build_user_input_team(SqliteDb(db_file=db_file), resuming=False)
+    run1 = team1.run("Move the money", session_id=session_id)
+    assert run1.is_paused
+
+    payload = []
+    for data in [r.to_dict() for r in run1.requirements or []]:
+        req = RunRequirement.from_dict(data)
+        for field in req.tool_execution.user_input_schema or []:
+            if field.name == "note":
+                field.value = "wire-only"
+        req.user_input_schema = None
+        payload.append(req)
+
+    team2 = _build_user_input_team(SqliteDb(db_file=db_file), resuming=True)
+    team2.continue_run(run_id=run1.run_id, session_id=session_id, requirements=payload)
+    assert _TRANSFERRED == [{"account_id": "victim", "note": "wire-only"}]
+
+
+def test_tampered_tool_execution_schema_does_not_change_the_executed_arguments(tmp_path):
+    """The dispatch reads the tool execution's schema, so that copy is the one
+    an attacker would rename. The stored schema still decides what runs: the
+    honest answer sent alongside it lands, and the renamed field does not."""
+    _TRANSFERRED.clear()
+    db_file = str(tmp_path / "te_tamper.db")
+    session_id = "s-te-tamper"
+
+    team1 = _build_user_input_team(SqliteDb(db_file=db_file), resuming=False)
+    run1 = team1.run("Move the money", session_id=session_id)
+    assert run1.is_paused
+
+    payload = _answered_payload(run1.requirements, {"note": "monthly rent"})
+    for req in payload:
+        for field in req.tool_execution.user_input_schema or []:
+            if field.name == "note":
+                field.name = "account_id"
+                field.value = "attacker"
+
+    team2 = _build_user_input_team(SqliteDb(db_file=db_file), resuming=True)
+    team2.continue_run(run_id=run1.run_id, session_id=session_id, requirements=payload)
+
+    assert _TRANSFERRED == [{"account_id": "victim", "note": "monthly rent"}]
+
+
 def test_wire_answered_flag_alone_does_not_resolve_an_open_field(tmp_path):
     """answered=True with no values must not run a gated tool with the field empty."""
     _EXECUTED.clear()
@@ -3024,17 +3074,14 @@ def test_completed_run_stores_no_stale_paused_member(tmp_path):
     db_file = str(tmp_path / "stale.db")
     session_id = "s-stale"
 
+    # One team object across both calls, with the session cached: the cached
+    # session is what would hold a frozen copy of the paused member run.
     outer = _build_nested_team(SqliteDb(db_file=db_file), resuming=False)
     outer.cache_session = True
     run1 = outer.run("Email a@example.com", session_id=session_id)
     assert run1.is_paused
 
-    # Same process, same team object: the cached session is the one that would
-    # keep a frozen copy.
-    outer.members[0]._model = None
-    outer2 = _build_nested_team(SqliteDb(db_file=db_file), resuming=True)
-    outer2.cache_session = True
-    run2 = outer2.continue_run(
+    run2 = outer.continue_run(
         run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
     )
     assert run2.status == RunStatus.completed
