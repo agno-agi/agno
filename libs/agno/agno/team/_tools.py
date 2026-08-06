@@ -318,6 +318,11 @@ def _determine_tools_for_model(
         if team.get_member_information_tool:
             _tools.append(team.get_member_information)
 
+    if team.enable_dynamic_agents:
+        from agno.team._default_tools import _get_create_agent_function
+
+        _tools.append(_get_create_agent_function(team, run_context=run_context, async_mode=async_mode))
+
     # Get Agent tools
     if len(_tools) > 0:
         log_debug("Processing tools for model")
