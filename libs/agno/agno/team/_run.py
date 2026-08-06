@@ -5373,6 +5373,18 @@ def _merge_requirement_decision(stored: Any, wire: Any) -> None:
     gated tool with its fields still empty. A requirement carrying no schema at
     all has no other way to be answered, so there the wire flag stands.
     """
+    stored_te = getattr(stored, "tool_execution", None)
+    wire_te = getattr(wire, "tool_execution", None)
+
+    # Whether the model left anything open, read before any answer lands. The
+    # requirement-level schema and tool_execution's are often the same list
+    # object, so "did this call fill something" cannot carry the signal — the
+    # first fill would consume it and the run would never read as answered.
+    stored_input_schema = getattr(stored_te, "user_input_schema", None) if stored_te is not None else None
+    stored_feedback_schema = getattr(stored_te, "user_feedback_schema", None) if stored_te is not None else None
+    input_was_open = any(field.value is None for field in stored_input_schema or [])
+    feedback_was_open = any(question.selected_options is None for question in stored_feedback_schema or [])
+
     for attr in ("confirmation", "confirmation_note"):
         if getattr(wire, attr, None) is not None:
             setattr(stored, attr, getattr(wire, attr))
@@ -5380,31 +5392,27 @@ def _merge_requirement_decision(stored: Any, wire: Any) -> None:
     _fill_user_feedback_answers(
         getattr(stored, "user_feedback_schema", None), getattr(wire, "user_feedback_schema", None)
     )
-    stored_te = getattr(stored, "tool_execution", None)
-    wire_te = getattr(wire, "tool_execution", None)
     if stored_te is not None and wire_te is not None:
         for attr in ("confirmed", "confirmation_note"):
             if getattr(wire_te, attr, None) is not None:
                 setattr(stored_te, attr, getattr(wire_te, attr))
         # Dispatch reads only tool_execution's schema, so answers sent at either
         # level have to reach it.
-        input_filled = _fill_user_input_answers(stored_te.user_input_schema, wire_te.user_input_schema)
-        input_filled |= _fill_user_input_answers(stored_te.user_input_schema, getattr(wire, "user_input_schema", None))
-        feedback_filled = _fill_user_feedback_answers(stored_te.user_feedback_schema, wire_te.user_feedback_schema)
-        feedback_filled |= _fill_user_feedback_answers(
-            stored_te.user_feedback_schema, getattr(wire, "user_feedback_schema", None)
-        )
+        _fill_user_input_answers(stored_input_schema, wire_te.user_input_schema)
+        _fill_user_input_answers(stored_input_schema, getattr(wire, "user_input_schema", None))
+        _fill_user_feedback_answers(stored_feedback_schema, wire_te.user_feedback_schema)
+        _fill_user_feedback_answers(stored_feedback_schema, getattr(wire, "user_feedback_schema", None))
         if stored_te.answered is None:
-            if input_filled and all(field.value is not None for field in stored_te.user_input_schema or []):
+            if input_was_open and all(field.value is not None for field in stored_input_schema or []):
                 stored_te.answered = True
-            elif feedback_filled and all(
-                question.selected_options is not None for question in stored_te.user_feedback_schema or []
+            elif feedback_was_open and all(
+                question.selected_options is not None for question in stored_feedback_schema or []
             ):
                 stored_te.answered = True
             elif (
                 getattr(wire_te, "answered", None) is not None
-                and not stored_te.user_input_schema
-                and not stored_te.user_feedback_schema
+                and not stored_input_schema
+                and not stored_feedback_schema
             ):
                 stored_te.answered = wire_te.answered
         if getattr(stored_te, "external_execution_required", None) and getattr(wire_te, "result", None) is not None:

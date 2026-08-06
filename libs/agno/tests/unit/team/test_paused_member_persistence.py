@@ -3166,3 +3166,59 @@ def test_live_run_tree_keeps_its_tool_messages_after_a_save(tmp_path):
     assert live, "the live run tree must still hold the member response"
     for leaf in live:
         assert leaf.messages, "the live member run must keep its messages"
+
+
+# ---------------------------------------------------------------------------
+# The user-feedback lane of the decision merge. No tool decorator declares
+# feedback, so it is pinned directly on the merge.
+# ---------------------------------------------------------------------------
+
+
+def _feedback_requirement() -> RunRequirement:
+    from agno.tools.function import UserFeedbackOption, UserFeedbackQuestion
+
+    schema = [
+        UserFeedbackQuestion(
+            question="Which channel?",
+            options=[UserFeedbackOption(label="email"), UserFeedbackOption(label="sms")],
+        )
+    ]
+    req = _make_requirement(tool_name="notify", tool_call_id="tc-fb", user_feedback_schema=schema)
+    req.user_feedback_schema = schema
+    return req
+
+
+def test_user_feedback_selections_reach_the_stored_tool_execution():
+    from agno.team._run import _merge_requirement_decision
+
+    stored = _feedback_requirement()
+    wire = RunRequirement.from_dict(stored.to_dict())
+    wire.provide_user_feedback({"Which channel?": ["sms"]})
+
+    _merge_requirement_decision(stored, wire)
+
+    stored_question = stored.tool_execution.user_feedback_schema[0]
+    assert stored_question.selected_options == ["sms"]
+    assert [(o.label, o.selected) for o in stored_question.options] == [("email", False), ("sms", True)]
+    assert stored.tool_execution.answered is True
+    assert stored.is_resolved()
+
+
+def test_user_feedback_answer_for_an_unknown_question_is_ignored():
+    from agno.tools.function import UserFeedbackQuestion
+
+    from agno.team._run import _merge_requirement_decision
+
+    stored = _feedback_requirement()
+    wire = RunRequirement.from_dict(stored.to_dict())
+    for question in wire.tool_execution.user_feedback_schema or []:
+        question.question = "Which account?"
+        question.selected_options = ["drain-it"]
+    wire.user_feedback_schema = [UserFeedbackQuestion(question="Which account?", selected_options=["drain-it"])]
+
+    _merge_requirement_decision(stored, wire)
+
+    stored_question = stored.tool_execution.user_feedback_schema[0]
+    assert stored_question.question == "Which channel?"
+    assert stored_question.selected_options is None
+    assert stored.tool_execution.answered is None, "an unanswered question must leave the run unresolved"
