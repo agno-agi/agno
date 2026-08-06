@@ -118,7 +118,7 @@ class ContextCompactionManager:
         """Compact messages if threshold exceeded.
 
         Returns:
-            Tuple of (compacted_view, new_summary). If no compaction needed,
+            Tuple of (compacted_compacted_messages, new_summary). If no compaction needed,
             returns (original_messages, None).
         """
         # 1. Check if compaction needed
@@ -140,21 +140,21 @@ class ContextCompactionManager:
         if not new_summary:
             return messages, None
 
-        # 4. Build compacted view: system + new summary + preserved user + recent
+        # 4. Build compacted compacted_messages: system + new summary + preserved user + recent
         summary_msg = Message(role="user", content=SUMMARY_PREFIX + new_summary, from_history=True)
-        view = system_msgs + [summary_msg] + preserved_user + recent_messages
+        compacted_messages = system_msgs + [summary_msg] + preserved_user + recent_messages
         log_info(f"[COMPACTION] Compacted {len(old_messages)} messages ({len(new_summary)} chars)")
 
         # 5. Compress large tool results if still over token limit
-        if self.token_limit and self.model.count_tokens(view) > self.token_limit:
+        if self.token_limit and self.model.count_tokens(compacted_messages) > self.token_limit:
             self._compress_tool_results(recent_messages, run_metrics)
-            view = system_msgs + [summary_msg] + preserved_user + recent_messages
-            log_info(f"[COMPACTION] Compressed tool results, now {self.model.count_tokens(view)} tokens")
+            compacted_messages = system_msgs + [summary_msg] + preserved_user + recent_messages
+            log_info(f"[COMPACTION] Compressed tool results, now {self.model.count_tokens(compacted_messages)} tokens")
 
         # 6. Update session state
         self._update_session_state(session, old_messages, new_summary)
 
-        return view, new_summary
+        return compacted_messages, new_summary
 
     def _split_messages(
         self, messages: List[Message]
@@ -301,21 +301,21 @@ class ContextCompactionManager:
         if not new_summary:
             return messages, None
 
-        # 4. Build compacted view: system + new summary + preserved user + recent
+        # 4. Build compacted compacted_messages: system + new summary + preserved user + recent
         summary_msg = Message(role="user", content=SUMMARY_PREFIX + new_summary, from_history=True)
-        view = system_msgs + [summary_msg] + preserved_user + recent_messages
+        compacted_messages = system_msgs + [summary_msg] + preserved_user + recent_messages
         log_info(f"[COMPACTION] Compacted {len(old_messages)} messages ({len(new_summary)} chars)")
 
         # 5. Compress large tool results if still over token limit
-        if self.token_limit and await self.model.acount_tokens(view) > self.token_limit:
+        if self.token_limit and await self.model.acount_tokens(compacted_messages) > self.token_limit:
             await self._acompress_tool_results(recent_messages, run_metrics)
-            view = system_msgs + [summary_msg] + preserved_user + recent_messages
-            log_info(f"[COMPACTION] Compressed tool results, now {await self.model.acount_tokens(view)} tokens")
+            compacted_messages = system_msgs + [summary_msg] + preserved_user + recent_messages
+            log_info(f"[COMPACTION] Compressed tool results, now {await self.model.acount_tokens(compacted_messages)} tokens")
 
         # 6. Update session state
         self._update_session_state(session, old_messages, new_summary)
 
-        return view, new_summary
+        return compacted_messages, new_summary
 
     async def _asummarize(
         self,
