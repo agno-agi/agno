@@ -370,14 +370,18 @@ class ReaderFactory:
         if reader_key in cls._reader_cache:
             return cls._reader_cache[reader_key]
 
-        # Get the reader method and create the instance
-        reader_method = cls._get_reader_method(reader_key)
-        reader = reader_method(**kwargs)
+        reader = cls._create_reader(reader_key, **kwargs)
 
         # Cache the reader
         cls._reader_cache[reader_key] = reader
 
         return reader
+
+    @classmethod
+    def _create_reader(cls, reader_key: str, **kwargs) -> Reader:
+        """Create a reader without adding it to the global reader cache."""
+        reader_method = cls._get_reader_method(reader_key)
+        return reader_method(**kwargs)
 
     @classmethod
     def get_reader_for_extension(cls, extension: str) -> Reader:

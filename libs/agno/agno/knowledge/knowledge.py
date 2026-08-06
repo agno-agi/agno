@@ -55,10 +55,13 @@ class Knowledge(RemoteKnowledge):
     # Requires re-indexing existing data to add linked_to metadata.
     # Default is False for backwards compatibility with existing data.
     isolate_vector_search: bool = False
+    chunk_size: Optional[int] = None
+    chunk_overlap: Optional[int] = None
 
     def __post_init__(self):
         from agno.vectordb import VectorDb
 
+        self._validate_chunking_defaults()
         self.vector_db = cast(VectorDb, self.vector_db)
         if self.vector_db and not self.vector_db.exists():
             self.vector_db.create()
@@ -937,6 +940,46 @@ class Knowledge(RemoteKnowledge):
 
     # --- Reader Helper Methods ---
 
+    def _validate_chunking_defaults(self) -> None:
+        """Validate Knowledge-level chunking defaults."""
+        if self.chunk_size is not None:
+            if not isinstance(self.chunk_size, int) or isinstance(self.chunk_size, bool):
+                raise ValueError("chunk_size must be an integer")
+            if self.chunk_size <= 0:
+                raise ValueError("chunk_size must be greater than 0")
+
+        if self.chunk_overlap is not None:
+            if not isinstance(self.chunk_overlap, int) or isinstance(self.chunk_overlap, bool):
+                raise ValueError("chunk_overlap must be an integer")
+            if self.chunk_overlap < 0:
+                raise ValueError("chunk_overlap must be greater than or equal to 0")
+
+        if self.chunk_size is not None and self.chunk_overlap is not None and self.chunk_overlap >= self.chunk_size:
+            raise ValueError("chunk_overlap must be less than chunk_size")
+
+    def _has_chunking_defaults(self) -> bool:
+        return self.chunk_size is not None or self.chunk_overlap is not None
+
+    def _create_default_reader(self, reader_type: str) -> Reader:
+        """Create an automatic reader and apply this Knowledge instance's defaults."""
+        if not self._has_chunking_defaults():
+            return ReaderFactory.create_reader(reader_type)
+
+        reader_kwargs: Dict[str, Any] = {}
+        if self.chunk_size is not None:
+            reader_kwargs["chunk_size"] = self.chunk_size
+
+        reader = ReaderFactory._create_reader(reader_type, **reader_kwargs)
+        strategy = reader.chunking_strategy
+
+        if self.chunk_overlap is not None and strategy is not None and hasattr(strategy, "overlap"):
+            effective_chunk_size = getattr(strategy, "chunk_size", reader.chunk_size)
+            if self.chunk_overlap >= effective_chunk_size:
+                raise ValueError("chunk_overlap must be less than the reader chunk size")
+            setattr(strategy, "overlap", self.chunk_overlap)
+
+        return reader
+
     def _generate_reader_key(self, reader: Reader) -> str:
         """Generate a key for a reader instance."""
         if reader.name:
@@ -951,12 +994,17 @@ class Knowledge(RemoteKnowledge):
 
         if reader_type not in self.readers:
             try:
-                reader = ReaderFactory.create_reader(reader_type)
+                reader = self._create_default_reader(reader_type)
                 if reader:
                     self.readers[reader_type] = reader
                 else:
                     return None
 
+            except ValueError as e:
+                if self._has_chunking_defaults():
+                    raise
+                log_warning(f"Cannot create {reader_type} reader: {str(e)}")
+                return None
             except Exception as e:
                 log_warning(f"Cannot create {reader_type} reader: {str(e)}")
                 return None
@@ -966,7 +1014,10 @@ class Knowledge(RemoteKnowledge):
     def _select_reader(self, extension: str) -> Reader:
         """Select the appropriate reader for a file extension."""
         log_info(f"Selecting reader for extension: {extension}")
-        return ReaderFactory.get_reader_for_extension(extension)
+        reader, _ = self._select_reader_by_extension(extension)
+        if reader is None:
+            raise ValueError(f"No reader available for extension: {extension}")
+        return reader
 
     def _should_include_file(self, file_path: str, include: Optional[List[str]], exclude: Optional[List[str]]) -> bool:
         """
@@ -1179,19 +1230,28 @@ class Knowledge(RemoteKnowledge):
             return provided_reader, ""
 
         file_extension = file_extension.lower()
-        if file_extension == ".csv":
+        if file_extension in [".csv", "text/csv"]:
             return self.csv_reader, "data.csv"
-        elif file_extension == ".pdf":
+        elif file_extension in [".pdf", "application/pdf"]:
             return self.pdf_reader, ""
-        elif file_extension == ".docx":
+        elif file_extension in [
+            ".docx",
+            ".doc",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ]:
             return self.docx_reader, ""
         elif file_extension == ".pptx":
             return self.pptx_reader, ""
         elif file_extension == ".json":
             return self.json_reader, ""
-        elif file_extension == ".markdown":
+        elif file_extension in [".md", ".markdown"]:
             return self.markdown_reader, ""
-        elif file_extension in [".xlsx", ".xls"]:
+        elif file_extension in [
+            ".xlsx",
+            ".xls",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.ms-excel",
+        ]:
             return self.excel_reader, ""
         else:
             return self.text_reader, ""
@@ -1375,7 +1435,7 @@ class Knowledge(RemoteKnowledge):
                 if content.reader:
                     reader = content.reader
                 else:
-                    reader = ReaderFactory.get_reader_for_extension(path.suffix)
+                    reader = self._select_reader(path.suffix)
                     log_debug(f"Using Reader: {reader.__class__.__name__}")
 
                 if reader:
@@ -1460,7 +1520,7 @@ class Knowledge(RemoteKnowledge):
                 if content.reader:
                     reader = content.reader
                 else:
-                    reader = ReaderFactory.get_reader_for_extension(path.suffix)
+                    reader = self._select_reader(path.suffix)
                     log_debug(f"Using Reader: {reader.__class__.__name__}")
 
                 if reader:
