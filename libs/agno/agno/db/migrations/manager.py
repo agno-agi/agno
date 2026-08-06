@@ -18,12 +18,46 @@ class MigrationManager:
         ("v2_5_6", packaging_version.parse("2.5.6")),
     ]
 
+    _table_type_to_attr = {
+        "memories": "memory_table_name",
+        "sessions": "session_table_name",
+        "metrics": "metrics_table_name",
+        "evals": "eval_table_name",
+        "knowledge": "knowledge_table_name",
+        "culture": "culture_table_name",
+        "approvals": "approvals_table_name",
+    }
+
+    _table_type_aliases = {
+        "memory": "memories",
+        "session": "sessions",
+        "eval": "evals",
+    }
+
     def __init__(self, db: Union[AsyncBaseDb, BaseDb]):
         self.db = db
 
     @property
     def latest_schema_version(self) -> Version:
         return self.available_versions[-1][1]
+
+    @classmethod
+    def _normalize_table_type(cls, table_type: str) -> str:
+        return cls._table_type_aliases.get(table_type, table_type)
+
+    @classmethod
+    def _valid_table_types(cls) -> str:
+        return ", ".join([*cls._table_type_to_attr.keys(), *cls._table_type_aliases.keys()])
+
+    def _get_tables(self, table_type: Optional[str] = None):
+        if table_type:
+            normalized_table_type = self._normalize_table_type(table_type)
+            if normalized_table_type not in self._table_type_to_attr:
+                log_warning(f"Invalid table type: {table_type}. Use one of: {self._valid_table_types()}")
+                return None
+            return [(normalized_table_type, getattr(self.db, self._table_type_to_attr[normalized_table_type]))]
+
+        return [(tt, getattr(self.db, attr)) for tt, attr in self._table_type_to_attr.items()]
 
     async def up(self, target_version: Optional[str] = None, table_type: Optional[str] = None, force: bool = False):
         """Handle executing an up migration.
@@ -42,25 +76,10 @@ class MigrationManager:
         else:
             _target_version = packaging_version.parse(target_version)
 
-        # Mapping from table_type to db attribute name
-        _table_type_to_attr = {
-            "memories": "memory_table_name",
-            "sessions": "session_table_name",
-            "metrics": "metrics_table_name",
-            "evals": "eval_table_name",
-            "knowledge": "knowledge_table_name",
-            "culture": "culture_table_name",
-            "approvals": "approvals_table_name",
-        }
-
         # Select tables to migrate
-        if table_type:
-            if table_type not in _table_type_to_attr:
-                log_warning(f"Invalid table type: {table_type}. Use one of: {', '.join(_table_type_to_attr.keys())}")
-                return
-            tables = [(table_type, getattr(self.db, _table_type_to_attr[table_type]))]
-        else:
-            tables = [(tt, getattr(self.db, attr)) for tt, attr in _table_type_to_attr.items()]
+        tables = self._get_tables(table_type)
+        if tables is None:
+            return
 
         # Handle migrations for each table separately (extend in future if needed):
         for table_type, table_name in tables:
@@ -135,25 +154,10 @@ class MigrationManager:
         """
         _target_version = packaging_version.parse(target_version)
 
-        # Mapping from table_type to db attribute name
-        _table_type_to_attr = {
-            "memories": "memory_table_name",
-            "sessions": "session_table_name",
-            "metrics": "metrics_table_name",
-            "evals": "eval_table_name",
-            "knowledge": "knowledge_table_name",
-            "culture": "culture_table_name",
-            "approvals": "approvals_table_name",
-        }
-
         # Select tables to migrate
-        if table_type:
-            if table_type not in _table_type_to_attr:
-                log_warning(f"Invalid table type: {table_type}. Use one of: {', '.join(_table_type_to_attr.keys())}")
-                return
-            tables = [(table_type, getattr(self.db, _table_type_to_attr[table_type]))]
-        else:
-            tables = [(tt, getattr(self.db, attr)) for tt, attr in _table_type_to_attr.items()]
+        tables = self._get_tables(table_type)
+        if tables is None:
+            return
 
         for table_type, table_name in tables:
             if isinstance(self.db, AsyncBaseDb):
