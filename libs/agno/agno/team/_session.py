@@ -175,26 +175,102 @@ async def aget_session(
     return None
 
 
+def _scrub_tool_results_keeping_unresolved(run: Union[TeamRunOutput, "RunOutput"]) -> None:
+    """Drop stored tool calls and their results, keeping any call still awaiting one.
+
+    ``scrub_tool_results_from_run_output`` drops every assistant message that
+    made a call it removed. On a paused run that takes the message carrying the
+    *pending* call with it whenever one assistant turn mixes a finished call
+    with the gated one, leaving the resumed model nothing to answer. Here a
+    resolved call is stripped out of the message it was made in instead, so the
+    pending call survives and no removed call is left dangling."""
+    from copy import copy
+
+    if not run.messages:
+        return
+    resolved = {message.tool_call_id for message in run.messages if message.role == "tool" and message.tool_call_id}
+    if not resolved:
+        return
+    kept = []
+    for message in run.messages:
+        if message.role == "tool" and message.tool_call_id in resolved:
+            continue
+        if message.role == "assistant" and message.tool_calls:
+            remaining = [call for call in message.tool_calls if call.get("id") not in resolved]
+            if not remaining:
+                continue
+            if len(remaining) != len(message.tool_calls):
+                message = copy(message)
+                message.tool_calls = remaining
+        kept.append(message)
+    run.messages = kept
+
+
+def _storage_view_of_spared_run(
+    team: "Team", member_response: Union[TeamRunOutput, "RunOutput"]
+) -> Union[TeamRunOutput, "RunOutput"]:
+    """Apply a spared member's own storage flags to a copy of its paused run.
+
+    A paused member run is kept out of the member-response scrub so
+    continue_run can resume it after a reload. That exemption must not also
+    carry the member's data past its own store_media / store_tool_messages /
+    store_history_messages settings: the delegation path applies them to every
+    member run it persists, and a run spared here is persisted the same way."""
+    from copy import copy
+
+    from agno.run.agent import RunOutput
+    from agno.team._tools import _find_member_by_id
+    from agno.utils.agent import (
+        isolate_media_scrub_targets,
+        scrub_history_messages_from_run_output,
+        scrub_media_from_run_output,
+    )
+
+    member_id = member_response.agent_id if isinstance(member_response, RunOutput) else member_response.team_id
+    if not member_id:
+        return member_response
+    member_result = _find_member_by_id(team, member_id)
+    if member_result is None:
+        return member_response
+    _, member = member_result
+    if member.store_media and member.store_tool_messages and member.store_history_messages:
+        return member_response
+
+    view = copy(member_response)
+    # The spared run is shared with the live tree, and the media scrub rewrites
+    # Message objects in place.
+    isolate_media_scrub_targets(view)
+    if not member.store_media:
+        scrub_media_from_run_output(view)
+    if not member.store_tool_messages:
+        _scrub_tool_results_keeping_unresolved(view)
+    if not member.store_history_messages:
+        scrub_history_messages_from_run_output(view)
+    return view
+
+
 def _scrub_member_responses_keeping_paused(
+    team: "Team",
     run: Union[TeamRunOutput, "RunOutput"],
 ) -> Union[TeamRunOutput, "RunOutput"]:
     """Return a storage view of the run with member responses removed at every
     nesting level, sparing paused ones: a paused member run is the resume
     state for continue_run after a session reload, and the save after it
     completes scrubs it. Completed responses inside a spared paused sub-team
-    run are removed too.
+    run are removed too, and a spared run still passes through its own member's
+    storage flags.
 
-    Copy-on-write: levels that need filtering are shallow-copied so the live
-    run tree the caller holds keeps its member responses; the spared paused
-    leaf runs are shared, never copied, so resume state stays live."""
+    Copy-on-write: every level this rebuilds is shallow-copied, so the live run
+    tree the caller holds keeps its member responses and its full messages."""
     from copy import copy
 
     spared = []
     for member_response in getattr(run, "member_responses", None) or []:
         if not getattr(member_response, "is_paused", False):
             continue
+        member_response = _storage_view_of_spared_run(team, member_response)
         if getattr(member_response, "member_responses", None):
-            member_response = _scrub_member_responses_keeping_paused(member_response)
+            member_response = _scrub_member_responses_keeping_paused(team, member_response)
         spared.append(member_response)
     run = copy(run)
     run.member_responses = spared  # type: ignore[union-attr]
@@ -222,17 +298,27 @@ def save_session(team: "Team", session: TeamSession) -> None:
             session.session_data["session_state"].pop("current_run_id", None)
 
         # scrub the member responses based on storage settings
+        live_runs = session.runs
         if session.runs is not None:
-            for i, run in enumerate(session.runs):
-                if hasattr(run, "member_responses"):
-                    if not team.store_member_responses:
-                        # Store the scrubbed copy; the live run tree keeps its
-                        # member responses.
-                        session.runs[i] = _scrub_member_responses_keeping_paused(run)
-                    else:
+            if not team.store_member_responses:
+                # Hand the DB a scrubbed view and give the session its live runs
+                # back. Keeping the view would freeze the stored copy of a
+                # paused member run at PAUSED — the resume continues the live
+                # run, so a cached session would advertise a pending approval on
+                # a finished run for good.
+                session.runs = [
+                    _scrub_member_responses_keeping_paused(team, run) if hasattr(run, "member_responses") else run
+                    for run in session.runs
+                ]
+            else:
+                for run in session.runs:
+                    if hasattr(run, "member_responses"):
                         # Scrub individual member responses based on their storage flags
                         _scrub_member_responses(team, run.member_responses)
-        _upsert_session(team, session=session)
+        try:
+            _upsert_session(team, session=session)
+        finally:
+            session.runs = live_runs
         log_debug(f"Created or updated TeamSession record: {session.session_id}")
 
 
@@ -254,21 +340,27 @@ async def asave_session(team: "Team", session: TeamSession) -> None:
             session.session_data["session_state"].pop("current_run_id", None)
 
         # scrub the member responses based on storage settings
+        live_runs = session.runs
         if session.runs is not None:
-            for i, run in enumerate(session.runs):
-                if hasattr(run, "member_responses"):
-                    if not team.store_member_responses:
-                        # Store the scrubbed copy; the live run tree keeps its
-                        # member responses.
-                        session.runs[i] = _scrub_member_responses_keeping_paused(run)
-                    else:
+            if not team.store_member_responses:
+                # See save_session: the scrubbed view is for the DB write only.
+                session.runs = [
+                    _scrub_member_responses_keeping_paused(team, run) if hasattr(run, "member_responses") else run
+                    for run in session.runs
+                ]
+            else:
+                for run in session.runs:
+                    if hasattr(run, "member_responses"):
                         # Scrub individual member responses based on their storage flags
                         _scrub_member_responses(team, run.member_responses)
 
-        if _has_async_db(team):
-            await _aupsert_session(team, session=session)
-        else:
-            _upsert_session(team, session=session)
+        try:
+            if _has_async_db(team):
+                await _aupsert_session(team, session=session)
+            else:
+                _upsert_session(team, session=session)
+        finally:
+            session.runs = live_runs
         log_debug(f"Created or updated TeamSession record: {session.session_id}")
 
 

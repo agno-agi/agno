@@ -2674,3 +2674,448 @@ def test_team_level_pause_streaming_continue_yields_final_output(tmp_path):
     assert len(finals) == 1, "exactly one final TeamRunOutput must be yielded on a team-level re-pause"
     assert finals[0].is_paused
     assert _EXECUTED == []
+
+
+# ---------------------------------------------------------------------------
+# A continue payload is bound to the stored requirements as one unit. A refusal
+# on any entry must leave every stored requirement exactly as the session holds
+# it: the refusal tells the client the run is untouched and still resumable, so
+# a bare retry of a rejected request must not execute the part that bound.
+# ---------------------------------------------------------------------------
+
+
+def _build_two_gated_members(db: SqliteDb, resuming: bool) -> Team:
+    smser = Agent(
+        name="Smser",
+        id="smser",
+        model=_ScriptedModel(
+            "m-smser",
+            [("content", "SMS sent.")]
+            if resuming
+            else [("tool", "send_sms", {"to": "b@x.com"}, "tc-sms"), ("content", "SMS sent.")],
+        ),
+        tools=[send_sms],
+        db=db,
+        telemetry=False,
+    )
+    return Team(
+        name="Comms Team",
+        id="comms-team",
+        model=_ScriptedModel(
+            "m-leader",
+            [("content", "All done.")]
+            if resuming
+            else [
+                (
+                    "tools",
+                    [
+                        ("delegate_task_to_member", {"member_id": "emailer", "task": "email"}, "tc-deleg-e"),
+                        ("delegate_task_to_member", {"member_id": "smser", "task": "sms"}, "tc-deleg-s"),
+                    ],
+                ),
+                ("content", "All done."),
+            ],
+        ),
+        members=[_emailer_agent(db, resuming), smser],
+        db=db,
+        telemetry=False,
+    )
+
+
+def test_refused_payload_does_not_bank_the_entries_that_bound(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "atomic.db")
+    session_id = "s-atomic"
+
+    team1 = _build_two_gated_members(SqliteDb(db_file=db_file), resuming=False)
+    run1 = team1.run("Email and sms", session_id=session_id)
+    assert run1.is_paused
+    assert len(run1.requirements or []) == 2
+
+    # First entry binds cleanly, second matches no stored requirement.
+    payload = _wire_requirements(run1.requirements)
+    payload[1].id = "bogus-requirement-id"
+    payload[1].tool_execution.tool_call_id = "bogus-tool-call-id"
+
+    with pytest.raises(RunNotContinuableError):
+        team1.continue_run(run_response=run1, requirements=payload)
+
+    assert _EXECUTED == []
+    # The stored requirements carry no part of the rejected payload's decision.
+    assert [r.confirmation for r in run1.requirements or []] == [None, None]
+    assert [r.tool_execution.confirmed for r in run1.requirements or []] == [None, None]
+    assert not any(r.is_resolved() for r in run1.requirements or [])
+
+    # A bare retry therefore executes nothing, exactly as it would have before
+    # the refused call.
+    team1.continue_run(run_response=run1)
+    assert _EXECUTED == []
+
+
+def test_binding_refuses_a_stored_id_paired_with_another_tool_call(tmp_path):
+    """A valid requirement id carrying a different tool call must not bind: the
+    id match alone would confirm one member's tool with the other's arguments."""
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "crosscheck.db")
+    session_id = "s-crosscheck"
+
+    team1 = _build_two_gated_members(SqliteDb(db_file=db_file), resuming=False)
+    run1 = team1.run("Email and sms", session_id=session_id)
+    assert run1.is_paused
+
+    payload = _wire_requirements(run1.requirements)
+    # Entry 0 keeps its own (valid) requirement id but carries entry 1's tool call.
+    payload[0].tool_execution.tool_call_id = payload[1].tool_execution.tool_call_id
+    payload[0].tool_execution.tool_name = payload[1].tool_execution.tool_name
+
+    with pytest.raises(RunNotContinuableError):
+        team1.continue_run(run_response=run1, requirements=payload)
+    assert _EXECUTED == []
+
+
+# ---------------------------------------------------------------------------
+# The stored schema is the tool's contract. A continue payload supplies answers
+# for the fields the model left open — it does not get to rename them, refill
+# the ones the model fixed, or declare itself answered.
+# ---------------------------------------------------------------------------
+
+
+_TRANSFERRED: List[Dict[str, Any]] = []
+
+
+@tool(requires_user_input=True, user_input_fields=["note"])
+def transfer_funds(account_id: str, note: str) -> str:
+    _TRANSFERRED.append({"account_id": account_id, "note": note})
+    return "Transfer done."
+
+
+def _build_user_input_team(db: SqliteDb, resuming: bool) -> Team:
+    banker = Agent(
+        name="Banker",
+        id="banker",
+        model=_ScriptedModel(
+            "m-banker",
+            [("content", "Transfer done.")]
+            if resuming
+            else [("tool", "transfer_funds", {"account_id": "victim"}, "tc-xfer"), ("content", "Transfer done.")],
+        ),
+        tools=[transfer_funds],
+        db=db,
+        telemetry=False,
+    )
+    return Team(
+        name="Bank Team",
+        id="bank-team",
+        model=_ScriptedModel(
+            "m-leader",
+            [("content", "All done.")]
+            if resuming
+            else [
+                ("tool", "delegate_task_to_member", {"member_id": "banker", "task": "move it"}, "tc-deleg"),
+                ("content", "All done."),
+            ],
+        ),
+        members=[banker],
+        db=db,
+        telemetry=False,
+    )
+
+
+def _answered_payload(requirements, values: Dict[str, Any]) -> List[RunRequirement]:
+    """Wire round-trip that fills the open input fields, as a frontend would."""
+    payload = []
+    for data in [r.to_dict() for r in requirements or []]:
+        req = RunRequirement.from_dict(data)
+        req.provide_user_input(values)
+        payload.append(req)
+    return payload
+
+
+def test_user_input_answers_reach_the_member_tool(tmp_path):
+    _TRANSFERRED.clear()
+    db_file = str(tmp_path / "user_input.db")
+    session_id = "s-user-input"
+
+    team1 = _build_user_input_team(SqliteDb(db_file=db_file), resuming=False)
+    run1 = team1.run("Move the money", session_id=session_id)
+    assert run1.is_paused
+
+    team2 = _build_user_input_team(SqliteDb(db_file=db_file), resuming=True)
+    team2.continue_run(
+        run_id=run1.run_id,
+        session_id=session_id,
+        requirements=_answered_payload(run1.requirements, {"note": "monthly rent"}),
+    )
+    assert _TRANSFERRED == [{"account_id": "victim", "note": "monthly rent"}]
+
+
+def test_wire_schema_cannot_rewrite_an_argument_the_model_fixed(tmp_path):
+    """Renaming an open field to a fixed argument's name must not reach tool_args."""
+    _TRANSFERRED.clear()
+    db_file = str(tmp_path / "schema_tamper.db")
+    session_id = "s-schema-tamper"
+
+    team1 = _build_user_input_team(SqliteDb(db_file=db_file), resuming=False)
+    run1 = team1.run("Move the money", session_id=session_id)
+    assert run1.is_paused
+
+    payload = _answered_payload(run1.requirements, {"note": "ok"})
+    for req in payload:
+        for schema in (req.user_input_schema, req.tool_execution.user_input_schema):
+            for field in schema or []:
+                if field.name == "note":
+                    field.name = "account_id"
+                    field.value = "attacker"
+
+    team2 = _build_user_input_team(SqliteDb(db_file=db_file), resuming=True)
+    team2.continue_run(run_id=run1.run_id, session_id=session_id, requirements=payload)
+
+    # The renamed field answers nothing the stored schema asked for, so it never
+    # reaches tool_args: the argument the model fixed at pause time stands.
+    assert [t["account_id"] for t in _TRANSFERRED] == [] or all(t["account_id"] == "victim" for t in _TRANSFERRED)
+    assert "attacker" not in [t["account_id"] for t in _TRANSFERRED]
+
+
+def test_wire_answered_flag_alone_does_not_resolve_an_open_field(tmp_path):
+    """answered=True with no values must not run a gated tool with the field empty."""
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "answered_flip.db")
+    session_id = "s-answered-flip"
+
+    @tool(requires_user_input=True, user_input_fields=["note"])
+    def file_report(subject: str, note: str) -> str:
+        _EXECUTED.append(f"{subject}:{note}")
+        return "Filed."
+
+    def build(resuming: bool) -> Team:
+        return Team(
+            name="Desk Team",
+            id="desk-team",
+            model=_ScriptedModel(
+                "m-leader",
+                [("content", "All done.")]
+                if resuming
+                else [("tool", "file_report", {"subject": "q3"}, "tc-file"), ("content", "All done.")],
+            ),
+            tools=[file_report],
+            members=[_emailer_agent(SqliteDb(db_file=db_file), resuming)],
+            db=SqliteDb(db_file=db_file),
+            telemetry=False,
+        )
+
+    run1 = build(resuming=False).run("File it", session_id=session_id)
+    assert run1.is_paused
+
+    payload = []
+    for data in [r.to_dict() for r in run1.requirements or []]:
+        req = RunRequirement.from_dict(data)
+        req.tool_execution.answered = True
+        payload.append(req)
+
+    run2 = build(resuming=True).continue_run(run_id=run1.run_id, session_id=session_id, requirements=payload)
+    assert run2.is_paused, "an unanswered field must keep the run paused"
+    assert _EXECUTED == []
+
+
+def test_external_execution_result_reaches_the_tool_execution(tmp_path):
+    """The result is the answer for an external-execution requirement, so it is
+    the one payload value that crosses onto the stored tool execution."""
+    db_file = str(tmp_path / "external.db")
+    session_id = "s-external"
+
+    @tool(external_execution=True)
+    def fetch_ledger(quarter: str) -> str:
+        raise AssertionError("an external-execution tool must never run in-process")
+
+    def build(resuming: bool) -> Team:
+        return Team(
+            name="Ledger Team",
+            id="ledger-team",
+            model=_ScriptedModel(
+                "m-leader",
+                [("content", "All done.")]
+                if resuming
+                else [("tool", "fetch_ledger", {"quarter": "q3"}, "tc-ledger"), ("content", "All done.")],
+            ),
+            tools=[fetch_ledger],
+            members=[_emailer_agent(SqliteDb(db_file=db_file), resuming)],
+            db=SqliteDb(db_file=db_file),
+            telemetry=False,
+        )
+
+    run1 = build(resuming=False).run("Fetch it", session_id=session_id)
+    assert run1.is_paused
+
+    payload = []
+    for data in [r.to_dict() for r in run1.requirements or []]:
+        req = RunRequirement.from_dict(data)
+        req.external_execution_result = "ledger-rows"
+        req.tool_execution.result = "ledger-rows"
+        payload.append(req)
+
+    run2 = build(resuming=True).continue_run(run_id=run1.run_id, session_id=session_id, requirements=payload)
+    assert run2.status == RunStatus.completed
+    stored = [r for r in _reload_runs(db_file, session_id) if getattr(r, "team_id", None) == "ledger-team"]
+    results = [t.result for t in (stored[0].tools or []) if t.tool_name == "fetch_ledger"]
+    assert results == ["ledger-rows"]
+
+
+# ---------------------------------------------------------------------------
+# A refusal raised below the top level must not damage the caller's run object.
+# The requirement objects a parent routes into a sub-team are the parent's own,
+# so the sub-team's reclaim has to work on a copy: de-stamping in place leaves
+# the parent holding what looks like a team-level requirement of its own, and
+# the retry the refusal invites then completes with the approved tool skipped.
+# ---------------------------------------------------------------------------
+
+
+def test_nested_refusal_keeps_the_subteam_requirement_routable(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "nested_refusal.db")
+    session_id = "s-nested-refusal"
+
+    outer1 = _build_subteam_own_tool(SqliteDb(db_file=db_file), resuming=False, mixed=True)
+    run1 = outer1.run("Publish the release", session_id=session_id)
+    assert run1.is_paused
+    stamps_at_pause = {
+        r.tool_execution.tool_name: r.member_agent_id for r in run1.requirements or [] if r.tool_execution
+    }
+    assert stamps_at_pause["publish"] == "comms-team"
+
+    for req in run1.requirements or []:
+        req.confirm()
+
+    # The deep member's continue fails once, the way a transient model outage
+    # would, so the sub-team's dispatch raises after the reclaim has run.
+    outer2 = _build_subteam_own_tool(SqliteDb(db_file=db_file), resuming=True, mixed=True)
+    inner = outer2.members[0]
+    emailer = inner.members[0]
+    original_continue = emailer.continue_run
+
+    def failing_continue(*args, **kwargs):
+        raise RuntimeError("transient model outage")
+
+    emailer.continue_run = failing_continue  # type: ignore[method-assign]
+    with pytest.raises(RuntimeError):
+        outer2.continue_run(run_response=run1)
+    emailer.continue_run = original_continue  # type: ignore[method-assign]
+
+    assert _EXECUTED == []
+    stamps_after = {r.tool_execution.tool_name: r.member_agent_id for r in run1.requirements or [] if r.tool_execution}
+    assert stamps_after == stamps_at_pause, "a refusal below must not restamp the caller's requirements"
+
+    # The retry the refusal invites executes every approved tool.
+    outer3 = _build_subteam_own_tool(SqliteDb(db_file=db_file), resuming=True, mixed=True)
+    run3 = outer3.continue_run(run_response=run1)
+    assert run3.status == RunStatus.completed
+    assert sorted(_EXECUTED) == ["a@example.com", "pub:release"]
+
+
+# ---------------------------------------------------------------------------
+# The scrub builds a storage view; it does not replace the session's live runs.
+# Rebinding them would freeze the stored copy of a paused member run at PAUSED
+# while the resume continues the live one, so a finished run would advertise a
+# pending approval for good.
+# ---------------------------------------------------------------------------
+
+
+def test_completed_run_stores_no_stale_paused_member(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "stale.db")
+    session_id = "s-stale"
+
+    outer = _build_nested_team(SqliteDb(db_file=db_file), resuming=False)
+    outer.cache_session = True
+    run1 = outer.run("Email a@example.com", session_id=session_id)
+    assert run1.is_paused
+
+    # Same process, same team object: the cached session is the one that would
+    # keep a frozen copy.
+    outer.members[0]._model = None
+    outer2 = _build_nested_team(SqliteDb(db_file=db_file), resuming=True)
+    outer2.cache_session = True
+    run2 = outer2.continue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+    )
+    assert run2.status == RunStatus.completed
+    assert _EXECUTED == ["a@example.com"]
+
+    for run in _reload_runs(db_file, session_id):
+        assert not run.is_paused
+        for member_response in getattr(run, "member_responses", None) or []:
+            assert not member_response.is_paused, "a finished run must not keep a paused member snapshot"
+
+
+# ---------------------------------------------------------------------------
+# Sparing a paused member run so it can be resumed must not carry its data past
+# that member's own storage flags — the delegation path applies them to every
+# member run it persists.
+# ---------------------------------------------------------------------------
+
+
+def test_spared_paused_member_run_honours_store_tool_messages(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "flags.db")
+    session_id = "s-flags"
+
+    def build(phase: str) -> Team:
+        team = _build_nested_chained_team(SqliteDb(db_file=db_file), phase=phase)
+        team.members[0].members[0].store_tool_messages = False
+        return team
+
+    run1 = build("pause").run("Email then sms", session_id=session_id)
+    assert run1.is_paused
+
+    # Confirm send_email; the member runs it and chains a gated send_sms.
+    run2 = build("chain").continue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+    )
+    assert run2.is_paused
+    assert _EXECUTED == ["a@example.com"]
+
+    def leaf_runs(runs):
+        for run in runs:
+            for member_response in getattr(run, "member_responses", None) or []:
+                if getattr(member_response, "agent_id", None) == "emailer":
+                    yield member_response
+                yield from leaf_runs([member_response])
+
+    stored_leaves = list(leaf_runs(_reload_runs(db_file, session_id)))
+    assert stored_leaves, "the paused member run must still be persisted for the resume"
+    for leaf in stored_leaves:
+        roles = [m.role for m in leaf.messages or []]
+        assert "tool" not in roles, "store_tool_messages=False must reach a spared paused member run"
+        pending = [call["id"] for m in leaf.messages or [] if m.role == "assistant" for call in m.tool_calls or []]
+        assert "tc-sms-chain" in pending, "the unresolved call must survive the scrub for the resume"
+
+    # And the resume still works from a fresh process.
+    unresolved = [r for r in run2.requirements or [] if not r.is_resolved()]
+    run3 = build("finish").continue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(unresolved)
+    )
+    assert run3.status == RunStatus.completed
+    assert _EXECUTED == ["a@example.com", "sms:c@x.com"]
+
+
+def test_live_run_tree_keeps_its_tool_messages_after_a_save(tmp_path):
+    """The storage scrub is copy-on-write: the caller's in-flight run keeps
+    everything the member's flags strip from the stored copy."""
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "cow.db")
+    session_id = "s-cow"
+
+    team = _build_nested_chained_team(SqliteDb(db_file=db_file), phase="pause")
+    team.members[0].members[0].store_tool_messages = False
+    run1 = team.run("Email then sms", session_id=session_id)
+    assert run1.is_paused
+
+    def leaves(run):
+        for member_response in getattr(run, "member_responses", None) or []:
+            if getattr(member_response, "agent_id", None) == "emailer":
+                yield member_response
+            yield from leaves(member_response)
+
+    live = list(leaves(run1))
+    assert live, "the live run tree must still hold the member response"
+    for leaf in live:
+        assert leaf.messages, "the live member run must keep its messages"

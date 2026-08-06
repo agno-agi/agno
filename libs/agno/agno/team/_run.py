@@ -5312,6 +5312,45 @@ def _merge_tools_preserving_approval(
     return merged
 
 
+def _fill_user_input_answers(stored_schema: Optional[List[Any]], wire_schema: Optional[List[Any]]) -> bool:
+    """Fill the stored schema's open fields from the wire copy, keyed by field name.
+
+    Returns True if a field the model had left open was filled.
+    """
+    if not stored_schema or not wire_schema:
+        return False
+    answers = {field.name: field.value for field in wire_schema if getattr(field, "value", None) is not None}
+    filled = False
+    for field in stored_schema:
+        if field.value is None and field.name in answers:
+            field.value = answers[field.name]
+            filled = True
+    return filled
+
+
+def _fill_user_feedback_answers(stored_schema: Optional[List[Any]], wire_schema: Optional[List[Any]]) -> bool:
+    """Fill the stored schema's unanswered questions from the wire copy, keyed by question.
+
+    Returns True if a question the model had left open was answered.
+    """
+    if not stored_schema or not wire_schema:
+        return False
+    selections = {
+        question.question: question.selected_options
+        for question in wire_schema
+        if getattr(question, "selected_options", None) is not None
+    }
+    filled = False
+    for question in stored_schema:
+        if question.selected_options is None and question.question in selections:
+            question.selected_options = selections[question.question]
+            if question.options:
+                for option in question.options:
+                    option.selected = option.label in question.selected_options
+            filled = True
+    return filled
+
+
 def _merge_requirement_decision(stored: Any, wire: Any) -> None:
     """Copy the client's decision state onto the canonical stored requirement.
 
@@ -5320,24 +5359,54 @@ def _merge_requirement_decision(stored: Any, wire: Any) -> None:
     and routing (tool_execution, tool_args, member provenance) stay the
     stored requirement's own; a result on a non-external tool is dropped
     because honoring it would suppress the confirmed tool's execution.
+
+    The schemas are filled field by field, never rebound. The wire copy is a
+    client document: rebinding it would put client-chosen field NAMES into the
+    schema that ``handle_user_input_update`` writes into ``tool_args``
+    immediately before the call, so a renamed field overwrites an argument the
+    model fixed at pause time. Answers therefore land by stored field name, and
+    only in fields the model left open.
+
+    ``answered`` is inferred from the stored schema exactly as
+    ``RunRequirement.from_dict`` infers it — only when this merge fills the last
+    open field — and never copied off the wire, which would otherwise run the
+    gated tool with its fields still empty. A requirement carrying no schema at
+    all has no other way to be answered, so there the wire flag stands.
     """
     for attr in ("confirmation", "confirmation_note"):
         if getattr(wire, attr, None) is not None:
             setattr(stored, attr, getattr(wire, attr))
-    if getattr(wire, "user_input_schema", None) is not None:
-        stored.user_input_schema = wire.user_input_schema
-    if getattr(wire, "user_feedback_schema", None) is not None:
-        stored.user_feedback_schema = wire.user_feedback_schema
+    _fill_user_input_answers(getattr(stored, "user_input_schema", None), getattr(wire, "user_input_schema", None))
+    _fill_user_feedback_answers(
+        getattr(stored, "user_feedback_schema", None), getattr(wire, "user_feedback_schema", None)
+    )
     stored_te = getattr(stored, "tool_execution", None)
     wire_te = getattr(wire, "tool_execution", None)
     if stored_te is not None and wire_te is not None:
-        for attr in ("confirmed", "confirmation_note", "answered"):
+        for attr in ("confirmed", "confirmation_note"):
             if getattr(wire_te, attr, None) is not None:
                 setattr(stored_te, attr, getattr(wire_te, attr))
-        if getattr(wire_te, "user_input_schema", None) is not None:
-            stored_te.user_input_schema = wire_te.user_input_schema
-        if getattr(wire_te, "user_feedback_schema", None) is not None:
-            stored_te.user_feedback_schema = wire_te.user_feedback_schema
+        # Dispatch reads only tool_execution's schema, so answers sent at either
+        # level have to reach it.
+        input_filled = _fill_user_input_answers(stored_te.user_input_schema, wire_te.user_input_schema)
+        input_filled |= _fill_user_input_answers(stored_te.user_input_schema, getattr(wire, "user_input_schema", None))
+        feedback_filled = _fill_user_feedback_answers(stored_te.user_feedback_schema, wire_te.user_feedback_schema)
+        feedback_filled |= _fill_user_feedback_answers(
+            stored_te.user_feedback_schema, getattr(wire, "user_feedback_schema", None)
+        )
+        if stored_te.answered is None:
+            if input_filled and all(field.value is not None for field in stored_te.user_input_schema or []):
+                stored_te.answered = True
+            elif feedback_filled and all(
+                question.selected_options is not None for question in stored_te.user_feedback_schema or []
+            ):
+                stored_te.answered = True
+            elif (
+                getattr(wire_te, "answered", None) is not None
+                and not stored_te.user_input_schema
+                and not stored_te.user_feedback_schema
+            ):
+                stored_te.answered = wire_te.answered
         if getattr(stored_te, "external_execution_required", None) and getattr(wire_te, "result", None) is not None:
             stored_te.result = wire_te.result
     if (
@@ -5411,7 +5480,7 @@ def _backfill_approval_to_requirements(
 
     run_id = getattr(run_response, "run_id", None)
     matched: Set[int] = set()
-    canonical: List[Any] = []
+    bindings: List[Tuple[Any, Any]] = []
     for req in reqs:
         te = getattr(req, "tool_execution", None)
         tool_call_id = te.tool_call_id if te is not None else None
@@ -5443,15 +5512,66 @@ def _backfill_approval_to_requirements(
                 f"requirement '{getattr(old_req, 'id', None)}'. The run remains paused."
             )
         matched.add(id(old_req))
+        bindings.append((old_req, req))
+
+    # Nothing is written until the whole payload has bound. Merging inside the
+    # loop above would leave the entries before a refusal holding the client's
+    # decision, and the refusal restores list references, not field values — so
+    # a bare retry of a rejected request would execute the tools that bound
+    # before the bad entry.
+    for old_req, req in bindings:
         _merge_requirement_decision(old_req, req)
-        canonical.append(old_req)
-    run_response.requirements = canonical
+    run_response.requirements = [old_req for old_req, _ in bindings]
+
+
+_REQUIREMENT_DECISION_FIELDS = ("confirmation", "confirmation_note", "external_execution_result")
+_TOOL_EXECUTION_DECISION_FIELDS = ("confirmed", "confirmation_note", "answered", "result")
+
+
+def _requirement_decision_slots(requirements: Optional[List[Any]]) -> Iterator[Tuple[Any, str]]:
+    """Yield every (object, attribute) pair _merge_requirement_decision writes.
+
+    The merge fills schemas in place and never rebinds a list, so the objects
+    reached here before the merge are the same ones it writes to.
+    """
+    for req in requirements or []:
+        for attr in _REQUIREMENT_DECISION_FIELDS:
+            yield req, attr
+        for holder in (req, getattr(req, "tool_execution", None)):
+            if holder is None:
+                continue
+            if holder is not req:
+                for attr in _TOOL_EXECUTION_DECISION_FIELDS:
+                    yield holder, attr
+            for field in getattr(holder, "user_input_schema", None) or []:
+                yield field, "value"
+            for question in getattr(holder, "user_feedback_schema", None) or []:
+                yield question, "selected_options"
+                for option in getattr(question, "options", None) or []:
+                    yield option, "selected"
+
+
+def _snapshot_requirement_decisions(requirements: Optional[List[Any]]) -> List[Tuple[Any, str, Any]]:
+    """Record the stored requirements' decision state before a payload is merged."""
+    return [(obj, attr, getattr(obj, attr, None)) for obj, attr in _requirement_decision_slots(requirements)]
+
+
+def _restore_requirement_decisions(snapshot: List[Tuple[Any, str, Any]]) -> None:
+    """Put the decision state recorded by _snapshot_requirement_decisions back.
+
+    Restoring the requirements list alone is not enough for a gate that refuses
+    a continue after the payload has bound: the entries on that list are the
+    stored requirements the merge wrote into, so the client's decision would
+    survive a refusal the caller was told left the run untouched.
+    """
+    for obj, attr, value in snapshot:
+        setattr(obj, attr, value)
 
 
 def _apply_requirements_payload(
     run_response: TeamRunOutput,
     requirements: List[Any],
-) -> Tuple[Optional[List["RunRequirement"]], Optional[List[Any]]]:
+) -> Tuple[Optional[List["RunRequirement"]], Optional[List[Any]], List[Tuple[Any, str, Any]]]:
     """Apply a continue payload to the run object, keeping it intact on refusal.
 
     Normalizes the payload, binds it to the stored requirements
@@ -5461,11 +5581,12 @@ def _apply_requirements_payload(
     the client to resend the stored ids, which a caller-supplied live run
     object only still has if nothing was overwritten.
 
-    Returns (old_requirements, old_tools) so the caller can restore them if
-    a later step of its payload apply raises.
+    Returns (old_requirements, old_tools, decisions) so the caller can restore
+    all three if a later step of its payload apply raises.
     """
     old_requirements = run_response.requirements
     old_tools = run_response.tools
+    decisions = _snapshot_requirement_decisions(old_requirements)
     run_response.requirements = _normalize_requirements_payload(requirements)
     try:
         _backfill_approval_to_requirements(run_response, old_requirements=old_requirements)
@@ -5482,10 +5603,12 @@ def _apply_requirements_payload(
         run_response.tools = _merge_tools_preserving_approval(run_response.tools, updated_tools_map)
     elif updated_tools:
         run_response.tools = updated_tools
-    return old_requirements, old_tools
+    return old_requirements, old_tools, decisions
 
 
-def _reclaim_own_requirements(team: "Team", requirements: List[Any], continuing_run_id: Optional[str]) -> None:
+def _reclaim_own_requirements(
+    team: "Team", requirements: Optional[List[Any]], continuing_run_id: Optional[str]
+) -> Optional[List[Any]]:
     """Clear the member stamp from requirements that belong to this team itself.
 
     When a sub-team's OWN tool pauses, _propagate_member_pause stamps the
@@ -5504,22 +5627,39 @@ def _reclaim_own_requirements(team: "Team", requirements: List[Any], continuing_
     member_run_id is never reclaimed: to_dict() strips None values, so a wire
     payload may omit the field, and _backfill_approval_to_requirements
     restores it from the stored session requirements before dispatch reaches
-    this function."""
+    this function.
+
+    Returns the list to route with. A reclaimed requirement is de-stamped on a
+    COPY: when a parent team routes a sub-team's lifted requirement down, the
+    objects on the sub-team's run are the parent's own, and the parent still
+    lists them. De-stamping in place would leave the parent holding what looks
+    like a team-level requirement of its own, so if anything below this
+    dispatch refuses, the caller's run object comes back mis-routed — the very
+    retry the refusal promises would then skip the approved tool."""
+    from copy import copy
+
     from agno.utils.team import get_member_id
 
+    if not requirements:
+        return requirements
     if not any(getattr(req, "member_agent_id", None) is not None for req in requirements):
-        return
+        return requirements
     own_id = get_member_id(team)
     if not own_id:
-        return
+        return requirements
+    reclaimed: List[Any] = []
     for req in requirements:
-        if getattr(req, "member_agent_id", None) != own_id:
-            continue
         member_run_id = getattr(req, "member_run_id", None)
-        if member_run_id is None or member_run_id != continuing_run_id:
-            continue
-        req.member_agent_id = None
-        req.member_agent_name = None
+        if (
+            getattr(req, "member_agent_id", None) == own_id
+            and member_run_id is not None
+            and member_run_id == continuing_run_id
+        ):
+            req = copy(req)
+            req.member_agent_id = None
+            req.member_agent_name = None
+        reclaimed.append(req)
+    return reclaimed
 
 
 def _has_member_requirements(requirements: List[Any]) -> bool:
@@ -6832,7 +6972,7 @@ def continue_run_dispatch(
 
     # Normalize and apply requirements
     if requirements:
-        old_requirements, old_tools = _apply_requirements_payload(run_response, requirements)
+        old_requirements, old_tools, decisions = _apply_requirements_payload(run_response, requirements)
 
         # Also apply any resolved approval
         if run_response.tools:
@@ -6843,6 +6983,7 @@ def continue_run_dispatch(
             except RuntimeError:
                 run_response.requirements = old_requirements
                 run_response.tools = old_tools
+                _restore_requirement_decisions(decisions)
                 raise ValueError(
                     "To continue a run from a given run_id, the requirements parameter must be provided "
                     "(or resolve an admin approval first)."
@@ -6876,7 +7017,7 @@ def continue_run_dispatch(
         _did_snapshot_dispatch = True
 
     # Determine what kind of pause we're continuing from
-    _reclaim_own_requirements(team, run_response.requirements or [], run_response.run_id)
+    run_response.requirements = _reclaim_own_requirements(team, run_response.requirements, run_response.run_id)
     has_member = _has_member_requirements(run_response.requirements or [])
     has_team_level = _has_team_level_requirements(run_response.requirements or [])
 
@@ -8154,6 +8295,12 @@ async def _acontinue_run(
     log_debug(f"Team Continue Run: {run_response.run_id if run_response else run_id}", center=True)
 
     team_session: Optional[TeamSession] = None
+    # The payload binds to the stored requirements exactly once. A retry after a
+    # transient failure re-enters the loop with the run already carrying the
+    # bound requirements, and the member-level ones consumed by the dispatch —
+    # re-binding the same payload against what is left refuses a run the retry
+    # was meant to rescue.
+    requirements_applied = False
 
     try:
         num_attempts = team.retries + 1
@@ -8232,23 +8379,26 @@ async def _acontinue_run(
                     run_response.content = None
                 # Normalize and apply requirements
                 elif requirements:
-                    old_requirements, old_tools = _apply_requirements_payload(run_response, requirements)
+                    if not requirements_applied:
+                        old_requirements, old_tools, decisions = _apply_requirements_payload(run_response, requirements)
+                        requirements_applied = True
 
-                    # Also apply any resolved approval
-                    if run_response.tools:
-                        from agno.run.approval import acheck_and_apply_approval_resolution
+                        # Also apply any resolved approval
+                        if run_response.tools:
+                            from agno.run.approval import acheck_and_apply_approval_resolution
 
-                        try:
-                            await acheck_and_apply_approval_resolution(
-                                team.db, run_response.run_id or run_id or "", run_response
-                            )
-                        except RuntimeError:
-                            run_response.requirements = old_requirements
-                            run_response.tools = old_tools
-                            raise ValueError(
-                                "To continue a run from a given run_id, the requirements parameter must be provided "
-                                "(or resolve an admin approval first)."
-                            )
+                            try:
+                                await acheck_and_apply_approval_resolution(
+                                    team.db, run_response.run_id or run_id or "", run_response
+                                )
+                            except RuntimeError:
+                                run_response.requirements = old_requirements
+                                run_response.tools = old_tools
+                                _restore_requirement_decisions(decisions)
+                                raise ValueError(
+                                    "To continue a run from a given run_id, the requirements parameter must be "
+                                    "provided (or resolve an admin approval first)."
+                                )
                 elif run_response.tools:
                     from agno.run.approval import acheck_and_apply_approval_resolution
 
@@ -8289,7 +8439,9 @@ async def _acontinue_run(
                     store_events=team.store_events,
                 )
 
-                _reclaim_own_requirements(team, run_response.requirements or [], run_response.run_id)
+                run_response.requirements = _reclaim_own_requirements(
+                    team, run_response.requirements, run_response.run_id
+                )
                 has_member = _has_member_requirements(run_response.requirements or [])
                 has_team_level = _has_team_level_requirements(run_response.requirements or [])
 
@@ -8589,6 +8741,8 @@ async def _acontinue_run_stream(
     log_debug(f"Team Continue Run Stream: {run_response.run_id if run_response else run_id}", center=True)
 
     team_session: Optional[TeamSession] = None
+    # See _acontinue_run: the payload binds once, not once per retry.
+    requirements_applied = False
 
     try:
         num_attempts = team.retries + 1
@@ -8667,23 +8821,26 @@ async def _acontinue_run_stream(
                     run_response.content = None
                 # Normalize and apply requirements
                 elif requirements:
-                    old_requirements, old_tools = _apply_requirements_payload(run_response, requirements)
+                    if not requirements_applied:
+                        old_requirements, old_tools, decisions = _apply_requirements_payload(run_response, requirements)
+                        requirements_applied = True
 
-                    # Also apply any resolved approval
-                    if run_response.tools:
-                        from agno.run.approval import acheck_and_apply_approval_resolution
+                        # Also apply any resolved approval
+                        if run_response.tools:
+                            from agno.run.approval import acheck_and_apply_approval_resolution
 
-                        try:
-                            await acheck_and_apply_approval_resolution(
-                                team.db, run_response.run_id or run_id or "", run_response
-                            )
-                        except RuntimeError:
-                            run_response.requirements = old_requirements
-                            run_response.tools = old_tools
-                            raise ValueError(
-                                "To continue a run from a given run_id, the requirements parameter must be provided "
-                                "(or resolve an admin approval first)."
-                            )
+                            try:
+                                await acheck_and_apply_approval_resolution(
+                                    team.db, run_response.run_id or run_id or "", run_response
+                                )
+                            except RuntimeError:
+                                run_response.requirements = old_requirements
+                                run_response.tools = old_tools
+                                _restore_requirement_decisions(decisions)
+                                raise ValueError(
+                                    "To continue a run from a given run_id, the requirements parameter must be "
+                                    "provided (or resolve an admin approval first)."
+                                )
                 elif run_response.tools:
                     from agno.run.approval import acheck_and_apply_approval_resolution
 
@@ -8714,7 +8871,9 @@ async def _acontinue_run_stream(
 
                 await aregister_run(run_response.run_id)  # type: ignore
 
-                _reclaim_own_requirements(team, run_response.requirements or [], run_response.run_id)
+                run_response.requirements = _reclaim_own_requirements(
+                    team, run_response.requirements, run_response.run_id
+                )
                 has_member = _has_member_requirements(run_response.requirements or [])
                 has_team_level = _has_team_level_requirements(run_response.requirements or [])
 
