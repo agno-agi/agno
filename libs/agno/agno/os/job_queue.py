@@ -1397,7 +1397,17 @@ async def araise_if_ticket_owns_continue(
     from fastapi import HTTPException
 
     try:
-        job = await queue_worker.store.get_job(run_id)
+        # STRICT lookup: the production adapters' plain get_job swallows
+        # store failures into None, and None here means "no ticket - allow
+        # the inline door", which reopens the cross-door double-execution
+        # race during exactly the outages this gate exists for. Third-party
+        # stores without the strict variant keep best-effort semantics.
+        store = queue_worker.store
+        strict = getattr(store, "get_job_strict", None)
+        if callable(strict):
+            job = await strict(run_id)
+        else:
+            job = await store.get_job(run_id)
     except Exception:
         raise HTTPException(
             status_code=503,

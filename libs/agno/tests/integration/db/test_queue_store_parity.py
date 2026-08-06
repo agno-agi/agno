@@ -360,3 +360,16 @@ class TestContractTupleValidation:
 
         resolved = resolve_queue_store(QueueConfig(durable=True, db=InMemoryQueueStore()), default_db=None)
         assert isinstance(resolved, InMemoryQueueStore)
+
+
+class TestStrictLookupParity:
+    @pytest.mark.asyncio
+    async def test_get_job_strict_reads_like_get_job(self, store):
+        """Every built-in store carries the failure-propagating lookup that
+        the continue-ownership gate prefers. Happy-path semantics are
+        identical to get_job (job dict, None for missing); only failure
+        behavior differs (propagate vs swallow), covered by the gate's own
+        outage tests."""
+        await store.enqueue_job(make_job("r1"))
+        assert (await store.get_job_strict("r1"))["id"] == "r1"
+        assert await store.get_job_strict("nope") is None

@@ -5088,6 +5088,19 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_error(f"Job queue store: swept-job terminalization failed for job {job_id} (worker={worker_id}): {e}")
             return False
 
+    async def get_job_strict(self, job_id: str) -> Optional[Dict[str, Any]]:
+        """Failure-propagating lookup: None means exactly "no such ticket".
+        Fail-closed consumers (the continue-ownership gate) must not read a
+        store outage as "no ticket" - get_job's lenient catch below does
+        exactly that, which is correct for its many fail-open readers and
+        wrong for the gate."""
+        table = await self._get_table(table_type="jobs")
+        if table is None:
+            raise RuntimeError(f"Job queue store: jobs table unavailable for strict lookup of {job_id}")
+        async with self.async_session_factory() as sess:
+            row = (await sess.execute(select(table).where(table.c.id == job_id))).fetchone()
+            return dict(row._mapping) if row is not None else None
+
     async def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
         try:
             table = await self._get_table(table_type="jobs")

@@ -220,6 +220,15 @@ class InMemoryQueueStore:
             job = self._jobs.get(job_id)
             return dict(job) if job is not None else None
 
+    async def get_job_strict(self, job_id: str) -> Optional[Dict[str, Any]]:
+        """Like get_job, but store failures PROPAGATE instead of reading as
+        None. None means exactly "no such ticket". Fail-closed consumers
+        (the continue-ownership gate) need the distinction: during a store
+        outage, "no ticket" must not be inferred from "could not look" -
+        that inference reopens the cross-door double-execution race the
+        gate exists to close. In-memory cannot fail, so this is get_job."""
+        return await self.get_job(job_id)
+
     async def count_queued_jobs(self) -> int:
         async with self._lock:
             return sum(1 for j in self._jobs.values() if j["status"] == "queued")

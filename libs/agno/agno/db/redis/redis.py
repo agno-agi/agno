@@ -3076,6 +3076,12 @@ class RedisDb(BaseDb):
     def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
         return self._q_load_job(job_id)
 
+    def get_job_strict(self, job_id: str) -> Optional[Dict[str, Any]]:
+        """Failure-propagating lookup for fail-closed consumers (see the
+        in-memory store's docstring). The plain load already propagates
+        Redis errors; the explicit method makes the contract visible."""
+        return self._q_load_job(job_id)
+
     def count_queued_jobs(self) -> int:
         return int(self.redis_client.zcard(self._q_key("queued")))
 

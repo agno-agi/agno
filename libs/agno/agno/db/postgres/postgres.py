@@ -6438,6 +6438,16 @@ class PostgresDb(BaseDb):
             log_error(f"Job queue store: swept-job terminalization failed for job {job_id} (worker={worker_id}): {e}")
             return False
 
+    def get_job_strict(self, job_id: str) -> Optional[Dict[str, Any]]:
+        """Failure-propagating lookup - sync twin of the async adapter's
+        get_job_strict; see that docstring."""
+        table = self._get_table(table_type="jobs")
+        if table is None:
+            raise RuntimeError(f"Job queue store: jobs table unavailable for strict lookup of {job_id}")
+        with self.Session() as sess:
+            row = sess.execute(select(table).where(table.c.id == job_id)).fetchone()
+            return dict(row._mapping) if row is not None else None
+
     def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
         try:
             table = self._get_table(table_type="jobs")
