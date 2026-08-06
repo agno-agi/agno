@@ -483,9 +483,7 @@ class StudioRunnerTools(Toolkit):
             if executor is not None:
                 children.append(executor)
         for attribute in ("steps", "else_steps", "choices"):
-            branch = getattr(node, attribute, None)
-            if isinstance(branch, list):
-                children.extend(branch)
+            children.extend(StudioRunnerTools._branch_items(getattr(node, attribute, None)))
         return children
 
     @staticmethod
@@ -517,6 +515,19 @@ class StudioRunnerTools(Toolkit):
         return StudioRunnerTools._step_list_divergence(
             getattr(original, "steps", None), getattr(fresh, "steps", None), depth
         )
+
+    @staticmethod
+    def _branch_items(value: Any) -> List[Any]:
+        """A step container's children, whether it holds a list or a single step.
+
+        ``steps=`` takes a list, one compound step (``Steps(...)``), or a
+        callable factory. A factory is not materialized here, so it contributes
+        nothing, the way every other walk in this file treats one."""
+        if isinstance(value, list):
+            return value
+        if value is None or callable(value):
+            return []
+        return [value]
 
     @staticmethod
     def _is_executor(node: Any) -> bool:
@@ -552,12 +563,15 @@ class StudioRunnerTools(Toolkit):
             # _require_inspectable_depth refuses before a real graph gets here,
             # so this is only the cycle guard.
             return None
-        if not isinstance(original_steps, list):
+        original_items = StudioRunnerTools._branch_items(original_steps)
+        if not original_items:
+            # Nothing declared, so nothing to lose. An empty branch list is a
+            # normal shape (Condition(else_steps=[])), not a dropped one.
             return None
-        if not isinstance(fresh_steps, list) or len(fresh_steps) != len(original_steps):
-            found = len(fresh_steps) if isinstance(fresh_steps, list) else "none"
-            return f"step count changed ({len(original_steps)} -> {found})"
-        for original_step, fresh_step in zip(original_steps, fresh_steps):
+        fresh_items = StudioRunnerTools._branch_items(fresh_steps)
+        if len(fresh_items) != len(original_items):
+            return f"step count changed ({len(original_items)} -> {len(fresh_items)})"
+        for original_step, fresh_step in zip(original_items, fresh_items):
             label = getattr(original_step, "name", None) or getattr(original_step, "id", None) or "?"
             # A workflow takes a bare agent, team or workflow as a step, so the
             # item itself can be the executor rather than a wrapper holding one.
@@ -995,9 +1009,21 @@ class StudioRunnerTools(Toolkit):
             return
         seen.add(key)
         rebuilt = self._components_by_id(component)
+        registered = {
+            instance_id
+            for instance_id in (getattr(instance, "id", None) for instance in self._registry_instances())
+            if isinstance(instance_id, str)
+        }
         for ref_type, ref_id in _component_references(component_type, config):
             target = rebuilt.get((ref_type, ref_id))
             if target is None:
+                continue
+            if ref_id in registered:
+                # from_dict resolves a member or step executor from the registry
+                # before the database, so this object was never built from the
+                # stored config and does not have to match it: a live toolkit is
+                # one object where the config lists its eight functions.
+                # _require_faithful_registry_copies judges this one instead.
                 continue
             try:
                 stored_type = ComponentType(ref_type)
@@ -1127,14 +1153,19 @@ class StudioRunnerTools(Toolkit):
         nested: List[str] = []
 
         def walk(value: Any) -> None:
-            if isinstance(value, dict):
-                if value.get("workflow_id"):
-                    nested.append(str(value["workflow_id"]))
-                for child in value.values():
-                    walk(child)
-            elif isinstance(value, list):
+            if isinstance(value, list):
                 for child in value:
                     walk(child)
+                return
+            if not isinstance(value, dict):
+                return
+            if value.get("workflow_id"):
+                nested.append(str(value["workflow_id"]))
+            # Only a step's own key marks a nested workflow. A step also carries
+            # free-form user JSON (a human_review input schema, say), so walking
+            # every value would refuse on a field that merely shares the name.
+            for branch in ("steps", "else_steps", "choices"):
+                walk(value.get(branch))
 
         walk(config.get("steps"))
         if nested:
