@@ -225,11 +225,11 @@ class TestIdentityThreading:
             "content": "done",
         }
 
-    def test_sessionless_run_uses_the_components_own_session(self, db):
+    def test_sessionless_run_passes_no_session_id(self, db):
         # A caller with no session of its own -- a direct Python call, which takes
-        # no session argument -- leaves session_id unset so the component runs on
-        # its own default session. Minting one per call would make every call in a
-        # script a cold start, with no way to opt out.
+        # no session argument -- passes session_id=None to the target. The target
+        # is a per-call copy or rebuild, so each such run starts a session of its
+        # own; a component constructed with an explicit session_id keeps using it.
         stub = _StubAgent()
         runner = StudioRunnerTools(db=db, agents_list=[stub])
         out = _loads(runner.run_agent("stub", "hi"))
@@ -294,6 +294,28 @@ class TestIdentityThreading:
         await runner.arun_workflow("stub-wf", "go")
         assert team.seen is not None and team.seen["stream"] is False
         assert wf.seen is not None and wf.seen["stream"] is False
+
+    @pytest.mark.asyncio
+    async def test_arun_team_and_workflow_thread_identity(self, db):
+        # Whole-dict asserts, mirroring the sync twins: a dropped user_id or
+        # session on the async path must fail, not pass by partial match.
+        team = _StubTeam()
+        wf = _StubWorkflow()
+        runner = StudioRunnerTools(db=db, teams_list=[team], workflows_list=[wf])
+        await runner.arun_team("stub-team", "hi", _agno_run_context=_context())
+        await runner.arun_workflow("stub-wf", "go", _agno_run_context=_context())
+        assert team.seen == {
+            "message": "hi",
+            "stream": False,
+            "user_id": "ash",
+            "session_id": _sub_session("team", "stub-team"),
+        }
+        assert wf.seen == {
+            "input": "go",
+            "stream": False,
+            "user_id": "ash",
+            "session_id": _sub_session("workflow", "stub-wf"),
+        }
 
 
 # ----------------------------------------------------------------------
@@ -704,6 +726,75 @@ class TestDispatchIsolation:
         assert "lost its identity" in out["error"]
         assert downcast.seen is None
 
+    def test_copy_dropping_model_instructions_or_member_isolation_refuses_dispatch(self, db):
+        # The fidelity loop checks model, instructions and member isolation, not
+        # only id and name: a rebuild that keeps the identity fields but drops
+        # what the component thinks with -- or shares its member objects -- must
+        # not be dispatched silently degraded.
+        class _ModelDroppingAgent(_StubAgent):
+            model = "gpt-x"
+
+            def deep_copy(self):
+                clone = object.__new__(type(self))
+                clone.__dict__ = dict(self.__dict__)
+                clone.model = None
+                return clone
+
+        class _InstructionsDroppingAgent(_StubAgent):
+            instructions = "be nice"
+
+            def deep_copy(self):
+                clone = object.__new__(type(self))
+                clone.__dict__ = dict(self.__dict__)
+                clone.instructions = None
+                return clone
+
+        class _MemberSharingTeam(_StubTeam):
+            def __init__(self):
+                super().__init__()
+                self.members = [_StubAgent()]
+
+            def deep_copy(self):
+                clone = object.__new__(type(self))
+                clone.__dict__ = dict(self.__dict__)
+                return clone
+
+        for agent_cls in (_ModelDroppingAgent, _InstructionsDroppingAgent):
+            agent = agent_cls()
+            runner = StudioRunnerTools(db=db, agents_list=[agent])
+            out = _loads(runner.run_agent("stub", "hi"))
+            assert "lost its identity" in out["error"]
+            assert agent.seen is None
+
+        team = _MemberSharingTeam()
+        runner = StudioRunnerTools(db=db, teams_list=[team])
+        out = _loads(runner.run_team("stub-team", "hi"))
+        assert "still shares member 'stub' with the original" in out["error"]
+        assert team.seen is None
+
+    def test_fresh_copy_of_real_components_preserves_fidelity(self, db):
+        # Pins the agno deep_copy <-> _fresh_copy contract with the real
+        # classes: a dispatch copy is distinct, keeps what the component says
+        # and thinks with, and holds no shared member objects.
+        from agno.agent.agent import Agent as AgentClass
+        from agno.team.team import Team as TeamClass
+
+        member_a = AgentClass(id="m-a", name="A")
+        member_b = AgentClass(id="m-b", name="B")
+        agent = AgentClass(id="real-agent", name="Real", instructions="be real")
+        team = TeamClass(id="real-team", name="Real Team", members=[member_a, member_b])
+        runner = StudioRunnerTools(db=db, agents_list=[agent], teams_list=[team])
+
+        fresh_agent = runner._agent_for_run("real-agent")
+        assert fresh_agent is not None and fresh_agent is not agent
+        assert (fresh_agent.id, fresh_agent.name, fresh_agent.instructions) == ("real-agent", "Real", "be real")
+
+        fresh_team = runner._team_for_run("real-team")
+        assert fresh_team is not None and fresh_team is not team
+        assert fresh_team.id == "real-team"
+        assert fresh_team.members
+        assert all(member is not member_a and member is not member_b for member in fresh_team.members)
+
     def test_blank_copy_with_no_id_refuses_dispatch(self, db):
         # A subclass whose __init__ hides the dataclass fields rebuilds blank.
         # With no id on either side the id comparison is vacuous; the name
@@ -963,6 +1054,40 @@ class TestStudioEmbedding:
         out = _loads(runner.run_team("crew", "hi"))
         assert "registry" in out.get("error", "")
 
+    def test_incomplete_registry_refuses_a_tool_bearing_nested_member(self, db):
+        # A member and a step executor rebuild from configs of their own, so the
+        # parent's config check says nothing about them: with a registry that
+        # holds the model but not the tool, the nested agent rebuilds with
+        # entrypoint=None tools and would otherwise run stripped of them.
+        from agno.tools.calculator import CalculatorTools
+
+        armed_registry = Registry(
+            name="Armed Registry",
+            models=[OpenAIResponses(id="gpt-5.4")],
+            tools=[CalculatorTools()],
+            dbs=[db],
+        )
+        studio = StudioTools(registry=armed_registry, db=db, teams=True, workflows=True)
+        studio.create_agent(name="Armed", instructions="i", model_id="gpt-5.4", tool_names=["calculator"])
+        studio.create_team(name="Crew", instructions="i", member_ids=["armed"], model_id="gpt-5.4")
+        studio.create_workflow(name="Flow", description="d", step_specs=[{"name": "s1", "agent_id": "armed"}])
+
+        toolless_registry = Registry(name="Toolless", models=[OpenAIResponses(id="gpt-5.4")], dbs=[db])
+        runner = StudioRunnerTools(registry=toolless_registry, db=db)
+
+        out = _loads(runner.run_team("crew", "hi"))
+        # The refusal names the member and the tool functions it lost.
+        assert "nested component armed" in out.get("error", "")
+        assert "add" in out.get("error", "")
+
+        out = _loads(runner.run_workflow("flow", "go"))
+        assert "nested component armed" in out.get("error", "")
+
+        # The complete registry still dispatches: the guard refuses degradation,
+        # not composition.
+        complete = StudioRunnerTools(registry=armed_registry, db=db)
+        assert complete._team_for_run("crew") is not None
+
     def test_registry_less_runner_refuses_workflow_with_code_defined_step(self, registry, db):
         code_agent = _StubAgent()
         studio = StudioTools(registry=registry, db=db, workflows=True, agents_list=[code_agent])
@@ -990,19 +1115,74 @@ class TestStudioEmbedding:
         assert "knowledge" in out.get("error", "")
         assert "registry" in out.get("error", "")
 
-    def test_registry_less_runner_refuses_team_with_idless_member(self, registry, db):
-        # A code-defined member that never ran serializes as agent_id null;
-        # only the registry can supply it, so the rebuild must refuse.
+    def test_create_refuses_an_idless_member_or_step(self, registry, db):
+        # Persisting a reference to a code-defined component with no id would
+        # store agent_id null; on reload a registry lookup by id=None binds
+        # whichever id-less component it sees first. Refuse at write time.
         from agno.agent.agent import Agent as AgentClass
 
         helper = AgentClass(name="Helper", model=OpenAIResponses(id="gpt-5.4"))
-        studio = StudioTools(registry=registry, db=db, teams=True, agents_list=[helper])
+        studio = StudioTools(registry=registry, db=db, teams=True, workflows=True, agents_list=[helper])
+
         created = _loads(studio.create_team(name="crew", instructions="i", member_ids=["Helper"], model_id="gpt-5.4"))
+        assert "no id" in created.get("error", "")
+        assert db.get_component("crew") is None
+
+        created = _loads(
+            studio.create_workflow(name="flow", description="d", step_specs=[{"name": "s1", "agent_id": "Helper"}])
+        )
+        assert "no id" in created.get("error", "")
+
+        # An empty-string id is refused the same way: the write guard matches
+        # the load guard's falsiness test, or the component is created and
+        # listed but never loadable.
+        blank = AgentClass(id="", name="Blank", model=OpenAIResponses(id="gpt-5.4"))
+        studio_blank = StudioTools(registry=registry, db=db, teams=True, agents_list=[blank])
+        created = _loads(
+            studio_blank.create_team(name="crew2", instructions="i", member_ids=["Blank"], model_id="gpt-5.4")
+        )
+        assert "no id" in created.get("error", "")
+
+    def test_edit_team_refuses_to_drop_unresolvable_members(self, registry, db):
+        # Team.from_dict resolves members through the registry and db only; a
+        # code-defined agents_list member is invisible to it, so an unrelated
+        # edit must refuse rather than publish the silently shrunken roster.
+        from agno.agent.agent import Agent as AgentClass
+
+        worker = AgentClass(id="worker", name="Worker", model=OpenAIResponses(id="gpt-5.4"))
+        studio = StudioTools(registry=registry, db=db, teams=True, agents_list=[worker])
+        created = _loads(studio.create_team(name="crew", instructions="i", member_ids=["worker"], model_id="gpt-5.4"))
         assert "error" not in created
 
-        out = _loads(StudioRunnerTools(db=db).run_team("crew", "hi"))
-        assert "registry" in out.get("error", "")
-        assert "not found" not in out.get("error", "")
+        out = _loads(studio.edit_team("crew", instructions="new"))
+        assert "would drop members" in out.get("error", "")
+
+        # The stored roster is intact and still names the member.
+        row = db.get_config(component_id="crew")
+        stored = row.get("config") if isinstance(row, dict) else {}
+        assert (stored or {}).get("members"), "edit must not have persisted a memberless version"
+
+    def test_runner_refuses_team_with_idless_member(self, registry, db):
+        # A legacy or externally persisted config can still carry agent_id null
+        # (create_team now refuses to write one), and the dispatch guard must
+        # refuse it with or without a registry.
+        config = {
+            "id": "crew",
+            "name": "crew",
+            "model": {"name": "OpenAIResponses", "id": "gpt-5.4", "provider": "OpenAI"},
+            "instructions": "i",
+            "members": [{"type": "agent", "agent_id": None}],
+        }
+        db.upsert_component(component_id="crew", component_type="team", name="crew")
+        db.upsert_config(component_id="crew", config=config, stage="published")
+
+        # No registry makes a null reference resolvable, so the refusal does
+        # not depend on one: a lookup by None matches the first component that
+        # also has no id.
+        for runner in (StudioRunnerTools(db=db), StudioRunnerTools(registry=registry, db=db)):
+            out = _loads(runner.run_team("crew", "hi"))
+            assert "had no id when it was saved" in out.get("error", "")
+            assert "not found" not in out.get("error", "")
 
     def test_unrebuildable_db_reference_warns_and_falls_back(self, db):
         # A declared db that neither db_from_dict nor the registry can supply
@@ -1248,3 +1428,313 @@ class TestResultMedia:
     def test_no_media_key_when_the_run_produced_none(self):
         payload = _loads(StudioRunnerTools._run_payload("agent_id", "stub", _StubRunOutput()))
         assert "media" not in payload
+
+
+class TestMemberIsolation:
+    def test_member_without_deep_copy_is_shared_by_design(self, db):
+        # A remote proxy holds no per-run state, so Team.deep_copy shares it.
+        # The dispatch guard must not read that as a failed copy.
+        from agno.agent.agent import Agent as AgentClass
+        from agno.agent.remote import RemoteAgent
+        from agno.team.team import Team as TeamClass
+
+        remote = RemoteAgent(base_url="http://remote:7777", agent_id="explorer", timeout=60.0)
+        local = AgentClass(id="summarizer", name="Summarizer", model=OpenAIResponses(id="gpt-5.4"))
+        team = TeamClass(
+            id="distributed-crew", name="Distributed Crew", model=OpenAIResponses(id="gpt-5.4"), members=[local, remote]
+        )
+
+        fresh = StudioRunnerTools._fresh_copy(team)
+        assert fresh is not team
+        assert fresh.members[1] is remote
+
+    def test_shared_member_nested_in_a_team_of_teams_refuses_dispatch(self, db):
+        # An inner team whose own member copy failed comes back as a new object
+        # holding the shared grandchild, so the check has to descend.
+        from agno.agent.agent import Agent as AgentClass
+        from agno.team.team import Team as TeamClass
+
+        class _UncopyableAgent(AgentClass):
+            def __init__(self, topic, **kwargs):
+                self.topic = topic
+                super().__init__(**kwargs)
+
+        grandchild = _UncopyableAgent("ai", id="grandchild", name="Grandchild", model=OpenAIResponses(id="gpt-5.4"))
+        inner = TeamClass(id="inner", name="Inner", model=OpenAIResponses(id="gpt-5.4"), members=[grandchild])
+        outer = TeamClass(id="outer", name="Outer", model=OpenAIResponses(id="gpt-5.4"), members=[inner])
+
+        out = _loads(StudioRunnerTools(db=db, teams_list=[outer]).run_team("outer", "hi"))
+        assert "still shares member 'grandchild'" in out["error"]
+
+    def test_healthy_nested_team_dispatches(self, db):
+        from agno.agent.agent import Agent as AgentClass
+        from agno.team.team import Team as TeamClass
+
+        grandchild = AgentClass(id="gc", name="GC", model=OpenAIResponses(id="gpt-5.4"))
+        inner = TeamClass(id="inner-ok", name="Inner Ok", model=OpenAIResponses(id="gpt-5.4"), members=[grandchild])
+        outer = TeamClass(id="outer-ok", name="Outer Ok", model=OpenAIResponses(id="gpt-5.4"), members=[inner])
+
+        fresh = StudioRunnerTools._fresh_copy(outer)
+        assert fresh.members[0].members[0] is not grandchild
+
+
+class TestIncludeAllComponents:
+    """run_* dispatch what list_* report. Code-defined components arrive through
+    the registry, which is passed so persisted components can rehydrate, so
+    running them is opt-in."""
+
+    @pytest.fixture
+    def registry_with_agent(self, db):
+        from agno.registry import Registry
+
+        return Registry(name="R", dbs=[db], agents=[_StubAgent()])
+
+    def test_registry_component_is_not_listed(self, registry_with_agent, db):
+        runner = StudioRunnerTools(registry=registry_with_agent, db=db)
+        assert _loads(runner.list_agents())["agents"] == []
+
+    def test_registry_component_is_refused_by_default(self, registry_with_agent, db):
+        runner = StudioRunnerTools(registry=registry_with_agent, db=db)
+        error = _loads(runner.run_agent("stub", "hi", _agno_run_context=_context()))["error"]
+        assert "include_all_components" in error
+        assert registry_with_agent.agents[0].seen is None  # never dispatched
+
+    def test_flag_admits_the_registry_component(self, registry_with_agent, db):
+        runner = StudioRunnerTools(registry=registry_with_agent, db=db, include_all_components=True)
+        assert _loads(runner.run_agent("stub", "hi", _agno_run_context=_context()))["agent_id"] == "stub"
+        assert registry_with_agent.agents[0].seen is not None
+
+    def test_explicit_list_needs_no_flag(self, db):
+        # Passing the component IS the allowlist.
+        runner = StudioRunnerTools(db=db, agents_list=[_StubAgent()])
+        assert _loads(runner.run_agent("stub", "hi", _agno_run_context=_context()))["agent_id"] == "stub"
+
+    def test_reads_still_see_the_registry_component(self, registry_with_agent, db):
+        # Only dispatch is gated; get/edit/member resolution keep the full set.
+        runner = StudioRunnerTools(registry=registry_with_agent, db=db)
+        assert runner._find_agent("stub") is registry_with_agent.agents[0]
+        assert runner._find_agent("stub", for_dispatch=True) is None
+
+    def test_studio_tools_keeps_its_reach(self, registry_with_agent, db):
+        # StudioTools holds the registry as its build palette, so its run_* are unchanged.
+        assert StudioTools(registry=registry_with_agent, db=db)._runner_tools.include_all_components is True
+
+
+class TestPartialRegistryFailsClosed:
+    """A registry that is present but incomplete degrades silently in from_dict:
+    an unresolved tool binds to entrypoint=None, a missing schema is deleted."""
+
+    def _config(self, **overrides):
+        config = {"id": "rep", "name": "Rep", "instructions": "help"}
+        config.update(overrides)
+        return config
+
+    def test_unresolved_tool_refuses_dispatch(self, db):
+        from agno.tools.function import Function
+
+        component = type("C", (), {"tools": [Function(name="secret_tool", entrypoint=None)]})()
+        with pytest.raises(Exception) as excinfo:
+            StudioRunnerTools(db=db)._require_faithful_rebuild(
+                component, self._config(tools=[{"name": "secret_tool"}]), "agent", "rep"
+            )
+        assert "secret_tool" in str(excinfo.value)
+
+    def test_dropped_knowledge_refuses_dispatch(self, db):
+        component = type("C", (), {"knowledge": None})()
+        with pytest.raises(Exception) as excinfo:
+            StudioRunnerTools(db=db)._require_faithful_rebuild(
+                component, self._config(knowledge={"name": "handbook"}), "agent", "rep"
+            )
+        assert "handbook" in str(excinfo.value)
+
+    def test_dropped_output_schema_refuses_dispatch(self, db):
+        component = type("C", (), {"output_schema": None})()
+        with pytest.raises(Exception) as excinfo:
+            StudioRunnerTools(db=db)._require_faithful_rebuild(
+                component, self._config(output_schema="Report"), "agent", "rep"
+            )
+        assert "Report" in str(excinfo.value)
+
+    def test_inline_dict_schema_is_not_a_registry_reference(self, db):
+        # Only the string form is a reference; an inline schema carries itself.
+        component = type("C", (), {"output_schema": None})()
+        StudioRunnerTools(db=db)._require_faithful_rebuild(
+            component, self._config(output_schema={"type": "object"}), "agent", "rep"
+        )
+
+    def test_faithful_rebuild_passes(self, db):
+        from agno.tools.function import Function
+
+        component = type(
+            "C",
+            (),
+            {"tools": [Function(name="ok", entrypoint=lambda: None)], "knowledge": object(), "output_schema": dict},
+        )()
+        StudioRunnerTools(db=db)._require_faithful_rebuild(
+            component,
+            self._config(tools=[{"name": "ok"}], knowledge={"name": "kb"}, output_schema="Report"),
+            "agent",
+            "rep",
+        )
+
+    def test_dispatch_of_a_stored_component_refuses_on_a_partial_registry(self, db):
+        """End to end through run_agent, so the check is wired into the load path and
+        not merely available: a tool-bearing component built against a full registry
+        must refuse to run against one that lost the tool, while reads keep working."""
+        from agno.registry import Registry
+        from agno.tools.calculator import CalculatorTools
+
+        full = Registry(name="full", dbs=[db], models=[OpenAIResponses(id="gpt-5.4")], tools=[CalculatorTools()])
+        StudioTools(registry=full, db=db, default_model_id="gpt-5.4").create_agent(
+            name="Calc Agent", instructions="math", model_id="gpt-5.4", tool_names=["calculator"]
+        )
+
+        partial = Registry(name="partial", dbs=[db], models=[OpenAIResponses(id="gpt-5.4")])
+        error = _loads(
+            StudioRunnerTools(registry=partial, db=db).run_agent("calc-agent", "2+2", _agno_run_context=_context())
+        )["error"]
+        assert "calc-agent" in error and "registry" in error
+
+        # The component stays loadable and repairable on the same partial registry.
+        assert _loads(StudioTools(registry=partial, db=db).get_agent("calc-agent"))["id"] == "calc-agent"
+
+    def test_a_component_without_registry_references_is_unaffected(self, db):
+        from agno.registry import Registry
+
+        registry = Registry(name="r", dbs=[db], models=[OpenAIResponses(id="gpt-5.4")])
+        StudioTools(registry=registry, db=db, default_model_id="gpt-5.4").create_agent(
+            name="Plain", instructions="hi", model_id="gpt-5.4"
+        )
+        assert StudioRunnerTools(registry=registry, db=db)._find_agent("plain", for_dispatch=True) is not None
+
+
+class TestMemberStructureFidelity:
+    """Whether a member is aliased is _shared_member's question (TestMemberIsolation).
+    This is the other half: whether the copy holds the same members at all."""
+
+    def test_swapped_member_is_refused(self):
+        from agno.agent import Agent
+        from agno.team import Team
+
+        class SwapsMember(Team):
+            def deep_copy(self, **kwargs):
+                return SwapsMember(id=self.id, name=self.name, members=[Agent(id="impostor", name="Impostor")])
+
+        with pytest.raises(Exception) as excinfo:
+            StudioRunnerTools._fresh_copy(SwapsMember(id="t", name="T", members=[Agent(id="real", name="Real")]))
+        assert "real" in str(excinfo.value)
+
+    def test_dropped_member_is_refused(self):
+        from agno.agent import Agent
+        from agno.team import Team
+
+        class DropsMember(Team):
+            def deep_copy(self, **kwargs):
+                return DropsMember(id=self.id, name=self.name, members=[Agent(id="a", name="A")])
+
+        original = DropsMember(id="t", name="T", members=[Agent(id="a", name="A"), Agent(id="b", name="B")])
+        with pytest.raises(Exception) as excinfo:
+            StudioRunnerTools._fresh_copy(original)
+        assert "member count changed" in str(excinfo.value)
+
+    def test_swap_nested_below_the_first_level_is_refused(self):
+        from agno.agent import Agent
+        from agno.team import Team
+
+        class SwapsGrandchild(Team):
+            def deep_copy(self, **kwargs):
+                inner = Team(id="inner", name="Inner", members=[Agent(id="impostor", name="Impostor")])
+                return SwapsGrandchild(id=self.id, name=self.name, members=[inner])
+
+        original = SwapsGrandchild(
+            id="outer", name="Outer", members=[Team(id="inner", name="Inner", members=[Agent(id="real", name="Real")])]
+        )
+        with pytest.raises(Exception) as excinfo:
+            StudioRunnerTools._fresh_copy(original)
+        assert "real" in str(excinfo.value)
+
+    def test_workflow_step_whose_executor_holds_a_shared_member_is_refused(self, db):
+        """A step whose team is a fresh copy still leaks if one of that team's own
+        members is the registry singleton, so the check descends into the executor."""
+        from agno.agent import Agent
+        from agno.registry import Registry
+        from agno.team import Team
+
+        shared_member = Agent(id="shared", name="Shared")
+        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db], agents=[shared_member]), db=db)
+
+        step = type("S", (), {"name": "s", "agent": None, "team": Team(id="t", name="T", members=[shared_member])})()
+        with pytest.raises(Exception) as excinfo:
+            runner._require_isolated_steps(type("W", (), {"steps": [step]})(), "wf")
+        assert "shared" in str(excinfo.value)
+
+    def test_step_member_without_deep_copy_is_shared_by_design(self, db):
+        """The step check descends into an executor's members, so it has to honour the
+        same rule _shared_member does: a member with no deep_copy holds no per-run
+        state to isolate, and refusing it would make a remote member undispatchable."""
+        from agno.agent import Agent
+        from agno.registry import Registry
+        from agno.team import Team
+
+        class _RemoteLike(Agent):
+            deep_copy = None  # a remote proxy: nothing to isolate
+
+        remote = _RemoteLike(id="remote", name="Remote")
+        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db], agents=[remote]), db=db)
+        step = type("S", (), {"name": "s", "agent": None, "team": Team(id="t", name="T", members=[remote])})()
+        runner._require_isolated_steps(type("W", (), {"steps": [step]})(), "wf")
+
+    def test_step_executor_itself_is_refused_without_that_exemption(self, db):
+        from agno.agent import Agent
+        from agno.registry import Registry
+
+        class _RemoteLike(Agent):
+            deep_copy = None
+
+        remote = _RemoteLike(id="remote", name="Remote")
+        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db], agents=[remote]), db=db)
+        step = type("S", (), {"name": "s", "agent": remote, "team": None})()
+        with pytest.raises(Exception):
+            runner._require_isolated_steps(type("W", (), {"steps": [step]})(), "wf")
+
+    def test_copy_refusal_reaches_the_caller_as_its_own_message(self, db):
+        """DispatchCopyError is a deliberate refusal with an actionable message, so it
+        must not be wrapped as a resolve failure and logged with a traceback."""
+        from agno.agent import Agent
+
+        class _Broken(Agent):
+            def deep_copy(self, **kwargs):
+                return self
+
+        runner = StudioRunnerTools(db=db, agents_list=[_Broken(id="b", name="B")])
+        error = _loads(runner.run_agent("b", "x", _agno_run_context=_context()))["error"]
+        assert error.startswith("deep_copy of 'b'")
+
+    def test_an_ambiguous_registry_name_stays_ambiguous(self, db):
+        """The undispatchable re-lookup must not swallow ambiguity into "not found"."""
+        from agno.agent import Agent
+        from agno.registry import Registry
+
+        registry = Registry(name="R", dbs=[db], agents=[Agent(id="a1", name="Dup"), Agent(id="a2", name="Dup")])
+        runner = StudioRunnerTools(registry=registry, db=db)
+        error = _loads(runner.run_agent("Dup", "x", _agno_run_context=_context()))["error"]
+        assert "Ambiguous" in error and "a1" in error and "a2" in error
+
+    def test_a_null_member_id_still_loads_for_reads_and_edits(self, db):
+        """The refusal is what stops the run; it must not also stop the component
+        loading, or the bad reference can never be seen and repaired. Same split
+        _require_faithful_rebuild uses."""
+        config = {"id": "squad", "name": "Squad", "members": [{"agent_id": None, "name": "Ghost"}]}
+        runner = StudioRunnerTools(db=db)
+
+        # Dispatch refuses.
+        with pytest.raises(Exception) as excinfo:
+            runner._require_resolvable_member_ids("team", "squad", config)
+        assert "no id" in str(excinfo.value)
+
+        # The read path does not call it at all.
+        import inspect
+
+        source = inspect.getsource(StudioRunnerTools._load_team_from_db)
+        before_call = source.split("_require_resolvable_member_ids")[0]
+        assert "if for_dispatch:" in before_call

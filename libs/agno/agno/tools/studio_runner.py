@@ -15,15 +15,26 @@ Typical use:
         tools=[StudioRunnerTools(registry=registry, db=db)],
     )
 
+Mount it INSTEAD of StudioTools, not beside it. StudioTools embeds this same
+toolkit and already exposes list_agents/list_teams/list_workflows/run_agent, and
+agno's tool namespace is flat: co-mounting collapses the overlapping names to
+whichever toolkit the tools list holds first, and a warning names the skipped
+one. Two runners scoped to different component lists collapse the same way, so
+the loser's allowlist becomes unreachable. ``name=`` names the toolkit, not its
+functions, so it does not disambiguate them.
+
 Semantics:
     * Runs execute as the current user: the wielding component's run_context is
       injected and its user_id passed through, so per-user state (memory,
       learning) lands on the human who asked, never on a service default.
-    * Each target keeps one session per calling conversation
-      ("<caller_session_id>--<component_type>--<component_id>"), so repeat
-      runs continue their context instead of starting cold. A caller with no
-      session of its own (a direct Python call) leaves the session unset, so
-      the component runs on its own default session.
+    * Each target keeps one session per calling conversation: the session id
+      is a digest keyed on the caller's session id, the component type and
+      the component id (see _sub_session_id), so repeat runs continue their
+      context instead of starting cold. A caller with no session of its own
+      (a direct Python call) passes no session id -- and because dispatch
+      runs on a per-call copy or rebuild, each such run starts a session of
+      its own. Construct the component with an explicit session_id to keep
+      continuity across sessionless calls.
     * Code-defined components are dispatched on a fresh deep copy per run, so
       per-run mutation of a shared instance never bleeds across callers.
       DB-loaded components are reconstructed per call already.
@@ -43,15 +54,24 @@ Semantics:
     * Persisted components rebuild from their stored config. Registry-backed
       references (tools, knowledge, function steps, schemas, code-defined
       members) require the registry: without it the runner refuses to run a
-      silently degraded component. Member references resolve at their current
+      silently degraded component. A registry that is present but does not
+      hold a referenced piece is refused the same way -- the rebuilt component
+      is checked against its own config before dispatch, so an unresolved tool
+      or a dropped schema stops the run rather than quietly changing what it
+      does. Reads and edits load it either way, so it stays repairable.
+      Member references resolve at their current
       published version. Model connection settings, credentials and a
       declared db are not fully persisted, so a rebuild can fall back to
       provider defaults and to the catalog db; the runner logs a warning for
       the dispatched agent's or team's own model and for a dropped db.
-    * list_* read the database only (id, name, description, newest first):
-      code-defined components are the wielding platform's own and are not
-      re-listed. 'total' reports the full DB count, so a capped list is
-      visible as capped.
+    * list_* read the database only (id, name, description, newest first), and
+      run_* dispatch that same set: a component you cannot list is a component
+      you cannot run. Code-defined components arrive through the registry,
+      which is passed so persisted components can rehydrate rather than to
+      grant the runner the run of the application, so dispatching them is
+      opt-in via include_all_components. An explicit agents_list/teams_list/
+      workflows_list is itself the allowlist and always runs. 'total' reports
+      the full DB count, so a capped list is visible as capped.
 
 StudioTools embeds this toolkit for its own run_* tools and delegates its
 component lookups here, so a builder's smoke-test runs and a dispatcher's
@@ -89,7 +109,14 @@ def _slugify(name: str) -> str:
     return slug.strip("-") or "component"
 
 
-class AmbiguousComponentNameError(ValueError):
+class StudioRunnerError(Exception):
+    """Base class for the runner's deliberate refusals.
+
+    Each carries an actionable message meant for the caller (model or code)
+    rather than the log, so the tools catch this one name."""
+
+
+class AmbiguousComponentNameError(StudioRunnerError, ValueError):
     """A display name matched more than one component of the requested type.
 
     The message lists the matching ids so the caller (model or code) can retry
@@ -103,7 +130,7 @@ class AmbiguousComponentNameError(ValueError):
         )
 
 
-class ComponentNeedsRegistryError(RuntimeError):
+class ComponentNeedsRegistryError(StudioRunnerError, RuntimeError):
     """The stored config references registry-backed pieces that cannot be
     reconstructed without the registry.
 
@@ -111,7 +138,15 @@ class ComponentNeedsRegistryError(RuntimeError):
     knowledge and function steps missing, code-defined members lost)."""
 
 
-class DispatchCopyError(RuntimeError):
+class ComponentNotDispatchableError(StudioRunnerError, RuntimeError):
+    """The identifier names a component this runner may read but not run.
+
+    Code-defined components reach the runner through the registry, which is
+    passed so persisted components can rehydrate. Running them is opt-in
+    (``include_all_components``)."""
+
+
+class DispatchCopyError(StudioRunnerError, RuntimeError):
     """A component could not be copied faithfully for dispatch.
 
     The runner refuses a copy that fails its fidelity checks (see
@@ -185,6 +220,7 @@ class StudioRunnerTools(Toolkit):
         agents: bool = True,
         teams: bool = True,
         workflows: bool = True,
+        include_all_components: bool = False,
         list_limit: int = 100,
         name: str = "studio_runners",
         **kwargs: Any,
@@ -199,6 +235,7 @@ class StudioRunnerTools(Toolkit):
         self.enable_agents = agents
         self.enable_teams = teams
         self.enable_workflows = workflows
+        self.include_all_components = include_all_components
         self.list_limit = list_limit
 
         tools: List[Callable] = []
@@ -248,23 +285,36 @@ class StudioRunnerTools(Toolkit):
     # builder and the runner resolve components one way.
     # ------------------------------------------------------------------
 
-    def _iter_agents(self) -> List["Agent"]:
-        """Code-defined agents: passed-in list, else registry."""
+    def _iter_agents(self, for_dispatch: bool = False) -> List["Agent"]:
+        """Code-defined agents: passed-in list, else registry.
+
+        The registry half is opt-in for dispatch (``include_all_components``).
+        A registry is passed so persisted components can rehydrate their tools
+        and members, which is not the same as consenting to run every agent the
+        application happens to define -- and ``list_*`` report the database
+        only, so those agents are reachable without being discoverable. An
+        explicit ``agents_list`` is itself the allowlist and always runs.
+        Lookups that are not dispatch (get, edit, members, steps) see the full
+        set either way."""
         if self.agents_list is not None:
             return list(self.agents_list)
+        if for_dispatch and not self.include_all_components:
+            return []
         return list(self.registry.agents) if self.registry is not None else []
 
-    def _iter_teams(self) -> List["Team"]:
-        """Code-defined teams: passed-in list, else registry."""
+    def _iter_teams(self, for_dispatch: bool = False) -> List["Team"]:
+        """Code-defined teams: passed-in list, else registry (see _iter_agents)."""
         if self.teams_list is not None:
             return list(self.teams_list)
+        if for_dispatch and not self.include_all_components:
+            return []
         return list(self.registry.teams) if self.registry is not None else []
 
-    def _iter_workflows(self) -> List["Workflow"]:
-        """Code-defined workflows."""
+    def _iter_workflows(self, for_dispatch: bool = False) -> List["Workflow"]:
+        """Code-defined workflows. Always an explicit list, so never gated."""
         return list(self.workflows_list) if self.workflows_list is not None else []
 
-    def _find_agent(self, agent_id: str) -> Optional["Agent"]:
+    def _find_agent(self, agent_id: str, for_dispatch: bool = False) -> Optional["Agent"]:
         """Lookup order: code-defined exact id, DB exact id, code-defined display
         name, DB display name (ambiguous -> AmbiguousComponentNameError), then
         the identifier's slug as an id. Exact ids always win over names.
@@ -272,69 +322,71 @@ class StudioRunnerTools(Toolkit):
         Split into an exact tier and a name tier so cross-type callers
         (StudioTools._resolve_members) can try exact ids across both types
         before any name matching."""
-        agent = self._find_agent_by_exact_id(agent_id)
+        agent = self._find_agent_by_exact_id(agent_id, for_dispatch=for_dispatch)
         if agent is not None:
             return agent
         if self._db_component_exists("agent", agent_id):
             # The id names a stored component whose config is missing or broken;
             # never reinterpret an exact id as a display name.
             return None
-        return self._find_agent_by_name(agent_id)
+        return self._find_agent_by_name(agent_id, for_dispatch=for_dispatch)
 
-    def _find_agent_by_exact_id(self, agent_id: str) -> Optional["Agent"]:
-        for a in self._iter_agents():
+    def _find_agent_by_exact_id(self, agent_id: str, for_dispatch: bool = False) -> Optional["Agent"]:
+        for a in self._iter_agents(for_dispatch=for_dispatch):
             if getattr(a, "id", None) == agent_id:
                 return a
-        return self._load_agent_from_db(agent_id)
+        return self._load_agent_from_db(agent_id, for_dispatch=for_dispatch)
 
-    def _find_agent_by_name(self, agent_id: str) -> Optional["Agent"]:
-        named_agents = [a for a in self._iter_agents() if getattr(a, "name", None) == agent_id]
+    def _find_agent_by_name(self, agent_id: str, for_dispatch: bool = False) -> Optional["Agent"]:
+        named_agents = [a for a in self._iter_agents(for_dispatch=for_dispatch) if getattr(a, "name", None) == agent_id]
         if len(named_agents) > 1:
             raise AmbiguousComponentNameError("agent", agent_id, [str(getattr(a, "id", "")) for a in named_agents])
         if named_agents:
             return named_agents[0]
         resolved = self._resolve_db_id_by_name_or_slug("agent", agent_id)
-        return self._load_agent_from_db(resolved) if resolved is not None else None
+        return self._load_agent_from_db(resolved, for_dispatch=for_dispatch) if resolved is not None else None
 
-    def _find_team(self, team_id: str) -> Optional["Team"]:
-        team = self._find_team_by_exact_id(team_id)
+    def _find_team(self, team_id: str, for_dispatch: bool = False) -> Optional["Team"]:
+        team = self._find_team_by_exact_id(team_id, for_dispatch=for_dispatch)
         if team is not None:
             return team
         if self._db_component_exists("team", team_id):
             return None
-        return self._find_team_by_name(team_id)
+        return self._find_team_by_name(team_id, for_dispatch=for_dispatch)
 
-    def _find_team_by_exact_id(self, team_id: str) -> Optional["Team"]:
-        for t in self._iter_teams():
+    def _find_team_by_exact_id(self, team_id: str, for_dispatch: bool = False) -> Optional["Team"]:
+        for t in self._iter_teams(for_dispatch=for_dispatch):
             if getattr(t, "id", None) == team_id:
                 return t
-        return self._load_team_from_db(team_id)
+        return self._load_team_from_db(team_id, for_dispatch=for_dispatch)
 
-    def _find_team_by_name(self, team_id: str) -> Optional["Team"]:
-        named_teams = [t for t in self._iter_teams() if getattr(t, "name", None) == team_id]
+    def _find_team_by_name(self, team_id: str, for_dispatch: bool = False) -> Optional["Team"]:
+        named_teams = [t for t in self._iter_teams(for_dispatch=for_dispatch) if getattr(t, "name", None) == team_id]
         if len(named_teams) > 1:
             raise AmbiguousComponentNameError("team", team_id, [str(getattr(t, "id", "")) for t in named_teams])
         if named_teams:
             return named_teams[0]
         resolved = self._resolve_db_id_by_name_or_slug("team", team_id)
-        return self._load_team_from_db(resolved) if resolved is not None else None
+        return self._load_team_from_db(resolved, for_dispatch=for_dispatch) if resolved is not None else None
 
-    def _find_workflow(self, workflow_id: str) -> Optional["Workflow"]:
-        wf = self._find_workflow_by_exact_id(workflow_id)
+    def _find_workflow(self, workflow_id: str, for_dispatch: bool = False) -> Optional["Workflow"]:
+        wf = self._find_workflow_by_exact_id(workflow_id, for_dispatch=for_dispatch)
         if wf is not None:
             return wf
         if self._db_component_exists("workflow", workflow_id):
             return None
-        return self._find_workflow_by_name(workflow_id)
+        return self._find_workflow_by_name(workflow_id, for_dispatch=for_dispatch)
 
-    def _find_workflow_by_exact_id(self, workflow_id: str) -> Optional["Workflow"]:
-        for w in self._iter_workflows():
+    def _find_workflow_by_exact_id(self, workflow_id: str, for_dispatch: bool = False) -> Optional["Workflow"]:
+        for w in self._iter_workflows(for_dispatch=for_dispatch):
             if getattr(w, "id", None) == workflow_id:
                 return w
-        return self._load_workflow_from_db(workflow_id)
+        return self._load_workflow_from_db(workflow_id, for_dispatch=for_dispatch)
 
-    def _find_workflow_by_name(self, workflow_id: str) -> Optional["Workflow"]:
-        named_workflows = [w for w in self._iter_workflows() if getattr(w, "name", None) == workflow_id]
+    def _find_workflow_by_name(self, workflow_id: str, for_dispatch: bool = False) -> Optional["Workflow"]:
+        named_workflows = [
+            w for w in self._iter_workflows(for_dispatch=for_dispatch) if getattr(w, "name", None) == workflow_id
+        ]
         if len(named_workflows) > 1:
             raise AmbiguousComponentNameError(
                 "workflow", workflow_id, [str(getattr(w, "id", "")) for w in named_workflows]
@@ -342,7 +394,7 @@ class StudioRunnerTools(Toolkit):
         if named_workflows:
             return named_workflows[0]
         resolved = self._resolve_db_id_by_name_or_slug("workflow", workflow_id)
-        return self._load_workflow_from_db(resolved) if resolved is not None else None
+        return self._load_workflow_from_db(resolved, for_dispatch=for_dispatch) if resolved is not None else None
 
     # run_* execute code-defined components on a fresh copy, so per-run
     # mutation never bleeds across callers. DB-loaded components are
@@ -358,7 +410,8 @@ class StudioRunnerTools(Toolkit):
         or fail to rebuild entirely, and the field-level copier keeps the
         original value for a field whose own copy raised. The copy is
         dispatched when it is a distinct instance of the same class that kept
-        its id, name, model, instructions, and distinct members."""
+        its id, name, model and instructions, and whose copyable members were
+        themselves copied (see _shared_member)."""
         label = getattr(component, "id", None) or getattr(component, "name", None) or component.__class__.__name__
         copier = getattr(component, "deep_copy", None)
         if not callable(copier):
@@ -389,42 +442,127 @@ class StudioRunnerTools(Toolkit):
                 or (original is not None and copied is None)
                 or (attribute in ("id", "name") and original != copied)
             )
-        original_members = getattr(component, "members", None)
-        copied_members = getattr(fresh, "members", None)
-        if isinstance(original_members, list) and isinstance(copied_members, list):
-            lost = lost or any(
-                any(member is original_member for original_member in original_members) for member in copied_members
-            )
         if lost:
             raise DispatchCopyError(
                 f"deep_copy of '{label}' lost its identity. "
                 "Give the class a deep_copy that rebuilds it, or store the component in the database."
             )
+        shared = StudioRunnerTools._shared_member(component, fresh)
+        if shared is not None:
+            shared_label = getattr(shared, "id", None) or getattr(shared, "name", None) or type(shared).__name__
+            raise DispatchCopyError(
+                f"deep_copy of '{label}' still shares member '{shared_label}' with the original. "
+                "Give that member's class a deep_copy that rebuilds it, or store the component in the database."
+            )
+        divergence = StudioRunnerTools._member_divergence(component, fresh)
+        if divergence is not None:
+            raise DispatchCopyError(
+                f"deep_copy of '{label}' did not reproduce its members: {divergence}. "
+                "Give the class a deep_copy that rebuilds it, or store the component in the database."
+            )
         return fresh
 
-    def _agent_for_run(self, agent_id: str) -> Optional["Agent"]:
-        agent = self._find_agent(agent_id)
-        if agent is None:
+    @staticmethod
+    def _member_divergence(original: Any, fresh: Any, depth: int = 0) -> Optional[str]:
+        """How the copy's member list differs in shape from the original's, else None.
+
+        Whether a member is aliased is _shared_member's question; this one is
+        whether the copy holds the same members at all. A copier that drops a
+        member or rebuilds it as a different component has not produced the
+        component that was asked for, and neither shows up as sharing."""
+        if depth > 12:  # A cycle or pathological nesting; stop rather than recurse forever.
             return None
-        if any(a is agent for a in self._iter_agents()):
+        original_members = getattr(original, "members", None)
+        if not isinstance(original_members, list):
+            return None
+        fresh_members = getattr(fresh, "members", None)
+        if not isinstance(fresh_members, list) or len(fresh_members) != len(original_members):
+            found = len(fresh_members) if isinstance(fresh_members, list) else "none"
+            return f"member count changed ({len(original_members)} -> {found})"
+        for original_member, fresh_member in zip(original_members, fresh_members):
+            if fresh_member is original_member:
+                # Shared by design, or already reported by _shared_member.
+                continue
+            member_label = getattr(original_member, "id", None) or getattr(original_member, "name", None) or "?"
+            if type(fresh_member) is not type(original_member):
+                return f"member '{member_label}' came back as {type(fresh_member).__name__}"
+            for attribute in ("id", "name"):
+                if getattr(original_member, attribute, None) != getattr(fresh_member, attribute, None):
+                    return f"member '{member_label}' lost its {attribute}"
+            nested = StudioRunnerTools._member_divergence(original_member, fresh_member, depth + 1)
+            if nested is not None:
+                return nested
+        return None
+
+    @staticmethod
+    def _shared_member(original: Any, fresh: Any) -> Optional[Any]:
+        """The first copyable member the copy still shares with the original,
+        searched through nested member lists, else None.
+
+        A member without deep_copy is shared by design: a remote proxy holds no
+        per-run state to isolate. A member that could have been copied and was
+        not is a failed copy, and dispatching it would let per-run mutation
+        cross callers."""
+        original_members = getattr(original, "members", None)
+        fresh_members = getattr(fresh, "members", None)
+        if not isinstance(original_members, list) or not isinstance(fresh_members, list):
+            return None
+        if len(original_members) != len(fresh_members):
+            return None
+        for original_member, fresh_member in zip(original_members, fresh_members):
+            if fresh_member is original_member and callable(getattr(original_member, "deep_copy", None)):
+                return fresh_member
+            nested = StudioRunnerTools._shared_member(original_member, fresh_member)
+            if nested is not None:
+                return nested
+        return None
+
+    def _refuse_if_only_reachable_with_include_all(self, component_type: str, identifier: str) -> None:
+        """Turn "not found" into the real reason when the identifier does name a
+        component, but one this runner may not dispatch."""
+        if self.include_all_components:
+            return
+        finder = {"agent": self._find_agent, "team": self._find_team, "workflow": self._find_workflow}[component_type]
+        try:
+            if finder(identifier) is None:
+                return
+        except AmbiguousComponentNameError:
+            # The identifier is ambiguous, not undispatchable; let the caller say so.
+            raise
+        except Exception:
+            return
+        raise ComponentNotDispatchableError(
+            f"{component_type.capitalize()} '{identifier}' is defined in code and provided through the registry, "
+            "which this runner may read but not run. Pass include_all_components=True to dispatch it, or store "
+            "the component in the database."
+        )
+
+    def _agent_for_run(self, agent_id: str) -> Optional["Agent"]:
+        agent = self._find_agent(agent_id, for_dispatch=True)
+        if agent is None:
+            self._refuse_if_only_reachable_with_include_all("agent", agent_id)
+            return None
+        if any(a is agent for a in self._iter_agents(for_dispatch=True)):
             return self._fresh_copy(agent)
         self._warn_if_model_rebuilt(agent, "agent", agent_id)
         return agent
 
     def _team_for_run(self, team_id: str) -> Optional["Team"]:
-        team = self._find_team(team_id)
+        team = self._find_team(team_id, for_dispatch=True)
         if team is None:
+            self._refuse_if_only_reachable_with_include_all("team", team_id)
             return None
-        if any(t is team for t in self._iter_teams()):
+        if any(t is team for t in self._iter_teams(for_dispatch=True)):
             return self._fresh_copy(team)
         self._warn_if_model_rebuilt(team, "team", team_id)
         return team
 
     def _workflow_for_run(self, workflow_id: str) -> Optional["Workflow"]:
-        wf = self._find_workflow(workflow_id)
+        wf = self._find_workflow(workflow_id, for_dispatch=True)
         if wf is None:
+            self._refuse_if_only_reachable_with_include_all("workflow", workflow_id)
             return None
-        if any(w is wf for w in self._iter_workflows()):
+        if any(w is wf for w in self._iter_workflows(for_dispatch=True)):
             return self._fresh_copy(wf)
         self._require_isolated_steps(wf, workflow_id)
         return wf
@@ -482,6 +620,25 @@ class StudioRunnerTools(Toolkit):
             return slug
         return None
 
+    @staticmethod
+    def _require_resolvable_member_ids(component_type: str, component_id: str, config: Dict[str, Any]) -> None:
+        """Refuse a config that references a member or step executor by a null id.
+
+        Serialization writes the referenced component's id even when it is
+        None, and a lookup by None matches the first component that also has
+        no id, which is rarely the one that was configured. No registry makes
+        the reference resolvable, so the refusal does not depend on one.
+
+        Dispatch only: reads and edits load the component so the reference can
+        be seen and repaired, the same split _require_faithful_rebuild uses."""
+        key = "members" if component_type == "team" else "steps"
+        if component_type not in ("team", "workflow") or not _references_idless_components(config.get(key)):
+            return
+        raise ComponentNeedsRegistryError(
+            f"{component_type.capitalize()} '{component_id}' references a component that had no id when it was "
+            "saved, so the reference cannot be resolved. Give that component an id and save it again."
+        )
+
     def _require_registry_for(
         self,
         component_type: str,
@@ -511,12 +668,8 @@ class StudioRunnerTools(Toolkit):
             needs.append("knowledge")
         if isinstance(config.get("input_schema"), str) or isinstance(config.get("output_schema"), str):
             needs.append("schemas")
-        if component_type == "team" and _references_idless_components(config.get("members")):
-            needs.append("code-defined members without ids")
         if component_type == "workflow" and _references_executors(config.get("steps")):
             needs.append("function steps")
-        if component_type == "workflow" and _references_idless_components(config.get("steps")):
-            needs.append("code-defined step members without ids")
         if needs:
             raise ComponentNeedsRegistryError(
                 f"{component_type.capitalize()} '{component_id}' references registry-backed resources "
@@ -533,6 +686,112 @@ class StudioRunnerTools(Toolkit):
                     "construct StudioRunnerTools with the registry to run it."
                 )
             self._require_registry_for(ref_type, ref_id, ref_config, _seen)
+
+    def _require_faithful_rebuild(
+        self, component: Any, config: Dict[str, Any], component_type: str, component_id: str
+    ) -> None:
+        """Refuse to dispatch a component whose config named registry-backed
+        pieces this registry does not hold.
+
+        _require_registry_for covers the registry being ABSENT. A registry that
+        is present but incomplete degrades instead of failing: rehydrate_functions
+        binds an unresolved tool to ``entrypoint=None``, and from_dict deletes a
+        knowledge or schema reference it cannot resolve. Either way from_dict
+        returns successfully and the component runs without the piece. Checking
+        the rebuilt object against its own config catches every such shape
+        without having to predict how each one resolves.
+
+        Reads and edits skip this, so a component missing a tool stays loadable
+        and repairable."""
+        from agno.tools.function import Function
+
+        missing: List[str] = []
+
+        declared_tools = config.get("tools") or []
+        if declared_tools:
+            rebuilt_tools = getattr(component, "tools", None) or []
+            unresolved = sorted(
+                {
+                    str(getattr(tool, "name", None) or "?")
+                    for tool in rebuilt_tools
+                    if isinstance(tool, Function) and tool.entrypoint is None
+                }
+            )
+            if unresolved:
+                missing.append(f"tools ({', '.join(unresolved)})")
+            elif len(rebuilt_tools) < len(declared_tools):
+                missing.append(f"tools ({len(declared_tools) - len(rebuilt_tools)} of {len(declared_tools)} dropped)")
+
+        declared_knowledge = config.get("knowledge")
+        if isinstance(declared_knowledge, dict) and getattr(component, "knowledge", None) is None:
+            missing.append(f"knowledge '{declared_knowledge.get('name') or '?'}'")
+
+        for field in ("input_schema", "output_schema"):
+            # Only the string form is a registry reference; an inline dict schema
+            # carries itself.
+            if isinstance(config.get(field), str) and getattr(component, field, None) is None:
+                missing.append(f"{field} '{config[field]}'")
+
+        declared_members = config.get("members") or []
+        if declared_members:
+            rebuilt_members = getattr(component, "members", None) or []
+            if len(rebuilt_members) < len(declared_members):
+                missing.append(f"members ({len(declared_members) - len(rebuilt_members)} of {len(declared_members)})")
+
+        nested = self._unresolved_below(component)
+        if nested is not None:
+            missing.append(f"nested component {nested}")
+
+        if missing:
+            raise ComponentNeedsRegistryError(
+                f"{component_type.capitalize()} '{component_id}' references registry-backed resources this "
+                f"registry does not provide ({'; '.join(missing)}); register them before running it. Reads and "
+                "edits still load the component."
+            )
+
+    @staticmethod
+    def _unresolved_below(node: Any, depth: int = 0, seen: Optional[set] = None) -> Optional[str]:
+        """The first nested member or step executor holding a tool with no
+        entrypoint, or None when the graph below is intact.
+
+        A member and a step executor rebuild from configs of their own, so the
+        parent's config check says nothing about them: rehydrate_functions binds
+        an unresolved tool to ``entrypoint=None`` at every depth alike, and an
+        incomplete registry would otherwise run a nested member stripped of its
+        tools. Depth- and cycle-capped, over objects already in memory."""
+        from agno.tools.function import Function
+
+        if node is None or depth > 12:
+            return None
+        seen = set() if seen is None else seen
+        if id(node) in seen:
+            return None
+        seen.add(id(node))
+
+        children: List[Any] = list(getattr(node, "members", None) or [])
+        for step in getattr(node, "steps", None) or []:
+            for attribute in ("agent", "team"):
+                child = getattr(step, attribute, None)
+                if child is not None:
+                    children.append(child)
+            for nested_attribute in ("steps", "else_steps", "choices"):
+                children.extend(getattr(step, nested_attribute, None) or [])
+
+        for child in children:
+            unresolved = sorted(
+                {
+                    str(getattr(tool, "name", None) or "?")
+                    for tool in (getattr(child, "tools", None) or [])
+                    if isinstance(tool, Function) and tool.entrypoint is None
+                }
+            )
+            if unresolved:
+                label = getattr(child, "id", None) or getattr(child, "name", None) or type(child).__name__
+                return f"{label}: tools ({', '.join(unresolved)})"
+            found = StudioRunnerTools._unresolved_below(child, depth + 1, seen)
+            if found is not None:
+                return found
+        return None
 
     def _warn_if_model_rebuilt(self, component: Any, component_type: str, component_id: str) -> None:
         """Log when a dispatched agent's or team's model is a config rebuild.
@@ -589,15 +848,41 @@ class StudioRunnerTools(Toolkit):
         if not shared:
             return
 
+        def shared_within(node: Any, depth: int = 0) -> Optional[Any]:
+            """The shared registry instance held at or below this executor. A step
+            whose team is a fresh copy still leaks if one of that team's own
+            members is the registry singleton.
+
+            A member is only a leak when it could have been copied, the same rule
+            _shared_member applies: a member with no deep_copy is shared by design,
+            because a remote proxy holds no per-run state to isolate. The executor
+            itself is judged without that exemption, as it was before."""
+            if node is None or depth > 12:
+                return None
+            is_shared = any(node is instance for instance in shared)
+            if is_shared and (depth == 0 or callable(getattr(node, "deep_copy", None))):
+                return node
+            for member in getattr(node, "members", None) or []:
+                found = shared_within(member, depth + 1)
+                if found is not None:
+                    return found
+            return None
+
         def walk(item: Any) -> None:
             for attr in ("agent", "team"):
                 executor = getattr(item, attr, None)
-                if executor is not None and any(executor is instance for instance in shared):
+                leaked = shared_within(executor)
+                if leaked is not None:
+                    where = (
+                        f"{attr} '{getattr(executor, 'id', None)}'"
+                        if leaked is executor
+                        else f"a member of {attr} '{getattr(executor, 'id', None)}', "
+                        f"'{getattr(leaked, 'id', None) or getattr(leaked, 'name', None)}'"
+                    )
                     raise DispatchCopyError(
                         f"Workflow '{workflow_id}' step '{getattr(item, 'name', None)}' resolved to the shared "
-                        f"registry instance of {attr} '{getattr(executor, 'id', None)}'; the runner dispatches "
-                        "only isolated copies. Give the class a deep_copy that rebuilds it, or store the "
-                        "component in the database."
+                        f"registry instance of {where}; the runner dispatches only isolated copies. Give the "
+                        "class a deep_copy that rebuilds it, or store the component in the database."
                     )
             for child_attr in ("steps", "else_steps", "choices"):
                 children = getattr(item, child_attr, None)
@@ -610,7 +895,9 @@ class StudioRunnerTools(Toolkit):
             for step in steps:
                 walk(step)
 
-    def _load_agent_from_db(self, agent_id: str, version: Optional[int] = None) -> Optional["Agent"]:
+    def _load_agent_from_db(
+        self, agent_id: str, version: Optional[int] = None, for_dispatch: bool = False
+    ) -> Optional["Agent"]:
         """Load an agent from DB via config + from_dict.
 
         Registry-backed references resolve at their current published version."""
@@ -630,17 +917,25 @@ class StudioRunnerTools(Toolkit):
             if getattr(agent, "db", None) is None:
                 self._warn_if_declared_db_dropped(config, "agent", agent_id)
                 agent.db = self.db
-            return agent
         except Exception:
             logger.warning("StudioRunnerTools: Agent.from_dict failed for %s", agent_id, exc_info=True)
             return None
+        if for_dispatch:
+            self._require_faithful_rebuild(agent, config, "agent", agent_id)
+        return agent
 
-    def _load_team_from_db(self, team_id: str, version: Optional[int] = None) -> Optional["Team"]:
+    def _load_team_from_db(
+        self, team_id: str, version: Optional[int] = None, for_dispatch: bool = False
+    ) -> Optional["Team"]:
         from agno.db.base import ComponentType
 
         config = self._load_config_from_db(team_id, version=version, component_type=ComponentType.TEAM)
         if config is None:
             return None
+        if for_dispatch:
+            # Dispatch only: a null reference cannot be resolved, but the component
+            # still has to load so the bad reference can be seen and repaired.
+            self._require_resolvable_member_ids("team", team_id, config)
         self._require_registry_for("team", team_id, config)
         from agno.team.team import Team
 
@@ -651,17 +946,25 @@ class StudioRunnerTools(Toolkit):
             if getattr(team, "db", None) is None:
                 self._warn_if_declared_db_dropped(config, "team", team_id)
                 team.db = self.db
-            return team
         except Exception:
             logger.warning("StudioRunnerTools: Team.from_dict failed for %s", team_id, exc_info=True)
             return None
+        if for_dispatch:
+            self._require_faithful_rebuild(team, config, "team", team_id)
+        return team
 
-    def _load_workflow_from_db(self, workflow_id: str, version: Optional[int] = None) -> Optional["Workflow"]:
+    def _load_workflow_from_db(
+        self, workflow_id: str, version: Optional[int] = None, for_dispatch: bool = False
+    ) -> Optional["Workflow"]:
         from agno.db.base import ComponentType
 
         config = self._load_config_from_db(workflow_id, version=version, component_type=ComponentType.WORKFLOW)
         if config is None:
             return None
+        if for_dispatch:
+            # Dispatch only: a null reference cannot be resolved, but the component
+            # still has to load so the bad reference can be seen and repaired.
+            self._require_resolvable_member_ids("workflow", workflow_id, config)
         self._require_registry_for("workflow", workflow_id, config)
         from agno.workflow.workflow import Workflow
 
@@ -672,10 +975,12 @@ class StudioRunnerTools(Toolkit):
             if getattr(wf, "db", None) is None:
                 self._warn_if_declared_db_dropped(config, "workflow", workflow_id)
                 wf.db = self.db
-            return wf
         except Exception:
             logger.warning("StudioRunnerTools: Workflow.from_dict failed for %s", workflow_id, exc_info=True)
             return None
+        if for_dispatch:
+            self._require_faithful_rebuild(wf, config, "workflow", workflow_id)
+        return wf
 
     def _load_config_from_db(
         self,
@@ -795,7 +1100,8 @@ class StudioRunnerTools(Toolkit):
         """
         try:
             agent = self._agent_for_run(agent_id)
-        except AmbiguousComponentNameError as e:
+        except StudioRunnerError as e:
+            # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
         except Exception as e:
             logger.exception("Failed to resolve agent")
@@ -833,7 +1139,8 @@ class StudioRunnerTools(Toolkit):
         """
         try:
             team = self._team_for_run(team_id)
-        except AmbiguousComponentNameError as e:
+        except StudioRunnerError as e:
+            # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
         except Exception as e:
             logger.exception("Failed to resolve team")
@@ -871,7 +1178,8 @@ class StudioRunnerTools(Toolkit):
         """
         try:
             wf = self._workflow_for_run(workflow_id)
-        except AmbiguousComponentNameError as e:
+        except StudioRunnerError as e:
+            # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
         except Exception as e:
             logger.exception("Failed to resolve workflow")
@@ -901,7 +1209,8 @@ class StudioRunnerTools(Toolkit):
         # Resolution hits the DB synchronously; keep it off the event loop.
         try:
             agent = await asyncio.to_thread(self._agent_for_run, agent_id)
-        except AmbiguousComponentNameError as e:
+        except StudioRunnerError as e:
+            # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
         except Exception as e:
             logger.exception("Failed to resolve agent")
@@ -930,7 +1239,8 @@ class StudioRunnerTools(Toolkit):
         """
         try:
             team = await asyncio.to_thread(self._team_for_run, team_id)
-        except AmbiguousComponentNameError as e:
+        except StudioRunnerError as e:
+            # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
         except Exception as e:
             logger.exception("Failed to resolve team")
@@ -961,7 +1271,8 @@ class StudioRunnerTools(Toolkit):
         """
         try:
             wf = await asyncio.to_thread(self._workflow_for_run, workflow_id)
-        except AmbiguousComponentNameError as e:
+        except StudioRunnerError as e:
+            # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
         except Exception as e:
             logger.exception("Failed to resolve workflow")
@@ -1014,18 +1325,20 @@ class StudioRunnerTools(Toolkit):
         which the joined form is not: nested dispatch grows it without limit and
         MySQL caps session_id at 128 characters.
 
-        A caller without a session gets None, so the component runs on its own
-        default session. That is what a direct Python call gets -- run_agent()
-        has no session argument -- and minting a session per call instead would
-        make every call in a script a cold start with no way to opt out."""
+        A caller without a session (a direct Python call -- run_agent() has no
+        session argument) gets None: no session id is passed to the target.
+        Dispatch runs on a per-call copy (code-defined) or a per-call rebuild
+        (DB-loaded), so each such run starts a session of its own. A component
+        constructed with an explicit session_id keeps using it, which is the
+        opt-in for continuity across sessionless calls."""
         if run_context is None or not getattr(run_context, "session_id", None):
             return None
-        from hashlib import sha256
+        from agno.utils.string import hash_string_sha256
 
         parts = (str(run_context.session_id), component_type, component_id)
         # Length-prefixed so no part can impersonate a boundary.
         key = "|".join(f"{len(part)}:{part}" for part in parts)
-        return f"{component_type}-{sha256(key.encode()).hexdigest()[:32]}"
+        return f"{component_type}-{hash_string_sha256(key)[:32]}"
 
     @staticmethod
     def _run_payload(id_key: str, component_id: str, run_output: Any) -> str:
