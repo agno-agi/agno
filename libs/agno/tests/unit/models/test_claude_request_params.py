@@ -364,3 +364,71 @@ def test_vertexai_temperature_none_excluded():
     model = VertexAIClaude()
     params = model.get_request_params()
     assert "temperature" not in params
+
+
+def test_azure_temperature_zero_included():
+    """Azure Foundry Claude: temperature=0.0 must appear in request params."""
+    from agno.models.azure.claude import Claude as AzureClaude
+
+    model = AzureClaude(temperature=0.0)
+    params = model.get_request_params()
+    assert "temperature" in params
+    assert params["temperature"] == 0.0
+
+
+def test_azure_top_p_zero_included():
+    """Azure Foundry Claude: top_p=0.0 must appear in request params."""
+    from agno.models.azure.claude import Claude as AzureClaude
+
+    model = AzureClaude(top_p=0.0)
+    params = model.get_request_params()
+    assert "top_p" in params
+    assert params["top_p"] == 0.0
+
+
+def test_azure_top_k_zero_included():
+    """Azure Foundry Claude: top_k=0 must appear in request params."""
+    from agno.models.azure.claude import Claude as AzureClaude
+
+    model = AzureClaude(top_k=0)
+    params = model.get_request_params()
+    assert "top_k" in params
+    assert params["top_k"] == 0
+
+
+def test_azure_temperature_none_excluded():
+    """Azure Foundry Claude: unset temperature must not appear in request params."""
+    from agno.models.azure.claude import Claude as AzureClaude
+
+    model = AzureClaude()
+    params = model.get_request_params()
+    assert "temperature" not in params
+    assert "top_p" not in params
+    assert "top_k" not in params
+
+
+def test_azure_positive_sampling_params_included():
+    """Azure Foundry Claude: ordinary non-zero values keep working."""
+    from agno.models.azure.claude import Claude as AzureClaude
+
+    model = AzureClaude(temperature=0.7, top_p=0.9, top_k=40)
+    params = model.get_request_params()
+    assert params["temperature"] == 0.7
+    assert params["top_p"] == 0.9
+    assert params["top_k"] == 40
+
+
+def test_azure_all_sampling_params_zero():
+    """Azure Foundry Claude: all three zeros must survive together.
+
+    Azure was the only Claude subclass still gating these on truthiness while
+    anthropic/, aws/ and vertexai/ used `is not None`, so the same explicit 0
+    behaved differently depending on which provider you routed through.
+    """
+    from agno.models.azure.claude import Claude as AzureClaude
+
+    model = AzureClaude(temperature=0.0, top_p=0.0, top_k=0)
+    params = model.get_request_params()
+    assert params["temperature"] == 0.0
+    assert params["top_p"] == 0.0
+    assert params["top_k"] == 0
