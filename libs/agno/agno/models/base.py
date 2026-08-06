@@ -2112,7 +2112,7 @@ class Model(ABC):
             tool_name=function_call.function.name,
             tool_args=function_call.arguments,
             tool_call_error=not success,
-            stop_after_tool_call=function_call.function.stop_after_tool_call,
+            stop_after_tool_call=function_call.effective_stop_after_tool_call(),
             images=images,
             videos=videos,
             audio=audios,
@@ -2195,7 +2195,7 @@ class Model(ABC):
                                 # Capture output
                                 function_call_output += item.content or ""
 
-                            if function_call.function.show_result and item.content is not None:
+                            if function_call.effective_show_result() and item.content is not None:
                                 yield ModelResponse(content=item.content)
 
                         if isinstance(item, CustomEvent):
@@ -2219,7 +2219,7 @@ class Model(ABC):
 
                     else:
                         function_call_output += str(item)
-                        if function_call.function.show_result and item is not None:
+                        if function_call.effective_show_result() and item is not None:
                             yield ModelResponse(content=str(item))
             except RunCancelledException:
                 raise
@@ -2258,7 +2258,7 @@ class Model(ABC):
             else:
                 function_call_output = str(function_execution_result.result) if function_execution_result.result else ""
 
-            if function_call.function.show_result and function_call_output is not None:
+            if function_call.effective_show_result() and function_call_output is not None:
                 yield ModelResponse(content=function_call_output)
 
         # Create ToolCallMetrics for the tool execution
@@ -2741,7 +2741,7 @@ class Model(ABC):
                                 # Capture output
                                 function_call_output += item.content or ""
 
-                            if function_call.function.show_result and item.content is not None:
+                            if function_call.effective_show_result() and item.content is not None:
                                 await event_queue.put(ModelResponse(content=item.content))
                                 continue
 
@@ -2765,7 +2765,7 @@ class Model(ABC):
                     # Yield custom events emitted by the tool
                     else:
                         function_call_output += str(item)
-                        if function_call.function.show_result and item is not None:
+                        if function_call.effective_show_result() and item is not None:
                             await event_queue.put(ModelResponse(content=str(item)))
 
                 # Store the final output for this generator
@@ -2879,7 +2879,7 @@ class Model(ABC):
                                     # Capture output
                                     function_call_output += item.content or ""
 
-                                if function_call.function.show_result and item.content is not None:
+                                if function_call.effective_show_result() and item.content is not None:
                                     yield ModelResponse(content=item.content)
                                     continue
 
@@ -2891,7 +2891,7 @@ class Model(ABC):
                             yield item
                         else:
                             function_call_output += str(item)
-                            if function_call.function.show_result and item is not None:
+                            if function_call.effective_show_result() and item is not None:
                                 yield ModelResponse(content=str(item))
                 except RunCancelledException:
                     raise
@@ -2939,7 +2939,7 @@ class Model(ABC):
                 else:
                     function_call_output = str(function_call.result)
 
-                if function_call.function.show_result and function_call_output is not None:
+                if function_call.effective_show_result() and function_call_output is not None:
                     yield ModelResponse(content=function_call_output)
 
             # Create ToolCallMetrics for the tool execution

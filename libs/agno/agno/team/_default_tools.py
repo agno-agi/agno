@@ -68,7 +68,7 @@ from agno.run.team import (
     TeamRunOutputEvent,
 )
 from agno.session import TeamSession
-from agno.tools.function import Function
+from agno.tools.function import Function, FunctionCall
 from agno.utils.knowledge import get_agentic_or_user_search_filters
 from agno.utils.log import (
     log_debug,
@@ -476,7 +476,11 @@ def _get_delegate_task_function(
     if not files:
         files = []
 
-    def _setup_delegate_task_to_member(member_agent: Union[Agent, "Team"], task: str):
+    def _setup_delegate_task_to_member(
+        member_agent: Union[Agent, "Team"],
+        task: str,
+        respond_directly: bool = False,
+    ):
         # 1. Initialize the member agent
 
         _initialize_member(team, member_agent)
@@ -486,8 +490,8 @@ def _get_delegate_task_function(
         if not team.send_media_to_model:
             member_agent.send_media_to_model = False
 
-        # 2. Handle respond_directly nuances
-        if team.respond_directly:
+        # 2. Handle respond_directly nuances (team-level or per-call)
+        if team.respond_directly or respond_directly:
             # Since we return the response directly from the member agent, we need to set the output schema from the team down.
             # Get output_schema from run_context
             team_output_schema = run_context.output_schema if run_context else None
@@ -599,13 +603,16 @@ def _get_delegate_task_function(
         if member_agent_run_response is not None:
             _update_team_media(team, member_agent_run_response)  # type: ignore
 
-    def delegate_task_to_member(member_id: str, task: str) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
+    def delegate_task_to_member(
+        member_id: str, task: str, respond_directly: bool = False
+    ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
         """Use this function to delegate a task to the selected team member.
         You must provide a clear and concise description of the task the member should achieve AND the expected output.
 
         Args:
             member_id (str): The ID of the member to delegate the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
             task (str): A clear and concise description of the task the member should achieve.
+            respond_directly (bool): If True, return this member's response as the team's final answer and stop after the tool call. Use False (default) for intermediate work that should return to you for further coordination.
         Returns:
             str: The result of the delegated task.
         """
@@ -617,7 +624,9 @@ def _get_delegate_task_function(
             return
 
         _, member_agent = result
-        member_agent_task, history = _setup_delegate_task_to_member(member_agent=member_agent, task=task)
+        member_agent_task, history = _setup_delegate_task_to_member(
+            member_agent=member_agent, task=task, respond_directly=respond_directly
+        )
 
         # Make sure for the member agent, we are using the agent logger
         use_agent_logger()
@@ -779,7 +788,7 @@ def _get_delegate_task_function(
         )
 
     async def adelegate_task_to_member(
-        member_id: str, task: str
+        member_id: str, task: str, respond_directly: bool = False
     ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
         """Use this function to delegate a task to the selected team member.
         You must provide a clear and concise description of the task the member should achieve AND the expected output.
@@ -787,6 +796,7 @@ def _get_delegate_task_function(
         Args:
             member_id (str): The ID of the member to delegate the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
             task (str): A clear and concise description of the task the member should achieve.
+            respond_directly (bool): If True, return this member's response as the team's final answer and stop after the tool call. Use False (default) for intermediate work that should return to you for further coordination.
         Returns:
             str: The result of the delegated task.
         """
@@ -804,7 +814,9 @@ def _get_delegate_task_function(
             return
 
         _, member_agent = result
-        member_agent_task, history = _setup_delegate_task_to_member(member_agent=member_agent, task=task)
+        member_agent_task, history = _setup_delegate_task_to_member(
+            member_agent=member_agent, task=task, respond_directly=respond_directly
+        )
 
         # Make sure for the member agent, we are using the agent logger
         use_agent_logger()
@@ -1425,6 +1437,16 @@ def _get_delegate_task_function(
             delegate_function = delegate_task_to_member  # type: ignore
 
         delegate_func = Function.from_callable(delegate_function, name="delegate_task_to_member")
+
+        # Per-call respond_directly: set FunctionCall overrides before execution so
+        # show_result / stop_after_tool_call apply to this invocation only.
+        def _apply_respond_directly_overrides(fc: FunctionCall) -> None:
+            args = fc.arguments or {}
+            if args.get("respond_directly"):
+                fc.override_show_result = True
+                fc.override_stop_after_tool_call = True
+
+        delegate_func.pre_hook = _apply_respond_directly_overrides
 
     if team.respond_directly:
         delegate_func.stop_after_tool_call = True
