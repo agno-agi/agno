@@ -1491,3 +1491,55 @@ class TestMemberStructureFidelity:
         with pytest.raises(Exception) as excinfo:
             runner._require_isolated_steps(type("W", (), {"steps": [step]})(), "wf")
         assert "shared" in str(excinfo.value)
+
+    def test_step_member_without_deep_copy_is_shared_by_design(self, db):
+        """The step check descends into an executor's members, so it has to honour the
+        same rule _shared_member does: a member with no deep_copy holds no per-run
+        state to isolate, and refusing it would make a remote member undispatchable."""
+        from agno.agent import Agent
+        from agno.registry import Registry
+        from agno.team import Team
+
+        class _RemoteLike(Agent):
+            deep_copy = None  # a remote proxy: nothing to isolate
+
+        remote = _RemoteLike(id="remote", name="Remote")
+        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db], agents=[remote]), db=db)
+        step = type("S", (), {"name": "s", "agent": None, "team": Team(id="t", name="T", members=[remote])})()
+        runner._require_isolated_steps(type("W", (), {"steps": [step]})(), "wf")
+
+    def test_step_executor_itself_is_refused_without_that_exemption(self, db):
+        from agno.agent import Agent
+        from agno.registry import Registry
+
+        class _RemoteLike(Agent):
+            deep_copy = None
+
+        remote = _RemoteLike(id="remote", name="Remote")
+        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db], agents=[remote]), db=db)
+        step = type("S", (), {"name": "s", "agent": remote, "team": None})()
+        with pytest.raises(Exception):
+            runner._require_isolated_steps(type("W", (), {"steps": [step]})(), "wf")
+
+    def test_copy_refusal_reaches_the_caller_as_its_own_message(self, db):
+        """DispatchCopyError is a deliberate refusal with an actionable message, so it
+        must not be wrapped as a resolve failure and logged with a traceback."""
+        from agno.agent import Agent
+
+        class _Broken(Agent):
+            def deep_copy(self, **kwargs):
+                return self
+
+        runner = StudioRunnerTools(db=db, agents_list=[_Broken(id="b", name="B")])
+        error = _loads(runner.run_agent("b", "x", _agno_run_context=_context()))["error"]
+        assert error.startswith("deep_copy of 'b'")
+
+    def test_an_ambiguous_registry_name_stays_ambiguous(self, db):
+        """The undispatchable re-lookup must not swallow ambiguity into "not found"."""
+        from agno.agent import Agent
+        from agno.registry import Registry
+
+        registry = Registry(name="R", dbs=[db], agents=[Agent(id="a1", name="Dup"), Agent(id="a2", name="Dup")])
+        runner = StudioRunnerTools(registry=registry, db=db)
+        error = _loads(runner.run_agent("Dup", "x", _agno_run_context=_context()))["error"]
+        assert "Ambiguous" in error and "a1" in error and "a2" in error

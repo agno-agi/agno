@@ -508,6 +508,9 @@ class StudioRunnerTools(Toolkit):
         try:
             if finder(identifier) is None:
                 return
+        except AmbiguousComponentNameError:
+            # The identifier is ambiguous, not undispatchable; let the caller say so.
+            raise
         except Exception:
             return
         raise ComponentNotDispatchableError(
@@ -779,10 +782,16 @@ class StudioRunnerTools(Toolkit):
         def shared_within(node: Any, depth: int = 0) -> Optional[Any]:
             """The shared registry instance held at or below this executor. A step
             whose team is a fresh copy still leaks if one of that team's own
-            members is the registry singleton."""
+            members is the registry singleton.
+
+            A member is only a leak when it could have been copied, the same rule
+            _shared_member applies: a member with no deep_copy is shared by design,
+            because a remote proxy holds no per-run state to isolate. The executor
+            itself is judged without that exemption, as it was before."""
             if node is None or depth > 12:
                 return None
-            if any(node is instance for instance in shared):
+            is_shared = any(node is instance for instance in shared)
+            if is_shared and (depth == 0 or callable(getattr(node, "deep_copy", None))):
                 return node
             for member in getattr(node, "members", None) or []:
                 found = shared_within(member, depth + 1)
@@ -1016,7 +1025,12 @@ class StudioRunnerTools(Toolkit):
         """
         try:
             agent = self._agent_for_run(agent_id)
-        except (AmbiguousComponentNameError, ComponentNeedsRegistryError, ComponentNotDispatchableError) as e:
+        except (
+            AmbiguousComponentNameError,
+            ComponentNeedsRegistryError,
+            ComponentNotDispatchableError,
+            DispatchCopyError,
+        ) as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
         except Exception as e:
@@ -1055,7 +1069,12 @@ class StudioRunnerTools(Toolkit):
         """
         try:
             team = self._team_for_run(team_id)
-        except (AmbiguousComponentNameError, ComponentNeedsRegistryError, ComponentNotDispatchableError) as e:
+        except (
+            AmbiguousComponentNameError,
+            ComponentNeedsRegistryError,
+            ComponentNotDispatchableError,
+            DispatchCopyError,
+        ) as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
         except Exception as e:
@@ -1094,7 +1113,12 @@ class StudioRunnerTools(Toolkit):
         """
         try:
             wf = self._workflow_for_run(workflow_id)
-        except (AmbiguousComponentNameError, ComponentNeedsRegistryError, ComponentNotDispatchableError) as e:
+        except (
+            AmbiguousComponentNameError,
+            ComponentNeedsRegistryError,
+            ComponentNotDispatchableError,
+            DispatchCopyError,
+        ) as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
         except Exception as e:
@@ -1125,7 +1149,12 @@ class StudioRunnerTools(Toolkit):
         # Resolution hits the DB synchronously; keep it off the event loop.
         try:
             agent = await asyncio.to_thread(self._agent_for_run, agent_id)
-        except (AmbiguousComponentNameError, ComponentNeedsRegistryError, ComponentNotDispatchableError) as e:
+        except (
+            AmbiguousComponentNameError,
+            ComponentNeedsRegistryError,
+            ComponentNotDispatchableError,
+            DispatchCopyError,
+        ) as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
         except Exception as e:
@@ -1155,7 +1184,12 @@ class StudioRunnerTools(Toolkit):
         """
         try:
             team = await asyncio.to_thread(self._team_for_run, team_id)
-        except (AmbiguousComponentNameError, ComponentNeedsRegistryError, ComponentNotDispatchableError) as e:
+        except (
+            AmbiguousComponentNameError,
+            ComponentNeedsRegistryError,
+            ComponentNotDispatchableError,
+            DispatchCopyError,
+        ) as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
         except Exception as e:
@@ -1187,7 +1221,12 @@ class StudioRunnerTools(Toolkit):
         """
         try:
             wf = await asyncio.to_thread(self._workflow_for_run, workflow_id)
-        except (AmbiguousComponentNameError, ComponentNeedsRegistryError, ComponentNotDispatchableError) as e:
+        except (
+            AmbiguousComponentNameError,
+            ComponentNeedsRegistryError,
+            ComponentNotDispatchableError,
+            DispatchCopyError,
+        ) as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
         except Exception as e:
