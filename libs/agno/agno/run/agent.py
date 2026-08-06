@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union
 from pydantic import BaseModel, Field
 
 from agno.media import Audio, File, Image, Video
+from agno.models.finish_reason import FinishReason
 from agno.models.message import Citations, Message
 from agno.models.metrics import RunMetrics
 from agno.models.response import ToolExecution
@@ -291,6 +292,7 @@ class RunCompletedEvent(BaseAgentRunEvent):
     metadata: Optional[Dict[str, Any]] = None
     metrics: Optional[RunMetrics] = None
     session_state: Optional[Dict[str, Any]] = None
+    finish_reason: Optional[FinishReason] = None
 
 
 @dataclass
@@ -660,6 +662,9 @@ class RunOutput:
 
     status: RunStatus = RunStatus.running
 
+    # Normalized reason the model stopped generating (raw value in model_provider_data["native_finish_reason"])
+    finish_reason: Optional[FinishReason] = None
+
     # User control flow (HITL) requirements to continue a run when paused, in order of arrival
     requirements: Optional[list[RunRequirement]] = None
 
@@ -747,6 +752,11 @@ class RunOutput:
 
         if self.status is not None:
             _dict["status"] = self.status.value if isinstance(self.status, RunStatus) else self.status
+
+        if self.finish_reason is not None:
+            _dict["finish_reason"] = (
+                self.finish_reason.value if isinstance(self.finish_reason, FinishReason) else self.finish_reason
+            )
 
         if self.messages is not None:
             _dict["messages"] = [m.to_dict() for m in self.messages]
@@ -916,6 +926,14 @@ class RunOutput:
         references = data.pop("references", None)
         if references is not None:
             references = [MessageReferences.model_validate(reference) for reference in references]
+
+        # Normalize finish_reason back into the enum (rehydrated as a plain str after JSON)
+        finish_reason = data.get("finish_reason")
+        if finish_reason is not None and not isinstance(finish_reason, FinishReason):
+            try:
+                data["finish_reason"] = FinishReason(finish_reason)
+            except ValueError:
+                data["finish_reason"] = FinishReason.UNKNOWN
 
         # Filter data to only include fields that are actually defined in the RunOutput dataclass
         from dataclasses import fields

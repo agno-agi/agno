@@ -9,6 +9,7 @@ from pydantic import BaseModel, ValidationError
 
 from agno.exceptions import ModelProviderError, ModelRateLimitError
 from agno.models.base import Model
+from agno.models.finish_reason import map_anthropic_finish_reason
 from agno.models.message import Citations, DocumentCitation, Message, UrlCitation
 from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
@@ -1056,6 +1057,14 @@ class Claude(Model):
         if response.usage is not None:
             model_response.response_usage = self._get_metrics(response.usage)
 
+        # Normalize the stop reason and preserve the raw provider value
+        if isinstance(response.stop_reason, str):
+            finish_reason, native_finish_reason = map_anthropic_finish_reason(response.stop_reason)
+            model_response.finish_reason = finish_reason
+            if model_response.provider_data is None:
+                model_response.provider_data = {}
+            model_response.provider_data["native_finish_reason"] = native_finish_reason
+
         # Capture context management information if present
         if self.context_management is not None and hasattr(response, "context_management"):
             if response.context_management is not None:  # type: ignore
@@ -1264,6 +1273,16 @@ class Claude(Model):
             and response.message.usage is not None  # type: ignore
         ):
             model_response.response_usage = self._get_metrics(response.message.usage)  # type: ignore
+
+        # Normalize the stop reason from the terminal MessageStop event and preserve the raw value
+        if isinstance(response, (MessageStopEvent, ParsedBetaMessageStopEvent)) and hasattr(response, "message"):
+            stop_reason = getattr(response.message, "stop_reason", None)  # type: ignore
+            if isinstance(stop_reason, str):
+                finish_reason, native_finish_reason = map_anthropic_finish_reason(stop_reason)
+                model_response.finish_reason = finish_reason
+                if model_response.provider_data is None:
+                    model_response.provider_data = {}
+                model_response.provider_data["native_finish_reason"] = native_finish_reason
 
         # Capture the Beta response
         try:

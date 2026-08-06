@@ -9,6 +9,7 @@ Examples for input formats, validation schemas, streaming, and structured output
 - `output_model.py` - Return structured data using output_model with a Pydantic model.
 - `output_schema.py` - Demonstrates output schema.
 - `parser_model.py` - Demonstrates parser model for structured extraction.
+- `finish_reason.py` - Read why the model stopped (normalized finish_reason, including truncation).
 - `response_as_variable.py` - Capture agent response as a variable.
 - `save_to_file.py` - Save agent responses to a file automatically.
 - `streaming.py` - Stream agent responses token by token.
