@@ -1,7 +1,7 @@
+import types
 from dataclasses import dataclass
 from functools import lru_cache, partial, wraps
 from importlib.metadata import version
-import types
 from typing import (
     Any,
     Callable,
@@ -46,22 +46,58 @@ IDENTITY_INJECTED_PARAMS = ("agent", "team", "run_context", *AGNO_INJECTED_PARAM
 
 
 def _framework_injected_types() -> tuple:
-    """Types the framework supplies by annotation rather than by parameter name."""
+    """Types kept out of the model-facing schema when they appear as a bare
+    parameter annotation. Agent and Team are injected by type; RunContext and
+    the media types are injected by parameter name (see
+    FunctionCall._build_entrypoint_args), so a differently-named parameter of
+    those types is hidden from the model and keeps its own default."""
     from agno.agent.agent import Agent
     from agno.team.team import Team
 
     return (Agent, Team, RunContext, Image, Video, Audio, File)
 
 
-def _is_framework_typed(hint: Any, framework_types: tuple) -> bool:
-    """True when the annotation names a framework-injected type, including
-    Optional[...] and union spellings (Optional[RunContext], RunContext | None)."""
-    if isinstance(hint, type):
-        return issubclass(hint, framework_types)
+def _identity_injected_types() -> tuple:
+    """The identity-bearing types: a model-supplied value for a parameter of
+    one of these types would choose the framework object a tool receives."""
+    from agno.agent.agent import Agent
+    from agno.team.team import Team
+
+    return (Agent, Team, RunContext)
+
+
+def _unwrap_annotation(hint: Any) -> Any:
+    """The annotation a type alias stands for (PEP 695 ``type X = ...``), else
+    the annotation itself. get_type_hints leaves an alias unresolved."""
+    return getattr(hint, "__value__", hint)
+
+
+def _union_names_type(hint: Any, wanted: tuple) -> bool:
+    """True when the annotation is a union (Optional[...], X | None) with a
+    member among the wanted types, nested unions and type aliases included."""
+    hint = _unwrap_annotation(hint)
     origin = get_origin(hint)
-    if origin is Union or origin is getattr(types, "UnionType", None):
-        return any(_is_framework_typed(arg, framework_types) for arg in get_args(hint) if arg is not type(None))
-    return False
+    if origin is not Union and origin is not getattr(types, "UnionType", None):
+        return False
+    return any(
+        (isinstance(arg, type) and issubclass(arg, wanted)) or _union_names_type(arg, wanted)
+        for arg in get_args(hint)
+        if arg is not type(None)
+    )
+
+
+def _is_framework_typed(hint: Any) -> bool:
+    """True when the annotation keeps the parameter out of the model-facing
+    schema: a bare framework type, or a union naming an identity type
+    (Optional[RunContext], RunContext | None, owner: Optional[Agent]).
+
+    Media types inside a union (Optional[Image], Union[str, File]) stay
+    model-fillable: media is injected by parameter name, so excluding them
+    would leave the parameter unfillable by anything."""
+    hint = _unwrap_annotation(hint)
+    if isinstance(hint, type):
+        return issubclass(hint, _framework_injected_types())
+    return _union_names_type(hint, _identity_injected_types())
 
 
 @lru_cache(maxsize=1)
@@ -365,10 +401,9 @@ class Function(BaseModel):
             # guard rejects a model-supplied value for them on this path too. See #6344.
             framework_typed_params: Set[str] = set()
             try:
-                _fw_types = _framework_injected_types()
                 for _pname in sig.parameters:
                     _hint = type_hints.get(_pname)
-                    if _hint is not None and _is_framework_typed(_hint, _fw_types):
+                    if _hint is not None and _is_framework_typed(_hint):
                         framework_typed_params.add(_pname)
             except Exception:
                 pass
@@ -485,9 +520,8 @@ class Function(BaseModel):
         reserved = {"return", "self", *FRAMEWORK_INJECTED_PARAMS, *AGNO_INJECTED_PARAMS}
         found = {name for name in sig.parameters if name in reserved}
         try:
-            framework_types = _framework_injected_types()
             for param_name, hint in get_type_hints(self.entrypoint).items():
-                if param_name in sig.parameters and _is_framework_typed(hint, framework_types):
+                if param_name in sig.parameters and _is_framework_typed(hint):
                     found.add(param_name)
         except Exception:
             pass
@@ -549,9 +583,8 @@ class Function(BaseModel):
             # Also exclude parameters whose types are framework-injected,
             # even if the parameter name differs (e.g. my_agent: Agent). See issue #6344.
             try:
-                framework_types = _framework_injected_types()
                 for param_name, hint in list(type_hints.items()):
-                    if _is_framework_typed(hint, framework_types):
+                    if _is_framework_typed(hint):
                         del type_hints[param_name]
                         excluded_params.append(param_name)
             except Exception:
@@ -710,18 +743,26 @@ class Function(BaseModel):
         if framework_params & set(sig.parameters.keys()):
             return func
 
-        # Also skip validation when parameter types include Agent or Team,
-        # even if the parameter name differs (e.g. my_agent: Agent).
+        # Also skip validation when a PARAMETER's type is Agent or Team, even
+        # if the parameter name differs (e.g. my_agent: Agent) or the annotation
+        # is a union (owner: Optional[Agent]).
         # validate_call uses get_type_hints() which fails to resolve types
         # from Agent/Team class hierarchies (like BaseDb) in the user's module globals.
+        # The return annotation is not a parameter: validate_call is called
+        # without validate_return, so it never introspects one.
         try:
             hints = get_type_hints(func)
             from agno.agent.agent import Agent
             from agno.team.team import Team
 
             framework_types = (Agent, Team)
-            for hint in hints.values():
-                if isinstance(hint, type) and issubclass(hint, framework_types):
+            for name, hint in hints.items():
+                if name == "return" or name not in sig.parameters:
+                    continue
+                hint = _unwrap_annotation(hint)
+                if (isinstance(hint, type) and issubclass(hint, framework_types)) or _union_names_type(
+                    hint, framework_types
+                ):
                     return func
         except Exception:
             pass
@@ -1065,8 +1106,9 @@ class FunctionCall(BaseModel):
         legitimately be model-supplied -- at worst the value is an attempt to
         override the caller's identity on an identity-threading tool. Without
         this, the tool-hooks execution chain merges model arguments over the
-        injected ones. The call still runs: the parameter gets the injected
-        object, or its own default where the framework injects nothing.
+        injected ones. The call runs with the injected object or the
+        parameter's own default; an identity-typed parameter the framework
+        does not fill stays at its default.
 
         A name that does appear in the tool's schema is left alone: an MCP
         server is free to expose an argument called "files", and the schema is
@@ -1093,8 +1135,8 @@ class FunctionCall(BaseModel):
             or (key in reserved and (key not in schema_properties or key in IDENTITY_INJECTED_PARAMS))
         }
         if dropped:
-            # Rebind rather than mutate: the pre-drop dict is already referenced by the
-            # ToolExecution emitted on tool_call_started, which should keep what the model sent.
+            # The pre-drop dict is already referenced by the ToolExecution emitted on
+            # tool_call_started, which keeps what the model sent; a new dict leaves it intact.
             self.arguments = {key: value for key, value in self.arguments.items() if key not in dropped}
             log_warning(
                 f"{self.function.name}: ignored tool-call arguments that name framework-injected "

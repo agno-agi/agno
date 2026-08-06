@@ -1,8 +1,7 @@
 """Shared serialization helpers for run outputs.
 
-The AgentOS MCP result layer and the Studio runner toolkit both import these,
-so the two surfaces speak one vocabulary for run status and paused
-requirements and the implementations cannot drift.
+The AgentOS MCP result layer and the Studio runner toolkit both build their
+run-status and paused-requirement payloads from these helpers.
 """
 
 from typing import Any, Dict, List, Optional

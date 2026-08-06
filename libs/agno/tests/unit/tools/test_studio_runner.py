@@ -659,6 +659,17 @@ class TestDispatchIsolation:
         class _NoCopyAgent(_StubAgent):
             deep_copy = None
 
+        class _SelfCopyAgent(_StubAgent):
+            def deep_copy(self):
+                return self
+
+        class _BaseClassCopyAgent(_StubAgent):
+            def deep_copy(self):
+                copy = _StubAgent()
+                copy.id = self.id
+                copy.name = self.name
+                return copy
+
         lossy = _LossyCopyAgent()
         runner = StudioRunnerTools(db=db, agents_list=[lossy])
         out = _loads(runner.run_agent("stub", "hi"))
@@ -674,6 +685,38 @@ class TestDispatchIsolation:
         runner = StudioRunnerTools(db=db, agents_list=[_NoCopyAgent()])
         out = _loads(runner.run_agent("stub", "hi"))
         assert "has no deep_copy" in out["error"]
+
+        selfish = _SelfCopyAgent()
+        runner = StudioRunnerTools(db=db, agents_list=[selfish])
+        out = _loads(runner.run_agent("stub", "hi"))
+        assert "returned the shared instance" in out["error"]
+        assert selfish.seen is None
+
+        downcast = _BaseClassCopyAgent()
+        runner = StudioRunnerTools(db=db, agents_list=[downcast])
+        out = _loads(runner.run_agent("stub", "hi"))
+        assert "lost its identity" in out["error"]
+        assert downcast.seen is None
+
+    def test_blank_copy_with_no_id_refuses_dispatch(self, db):
+        # A subclass whose __init__ hides the dataclass fields rebuilds blank.
+        # With no id on either side the id comparison is vacuous; the name
+        # comparison still catches the blank copy.
+        class _BlankCopyAgent(_StubAgent):
+            id = None
+            name = "Helper"
+
+            def deep_copy(self):
+                blank = object.__new__(type(self))
+                blank.__dict__ = dict(self.__dict__)
+                blank.name = None
+                return blank
+
+        blank = _BlankCopyAgent()
+        runner = StudioRunnerTools(db=db, agents_list=[blank])
+        out = _loads(runner.run_agent("Helper", "hi"))
+        assert "lost its identity" in out["error"]
+        assert blank.seen is None
 
     def test_loader_keeps_config_declared_db(self, registry, db, tmp_path, monkeypatch):
         # A db reconstructed from the component's own config (possibly carrying
@@ -904,6 +947,174 @@ class TestStudioEmbedding:
         out = _loads(runner.run_workflow("flow", "go"))
         assert "registry" in out.get("error", "")
         assert "not found" not in out.get("error", "")
+
+    def test_registry_less_runner_refuses_knowledge_bearing_component(self, db):
+        # A knowledge reference is stored as {"name": ...} and resolves only
+        # through the registry; a registry-less rebuild would drop it and run
+        # the agent without retrieval.
+        config = {
+            "id": "rag",
+            "model": {"name": "OpenAIResponses", "id": "gpt-5.4", "provider": "OpenAI"},
+            "instructions": "answer from the handbook",
+            "knowledge": {"name": "handbook"},
+        }
+        db.upsert_component(component_id="rag", component_type="agent", name="RagBot")
+        db.upsert_config(component_id="rag", config=config, stage="published")
+
+        out = _loads(StudioRunnerTools(db=db).run_agent("rag", "hi"))
+        assert "knowledge" in out.get("error", "")
+        assert "registry" in out.get("error", "")
+
+    def test_registry_less_runner_refuses_team_with_idless_member(self, registry, db):
+        # A code-defined member that never ran serializes as agent_id null;
+        # only the registry can supply it, so the rebuild must refuse.
+        from agno.agent.agent import Agent as AgentClass
+
+        helper = AgentClass(name="Helper", model=OpenAIResponses(id="gpt-5.4"))
+        studio = StudioTools(registry=registry, db=db, teams=True, agents_list=[helper])
+        created = _loads(studio.create_team(name="crew", instructions="i", member_ids=["Helper"], model_id="gpt-5.4"))
+        assert "error" not in created
+
+        out = _loads(StudioRunnerTools(db=db).run_team("crew", "hi"))
+        assert "registry" in out.get("error", "")
+        assert "not found" not in out.get("error", "")
+
+    def test_unrebuildable_db_reference_warns_and_falls_back(self, db):
+        # A declared db that neither db_from_dict nor the registry can supply
+        # falls back to the catalog db. The component still runs; the fallback
+        # is announced rather than silent.
+        import logging
+
+        config = {
+            "id": "redis-agent",
+            "model": {"name": "OpenAIResponses", "id": "gpt-5.4", "provider": "OpenAI"},
+            "instructions": "i",
+            "db": {"type": "redis", "id": "prod-redis"},
+        }
+        db.upsert_component(component_id="redis-agent", component_type="agent", name="RedisAgent")
+        db.upsert_config(component_id="redis-agent", config=config, stage="published")
+
+        records: list = []
+        handler = logging.Handler()
+        handler.emit = lambda record: records.append(record.getMessage())
+        logging.getLogger("agno").addHandler(handler)
+        try:
+            loaded = StudioRunnerTools(db=db)._find_agent("redis-agent")
+        finally:
+            logging.getLogger("agno").removeHandler(handler)
+        assert loaded is not None
+        assert loaded.db is db
+        assert any("could not be reconstructed" in message for message in records)
+
+    def test_untyped_db_config_still_loads(self, db):
+        # Only postgres/sqlite/clickhouse serialize a "type"; every other
+        # backend inherits BaseDb.to_dict, which does not. A missing type must
+        # not make the component unrunnable.
+        config = {
+            "id": "plain-db-agent",
+            "model": {"name": "OpenAIResponses", "id": "gpt-5.4", "provider": "OpenAI"},
+            "instructions": "be useful",
+            "db": {"id": "runner-test-db"},
+        }
+        db.upsert_component(component_id="plain-db-agent", component_type="agent", name="PlainDbAgent")
+        db.upsert_config(component_id="plain-db-agent", config=config, stage="published")
+
+        loaded = StudioRunnerTools(db=db)._find_agent("plain-db-agent")
+        assert loaded is not None
+        assert loaded.db is db
+        assert loaded.instructions == "be useful"
+
+    def test_db_workflow_step_holding_registry_singleton_refuses_dispatch(self, db):
+        # Step.from_dict keeps the shared registry agent when its deep_copy
+        # raises. Dispatch refuses it; reads and edits still reach it, so the
+        # step can be replaced.
+        from agno.agent.agent import Agent as AgentClass
+
+        class _UncopyableAgent(AgentClass):
+            def __init__(self, topic, **kwargs):
+                self.topic = topic
+                super().__init__(**kwargs)
+
+        researcher = _UncopyableAgent(
+            "ai", id="researcher", name="Researcher", model=OpenAIResponses(id="gpt-5.4"), db=db
+        )
+        reg = Registry(name="Singleton Registry", agents=[researcher], models=[OpenAIResponses(id="gpt-5.4")], dbs=[db])
+        studio = StudioTools(registry=reg, db=db, workflows=True)
+        created = _loads(
+            studio.create_workflow(name="Flow", description="d", step_specs=[{"name": "s1", "agent_id": "researcher"}])
+        )
+        assert "error" not in created
+
+        out = _loads(StudioRunnerTools(registry=reg, db=db).run_workflow("flow", "go"))
+        assert "shared registry instance" in out.get("error", "")
+
+        # Reads reach the workflow, and no read or edit reports the dispatch
+        # refusal, so the offending step stays repairable.
+        assert "error" not in _loads(studio.get_workflow("flow"))
+        assert "shared registry instance" not in _loads(studio.edit_workflow("flow", description="new")).get(
+            "error", ""
+        )
+
+    def test_healthy_workflow_step_dispatches(self, registry, db):
+        # The isolation check must not refuse a step whose registry agent
+        # copies cleanly.
+        from agno.agent.agent import Agent as AgentClass
+
+        researcher = AgentClass(id="researcher", name="Researcher", model=OpenAIResponses(id="gpt-5.4"), db=db)
+        reg = Registry(name="Healthy Registry", agents=[researcher], models=[OpenAIResponses(id="gpt-5.4")], dbs=[db])
+        studio = StudioTools(registry=reg, db=db, workflows=True)
+        studio.create_workflow(name="Flow", description="d", step_specs=[{"name": "s1", "agent_id": "researcher"}])
+
+        loaded = StudioRunnerTools(registry=reg, db=db)._workflow_for_run("flow")
+        assert loaded is not None
+        assert loaded.steps[0].agent is not researcher
+
+    def test_model_rebuild_warning_fires_on_dispatch_without_registry(self, registry, db):
+        # Model connection settings are never persisted; a rebuilt model must
+        # announce that provider defaults apply. Reads stay quiet.
+        import logging
+
+        studio = StudioTools(registry=registry, db=db)
+        studio.create_agent(name="Plain", instructions="i", model_id="gpt-5.4")
+
+        records: list = []
+        handler = logging.Handler()
+        handler.emit = lambda record: records.append(record.getMessage())
+
+        logging.getLogger("agno").addHandler(handler)
+        try:
+            dispatched = StudioRunnerTools(db=db)._agent_for_run("plain")
+        finally:
+            logging.getLogger("agno").removeHandler(handler)
+        assert dispatched is not None
+        assert any("rebuilt from its stored config" in message for message in records)
+
+        # A read does not dispatch, so it does not warn.
+        records.clear()
+        logging.getLogger("agno").addHandler(handler)
+        try:
+            StudioRunnerTools(db=db)._find_agent("plain")
+        finally:
+            logging.getLogger("agno").removeHandler(handler)
+        assert not any("rebuilt from its stored config" in message for message in records)
+
+        # The registry instance dispatches silently.
+        records.clear()
+        logging.getLogger("agno").addHandler(handler)
+        try:
+            StudioRunnerTools(registry=registry, db=db)._agent_for_run("plain")
+        finally:
+            logging.getLogger("agno").removeHandler(handler)
+        assert not any("rebuilt from its stored config" in message for message in records)
+
+    def test_compat_run_methods_carry_legacy_id_key(self, registry, db):
+        stub = _StubAgent()
+        studio = StudioTools(registry=registry, db=db, agents_list=[stub])
+        payload = _loads(studio.run_agent("stub", "hi"))
+        assert payload["id"] == payload["agent_id"] == "stub"
+
+        error = _loads(studio.run_agent("no-such-agent", "hi"))
+        assert "error" in error and "id" not in error
 
     def test_create_team_ambiguous_member_name_errors(self, registry, db):
         studio = StudioTools(registry=registry, db=db, teams=True)

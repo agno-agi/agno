@@ -1589,35 +1589,52 @@ class StudioTools(Toolkit):
     # and PAUSED results that carry their unresolved requirements.
 
     # ------------------------------------------------------------------
-    # Compatibility methods. StudioTools.run_*/arun_* shipped as public
-    # methods from v2.6.19 through v2.8.7. The implementations moved to
-    # StudioRunnerTools; these forward so direct callers keep working. The
-    # result shape follows the runner (see agno/tools/studio_runner.py).
+    # Public run methods. StudioRunnerTools owns the implementations; these
+    # forward to it and add an 'id' key beside the runner's typed key (see
+    # agno/tools/studio_runner.py for the runner's payload). The tools
+    # registered for the model are the runner's own bound methods, which
+    # carry the typed key alone.
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _alias_runner_result(result: str) -> str:
+        """The runner payload plus an 'id' key holding the resolved component id.
+
+        Error payloads carry no id and pass through unchanged."""
+        try:
+            payload = json.loads(result)
+        except Exception:
+            return result
+        if isinstance(payload, dict) and "error" not in payload:
+            for key in ("agent_id", "team_id", "workflow_id"):
+                if key in payload:
+                    payload.setdefault("id", payload[key])
+                    return json.dumps(payload, default=str)
+        return result
 
     def run_agent(self, agent_id: str, message: str) -> str:
         """Run an agent by id or display name. Forwards to StudioRunnerTools."""
-        return self._runner_tools.run_agent(agent_id, message)
+        return self._alias_runner_result(self._runner_tools.run_agent(agent_id, message))
 
     def run_team(self, team_id: str, message: str) -> str:
         """Run a team by id or display name. Forwards to StudioRunnerTools."""
-        return self._runner_tools.run_team(team_id, message)
+        return self._alias_runner_result(self._runner_tools.run_team(team_id, message))
 
     def run_workflow(self, workflow_id: str, message: str) -> str:
         """Run a workflow by id or display name. Forwards to StudioRunnerTools."""
-        return self._runner_tools.run_workflow(workflow_id, message)
+        return self._alias_runner_result(self._runner_tools.run_workflow(workflow_id, message))
 
     async def arun_agent(self, agent_id: str, message: str) -> str:
         """Async variant of run_agent."""
-        return await self._runner_tools.arun_agent(agent_id, message)
+        return self._alias_runner_result(await self._runner_tools.arun_agent(agent_id, message))
 
     async def arun_team(self, team_id: str, message: str) -> str:
         """Async variant of run_team."""
-        return await self._runner_tools.arun_team(team_id, message)
+        return self._alias_runner_result(await self._runner_tools.arun_team(team_id, message))
 
     async def arun_workflow(self, workflow_id: str, message: str) -> str:
         """Async variant of run_workflow."""
-        return await self._runner_tools.arun_workflow(workflow_id, message)
+        return self._alias_runner_result(await self._runner_tools.arun_workflow(workflow_id, message))
 
     # ------------------------------------------------------------------
     # Schedules (component-aware)

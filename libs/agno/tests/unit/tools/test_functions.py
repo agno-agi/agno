@@ -1827,3 +1827,132 @@ def test_optional_framework_typed_param_is_excluded_and_guarded():
     properties = (function.parameters or {}).get("properties") or {}
     assert set(properties) == {"query"}
     assert "ctx" in (function._framework_params or set())
+
+
+def test_mixed_union_param_stays_model_fillable():
+    # A union mixing a framework media type with a model-fillable type belongs
+    # to the model: it stays in the schema and a model-supplied value reaches
+    # the entrypoint.
+    from typing import Union as Un
+
+    from agno.media import Image
+    from agno.tools.function import Function, FunctionCall
+
+    def describe_source(source: Un[str, Image]) -> str:
+        """Describe a source."""
+        return f"described {source!r}"
+
+    function = Function.from_callable(describe_source)
+    function.process_entrypoint()
+    properties = (function.parameters or {}).get("properties") or {}
+    assert "source" in properties
+    assert "source" not in (function._framework_params or set())
+
+    call = FunctionCall(function=function, arguments={"source": "https://example.com/cat.png"})
+    result = call.execute()
+    assert result.status == "success"
+    assert "cat.png" in (result.result or "")
+
+
+def test_optional_media_param_stays_model_fillable():
+    # Optional[File] is a model-fillable parameter: media is injected by
+    # parameter name only, so a type-based exclusion would leave it forever
+    # unfilled.
+    from typing import Optional as Opt
+
+    from agno.media import File
+    from agno.tools.function import Function
+
+    def summarize(query: str, doc: Opt[File] = None) -> str:
+        """Summarize."""
+        return "ok"
+
+    function = Function.from_callable(summarize)
+    function.process_entrypoint()
+    properties = (function.parameters or {}).get("properties") or {}
+    assert set(properties) == {"query", "doc"}
+    assert "doc" not in (function._framework_params or set())
+
+
+def test_identity_and_media_unions_land_on_opposite_sides():
+    # A union naming an identity type is framework-owned even when it also
+    # names a model-fillable type: a model-supplied dict could coerce into a
+    # live RunContext carrying a chosen user_id. A union naming a media type
+    # is not, because media is injected by parameter name only.
+    from typing import Union as Un
+
+    from agno.media import Image
+    from agno.run import RunContext
+    from agno.tools.function import Function
+
+    def fetch(query: str, ctx: Un[str, RunContext] = "none", picture: Un[str, Image] = "none") -> str:
+        return "ok"
+
+    function = Function.from_callable(fetch)
+    function.process_entrypoint()
+    properties = (function.parameters or {}).get("properties") or {}
+    assert set(properties) == {"query", "picture"}
+    assert "ctx" in (function._framework_params or set())
+    assert "picture" not in (function._framework_params or set())
+
+
+def test_framework_typed_return_annotation_keeps_argument_validation():
+    # The return annotation is not a parameter: a tool returning an Agent must
+    # still get pydantic coercion for the arguments the model sends.
+    from typing import Optional as Opt
+
+    from agno.agent.agent import Agent
+    from agno.tools.function import Function, FunctionCall
+
+    seen = {}
+
+    def spawn_worker(count: int, role: str) -> Opt[Agent]:
+        """Spawn a worker."""
+        seen["count"] = count
+        return None
+
+    function = Function.from_callable(spawn_worker)
+    function.process_entrypoint()
+    call = FunctionCall(function=function, arguments={"count": "3", "role": "worker"})
+    call.execute()
+    assert seen["count"] == 3
+
+
+def test_type_alias_identity_param_is_excluded_and_guarded():
+    # get_type_hints leaves a type alias unresolved; the guard must unwrap it
+    # so an aliased RunContext parameter is not model-fillable.
+    from typing import Optional as Opt
+
+    from agno.run import RunContext
+    from agno.tools.function import Function
+
+    MaybeContext = Opt[RunContext]
+
+    def audit(query: str, ctx: MaybeContext = None) -> str:
+        return "ok"
+
+    function = Function.from_callable(audit)
+    function.process_entrypoint()
+    properties = (function.parameters or {}).get("properties") or {}
+    assert set(properties) == {"query"}
+    assert "ctx" in (function._framework_params or set())
+
+
+def test_optional_agent_param_registers_and_is_excluded():
+    # from_callable must register a tool with an Optional[Agent] parameter:
+    # the union skips the validate_call wrapper (pydantic cannot resolve the
+    # Agent class hierarchy) and the parameter stays out of the model schema.
+    from typing import Optional as Opt
+
+    from agno.agent.agent import Agent
+    from agno.tools.function import Function
+
+    def lookup(query: str, owner: Opt[Agent] = None) -> str:
+        """Lookup."""
+        return "ok"
+
+    function = Function.from_callable(lookup)
+    function.process_entrypoint()
+    properties = (function.parameters or {}).get("properties") or {}
+    assert set(properties) == {"query"}
+    assert "owner" in (function._framework_params or set())

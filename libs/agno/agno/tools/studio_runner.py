@@ -22,29 +22,30 @@ Semantics:
     * Each target keeps one session per calling conversation
       ("<caller_session_id>--<component_type>--<component_id>"), so repeat
       runs continue their context instead of starting cold.
-    * Code-defined components are dispatched on a fresh deep copy per run
-      (mirroring AgentOS's create_fresh resolution), so per-run mutation of a
-      shared instance never bleeds across callers. DB-loaded components are
-      reconstructed per call already.
+    * Code-defined components are dispatched on a fresh deep copy per run, so
+      per-run mutation of a shared instance never bleeds across callers.
+      DB-loaded components are reconstructed per call already.
     * A PAUSED result carries the unresolved requirements plus the
       run_id/session_id a continue call must address (the same shape the
-      AgentOS MCP plane returns) -- human-in-the-loop pauses are relayed, not
-      swallowed.
+      AgentOS MCP plane returns) -- human-in-the-loop pauses are relayed.
     * Runs are dispatched with stream=False pinned: run-option resolution is
       call-site > component.stream > False, so a component saved with
-      stream=True would otherwise hand back an unconsumed event iterator
-      instead of its final run output.
+      stream=True still hands back its final run output, never an unconsumed
+      event iterator.
     * run_* resolve in a fixed order: code-defined exact id, DB exact id,
       code-defined display name, DB display name, then the identifier's slug
       as an id (covers renamed components, whose ids keep the original
       name's slug). Exact ids always win over display names. A display name
       matching several components of the type returns an error listing the
-      matching ids instead of silently picking one.
+      matching ids.
     * Persisted components rebuild from their stored config. Registry-backed
-      references (tools, function steps, schemas, code-defined members)
-      require the registry: without it the runner refuses to run a silently
-      degraded component. Member references resolve at their current
-      published version.
+      references (tools, knowledge, function steps, schemas, code-defined
+      members) require the registry: without it the runner refuses to run a
+      silently degraded component. Member references resolve at their current
+      published version. Model connection settings, credentials and a
+      declared db are not fully persisted, so a rebuild can fall back to
+      provider defaults and to the catalog db; the runner logs a warning for
+      the dispatched agent's or team's own model and for a dropped db.
     * list_* read the database only (id, name, description, newest first):
       code-defined components are the wielding platform's own and are not
       re-listed. 'total' reports the full DB count, so a capped list is
@@ -90,8 +91,8 @@ def _slugify(name: str) -> str:
 class AmbiguousComponentNameError(ValueError):
     """A display name matched more than one component of the requested type.
 
-    Raised instead of silently resolving to one of them; the message lists the
-    matching ids so the caller (model or code) can retry with an exact id.
+    The message lists the matching ids so the caller (model or code) can retry
+    with an exact id.
     """
 
     def __init__(self, component_type: str, name: str, matches: List[str]):
@@ -105,17 +106,17 @@ class ComponentNeedsRegistryError(RuntimeError):
     """The stored config references registry-backed pieces that cannot be
     reconstructed without the registry.
 
-    Raised instead of running a silently degraded component (tools dropped,
-    function steps missing, code-defined members lost)."""
+    The runner refuses to dispatch the degraded rebuild (tools dropped,
+    knowledge and function steps missing, code-defined members lost)."""
 
 
 class DispatchCopyError(RuntimeError):
-    """A code-defined component could not be copied faithfully for dispatch.
+    """A component could not be copied faithfully for dispatch.
 
-    Raised instead of running the shared instance: the runner promises that
-    per-run mutation never crosses callers, so an unverifiable copy must not
-    be dispatched. Give the component class a deep_copy that rebuilds it, or
-    store the component in the database."""
+    The runner refuses a copy that fails its fidelity checks (see
+    StudioRunnerTools._fresh_copy for what is checked) rather than dispatch a
+    component that differs from the one asked for. Give the component class a
+    deep_copy that rebuilds it, or store the component in the database."""
 
 
 def _references_executors(value: Any) -> bool:
@@ -126,6 +127,20 @@ def _references_executors(value: Any) -> bool:
         return any(_references_executors(v) for v in value.values())
     if isinstance(value, list):
         return any(_references_executors(v) for v in value)
+    return False
+
+
+def _references_idless_components(value: Any) -> bool:
+    """True when a stored config carries an agent/team reference whose id is
+    null. Serialization writes the referenced component's id even when it is
+    None, and a code-defined component that never ran has no id, so a null id
+    marks a component only the registry can supply."""
+    if isinstance(value, dict):
+        if ("agent_id" in value and not value["agent_id"]) or ("team_id" in value and not value["team_id"]):
+            return True
+        return any(_references_idless_components(v) for v in value.values())
+    if isinstance(value, list):
+        return any(_references_idless_components(v) for v in value)
     return False
 
 
@@ -329,21 +344,21 @@ class StudioRunnerTools(Toolkit):
         return self._load_workflow_from_db(resolved) if resolved is not None else None
 
     # run_* execute code-defined components on a fresh copy, so per-run
-    # mutation never bleeds across callers (mirrors AgentOS's create_fresh
-    # resolution). DB-loaded components are already reconstructed per call.
+    # mutation never bleeds across callers. DB-loaded components are
+    # reconstructed per call already.
 
     @staticmethod
     def _fresh_copy(component: Any) -> Any:
-        """A deep copy for dispatch. Raises DispatchCopyError on a bad copy.
+        """A checked deep copy for dispatch. Raises DispatchCopyError on a
+        copy that is unavailable, raised, or fails a fidelity check.
 
         deep_copy rebuilds via the component class's __init__ signature, so a
         subclass with a ``(custom, **kwargs)`` initializer can come back blank
-        or fail to rebuild entirely. A copy that is unavailable, raised, or
-        lost its id is not the same component. The runner refuses to dispatch
-        it, and it also refuses to dispatch the shared instance (mirrors the
-        AgentOS create_fresh path, which propagates copy failure).
-        """
-        label = getattr(component, "id", None) or component.__class__.__name__
+        or fail to rebuild entirely, and the field-level copier keeps the
+        original value for a field whose own copy raised. The copy is
+        dispatched when it is a distinct instance of the same class that kept
+        its id, name, model, instructions, and distinct members."""
+        label = getattr(component, "id", None) or getattr(component, "name", None) or component.__class__.__name__
         copier = getattr(component, "deep_copy", None)
         if not callable(copier):
             raise DispatchCopyError(
@@ -357,7 +372,29 @@ class StudioRunnerTools(Toolkit):
                 f"deep_copy failed for '{label}': {str(e) or type(e).__name__}. "
                 "Give the class a deep_copy that rebuilds it, or store the component in the database."
             ) from e
-        if getattr(fresh, "id", None) != getattr(component, "id", None):
+        if fresh is component:
+            raise DispatchCopyError(
+                f"deep_copy of '{label}' returned the shared instance; the runner does not dispatch it. "
+                "Give the class a deep_copy that rebuilds a new instance, or store the component in the database."
+            )
+        lost = type(fresh) is not type(component)
+        for attribute in ("id", "name", "model", "instructions"):
+            original = getattr(component, attribute, None)
+            copied = getattr(fresh, attribute, None)
+            # A rebuild that drops a field leaves it None; equality would also
+            # reject a model instance the copier legitimately rebuilt.
+            lost = (
+                lost
+                or (original is not None and copied is None)
+                or (attribute in ("id", "name") and original != copied)
+            )
+        original_members = getattr(component, "members", None)
+        copied_members = getattr(fresh, "members", None)
+        if isinstance(original_members, list) and isinstance(copied_members, list):
+            lost = lost or any(
+                any(member is original_member for original_member in original_members) for member in copied_members
+            )
+        if lost:
             raise DispatchCopyError(
                 f"deep_copy of '{label}' lost its identity. "
                 "Give the class a deep_copy that rebuilds it, or store the component in the database."
@@ -366,20 +403,29 @@ class StudioRunnerTools(Toolkit):
 
     def _agent_for_run(self, agent_id: str) -> Optional["Agent"]:
         agent = self._find_agent(agent_id)
-        if agent is not None and any(a is agent for a in self._iter_agents()):
-            agent = self._fresh_copy(agent)
+        if agent is None:
+            return None
+        if any(a is agent for a in self._iter_agents()):
+            return self._fresh_copy(agent)
+        self._warn_if_model_rebuilt(agent, "agent", agent_id)
         return agent
 
     def _team_for_run(self, team_id: str) -> Optional["Team"]:
         team = self._find_team(team_id)
-        if team is not None and any(t is team for t in self._iter_teams()):
-            team = self._fresh_copy(team)
+        if team is None:
+            return None
+        if any(t is team for t in self._iter_teams()):
+            return self._fresh_copy(team)
+        self._warn_if_model_rebuilt(team, "team", team_id)
         return team
 
     def _workflow_for_run(self, workflow_id: str) -> Optional["Workflow"]:
         wf = self._find_workflow(workflow_id)
-        if wf is not None and any(w is wf for w in self._iter_workflows()):
-            wf = self._fresh_copy(wf)
+        if wf is None:
+            return None
+        if any(w is wf for w in self._iter_workflows()):
+            return self._fresh_copy(wf)
+        self._require_isolated_steps(wf, workflow_id)
         return wf
 
     def _db_component_exists(self, component_type: str, component_id: str) -> bool:
@@ -445,10 +491,10 @@ class StudioRunnerTools(Toolkit):
         """Refuse to rebuild a component whose config needs the absent registry.
 
         from_dict silently drops registry-backed references when no registry is
-        given; a dispatch surface must refuse rather than run the degraded
-        result. The check is transitive: a team's members and a workflow's
-        agent/team steps are checked too, so a nested component cannot degrade
-        silently. Covers the Studio config shape (id references)."""
+        given; this dispatch surface refuses to run the degraded result. The
+        check is transitive: a team's members and a workflow's agent/team steps
+        are checked too, so a nested component cannot degrade silently. Covers
+        the Studio config shape (id references)."""
         if self.registry is not None:
             return
         if _seen is None:
@@ -460,14 +506,20 @@ class StudioRunnerTools(Toolkit):
         needs: List[str] = []
         if config.get("tools"):
             needs.append("tools")
+        if config.get("knowledge"):
+            needs.append("knowledge")
         if isinstance(config.get("input_schema"), str) or isinstance(config.get("output_schema"), str):
             needs.append("schemas")
+        if component_type == "team" and _references_idless_components(config.get("members")):
+            needs.append("code-defined members without ids")
         if component_type == "workflow" and _references_executors(config.get("steps")):
             needs.append("function steps")
+        if component_type == "workflow" and _references_idless_components(config.get("steps")):
+            needs.append("code-defined step members without ids")
         if needs:
             raise ComponentNeedsRegistryError(
-                f"{component_type.capitalize()} '{component_id}' references registry-backed "
-                f"{', '.join(needs)}; construct StudioRunnerTools with the registry to run it."
+                f"{component_type.capitalize()} '{component_id}' references registry-backed resources "
+                f"({', '.join(needs)}); construct StudioRunnerTools with the registry to run it."
             )
         from agno.db.base import ComponentType
 
@@ -481,12 +533,86 @@ class StudioRunnerTools(Toolkit):
                 )
             self._require_registry_for(ref_type, ref_id, ref_config, _seen)
 
+    def _warn_if_model_rebuilt(self, component: Any, component_type: str, component_id: str) -> None:
+        """Log when a dispatched agent's or team's model is a config rebuild.
+
+        Model connection settings and credentials are never persisted, so a
+        model rebuilt from config runs against the provider's default endpoint
+        with ambient credentials. Only the live registry instance carries the
+        configured connection. The check covers the dispatched component's own
+        model; a workflow step's executor and a team member carry models
+        rebuilt the same way."""
+        model = getattr(component, "model", None)
+        if model is None:
+            return
+        registry_models = list(self.registry.models or []) if self.registry is not None else []
+        if any(model is registered for registered in registry_models):
+            return
+        logger.warning(
+            "StudioRunnerTools: %s '%s' uses model '%s' rebuilt from its stored config; "
+            "connection settings and credentials are not persisted, so provider defaults apply.",
+            component_type,
+            component_id,
+            getattr(model, "id", None) or type(model).__name__,
+        )
+
+    def _warn_if_declared_db_dropped(self, config: Dict[str, Any], component_type: str, component_id: str) -> None:
+        """Log when a config declared a db that could not be reconstructed.
+
+        db_from_dict rebuilds postgres, sqlite and clickhouse configs that
+        carry their connection field; anything else resolves through the
+        registry. When neither supplies it, the component falls back to the
+        catalog db, so its sessions and memory land elsewhere than configured."""
+        db_config = config.get("db")
+        if not isinstance(db_config, dict):
+            return
+        logger.warning(
+            "StudioRunnerTools: %s '%s' declares db '%s', which could not be reconstructed; "
+            "the component falls back to the catalog db.",
+            component_type,
+            component_id,
+            db_config.get("id") or db_config.get("type") or "unknown",
+        )
+
+    def _require_isolated_steps(self, wf: "Workflow", workflow_id: str) -> None:
+        """Refuse to dispatch a rebuilt workflow that holds a shared registry
+        instance in a step.
+
+        Step.from_dict keeps the shared registry agent/team when its deep_copy
+        raises; dispatching that instance would let per-run mutation cross
+        callers. Reads and edits load the same workflow without this check, so
+        the offending step stays inspectable and editable."""
+        if self.registry is None:
+            return
+        shared: List[Any] = list(self.registry.agents or []) + list(self.registry.teams or [])
+        if not shared:
+            return
+
+        def walk(item: Any) -> None:
+            for attr in ("agent", "team"):
+                executor = getattr(item, attr, None)
+                if executor is not None and any(executor is instance for instance in shared):
+                    raise DispatchCopyError(
+                        f"Workflow '{workflow_id}' step '{getattr(item, 'name', None)}' resolved to the shared "
+                        f"registry instance of {attr} '{getattr(executor, 'id', None)}'; the runner dispatches "
+                        "only isolated copies. Give the class a deep_copy that rebuilds it, or store the "
+                        "component in the database."
+                    )
+            for child_attr in ("steps", "else_steps", "choices"):
+                children = getattr(item, child_attr, None)
+                if isinstance(children, (list, tuple)):
+                    for child in children:
+                        walk(child)
+
+        steps = getattr(wf, "steps", None)
+        if isinstance(steps, (list, tuple)):
+            for step in steps:
+                walk(step)
+
     def _load_agent_from_db(self, agent_id: str, version: Optional[int] = None) -> Optional["Agent"]:
         """Load an agent from DB via config + from_dict.
 
-        Registry-backed references resolve at their current published version;
-        converging on the version-snapshotting graph loader is follow-up work
-        tracked with the rehydration hardening."""
+        Registry-backed references resolve at their current published version."""
         from agno.db.base import ComponentType
 
         config = self._load_config_from_db(agent_id, version=version, component_type=ComponentType.AGENT)
@@ -501,6 +627,7 @@ class StudioRunnerTools(Toolkit):
             # The catalog db is a fallback only: a config-declared db (resolved
             # by from_dict, possibly with table overrides) must keep winning.
             if getattr(agent, "db", None) is None:
+                self._warn_if_declared_db_dropped(config, "agent", agent_id)
                 agent.db = self.db
             return agent
         except Exception:
@@ -521,6 +648,7 @@ class StudioRunnerTools(Toolkit):
             team.id = team_id
             # The catalog db is a fallback only; a config-declared db wins.
             if getattr(team, "db", None) is None:
+                self._warn_if_declared_db_dropped(config, "team", team_id)
                 team.db = self.db
             return team
         except Exception:
@@ -541,6 +669,7 @@ class StudioRunnerTools(Toolkit):
             wf.id = workflow_id
             # The catalog db is a fallback only; a config-declared db wins.
             if getattr(wf, "db", None) is None:
+                self._warn_if_declared_db_dropped(config, "workflow", workflow_id)
                 wf.db = self.db
             return wf
         except Exception:
@@ -557,7 +686,7 @@ class StudioRunnerTools(Toolkit):
 
         When ``component_type`` is given, the stored component must be of that
         type; a mismatch returns None so that, e.g., a team id never loads as an
-        Agent (mirrors the typed ``get_component`` guard used by delete_agent).
+        Agent.
         """
         if self.db is None:
             return None
@@ -591,9 +720,8 @@ class StudioRunnerTools(Toolkit):
                 limit=limit if limit is not None else self.list_limit,
             )
         except NotImplementedError:
-            # Not every db adapter implements component storage; degrade to an empty
-            # listing like the other db helpers here, rather than surfacing an
-            # argument-less NotImplementedError as {"error": ""}.
+            # Not every db adapter implements component storage; degrade to an
+            # empty listing like the other db helpers here.
             return [], 0
         return (
             [{"id": r.get("component_id"), "name": r.get("name"), "description": r.get("description")} for r in rows],
@@ -640,10 +768,6 @@ class StudioRunnerTools(Toolkit):
         try:
             items, total = self._list_db_component_rows(component_type)
             return json.dumps({key: items, "count": len(items), "total": total})
-        except NotImplementedError:
-            return json.dumps(
-                {"error": "The configured db does not support component storage; cannot list components."}
-            )
         except Exception as e:
             logger.exception("Failed to list %s", key)
             return json.dumps({"error": str(e) or type(e).__name__})
@@ -882,9 +1006,7 @@ class StudioRunnerTools(Toolkit):
         must not share a session row.
 
         A caller without a session gets a fresh session per run -- the REST and
-        MCP run planes mint one the same way. Forwarding None would collapse
-        every sessionless run into the target's sticky per-instance session,
-        leaking history between unrelated callers."""
+        MCP run planes mint one for sessionless runs the same way."""
         if run_context is None or not getattr(run_context, "session_id", None):
             return str(uuid4())
         return f"{run_context.session_id}--{component_type}--{component_id}"

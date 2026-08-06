@@ -1503,7 +1503,10 @@ class _StubAgent:
         return _StubRunOutput()
 
     def deep_copy(self):
-        return self
+        # A distinct instance that shares state, the shape _fresh_copy accepts.
+        clone = object.__new__(type(self))
+        clone.__dict__ = self.__dict__
+        return clone
 
 
 class TestRunSerialization:

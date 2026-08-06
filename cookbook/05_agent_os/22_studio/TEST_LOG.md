@@ -112,3 +112,37 @@ with HTTP 404.
 - The assigned legacy `studio_tool/` lesson was removed after all replacements
   passed.
 - `git diff --check` passed for the rewritten and deleted paths.
+
+### studio_runner_dispatcher.py
+
+**Status:** PASS
+
+**Test mode:** LIVE
+
+**Description:** Tested 2026-08-06 against the `feat/studio-runner-tools`
+worktree via `PYTHONPATH=/Users/ab/code/agno-worktrees/studio-runners/libs/agno`.
+Built a Haiku Writer component with StudioTools, then asked a runner-only
+Dispatcher Agent to discover and delegate to it through StudioRunnerTools.
+
+**Result:** The dispatcher called list_agents/list_teams/list_workflows, then
+run_agent(agent_id=haiku-writer) and returned the delegated haiku. No mutation
+tools were exposed to the dispatcher.
+
+---
+
+### studio_runner_direct.py
+
+**Status:** PASS
+
+**Test mode:** LIVE
+
+**Description:** Tested 2026-08-06 against the `feat/studio-runner-tools`
+worktree. Called StudioRunnerTools methods directly: list_agents, run_agent by
+exact id, and a registry-less run_agent against a tool-bearing component.
+
+**Result:** Listing returned both built components, the greeter run completed
+with content, and the registry-less runner refused the calculator agent with
+"references registry-backed resources (tools); construct StudioRunnerTools
+with the registry to run it."
+
+---
