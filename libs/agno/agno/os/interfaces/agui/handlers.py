@@ -38,6 +38,36 @@ from agno.run.team import TeamRunEvent
 from agno.utils.message import get_text_from_message
 
 EventHandler = Callable[[BaseRunOutputEvent, StreamState], List[BaseEvent]]
+_RUN_LINEAGE_FIELDS = ("agent_id", "team_id", "run_id", "parent_run_id")
+
+
+def _add_run_lineage(events: list[BaseEvent], chunk: BaseRunOutputEvent, state: StreamState) -> list[BaseEvent]:
+    """Preserve Agno run lineage on translated AG-UI events."""
+    lineage = {field: getattr(chunk, field, None) for field in _RUN_LINEAGE_FIELDS}
+    lineage["team_id"] = lineage["team_id"] or state.team_id
+
+    for event in events:
+        for field, value in lineage.items():
+            existing_value = getattr(event, field, None)
+            is_protocol_field = field in event.__class__.model_fields
+            if value not in (None, "") and not (is_protocol_field and existing_value not in (None, "")):
+                setattr(event, field, value)
+    return events
+
+
+def _add_text_surface(events: list[BaseEvent], chunk: BaseRunOutputEvent, state: StreamState) -> list[BaseEvent]:
+    """Mark whether translated text is user-facing or orchestration trace."""
+    parent_run_id = getattr(chunk, "parent_run_id", None)
+    surface = "user" if not parent_run_id or state.team_mode == "route" else "trace"
+
+    for event in events:
+        if event.type in {
+            EventType.TEXT_MESSAGE_START,
+            EventType.TEXT_MESSAGE_CONTENT,
+            EventType.TEXT_MESSAGE_END,
+        }:
+            setattr(event, "surface", surface)
+    return events
 
 
 def _extract_response_chunk_content(response: RunContentEvent) -> str:
@@ -458,11 +488,14 @@ def process_event(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEve
 
     handler = HANDLERS.get(normalized)
     if handler:
-        return handler(chunk, state)
+        events = handler(chunk, state)
+        if normalized == RunEvent.run_content.value:
+            events = _add_text_surface(events, chunk, state)
+        return _add_run_lineage(events, chunk, state)
 
-    return on_unknown_event(chunk, state)
+    return _add_run_lineage(on_unknown_event(chunk, state), chunk, state)
 
 
 def process_completion(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
     """Process completion event (run_completed/run_paused) and return cleanup events."""
-    return on_run_completed(chunk, state)
+    return _add_run_lineage(on_run_completed(chunk, state), chunk, state)
