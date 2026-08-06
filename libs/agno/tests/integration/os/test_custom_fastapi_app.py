@@ -217,6 +217,39 @@ def test_custom_app_endpoints_preserved(test_agent: Agent):
     assert "AgentOS API" in data["name"]
 
 
+def test_custom_app_endpoints_preserved_after_resync(test_agent: Agent):
+    """Test that resync() preserves base_app routes, including ones that only
+    survived an initial conflict via on_route_conflict='preserve_base_app'."""
+    custom_app = FastAPI(title="Custom App")
+
+    @custom_app.get("/status")
+    async def status_check():
+        return {"status": "healthy"}
+
+    @custom_app.get("/health")
+    async def custom_health():
+        return {"status": "custom_ok"}
+
+    agent_os = AgentOS(
+        agents=[test_agent],
+        base_app=custom_app,
+        on_route_conflict="preserve_base_app",
+    )
+
+    app = agent_os.get_app()
+    client = TestClient(app)
+
+    assert client.get("/status").json() == {"status": "healthy"}
+    assert client.get("/health").json()["status"] == "custom_ok"
+
+    agent_os.agents.append(Agent(name="second-agent", db=InMemoryDb()))
+    agent_os.resync(app)
+
+    assert client.get("/status").json() == {"status": "healthy"}
+    assert client.get("/health").json()["status"] == "custom_ok"
+    assert len(client.get("/agents").json()) == 2
+
+
 def test_custom_lifespan_integration(test_agent: Agent):
     """Test custom lifespan context manager integration."""
     startup_called = False

@@ -434,6 +434,15 @@ class AgentOS:
         # the caller's app in place, so preparing twice would double routes/lifespans).
         self._base_app_prepared: bool = False
 
+        # id() of every route object AgentOS itself has added to the app via
+        # _add_router (populated on both the initial get_app() and every resync()).
+        # Route/APIRoute define value equality and are unhashable, so identity is
+        # tracked by id() rather than by keeping the objects themselves in a set.
+        # _reprovision_routers() uses this to remove only what AgentOS put there,
+        # leaving FastAPI's own routes (/docs, /mcp mount, ...) and anything the
+        # caller defined on their base_app untouched.
+        self._agentos_route_ids: set = set()
+
         self._initialize_agents()
         self._initialize_teams()
         self._initialize_workflows()
@@ -606,16 +615,13 @@ class AgentOS:
         else:
             updated_routers.append(_get_disabled_feature_router("/registry", "Registry", "registry"))
 
-        # Clear all previously existing routes
-        app.router.routes = [
-            route
-            for route in app.router.routes
-            if hasattr(route, "path")
-            and (
-                route.path in ["/docs", "/redoc", "/openapi.json", "/docs/oauth2-redirect"]
-                or route.path.startswith("/mcp")
-            )
-        ]
+        # Drop only the routes AgentOS itself previously added (tracked in
+        # self._agentos_route_ids by _add_router). Everything else -- FastAPI's own
+        # /docs & co, the /mcp mount (added outside _add_router, see
+        # _mount_mcp_app), and any route the caller defined on their base_app -- is
+        # left in place instead of being destroyed and never restored.
+        app.router.routes = [route for route in app.router.routes if id(route) not in self._agentos_route_ids]
+        self._agentos_route_ids.clear()
 
         # Add the built-in routes
         self._add_built_in_routes(app=app)
@@ -1492,6 +1498,10 @@ class AgentOS:
         Args:
             router: The APIRouter to add
         """
+        # Snapshot by identity so routes actually added below -- as opposed to ones
+        # skipped by the "preserve_base_app" conflict policy just below -- are the
+        # only ones recorded as AgentOS-owned (see self._agentos_route_ids).
+        route_ids_before = {id(route) for route in fastapi_app.router.routes}
 
         conflicts = find_conflicting_routes(fastapi_app, router)
         conflicting_routes = [conflict["route"] for conflict in conflicts]
@@ -1541,6 +1551,10 @@ class AgentOS:
         else:
             # No conflicts, add router normally
             fastapi_app.include_router(router)
+
+        self._agentos_route_ids.update(
+            id(route) for route in fastapi_app.router.routes if id(route) not in route_ids_before
+        )
 
     def _get_telemetry_data(self) -> Dict[str, Any]:
         """Get the telemetry data for the OS"""
