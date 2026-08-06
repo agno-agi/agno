@@ -11,6 +11,7 @@ from typing import (
     Optional,
     Sequence,
     Set,
+    Tuple,
     Type,
     TypeVar,
     Union,
@@ -49,13 +50,10 @@ def _identity_injected_types() -> tuple:
     """The identity-bearing types: a model-supplied value for a parameter of
     one of these types would choose the framework object a tool receives.
 
-    These are the only types that hide a parameter from the model. Agent and
-    Team are injected by type, RunContext by parameter name, so an excluded
-    parameter is still filled or keeps its own default. The media types are
-    injected by parameter name ALONE (images/videos/audios/files, see
-    FunctionCall._build_entrypoint_args), so excluding a media-typed parameter
-    under any other name would leave it unfillable by anything: hidden from the
-    model and filled by no one."""
+    An identity-typed parameter is hidden from the model and bound by
+    FunctionCall._build_entrypoint_args, whatever its name. Bare media
+    annotations are hidden too (_is_bare_media_typed) but are filled by the
+    reserved parameter names alone, never by type."""
     from agno.agent.agent import Agent
     from agno.team.team import Team
 
@@ -64,8 +62,20 @@ def _identity_injected_types() -> tuple:
 
 def _unwrap_annotation(hint: Any) -> Any:
     """The annotation a type alias stands for (PEP 695 ``type X = ...``), else
-    the annotation itself. get_type_hints leaves an alias unresolved."""
-    return getattr(hint, "__value__", hint)
+    the annotation itself. get_type_hints leaves an alias unresolved.
+
+    Aliases chain (``type A = RunContext; type B = A``), so unwrapping repeats
+    to a fixpoint: any depth left unresolved is an identity annotation the model
+    can still fill. The seen list holds strong references, so a self-referential
+    alias terminates without relying on ids that a collected object could
+    reuse."""
+    seen: List[Any] = []
+    while True:
+        unwrapped = getattr(hint, "__value__", hint)
+        if unwrapped is hint or any(unwrapped is s for s in seen):
+            return hint
+        seen.append(hint)
+        hint = unwrapped
 
 
 def _is_union(hint: Any) -> bool:
@@ -134,9 +144,11 @@ def _is_framework_typed(hint: Any) -> bool:
         so an exposed union coerces {"user_id": ...} into a live RunContext and
         hands the model the caller's identity.
 
-    Model-fillable, because hiding these would leave the parameter unfillable:
-      * media in any spelling (image: Image, Optional[Image], Union[str, File]),
-        which is injected by parameter name alone;
+    Model-fillable:
+      * media inside a union (Optional[Image], Union[str, File]): media is
+        injected by parameter name alone, so hiding the union would leave it
+        unfillable by anything. A BARE media annotation (pic: Image) is hidden
+        all the same -- see _is_bare_media_typed;
       * a union naming Agent or Team beside an ordinary type
         (owner: Union[str, Agent]). The model can only ever send JSON, so such a
         parameter receives a plain dict or string, never a live Agent."""
@@ -144,6 +156,48 @@ def _is_framework_typed(hint: Any) -> bool:
     if isinstance(hint, type):
         return issubclass(hint, _identity_injected_types())
     return _union_names_type(hint, (RunContext,)) or _union_is_only(hint, _identity_injected_types())
+
+
+def _is_bare_media_typed(hint: Any) -> bool:
+    """True for a parameter annotated with a media type itself (pic: Image).
+
+    On the process_entrypoint path (Toolkit methods, @tool) such a parameter is
+    hidden from the model, as on v2.8.7: media is injected by the reserved
+    parameter names alone (images/videos/audios/files, see
+    FunctionCall._build_entrypoint_args), so the framework can never fill it,
+    and exposing it would let the model fabricate the object while its pydantic
+    schema is invalid under strict mode, failing the whole request rather than
+    one call. from_callable does NOT use this predicate -- v2.8.7 never hid
+    media on the plain-callable path, where the parameter is the model's to
+    fill. Media inside a union (Union[str, Image]) stays model-fillable on
+    both paths."""
+    hint = _unwrap_annotation(hint)
+    return isinstance(hint, type) and issubclass(hint, (Image, Video, Audio, File))
+
+
+def _is_schema_excluded(hint: Any) -> bool:
+    """True when process_entrypoint keeps the parameter out of the model-facing
+    schema and a model-supplied value for it is dropped: the identity types
+    (which _build_entrypoint_args binds) plus bare media types (which only the
+    reserved names can receive)."""
+    return _is_framework_typed(hint) or _is_bare_media_typed(hint)
+
+
+_hidden_media_warned: Set[Tuple[str, str]] = set()
+
+
+def _warn_hidden_media(function_name: str, param_name: str) -> None:
+    # Schema processing runs on the per-run pipeline, not once at registration;
+    # warn once per (function, param) or a long-lived process logs it forever.
+    key = (function_name, param_name)
+    if key in _hidden_media_warned:
+        return
+    _hidden_media_warned.add(key)
+    log_warning(
+        f"Parameter '{param_name}' of function '{function_name}' has a media type but not a "
+        "reserved media name: it is hidden from the model and never auto-filled. Rename it to "
+        "images/videos/audios/files to receive the run's media."
+    )
 
 
 @lru_cache(maxsize=1)
@@ -447,6 +501,10 @@ class Function(BaseModel):
             # guard rejects a model-supplied value for them on this path too. See #6344.
             framework_typed_params: Set[str] = set()
             try:
+                # Identity only, not _is_schema_excluded: v2.8.7's from_callable never
+                # hid media by type, so a bare media param on a plain callable stays
+                # the model's to fill (pydantic coerces the dict) -- unlike the
+                # process_entrypoint path, which hid it then and hides it now.
                 for _pname in sig.parameters:
                     _hint = type_hints.get(_pname)
                     if _hint is not None and _is_framework_typed(_hint):
@@ -567,7 +625,7 @@ class Function(BaseModel):
         found = {name for name in sig.parameters if name in reserved}
         try:
             for param_name, hint in get_type_hints(self.entrypoint).items():
-                if param_name in sig.parameters and _is_framework_typed(hint):
+                if param_name in sig.parameters and _is_schema_excluded(hint):
                     found.add(param_name)
         except Exception:
             pass
@@ -630,9 +688,11 @@ class Function(BaseModel):
             # even if the parameter name differs (e.g. my_agent: Agent). See issue #6344.
             try:
                 for param_name, hint in list(type_hints.items()):
-                    if _is_framework_typed(hint):
+                    if _is_schema_excluded(hint):
                         del type_hints[param_name]
                         excluded_params.append(param_name)
+                        if _is_bare_media_typed(hint):
+                            _warn_hidden_media(self.name, param_name)
             except Exception:
                 pass
 
@@ -1126,12 +1186,19 @@ class FunctionCall(BaseModel):
         # cases like `my_agent: Agent`, `custom_team: Team` or `ctx: RunContext`.
         # See issue #6344.
         #
-        # Every annotation _is_framework_typed hides from the model-facing schema
-        # is filled here, union spellings included (owner: Optional[Agent],
-        # ctx: Union[str, RunContext]). What exclusion hides and injection skips
-        # is filled by nobody: a required parameter would raise on every call,
-        # and one with a default would silently keep it forever.
+        # Every identity annotation _is_framework_typed hides from the model-facing
+        # schema is bound here, union spellings included (owner: Optional[Agent],
+        # ctx: Union[str, RunContext]). A wielder without the object binds None --
+        # a tool registered on a Team has no Agent, and a required `owner: Agent`
+        # must not raise a missing-argument error the model can neither see nor
+        # fix -- except when the parameter carries its own default, which then
+        # stands (an explicit None would stomp it, and validate_call rejects an
+        # explicit None for a bare non-Optional annotation). Bare media
+        # annotations are hidden too but never filled by type: media arrives
+        # through the reserved names alone (images/videos/audios/files).
         try:
+            from inspect import Parameter
+
             from agno.agent.agent import Agent
             from agno.team.team import Team
 
@@ -1141,21 +1208,32 @@ class FunctionCall(BaseModel):
                 # not a parameter, and passing it as a keyword would raise.
                 if param_name not in sig.parameters or param_name in entrypoint_args:
                     continue  # Not a parameter, or already handled by name-based injection
+                param = sig.parameters[param_name]
+                # A variadic parameter can never take a keyword bind (*rest: Agent
+                # binds rest=() by itself; **extra: RunContext binds {}), and a
+                # positional-only one cannot be passed by name either.
+                if param.kind in (Parameter.VAR_POSITIONAL, Parameter.VAR_KEYWORD, Parameter.POSITIONAL_ONLY):
+                    continue
                 if not _is_framework_typed(hint):
                     continue
                 hint = _unwrap_annotation(hint)
-                for wanted, injected in (
-                    ((Agent,), self.function._agent),
-                    ((Team,), self.function._team),
-                    ((RunContext,), self.function._run_context),
-                ):
-                    names_type = (isinstance(hint, type) and issubclass(hint, wanted)) or _union_names_type(
-                        hint, wanted
+                matches = [
+                    injected
+                    for wanted, injected in (
+                        ((Agent,), self.function._agent),
+                        ((Team,), self.function._team),
+                        ((RunContext,), self.function._run_context),
                     )
-                    if names_type:
-                        if injected is not None:
-                            entrypoint_args[param_name] = injected
-                        break
+                    if (isinstance(hint, type) and issubclass(hint, wanted)) or _union_names_type(hint, wanted)
+                ]
+                if not matches:
+                    continue
+                # Take the first type the framework can actually supply, not the first
+                # one the annotation mentions: `Union[Agent, Team]` on a team names
+                # Agent first, and stopping there would leave it unfilled.
+                injected = next((m for m in matches if m is not None), None)
+                if injected is not None or param.default is Parameter.empty:
+                    entrypoint_args[param_name] = injected
         except Exception:
             pass
 
@@ -1170,9 +1248,9 @@ class FunctionCall(BaseModel):
         legitimately be model-supplied -- at worst the value is an attempt to
         override the caller's identity on an identity-threading tool. Without
         this, the tool-hooks execution chain merges model arguments over the
-        injected ones. The call runs with the injected object or the
-        parameter's own default; an identity-typed parameter the framework
-        does not fill stays at its default.
+        injected ones. The call runs with the injected object, with the
+        parameter's own default when the wielder has no such object, or with
+        an explicit None when it has neither.
 
         A name that does appear in the tool's schema is left alone: an MCP
         server is free to expose an argument called "files", and the schema is

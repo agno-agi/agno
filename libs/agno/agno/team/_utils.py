@@ -122,22 +122,17 @@ def deep_copy(team: Team, *, update: Optional[Dict[str, Any]] = None) -> Team:
         Team: A new Team instance with copied state.
     """
     from dataclasses import fields
-    from inspect import Parameter, signature
+    from inspect import signature
 
-    # Get the set of valid __init__ parameter names. A subclass that forwards with
-    # **kwargs (`def __init__(self, **kw): super().__init__(**kw)`) names none of
-    # them, so match on the VAR_KEYWORD instead: without this every field is
-    # skipped and the copy comes back blank.
-    init_signature = signature(team.__class__.__init__)
-    init_params = set(init_signature.parameters.keys()) - {"self"}
-    accepts_kwargs = any(p.kind is Parameter.VAR_KEYWORD for p in init_signature.parameters.values())
+    # Get the set of valid __init__ parameter names
+    init_params = set(signature(team.__class__.__init__).parameters.keys()) - {"self"}
 
     # Extract the fields to set for the new Team
     fields_for_new_team: Dict[str, Any] = {}
 
     for f in fields(cast(Any, team)):
         # Skip private fields and fields not accepted by __init__
-        if f.name.startswith("_") or not (accepts_kwargs or f.name in init_params):
+        if f.name.startswith("_") or f.name not in init_params:
             continue
 
         field_value = getattr(team, f.name)
