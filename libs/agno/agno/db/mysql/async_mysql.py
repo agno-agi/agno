@@ -2520,7 +2520,7 @@ class AsyncMySQLDb(AsyncBaseDb):
         Args:
             trace: The Trace object to store (one per trace_id).
         """
-        from sqlalchemy import case
+        from sqlalchemy import and_, case
 
         try:
             table = await self._get_table(table_type="traces", create_table_if_not_found=True)
@@ -2578,7 +2578,13 @@ class AsyncMySQLDb(AsyncBaseDb):
                     # Otherwise a later upsert from a child span (e.g. a post-hook
                     # agent's run with a different session_id) would overwrite
                     # the trace's already-correct context.
-                    run_id=func.coalesce(table.c.run_id, insert_stmt.inserted.run_id),
+                    run_id=case(
+                        (
+                            and_(insert_stmt.inserted.run_id.isnot(None), new_level > existing_level),
+                            insert_stmt.inserted.run_id,
+                        ),
+                        else_=func.coalesce(table.c.run_id, insert_stmt.inserted.run_id),
+                    ),
                     session_id=func.coalesce(table.c.session_id, insert_stmt.inserted.session_id),
                     user_id=func.coalesce(table.c.user_id, insert_stmt.inserted.user_id),
                     agent_id=func.coalesce(table.c.agent_id, insert_stmt.inserted.agent_id),

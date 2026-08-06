@@ -2236,6 +2236,9 @@ class DynamoDb(BaseDb):
                 )
                 new_level = get_component_level(trace.workflow_id, trace.team_id, trace.agent_id, trace.name)
                 should_update_name = new_level > existing_level
+                should_update_run_id = trace.run_id is not None and (
+                    existing.get("run_id") is None or new_level > existing_level
+                )
 
                 # Parse existing start_time to calculate correct duration
                 existing_start_time_str = existing.get("start_time")
@@ -2268,7 +2271,7 @@ class DynamoDb(BaseDb):
                 # that the existing row left blank. Otherwise a later upsert from
                 # a child span (e.g. a post-hook agent's run with a different
                 # session_id) would overwrite the trace's already-correct context.
-                if existing.get("run_id") is None and trace.run_id is not None:
+                if should_update_run_id:
                     update_parts.append("run_id = :run_id")
                     expression_attr_values[":run_id"] = {"S": trace.run_id}
                 if existing.get("session_id") is None and trace.session_id is not None:
