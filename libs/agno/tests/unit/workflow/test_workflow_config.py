@@ -750,3 +750,50 @@ class TestWorkflowStrictThreading:
         listed = get_workflows(db=db)
 
         assert [w.id for w in listed] == ["wf1"]
+
+
+class TestStepMemberPins:
+    def test_strict_load_honors_step_agent_pin_when_current_version_is_broken(self, tmp_path):
+        """The workflow pinned a clean agent version at save time; a broken
+        newer agent version must not make the workflow refuse."""
+        from agno.agent.agent import Agent
+        from agno.db.sqlite import SqliteDb
+        from agno.registry import Registry
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import get_workflow_by_id
+
+        def broken_tool(q: str) -> str:
+            """Tool."""
+            return q
+
+        db = SqliteDb(db_file=str(tmp_path / "step_pin.db"))
+        member = Agent(id="sp-agent", name="SP")
+        Workflow(id="sp-wf", name="WF", steps=[Step(name="s1", agent=member)]).save(db=db)
+        from agno.models.openai import OpenAIChat
+
+        member.model = OpenAIChat(id="gpt-4o-mini")
+        member.tools = [broken_tool]
+        member.save(db=db)
+
+        loaded = get_workflow_by_id(db=db, id="sp-wf", registry=Registry(), strict=True)
+
+        assert loaded is not None
+        assert loaded.steps[0].agent.id == "sp-agent"
+
+    def test_workflow_load_fetches_links_for_step_pins(self, tmp_path):
+        """Workflow.load resolves step members at their pinned versions, like
+        get_workflow_by_id."""
+        from agno.agent.agent import Agent
+        from agno.db.sqlite import SqliteDb
+        from agno.workflow.step import Step
+
+        db = SqliteDb(db_file=str(tmp_path / "load_pin.db"))
+        member = Agent(id="lp-agent", name="LP", description="v1 desc")
+        Workflow(id="lp-wf", name="WF", steps=[Step(name="s1", agent=member)]).save(db=db)
+        member.description = "v2 desc"
+        member.save(db=db)
+
+        loaded = Workflow.load(id="lp-wf", db=db)
+
+        assert loaded is not None
+        assert loaded.steps[0].agent.description == "v1 desc"

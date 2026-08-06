@@ -1014,3 +1014,52 @@ class TestGetAgents:
 
         assert len(agents) == 1
         assert agents[0].db == mock_db
+
+
+class TestStrictToolResolution:
+    def test_from_dict_external_execution_tool_loads_under_strict(self):
+        """Client-executed tools never carry a server entrypoint; strict must
+        not treat them as unresolved references."""
+        from agno.models.openai import OpenAIChat
+        from agno.tools.decorator import tool
+        from agno.tools.function import Function
+
+        @tool(external_execution=True)
+        def charge_card(amount: float) -> str:
+            """Charge a card."""
+            return "charged"
+
+        agent = Agent(id="ext-agent", model=OpenAIChat(id="gpt-4o-mini"), tools=[charge_card])
+        config = agent.to_dict()
+
+        rebuilt = Agent.from_dict(config, registry=Registry(), strict=True)
+
+        names = [t.name for t in rebuilt.tools if isinstance(t, Function)]
+        assert "charge_card" in names
+
+    def test_from_dict_strict_keeps_qualified_tools_bound_to_their_toolkit(self):
+        """A same-named function from a different toolkit is a different tool:
+        strict refuses it, lenient warns and binds it."""
+        from agno.exceptions import ComponentRehydrationError
+        from agno.models.openai import OpenAIChat
+        from agno.tools.function import Function
+        from agno.tools.toolkit import Toolkit
+
+        def search(query: str) -> str:
+            """Search."""
+            return "results"
+
+        agent = Agent(
+            id="qual-agent",
+            model=OpenAIChat(id="gpt-4o-mini"),
+            tools=[Toolkit(name="right_toolkit", tools=[search])],
+        )
+        config = agent.to_dict()
+        registry = Registry(tools=[Toolkit(name="wrong_toolkit", tools=[search])])
+
+        with pytest.raises(ComponentRehydrationError, match="right_toolkit.search"):
+            Agent.from_dict(config, registry=registry, strict=True)
+
+        lenient = Agent.from_dict(config, registry=registry, strict=False)
+        bound = [t for t in lenient.tools if isinstance(t, Function) and t.name == "search"]
+        assert bound and bound[0].entrypoint is not None

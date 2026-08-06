@@ -439,3 +439,21 @@ class TestStepSerializationRoundtrip:
 
         assert restored.description is None
         assert restored.add_workflow_history is None
+
+
+class TestStrictExecutorRefs:
+    def test_from_dict_unresolvable_executor_raises_under_strict(self):
+        """A function-step whose executor is not in the registry must refuse
+        under strict instead of degrading to a generic validation error."""
+        from agno.exceptions import ComponentRehydrationError
+
+        data = {"type": "Step", "name": "fn-step", "executor_ref": "missing_fn"}
+
+        with pytest.raises(ComponentRehydrationError, match="missing_fn"):
+            Step.from_dict(data, registry=Registry(), strict=True)
+
+    def test_from_dict_unresolvable_executor_still_fails_validation_when_lenient(self):
+        data = {"type": "Step", "name": "fn-step", "executor_ref": "missing_fn"}
+
+        with pytest.raises(ValueError, match="must have one executor"):
+            Step.from_dict(data, registry=Registry(), strict=False)

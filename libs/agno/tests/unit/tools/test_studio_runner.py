@@ -2123,3 +2123,25 @@ class TestMemberStructureFidelity:
         source = inspect.getsource(StudioRunnerTools._load_team_from_db)
         before_call = source.split("_require_resolvable_member_ids")[0]
         assert "if for_dispatch:" in before_call
+
+
+def test_dispatch_resolves_members_at_pinned_versions(tmp_path):
+    """A dispatched team must execute the member versions pinned at team-save
+    time, matching what get_team_by_id and Team.load resolve."""
+    from agno.agent.agent import Agent
+    from agno.db.sqlite import SqliteDb
+    from agno.registry import Registry
+    from agno.team.team import Team
+    from agno.tools.studio_runner import StudioRunnerTools
+
+    db = SqliteDb(db_file=str(tmp_path / "runner_pin.db"))
+    member = Agent(id="rp-member", name="Member", description="v1 desc")
+    Team(id="rp-team", name="Team", members=[member]).save(db=db)
+    member.description = "v3 desc"
+    member.save(db=db)
+
+    runner = StudioRunnerTools(registry=Registry(), db=db)
+    team = runner._load_team_from_db("rp-team", for_dispatch=True)
+
+    assert team is not None
+    assert team.members[0].description == "v1 desc"

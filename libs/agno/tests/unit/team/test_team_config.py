@@ -1317,3 +1317,43 @@ def test_team_load_survives_broken_current_member_version(tmp_path):
 
     assert loaded is not None
     assert [m.id for m in loaded.members] == ["m1"]
+
+
+class TestMemberPinFailures:
+    def test_strict_pin_miss_refuses_and_names_the_version(self, tmp_path):
+        """A pinned member version whose config row was deleted must refuse
+        with the pin and the remedy, not report the member as missing."""
+        from agno.exceptions import ComponentRehydrationError
+
+        db = SqliteDb(db_file=str(tmp_path / "pin_miss.db"))
+        member = Agent(id="pm-member", name="Member")
+        Team(id="pm-team", name="Team", members=[member]).save(db=db)
+        member.description = "v2"
+        member.save(db=db)
+        links = db.get_links(component_id="pm-team", version=1)
+        pinned = next(link for link in links if link["link_kind"] == "member")["child_version"]
+        assert db.delete_config(component_id="pm-member", version=pinned)
+
+        with pytest.raises(ComponentRehydrationError, match=f"pins member agent 'pm-member' at version {pinned}"):
+            get_team_by_id(db=db, id="pm-team", strict=True)
+
+    def test_strict_pin_miss_does_not_substitute_registry_component(self, tmp_path):
+        """An explicit pin names one stored version; a same-id registry
+        component is a different object and must not silently replace it."""
+        from agno.exceptions import ComponentRehydrationError
+
+        db = SqliteDb(db_file=str(tmp_path / "pin_subst.db"))
+        member = Agent(id="ps-member", name="Member")
+        Team(id="ps-team", name="Team", members=[member]).save(db=db)
+        member.description = "v2"
+        member.save(db=db)
+        links = db.get_links(component_id="ps-team", version=1)
+        pinned = next(link for link in links if link["link_kind"] == "member")["child_version"]
+        assert db.delete_config(component_id="ps-member", version=pinned)
+        registry = Registry(agents=[Agent(id="ps-member", name="Code Member")])
+
+        with pytest.raises(ComponentRehydrationError, match="pins member agent 'ps-member'"):
+            get_team_by_id(db=db, id="ps-team", registry=registry, strict=True)
+
+        lenient = get_team_by_id(db=db, id="ps-team", registry=registry, strict=False)
+        assert [m.name for m in lenient.members] == ["Code Member"]
