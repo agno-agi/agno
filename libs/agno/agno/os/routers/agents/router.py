@@ -1279,36 +1279,14 @@ def get_agent_router(
                 component_id=agent_id,
             )
 
-        # Fetch existing run once for validation and potential approval resolution
-        existing_run = None
-        if session_id and not isinstance(agent, RemoteAgent):
-            if hasattr(agent, "aget_run_output"):
-                existing_run = await agent.aget_run_output(
-                    run_id=run_id,
-                    session_id=session_id,
-                    user_id=scoped_user_id or user_id,
-                )
-
-        # Only allow /continue when the run is in a paused state. If running, continued, or errored, return 409.
-        if existing_run is not None:
-            is_paused = getattr(existing_run, "is_paused", False)
-            if not is_paused:
-                status = getattr(existing_run, "status", None)
-                _status_to_detail = {
-                    RunStatus.running: "run is already running",
-                    RunStatus.completed: "run is already continued",
-                    RunStatus.error: "run is already errored",
-                    RunStatus.cancelled: "run is already cancelled",
-                    RunStatus.pending: "run is already pending",
-                }
-                detail = _status_to_detail.get(
-                    status,  # type: ignore[arg-type]
-                    f"run is not paused (status={getattr(status, 'value', status)})",
-                )
-                raise HTTPException(
-                    status_code=409,
-                    detail=detail,
-                )
+        # No router-level status gate: unified /continue (main's a7314ee79d,
+        # checkpointing + unified continue) handles EVERY run state in the
+        # core dispatch - COMPLETED forks as a follow-up, RUNNING/ERROR
+        # resume, unresolved HITL raises its own honest error. The old
+        # paused-only 409 here blocked requests the core supports (and its
+        # "run is already continued" detail was simply false). Teams and
+        # workflows keep their paused-only gates - main has not unified
+        # those doors.
 
         # Convert tools dict to RunRequirement and ToolExecution objects if provided
         requirements = None
