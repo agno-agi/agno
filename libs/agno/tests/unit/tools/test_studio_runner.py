@@ -1115,6 +1115,392 @@ class TestStudioEmbedding:
         assert "knowledge" in out.get("error", "")
         assert "registry" in out.get("error", "")
 
+    def test_unresolved_tools_inside_a_compound_step_are_refused(self, db, registry):
+        """A step reached through a compound step's branch list is a step, not an
+        executor, so a walk that unwraps executors only one level below the
+        workflow never reaches it. The same agent as a direct step was already
+        refused; nesting it must not buy dispatch."""
+        from agno.tools.calculator import CalculatorTools
+        from agno.workflow.parallel import Parallel
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import Workflow
+
+        armed_registry = Registry(
+            name="Armed Registry", models=[OpenAIResponses(id="gpt-5.4")], tools=[CalculatorTools()], dbs=[db]
+        )
+        studio = StudioTools(registry=armed_registry, db=db, workflows=True)
+        studio.create_agent(name="Armed", instructions="i", model_id="gpt-5.4", tool_names=["calculator"])
+        studio.create_workflow(name="Direct", description="d", step_specs=[{"name": "s", "agent_id": "armed"}])
+        # StudioTools cannot author a compound step, so the persisted config for
+        # the nested shape is written directly, the way a posted config arrives.
+        db.upsert_component(component_id="nested", component_type="workflow", name="Nested")
+        db.upsert_config(
+            component_id="nested",
+            stage="published",
+            config={
+                "id": "nested",
+                "name": "Nested",
+                "steps": [{"name": "p", "type": "Parallel", "steps": [{"name": "s", "agent_id": "armed"}]}],
+            },
+        )
+
+        # The registry resolves the model but not the tool, so the rebuild binds
+        # the tool to entrypoint=None rather than failing.
+        runner = StudioRunnerTools(registry=registry, db=db)
+        for workflow_id in ("direct", "nested"):
+            assert "add" in _loads(runner.run_workflow(workflow_id, "hi")).get("error", ""), workflow_id
+
+        # The walk used to alternate with nesting depth -- one wrapper missed,
+        # two caught -- so a doubly nested spot check would have looked healthy.
+        agent = runner._load_agent_from_db("armed")
+        nested: Any = Step(name="s", agent=agent)
+        for depth in range(1, 5):
+            nested = Parallel(nested, name=f"p{depth}")
+            wf = Workflow(id="w", name="W", steps=[nested])
+            assert StudioRunnerTools._unresolved_below(wf) is not None, depth
+
+    def test_nested_workflow_step_is_refused_rather_than_reported_complete(self, db, registry):
+        """A nested workflow serializes as workflow_id alone and Step.from_dict
+        installs a placeholder that returns an unsuccessful StepOutput. A failed
+        step does not fail its workflow, so dispatching would report COMPLETED
+        while the child never ran."""
+        for component_id, config in (
+            ("child", {"id": "child", "name": "Child", "steps": [{"name": "c", "agent_id": "worker"}]}),
+            ("parent", {"id": "parent", "name": "Parent", "steps": [{"name": "call", "workflow_id": "child"}]}),
+        ):
+            db.upsert_component(component_id=component_id, component_type="workflow", name=component_id)
+            db.upsert_config(component_id=component_id, config=config, stage="published")
+
+        result = _loads(StudioRunnerTools(registry=registry, db=db).run_workflow("parent", "hi"))
+        assert "cannot reconstruct" in result["error"]
+        assert "child" in result["error"]
+
+    def test_bare_executor_step_that_copies_to_itself_is_refused(self, db):
+        """A workflow takes a bare agent as a step, without a Step wrapper. Then
+        the item IS the executor, so a check that only reads item.agent/.team
+        walks straight past it."""
+        from agno.agent import Agent
+        from agno.registry import Registry
+        from agno.workflow.workflow import Workflow
+
+        class _SelfCopy(Agent):
+            def deep_copy(self, *, update=None):
+                return self
+
+        leaky = _SelfCopy(id="leaky", name="Leaky", model=OpenAIResponses(id="gpt-5.4"))
+        wf = Workflow(id="flow", name="Flow", db=db, steps=[leaky])
+        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db]), db=db, workflows_list=[wf])
+
+        assert "is still shared" in _loads(runner.run_workflow("flow", "hi"))["error"]
+
+    def test_degraded_copy_of_a_registered_component_is_refused(self, db, registry):
+        """A deep_copy returning a distinct but blank object passes every
+        identity check that asks "is this the same instance". The registry still
+        holds the original, so the copy is judged against it."""
+        from agno.agent import Agent
+
+        class _Downcast(Agent):
+            def deep_copy(self, *, update=None):
+                return Agent(id=self.id, name=self.name)  # loses model and instructions
+
+        worker = _Downcast(id="worker", name="Worker", model=OpenAIResponses(id="gpt-5.4"), instructions="rules")
+        registry.agents = [worker]
+        for component_id, component_type, config in (
+            (
+                "crew",
+                "team",
+                {
+                    "id": "crew",
+                    "name": "Crew",
+                    "model": {"id": "gpt-5.4", "provider": "OpenAI"},
+                    "members": [{"type": "agent", "agent_id": "worker"}],
+                },
+            ),
+            ("flow", "workflow", {"id": "flow", "name": "Flow", "steps": [{"name": "s", "agent_id": "worker"}]}),
+        ):
+            db.upsert_component(component_id=component_id, component_type=component_type, name=component_id)
+            db.upsert_config(component_id=component_id, config=config, stage="published")
+
+        runner = StudioRunnerTools(registry=registry, db=db)
+        assert "degraded copy" in _loads(runner.run_team("crew", "hi"))["error"]
+        assert "degraded copy" in _loads(runner.run_workflow("flow", "hi"))["error"]
+
+        # A faithful copy of the same registered component still dispatches.
+        registry.agents = [Agent(id="worker", name="Worker", model=OpenAIResponses(id="gpt-5.4"))]
+        assert StudioRunnerTools(registry=registry, db=db)._team_for_run("crew") is not None
+
+    def test_references_are_checked_all_the_way_down(self, db, registry):
+        """A reference's own config names references of its own. Stopping after
+        one hop leaves an outer team dispatchable while its inner team's member
+        lost the schema it declared."""
+
+        class Report(BaseModel):
+            title: str
+
+        for component_id, component_type, config in (
+            (
+                "leaf",
+                "agent",
+                {
+                    "id": "leaf",
+                    "name": "leaf",
+                    "model": {"id": "gpt-5.4", "provider": "OpenAI"},
+                    "output_schema": "Report",
+                },
+            ),
+            (
+                "inner",
+                "team",
+                {
+                    "id": "inner",
+                    "name": "inner",
+                    "model": {"id": "gpt-5.4", "provider": "OpenAI"},
+                    "members": [{"type": "agent", "agent_id": "leaf"}],
+                },
+            ),
+            (
+                "outer",
+                "team",
+                {
+                    "id": "outer",
+                    "name": "outer",
+                    "model": {"id": "gpt-5.4", "provider": "OpenAI"},
+                    "members": [{"type": "team", "team_id": "inner"}],
+                },
+            ),
+        ):
+            db.upsert_component(component_id=component_id, component_type=component_type, name=component_id)
+            db.upsert_config(component_id=component_id, config=config, stage="published")
+
+        # The refusal has to name the piece that went missing; which layer
+        # refuses it (this check, or a strict rehydration below it) may vary.
+        assert "Report" in _loads(StudioRunnerTools(registry=registry, db=db).run_team("outer", "hi"))["error"]
+
+        registry.schemas = [Report]
+        whole = StudioRunnerTools(registry=registry, db=db)._team_for_run("outer")
+        assert whole.members[0].members[0].output_schema is Report
+
+    def test_a_graph_too_deep_to_inspect_is_refused_not_passed(self, db):
+        """Every check here is depth-capped so a cycle cannot hang it, and a cap
+        reached mid-walk reports nothing wrong. Past the cap that is a pass for
+        a graph nobody inspected, so dispatch refuses instead."""
+        from agno.agent import Agent
+        from agno.registry import Registry
+        from agno.workflow.parallel import Parallel
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import Workflow
+
+        def _wrapped(count: int, workflow_id: str):
+            nested: Any = Step(name="s", agent=Agent(id="a", name="A", model=OpenAIResponses(id="gpt-5.4")))
+            for index in range(count):
+                nested = Parallel(nested, name=f"p{index}")
+            return Workflow(id=workflow_id, name=workflow_id, db=db, steps=[nested])
+
+        shallow, deep = _wrapped(4, "shallow"), _wrapped(40, "deep")
+        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db]), db=db, workflows_list=[shallow, deep])
+
+        assert runner._workflow_for_run("shallow") is not None
+        assert "nests deeper than" in _loads(runner.run_workflow("deep", "hi"))["error"]
+
+    def test_a_registry_backed_step_executor_is_not_judged_against_a_stored_config(self, db, registry):
+        """from_dict resolves an executor from the registry before the database,
+        so a component that lives in both is the live object, not a rebuild of
+        that config. A live toolkit is one object where the config lists its
+        eight functions, and comparing the two called the healthy agent gutted."""
+        from agno.agent import Agent
+        from agno.tools.calculator import CalculatorTools
+
+        live = Agent(id="worker", name="Worker", model=OpenAIResponses(id="gpt-5.4"), tools=[CalculatorTools()])
+        registry.agents = [live]
+        registry.tools = [CalculatorTools()]
+        db.upsert_component(component_id="worker", component_type="agent", name="Worker")
+        # The stored config lists the toolkit's functions one by one, the shape
+        # the live object holds as a single toolkit.
+        db.upsert_config(
+            component_id="worker",
+            stage="published",
+            config={
+                "id": "worker",
+                "name": "Worker",
+                "model": {"id": "gpt-5.4", "provider": "OpenAI"},
+                "tools": [{"name": name} for name in ("add", "subtract", "multiply", "divide")],
+            },
+        )
+        db.upsert_component(component_id="flow", component_type="workflow", name="Flow")
+        db.upsert_config(
+            component_id="flow",
+            stage="published",
+            config={"id": "flow", "name": "Flow", "steps": [{"name": "s", "agent_id": "worker"}]},
+        )
+
+        runner = StudioRunnerTools(registry=registry, db=db)
+        dispatched = runner._workflow_for_run("flow")
+        assert dispatched is not None
+        # The live toolkit came through, which is what the config's expanded
+        # function list would have been compared against.
+        assert dispatched.steps[0].agent.tools
+
+    def test_an_empty_branch_list_is_a_shape_not_a_loss(self, db):
+        """Condition(else_steps=[]) declares no else branch. Reading an empty
+        list as "the copy dropped these steps" refuses a clean workflow."""
+        from agno.agent import Agent
+        from agno.registry import Registry
+        from agno.workflow.condition import Condition
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import Workflow
+
+        agent = Agent(id="a", name="A", model=OpenAIResponses(id="gpt-5.4"))
+        condition = Condition(name="c", evaluator=lambda *_: True, steps=[Step(name="s", agent=agent)], else_steps=[])
+        wf = Workflow(id="cond", name="cond", db=db, steps=[condition])
+        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db]), db=db, workflows_list=[wf])
+
+        assert runner._workflow_for_run("cond") is not None
+
+    def test_a_steps_container_is_walked_like_a_step_list(self, db):
+        """steps= takes a list or one compound step. A check that only handles
+        the list spelling skips the whole workflow when it is given a container."""
+        from agno.agent import Agent
+        from agno.registry import Registry
+        from agno.workflow.step import Step
+        from agno.workflow.steps import Steps
+        from agno.workflow.workflow import Workflow
+
+        class _SelfCopy(Agent):
+            def deep_copy(self, *, update=None):
+                return self
+
+        leaky = _SelfCopy(id="leaky", name="Leaky", model=OpenAIResponses(id="gpt-5.4"))
+        wf = Workflow(id="boxed", name="boxed", db=db, steps=Steps(name="box", steps=[Step(name="s", agent=leaky)]))
+        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db]), db=db, workflows_list=[wf])
+
+        assert "is still shared" in _loads(runner.run_workflow("boxed", "hi"))["error"]
+
+    def test_only_a_steps_own_workflow_id_marks_a_nested_workflow(self, db, registry):
+        """A step carries free-form user JSON as well as its own fields, so a
+        walk over every value refuses on a key that merely shares the name."""
+        db.upsert_component(component_id="a1", component_type="agent", name="a1")
+        db.upsert_config(
+            component_id="a1",
+            stage="published",
+            config={"id": "a1", "name": "a1", "model": {"id": "gpt-5.4", "provider": "OpenAI"}},
+        )
+        db.upsert_component(component_id="fy", component_type="workflow", name="fy")
+        db.upsert_config(
+            component_id="fy",
+            stage="published",
+            config={
+                "id": "fy",
+                "name": "fy",
+                "steps": [
+                    {
+                        "type": "Step",
+                        "name": "s",
+                        "agent_id": "a1",
+                        "human_review": {"user_input_schema": [{"name": "target", "workflow_id": "other-flow"}]},
+                    }
+                ],
+            },
+        )
+
+        runner = StudioRunnerTools(registry=registry, db=db)
+        assert "cannot reconstruct" not in _loads(runner.run_workflow("fy", "hi")).get("error", "")
+
+    def test_a_failed_reference_read_refuses_rather_than_passes(self, db, registry):
+        """A db read that fails is not evidence of fidelity. Swallowing it would
+        turn "could not check" into "checked and fine" for the one component the
+        check exists to inspect."""
+        db.upsert_component(component_id="worker", component_type="agent", name="Worker")
+        db.upsert_config(
+            component_id="worker",
+            stage="published",
+            config={"id": "worker", "name": "Worker", "model": {"id": "gpt-5.4", "provider": "OpenAI"}},
+        )
+        db.upsert_component(component_id="crew", component_type="team", name="Crew")
+        db.upsert_config(
+            component_id="crew",
+            stage="published",
+            config={
+                "id": "crew",
+                "name": "Crew",
+                "model": {"id": "gpt-5.4", "provider": "OpenAI"},
+                "members": [{"type": "agent", "agent_id": "worker"}],
+            },
+        )
+        runner = StudioRunnerTools(registry=registry, db=db)
+        assert runner._team_for_run("crew") is not None  # healthy before the fault
+
+        # With a registry present, the reference check is the only reader of a
+        # member's stored config, so this fault lands on exactly that read.
+        original = runner._load_config_from_db
+
+        def failing(component_id, **kwargs):
+            if component_id == "worker":
+                raise RuntimeError("transient db failure")
+            return original(component_id, **kwargs)
+
+        runner._load_config_from_db = failing  # type: ignore[method-assign]
+        assert "transient db failure" in _loads(runner.run_team("crew", "hi"))["error"]
+
+    def test_reference_stored_under_another_type_is_refused(self, db, registry):
+        """A code-defined reference is simply absent from the components table.
+        An id that IS there under another type is a contradiction, and whatever
+        it resolved to cannot be checked against any stored config."""
+        db.upsert_component(component_id="x", component_type="team", name="X-Team")
+        db.upsert_config(
+            component_id="x",
+            stage="published",
+            config={"id": "x", "name": "X-Team", "model": {"id": "gpt-5.4", "provider": "OpenAI"}, "members": []},
+        )
+        db.upsert_component(component_id="flow", component_type="workflow", name="Flow")
+        db.upsert_config(
+            component_id="flow",
+            stage="published",
+            config={"id": "flow", "name": "Flow", "steps": [{"name": "s", "agent_id": "x"}]},
+        )
+
+        error = _loads(StudioRunnerTools(registry=registry, db=db).run_workflow("flow", "hi"))["error"]
+        assert "stores 'x' as a team" in error
+
+    def test_step_executor_is_checked_against_its_own_stored_config(self, db, registry):
+        """A workflow's config carries none of the schemas its step executors
+        declare, so the top-level fidelity check is silent for a workflow. An
+        executor that lost a registry-backed piece must be refused as a step
+        exactly as it is refused when dispatched directly."""
+
+        class Report(BaseModel):
+            title: str
+
+        db.upsert_component(component_id="shaped", component_type="agent", name="Shaped")
+        db.upsert_config(
+            component_id="shaped",
+            stage="published",
+            config={
+                "id": "shaped",
+                "name": "Shaped",
+                "model": {"id": "gpt-5.4", "provider": "OpenAI"},
+                "output_schema": "Report",
+            },
+        )
+        db.upsert_component(component_id="flow", component_type="workflow", name="Flow")
+        db.upsert_config(
+            component_id="flow",
+            stage="published",
+            config={"id": "flow", "name": "Flow", "steps": [{"name": "s", "agent_id": "shaped"}]},
+        )
+
+        thin = StudioRunnerTools(registry=registry, db=db)
+        # Naming the lost schema is the contract; the exact wording belongs to
+        # whichever layer refuses first.
+        assert "Report" in _loads(thin.run_agent("shaped", "hi")).get("error", "")
+        assert "Report" in _loads(thin.run_workflow("flow", "hi")).get("error", "")
+
+        # The control matters as much as the refusal: a registry that does hold
+        # the schema must still dispatch, or the check is just a wall.
+        registry.schemas = [Report]
+        whole = StudioRunnerTools(registry=registry, db=db)
+        assert whole._agent_for_run("shaped").output_schema is Report
+        assert whole._workflow_for_run("flow").steps[0].agent.output_schema is Report
+
     def test_create_refuses_an_idless_member_or_step(self, registry, db):
         # Persisting a reference to a code-defined component with no id would
         # store agent_id null; on reload a registry lookup by id=None binds
@@ -1408,6 +1794,13 @@ class TestSubSessionDerivation:
         assert StudioRunnerTools._sub_session_id(None, "agent", "a1") is None
         assert StudioRunnerTools._sub_session_id(_context(session_id=""), "agent", "a1") is None
 
+    def test_derivation_is_frozen(self):
+        # The derived id is persisted in session rows, so a change to the
+        # derivation orphans every existing sub-session. This literal is the
+        # contract: sha256 of the length-prefixed parts, first 32 hex chars,
+        # prefixed with the component type.
+        assert _sub_session("agent", "a1") == "agent-f08679ca57837826037ef1af09fc5b35"
+
 
 class TestResultMedia:
     def test_response_audio_is_reported(self):
@@ -1696,6 +2089,105 @@ class TestMemberStructureFidelity:
         step = type("S", (), {"name": "s", "agent": remote, "team": None})()
         with pytest.raises(Exception):
             runner._require_isolated_steps(type("W", (), {"steps": [step]})(), "wf")
+
+    def test_code_defined_workflow_step_executor_that_copies_to_itself_is_refused(self, db):
+        """A workflow holds steps, not members, so the member checks say nothing
+        about a step executor. An executor whose deep_copy returns the original
+        dispatches the shared instance, and per-run mutation of it crosses
+        callers."""
+        from agno.agent import Agent
+        from agno.registry import Registry
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import Workflow
+
+        class _SelfCopy(Agent):
+            def deep_copy(self, *, update=None):
+                return self
+
+        shared = _SelfCopy(id="leaky", name="Leaky", model=OpenAIResponses(id="gpt-5.4"))
+        wf = Workflow(id="flow", name="Flow", db=db, steps=[Step(name="s", agent=shared)])
+        # Not in the registry: the copy is judged against the original, so the
+        # refusal does not depend on knowing the registry's instances.
+        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db]), db=db, workflows_list=[wf])
+
+        result = _loads(runner.run_workflow("flow", "hello"))
+        assert "agent is still shared" in result["error"]
+
+    def test_step_executor_whose_member_survives_the_copy_is_refused(self, db):
+        """A step executor that copies cleanly still leaks when one of its own
+        members did not, so the check descends into the copied executor."""
+        from agno.agent import Agent
+        from agno.registry import Registry
+        from agno.team import Team
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import Workflow
+
+        class _SelfCopy(Agent):
+            def deep_copy(self, *, update=None):
+                return self
+
+        member = _SelfCopy(id="nested-leaky", name="Nested", model=OpenAIResponses(id="gpt-5.4"))
+        crew = Team(id="crew", name="Crew", model=OpenAIResponses(id="gpt-5.4"), members=[member])
+        wf = Workflow(id="flow", name="Flow", db=db, steps=[Step(name="s", team=crew)])
+        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db]), db=db, workflows_list=[wf])
+
+        result = _loads(runner.run_workflow("flow", "hello"))
+        assert "still shares member 'nested-leaky'" in result["error"]
+
+    def test_db_team_holding_a_registry_singleton_member_is_refused(self, db, registry):
+        """Team.from_dict resolves a member the database does not hold through
+        the registry and keeps whatever deep_copy returned, so a class that
+        returns itself puts the singleton into the rebuilt team. The workflow
+        path already refuses this graph; the team path has to agree."""
+        from agno.agent import Agent
+
+        class _SelfCopy(Agent):
+            def deep_copy(self, *, update=None):
+                return self
+
+        worker = _SelfCopy(id="worker", name="Worker", model=OpenAIResponses(id="gpt-5.4"))
+        registry.agents = [worker]
+        db.upsert_component(component_id="crew", component_type="team", name="Crew")
+        db.upsert_config(
+            component_id="crew",
+            stage="published",
+            config={
+                "id": "crew",
+                "name": "Crew",
+                "model": {"id": "gpt-5.4", "provider": "OpenAI"},
+                "members": [{"type": "agent", "agent_id": "worker"}],
+            },
+        )
+        runner = StudioRunnerTools(registry=registry, db=db)
+
+        result = _loads(runner.run_team("crew", "hello"))
+        assert "shared registry instance of member 'worker'" in result["error"]
+
+    def test_callable_factory_members_and_tools_do_not_crash_the_graph_walk(self):
+        """members= and tools= accept callable factories, so the nested-tools walk
+        must skip what it cannot iterate instead of crashing dispatch."""
+        from agno.agent import Agent
+        from agno.team import Team
+
+        with_tool_factory = Team(id="t", name="T", members=[Agent(id="m", name="M", tools=lambda: [])])
+        assert StudioRunnerTools._unresolved_below(with_tool_factory) is None
+
+        lazy_members = Team(id="t2", name="T2", members=lambda: [Agent(id="m2", name="M2")])
+        with_member_factory = Team(id="outer", name="Outer", members=[lazy_members])
+        assert StudioRunnerTools._unresolved_below(with_member_factory) is None
+
+    def test_step_executor_with_callable_factory_members_passes_the_isolation_check(self, db):
+        """The isolation walk descends through member lists; a member team whose
+        members= is a callable factory must be skipped, not iterated."""
+        from agno.agent import Agent
+        from agno.registry import Registry
+        from agno.team import Team
+
+        registered = Agent(id="registered", name="Registered")
+        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db], agents=[registered]), db=db)
+        lazy = Team(id="lazy", name="Lazy", members=lambda: [Agent(id="m", name="M")])
+        step = type("S", (), {"name": "s", "agent": None, "team": Team(id="t", name="T", members=[lazy])})()
+        runner._require_isolated_steps(type("W", (), {"steps": [step]})(), "wf")
 
     def test_copy_refusal_reaches_the_caller_as_its_own_message(self, db):
         """DispatchCopyError is a deliberate refusal with an actionable message, so it

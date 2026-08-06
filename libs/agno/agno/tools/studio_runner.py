@@ -16,8 +16,10 @@ Typical use:
     )
 
 Mount it INSTEAD of StudioTools, not beside it. StudioTools embeds this same
-toolkit and already exposes list_agents/list_teams/list_workflows/run_agent, and
-agno's tool namespace is flat: co-mounting collapses the overlapping names to
+toolkit and already exposes list_agents/list_teams/list_workflows/run_agent,
+plus run_team and run_workflow once teams or workflows are enabled (an explicit
+agents_list enables both), and agno's tool namespace is flat: co-mounting
+collapses the overlapping names to
 whichever toolkit the tools list holds first, and a warning names the skipped
 one. Two runners scoped to different component lists collapse the same way, so
 the loser's allowlist becomes unreachable. ``name=`` names the toolkit, not its
@@ -100,6 +102,11 @@ if TYPE_CHECKING:
 # Page size for the display-name fallback lookup, which scans the components
 # table when an identifier is not an exact id.
 _NAME_LOOKUP_PAGE = 100
+
+
+# How deep the dispatch checks walk a component graph. A graph deeper than this
+# is refused rather than half-inspected, so a cap can never read as a pass.
+_GRAPH_DEPTH_CAP = 32
 
 
 def _slugify(name: str) -> str:
@@ -432,21 +439,16 @@ class StudioRunnerTools(Toolkit):
                 f"deep_copy of '{label}' returned the shared instance; the runner does not dispatch it. "
                 "Give the class a deep_copy that rebuilds a new instance, or store the component in the database."
             )
-        lost = type(fresh) is not type(component)
-        for attribute in ("id", "name", "model", "instructions"):
-            original = getattr(component, attribute, None)
-            copied = getattr(fresh, attribute, None)
-            # A rebuild that drops a field leaves it None; equality would also
-            # reject a model instance the copier legitimately rebuilt.
-            lost = (
-                lost
-                or (original is not None and copied is None)
-                or (attribute in ("id", "name") and original != copied)
-            )
-        if lost:
+        if StudioRunnerTools._copy_lost_identity(component, fresh):
             raise DispatchCopyError(
                 f"deep_copy of '{label}' lost its identity. "
                 "Give the class a deep_copy that rebuilds it, or store the component in the database."
+            )
+        step_divergence = StudioRunnerTools._executor_divergence(component, fresh)
+        if step_divergence is not None:
+            raise DispatchCopyError(
+                f"deep_copy of '{label}' did not isolate its steps: {step_divergence}. "
+                "Give that executor's class a deep_copy that rebuilds it, or store the component in the database."
             )
         shared = StudioRunnerTools._shared_member(component, fresh)
         if shared is not None:
@@ -462,6 +464,140 @@ class StudioRunnerTools(Toolkit):
                 "Give the class a deep_copy that rebuilds it, or store the component in the database."
             )
         return fresh
+
+    @staticmethod
+    def _child_nodes(node: Any) -> List[Any]:
+        """Everything directly below a component or a step that can hold tools.
+
+        A step reached through a compound step's branch list is a step, not an
+        executor, so a walk that only unwraps executors one level below a
+        component never reaches it. Taking the executor off whatever node the
+        walk is standing on makes every depth alike. members=, steps= and
+        tools= also accept callable factories, and only a materialized list can
+        be walked."""
+        children: List[Any] = []
+        members = getattr(node, "members", None)
+        if isinstance(members, list):
+            children.extend(members)
+        for attribute in ("agent", "team", "workflow"):
+            executor = getattr(node, attribute, None)
+            if executor is not None:
+                children.append(executor)
+        for attribute in ("steps", "else_steps", "choices"):
+            children.extend(StudioRunnerTools._branch_items(getattr(node, attribute, None)))
+        return children
+
+    @staticmethod
+    def _copy_lost_identity(original: Any, fresh: Any) -> bool:
+        """Whether a copy failed to carry over what identifies the original."""
+        if type(fresh) is not type(original):
+            return True
+        for attribute in ("id", "name", "model", "instructions"):
+            was = getattr(original, attribute, None)
+            now = getattr(fresh, attribute, None)
+            # A rebuild that drops a field leaves it None; equality would also
+            # reject a model instance the copier legitimately rebuilt.
+            if was is not None and now is None:
+                return True
+            if attribute in ("id", "name") and was != now:
+                return True
+        return False
+
+    @staticmethod
+    def _executor_divergence(original: Any, fresh: Any, depth: int = 0) -> Optional[str]:
+        """How the copy's step executors differ from the original's, else None.
+
+        _shared_member and _member_divergence walk ``members``, and a workflow
+        holds ``steps``, so neither reaches a step executor. An executor the
+        copy still shares is the original instance, and per-run mutation of it
+        crosses callers; one that came back blank runs as a different
+        component. Compound steps hold their branches in lists of their own,
+        so the walk descends through them too."""
+        return StudioRunnerTools._step_list_divergence(
+            getattr(original, "steps", None), getattr(fresh, "steps", None), depth
+        )
+
+    @staticmethod
+    def _branch_items(value: Any) -> List[Any]:
+        """A step container's children, whether it holds a list or a single step.
+
+        ``steps=`` takes a list, one compound step (``Steps(...)``), or a
+        callable factory. A factory is not materialized here, so it contributes
+        nothing, the way every other walk in this file treats one."""
+        if isinstance(value, list):
+            return value
+        if value is None or callable(value):
+            return []
+        return [value]
+
+    @staticmethod
+    def _is_executor(node: Any) -> bool:
+        """Whether this object runs work itself rather than wrapping one that does."""
+        from agno.agent.agent import Agent
+        from agno.team.team import Team
+        from agno.workflow.workflow import Workflow
+
+        return isinstance(node, (Agent, Team, Workflow))
+
+    @staticmethod
+    def _executor_problem(was: Any, now: Any, where: str, depth: int) -> Optional[str]:
+        """How a copied executor fails to stand in for the original, else None."""
+        if now is was:
+            # An executor without deep_copy is shared by design, the rule
+            # _shared_member applies to a member.
+            return f"{where} is still shared" if callable(getattr(was, "deep_copy", None)) else None
+        if StudioRunnerTools._copy_lost_identity(was, now):
+            return f"{where} lost its identity"
+        shared = StudioRunnerTools._shared_member(was, now)
+        if shared is not None:
+            shared_label = getattr(shared, "id", None) or getattr(shared, "name", None) or "?"
+            return f"{where} still shares member '{shared_label}'"
+        divergence = StudioRunnerTools._member_divergence(was, now, depth + 1)
+        if divergence is not None:
+            return f"{where}: {divergence}"
+        nested = StudioRunnerTools._executor_divergence(was, now, depth + 1)
+        return f"{where}: {nested}" if nested is not None else None
+
+    @staticmethod
+    def _step_list_divergence(original_steps: Any, fresh_steps: Any, depth: int = 0) -> Optional[str]:
+        if depth > _GRAPH_DEPTH_CAP:
+            # _require_inspectable_depth refuses before a real graph gets here,
+            # so this is only the cycle guard.
+            return None
+        original_items = StudioRunnerTools._branch_items(original_steps)
+        if not original_items:
+            # Nothing declared, so nothing to lose. An empty branch list is a
+            # normal shape (Condition(else_steps=[])), not a dropped one.
+            return None
+        fresh_items = StudioRunnerTools._branch_items(fresh_steps)
+        if len(fresh_items) != len(original_items):
+            return f"step count changed ({len(original_items)} -> {len(fresh_items)})"
+        for original_step, fresh_step in zip(original_items, fresh_items):
+            label = getattr(original_step, "name", None) or getattr(original_step, "id", None) or "?"
+            # A workflow takes a bare agent, team or workflow as a step, so the
+            # item itself can be the executor rather than a wrapper holding one.
+            if StudioRunnerTools._is_executor(original_step):
+                problem = StudioRunnerTools._executor_problem(original_step, fresh_step, f"step '{label}'", depth)
+                if problem is not None:
+                    return problem
+            for attribute in ("agent", "team", "workflow"):
+                was = getattr(original_step, attribute, None)
+                if was is None:
+                    continue
+                problem = StudioRunnerTools._executor_problem(
+                    was, getattr(fresh_step, attribute, None), f"step '{label}' {attribute}", depth
+                )
+                if problem is not None:
+                    return problem
+            for child_attribute in ("steps", "else_steps", "choices"):
+                nested = StudioRunnerTools._step_list_divergence(
+                    getattr(original_step, child_attribute, None),
+                    getattr(fresh_step, child_attribute, None),
+                    depth + 1,
+                )
+                if nested is not None:
+                    return nested
+        return None
 
     @staticmethod
     def _member_divergence(original: Any, fresh: Any, depth: int = 0) -> Optional[str]:
@@ -554,7 +690,9 @@ class StudioRunnerTools(Toolkit):
             self._refuse_if_only_reachable_with_include_all("team", team_id)
             return None
         if any(t is team for t in self._iter_teams(for_dispatch=True)):
+            self._require_inspectable_depth(team, "team", team_id)
             return self._fresh_copy(team)
+        self._require_isolated_members(team, team_id)
         self._warn_if_model_rebuilt(team, "team", team_id)
         return team
 
@@ -564,6 +702,7 @@ class StudioRunnerTools(Toolkit):
             self._refuse_if_only_reachable_with_include_all("workflow", workflow_id)
             return None
         if any(w is wf for w in self._iter_workflows(for_dispatch=True)):
+            self._require_inspectable_depth(wf, "workflow", workflow_id)
             return self._fresh_copy(wf)
         self._require_isolated_steps(wf, workflow_id)
         return wf
@@ -774,6 +913,191 @@ class StudioRunnerTools(Toolkit):
                 "edits still load the component."
             )
 
+    def _require_inspectable_depth(self, component: Any, component_type: str, component_id: str) -> None:
+        """Refuse a graph deeper than the dispatch checks walk.
+
+        Every check here is depth-capped so a cycle cannot hang it, and a cap
+        reached mid-walk returns "nothing wrong" -- a pass for a graph that was
+        never fully inspected. Refusing past the cap stops a cap reading as an
+        approval."""
+        seen: set = set()
+        frontier = [(component, 0)]
+        while frontier:
+            node, depth = frontier.pop()
+            if node is None or id(node) in seen:
+                continue
+            seen.add(id(node))
+            if depth > _GRAPH_DEPTH_CAP:
+                raise ComponentNotDispatchableError(
+                    f"{component_type.capitalize()} '{component_id}' nests deeper than "
+                    f"{_GRAPH_DEPTH_CAP} levels, past what the runner inspects before dispatch; "
+                    "flatten it, or dispatch the nested component directly."
+                )
+            frontier.extend((child, depth + 1) for child in self._child_nodes(node))
+
+    def _require_faithful_registry_copies(self, component: Any, component_type: str, component_id: str) -> None:
+        """Refuse a rebuild holding a degraded copy of a registered component.
+
+        _require_isolated_members and _require_isolated_steps catch a copy that
+        IS the singleton. A deep_copy returning a distinct but blank object, or
+        an instance of a plainer class, passes both and then dispatches with no
+        model and no instructions. The registry still holds the original, so the
+        copy can be judged against it."""
+        originals: Dict[str, Any] = {}
+        for instance in self._registry_instances():
+            instance_id = getattr(instance, "id", None)
+            if isinstance(instance_id, str):
+                originals.setdefault(instance_id, instance)
+        if not originals:
+            return
+        for node in self._descendants(component):
+            node_id = getattr(node, "id", None)
+            original = originals.get(node_id) if isinstance(node_id, str) else None
+            # Only a rebuild of that very component is comparable; the singleton
+            # itself is _require_isolated_*'s question.
+            if original is None or original is node:
+                continue
+            if self._copy_lost_identity(original, node):
+                label = getattr(node, "id", None) or getattr(node, "name", None) or "?"
+                raise DispatchCopyError(
+                    f"{component_type.capitalize()} '{component_id}' rebuilt '{label}' as a degraded copy of the "
+                    "registered component: its class, model or instructions did not survive. Give that class a "
+                    "deep_copy that rebuilds it, or store the component in the database."
+                )
+
+    def _require_reference_type_matches(
+        self, ref_type: str, ref_id: str, component_type: str, component_id: str
+    ) -> None:
+        """Refuse a reference whose id the database stores under another type.
+
+        A code-defined reference is simply absent from the components table. An
+        id that IS there under a different type is a contradiction, and the
+        piece it resolved to cannot be checked against any stored config."""
+        if self.db is None:
+            return
+        try:
+            stored = self.db.get_component(ref_id)
+        except NotImplementedError:
+            return
+        stored_type = stored.get("component_type") if isinstance(stored, dict) else None
+        if stored_type is None or str(stored_type) == ref_type:
+            return
+        raise ComponentNotDispatchableError(
+            f"{component_type.capitalize()} '{component_id}' references {ref_type} '{ref_id}', but the database "
+            f"stores '{ref_id}' as a {stored_type}; the runner cannot verify what that reference resolved to. "
+            "Point the reference at the right component, or give it an id of its own."
+        )
+
+    @staticmethod
+    def _descendants(node: Any, depth: int = 0, seen: Optional[set] = None) -> List[Any]:
+        """Every member and step executor below a component, once each."""
+        seen = set() if seen is None else seen
+        found: List[Any] = []
+        if node is None or depth > _GRAPH_DEPTH_CAP:
+            return found
+        for child in StudioRunnerTools._child_nodes(node):
+            if id(child) in seen:
+                continue
+            seen.add(id(child))
+            found.append(child)
+            found.extend(StudioRunnerTools._descendants(child, depth + 1, seen))
+        return found
+
+    def _require_faithful_references(
+        self, component: Any, config: Dict[str, Any], component_type: str, component_id: str
+    ) -> None:
+        """Check each referenced member or step executor against its OWN config.
+
+        _require_faithful_rebuild compares a component with the config it was
+        built from, and a workflow's config carries none of the tools, knowledge
+        or schemas its step executors declare: those live in the referenced
+        components' own configs, so every branch of that check is silent for a
+        workflow. Without this, an executor that lost its output_schema to an
+        incomplete registry dispatches and answers in prose, while the same
+        component dispatched directly is refused."""
+        if self.db is None:
+            return
+        self._check_references(component, config, component_type, component_id, set(), {})
+
+    def _check_references(
+        self,
+        component: Any,
+        config: Dict[str, Any],
+        component_type: str,
+        component_id: str,
+        seen: set,
+        configs: Dict[tuple, Optional[Dict[str, Any]]],
+    ) -> None:
+        """Check this component's references, then theirs, down to the leaves.
+
+        A reference's own config names references of its own, so stopping after
+        one hop leaves an outer team dispatchable while its inner team's member
+        lost the schema it declared."""
+        from agno.db.base import ComponentType
+
+        key = (component_type, component_id)
+        if key in seen or len(seen) > _GRAPH_DEPTH_CAP:
+            return
+        seen.add(key)
+        rebuilt = self._components_by_id(component)
+        registered = {
+            instance_id
+            for instance_id in (getattr(instance, "id", None) for instance in self._registry_instances())
+            if isinstance(instance_id, str)
+        }
+        for ref_type, ref_id in _component_references(component_type, config):
+            target = rebuilt.get((ref_type, ref_id))
+            if target is None:
+                continue
+            if ref_id in registered:
+                # from_dict resolves a member or step executor from the registry
+                # before the database, so this object was never built from the
+                # stored config and does not have to match it: a live toolkit is
+                # one object where the config lists its eight functions.
+                # _require_faithful_registry_copies judges this one instead.
+                continue
+            try:
+                stored_type = ComponentType(ref_type)
+            except ValueError:
+                # A reference type this runner does not model; the loaders'
+                # type guards cover it.
+                continue
+            # A db read that fails is not evidence of fidelity, so it must not
+            # pass as one: let it reach the caller's handler.
+            if (ref_type, ref_id) in configs:
+                ref_config = configs[(ref_type, ref_id)]
+            else:
+                ref_config = self._load_config_from_db(ref_id, component_type=stored_type)
+                configs[(ref_type, ref_id)] = ref_config
+            if ref_config is None:
+                # A code-defined reference has no stored config to compare
+                # against, and _require_registry_for covers an absent registry.
+                # An id stored under a DIFFERENT type is neither: the reference
+                # names something the database contradicts, so nothing here can
+                # be checked against it.
+                self._require_reference_type_matches(ref_type, ref_id, component_type, component_id)
+                continue
+            self._require_faithful_rebuild(target, ref_config, ref_type, ref_id)
+            self._check_references(target, ref_config, ref_type, ref_id, seen, configs)
+
+    @staticmethod
+    def _components_by_id(node: Any) -> Dict[tuple, Any]:
+        """The rebuilt members and step executors below a component, by (type, id).
+
+        Ids are unique per type only, so keying on the id alone would let a
+        stored team's config be checked against an agent that shares it."""
+        from agno.team.team import Team
+        from agno.workflow.workflow import Workflow
+
+        found: Dict[tuple, Any] = {}
+        for child in StudioRunnerTools._descendants(node):
+            child_id = getattr(child, "id", None)
+            if not isinstance(child_id, str):
+                continue
+            child_type = "team" if isinstance(child, Team) else "workflow" if isinstance(child, Workflow) else "agent"
+            found.setdefault((child_type, child_id), child)
+        return found
+
     @staticmethod
     def _unresolved_below(node: Any, depth: int = 0, seen: Optional[set] = None) -> Optional[str]:
         """The first nested member or step executor holding a tool with no
@@ -786,27 +1110,19 @@ class StudioRunnerTools(Toolkit):
         tools. Depth- and cycle-capped, over objects already in memory."""
         from agno.tools.function import Function
 
-        if node is None or depth > 12:
+        if node is None or depth > _GRAPH_DEPTH_CAP:
             return None
         seen = set() if seen is None else seen
         if id(node) in seen:
             return None
         seen.add(id(node))
 
-        children: List[Any] = list(getattr(node, "members", None) or [])
-        for step in getattr(node, "steps", None) or []:
-            for attribute in ("agent", "team"):
-                child = getattr(step, attribute, None)
-                if child is not None:
-                    children.append(child)
-            for nested_attribute in ("steps", "else_steps", "choices"):
-                children.extend(getattr(step, nested_attribute, None) or [])
-
-        for child in children:
+        for child in StudioRunnerTools._child_nodes(node):
+            child_tools = getattr(child, "tools", None)
             unresolved = sorted(
                 {
                     str(getattr(tool, "name", None) or "?")
-                    for tool in (getattr(child, "tools", None) or [])
+                    for tool in (child_tools if isinstance(child_tools, list) else [])
                     if isinstance(tool, Function) and tool.entrypoint is None
                 }
             )
@@ -859,6 +1175,99 @@ class StudioRunnerTools(Toolkit):
             db_config.get("id") or db_config.get("type") or "unknown",
         )
 
+    @staticmethod
+    def _require_reconstructable_steps(config: Dict[str, Any], workflow_id: str) -> None:
+        """Refuse to dispatch a stored workflow whose step targets another workflow.
+
+        A nested workflow serializes as ``workflow_id`` alone, and Step.from_dict
+        cannot rebuild one: it installs a placeholder that returns an unsuccessful
+        StepOutput. A failed step does not fail its workflow, so the parent run
+        would report COMPLETED while the child never executed. Reads and edits
+        load the same workflow without this check, so the step stays
+        inspectable."""
+        nested: List[str] = []
+
+        def walk(value: Any) -> None:
+            if isinstance(value, list):
+                for child in value:
+                    walk(child)
+                return
+            if not isinstance(value, dict):
+                return
+            if value.get("workflow_id"):
+                nested.append(str(value["workflow_id"]))
+            # Only a step's own key marks a nested workflow. A step also carries
+            # free-form user JSON (a human_review input schema, say), so walking
+            # every value would refuse on a field that merely shares the name.
+            for branch in ("steps", "else_steps", "choices"):
+                walk(value.get(branch))
+
+        walk(config.get("steps"))
+        if nested:
+            raise ComponentNotDispatchableError(
+                f"Workflow '{workflow_id}' has a step targeting workflow "
+                f"'{', '.join(sorted(set(nested)))}', which the runner cannot reconstruct; it would report "
+                "success without running that step. Inline the nested workflow's steps into this one, or "
+                "dispatch it separately."
+            )
+
+    def _registry_instances(self) -> List[Any]:
+        """The shared singletons a rebuild can hand back instead of a copy."""
+        if self.registry is None:
+            return []
+        return list(self.registry.agents or []) + list(self.registry.teams or [])
+
+    @staticmethod
+    def _shared_registry_instance(node: Any, shared: List[Any], depth: int = 0) -> Optional[Any]:
+        """The shared registry instance held at or below this node, else None.
+
+        A component that is itself a fresh rebuild still leaks if one of its own
+        members is the registry singleton, so the search descends.
+
+        A member is only a leak when it could have been copied, the same rule
+        _shared_member applies: a member with no deep_copy is shared by design,
+        because a remote proxy holds no per-run state to isolate. The node the
+        search starts from is judged without that exemption."""
+        if node is None or depth > 12:
+            return None
+        is_shared = any(node is instance for instance in shared)
+        if is_shared and (depth == 0 or callable(getattr(node, "deep_copy", None))):
+            return node
+        # members= accepts a callable factory; only a materialized list can be walked.
+        members = getattr(node, "members", None)
+        for member in members if isinstance(members, list) else []:
+            found = StudioRunnerTools._shared_registry_instance(member, shared, depth + 1)
+            if found is not None:
+                return found
+        return None
+
+    def _require_isolated_members(self, team: "Team", team_id: str) -> None:
+        """Refuse to dispatch a rebuilt team that holds a shared registry
+        instance as a member.
+
+        Team.from_dict resolves a member the database does not hold through the
+        registry, and keeps whatever deep_copy returned; a class whose deep_copy
+        returns self therefore puts the singleton itself into the rebuilt team.
+        _shared_member covers the same hazard on the code-defined path, and
+        _require_isolated_steps covers it for a workflow's step executors."""
+        shared = self._registry_instances()
+        if not shared:
+            return
+        # The team is a rebuild, not the singleton itself, so start below it.
+        # depth=1 keeps the shared-by-design exemption for a member that has no
+        # deep_copy, which is the rule _shared_member applies.
+        members = getattr(team, "members", None)
+        for member in members if isinstance(members, list) else []:
+            leaked = self._shared_registry_instance(member, shared, depth=1)
+            if leaked is None:
+                continue
+            leaked_label = getattr(leaked, "id", None) or getattr(leaked, "name", None) or "?"
+            raise DispatchCopyError(
+                f"Team '{team_id}' resolved to the shared registry instance of member '{leaked_label}'; "
+                "the runner dispatches only isolated copies. Give that member's class a deep_copy that "
+                "rebuilds it, or store the member in the database."
+            )
+
     def _require_isolated_steps(self, wf: "Workflow", workflow_id: str) -> None:
         """Refuse to dispatch a rebuilt workflow that holds a shared registry
         instance in a step.
@@ -867,31 +1276,12 @@ class StudioRunnerTools(Toolkit):
         raises; dispatching that instance would let per-run mutation cross
         callers. Reads and edits load the same workflow without this check, so
         the offending step stays inspectable and editable."""
-        if self.registry is None:
-            return
-        shared: List[Any] = list(self.registry.agents or []) + list(self.registry.teams or [])
+        shared = self._registry_instances()
         if not shared:
             return
 
         def shared_within(node: Any, depth: int = 0) -> Optional[Any]:
-            """The shared registry instance held at or below this executor. A step
-            whose team is a fresh copy still leaks if one of that team's own
-            members is the registry singleton.
-
-            A member is only a leak when it could have been copied, the same rule
-            _shared_member applies: a member with no deep_copy is shared by design,
-            because a remote proxy holds no per-run state to isolate. The executor
-            itself is judged without that exemption, as it was before."""
-            if node is None or depth > 12:
-                return None
-            is_shared = any(node is instance for instance in shared)
-            if is_shared and (depth == 0 or callable(getattr(node, "deep_copy", None))):
-                return node
-            for member in getattr(node, "members", None) or []:
-                found = shared_within(member, depth + 1)
-                if found is not None:
-                    return found
-            return None
+            return StudioRunnerTools._shared_registry_instance(node, shared, depth)
 
         def walk(item: Any) -> None:
             for attr in ("agent", "team"):
@@ -954,6 +1344,7 @@ class StudioRunnerTools(Toolkit):
             logger.warning("StudioRunnerTools: Agent.from_dict failed for %s", agent_id, exc_info=True)
             return None
         if for_dispatch:
+            self._require_inspectable_depth(agent, "agent", agent_id)
             self._require_faithful_rebuild(agent, config, "agent", agent_id)
         return agent
 
@@ -991,7 +1382,10 @@ class StudioRunnerTools(Toolkit):
             logger.warning("StudioRunnerTools: Team.from_dict failed for %s", team_id, exc_info=True)
             return None
         if for_dispatch:
+            self._require_inspectable_depth(team, "team", team_id)
             self._require_faithful_rebuild(team, config, "team", team_id)
+            self._require_faithful_registry_copies(team, "team", team_id)
+            self._require_faithful_references(team, config, "team", team_id)
         return team
 
     def _load_workflow_from_db(
@@ -1028,7 +1422,11 @@ class StudioRunnerTools(Toolkit):
             logger.warning("StudioRunnerTools: Workflow.from_dict failed for %s", workflow_id, exc_info=True)
             return None
         if for_dispatch:
+            self._require_inspectable_depth(wf, "workflow", workflow_id)
+            self._require_reconstructable_steps(config, workflow_id)
             self._require_faithful_rebuild(wf, config, "workflow", workflow_id)
+            self._require_faithful_registry_copies(wf, "workflow", workflow_id)
+            self._require_faithful_references(wf, config, "workflow", workflow_id)
         return wf
 
     def _load_config_from_db(

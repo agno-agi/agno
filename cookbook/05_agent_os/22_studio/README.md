@@ -79,9 +79,10 @@ current user, keep one session per component per conversation, pin
 `stream=False`, and relay PAUSED results with their requirements.
 
 Mount it instead of `StudioTools`, not alongside it. The two share `list_agents`,
-`list_teams`, `list_workflows` and `run_agent`, and the tool namespace is flat,
-so the toolkit listed first wins those names and the other is skipped with a
-warning.
+`list_teams`, `list_workflows` and `run_agent`, plus `run_team` and
+`run_workflow` once teams or workflows are enabled (passing an `agents_list`
+enables both), and the tool namespace is flat, so the toolkit listed first wins
+those names and the other is skipped with a warning.
 
 ```bash
 .venvs/demo/bin/python cookbook/05_agent_os/22_studio/studio_runner_dispatcher.py
