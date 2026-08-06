@@ -352,7 +352,23 @@ def parse_tools(
 ) -> List[Union[Function, dict]]:
     _function_names: List[str] = []
     _functions: List[Union[Function, dict]] = []
+    _toolkit_instruction_sources: set[int] = set()
+    _source_toolkit_last_indices = {
+        id(tool.source_toolkit): index
+        for index, tool in enumerate(tools)
+        if isinstance(tool, Function) and isinstance(tool.source_toolkit, Toolkit)
+    }
     agent._tool_instructions = []
+
+    def add_toolkit_instructions(toolkit: Toolkit) -> None:
+        source_id = id(toolkit)
+        if source_id in _toolkit_instruction_sources:
+            return
+        if toolkit.add_instructions and toolkit.instructions is not None:
+            if agent._tool_instructions is None:
+                agent._tool_instructions = []
+            agent._tool_instructions.append(toolkit.instructions)
+            _toolkit_instruction_sources.add(source_id)
 
     # Get output_schema from run_context
     output_schema = run_context.output_schema if run_context else None
@@ -367,7 +383,7 @@ def parse_tools(
     ):
         strict = True
 
-    for tool in tools:
+    for tool_index, tool in enumerate(tools):
         if isinstance(tool, Dict):
             # If a dict is passed, it is a builtin tool
             # that is run by the model provider and not the Agent
@@ -404,12 +420,17 @@ def parse_tools(
                     agent._tool_instructions.append(_func.instructions)
 
             # Add instructions from the toolkit
-            if tool.add_instructions and tool.instructions is not None:
-                agent._tool_instructions.append(tool.instructions)
+            add_toolkit_instructions(tool)
 
         elif isinstance(tool, Function):
+            source_toolkit = tool.source_toolkit if isinstance(tool.source_toolkit, Toolkit) else None
+            is_last_source_toolkit_function = (
+                source_toolkit is not None and _source_toolkit_last_indices.get(id(source_toolkit)) == tool_index
+            )
             if tool.name in _function_names:
                 log_warning(f"Duplicate tool name '{tool.name}' already registered on agent; skipping the duplicate.")
+                if is_last_source_toolkit_function and source_toolkit is not None:
+                    add_toolkit_instructions(source_toolkit)
                 continue
             _function_names.append(tool.name)
 
@@ -431,6 +452,13 @@ def parse_tools(
             # Add instructions from the Function
             if tool.add_instructions and tool.instructions is not None:
                 agent._tool_instructions.append(tool.instructions)
+
+            # DB-loaded toolkit members are bare Functions. Their live owning
+            # Toolkit is restored by Registry.rehydrate_function; add its
+            # guidance after all its member Functions, matching live Toolkit
+            # instruction order, and only once.
+            if is_last_source_toolkit_function and source_toolkit is not None:
+                add_toolkit_instructions(source_toolkit)
 
         elif callable(tool):
             try:

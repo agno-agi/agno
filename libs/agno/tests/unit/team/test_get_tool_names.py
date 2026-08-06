@@ -10,6 +10,7 @@ Regression test for: https://github.com/agno-agi/agno/issues/7039
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from agno.registry import Registry
 from agno.run.base import RunContext
 from agno.run.team import TeamRunOutput
 from agno.session import TeamSession
@@ -244,6 +245,36 @@ def test_toolkit_level_and_per_function_instructions_both_reach_team():
     _resolve(team)
 
     assert team._tool_instructions == ["toolkit-func-rule", "toolkit-level-rule"]
+
+
+def test_rehydrated_toolkit_instructions_reach_team_once():
+    def first_tool() -> str:
+        return "first"
+
+    def second_tool() -> str:
+        return "second"
+
+    toolkit = Toolkit(
+        name="my_toolkit",
+        tools=[first_tool, second_tool],
+        instructions="toolkit-level-rule",
+        add_instructions=True,
+    )
+    toolkit.functions["first_tool"].instructions = "first-function-rule"
+    toolkit.functions["second_tool"].instructions = "second-function-rule"
+    registry = Registry(tools=[toolkit])
+    stored_tools = []
+    for function in toolkit.get_functions().values():
+        function_dict = function.to_dict()
+        function_dict["toolkit"] = toolkit.name
+        stored_tools.append(function_dict)
+
+    team = Team(name="t", members=[], tools=registry.rehydrate_functions(stored_tools)).deep_copy()
+    assert team.tools is not None
+    assert all(isinstance(tool, Function) and tool.source_toolkit is toolkit for tool in team.tools)
+    _resolve(team)
+
+    assert team._tool_instructions == ["first-function-rule", "second-function-rule", "toolkit-level-rule"]
 
 
 def test_toolkit_per_function_add_instructions_false_is_respected_team():

@@ -568,6 +568,7 @@ class TestToolkitQualifiedRehydration:
         rehydrated = reg.rehydrate_function(func_dict)
 
         assert rehydrated.entrypoint is self._agent_read
+        assert rehydrated.source_toolkit is None
         assert any("gone_files" in w for w in warnings)
 
     def test_qualified_lookup_rebuilds_stale_cache(self):
@@ -605,6 +606,32 @@ class TestToolkitQualifiedRehydration:
         assert unqualified.owning_toolkit is None
         # owning_toolkit never leaks into the model-facing schema
         assert "owning_toolkit" not in rehydrated.to_dict()
+
+    def test_qualified_rehydration_restores_live_function_instruction_settings(self):
+        """Instruction settings come from the live registry Function, not the
+        serialized component config."""
+
+        source = Function(
+            name="search_docs",
+            entrypoint=search_function,
+            instructions="Creation-time function guidance.",
+        )
+        toolkit = Toolkit(name="agno_docs")
+        toolkit.functions[source.name] = source
+        reg = Registry(tools=[toolkit])
+
+        func_dict = source.to_dict()
+        func_dict["toolkit"] = toolkit.name
+        assert "instructions" not in func_dict
+        assert "add_instructions" not in func_dict
+
+        source.instructions = "Use the live registry search conventions."
+        source.add_instructions = False
+        rehydrated = reg.rehydrate_function(func_dict)
+
+        assert rehydrated.instructions == source.instructions
+        assert rehydrated.add_instructions is False
+        assert rehydrated.source_toolkit is toolkit
 
     def test_same_named_toolkits_warn_once_per_collision(self, monkeypatch):
         """Two same-named toolkits sharing a member name collide on both the

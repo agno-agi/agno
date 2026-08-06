@@ -152,11 +152,21 @@ class Registry:
             return found
 
         source: Optional[EntrypointSource] = None
+        source_toolkit: Optional[Toolkit] = None
         if func.owning_toolkit is not None:
             # A qualified miss rebuilds before falling back to the flat name:
             # the flat slot may hold a same-named function from a *different*
             # toolkit while the right one simply hasn't populated the cache yet.
             source = lookup((func.owning_toolkit, func.name))
+            if isinstance(source, Function):
+                # Qualified slots are last-write-wins, so search in reverse to
+                # retain the exact Toolkit that supplied the resolved source.
+                for tool in reversed(self.tools):
+                    if not isinstance(tool, Toolkit) or tool.name != func.owning_toolkit:
+                        continue
+                    if any(tool_func is source for tool_func in tool.get_functions().values()):
+                        source_toolkit = tool
+                        break
         if source is None:
             source = lookup(func.name)
             if source is not None and func.owning_toolkit is not None:
@@ -171,10 +181,21 @@ class Registry:
                 )
         if isinstance(source, Function):
             func.entrypoint = source.entrypoint
+            # Instruction settings are intentionally not serialized. Restore
+            # them from the live registry Function so registry edits apply on
+            # the next component load.
+            func.instructions = source.instructions
+            func.add_instructions = source.add_instructions
             # Entrypoints built for a fixed schema (e.g. MCP call proxies) must
             # not be re-introspected at run time: processing would rebuild the
             # schema's `required` list from the proxy's signature.
             func.skip_entrypoint_processing = source.skip_entrypoint_processing
+            if source_toolkit is not None:
+                # Keep the exact live Toolkit available to instruction
+                # collection. Every member points to the same object, so the
+                # collector can add toolkit-level guidance once without
+                # copying it into persisted Function dictionaries.
+                func.source_toolkit = source_toolkit
         else:
             func.entrypoint = source
         if func.entrypoint is None:

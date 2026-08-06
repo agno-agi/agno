@@ -198,6 +198,10 @@ class Function(BaseModel):
     # to_dict: it is persisted via the storage layer's "toolkit" key and never
     # sent to models.
     owning_toolkit: Optional[str] = None
+    # Live Toolkit this function was flattened from during registry
+    # rehydration. It restores toolkit-level behavior without persisting the
+    # Toolkit or its instructions in component configs.
+    source_toolkit: Optional[Any] = Field(default=None, exclude=True, repr=False)
 
     # Caching configuration
     cache_results: bool = False
@@ -245,6 +249,15 @@ class Function(BaseModel):
             external_execution=data.get("external_execution", False),
             approval_type=data.get("approval_type"),
         )
+
+    def __deepcopy__(self, memo: Dict[int, Any]) -> "Function":
+        """Deep-copy runtime state while retaining the live source Toolkit."""
+        if self.source_toolkit is not None:
+            # AgentOS deep-copies each Function independently for request
+            # isolation. Sharing the registry Toolkit preserves its connections,
+            # current instructions, and one stable identity for deduplication.
+            memo[id(self.source_toolkit)] = self.source_toolkit
+        return super().__deepcopy__(memo)
 
     def model_copy(self, *, deep: bool = False) -> "Function":
         """
