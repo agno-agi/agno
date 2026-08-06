@@ -1,6 +1,6 @@
-"""Migration v3.0.0: Normalize session runs into a dedicated runs table
+"""Migration v3.0.0: Normalize session runs into a runs table, isolate eval runs by user
 
-Changes:
+Sessions changes:
 - Create the runs table (one row per run, with the run payload as JSON)
 - Copy every run stored in the sessions table `runs` column into the runs table
 
@@ -11,6 +11,19 @@ The legacy `runs` column on `agno_sessions` is intentionally NOT dropped by this
 migration — it stays in place as a backup. New writes will null it as sessions
 are touched. When you have verified the migration and taken a backup, drop the
 column manually by calling ``db.cleanup_legacy_runs_column()``.
+
+Per-user isolation changes:
+- Add the user_id column and its index to every table in ``USER_ID_TABLE_TYPES``
+
+The column backs per-user isolation: get / list / rename / delete scope by
+user_id when the caller is scoped, and stay global when it is None. Existing
+rows keep a NULL user_id, so they stay visible to admins and to unscoped
+deployments while a scoped caller sees none of them. Document backends store
+these records as documents and pick the field up without a schema change.
+
+To isolate another table, declare user_id on that table in each adapter schema
+and add its table type to ``USER_ID_TABLE_TYPES`` — the per-backend functions
+read the column type from the schema, so they need no change.
 """
 
 import json
@@ -31,8 +44,19 @@ except ImportError:
 BATCH_SIZE = 50
 
 
+# Table types that get a user_id column and index, so AgentOS can scope them per user.
+# Extend this tuple to isolate another table whose schema already declares user_id;
+# the per-backend functions need no change.
+USER_ID_TABLE_TYPES = ("evals",)
+
+
 def up(db: BaseDb, table_type: str, table_name: str) -> bool:
-    """Move session runs into the runs table and drop the sessions `runs` column.
+    """
+    Apply the following changes to the database:
+    - Move session runs out of the sessions `runs` column into the runs table
+    - Add a user_id column and index to the tables listed in USER_ID_TABLE_TYPES
+
+    Notice only the changes related to the given table_type are applied.
 
     Returns:
         bool: True if any migration was applied, False otherwise.
@@ -40,35 +64,32 @@ def up(db: BaseDb, table_type: str, table_name: str) -> bool:
     db_type = type(db).__name__
 
     try:
-        if table_type != "sessions":
-            return False
-
         if db_type == "PostgresDb":
-            return _migrate_postgres(db, table_name)
+            return _migrate_postgres(db, table_type, table_name)
         elif db_type == "SqliteDb":
-            return _migrate_sqlite(db, table_name)
+            return _migrate_sqlite(db, table_type, table_name)
         elif db_type in ("MySQLDb", "SingleStoreDb"):
-            return _migrate_mysql_like(db, table_name)
+            return _migrate_mysql_like(db, table_type, table_name)
         elif db_type == "MongoDb":
-            return _migrate_mongo(db, table_name)
+            return _migrate_mongo(db, table_type, table_name)
         elif db_type == "FirestoreDb":
-            return _migrate_firestore(db, table_name)
+            return _migrate_firestore(db, table_type, table_name)
         elif db_type == "RedisDb":
-            return _migrate_redis(db, table_name)
+            return _migrate_redis(db, table_type, table_name)
         elif db_type == "ValkeyDb":
-            return _migrate_valkey(db, table_name)
+            return _migrate_valkey(db, table_type, table_name)
         elif db_type == "JsonDb":
-            return _migrate_jsondb(db, table_name)
+            return _migrate_jsondb(db, table_type, table_name)
         elif db_type == "GcsJsonDb":
-            return _migrate_gcsjsondb(db, table_name)
+            return _migrate_gcsjsondb(db, table_type, table_name)
         elif db_type == "InMemoryDb":
-            return _migrate_inmemorydb(db, table_name)
+            return _migrate_inmemorydb(db, table_type, table_name)
         elif db_type == "DynamoDb":
-            return _migrate_dynamodb(db, table_name)
+            return _migrate_dynamodb(db, table_type, table_name)
         elif db_type == "SurrealDb":
-            return _migrate_surrealdb(db, table_name)
+            return _migrate_surrealdb(db, table_type, table_name)
         else:
-            log_info(f"Migration v3.0.0 is not implemented for {db_type}. Sessions will keep storing runs inline.")
+            log_info(f"Migration v3.0.0 is not implemented for {db_type}. Table '{table_name}' is left unchanged.")
         return False
     except Exception as e:
         log_error(f"Error running migration v3.0.0 for {db_type} on table {table_name}: {str(e)}")
@@ -76,7 +97,12 @@ def up(db: BaseDb, table_type: str, table_name: str) -> bool:
 
 
 async def async_up(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
-    """Move session runs into the runs table and drop the sessions `runs` column.
+    """
+    Apply the following changes to the database:
+    - Move session runs out of the sessions `runs` column into the runs table
+    - Add a user_id column and index to the tables listed in USER_ID_TABLE_TYPES
+
+    Notice only the changes related to the given table_type are applied.
 
     Returns:
         bool: True if any migration was applied, False otherwise.
@@ -84,19 +110,16 @@ async def async_up(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
     db_type = type(db).__name__
 
     try:
-        if table_type != "sessions":
-            return False
-
         if db_type == "AsyncPostgresDb":
-            return await _migrate_async_postgres(db, table_name)
+            return await _migrate_async_postgres(db, table_type, table_name)
         elif db_type == "AsyncSqliteDb":
-            return await _migrate_async_sqlite(db, table_name)
+            return await _migrate_async_sqlite(db, table_type, table_name)
         elif db_type == "AsyncMySQLDb":
-            return await _migrate_async_mysql(db, table_name)
+            return await _migrate_async_mysql(db, table_type, table_name)
         elif db_type == "AsyncMongoDb":
-            return await _migrate_async_mongo(db, table_name)
+            return await _migrate_async_mongo(db, table_type, table_name)
         else:
-            log_info(f"Migration v3.0.0 is not implemented for {db_type}. Sessions will keep storing runs inline.")
+            log_info(f"Migration v3.0.0 is not implemented for {db_type}. Table '{table_name}' is left unchanged.")
         return False
     except Exception as e:
         log_error(f"Error running migration v3.0.0 for {db_type} on table {table_name}: {str(e)}")
@@ -104,7 +127,12 @@ async def async_up(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
 
 
 def down(db: BaseDb, table_type: str, table_name: str) -> bool:
-    """Revert: move runs back into the sessions `runs` column and drop the runs table.
+    """
+    Revert the following changes to the database:
+    - Move runs back into the sessions `runs` column and drop the runs table
+    - Drop the user_id column and index from the tables listed in USER_ID_TABLE_TYPES
+
+    Notice only the changes related to the given table_type are reverted.
 
     Returns:
         bool: True if any migration was reverted, False otherwise.
@@ -112,33 +140,30 @@ def down(db: BaseDb, table_type: str, table_name: str) -> bool:
     db_type = type(db).__name__
 
     try:
-        if table_type != "sessions":
-            return False
-
         if db_type == "PostgresDb":
-            return _revert_postgres(db, table_name)
+            return _revert_postgres(db, table_type, table_name)
         elif db_type == "SqliteDb":
-            return _revert_sqlite(db, table_name)
+            return _revert_sqlite(db, table_type, table_name)
         elif db_type in ("MySQLDb", "SingleStoreDb"):
-            return _revert_mysql_like(db, table_name)
+            return _revert_mysql_like(db, table_type, table_name)
         elif db_type == "MongoDb":
-            return _revert_mongo(db, table_name)
+            return _revert_mongo(db, table_type, table_name)
         elif db_type == "FirestoreDb":
-            return _revert_firestore(db, table_name)
+            return _revert_firestore(db, table_type, table_name)
         elif db_type == "RedisDb":
-            return _revert_redis(db, table_name)
+            return _revert_redis(db, table_type, table_name)
         elif db_type == "ValkeyDb":
-            return _revert_valkey(db, table_name)
+            return _revert_valkey(db, table_type, table_name)
         elif db_type == "JsonDb":
-            return _revert_jsondb(db, table_name)
+            return _revert_jsondb(db, table_type, table_name)
         elif db_type == "GcsJsonDb":
-            return _revert_gcsjsondb(db, table_name)
+            return _revert_gcsjsondb(db, table_type, table_name)
         elif db_type == "InMemoryDb":
-            return _revert_inmemorydb(db, table_name)
+            return _revert_inmemorydb(db, table_type, table_name)
         elif db_type == "DynamoDb":
-            return _revert_dynamodb(db, table_name)
+            return _revert_dynamodb(db, table_type, table_name)
         elif db_type == "SurrealDb":
-            return _revert_surrealdb(db, table_name)
+            return _revert_surrealdb(db, table_type, table_name)
         else:
             log_info(f"Revert not implemented for {db_type}")
         return False
@@ -148,7 +173,12 @@ def down(db: BaseDb, table_type: str, table_name: str) -> bool:
 
 
 async def async_down(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
-    """Revert: move runs back into the sessions `runs` column and drop the runs table.
+    """
+    Revert the following changes to the database:
+    - Move runs back into the sessions `runs` column and drop the runs table
+    - Drop the user_id column and index from the tables listed in USER_ID_TABLE_TYPES
+
+    Notice only the changes related to the given table_type are reverted.
 
     Returns:
         bool: True if any migration was reverted, False otherwise.
@@ -156,23 +186,137 @@ async def async_down(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
     db_type = type(db).__name__
 
     try:
-        if table_type != "sessions":
-            return False
-
         if db_type == "AsyncPostgresDb":
-            return await _revert_async_postgres(db, table_name)
+            return await _revert_async_postgres(db, table_type, table_name)
         elif db_type == "AsyncSqliteDb":
-            return await _revert_async_sqlite(db, table_name)
+            return await _revert_async_sqlite(db, table_type, table_name)
         elif db_type == "AsyncMySQLDb":
-            return await _revert_async_mysql(db, table_name)
+            return await _revert_async_mysql(db, table_type, table_name)
         elif db_type == "AsyncMongoDb":
-            return await _revert_async_mongo(db, table_name)
+            return await _revert_async_mongo(db, table_type, table_name)
         else:
             log_info(f"Revert not implemented for {db_type}")
         return False
     except Exception as e:
         log_error(f"Error reverting migration v3.0.0 for {db_type} on table {table_name}: {str(e)}")
         raise
+
+
+# ---------------------------------------------------------------------------
+# Per-backend dispatch
+#
+# One entry per SQL backend, routing a table type to the work v3.0.0 does on it.
+# The document backends carry user_id without a schema change, so they only
+# implement the sessions half and return False for everything else.
+# ---------------------------------------------------------------------------
+
+
+def _migrate_postgres(db: BaseDb, table_type: str, table_name: str) -> bool:
+    """Apply the v3.0.0 changes for the given table type on PostgreSQL."""
+    if table_type == "sessions":
+        return _migrate_postgres_sessions(db, table_name)
+    if table_type in USER_ID_TABLE_TYPES:
+        return _migrate_postgres_user_id(db, table_type, table_name)
+    return False
+
+
+async def _migrate_async_postgres(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
+    """Apply the v3.0.0 changes for the given table type on async PostgreSQL."""
+    if table_type == "sessions":
+        return await _migrate_async_postgres_sessions(db, table_name)
+    if table_type in USER_ID_TABLE_TYPES:
+        return await _migrate_async_postgres_user_id(db, table_type, table_name)
+    return False
+
+
+def _migrate_sqlite(db: BaseDb, table_type: str, table_name: str) -> bool:
+    """Apply the v3.0.0 changes for the given table type on SQLite."""
+    if table_type == "sessions":
+        return _migrate_sqlite_sessions(db, table_name)
+    if table_type in USER_ID_TABLE_TYPES:
+        return _migrate_sqlite_user_id(db, table_type, table_name)
+    return False
+
+
+async def _migrate_async_sqlite(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
+    """Apply the v3.0.0 changes for the given table type on async SQLite."""
+    if table_type == "sessions":
+        return await _migrate_async_sqlite_sessions(db, table_name)
+    if table_type in USER_ID_TABLE_TYPES:
+        return await _migrate_async_sqlite_user_id(db, table_type, table_name)
+    return False
+
+
+def _migrate_mysql_like(db: BaseDb, table_type: str, table_name: str) -> bool:
+    """Apply the v3.0.0 changes for the given table type on MySQL or SingleStore."""
+    if table_type == "sessions":
+        return _migrate_mysql_like_sessions(db, table_name)
+    if table_type in USER_ID_TABLE_TYPES:
+        return _migrate_mysql_like_user_id(db, table_type, table_name)
+    return False
+
+
+async def _migrate_async_mysql(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
+    """Apply the v3.0.0 changes for the given table type on async MySQL."""
+    if table_type == "sessions":
+        return await _migrate_async_mysql_sessions(db, table_name)
+    if table_type in USER_ID_TABLE_TYPES:
+        return await _migrate_async_mysql_user_id(db, table_type, table_name)
+    return False
+
+
+def _revert_postgres(db: BaseDb, table_type: str, table_name: str) -> bool:
+    """Revert the v3.0.0 changes for the given table type on PostgreSQL."""
+    if table_type == "sessions":
+        return _revert_postgres_sessions(db, table_name)
+    if table_type in USER_ID_TABLE_TYPES:
+        return _revert_postgres_user_id(db, table_type, table_name)
+    return False
+
+
+async def _revert_async_postgres(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
+    """Revert the v3.0.0 changes for the given table type on async PostgreSQL."""
+    if table_type == "sessions":
+        return await _revert_async_postgres_sessions(db, table_name)
+    if table_type in USER_ID_TABLE_TYPES:
+        return await _revert_async_postgres_user_id(db, table_type, table_name)
+    return False
+
+
+def _revert_sqlite(db: BaseDb, table_type: str, table_name: str) -> bool:
+    """Revert the v3.0.0 changes for the given table type on SQLite."""
+    if table_type == "sessions":
+        return _revert_sqlite_sessions(db, table_name)
+    if table_type in USER_ID_TABLE_TYPES:
+        return _revert_sqlite_user_id(db, table_type, table_name)
+    return False
+
+
+async def _revert_async_sqlite(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
+    """Revert the v3.0.0 changes for the given table type on async SQLite."""
+    if table_type == "sessions":
+        return await _revert_async_sqlite_sessions(db, table_name)
+    if table_type in USER_ID_TABLE_TYPES:
+        return await _revert_async_sqlite_user_id(db, table_type, table_name)
+    return False
+
+
+def _revert_mysql_like(db: BaseDb, table_type: str, table_name: str) -> bool:
+    """Revert the v3.0.0 changes for the given table type on MySQL or SingleStore."""
+    if table_type == "sessions":
+        return _revert_mysql_like_sessions(db, table_name)
+    if table_type in USER_ID_TABLE_TYPES:
+        return _revert_mysql_like_user_id(db, table_type, table_name)
+    return False
+
+
+async def _revert_async_mysql(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
+    """Revert the v3.0.0 changes for the given table type on async MySQL."""
+    if table_type == "sessions":
+        return await _revert_async_mysql_sessions(db, table_name)
+    if table_type in USER_ID_TABLE_TYPES:
+        return await _revert_async_mysql_user_id(db, table_type, table_name)
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -225,12 +369,103 @@ def _build_run_rows(
     return rows
 
 
-def _column_exists_postgres(sess, db_schema: str, table_name: str, column_name: str) -> bool:
-    query = text(
-        "SELECT 1 FROM information_schema.columns "
-        "WHERE table_schema = :schema AND table_name = :table AND column_name = :column"
-    )
-    return sess.execute(query, {"schema": db_schema, "table": table_name, "column": column_name}).scalar() is not None
+def _forget_runs_table(db) -> None:
+    """Drop the runs table from the adapter's SQLAlchemy state after a revert.
+
+    ``DROP TABLE`` only removes the table from the database — the Table object
+    stays registered on ``db.metadata``, so a later up() in the same process
+    raises "Table is already defined for this MetaData instance" when it tries
+    to define it again.
+    """
+    metadata = getattr(db, "metadata", None)
+    runs_table_name = getattr(db, "runs_table_name", None)
+    if metadata is not None and runs_table_name is not None:
+        for table in list(metadata.tables.values()):
+            if table.name == runs_table_name:
+                metadata.remove(table)
+    if hasattr(db, "runs_table"):
+        db.runs_table = None
+
+
+def _decode_run_data(value: Any) -> Any:
+    """Decode a run_data payload read back through a raw SQL SELECT.
+
+    A raw select skips the column's JSON deserializer, so SQLite — which stores
+    the payload as a JSON string inside a JSON column — hands back both layers.
+    """
+    if isinstance(value, (bytes, bytearray)):
+        value = value.decode()
+    if isinstance(value, str):
+        value = json.loads(value)
+    if isinstance(value, str):
+        value = json.loads(value)
+    return value
+
+
+def _column_exists(sess, db_schema: str, table_name: str, column_name: str, db_type: str) -> bool:
+    """Check if a column exists in a table."""
+    if db_type in ("PostgresDb", "AsyncPostgresDb"):
+        query = text(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_schema = :schema AND table_name = :table AND column_name = :column"
+        )
+    else:
+        # MySQL / SingleStore
+        query = text(
+            "SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS "
+            "WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table AND COLUMN_NAME = :column"
+        )
+    result = sess.execute(query, {"schema": db_schema, "table": table_name, "column": column_name})
+    return result.scalar() is not None
+
+
+async def _async_column_exists(sess, db_schema: str, table_name: str, column_name: str, db_type: str) -> bool:
+    """Async version: check if a column exists in a table."""
+    if db_type in ("PostgresDb", "AsyncPostgresDb"):
+        query = text(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_schema = :schema AND table_name = :table AND column_name = :column"
+        )
+    else:
+        # MySQL / SingleStore
+        query = text(
+            "SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS "
+            "WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table AND COLUMN_NAME = :column"
+        )
+    result = await sess.execute(query, {"schema": db_schema, "table": table_name, "column": column_name})
+    return result.scalar() is not None
+
+
+def _index_exists(sess, db_schema: str, table_name: str, index_name: str, db_type: str) -> bool:
+    """Check if an index exists on a table."""
+    if db_type in ("PostgresDb", "AsyncPostgresDb"):
+        query = text(
+            "SELECT 1 FROM pg_indexes WHERE schemaname = :schema AND tablename = :table AND indexname = :index"
+        )
+    else:
+        # MySQL / SingleStore
+        query = text(
+            "SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS "
+            "WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table AND INDEX_NAME = :index"
+        )
+    result = sess.execute(query, {"schema": db_schema, "table": table_name, "index": index_name})
+    return result.scalar() is not None
+
+
+async def _async_index_exists(sess, db_schema: str, table_name: str, index_name: str, db_type: str) -> bool:
+    """Async version: check if an index exists on a table."""
+    if db_type in ("PostgresDb", "AsyncPostgresDb"):
+        query = text(
+            "SELECT 1 FROM pg_indexes WHERE schemaname = :schema AND tablename = :table AND indexname = :index"
+        )
+    else:
+        # MySQL / SingleStore
+        query = text(
+            "SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS "
+            "WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table AND INDEX_NAME = :index"
+        )
+    result = await sess.execute(query, {"schema": db_schema, "table": table_name, "index": index_name})
+    return result.scalar() is not None
 
 
 # ---------------------------------------------------------------------------
@@ -238,7 +473,7 @@ def _column_exists_postgres(sess, db_schema: str, table_name: str, column_name: 
 # ---------------------------------------------------------------------------
 
 
-def _migrate_postgres(db: BaseDb, table_name: str) -> bool:
+def _migrate_postgres_sessions(db: BaseDb, table_name: str) -> bool:
     """Move session runs into the runs table and drop the `runs` column, for PostgreSQL."""
     db_schema = db.db_schema or "ai"  # type: ignore
     db_type = type(db).__name__
@@ -265,7 +500,7 @@ def _migrate_postgres(db: BaseDb, table_name: str) -> bool:
             log_info(f"Table {table_name} does not exist, skipping migration")
             return False
 
-        if not _column_exists_postgres(sess, db_schema, table_name, "runs"):
+        if not _column_exists(sess, db_schema, table_name, "runs", db_type):
             log_info(f"Table {table_name} has no runs column, skipping migration")
             return False
 
@@ -295,7 +530,7 @@ def _migrate_postgres(db: BaseDb, table_name: str) -> bool:
         return True
 
 
-async def _migrate_async_postgres(db: AsyncBaseDb, table_name: str) -> bool:
+async def _migrate_async_postgres_sessions(db: AsyncBaseDb, table_name: str) -> bool:
     """Move session runs into the runs table and drop the `runs` column, for async PostgreSQL."""
     db_schema = db.db_schema or "ai"  # type: ignore
     db_type = type(db).__name__
@@ -324,15 +559,7 @@ async def _migrate_async_postgres(db: AsyncBaseDb, table_name: str) -> bool:
             log_info(f"Table {table_name} does not exist, skipping migration")
             return False
 
-        column_exists = (
-            await sess.execute(
-                text(
-                    "SELECT 1 FROM information_schema.columns "
-                    "WHERE table_schema = :schema AND table_name = :table AND column_name = 'runs'"
-                ),
-                {"schema": db_schema, "table": table_name},
-            )
-        ).scalar() is not None
+        column_exists = await _async_column_exists(sess, db_schema, table_name, "runs", db_type)
         if not column_exists:
             log_info(f"Table {table_name} has no runs column, skipping migration")
             return False
@@ -368,7 +595,7 @@ async def _migrate_async_postgres(db: AsyncBaseDb, table_name: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _migrate_sqlite(db: BaseDb, table_name: str) -> bool:
+def _migrate_sqlite_sessions(db: BaseDb, table_name: str) -> bool:
     """Move session runs into the runs table and drop the `runs` column, for SQLite."""
     # Ensure the runs table exists
     runs_table = db._get_table(table_type="runs", create_table_if_not_found=True)  # type: ignore
@@ -416,7 +643,7 @@ def _migrate_sqlite(db: BaseDb, table_name: str) -> bool:
         return True
 
 
-async def _migrate_async_sqlite(db: AsyncBaseDb, table_name: str) -> bool:
+async def _migrate_async_sqlite_sessions(db: AsyncBaseDb, table_name: str) -> bool:
     """Move session runs into the runs table and drop the `runs` column, for async SQLite."""
     # Ensure the runs table exists
     runs_table = await db._get_table(table_type="runs", create_table_if_not_found=True)  # type: ignore
@@ -471,7 +698,7 @@ async def _migrate_async_sqlite(db: AsyncBaseDb, table_name: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _revert_postgres(db: BaseDb, table_name: str) -> bool:
+def _revert_postgres_sessions(db: BaseDb, table_name: str) -> bool:
     """Revert: move runs back into the sessions `runs` column and drop the runs table, for PostgreSQL."""
     db_schema = db.db_schema or "ai"  # type: ignore
     db_type = type(db).__name__
@@ -496,7 +723,7 @@ def _revert_postgres(db: BaseDb, table_name: str) -> bool:
             return False
 
         # Re-add the runs column if missing
-        if not _column_exists_postgres(sess, db_schema, table_name, "runs"):
+        if not _column_exists(sess, db_schema, table_name, "runs", db_type):
             log_info(f"-- Adding runs column back to {table_name}")
             sess.execute(text(f"ALTER TABLE {full_table} ADD COLUMN runs JSONB"))
 
@@ -516,11 +743,12 @@ def _revert_postgres(db: BaseDb, table_name: str) -> bool:
         # Drop the runs table
         log_info(f"-- Dropping runs table {runs_table_name}")
         sess.execute(text(f"DROP TABLE {quoted_runs_table}"))
+        _forget_runs_table(db)
 
         return True
 
 
-async def _revert_async_postgres(db: AsyncBaseDb, table_name: str) -> bool:
+async def _revert_async_postgres_sessions(db: AsyncBaseDb, table_name: str) -> bool:
     """Revert: move runs back into the sessions `runs` column and drop the runs table, for async PostgreSQL."""
     db_schema = db.db_schema or "ai"  # type: ignore
     db_type = type(db).__name__
@@ -547,15 +775,7 @@ async def _revert_async_postgres(db: AsyncBaseDb, table_name: str) -> bool:
             return False
 
         # Re-add the runs column if missing
-        column_exists = (
-            await sess.execute(
-                text(
-                    "SELECT 1 FROM information_schema.columns "
-                    "WHERE table_schema = :schema AND table_name = :table AND column_name = 'runs'"
-                ),
-                {"schema": db_schema, "table": table_name},
-            )
-        ).scalar() is not None
+        column_exists = await _async_column_exists(sess, db_schema, table_name, "runs", db_type)
         if not column_exists:
             log_info(f"-- Adding runs column back to {table_name}")
             await sess.execute(text(f"ALTER TABLE {full_table} ADD COLUMN runs JSONB"))
@@ -576,11 +796,12 @@ async def _revert_async_postgres(db: AsyncBaseDb, table_name: str) -> bool:
         # Drop the runs table
         log_info(f"-- Dropping runs table {runs_table_name}")
         await sess.execute(text(f"DROP TABLE {quoted_runs_table}"))
+        _forget_runs_table(db)
 
         return True
 
 
-def _revert_sqlite(db: BaseDb, table_name: str) -> bool:
+def _revert_sqlite_sessions(db: BaseDb, table_name: str) -> bool:
     """Revert: move runs back into the sessions `runs` column and drop the runs table, for SQLite."""
     runs_table_name = db.runs_table_name
 
@@ -610,7 +831,7 @@ def _revert_sqlite(db: BaseDb, table_name: str) -> bool:
                 ),
                 {"session_id": session_id},
             ).fetchall()
-            runs = [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in run_rows]
+            runs = [_decode_run_data(row[0]) for row in run_rows]
             sess.execute(
                 text(f"UPDATE {table_name} SET runs = :runs WHERE session_id = :session_id"),
                 {"runs": json.dumps(runs, cls=CustomJSONEncoder), "session_id": session_id},
@@ -619,11 +840,12 @@ def _revert_sqlite(db: BaseDb, table_name: str) -> bool:
         # Drop the runs table
         log_info(f"-- Dropping runs table {runs_table_name}")
         sess.execute(text(f"DROP TABLE {runs_table_name}"))
+        _forget_runs_table(db)
 
         return True
 
 
-async def _revert_async_sqlite(db: AsyncBaseDb, table_name: str) -> bool:
+async def _revert_async_sqlite_sessions(db: AsyncBaseDb, table_name: str) -> bool:
     """Revert: move runs back into the sessions `runs` column and drop the runs table, for async SQLite."""
     runs_table_name = db.runs_table_name
 
@@ -659,7 +881,7 @@ async def _revert_async_sqlite(db: AsyncBaseDb, table_name: str) -> bool:
                     {"session_id": session_id},
                 )
             ).fetchall()
-            runs = [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in run_rows]
+            runs = [_decode_run_data(row[0]) for row in run_rows]
             await sess.execute(
                 text(f"UPDATE {table_name} SET runs = :runs WHERE session_id = :session_id"),
                 {"runs": json.dumps(runs, cls=CustomJSONEncoder), "session_id": session_id},
@@ -668,6 +890,7 @@ async def _revert_async_sqlite(db: AsyncBaseDb, table_name: str) -> bool:
         # Drop the runs table
         log_info(f"-- Dropping runs table {runs_table_name}")
         await sess.execute(text(f"DROP TABLE {runs_table_name}"))
+        _forget_runs_table(db)
 
         return True
 
@@ -678,21 +901,22 @@ async def _revert_async_sqlite(db: AsyncBaseDb, table_name: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _migrate_mysql_like(db: BaseDb, table_name: str) -> bool:
+def _migrate_mysql_like_sessions(db: BaseDb, table_name: str) -> bool:
     """Move session runs into the runs table for MySQL or SingleStore.
 
     Non-destructive: the legacy `runs` column is left in place. Call
     ``db.cleanup_legacy_runs_column()`` to drop it once you have verified
     the migration and taken a backup.
     """
-    db_schema = db.db_schema or "agno"  # type: ignore
-
     # Ensure the runs table exists
     runs_table = db._get_table(table_type="runs", create_table_if_not_found=True)  # type: ignore
     if runs_table is None:
         return False
 
     with db.Session() as sess, sess.begin():  # type: ignore
+        # SingleStore leaves db_schema as None and uses the connection's database
+        db_schema = db.db_schema or sess.execute(text("SELECT DATABASE()")).scalar()  # type: ignore
+
         # Does the sessions table exist?
         table_exists = sess.execute(
             text(
@@ -755,8 +979,8 @@ def _migrate_mysql_like(db: BaseDb, table_name: str) -> bool:
         return True
 
 
-async def _migrate_async_mysql(db: AsyncBaseDb, table_name: str) -> bool:
-    """Async MySQL variant of :func:`_migrate_mysql_like`."""
+async def _migrate_async_mysql_sessions(db: AsyncBaseDb, table_name: str) -> bool:
+    """Async MySQL variant of :func:`_migrate_mysql_like_sessions`."""
     db_schema = db.db_schema or "agno"  # type: ignore
 
     runs_table = await db._get_table(table_type="runs", create_table_if_not_found=True)  # type: ignore
@@ -820,12 +1044,14 @@ async def _migrate_async_mysql(db: AsyncBaseDb, table_name: str) -> bool:
         return True
 
 
-def _revert_mysql_like(db: BaseDb, table_name: str) -> bool:
+def _revert_mysql_like_sessions(db: BaseDb, table_name: str) -> bool:
     """Revert: rebuild blobs in `sessions.runs` from the runs table; drop the runs table."""
-    db_schema = db.db_schema or "agno"  # type: ignore
     runs_table_name = db.runs_table_name  # type: ignore
 
     with db.Session() as sess, sess.begin():  # type: ignore
+        # SingleStore leaves db_schema as None and uses the connection's database
+        db_schema = db.db_schema or sess.execute(text("SELECT DATABASE()")).scalar()  # type: ignore
+
         runs_table_exists = sess.execute(
             text(
                 "SELECT EXISTS ("
@@ -866,7 +1092,7 @@ def _revert_mysql_like(db: BaseDb, table_name: str) -> bool:
                 ),
                 {"session_id": session_id},
             ).fetchall()
-            runs = [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in run_rows]
+            runs = [_decode_run_data(row[0]) for row in run_rows]
             sess.execute(
                 text(f"UPDATE `{db_schema}`.`{table_name}` SET runs = :runs WHERE session_id = :session_id"),
                 {"runs": json.dumps(runs, cls=CustomJSONEncoder), "session_id": session_id},
@@ -875,12 +1101,13 @@ def _revert_mysql_like(db: BaseDb, table_name: str) -> bool:
         # Drop the runs table
         log_info(f"-- Dropping runs table {runs_table_name}")
         sess.execute(text(f"DROP TABLE `{db_schema}`.`{runs_table_name}`"))
+        _forget_runs_table(db)
 
         return True
 
 
-async def _revert_async_mysql(db: AsyncBaseDb, table_name: str) -> bool:
-    """Async MySQL variant of :func:`_revert_mysql_like`."""
+async def _revert_async_mysql_sessions(db: AsyncBaseDb, table_name: str) -> bool:
+    """Async MySQL variant of :func:`_revert_mysql_like_sessions`."""
     db_schema = db.db_schema or "agno"  # type: ignore
     runs_table_name = db.runs_table_name  # type: ignore
 
@@ -927,7 +1154,7 @@ async def _revert_async_mysql(db: AsyncBaseDb, table_name: str) -> bool:
                     {"session_id": session_id},
                 )
             ).fetchall()
-            runs = [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in run_rows]
+            runs = [_decode_run_data(row[0]) for row in run_rows]
             await sess.execute(
                 text(f"UPDATE `{db_schema}`.`{table_name}` SET runs = :runs WHERE session_id = :session_id"),
                 {"runs": json.dumps(runs, cls=CustomJSONEncoder), "session_id": session_id},
@@ -935,6 +1162,7 @@ async def _revert_async_mysql(db: AsyncBaseDb, table_name: str) -> bool:
 
         log_info(f"-- Dropping runs table {runs_table_name}")
         await sess.execute(text(f"DROP TABLE `{db_schema}`.`{runs_table_name}`"))
+        _forget_runs_table(db)
 
         return True
 
@@ -944,13 +1172,16 @@ async def _revert_async_mysql(db: AsyncBaseDb, table_name: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _migrate_mongo(db: BaseDb, table_name: str) -> bool:
+def _migrate_mongo(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Copy runs from the legacy `runs` field on session documents into the runs collection.
 
     Non-destructive: the legacy `runs` field is left in place. Call
     ``db.cleanup_legacy_runs_field()`` to remove it once you have verified
     the migration and taken a backup.
     """
+    if table_type != "sessions":
+        return False
+
     sessions_collection = db._get_collection(table_type="sessions", create_collection_if_not_found=True)  # type: ignore
     if sessions_collection is None:
         log_info(f"Sessions collection {table_name} does not exist, skipping migration")
@@ -983,11 +1214,14 @@ def _migrate_mongo(db: BaseDb, table_name: str) -> bool:
     return True
 
 
-def _revert_mongo(db: BaseDb, table_name: str) -> bool:
+def _revert_mongo(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Revert: rebuild the legacy `runs` field on session documents from the runs collection.
 
     The runs collection is dropped at the end.
     """
+    if table_type != "sessions":
+        return False
+
     sessions_collection = db._get_collection(table_type="sessions", create_collection_if_not_found=True)  # type: ignore
     runs_collection_name = db.runs_table_name  # type: ignore
     runs_collection = db._get_collection(table_type="runs", create_collection_if_not_found=True)  # type: ignore
@@ -1015,8 +1249,11 @@ def _revert_mongo(db: BaseDb, table_name: str) -> bool:
     return True
 
 
-async def _migrate_async_mongo(db: AsyncBaseDb, table_name: str) -> bool:
+async def _migrate_async_mongo(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
     """Async variant of :func:`_migrate_mongo`."""
+    if table_type != "sessions":
+        return False
+
     sessions_collection = await db._get_collection(table_type="sessions", create_collection_if_not_found=True)  # type: ignore
     if sessions_collection is None:
         log_info(f"Sessions collection {table_name} does not exist, skipping migration")
@@ -1047,8 +1284,11 @@ async def _migrate_async_mongo(db: AsyncBaseDb, table_name: str) -> bool:
     return True
 
 
-async def _revert_async_mongo(db: AsyncBaseDb, table_name: str) -> bool:
+async def _revert_async_mongo(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
     """Async variant of :func:`_revert_mongo`."""
+    if table_type != "sessions":
+        return False
+
     sessions_collection = await db._get_collection(table_type="sessions", create_collection_if_not_found=True)  # type: ignore
     runs_collection_name = db.runs_table_name  # type: ignore
     runs_collection = await db._get_collection(table_type="runs", create_collection_if_not_found=True)  # type: ignore
@@ -1061,7 +1301,9 @@ async def _revert_async_mongo(db: AsyncBaseDb, table_name: str) -> bool:
         {"$sort": {"session_id": 1, "run_index": 1, "created_at": 1}},
         {"$group": {"_id": "$session_id", "runs": {"$push": "$run_data"}}},
     ]
-    async for group in runs_collection.aggregate(pipeline):
+    # PyMongo's async client returns a coroutine from aggregate(), Motor returns a
+    # cursor. _aggregate_to_list() is the adapter's helper that handles both.
+    for group in await db._aggregate_to_list(runs_collection, pipeline):  # type: ignore
         session_id = group["_id"]
         runs = group["runs"]
         await sessions_collection.update_one(
@@ -1079,12 +1321,15 @@ async def _revert_async_mongo(db: AsyncBaseDb, table_name: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _migrate_firestore(db: BaseDb, table_name: str) -> bool:
+def _migrate_firestore(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Copy runs from the legacy `runs` field on session documents into the runs collection.
 
     Non-destructive: the legacy `runs` field is left in place. Call
     ``db.cleanup_legacy_runs_field()`` to remove it once verified.
     """
+    if table_type != "sessions":
+        return False
+
     sessions_ref = db._get_collection(table_type="sessions", create_collection_if_not_found=True)  # type: ignore
     if sessions_ref is None:
         log_info(f"Sessions collection {table_name} does not exist, skipping migration")
@@ -1130,11 +1375,14 @@ def _migrate_firestore(db: BaseDb, table_name: str) -> bool:
     return True
 
 
-def _revert_firestore(db: BaseDb, table_name: str) -> bool:
+def _revert_firestore(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Revert: rebuild the legacy `runs` field on session documents from the runs collection.
 
     The runs collection is deleted at the end.
     """
+    if table_type != "sessions":
+        return False
+
     from google.cloud.firestore import FieldFilter  # type: ignore[import-untyped]
 
     sessions_ref = db._get_collection(table_type="sessions", create_collection_if_not_found=True)  # type: ignore
@@ -1192,13 +1440,16 @@ def _revert_firestore(db: BaseDb, table_name: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _migrate_redis(db: BaseDb, table_name: str) -> bool:
+def _migrate_redis(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Copy runs from the legacy `runs` field on session records into per-run keys.
 
     Non-destructive: the legacy `runs` field is left in place on the session
     record. Call ``db.cleanup_legacy_runs_field()`` once you have verified the
     migration to free the storage.
     """
+    if table_type != "sessions":
+        return False
+
     sessions = db._get_all_records("sessions")  # type: ignore
     migrated_runs = 0
     for session in sessions:
@@ -1228,8 +1479,11 @@ def _migrate_redis(db: BaseDb, table_name: str) -> bool:
     return True
 
 
-def _revert_redis(db: BaseDb, table_name: str) -> bool:
+def _revert_redis(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Revert: rebuild the legacy `runs` field on session records, then delete run keys."""
+    if table_type != "sessions":
+        return False
+
     from agno.db.redis.utils import generate_redis_key  # type: ignore
 
     # Collect runs per session
@@ -1274,13 +1528,16 @@ def _revert_redis(db: BaseDb, table_name: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _migrate_valkey(db: BaseDb, table_name: str) -> bool:
+def _migrate_valkey(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Copy runs from the legacy `runs` field on session records into per-run keys.
 
     Non-destructive: the legacy `runs` field is left in place on the session
     record. Call ``db.cleanup_legacy_runs_field()`` once you have verified the
     migration to free the storage.
     """
+    if table_type != "sessions":
+        return False
+
     from glide_sync import ExpirySet, ExpiryType
 
     from agno.db.valkey.utils import generate_valkey_key, serialize_data  # type: ignore
@@ -1315,8 +1572,11 @@ def _migrate_valkey(db: BaseDb, table_name: str) -> bool:
     return True
 
 
-def _revert_valkey(db: BaseDb, table_name: str) -> bool:
+def _revert_valkey(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Revert: rebuild the legacy `runs` field on session records, then delete run keys."""
+    if table_type != "sessions":
+        return False
+
     from agno.db.valkey.utils import generate_valkey_key  # type: ignore
 
     # Collect runs per session
@@ -1364,13 +1624,16 @@ def _revert_valkey(db: BaseDb, table_name: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _migrate_jsondb(db: BaseDb, table_name: str) -> bool:
+def _migrate_jsondb(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Copy runs from the legacy `runs` field on each session record into the runs file.
 
     Idempotent: reruns don't clobber fresh post-migration writes. Any run_id
     already present in the runs table wins — the legacy blob is only used
     to backfill run_ids that aren't there yet.
     """
+    if table_type != "sessions":
+        return False
+
     sessions = db._read_json_file(db.session_table_name, create_table_if_not_found=False)  # type: ignore
     if not sessions:
         log_info(f"Sessions file {table_name}.json is empty or missing, skipping migration")
@@ -1403,8 +1666,11 @@ def _migrate_jsondb(db: BaseDb, table_name: str) -> bool:
     return True
 
 
-def _revert_jsondb(db: BaseDb, table_name: str) -> bool:
+def _revert_jsondb(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Revert: rebuild the legacy `runs` field on each session record from the runs file."""
+    if table_type != "sessions":
+        return False
+
     sessions = db._read_json_file(db.session_table_name, create_table_if_not_found=False)  # type: ignore
     all_runs = db._read_runs_file(create_table_if_not_found=False)  # type: ignore
 
@@ -1428,12 +1694,15 @@ def _revert_jsondb(db: BaseDb, table_name: str) -> bool:
     return True
 
 
-def _migrate_gcsjsondb(db: BaseDb, table_name: str) -> bool:
+def _migrate_gcsjsondb(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Same shape as :func:`_migrate_jsondb` — both store sessions as a JSON list (file vs object).
 
     Idempotent: reruns don't clobber fresh post-migration writes. Any run_id
     already present in the runs table wins.
     """
+    if table_type != "sessions":
+        return False
+
     sessions = db._read_json_file(db.session_table_name, create_table_if_not_found=False)  # type: ignore
     if not sessions:
         log_info(f"Sessions object {table_name}.json is empty or missing, skipping migration")
@@ -1464,7 +1733,10 @@ def _migrate_gcsjsondb(db: BaseDb, table_name: str) -> bool:
     return True
 
 
-def _revert_gcsjsondb(db: BaseDb, table_name: str) -> bool:
+def _revert_gcsjsondb(db: BaseDb, table_type: str, table_name: str) -> bool:
+    if table_type != "sessions":
+        return False
+
     sessions = db._read_json_file(db.session_table_name, create_table_if_not_found=False)  # type: ignore
     all_runs = db._read_json_file(db.runs_table_name, create_table_if_not_found=False)  # type: ignore
 
@@ -1488,13 +1760,19 @@ def _revert_gcsjsondb(db: BaseDb, table_name: str) -> bool:
     return True
 
 
-def _migrate_inmemorydb(db: BaseDb, table_name: str) -> bool:
+def _migrate_inmemorydb(db: BaseDb, table_type: str, table_name: str) -> bool:
     """InMemoryDb is not normalized in v3.0; runs stay inline."""
+    if table_type != "sessions":
+        return False
+
     log_info("-- InMemoryDb does not split runs into a separate table; skipping migration.")
     return False
 
 
-def _revert_inmemorydb(db: BaseDb, table_name: str) -> bool:
+def _revert_inmemorydb(db: BaseDb, table_type: str, table_name: str) -> bool:
+    if table_type != "sessions":
+        return False
+
     return False
 
 
@@ -1560,8 +1838,11 @@ def _dynamo_put_run_with_retry(
     raise RuntimeError(f"Failed to migrate run into {table_name} after {max_retries} retries")
 
 
-def _migrate_dynamodb(db: BaseDb, table_name: str) -> bool:
+def _migrate_dynamodb(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Copy legacy `runs` blob from each session item into the agno_runs table."""
+    if table_type != "sessions":
+        return False
+
     import json as _json
 
     client = db.client  # type: ignore
@@ -1624,8 +1905,11 @@ def _migrate_dynamodb(db: BaseDb, table_name: str) -> bool:
     return migrated > 0
 
 
-def _revert_dynamodb(db: BaseDb, table_name: str) -> bool:
+def _revert_dynamodb(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Walk runs and re-attach to session items, then truncate the runs table."""
+    if table_type != "sessions":
+        return False
+
     import json as _json
 
     client = db.client  # type: ignore
@@ -1724,8 +2008,11 @@ def _serialize_to_dynamo_item_minimal(data: Dict[str, Any]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _migrate_surrealdb(db: BaseDb, table_name: str) -> bool:
+def _migrate_surrealdb(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Copy legacy `runs` blob from each session record into the runs table."""
+    if table_type != "sessions":
+        return False
+
     from surrealdb import RecordID  # type: ignore
 
     from agno.db.surrealdb.models import serialize_run_row  # local import to avoid hard dep
@@ -1769,8 +2056,11 @@ def _migrate_surrealdb(db: BaseDb, table_name: str) -> bool:
     return migrated > 0
 
 
-def _revert_surrealdb(db: BaseDb, table_name: str) -> bool:
+def _revert_surrealdb(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Walk runs and rebuild the legacy `runs` blob on each session row."""
+    if table_type != "sessions":
+        return False
+
     from surrealdb import RecordID  # type: ignore
 
     runs_table = db.runs_table_name  # type: ignore
@@ -1830,3 +2120,544 @@ def _revert_surrealdb(db: BaseDb, table_name: str) -> bool:
             "blob rebuild failed; re-run down() after resolving the error."
         )
     return True
+
+
+# ---------------------------------------------------------------------------
+# user_id column
+# ---------------------------------------------------------------------------
+
+
+def _user_id_column_ddl(db, table_type: str) -> str:
+    """Compile the user_id column type from the adapter's own schema for this table.
+
+    Keeps a migrated table identical to one created fresh from the schema, so a
+    later migration reading INFORMATION_SCHEMA sees the same type either way.
+    """
+    db_type = type(db).__name__
+
+    schemas: Any
+    if db_type in ("PostgresDb", "AsyncPostgresDb"):
+        from agno.db.postgres import schemas
+    elif db_type in ("MySQLDb", "AsyncMySQLDb"):
+        from agno.db.mysql import schemas
+    elif db_type == "SingleStoreDb":
+        from agno.db.singlestore import schemas
+    else:
+        from agno.db.sqlite import schemas
+
+    column_type = schemas.get_table_schema_definition(table_type)["user_id"]["type"]
+    return column_type().compile(dialect=db.db_engine.dialect)
+
+
+def _migrate_postgres_user_id(db: BaseDb, table_type: str, table_name: str) -> bool:
+    """Add the user_id column to the given table for PostgreSQL."""
+    db_schema = db.db_schema or "ai"  # type: ignore
+    db_type = type(db).__name__
+    quoted_schema = quote_db_identifier(db_type, db_schema)
+    full_table = f"{quoted_schema}.{quote_db_identifier(db_type, table_name)}"
+    index_name = f"idx_{table_name}_user_id"
+    column_ddl = _user_id_column_ddl(db, table_type)
+
+    with db.Session() as sess, sess.begin():  # type: ignore
+        table_exists = sess.execute(
+            text(
+                "SELECT EXISTS ("
+                "  SELECT FROM information_schema.tables"
+                "  WHERE table_schema = :schema AND table_name = :table_name"
+                ")"
+            ),
+            {"schema": db_schema, "table_name": table_name},
+        ).scalar()
+        if not table_exists:
+            log_info(f"Table {table_name} does not exist, skipping migration")
+            return False
+
+        applied = False
+
+        if not _column_exists(sess, db_schema, table_name, "user_id", db_type):
+            log_info(f"-- Adding user_id column to {table_name}")
+            sess.execute(text(f"ALTER TABLE {full_table} ADD COLUMN user_id {column_ddl}"))
+            applied = True
+
+        if not _index_exists(sess, db_schema, table_name, index_name, db_type):
+            log_info(f"-- Adding index {index_name} on {table_name}")
+            sess.execute(text(f"CREATE INDEX {quote_db_identifier(db_type, index_name)} ON {full_table} (user_id)"))
+            applied = True
+
+        return applied
+
+
+async def _migrate_async_postgres_user_id(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
+    """Async PostgreSQL variant of :func:`_migrate_postgres_user_id`."""
+    db_schema = db.db_schema or "ai"  # type: ignore
+    db_type = type(db).__name__
+    quoted_schema = quote_db_identifier(db_type, db_schema)
+    full_table = f"{quoted_schema}.{quote_db_identifier(db_type, table_name)}"
+    index_name = f"idx_{table_name}_user_id"
+    column_ddl = _user_id_column_ddl(db, table_type)
+
+    async with db.async_session_factory() as sess, sess.begin():  # type: ignore
+        result = await sess.execute(
+            text(
+                "SELECT EXISTS ("
+                "  SELECT FROM information_schema.tables"
+                "  WHERE table_schema = :schema AND table_name = :table_name"
+                ")"
+            ),
+            {"schema": db_schema, "table_name": table_name},
+        )
+        if not result.scalar():
+            log_info(f"Table {table_name} does not exist, skipping migration")
+            return False
+
+        applied = False
+
+        if not await _async_column_exists(sess, db_schema, table_name, "user_id", db_type):
+            log_info(f"-- Adding user_id column to {table_name}")
+            await sess.execute(text(f"ALTER TABLE {full_table} ADD COLUMN user_id {column_ddl}"))
+            applied = True
+
+        if not await _async_index_exists(sess, db_schema, table_name, index_name, db_type):
+            log_info(f"-- Adding index {index_name} on {table_name}")
+            await sess.execute(
+                text(f"CREATE INDEX {quote_db_identifier(db_type, index_name)} ON {full_table} (user_id)")
+            )
+            applied = True
+
+        return applied
+
+
+def _migrate_mysql_like_user_id(db: BaseDb, table_type: str, table_name: str) -> bool:
+    """Add the user_id column to the given table for MySQL or SingleStore."""
+    db_type = type(db).__name__
+    index_name = f"idx_{table_name}_user_id"
+    column_ddl = _user_id_column_ddl(db, table_type)
+
+    with db.Session() as sess, sess.begin():  # type: ignore
+        # SingleStore leaves db_schema as None and uses the connection's database
+        db_schema = db.db_schema or sess.execute(text("SELECT DATABASE()")).scalar()  # type: ignore
+        quoted_schema = quote_db_identifier(db_type, db_schema)
+        full_table = f"{quoted_schema}.{quote_db_identifier(db_type, table_name)}"
+
+        table_exists = sess.execute(
+            text(
+                "SELECT EXISTS ("
+                "  SELECT 1 FROM INFORMATION_SCHEMA.TABLES"
+                "  WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table_name"
+                ")"
+            ),
+            {"schema": db_schema, "table_name": table_name},
+        ).scalar()
+        if not table_exists:
+            log_info(f"Table {table_name} does not exist, skipping migration")
+            return False
+
+        applied = False
+
+        if not _column_exists(sess, db_schema, table_name, "user_id", db_type):
+            log_info(f"-- Adding user_id column to {table_name}")
+            sess.execute(text(f"ALTER TABLE {full_table} ADD COLUMN `user_id` {column_ddl}"))
+            applied = True
+
+        if not _index_exists(sess, db_schema, table_name, index_name, db_type):
+            log_info(f"-- Adding index {index_name} on {table_name}")
+            sess.execute(text(f"CREATE INDEX {quote_db_identifier(db_type, index_name)} ON {full_table} (`user_id`)"))
+            applied = True
+
+        return applied
+
+
+async def _migrate_async_mysql_user_id(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
+    """Async MySQL variant of :func:`_migrate_mysql_like_user_id`."""
+    db_type = type(db).__name__
+    index_name = f"idx_{table_name}_user_id"
+    column_ddl = _user_id_column_ddl(db, table_type)
+
+    async with db.async_session_factory() as sess, sess.begin():  # type: ignore
+        db_schema = db.db_schema or (await sess.execute(text("SELECT DATABASE()"))).scalar()  # type: ignore
+        quoted_schema = quote_db_identifier(db_type, db_schema)
+        full_table = f"{quoted_schema}.{quote_db_identifier(db_type, table_name)}"
+
+        table_exists = (
+            await sess.execute(
+                text(
+                    "SELECT EXISTS ("
+                    "  SELECT 1 FROM INFORMATION_SCHEMA.TABLES"
+                    "  WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table_name"
+                    ")"
+                ),
+                {"schema": db_schema, "table_name": table_name},
+            )
+        ).scalar()
+        if not table_exists:
+            log_info(f"Table {table_name} does not exist, skipping migration")
+            return False
+
+        applied = False
+
+        if not await _async_column_exists(sess, db_schema, table_name, "user_id", db_type):
+            log_info(f"-- Adding user_id column to {table_name}")
+            await sess.execute(text(f"ALTER TABLE {full_table} ADD COLUMN `user_id` {column_ddl}"))
+            applied = True
+
+        if not await _async_index_exists(sess, db_schema, table_name, index_name, db_type):
+            log_info(f"-- Adding index {index_name} on {table_name}")
+            await sess.execute(
+                text(f"CREATE INDEX {quote_db_identifier(db_type, index_name)} ON {full_table} (`user_id`)")
+            )
+            applied = True
+
+        return applied
+
+
+def _migrate_sqlite_user_id(db: BaseDb, table_type: str, table_name: str) -> bool:
+    """Add the user_id column to the given table for SQLite."""
+    db_type = type(db).__name__
+    quoted_table = quote_db_identifier(db_type, table_name)
+    index_name = f"idx_{table_name}_user_id"
+    column_ddl = _user_id_column_ddl(db, table_type)
+
+    with db.Session() as sess, sess.begin():  # type: ignore
+        table_exists = sess.execute(
+            text("SELECT 1 FROM sqlite_master WHERE type='table' AND name=:table_name"),
+            {"table_name": table_name},
+        ).scalar()
+        if not table_exists:
+            log_info(f"Table {table_name} does not exist, skipping migration")
+            return False
+
+        applied = False
+
+        columns_info = sess.execute(text(f"PRAGMA table_info({quoted_table})")).fetchall()
+        if "user_id" not in {col[1] for col in columns_info}:
+            log_info(f"-- Adding user_id column to {table_name}")
+            sess.execute(text(f"ALTER TABLE {quoted_table} ADD COLUMN user_id {column_ddl}"))
+            applied = True
+
+        indexes = sess.execute(text(f"PRAGMA index_list({quoted_table})")).fetchall()
+        if index_name not in {idx[1] for idx in indexes}:
+            log_info(f"-- Adding index {index_name} on {table_name}")
+            sess.execute(text(f"CREATE INDEX {quote_db_identifier(db_type, index_name)} ON {quoted_table} (user_id)"))
+            applied = True
+
+        return applied
+
+
+async def _migrate_async_sqlite_user_id(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
+    """Async SQLite variant of :func:`_migrate_sqlite_user_id`."""
+    db_type = type(db).__name__
+    quoted_table = quote_db_identifier(db_type, table_name)
+    index_name = f"idx_{table_name}_user_id"
+    column_ddl = _user_id_column_ddl(db, table_type)
+
+    async with db.async_session_factory() as sess, sess.begin():  # type: ignore
+        result = await sess.execute(
+            text("SELECT 1 FROM sqlite_master WHERE type='table' AND name=:table_name"),
+            {"table_name": table_name},
+        )
+        if not result.scalar():
+            log_info(f"Table {table_name} does not exist, skipping migration")
+            return False
+
+        applied = False
+
+        result = await sess.execute(text(f"PRAGMA table_info({quoted_table})"))
+        if "user_id" not in {col[1] for col in result.fetchall()}:
+            log_info(f"-- Adding user_id column to {table_name}")
+            await sess.execute(text(f"ALTER TABLE {quoted_table} ADD COLUMN user_id {column_ddl}"))
+            applied = True
+
+        result = await sess.execute(text(f"PRAGMA index_list({quoted_table})"))
+        if index_name not in {idx[1] for idx in result.fetchall()}:
+            log_info(f"-- Adding index {index_name} on {table_name}")
+            await sess.execute(
+                text(f"CREATE INDEX {quote_db_identifier(db_type, index_name)} ON {quoted_table} (user_id)")
+            )
+            applied = True
+
+        return applied
+
+
+def _revert_postgres_user_id(db: BaseDb, table_type: str, table_name: str) -> bool:
+    """Drop the user_id column from the given table for PostgreSQL."""
+    db_schema = db.db_schema or "ai"  # type: ignore
+    db_type = type(db).__name__
+    quoted_schema = quote_db_identifier(db_type, db_schema)
+    full_table = f"{quoted_schema}.{quote_db_identifier(db_type, table_name)}"
+    index_name = f"idx_{table_name}_user_id"
+
+    with db.Session() as sess, sess.begin():  # type: ignore
+        table_exists = sess.execute(
+            text(
+                "SELECT EXISTS ("
+                "  SELECT FROM information_schema.tables"
+                "  WHERE table_schema = :schema AND table_name = :table_name"
+                ")"
+            ),
+            {"schema": db_schema, "table_name": table_name},
+        ).scalar()
+        if not table_exists:
+            log_info(f"Table {table_name} does not exist, skipping revert")
+            return False
+
+        applied = False
+
+        if _index_exists(sess, db_schema, table_name, index_name, db_type):
+            log_info(f"-- Dropping index {index_name} from {table_name}")
+            sess.execute(text(f"DROP INDEX {quoted_schema}.{quote_db_identifier(db_type, index_name)}"))
+            applied = True
+
+        if _column_exists(sess, db_schema, table_name, "user_id", db_type):
+            log_info(f"-- Dropping user_id column from {table_name}")
+            sess.execute(text(f"ALTER TABLE {full_table} DROP COLUMN user_id"))
+            applied = True
+
+        return applied
+
+
+async def _revert_async_postgres_user_id(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
+    """Async PostgreSQL variant of :func:`_revert_postgres_user_id`."""
+    db_schema = db.db_schema or "ai"  # type: ignore
+    db_type = type(db).__name__
+    quoted_schema = quote_db_identifier(db_type, db_schema)
+    full_table = f"{quoted_schema}.{quote_db_identifier(db_type, table_name)}"
+    index_name = f"idx_{table_name}_user_id"
+
+    async with db.async_session_factory() as sess, sess.begin():  # type: ignore
+        result = await sess.execute(
+            text(
+                "SELECT EXISTS ("
+                "  SELECT FROM information_schema.tables"
+                "  WHERE table_schema = :schema AND table_name = :table_name"
+                ")"
+            ),
+            {"schema": db_schema, "table_name": table_name},
+        )
+        if not result.scalar():
+            log_info(f"Table {table_name} does not exist, skipping revert")
+            return False
+
+        applied = False
+
+        if await _async_index_exists(sess, db_schema, table_name, index_name, db_type):
+            log_info(f"-- Dropping index {index_name} from {table_name}")
+            await sess.execute(text(f"DROP INDEX {quoted_schema}.{quote_db_identifier(db_type, index_name)}"))
+            applied = True
+
+        if await _async_column_exists(sess, db_schema, table_name, "user_id", db_type):
+            log_info(f"-- Dropping user_id column from {table_name}")
+            await sess.execute(text(f"ALTER TABLE {full_table} DROP COLUMN user_id"))
+            applied = True
+
+        return applied
+
+
+def _revert_mysql_like_user_id(db: BaseDb, table_type: str, table_name: str) -> bool:
+    """Drop the user_id column from the given table for MySQL or SingleStore."""
+    db_type = type(db).__name__
+    index_name = f"idx_{table_name}_user_id"
+
+    with db.Session() as sess, sess.begin():  # type: ignore
+        # SingleStore leaves db_schema as None and uses the connection's database
+        db_schema = db.db_schema or sess.execute(text("SELECT DATABASE()")).scalar()  # type: ignore
+        quoted_schema = quote_db_identifier(db_type, db_schema)
+        full_table = f"{quoted_schema}.{quote_db_identifier(db_type, table_name)}"
+
+        table_exists = sess.execute(
+            text(
+                "SELECT EXISTS ("
+                "  SELECT 1 FROM INFORMATION_SCHEMA.TABLES"
+                "  WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table_name"
+                ")"
+            ),
+            {"schema": db_schema, "table_name": table_name},
+        ).scalar()
+        if not table_exists:
+            log_info(f"Table {table_name} does not exist, skipping revert")
+            return False
+
+        applied = False
+
+        dropped_index = False
+        if _index_exists(sess, db_schema, table_name, index_name, db_type):
+            log_info(f"-- Dropping index {index_name} from {table_name}")
+            sess.execute(text(f"DROP INDEX {quote_db_identifier(db_type, index_name)} ON {full_table}"))
+            dropped_index = True
+            applied = True
+
+        if _column_exists(sess, db_schema, table_name, "user_id", db_type):
+            log_info(f"-- Dropping user_id column from {table_name}")
+            try:
+                sess.execute(text(f"ALTER TABLE {full_table} DROP COLUMN `user_id`"))
+            except Exception:
+                # MySQL and SingleStore commit DDL immediately, so the index drop
+                # above already stuck. Put it back rather than leave the column in
+                # place but unindexed.
+                if dropped_index:
+                    sess.execute(
+                        text(f"CREATE INDEX {quote_db_identifier(db_type, index_name)} ON {full_table} (`user_id`)")
+                    )
+                raise
+            applied = True
+
+        return applied
+
+
+async def _revert_async_mysql_user_id(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
+    """Async MySQL variant of :func:`_revert_mysql_like_user_id`."""
+    db_type = type(db).__name__
+    index_name = f"idx_{table_name}_user_id"
+
+    async with db.async_session_factory() as sess, sess.begin():  # type: ignore
+        db_schema = db.db_schema or (await sess.execute(text("SELECT DATABASE()"))).scalar()  # type: ignore
+        quoted_schema = quote_db_identifier(db_type, db_schema)
+        full_table = f"{quoted_schema}.{quote_db_identifier(db_type, table_name)}"
+
+        table_exists = (
+            await sess.execute(
+                text(
+                    "SELECT EXISTS ("
+                    "  SELECT 1 FROM INFORMATION_SCHEMA.TABLES"
+                    "  WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table_name"
+                    ")"
+                ),
+                {"schema": db_schema, "table_name": table_name},
+            )
+        ).scalar()
+        if not table_exists:
+            log_info(f"Table {table_name} does not exist, skipping revert")
+            return False
+
+        applied = False
+
+        dropped_index = False
+        if await _async_index_exists(sess, db_schema, table_name, index_name, db_type):
+            log_info(f"-- Dropping index {index_name} from {table_name}")
+            await sess.execute(text(f"DROP INDEX {quote_db_identifier(db_type, index_name)} ON {full_table}"))
+            dropped_index = True
+            applied = True
+
+        if await _async_column_exists(sess, db_schema, table_name, "user_id", db_type):
+            log_info(f"-- Dropping user_id column from {table_name}")
+            try:
+                await sess.execute(text(f"ALTER TABLE {full_table} DROP COLUMN `user_id`"))
+            except Exception:
+                # MySQL commits DDL immediately, so the index drop above already
+                # stuck. Put it back rather than leave the column in place but
+                # unindexed.
+                if dropped_index:
+                    await sess.execute(
+                        text(f"CREATE INDEX {quote_db_identifier(db_type, index_name)} ON {full_table} (`user_id`)")
+                    )
+                raise
+            applied = True
+
+        return applied
+
+
+def _revert_sqlite_user_id(db: BaseDb, table_type: str, table_name: str) -> bool:
+    """Drop the user_id column from the given table for SQLite.
+
+    ``DROP COLUMN`` needs SQLite 3.35+, and the index has to go first because
+    SQLite refuses to drop a column an index still references.
+    """
+    db_type = type(db).__name__
+    quoted_table = quote_db_identifier(db_type, table_name)
+    index_name = f"idx_{table_name}_user_id"
+
+    with db.Session() as sess, sess.begin():  # type: ignore
+        table_exists = sess.execute(
+            text("SELECT 1 FROM sqlite_master WHERE type='table' AND name=:table_name"),
+            {"table_name": table_name},
+        ).scalar()
+        if not table_exists:
+            log_info(f"Table {table_name} does not exist, skipping revert")
+            return False
+
+        import sqlite3
+
+        # DROP COLUMN landed in SQLite 3.35.0. Skip rather than drop the index
+        # and then fail on the column, which would leave user_id unindexed.
+        if sqlite3.sqlite_version_info < (3, 35, 0):
+            log_info(f"SQLite revert for {table_name}: DROP COLUMN needs SQLite >= 3.35.0, skipping")
+            return False
+
+        applied = False
+
+        dropped_index = False
+        indexes = sess.execute(text(f"PRAGMA index_list({quoted_table})")).fetchall()
+        if index_name in {idx[1] for idx in indexes}:
+            log_info(f"-- Dropping index {index_name} from {table_name}")
+            sess.execute(text(f"DROP INDEX {quote_db_identifier(db_type, index_name)}"))
+            dropped_index = True
+            applied = True
+
+        columns_info = sess.execute(text(f"PRAGMA table_info({quoted_table})")).fetchall()
+        if "user_id" in {col[1] for col in columns_info}:
+            log_info(f"-- Dropping user_id column from {table_name}")
+            try:
+                sess.execute(text(f"ALTER TABLE {quoted_table} DROP COLUMN user_id"))
+            except Exception:
+                # SQLite commits DDL outside the session transaction, so the index
+                # drop above already stuck. Put it back rather than leave the column
+                # in place but unindexed.
+                if dropped_index:
+                    sess.execute(
+                        text(f"CREATE INDEX {quote_db_identifier(db_type, index_name)} ON {quoted_table} (user_id)")
+                    )
+                raise
+            applied = True
+
+        return applied
+
+
+async def _revert_async_sqlite_user_id(db: AsyncBaseDb, table_type: str, table_name: str) -> bool:
+    """Async SQLite variant of :func:`_revert_sqlite_user_id`."""
+    db_type = type(db).__name__
+    quoted_table = quote_db_identifier(db_type, table_name)
+    index_name = f"idx_{table_name}_user_id"
+
+    async with db.async_session_factory() as sess, sess.begin():  # type: ignore
+        result = await sess.execute(
+            text("SELECT 1 FROM sqlite_master WHERE type='table' AND name=:table_name"),
+            {"table_name": table_name},
+        )
+        if not result.scalar():
+            log_info(f"Table {table_name} does not exist, skipping revert")
+            return False
+
+        import sqlite3
+
+        # DROP COLUMN landed in SQLite 3.35.0. Skip rather than drop the index
+        # and then fail on the column, which would leave user_id unindexed.
+        if sqlite3.sqlite_version_info < (3, 35, 0):
+            log_info(f"SQLite revert for {table_name}: DROP COLUMN needs SQLite >= 3.35.0, skipping")
+            return False
+
+        applied = False
+
+        result = await sess.execute(text(f"PRAGMA index_list({quoted_table})"))
+        dropped_index = False
+        if index_name in {idx[1] for idx in result.fetchall()}:
+            log_info(f"-- Dropping index {index_name} from {table_name}")
+            await sess.execute(text(f"DROP INDEX {quote_db_identifier(db_type, index_name)}"))
+            dropped_index = True
+            applied = True
+
+        result = await sess.execute(text(f"PRAGMA table_info({quoted_table})"))
+        if "user_id" in {col[1] for col in result.fetchall()}:
+            log_info(f"-- Dropping user_id column from {table_name}")
+            try:
+                await sess.execute(text(f"ALTER TABLE {quoted_table} DROP COLUMN user_id"))
+            except Exception:
+                # SQLite commits DDL outside the session transaction, so the index
+                # drop above already stuck. Put it back rather than leave the column
+                # in place but unindexed.
+                if dropped_index:
+                    await sess.execute(
+                        text(f"CREATE INDEX {quote_db_identifier(db_type, index_name)} ON {quoted_table} (user_id)")
+                    )
+                raise
+            applied = True
+
+        return applied

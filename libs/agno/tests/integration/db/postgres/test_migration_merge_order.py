@@ -180,7 +180,7 @@ class TestPartialMigrationMergeOrder:
         legacy blob. get_session() must return [r0, r1, r2, r3]."""
         _seed_v2_session(postgres_db_real, ["r0", "r1", "r2", "r3"])
 
-        migrated = v3_0_0._migrate_postgres(postgres_db_real, "test_sessions")
+        migrated = v3_0_0._migrate_postgres(postgres_db_real, "sessions", "test_sessions")
         assert migrated is True
 
         assert set(_get_runs_table_ids(postgres_db_real)) == {"r0", "r1", "r2", "r3"}
@@ -200,7 +200,7 @@ class TestPartialMigrationMergeOrder:
     def test_leading_run_only_in_table(self, postgres_db_real: PostgresDb):
         """Only r0 in the runs table; r1, r2, r3 in blob only."""
         _seed_v2_session(postgres_db_real, ["r0", "r1", "r2", "r3"])
-        v3_0_0._migrate_postgres(postgres_db_real, "test_sessions")
+        v3_0_0._migrate_postgres(postgres_db_real, "sessions", "test_sessions")
         _delete_runs_from_table(postgres_db_real, ["r1", "r2", "r3"])
 
         merged = _read_merged_runs(postgres_db_real)
@@ -210,7 +210,7 @@ class TestPartialMigrationMergeOrder:
     def test_trailing_run_only_in_table(self, postgres_db_real: PostgresDb):
         """Only r3 in the runs table; r0, r1, r2 in blob only."""
         _seed_v2_session(postgres_db_real, ["r0", "r1", "r2", "r3"])
-        v3_0_0._migrate_postgres(postgres_db_real, "test_sessions")
+        v3_0_0._migrate_postgres(postgres_db_real, "sessions", "test_sessions")
         _delete_runs_from_table(postgres_db_real, ["r0", "r1", "r2"])
 
         merged = _read_merged_runs(postgres_db_real)
@@ -222,7 +222,7 @@ class TestPartialMigrationMergeOrder:
         counterpart in the legacy blob) is by definition newer than everything
         the blob knew about — it should appear at the tail."""
         _seed_v2_session(postgres_db_real, ["r0", "r1"])
-        v3_0_0._migrate_postgres(postgres_db_real, "test_sessions")
+        v3_0_0._migrate_postgres(postgres_db_real, "sessions", "test_sessions")
 
         with postgres_db_real.Session() as sess:
             sess.execute(
@@ -252,7 +252,7 @@ class TestPartialMigrationMergeOrder:
         """When the same run_id exists in both surfaces, the table wins on
         *content* but the legacy blob's position wins on *order*."""
         _seed_v2_session(postgres_db_real, ["r0", "r1", "r2"])
-        v3_0_0._migrate_postgres(postgres_db_real, "test_sessions")
+        v3_0_0._migrate_postgres(postgres_db_real, "sessions", "test_sessions")
 
         with postgres_db_real.Session() as sess:
             sess.execute(
