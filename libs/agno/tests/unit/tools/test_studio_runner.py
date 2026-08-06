@@ -990,7 +990,7 @@ class TestStudioEmbedding:
         assert "knowledge" in out.get("error", "")
         assert "registry" in out.get("error", "")
 
-    def test_registry_less_runner_refuses_team_with_idless_member(self, registry, db):
+    def test_runner_refuses_team_with_idless_member(self, registry, db):
         # A code-defined member that never ran serializes as agent_id null;
         # only the registry can supply it, so the rebuild must refuse.
         from agno.agent.agent import Agent as AgentClass
@@ -1000,9 +1000,13 @@ class TestStudioEmbedding:
         created = _loads(studio.create_team(name="crew", instructions="i", member_ids=["Helper"], model_id="gpt-5.4"))
         assert "error" not in created
 
-        out = _loads(StudioRunnerTools(db=db).run_team("crew", "hi"))
-        assert "registry" in out.get("error", "")
-        assert "not found" not in out.get("error", "")
+        # No registry makes a null reference resolvable, so the refusal does
+        # not depend on one: a lookup by None matches the first component that
+        # also has no id.
+        for runner in (StudioRunnerTools(db=db), StudioRunnerTools(registry=registry, db=db)):
+            out = _loads(runner.run_team("crew", "hi"))
+            assert "had no id when it was saved" in out.get("error", "")
+            assert "not found" not in out.get("error", "")
 
     def test_unrebuildable_db_reference_warns_and_falls_back(self, db):
         # A declared db that neither db_from_dict nor the registry can supply

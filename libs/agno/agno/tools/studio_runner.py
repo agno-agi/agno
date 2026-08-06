@@ -507,6 +507,22 @@ class StudioRunnerTools(Toolkit):
             return slug
         return None
 
+    @staticmethod
+    def _require_resolvable_member_ids(component_type: str, component_id: str, config: Dict[str, Any]) -> None:
+        """Refuse a config that references a member or step executor by a null id.
+
+        Serialization writes the referenced component's id even when it is
+        None, and a lookup by None matches the first component that also has
+        no id, which is rarely the one that was configured. No registry makes
+        the reference resolvable, so the refusal does not depend on one."""
+        key = "members" if component_type == "team" else "steps"
+        if component_type not in ("team", "workflow") or not _references_idless_components(config.get(key)):
+            return
+        raise ComponentNeedsRegistryError(
+            f"{component_type.capitalize()} '{component_id}' references a component that had no id when it was "
+            "saved, so the reference cannot be resolved. Give that component an id and save it again."
+        )
+
     def _require_registry_for(
         self,
         component_type: str,
@@ -536,12 +552,8 @@ class StudioRunnerTools(Toolkit):
             needs.append("knowledge")
         if isinstance(config.get("input_schema"), str) or isinstance(config.get("output_schema"), str):
             needs.append("schemas")
-        if component_type == "team" and _references_idless_components(config.get("members")):
-            needs.append("code-defined members without ids")
         if component_type == "workflow" and _references_executors(config.get("steps")):
             needs.append("function steps")
-        if component_type == "workflow" and _references_idless_components(config.get("steps")):
-            needs.append("code-defined step members without ids")
         if needs:
             raise ComponentNeedsRegistryError(
                 f"{component_type.capitalize()} '{component_id}' references registry-backed resources "
@@ -666,6 +678,7 @@ class StudioRunnerTools(Toolkit):
         config = self._load_config_from_db(team_id, version=version, component_type=ComponentType.TEAM)
         if config is None:
             return None
+        self._require_resolvable_member_ids("team", team_id, config)
         self._require_registry_for("team", team_id, config)
         from agno.team.team import Team
 
@@ -687,6 +700,7 @@ class StudioRunnerTools(Toolkit):
         config = self._load_config_from_db(workflow_id, version=version, component_type=ComponentType.WORKFLOW)
         if config is None:
             return None
+        self._require_resolvable_member_ids("workflow", workflow_id, config)
         self._require_registry_for("workflow", workflow_id, config)
         from agno.workflow.workflow import Workflow
 
