@@ -15,15 +15,26 @@ Typical use:
         tools=[StudioRunnerTools(registry=registry, db=db)],
     )
 
+Mount it INSTEAD of StudioTools, not beside it. StudioTools embeds this same
+toolkit and already exposes list_agents/list_teams/list_workflows/run_agent, and
+agno's tool namespace is flat: co-mounting collapses the overlapping names to
+whichever toolkit the tools list holds first, and a warning names the skipped
+one. Two runners scoped to different component lists collapse the same way, so
+the loser's allowlist becomes unreachable. ``name=`` names the toolkit, not its
+functions, so it does not disambiguate them.
+
 Semantics:
     * Runs execute as the current user: the wielding component's run_context is
       injected and its user_id passed through, so per-user state (memory,
       learning) lands on the human who asked, never on a service default.
-    * Each target keeps one session per calling conversation
-      ("<caller_session_id>--<component_type>--<component_id>"), so repeat
-      runs continue their context instead of starting cold. A caller with no
-      session of its own (a direct Python call) leaves the session unset, so
-      the component runs on its own default session.
+    * Each target keeps one session per calling conversation: the session id
+      is a digest keyed on the caller's session id, the component type and
+      the component id (see _sub_session_id), so repeat runs continue their
+      context instead of starting cold. A caller with no session of its own
+      (a direct Python call) passes no session id -- and because dispatch
+      runs on a per-call copy or rebuild, each such run starts a session of
+      its own. Construct the component with an explicit session_id to keep
+      continuity across sessionless calls.
     * Code-defined components are dispatched on a fresh deep copy per run, so
       per-run mutation of a shared instance never bleeds across callers.
       DB-loaded components are reconstructed per call already.
@@ -48,11 +59,11 @@ Semantics:
       is checked against its own config before dispatch, so an unresolved tool
       or a dropped schema stops the run rather than quietly changing what it
       does. Reads and edits load it either way, so it stays repairable.
-      Member references resolve at their current published version. Model
-      connection settings, credentials and a declared db are not fully
-      persisted, so a rebuild can fall back to provider defaults and to the
-      catalog db; the runner logs a warning for the dispatched agent's or
-      team's own model and for a dropped db.
+      Member references resolve at their current
+      published version. Model connection settings, credentials and a
+      declared db are not fully persisted, so a rebuild can fall back to
+      provider defaults and to the catalog db; the runner logs a warning for
+      the dispatched agent's or team's own model and for a dropped db.
     * list_* read the database only (id, name, description, newest first), and
       run_* dispatch that same set: a component you cannot list is a component
       you cannot run. Code-defined components arrive through the registry,
@@ -99,7 +110,14 @@ def _slugify(name: str) -> str:
     return slug.strip("-") or "component"
 
 
-class AmbiguousComponentNameError(ValueError):
+class StudioRunnerError(Exception):
+    """Base class for the runner's deliberate refusals.
+
+    Each carries an actionable message meant for the caller (model or code)
+    rather than the log, so the tools catch this one name."""
+
+
+class AmbiguousComponentNameError(StudioRunnerError, ValueError):
     """A display name matched more than one component of the requested type.
 
     The message lists the matching ids so the caller (model or code) can retry
@@ -113,7 +131,7 @@ class AmbiguousComponentNameError(ValueError):
         )
 
 
-class ComponentNeedsRegistryError(RuntimeError):
+class ComponentNeedsRegistryError(StudioRunnerError, RuntimeError):
     """The stored config references registry-backed pieces that cannot be
     reconstructed without the registry.
 
@@ -121,7 +139,7 @@ class ComponentNeedsRegistryError(RuntimeError):
     knowledge and function steps missing, code-defined members lost)."""
 
 
-class ComponentNotDispatchableError(RuntimeError):
+class ComponentNotDispatchableError(StudioRunnerError, RuntimeError):
     """The identifier names a component this runner may read but not run.
 
     Code-defined components reach the runner through the registry, which is
@@ -129,7 +147,7 @@ class ComponentNotDispatchableError(RuntimeError):
     (``include_all_components``)."""
 
 
-class DispatchCopyError(RuntimeError):
+class DispatchCopyError(StudioRunnerError, RuntimeError):
     """A component could not be copied faithfully for dispatch.
 
     The runner refuses a copy that fails its fidelity checks (see
@@ -304,11 +322,7 @@ class StudioRunnerTools(Toolkit):
 
         Split into an exact tier and a name tier so cross-type callers
         (StudioTools._resolve_members) can try exact ids across both types
-        before any name matching.
-
-        ``for_dispatch`` narrows the code-defined candidates to the ones this
-        runner may run (see _iter_agents) and makes a rebuild that lost its
-        registry-backed pieces refuse rather than degrade."""
+        before any name matching."""
         agent = self._find_agent_by_exact_id(agent_id, for_dispatch=for_dispatch)
         if agent is not None:
             return agent
@@ -397,7 +411,8 @@ class StudioRunnerTools(Toolkit):
         or fail to rebuild entirely, and the field-level copier keeps the
         original value for a field whose own copy raised. The copy is
         dispatched when it is a distinct instance of the same class that kept
-        its id, name, model, instructions, and distinct members."""
+        its id, name, model and instructions, and whose copyable members were
+        themselves copied (see _shared_member)."""
         label = getattr(component, "id", None) or getattr(component, "name", None) or component.__class__.__name__
         copier = getattr(component, "deep_copy", None)
         if not callable(copier):
@@ -433,11 +448,14 @@ class StudioRunnerTools(Toolkit):
                 f"deep_copy of '{label}' lost its identity. "
                 "Give the class a deep_copy that rebuilds it, or store the component in the database."
             )
-        # Members are checked to the bottom of the tree, not just the first level:
-        # a team of teams whose grandchild is shared leaks per-run mutation just as
-        # a shared direct member does, and a copier that swaps one member for
-        # another is not the component that was asked for.
-        divergence = StudioRunnerTools._member_tree_divergence(component, fresh)
+        shared = StudioRunnerTools._shared_member(component, fresh)
+        if shared is not None:
+            shared_label = getattr(shared, "id", None) or getattr(shared, "name", None) or type(shared).__name__
+            raise DispatchCopyError(
+                f"deep_copy of '{label}' still shares member '{shared_label}' with the original. "
+                "Give that member's class a deep_copy that rebuilds it, or store the component in the database."
+            )
+        divergence = StudioRunnerTools._member_divergence(component, fresh)
         if divergence is not None:
             raise DispatchCopyError(
                 f"deep_copy of '{label}' did not reproduce its members: {divergence}. "
@@ -446,28 +464,56 @@ class StudioRunnerTools(Toolkit):
         return fresh
 
     @staticmethod
-    def _member_tree_divergence(original: Any, fresh: Any, depth: int = 0) -> Optional[str]:
-        """What differs between the two member trees, or None when the copy mirrors
-        the original. Checks non-aliasing and structural fidelity at every level."""
-        if depth > 12:  # A cycle or a pathological nesting depth; stop rather than recurse forever.
+    def _member_divergence(original: Any, fresh: Any, depth: int = 0) -> Optional[str]:
+        """How the copy's member list differs in shape from the original's, else None.
+
+        Whether a member is aliased is _shared_member's question; this one is
+        whether the copy holds the same members at all. A copier that drops a
+        member or rebuilds it as a different component has not produced the
+        component that was asked for, and neither shows up as sharing."""
+        if depth > 12:  # A cycle or pathological nesting; stop rather than recurse forever.
             return None
         original_members = getattr(original, "members", None)
         if not isinstance(original_members, list):
             return None
-        copied_members = getattr(fresh, "members", None)
-        if not isinstance(copied_members, list) or len(copied_members) != len(original_members):
-            copied_count = len(copied_members) if isinstance(copied_members, list) else "none"
-            return f"member count changed ({len(original_members)} -> {copied_count})"
-        for original_member, copied_member in zip(original_members, copied_members):
+        fresh_members = getattr(fresh, "members", None)
+        if not isinstance(fresh_members, list) or len(fresh_members) != len(original_members):
+            found = len(fresh_members) if isinstance(fresh_members, list) else "none"
+            return f"member count changed ({len(original_members)} -> {found})"
+        for original_member, fresh_member in zip(original_members, fresh_members):
+            if fresh_member is original_member:
+                # Shared by design, or already reported by _shared_member.
+                continue
             member_label = getattr(original_member, "id", None) or getattr(original_member, "name", None) or "?"
-            if copied_member is original_member:
-                return f"member '{member_label}' is the shared instance"
-            if type(copied_member) is not type(original_member):
-                return f"member '{member_label}' changed class"
+            if type(fresh_member) is not type(original_member):
+                return f"member '{member_label}' came back as {type(fresh_member).__name__}"
             for attribute in ("id", "name"):
-                if getattr(original_member, attribute, None) != getattr(copied_member, attribute, None):
+                if getattr(original_member, attribute, None) != getattr(fresh_member, attribute, None):
                     return f"member '{member_label}' lost its {attribute}"
-            nested = StudioRunnerTools._member_tree_divergence(original_member, copied_member, depth + 1)
+            nested = StudioRunnerTools._member_divergence(original_member, fresh_member, depth + 1)
+            if nested is not None:
+                return nested
+        return None
+
+    @staticmethod
+    def _shared_member(original: Any, fresh: Any) -> Optional[Any]:
+        """The first copyable member the copy still shares with the original,
+        searched through nested member lists, else None.
+
+        A member without deep_copy is shared by design: a remote proxy holds no
+        per-run state to isolate. A member that could have been copied and was
+        not is a failed copy, and dispatching it would let per-run mutation
+        cross callers."""
+        original_members = getattr(original, "members", None)
+        fresh_members = getattr(fresh, "members", None)
+        if not isinstance(original_members, list) or not isinstance(fresh_members, list):
+            return None
+        if len(original_members) != len(fresh_members):
+            return None
+        for original_member, fresh_member in zip(original_members, fresh_members):
+            if fresh_member is original_member and callable(getattr(original_member, "deep_copy", None)):
+                return fresh_member
+            nested = StudioRunnerTools._shared_member(original_member, fresh_member)
             if nested is not None:
                 return nested
         return None
@@ -481,6 +527,9 @@ class StudioRunnerTools(Toolkit):
         try:
             if finder(identifier) is None:
                 return
+        except AmbiguousComponentNameError:
+            # The identifier is ambiguous, not undispatchable; let the caller say so.
+            raise
         except Exception:
             return
         raise ComponentNotDispatchableError(
@@ -572,6 +621,25 @@ class StudioRunnerTools(Toolkit):
             return slug
         return None
 
+    @staticmethod
+    def _require_resolvable_member_ids(component_type: str, component_id: str, config: Dict[str, Any]) -> None:
+        """Refuse a config that references a member or step executor by a null id.
+
+        Serialization writes the referenced component's id even when it is
+        None, and a lookup by None matches the first component that also has
+        no id, which is rarely the one that was configured. No registry makes
+        the reference resolvable, so the refusal does not depend on one.
+
+        Dispatch only: reads and edits load the component so the reference can
+        be seen and repaired, the same split _require_faithful_rebuild uses."""
+        key = "members" if component_type == "team" else "steps"
+        if component_type not in ("team", "workflow") or not _references_idless_components(config.get(key)):
+            return
+        raise ComponentNeedsRegistryError(
+            f"{component_type.capitalize()} '{component_id}' references a component that had no id when it was "
+            "saved, so the reference cannot be resolved. Give that component an id and save it again."
+        )
+
     def _require_registry_for(
         self,
         component_type: str,
@@ -601,12 +669,8 @@ class StudioRunnerTools(Toolkit):
             needs.append("knowledge")
         if isinstance(config.get("input_schema"), str) or isinstance(config.get("output_schema"), str):
             needs.append("schemas")
-        if component_type == "team" and _references_idless_components(config.get("members")):
-            needs.append("code-defined members without ids")
         if component_type == "workflow" and _references_executors(config.get("steps")):
             needs.append("function steps")
-        if component_type == "workflow" and _references_idless_components(config.get("steps")):
-            needs.append("code-defined step members without ids")
         if needs:
             raise ComponentNeedsRegistryError(
                 f"{component_type.capitalize()} '{component_id}' references registry-backed resources "
@@ -630,8 +694,8 @@ class StudioRunnerTools(Toolkit):
         """Refuse to dispatch a component whose config named registry-backed
         pieces this registry does not hold.
 
-        _require_registry_for covers the registry-ABSENT case. A registry that is
-        present but incomplete degrades instead of failing: rehydrate_functions
+        _require_registry_for covers the registry being ABSENT. A registry that
+        is present but incomplete degrades instead of failing: rehydrate_functions
         binds an unresolved tool to ``entrypoint=None``, and from_dict deletes a
         knowledge or schema reference it cannot resolve. Either way from_dict
         returns successfully and the component runs without the piece. Checking
@@ -675,12 +739,60 @@ class StudioRunnerTools(Toolkit):
             if len(rebuilt_members) < len(declared_members):
                 missing.append(f"members ({len(declared_members) - len(rebuilt_members)} of {len(declared_members)})")
 
+        nested = self._unresolved_below(component)
+        if nested is not None:
+            missing.append(f"nested component {nested}")
+
         if missing:
             raise ComponentNeedsRegistryError(
                 f"{component_type.capitalize()} '{component_id}' references registry-backed resources this "
                 f"registry does not provide ({'; '.join(missing)}); register them before running it. Reads and "
                 "edits still load the component."
             )
+
+    @staticmethod
+    def _unresolved_below(node: Any, depth: int = 0, seen: Optional[set] = None) -> Optional[str]:
+        """The first nested member or step executor holding a tool with no
+        entrypoint, or None when the graph below is intact.
+
+        A member and a step executor rebuild from configs of their own, so the
+        parent's config check says nothing about them: rehydrate_functions binds
+        an unresolved tool to ``entrypoint=None`` at every depth alike, and an
+        incomplete registry would otherwise run a nested member stripped of its
+        tools. Depth- and cycle-capped, over objects already in memory."""
+        from agno.tools.function import Function
+
+        if node is None or depth > 12:
+            return None
+        seen = set() if seen is None else seen
+        if id(node) in seen:
+            return None
+        seen.add(id(node))
+
+        children: List[Any] = list(getattr(node, "members", None) or [])
+        for step in getattr(node, "steps", None) or []:
+            for attribute in ("agent", "team"):
+                child = getattr(step, attribute, None)
+                if child is not None:
+                    children.append(child)
+            for nested_attribute in ("steps", "else_steps", "choices"):
+                children.extend(getattr(step, nested_attribute, None) or [])
+
+        for child in children:
+            unresolved = sorted(
+                {
+                    str(getattr(tool, "name", None) or "?")
+                    for tool in (getattr(child, "tools", None) or [])
+                    if isinstance(tool, Function) and tool.entrypoint is None
+                }
+            )
+            if unresolved:
+                label = getattr(child, "id", None) or getattr(child, "name", None) or type(child).__name__
+                return f"{label}: tools ({', '.join(unresolved)})"
+            found = StudioRunnerTools._unresolved_below(child, depth + 1, seen)
+            if found is not None:
+                return found
+        return None
 
     def _warn_if_model_rebuilt(self, component: Any, component_type: str, component_id: str) -> None:
         """Log when a dispatched agent's or team's model is a config rebuild.
@@ -739,11 +851,17 @@ class StudioRunnerTools(Toolkit):
 
         def shared_within(node: Any, depth: int = 0) -> Optional[Any]:
             """The shared registry instance held at or below this executor. A step
-            whose team is a fresh copy still leaks if one of that team's members is
-            the registry singleton."""
+            whose team is a fresh copy still leaks if one of that team's own
+            members is the registry singleton.
+
+            A member is only a leak when it could have been copied, the same rule
+            _shared_member applies: a member with no deep_copy is shared by design,
+            because a remote proxy holds no per-run state to isolate. The executor
+            itself is judged without that exemption, as it was before."""
             if node is None or depth > 12:
                 return None
-            if any(node is instance for instance in shared):
+            is_shared = any(node is instance for instance in shared)
+            if is_shared and (depth == 0 or callable(getattr(node, "deep_copy", None))):
                 return node
             for member in getattr(node, "members", None) or []:
                 found = shared_within(member, depth + 1)
@@ -817,6 +935,10 @@ class StudioRunnerTools(Toolkit):
         config = self._load_config_from_db(team_id, version=version, component_type=ComponentType.TEAM)
         if config is None:
             return None
+        if for_dispatch:
+            # Dispatch only: a null reference cannot be resolved, but the component
+            # still has to load so the bad reference can be seen and repaired.
+            self._require_resolvable_member_ids("team", team_id, config)
         self._require_registry_for("team", team_id, config)
         from agno.team.team import Team
 
@@ -844,6 +966,10 @@ class StudioRunnerTools(Toolkit):
         config = self._load_config_from_db(workflow_id, version=version, component_type=ComponentType.WORKFLOW)
         if config is None:
             return None
+        if for_dispatch:
+            # Dispatch only: a null reference cannot be resolved, but the component
+            # still has to load so the bad reference can be seen and repaired.
+            self._require_resolvable_member_ids("workflow", workflow_id, config)
         self._require_registry_for("workflow", workflow_id, config)
         from agno.workflow.workflow import Workflow
 
@@ -981,7 +1107,7 @@ class StudioRunnerTools(Toolkit):
         """
         try:
             agent = self._agent_for_run(agent_id)
-        except (AmbiguousComponentNameError, ComponentNeedsRegistryError, ComponentNotDispatchableError) as e:
+        except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
         except Exception as e:
@@ -1020,7 +1146,7 @@ class StudioRunnerTools(Toolkit):
         """
         try:
             team = self._team_for_run(team_id)
-        except (AmbiguousComponentNameError, ComponentNeedsRegistryError, ComponentNotDispatchableError) as e:
+        except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
         except Exception as e:
@@ -1059,7 +1185,7 @@ class StudioRunnerTools(Toolkit):
         """
         try:
             wf = self._workflow_for_run(workflow_id)
-        except (AmbiguousComponentNameError, ComponentNeedsRegistryError, ComponentNotDispatchableError) as e:
+        except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
         except Exception as e:
@@ -1090,7 +1216,7 @@ class StudioRunnerTools(Toolkit):
         # Resolution hits the DB synchronously; keep it off the event loop.
         try:
             agent = await asyncio.to_thread(self._agent_for_run, agent_id)
-        except (AmbiguousComponentNameError, ComponentNeedsRegistryError, ComponentNotDispatchableError) as e:
+        except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
         except Exception as e:
@@ -1120,7 +1246,7 @@ class StudioRunnerTools(Toolkit):
         """
         try:
             team = await asyncio.to_thread(self._team_for_run, team_id)
-        except (AmbiguousComponentNameError, ComponentNeedsRegistryError, ComponentNotDispatchableError) as e:
+        except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
         except Exception as e:
@@ -1152,7 +1278,7 @@ class StudioRunnerTools(Toolkit):
         """
         try:
             wf = await asyncio.to_thread(self._workflow_for_run, workflow_id)
-        except (AmbiguousComponentNameError, ComponentNeedsRegistryError, ComponentNotDispatchableError) as e:
+        except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
         except Exception as e:
@@ -1206,18 +1332,20 @@ class StudioRunnerTools(Toolkit):
         which the joined form is not: nested dispatch grows it without limit and
         MySQL caps session_id at 128 characters.
 
-        A caller without a session gets None, so the component runs on its own
-        default session. That is what a direct Python call gets -- run_agent()
-        has no session argument -- and minting a session per call instead would
-        make every call in a script a cold start with no way to opt out."""
+        A caller without a session (a direct Python call -- run_agent() has no
+        session argument) gets None: no session id is passed to the target.
+        Dispatch runs on a per-call copy (code-defined) or a per-call rebuild
+        (DB-loaded), so each such run starts a session of its own. A component
+        constructed with an explicit session_id keeps using it, which is the
+        opt-in for continuity across sessionless calls."""
         if run_context is None or not getattr(run_context, "session_id", None):
             return None
-        from hashlib import sha256
+        from agno.utils.string import hash_string_sha256
 
         parts = (str(run_context.session_id), component_type, component_id)
         # Length-prefixed so no part can impersonate a boundary.
         key = "|".join(f"{len(part)}:{part}" for part in parts)
-        return f"{component_type}-{sha256(key.encode()).hexdigest()[:32]}"
+        return f"{component_type}-{hash_string_sha256(key)[:32]}"
 
     @staticmethod
     def _run_payload(id_key: str, component_id: str, run_output: Any) -> str:

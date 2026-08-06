@@ -586,7 +586,7 @@ class StudioTools(Toolkit):
             return json.dumps({"models": models, "count": len(models)})
         except Exception as e:
             logger.exception("Failed to list models")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
 
     def list_tools(self) -> str:
         """List toolkits and functions available in the registry.
@@ -607,7 +607,7 @@ class StudioTools(Toolkit):
             return json.dumps({"tools": result, "count": len(result)})
         except Exception as e:
             logger.exception("Failed to list tools")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
 
     def list_functions(self) -> str:
         """List raw functions available in the registry for workflow steps.
@@ -636,7 +636,7 @@ class StudioTools(Toolkit):
             return json.dumps({"functions": result, "count": len(result)})
         except Exception as e:
             logger.exception("Failed to list functions")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
 
     def list_dbs(self) -> str:
         """List databases available in the registry.
@@ -649,7 +649,7 @@ class StudioTools(Toolkit):
             return json.dumps({"dbs": dbs, "count": len(dbs)})
         except Exception as e:
             logger.exception("Failed to list dbs")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
 
     def list_agents(self) -> str:
         """List all known agents: code-defined (registry / agents_list) plus DB components.
@@ -692,7 +692,7 @@ class StudioTools(Toolkit):
             return json.dumps({"agents": result, "count": len(result), "db_total": db_total})
         except Exception as e:
             logger.exception("Failed to list agents")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
 
     def list_teams(self) -> str:
         """List all known teams: code-defined plus DB components.
@@ -735,7 +735,7 @@ class StudioTools(Toolkit):
             return json.dumps({"teams": result, "count": len(result), "db_total": db_total})
         except Exception as e:
             logger.exception("Failed to list teams")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
 
     def list_workflows(self) -> str:
         """List all known workflows: code-defined plus DB components.
@@ -777,7 +777,7 @@ class StudioTools(Toolkit):
             return json.dumps({"workflows": result, "count": len(result), "db_total": db_total})
         except Exception as e:
             logger.exception("Failed to list workflows")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
 
     def _list_db_components(self, component_type: str) -> tuple[List[Dict[str, Any]], int]:
         """Thin summaries of DB components of a given type plus the total DB count.
@@ -801,7 +801,7 @@ class StudioTools(Toolkit):
         try:
             agent = self._find_agent(agent_id)
         except AmbiguousComponentNameError as e:
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
         except Exception as e:
             logger.exception("Failed to resolve agent")
             return json.dumps({"error": f"Failed to resolve agent '{agent_id}': {str(e) or type(e).__name__}"})
@@ -833,7 +833,7 @@ class StudioTools(Toolkit):
         try:
             team = self._find_team(team_id)
         except AmbiguousComponentNameError as e:
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
         except Exception as e:
             logger.exception("Failed to resolve team")
             return json.dumps({"error": f"Failed to resolve team '{team_id}': {str(e) or type(e).__name__}"})
@@ -866,7 +866,7 @@ class StudioTools(Toolkit):
         try:
             wf = self._find_workflow(workflow_id)
         except AmbiguousComponentNameError as e:
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
         except Exception as e:
             logger.exception("Failed to resolve workflow")
             return json.dumps({"error": f"Failed to resolve workflow '{workflow_id}': {str(e) or type(e).__name__}"})
@@ -978,7 +978,7 @@ class StudioTools(Toolkit):
             )
         except Exception as e:
             logger.exception("Failed to create agent")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
 
     def create_team(
         self,
@@ -1021,7 +1021,12 @@ class StudioTools(Toolkit):
             if model is None:
                 return json.dumps({"error": f"Model not found: {model_id or 'default'}"})
 
-            members, missing = self._resolve_members(member_ids)
+            try:
+                members, missing = self._resolve_members(member_ids)
+            except ValueError as e:
+                # Ambiguity and id-less refusals are validation of model input,
+                # not system failures: no traceback in the operator log.
+                return json.dumps({"error": str(e)})
             if missing:
                 return json.dumps({"error": f"Members not found: {missing}"})
             if not members:
@@ -1061,7 +1066,7 @@ class StudioTools(Toolkit):
             )
         except Exception as e:
             logger.exception("Failed to create team")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
 
     def create_workflow(
         self,
@@ -1116,7 +1121,7 @@ class StudioTools(Toolkit):
             )
         except Exception as e:
             logger.exception("Failed to create workflow")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
 
     # ------------------------------------------------------------------
     # Edit (produces a draft version)
@@ -1173,7 +1178,7 @@ class StudioTools(Toolkit):
                 )
             agent = self._find_agent_for_edit(agent_id)
         except AmbiguousComponentNameError as e:
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
         except Exception as e:
             logger.exception("Failed to resolve agent")
             return json.dumps({"error": f"Failed to resolve agent '{agent_id}': {str(e) or type(e).__name__}"})
@@ -1211,7 +1216,7 @@ class StudioTools(Toolkit):
             return json.dumps({"status": "edited", "id": getattr(agent, "id", None) or agent_id, **result})
         except Exception as e:
             logger.exception("Failed to edit agent")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
 
     def edit_team(
         self,
@@ -1264,7 +1269,7 @@ class StudioTools(Toolkit):
                 )
             team = self._find_team_for_edit(team_id)
         except AmbiguousComponentNameError as e:
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
         except Exception as e:
             logger.exception("Failed to resolve team")
             return json.dumps({"error": f"Failed to resolve team '{team_id}': {str(e) or type(e).__name__}"})
@@ -1286,12 +1291,33 @@ class StudioTools(Toolkit):
                     return json.dumps({"error": f"Model not found: {model_id}"})
                 team.model = model
             if member_ids is not None:
-                members, missing = self._resolve_members(member_ids)
+                try:
+                    members, missing = self._resolve_members(member_ids)
+                except ValueError as e:
+                    return json.dumps({"error": str(e)})
                 if missing:
                     return json.dumps({"error": f"Members not found: {missing}"})
                 if not members:
                     return json.dumps({"error": "A team must have at least one member"})
                 team.members = members
+            else:
+                # Team.from_dict resolves members through the registry and db only,
+                # dropping (with a warning) any it cannot supply -- a code-defined
+                # agents_list entry, for one. Re-serializing that rebuild would
+                # publish a roster silently shrunk by an unrelated edit.
+                resolved_id = getattr(team, "id", None) or team_id
+                row = self.db.get_config(component_id=resolved_id, version=self._edit_base_version(resolved_id))
+                stored_config = row.get("config") if isinstance(row, dict) else None
+                stored_members = (stored_config or {}).get("members") or []
+                rebuilt_members = team.members if isinstance(team.members, list) else []
+                if len(rebuilt_members) < len(stored_members):
+                    return json.dumps(
+                        {
+                            "error": f"Editing '{resolved_id}' would drop members its rebuild cannot resolve "
+                            f"({len(rebuilt_members)} of {len(stored_members)} resolved). Register the "
+                            "missing members in the registry or database, then retry."
+                        }
+                    )
             if add_history_to_context is not None:
                 team.add_history_to_context = add_history_to_context
             if num_history_runs is not None:
@@ -1307,7 +1333,7 @@ class StudioTools(Toolkit):
             return json.dumps({"status": "edited", "id": getattr(team, "id", None) or team_id, **result})
         except Exception as e:
             logger.exception("Failed to edit team")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
 
     def edit_workflow(
         self,
@@ -1349,7 +1375,7 @@ class StudioTools(Toolkit):
                 )
             wf = self._find_workflow_for_edit(workflow_id)
         except AmbiguousComponentNameError as e:
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
         except Exception as e:
             logger.exception("Failed to resolve workflow")
             return json.dumps({"error": f"Failed to resolve workflow '{workflow_id}': {str(e) or type(e).__name__}"})
@@ -1374,7 +1400,7 @@ class StudioTools(Toolkit):
             return json.dumps({"status": "edited", "id": getattr(wf, "id", None) or workflow_id, **result})
         except Exception as e:
             logger.exception("Failed to edit workflow")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
 
     # ------------------------------------------------------------------
     # Versioning / configs
@@ -1405,7 +1431,7 @@ class StudioTools(Toolkit):
             return json.dumps({"component_id": component_id, "versions": versions, "count": len(versions)})
         except Exception as e:
             logger.exception("Failed to list versions")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
 
     def get_version(self, component_id: str, version: Optional[int] = None) -> str:
         """Get a specific config version. If version is omitted, returns the current version.
@@ -1423,7 +1449,7 @@ class StudioTools(Toolkit):
             return json.dumps(config, default=str)
         except Exception as e:
             logger.exception("Failed to get version")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
 
     def publish_component(self, component_id: str, version: Optional[int] = None) -> str:
         """Promote a draft to published (and make it the current version).
@@ -1465,7 +1491,7 @@ class StudioTools(Toolkit):
             )
         except Exception as e:
             logger.exception("Failed to publish component")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
 
     def set_current_version(self, component_id: str, version: int) -> str:
         """Roll back to a previously published version (make it current).
@@ -1483,7 +1509,7 @@ class StudioTools(Toolkit):
             return json.dumps({"status": "set_current", "id": component_id, "version": version})
         except Exception as e:
             logger.exception("Failed to set current version")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
 
     def delete_version(self, component_id: str, version: int) -> str:
         """Delete a draft config version. Published and current versions cannot be deleted.
@@ -1501,7 +1527,7 @@ class StudioTools(Toolkit):
             return json.dumps({"status": "deleted", "id": component_id, "version": version})
         except Exception as e:
             logger.exception("Failed to delete version")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
 
     # ------------------------------------------------------------------
     # Delete
@@ -1533,7 +1559,7 @@ class StudioTools(Toolkit):
             return json.dumps({"status": "deleted", "id": agent_id})
         except Exception as e:
             logger.exception("Failed to delete agent")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
 
     def delete_team(self, team_id: str) -> str:
         """Hard-delete a team component.
@@ -1559,7 +1585,7 @@ class StudioTools(Toolkit):
             return json.dumps({"status": "deleted", "id": team_id})
         except Exception as e:
             logger.exception("Failed to delete team")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
 
     def delete_workflow(self, workflow_id: str) -> str:
         """Hard-delete a workflow component.
@@ -1587,19 +1613,18 @@ class StudioTools(Toolkit):
             return json.dumps({"status": "deleted", "id": workflow_id})
         except Exception as e:
             logger.exception("Failed to delete workflow")
-            return json.dumps({"error": str(e)})
-
-    # Execution (run_agent/run_team/run_workflow and async variants) is
-    # registered from the embedded StudioRunnerTools in __init__. The runner
-    # owns run semantics: current-user identity, per-conversation sub-sessions,
-    # and PAUSED results that carry their unresolved requirements.
+            return json.dumps({"error": str(e) or type(e).__name__})
 
     # ------------------------------------------------------------------
-    # Public run methods. StudioRunnerTools owns the implementations; these
-    # forward to it and add an 'id' key beside the runner's typed key (see
-    # agno/tools/studio_runner.py for the runner's payload). The tools
-    # registered for the model are the runner's own bound methods, which
-    # carry the typed key alone.
+    # Public run methods. StudioRunnerTools owns the run semantics
+    # (current-user identity, per-conversation sub-sessions, PAUSED results
+    # that carry their unresolved requirements); these forward to it and add
+    # an 'id' key beside the runner's typed key. __init__ registers THESE
+    # methods for the model, so the model-facing payload carries both keys
+    # and a subclass override sits on the model's path. The paths are
+    # separate methods: a policy gate must override run_agent AND arun_agent
+    # (async_mode picks one), or it guards only half the surface. Only a
+    # standalone StudioRunnerTools serves the typed key alone.
     # ------------------------------------------------------------------
 
     @staticmethod
@@ -1619,10 +1644,10 @@ class StudioTools(Toolkit):
         return result
 
     # These are what the model calls, not the embedded runner's bound methods, so a
-    # subclass that overrides run_agent to add a policy gate still sits on the path.
-    # They carry the `_agno_run_context` channel for the same reason the runner does:
-    # the framework fills it, it is kept out of the model-facing schema, and a
-    # model-supplied value for it is dropped.
+    # subclass override sits on the path -- the sync and async halves separately,
+    # as everywhere else in agno. They carry the `_agno_run_context` channel for
+    # the same reason the runner does: the framework fills it, it is kept out of
+    # the model-facing schema, and a model-supplied value for it is dropped.
 
     def run_agent(self, agent_id: str, message: str, _agno_run_context: Optional[RunContext] = None) -> str:
         """Run an agent by id or display name. Forwards to StudioRunnerTools.
@@ -1765,7 +1790,7 @@ class StudioTools(Toolkit):
             )
         except Exception as e:
             logger.exception("Failed to create schedule")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e) or type(e).__name__})
 
     # ------------------------------------------------------------------
     # Async tools
@@ -2095,6 +2120,15 @@ class StudioTools(Toolkit):
             if member is None:
                 missing.append(mid)
             else:
+                if not getattr(member, "id", None):
+                    # Persisting the reference would store a null id; on reload the
+                    # registry lookup by id=None binds whichever id-less component
+                    # it sees first -- silently the wrong one. Falsy, not None:
+                    # the load-side guard refuses an empty-string id the same way.
+                    raise ValueError(
+                        f"Member '{mid}' is code-defined with no id, so a stored reference "
+                        "cannot name it. Set an explicit id on the component."
+                    )
                 members.append(member)
         return members, missing
 
@@ -2112,11 +2146,23 @@ class StudioTools(Toolkit):
                 agent = self._find_agent(spec["agent_id"])
                 if agent is None:
                     return [], f"Agent not found for step '{step_name}': {spec['agent_id']}"
+                if not getattr(agent, "id", None):
+                    # A null (or empty) id in the stored step config makes the
+                    # workflow unreconstructable: created and listed, never loadable.
+                    return [], (
+                        f"Agent for step '{step_name}' ('{spec['agent_id']}') is code-defined with no id, "
+                        "so a stored step cannot name it. Set an explicit id on the agent."
+                    )
                 steps.append(Step(name=step_name, agent=agent, description=step_desc))
             elif "team_id" in spec:
                 team = self._find_team(spec["team_id"])
                 if team is None:
                     return [], f"Team not found for step '{step_name}': {spec['team_id']}"
+                if not getattr(team, "id", None):
+                    return [], (
+                        f"Team for step '{step_name}' ('{spec['team_id']}') is code-defined with no id, "
+                        "so a stored step cannot name it. Set an explicit id on the team."
+                    )
                 steps.append(Step(name=step_name, team=team, description=step_desc))
             elif "function_name" in spec:
                 func = self.registry.get_function(spec["function_name"])
