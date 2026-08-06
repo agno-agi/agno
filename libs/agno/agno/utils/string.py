@@ -67,12 +67,32 @@ def hash_string_sha256(input_string):
 
 
 def _extract_json_objects(text: str) -> list[str]:
+    """Return the balanced `{...}` spans in `text`, ignoring braces and quotes in prose.
+
+    This is the last-resort extractor: it only runs once strict parsing of the whole
+    response has already failed, so its input is expected to be JSON surrounded by
+    model prose. Outside a candidate object, therefore, every character is prose and
+    must not carry scanner state — a quote or a closing brace in a preamble says
+    nothing about the JSON that follows it.
+    """
+
     objs: list[str] = []
     brace_depth = 0
     start_idx: Optional[int] = None
     in_string = False
     escape = False
     for idx, ch in enumerate(text):
+        if brace_depth == 0:
+            # Prose. Only `{` is meaningful here; a stray `"` used to put the scanner
+            # into a string it never left, and a stray `}` used to drive the depth
+            # negative so the next `{` no longer looked like an object start. Either
+            # way the object after it became invisible.
+            if ch == "{":
+                start_idx = idx
+                brace_depth = 1
+                in_string = False
+                escape = False
+            continue
         if in_string:
             if escape:
                 escape = False
@@ -83,10 +103,7 @@ def _extract_json_objects(text: str) -> list[str]:
             continue
         if ch == '"':
             in_string = True
-            continue
-        if ch == "{" and brace_depth == 0:
-            start_idx = idx
-        if ch == "{":
+        elif ch == "{":
             brace_depth += 1
         elif ch == "}":
             brace_depth -= 1
