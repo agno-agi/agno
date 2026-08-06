@@ -125,6 +125,21 @@ class Message(BaseModel):
 
     model_config = ConfigDict(extra="allow", populate_by_name=True, arbitrary_types_allowed=True)
 
+    @staticmethod
+    def _json_serialize_content(content: Any) -> Any:
+        model_dump = getattr(content, "model_dump", None)
+        if callable(model_dump):
+            try:
+                return model_dump(mode="json")
+            except TypeError:
+                return model_dump()
+
+        to_dict = getattr(content, "to_dict", None)
+        if callable(to_dict):
+            return to_dict()
+
+        return str(content)
+
     def get_content_string(self) -> str:
         """Returns the content as a string."""
         if isinstance(self.content, str):
@@ -134,8 +149,10 @@ class Message(BaseModel):
                 return ""
             if isinstance(self.content[0], dict) and "text" in self.content[0]:
                 return self.content[0].get("text", "")
+            if getattr(self.content[0], "type", None) == "text" and hasattr(self.content[0], "text"):
+                return getattr(self.content[0], "text", "")
             else:
-                return json.dumps(self.content, ensure_ascii=False)
+                return json.dumps(self.content, ensure_ascii=False, default=self._json_serialize_content)
         return ""
 
     def get_content(self, use_compressed_content: bool = False) -> Optional[Union[List[Any], str]]:
