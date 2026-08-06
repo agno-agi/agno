@@ -255,11 +255,17 @@ class DynamoDb(BaseDb):
         return items
 
     def _get_session_runs_data(self, session_id: str) -> List[Dict[str, Any]]:
-        """Return raw run_data dicts for a session, ordered by run_index then created_at."""
+        """Return raw run_data dicts for a session, ordered by run_index then created_at.
+
+        run_index is injected into run_data so RunOutput carries its DB position.
+        """
         items = self._query_runs_by_session(session_id)
         rows = [deserialize_from_dynamodb_item(it) for it in items]
+        rows = [r for r in rows if "run_data" in r]
         rows.sort(key=lambda r: (r.get("run_index") or 0, r.get("created_at") or 0))
-        return [r["run_data"] for r in rows if "run_data" in r]
+        for r in rows:
+            r["run_data"]["run_index"] = r["run_index"]
+        return [r["run_data"] for r in rows]
 
     def _get_sessions_runs_data(self, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
         if not session_ids:
@@ -317,6 +323,36 @@ class DynamoDb(BaseDb):
                         row["run_index"] = existing["run_index"]
             except self.client.exceptions.ResourceNotFoundException:
                 pass
+
+            # Backfill run_index for new runs: query session runs and find max client-side
+            # DynamoDB has no MAX aggregation; query with projection to minimize data transfer
+            if row.get("run_index") is None:
+                try:
+                    response = self.client.query(
+                        TableName=table_name,
+                        IndexName="session_id-created_at-index",
+                        KeyConditionExpression="session_id = :sid",
+                        ExpressionAttributeValues={":sid": {"S": session_id}},
+                        ProjectionExpression="run_index",
+                    )
+                    items = response.get("Items", [])
+                    while "LastEvaluatedKey" in response:
+                        response = self.client.query(
+                            TableName=table_name,
+                            IndexName="session_id-created_at-index",
+                            KeyConditionExpression="session_id = :sid",
+                            ExpressionAttributeValues={":sid": {"S": session_id}},
+                            ProjectionExpression="run_index",
+                            ExclusiveStartKey=response["LastEvaluatedKey"],
+                        )
+                        items.extend(response.get("Items", []))
+                    valid_indices: list[int] = [
+                        int(it["run_index"]["N"]) for it in items if "run_index" in it and "N" in it["run_index"]
+                    ]
+                    current_max = max(valid_indices) if valid_indices else None
+                except self.client.exceptions.ResourceNotFoundException:
+                    current_max = None
+                row["run_index"] = (current_max + 1) if current_max is not None else 0
 
             payload = {k: v for k, v in row.items() if v is not None}
             if "run_data" in payload and isinstance(payload["run_data"], (dict, list)):

@@ -739,6 +739,10 @@ class WorkflowRunOutput:
     metadata: Optional[Dict[str, Any]] = None
     created_at: int = field(default_factory=lambda: int(time()))
 
+    # Position within the session's run history. Injected from DB on read,
+    # used for ordering. None for new runs (DB computes via MAX+1 backfill).
+    run_index: Optional[int] = None
+
     status: RunStatus = RunStatus.pending
 
     # Unified HITL requirements to continue a paused workflow

@@ -426,7 +426,13 @@ class ValkeyDb(BaseDb):
             if existing is not None and "run_index" in existing:
                 row["run_index"] = existing["run_index"]
 
+            # Backfill run_index for new runs: get max score from sorted set + 1
             index_key = self._runs_by_session_index_key(session_id)
+            if row.get("run_index") is None:
+                # Get the last element (highest run_index) from the sorted set
+                top = self.valkey_client.zrange_withscores(index_key, RangeByIndex(-1, -1))
+                current_max = int(list(top.values())[0]) if top else None
+                row["run_index"] = (current_max + 1) if current_max is not None else 0
             run_key = generate_valkey_key(prefix=self.db_prefix, table_type="runs", key_id=row["run_id"])
 
             pipeline = self._create_pipeline()
@@ -485,8 +491,14 @@ class ValkeyDb(BaseDb):
         return rows
 
     def _get_session_runs_data(self, session_id: str) -> List[Dict[str, Any]]:
-        """Get raw run_data dicts for a session, ordered by run_index."""
-        return [row["run_data"] for row in self._get_session_run_rows(session_id) if row.get("run_data") is not None]
+        """Get raw run_data dicts for a session, ordered by run_index.
+
+        run_index is injected into run_data so RunOutput carries its DB position.
+        """
+        rows = [row for row in self._get_session_run_rows(session_id) if row.get("run_data") is not None]
+        for row in rows:
+            row["run_data"]["run_index"] = row["run_index"]
+        return [row["run_data"] for row in rows]
 
     def _get_sessions_runs_data(self, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
         """Get raw run_data dicts for several sessions, grouped by session_id."""

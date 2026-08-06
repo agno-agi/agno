@@ -627,6 +627,7 @@ class AsyncMongoDb(AsyncBaseDb):
         this keeps runs whose ``status`` is null/absent — mirroring the SQL
         ``status IS NULL OR status NOT IN (...)`` fast path.
         """
+        # run_index is injected into run_data so RunOutput carries its DB position
         if limit is not None:
             pipeline: List[Dict[str, Any]] = [
                 {
@@ -645,18 +646,23 @@ class AsyncMongoDb(AsyncBaseDb):
                 {"$sort": {"_ri": -1, "_ca": -1}},
                 {"$limit": limit},
             ]
-            docs = await runs_collection.aggregate(pipeline).to_list(length=limit)
-            run_docs = [doc["run_data"] for doc in docs if "run_data" in doc]
-            run_docs.reverse()  # back to chronological order
-            return run_docs
+            raw_docs = await runs_collection.aggregate(pipeline).to_list(length=limit)  # type: ignore[union-attr]
+            docs = [doc for doc in raw_docs if "run_data" in doc]
+            for doc in docs:
+                doc["run_data"]["run_index"] = doc["run_index"]
+            docs.reverse()
+            return [doc["run_data"] for doc in docs]
 
         pipeline = [
             {"$match": {"session_id": session_id}},
             {"$addFields": {"_ri": {"$ifNull": ["$run_index", 0]}, "_ca": {"$ifNull": ["$created_at", 0]}}},
             {"$sort": {"_ri": 1, "_ca": 1}},
         ]
-        docs = await runs_collection.aggregate(pipeline).to_list(length=None)
-        return [doc["run_data"] for doc in docs if "run_data" in doc]
+        raw_docs = await runs_collection.aggregate(pipeline).to_list(length=None)  # type: ignore[union-attr]
+        docs = [doc for doc in raw_docs if "run_data" in doc]
+        for doc in docs:
+            doc["run_data"]["run_index"] = doc["run_index"]
+        return [doc["run_data"] for doc in docs]
 
     async def _get_sessions_runs_docs(
         self, runs_collection: AsyncMongoCollectionType, session_ids: List[str]
@@ -716,6 +722,17 @@ class AsyncMongoDb(AsyncBaseDb):
             existing = await runs_collection.find_one({"run_id": row["run_id"]}, {"run_index": 1})
             if existing is not None and "run_index" in existing:
                 row["run_index"] = existing["run_index"]
+
+            # Backfill run_index for new runs: compute MAX(run_index) + 1 for this session
+            if row.get("run_index") is None:
+                pipeline: list[dict[str, Any]] = [
+                    {"$match": {"session_id": session_id, "run_index": {"$ne": None}}},
+                    {"$group": {"_id": None, "max_idx": {"$max": "$run_index"}}},
+                ]
+                cursor = runs_collection.aggregate(pipeline)
+                result = await cursor.to_list(length=1)  # type: ignore[union-attr]
+                current_max = result[0]["max_idx"] if result else None
+                row["run_index"] = (current_max + 1) if current_max is not None else 0
 
             await runs_collection.replace_one({"run_id": row["run_id"]}, row, upsert=True)
         except Exception as e:

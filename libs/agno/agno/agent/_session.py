@@ -321,12 +321,11 @@ def save_run(
         run: The run to save.
         session_id: The session ID this run belongs to.
         user_id: Optional user ID to associate with the run.
-        run_index: Position of the run within the session. **Required for the
-            first save of a given run_id** (INSERT path) — compute via
-            ``resolve_run_index(session, run)``. May be omitted only for
-            subsequent status-transition saves of an already-persisted run:
-            every adapter's upsert excludes ``run_index`` from the UPDATE set
-            to preserve ordering. Omitting on INSERT silently writes NULL.
+        run_index: Position of the run within the session. For new runs, pass
+            ``run.run_index`` (which is ``None``); the DB computes MAX+1 backfill.
+            For existing runs loaded from DB, ``run.run_index`` already holds
+            the correct value. Every adapter's upsert excludes ``run_index``
+            from the UPDATE set to preserve ordering.
     """
     from agno.agent import _init, _storage
 

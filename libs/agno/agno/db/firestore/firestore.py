@@ -320,13 +320,19 @@ class FirestoreDb(BaseDb):
 
     # -- Run methods --
     def _get_session_runs_docs(self, runs_collection_ref, session_id: str) -> List[Dict[str, Any]]:
-        """Get the raw run_data dicts for the given session, in insertion order."""
+        """Get the raw run_data dicts for the given session, in insertion order.
+
+        run_index is injected into run_data so RunOutput carries its DB position.
+        """
         query = (
             runs_collection_ref.where(filter=FieldFilter("session_id", "==", session_id))
             .order_by("run_index")
             .order_by("created_at")
         )
-        return [doc.to_dict().get("run_data") for doc in query.stream() if doc.exists]
+        docs = [doc.to_dict() for doc in query.stream() if doc.exists and doc.to_dict().get("run_data")]
+        for doc in docs:
+            doc["run_data"]["run_index"] = doc["run_index"]
+        return [doc["run_data"] for doc in docs]
 
     def _get_sessions_runs_docs(self, runs_collection_ref, session_ids: List[str]) -> Dict[str, List[Dict[str, Any]]]:
         """Get the raw run_data dicts for several sessions, grouped by session_id.
@@ -401,6 +407,19 @@ class FirestoreDb(BaseDb):
                 existing = snapshot.to_dict() or {}
                 if "run_index" in existing:
                     row["run_index"] = existing["run_index"]
+
+            # Backfill run_index for new runs: query max run_index for this session
+            if row.get("run_index") is None:
+                from google.cloud.firestore_v1.base_query import FieldFilter
+
+                query = (
+                    runs_collection_ref.where(filter=FieldFilter("session_id", "==", session_id))
+                    .order_by("run_index", direction="DESCENDING")
+                    .limit(1)
+                )
+                docs = list(query.stream())
+                current_max = docs[0].to_dict().get("run_index") if docs else None
+                row["run_index"] = (current_max + 1) if current_max is not None else 0
 
             doc_ref.set(row)
         except Exception as e:

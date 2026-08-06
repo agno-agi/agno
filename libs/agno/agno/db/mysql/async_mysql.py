@@ -531,10 +531,13 @@ class AsyncMySQLDb(AsyncBaseDb):
         filtering in ``get_messages``: member sub-runs (``parent_run_id`` set) and
         terminal-skip statuses are excluded in SQL, so the DB-side last-N matches
         the in-memory history window.
+
+        The run_index column is injected into each run_data dict so RunOutput
+        carries its DB position — enabling correct indexing with bounded loads.
         """
         if limit is not None:
             stmt = (
-                select(runs_table.c.run_data)
+                select(runs_table.c.run_data, runs_table.c.run_index)
                 .where(runs_table.c.session_id == session_id)
                 .where(runs_table.c.parent_run_id.is_(None))
                 .where(or_(runs_table.c.status.is_(None), runs_table.c.status.notin_(HISTORY_SKIP_STATUSES)))
@@ -546,11 +549,15 @@ class AsyncMySQLDb(AsyncBaseDb):
                 .limit(limit)
             )
             result = await sess.execute(stmt)
-            rows = [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in result.fetchall()]
+            rows = []
+            for row in result.fetchall():
+                data = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+                data["run_index"] = row[1]
+                rows.append(data)
             rows.reverse()
             return rows
         stmt = (
-            select(runs_table.c.run_data)
+            select(runs_table.c.run_data, runs_table.c.run_index)
             .where(runs_table.c.session_id == session_id)
             .order_by(
                 runs_table.c.run_index.asc(),
@@ -559,7 +566,12 @@ class AsyncMySQLDb(AsyncBaseDb):
             )
         )
         result = await sess.execute(stmt)
-        return [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in result.fetchall()]
+        rows = []
+        for row in result.fetchall():
+            data = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+            data["run_index"] = row[1]
+            rows.append(data)
+        return rows
 
     async def _get_sessions_runs_data(
         self, sess, runs_table: Table, session_ids: List[str]

@@ -428,6 +428,7 @@ class MongoDb(BaseDb):
         this keeps runs whose ``status`` is null/absent — mirroring the SQL
         ``status IS NULL OR status NOT IN (...)`` fast path.
         """
+        # run_index is injected into run_data so RunOutput carries its DB position
         if limit is not None:
             pipeline: List[Dict[str, Any]] = [
                 {
@@ -446,16 +447,21 @@ class MongoDb(BaseDb):
                 {"$sort": {"_ri": -1, "_ca": -1}},
                 {"$limit": limit},
             ]
-            docs = [doc["run_data"] for doc in runs_collection.aggregate(pipeline) if "run_data" in doc]
-            docs.reverse()  # back to chronological order
-            return docs
+            docs = [doc for doc in runs_collection.aggregate(pipeline) if "run_data" in doc]
+            for doc in docs:
+                doc["run_data"]["run_index"] = doc["run_index"]
+            docs.reverse()
+            return [doc["run_data"] for doc in docs]
 
         pipeline = [
             {"$match": {"session_id": session_id}},
             {"$addFields": {"_ri": {"$ifNull": ["$run_index", 0]}, "_ca": {"$ifNull": ["$created_at", 0]}}},
             {"$sort": {"_ri": 1, "_ca": 1}},
         ]
-        return [doc["run_data"] for doc in runs_collection.aggregate(pipeline) if "run_data" in doc]
+        docs = [doc for doc in runs_collection.aggregate(pipeline) if "run_data" in doc]
+        for doc in docs:
+            doc["run_data"]["run_index"] = doc["run_index"]
+        return [doc["run_data"] for doc in docs]
 
     def _get_sessions_runs_docs(
         self, runs_collection: Collection, session_ids: List[str]
@@ -518,6 +524,16 @@ class MongoDb(BaseDb):
             existing = runs_collection.find_one({"run_id": row["run_id"]}, {"run_index": 1})
             if existing is not None and "run_index" in existing:
                 row["run_index"] = existing["run_index"]
+
+            # Backfill run_index for new runs: compute MAX(run_index) + 1 for this session
+            if row.get("run_index") is None:
+                pipeline: list[dict[str, Any]] = [
+                    {"$match": {"session_id": session_id, "run_index": {"$ne": None}}},
+                    {"$group": {"_id": None, "max_idx": {"$max": "$run_index"}}},
+                ]
+                result = list(runs_collection.aggregate(pipeline))
+                current_max = result[0]["max_idx"] if result else None
+                row["run_index"] = (current_max + 1) if current_max is not None else 0
 
             runs_collection.replace_one({"run_id": row["run_id"]}, row, upsert=True)
         except Exception as e:
