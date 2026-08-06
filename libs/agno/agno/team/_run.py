@@ -16,6 +16,7 @@ from typing import (
     Literal,
     Optional,
     Sequence,
+    Set,
     Tuple,
     Type,
     Union,
@@ -5311,35 +5312,68 @@ def _merge_tools_preserving_approval(
     return merged
 
 
+def _merge_requirement_decision(stored: Any, wire: Any) -> None:
+    """Copy the client's decision state onto the canonical stored requirement.
+
+    Only decision fields cross over: confirmation, user input and feedback
+    answers, and — solely for external-execution tools — the result. Identity
+    and routing (tool_execution, tool_args, member provenance) stay the
+    stored requirement's own; a result on a non-external tool is dropped
+    because honoring it would suppress the confirmed tool's execution.
+    """
+    for attr in ("confirmation", "confirmation_note"):
+        if getattr(wire, attr, None) is not None:
+            setattr(stored, attr, getattr(wire, attr))
+    if getattr(wire, "user_input_schema", None) is not None:
+        stored.user_input_schema = wire.user_input_schema
+    if getattr(wire, "user_feedback_schema", None) is not None:
+        stored.user_feedback_schema = wire.user_feedback_schema
+    stored_te = getattr(stored, "tool_execution", None)
+    wire_te = getattr(wire, "tool_execution", None)
+    if stored_te is not None and wire_te is not None:
+        for attr in ("confirmed", "confirmation_note", "answered"):
+            if getattr(wire_te, attr, None) is not None:
+                setattr(stored_te, attr, getattr(wire_te, attr))
+        if getattr(wire_te, "user_input_schema", None) is not None:
+            stored_te.user_input_schema = wire_te.user_input_schema
+        if getattr(wire_te, "user_feedback_schema", None) is not None:
+            stored_te.user_feedback_schema = wire_te.user_feedback_schema
+        if getattr(stored_te, "external_execution_required", None) and getattr(wire_te, "result", None) is not None:
+            stored_te.result = wire_te.result
+    if (
+        stored_te is not None
+        and getattr(stored_te, "external_execution_required", None)
+        and getattr(wire, "external_execution_result", None) is not None
+    ):
+        stored.external_execution_result = wire.external_execution_result
+
+
 def _backfill_approval_to_requirements(
     run_response: Any,
     old_requirements: Optional[List[Any]] = None,
 ) -> None:
-    """Restore approval metadata and member provenance on requirements after a continue payload merge.
+    """Bind the continue payload's requirements to the stored originals.
 
-    During continue_run the client's requirements replace the session originals,
-    but approval_type/approval_id are typically absent from the client payload.
-    This function copies those fields back from two sources (checked in priority order):
+    Requirements arrive from the wire (to_dict() strips None values, raw
+    dicts are accepted), so every field on them is unverified client input.
+    When the pre-overwrite stored requirements are available, each payload
+    entry must bind one-to-one to a stored requirement — matched by
+    requirement id (cross-checked against the tool_call_id), falling back to
+    tool_call_id only when exactly one stored requirement carries it — and
+    the STORED requirement becomes the object routing sees, with only the
+    client's decision state merged onto it (_merge_requirement_decision).
+    Trusting the wire copy instead mis-executes: a swapped or duplicated id
+    binds one member's approved arguments to another member's tool.
 
-    1. run_response.tools — covers team-level approval tools whose metadata was
-       already preserved by _merge_tools_preserving_approval.
-    2. old_requirements (the pre-overwrite session requirements) — covers member-level
-       approval tools where run_response.tools only contains delegate_task_to_member
-       entries that have no approval_type. The original session requirements carry it.
+    Raises RunNotContinuableError — with the run left paused — for a payload
+    entry that is ambiguous (several stored requirements share its
+    tool_call_id and no id matches), matches no stored requirement, or maps
+    a stored requirement that another entry already claimed.
 
-    Member provenance (member_agent_id, member_agent_name, member_run_id) is
-    taken from the stored requirement as the authority: requirements arrive
-    from the wire (to_dict() strips None values, raw dicts are accepted), so
-    absent fields are ordinary and present fields are unverified client
-    input — routing on either mis-dispatches or skips the confirmed tool.
-    The stored requirement is matched by requirement id first, then by
-    tool_call_id when exactly one stored requirement carries it: two member
-    runs paused in one turn can share a tool_call_id (from_dict mints a
-    fresh id for a payload without one, so such a payload is ambiguous), and
-    guessing would silently drop one confirmed run.
-
-    Raises RunNotContinuableError for an ambiguous payload — the run stays
-    paused and can be continued again with the requirement ids included.
+    Without stored requirements (a caller-supplied bare run object), the
+    payload is kept as-is and only approval metadata is backfilled from
+    run_response.tools, whose approval fields _merge_tools_preserving_approval
+    already preserved.
     """
     reqs = getattr(run_response, "requirements", None)
     if not reqs:
@@ -5371,25 +5405,84 @@ def _backfill_approval_to_requirements(
             for attr in ("approval_type", "approval_id"):
                 if getattr(te, attr, None) is None and getattr(src, attr, None) is not None:
                     setattr(te, attr, getattr(src, attr))
+
+    if not old_requirements:
+        return
+
+    run_id = getattr(run_response, "run_id", None)
+    matched: Set[int] = set()
+    canonical: List[Any] = []
+    for req in reqs:
+        te = getattr(req, "tool_execution", None)
+        tool_call_id = te.tool_call_id if te is not None else None
         old_req = old_by_req_id.get(getattr(req, "id", None) or "")
-        if old_req is not None and te is not None and te.tool_call_id:
+        if old_req is not None and tool_call_id:
             old_te = getattr(old_req, "tool_execution", None)
-            if old_te is not None and old_te.tool_call_id and old_te.tool_call_id != te.tool_call_id:
+            if old_te is not None and old_te.tool_call_id and old_te.tool_call_id != tool_call_id:
                 old_req = None
-        if old_req is None and te is not None and te.tool_call_id:
-            candidates = old_by_tool_call_id.get(te.tool_call_id, [])
+        if old_req is None and tool_call_id:
+            candidates = old_by_tool_call_id.get(tool_call_id, [])
             if len(candidates) == 1:
                 old_req = candidates[0]
             elif len(candidates) > 1:
                 raise RunNotContinuableError(
-                    f"Cannot continue run {getattr(run_response, 'run_id', None)}: the requirement for "
-                    f"tool call '{te.tool_call_id}' matches {len(candidates)} stored requirements and "
-                    f"carries no matching requirement id. Resend the requirements with their original "
-                    f"'id' values. The run remains paused."
+                    f"Cannot continue run {run_id}: the requirement for tool call '{tool_call_id}' "
+                    f"matches {len(candidates)} stored requirements and carries no matching "
+                    f"requirement id. Resend the requirements with their original 'id' values. "
+                    f"The run remains paused."
                 )
-        if old_req is not None:
-            for attr in ("member_agent_id", "member_agent_name", "member_run_id"):
-                setattr(req, attr, getattr(old_req, attr, None))
+        if old_req is None:
+            raise RunNotContinuableError(
+                f"Cannot continue run {run_id}: the requirement with id '{getattr(req, 'id', None)}' "
+                f"and tool call '{tool_call_id}' matches no stored requirement of this run. "
+                f"The run remains paused."
+            )
+        if id(old_req) in matched:
+            raise RunNotContinuableError(
+                f"Cannot continue run {run_id}: two payload requirements both resolve to the stored "
+                f"requirement '{getattr(old_req, 'id', None)}'. The run remains paused."
+            )
+        matched.add(id(old_req))
+        _merge_requirement_decision(old_req, req)
+        canonical.append(old_req)
+    run_response.requirements = canonical
+
+
+def _apply_requirements_payload(
+    run_response: TeamRunOutput,
+    requirements: List[Any],
+) -> Tuple[Optional[List["RunRequirement"]], Optional[List[Any]]]:
+    """Apply a continue payload to the run object, keeping it intact on refusal.
+
+    Normalizes the payload, binds it to the stored requirements
+    (_backfill_approval_to_requirements), and merges the bound tool
+    executions into run_response.tools. On a binding refusal the run object
+    gets its requirements and tools back before the raise: the refusal asks
+    the client to resend the stored ids, which a caller-supplied live run
+    object only still has if nothing was overwritten.
+
+    Returns (old_requirements, old_tools) so the caller can restore them if
+    a later step of its payload apply raises.
+    """
+    old_requirements = run_response.requirements
+    old_tools = run_response.tools
+    run_response.requirements = _normalize_requirements_payload(requirements)
+    try:
+        _backfill_approval_to_requirements(run_response, old_requirements=old_requirements)
+    except Exception:
+        run_response.requirements = old_requirements
+        run_response.tools = old_tools
+        raise
+    # Merge the bound tool executions into the run's tools, preserving
+    # approval fields the FE omits. After binding these are the stored
+    # requirements' own tool executions carrying the client's decisions.
+    updated_tools = [req.tool_execution for req in run_response.requirements or [] if req.tool_execution is not None]
+    if updated_tools and run_response.tools:
+        updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools if tool.tool_call_id}
+        run_response.tools = _merge_tools_preserving_approval(run_response.tools, updated_tools_map)
+    elif updated_tools:
+        run_response.tools = updated_tools
+    return old_requirements, old_tools
 
 
 def _reclaim_own_requirements(team: "Team", requirements: List[Any], continuing_run_id: Optional[str]) -> None:
@@ -5604,20 +5697,25 @@ def _group_requirements_for_continue(
             )
         _, member = route_result
         target = _resolve_member_run_output_for_continue(member, reqs, run_response, session)
-        if isinstance(target, TeamRunOutput) and target.team_id is not None and target.team_id != get_member_id(member):
-            owners = [m for m in get_resolved_members(team, run_context) or [] if get_member_id(m) == target.team_id]
+        owner_id: Optional[str] = None
+        if isinstance(target, TeamRunOutput):
+            owner_id = target.team_id
+        elif isinstance(target, RunOutput):
+            owner_id = target.agent_id
+        if owner_id is not None:
+            owners = [m for m in get_resolved_members(team, run_context) or [] if get_member_id(m) == owner_id]
             if len(owners) == 1:
                 member = owners[0]
             elif not owners:
                 raise RunNotContinuableError(
                     f"Cannot continue run {run_response.run_id}: the paused run for requirement "
-                    f"'{member_id}' belongs to member '{target.team_id}', which is not a member of "
+                    f"'{member_id}' belongs to member '{owner_id}', which is not a member of "
                     f"team '{team.name or team.id}'. The run remains paused."
                 )
             else:
                 raise RunNotContinuableError(
                     f"Cannot continue run {run_response.run_id}: the paused run for requirement "
-                    f"'{member_id}' belongs to member id '{target.team_id}', which matches "
+                    f"'{member_id}' belongs to member id '{owner_id}', which matches "
                     f"{len(owners)} members of team '{team.name or team.id}'. The run remains paused."
                 )
         merged = False
@@ -6732,21 +6830,9 @@ def continue_run_dispatch(
             )
     # --- End snapshot dispatch ----------------------------------------------
 
-    # Save old requirements before overwriting — needed to preserve approval fields for member-level tools
-    old_requirements = run_response.requirements
-
     # Normalize and apply requirements
     if requirements:
-        requirements = _normalize_requirements_payload(requirements)
-        run_response.requirements = requirements
-        # Update tools from requirements, preserving approval fields the FE omits
-        updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
-        if updated_tools and run_response.tools:
-            updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
-            run_response.tools = _merge_tools_preserving_approval(run_response.tools, updated_tools_map)
-        elif updated_tools:
-            run_response.tools = updated_tools
-        _backfill_approval_to_requirements(run_response, old_requirements=old_requirements)
+        old_requirements, old_tools = _apply_requirements_payload(run_response, requirements)
 
         # Also apply any resolved approval
         if run_response.tools:
@@ -6755,6 +6841,8 @@ def continue_run_dispatch(
             try:
                 check_and_apply_approval_resolution(team.db, run_id_resolved, run_response)
             except RuntimeError:
+                run_response.requirements = old_requirements
+                run_response.tools = old_tools
                 raise ValueError(
                     "To continue a run from a given run_id, the requirements parameter must be provided "
                     "(or resolve an admin approval first)."
@@ -8132,9 +8220,6 @@ async def _acontinue_run(
                     _maybe_append_input_message_team(run_response, input, team)
                 # --- End snapshot dispatch ---
 
-                # Save old requirements before overwriting — needed for member-level approval fields
-                old_requirements = run_response.requirements
-
                 # A freshly-forked run has no PAUSED requirements contract;
                 # skip the HITL machinery entirely. The fork is a fresh
                 # attempt seeded from the snapshot — no tools/approvals to
@@ -8147,15 +8232,7 @@ async def _acontinue_run(
                     run_response.content = None
                 # Normalize and apply requirements
                 elif requirements:
-                    requirements = _normalize_requirements_payload(requirements)
-                    run_response.requirements = requirements
-                    updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
-                    if updated_tools and run_response.tools:
-                        updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
-                        run_response.tools = _merge_tools_preserving_approval(run_response.tools, updated_tools_map)
-                    elif updated_tools:
-                        run_response.tools = updated_tools
-                    _backfill_approval_to_requirements(run_response, old_requirements=old_requirements)
+                    old_requirements, old_tools = _apply_requirements_payload(run_response, requirements)
 
                     # Also apply any resolved approval
                     if run_response.tools:
@@ -8166,6 +8243,8 @@ async def _acontinue_run(
                                 team.db, run_response.run_id or run_id or "", run_response
                             )
                         except RuntimeError:
+                            run_response.requirements = old_requirements
+                            run_response.tools = old_tools
                             raise ValueError(
                                 "To continue a run from a given run_id, the requirements parameter must be provided "
                                 "(or resolve an admin approval first)."
@@ -8576,9 +8655,6 @@ async def _acontinue_run_stream(
                     _maybe_append_input_message_team(run_response, input, team)
                 # --- End snapshot dispatch ---
 
-                # Save old requirements before overwriting — needed for member-level approval fields
-                old_requirements = run_response.requirements
-
                 # A freshly-forked run has no PAUSED requirements contract;
                 # skip the HITL machinery entirely. The fork is a fresh
                 # attempt seeded from the snapshot — no tools/approvals to
@@ -8591,15 +8667,7 @@ async def _acontinue_run_stream(
                     run_response.content = None
                 # Normalize and apply requirements
                 elif requirements:
-                    requirements = _normalize_requirements_payload(requirements)
-                    run_response.requirements = requirements
-                    updated_tools = [req.tool_execution for req in requirements if req.tool_execution is not None]
-                    if updated_tools and run_response.tools:
-                        updated_tools_map = {tool.tool_call_id: tool for tool in updated_tools}
-                        run_response.tools = _merge_tools_preserving_approval(run_response.tools, updated_tools_map)
-                    elif updated_tools:
-                        run_response.tools = updated_tools
-                    _backfill_approval_to_requirements(run_response, old_requirements=old_requirements)
+                    old_requirements, old_tools = _apply_requirements_payload(run_response, requirements)
 
                     # Also apply any resolved approval
                     if run_response.tools:
@@ -8610,6 +8678,8 @@ async def _acontinue_run_stream(
                                 team.db, run_response.run_id or run_id or "", run_response
                             )
                         except RuntimeError:
+                            run_response.requirements = old_requirements
+                            run_response.tools = old_tools
                             raise ValueError(
                                 "To continue a run from a given run_id, the requirements parameter must be provided "
                                 "(or resolve an admin approval first)."
