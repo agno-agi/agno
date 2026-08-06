@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Type
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple, Type, Union
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -17,6 +17,11 @@ from agno.vectordb.base import VectorDb
 if TYPE_CHECKING:
     from agno.agent import Agent
     from agno.team import Team
+
+# A flat function name, or a (toolkit name, function name) qualified pair.
+EntrypointKey = Union[str, Tuple[str, str]]
+# The Function that owns the entrypoint, or the registered plain callable itself.
+EntrypointSource = Union[Function, Callable]
 
 
 def _model_identity(model: Model) -> tuple:
@@ -54,19 +59,27 @@ class Registry:
     teams: List[Team] = field(default_factory=list)
 
     @cached_property
-    def _entrypoint_lookup(self) -> Dict[str, Any]:
+    def _entrypoint_lookup(self) -> Dict[EntrypointKey, EntrypointSource]:
         # Maps function name -> source: the Function that owns the entrypoint
         # (for Toolkit and Function tools) or the plain callable itself.
-        lookup: Dict[str, Any] = {}
+        # Toolkit functions are additionally indexed under a toolkit-qualified
+        # tuple key (<toolkit name>, <function name>) so serialized dicts that
+        # carry their owning toolkit's name (the "toolkit" key written at
+        # serialization) resolve to the right toolkit even when two registry
+        # toolkits share member names. A tuple never equals a string, so
+        # qualified keys cannot collide with flat names -- including function
+        # names that contain characters like dots.
+        lookup: Dict[EntrypointKey, EntrypointSource] = {}
 
-        def _entrypoint(source: Any) -> Optional[Callable]:
+        def _entrypoint(source: EntrypointSource) -> Optional[Callable]:
             return source.entrypoint if isinstance(source, Function) else source
 
-        def register(name: str, source: Any) -> None:
-            # This lookup is keyed by name only, so two genuinely different tools
-            # that share a name collapse to one slot (last wins). We can't resolve
-            # that from a serialized function name alone, but we can surface it so
-            # the user can give the tools distinct names.
+        def register(name: str, source: EntrypointSource) -> None:
+            # The flat slot is keyed by name only, so two genuinely different
+            # tools that share a name collapse to one slot (last wins). Dicts
+            # qualified with their toolkit's name still resolve correctly, but
+            # unqualified ones (legacy configs, plain callables) can't, so we
+            # surface the collision for the user to disambiguate.
             existing = lookup.get(name)
             if existing is not None and existing is not source and _entrypoint(existing) is not _entrypoint(source):
                 log_warning(
@@ -78,9 +91,17 @@ class Registry:
 
         for tool in self.tools:
             if isinstance(tool, Toolkit):
-                for func in tool.functions.values():
+                # get_functions() is the exposed subset -- the only functions that
+                # are serialized or run, so only those claim a slot or warn here.
+                for func in tool.get_functions().values():
                     if func.entrypoint is not None:
                         register(func.name, func)
+                        if isinstance(tool.name, str) and tool.name:
+                            # A qualified slot collides only when two same-named
+                            # toolkits share a member name, and that collision has
+                            # already warned on the flat slot above -- so this
+                            # write stays silent (last wins).
+                            lookup[(tool.name, func.name)] = func
             elif isinstance(tool, Function):
                 if tool.entrypoint is not None:
                     register(tool.name, tool)
@@ -89,15 +110,65 @@ class Registry:
         return lookup
 
     def rehydrate_function(self, func_dict: Dict[str, Any]) -> Function:
-        """Reconstruct a Function from dict, reattaching its entrypoint."""
+        """Reconstruct a Function from dict, reattaching its entrypoint.
+
+        Dicts that carry their owning toolkit's name (the "toolkit" key written
+        at serialization) resolve via the toolkit-qualified key first, so
+        same-named functions from different toolkits bind to the right
+        entrypoint. The flat function name stays as the fallback for configs
+        saved before qualification and for functions whose toolkit is no longer
+        in the registry.
+        """
+        return self._rehydrate_function(func_dict, {"rebuilt": False})
+
+    def rehydrate_functions(self, func_dicts: List[Dict[str, Any]]) -> List[Function]:
+        """Rehydrate a batch of function dicts, sharing one cache-rebuild budget.
+
+        A component load rehydrates every tool in its config; one rebuild of the
+        entrypoint lookup per batch is enough to pick up late-registered
+        functions, so repeated misses within a load don't each pay a rebuild.
+        """
+        rebuild_state = {"rebuilt": False}
+        return [self._rehydrate_function(func_dict, rebuild_state) for func_dict in func_dicts]
+
+    def _rehydrate_function(self, func_dict: Dict[str, Any], rebuild_state: Dict[str, bool]) -> Function:
         func = Function.from_dict(func_dict)
-        source = self._entrypoint_lookup.get(func.name)
-        if source is None:
+        toolkit_name = func_dict.get("toolkit")
+        if isinstance(toolkit_name, str) and toolkit_name:
+            # Keep the attribution on the object so a load -> save round trip
+            # re-stamps the "toolkit" key even though the loaded component holds
+            # bare Functions instead of Toolkits.
+            func.owning_toolkit = toolkit_name
+
+        def lookup(key: EntrypointKey) -> Optional[EntrypointSource]:
             # Toolkits can gain functions after the lookup is first built -- MCP
             # toolkits only register their functions once connected -- so a miss
             # may just mean the cache is stale. Rebuild once and retry.
-            self.__dict__.pop("_entrypoint_lookup", None)
-            source = self._entrypoint_lookup.get(func.name)
+            found = self._entrypoint_lookup.get(key)
+            if found is None and not rebuild_state["rebuilt"]:
+                self.__dict__.pop("_entrypoint_lookup", None)
+                rebuild_state["rebuilt"] = True
+                found = self._entrypoint_lookup.get(key)
+            return found
+
+        source: Optional[EntrypointSource] = None
+        if func.owning_toolkit is not None:
+            # A qualified miss rebuilds before falling back to the flat name:
+            # the flat slot may hold a same-named function from a *different*
+            # toolkit while the right one simply hasn't populated the cache yet.
+            source = lookup((func.owning_toolkit, func.name))
+        if source is None:
+            source = lookup(func.name)
+            if source is not None and func.owning_toolkit is not None:
+                # The recorded toolkit could not be honored, so the flat slot's
+                # same-named function -- possibly from a different toolkit -- is
+                # being bound instead.
+                log_warning(
+                    f"Registry: toolkit '{func.owning_toolkit}' does not provide '{func.name}' "
+                    "in this registry; binding the same-named function found under the flat "
+                    "name instead. If the toolkit was renamed, update the registry or re-save "
+                    "the component."
+                )
         if isinstance(source, Function):
             func.entrypoint = source.entrypoint
             # Entrypoints built for a fixed schema (e.g. MCP call proxies) must

@@ -192,6 +192,13 @@ class Function(BaseModel):
     # Set via the @approval decorator, not directly via @tool().
     approval_type: Optional[str] = None
 
+    # Name of the Toolkit this function was flattened from, if any. Set by
+    # Registry.rehydrate_function and read by the agent/team storage serializers
+    # so toolkit attribution survives load -> save round trips. Excluded from
+    # to_dict: it is persisted via the storage layer's "toolkit" key and never
+    # sent to models.
+    owning_toolkit: Optional[str] = None
+
     # Caching configuration
     cache_results: bool = False
     cache_dir: Optional[str] = None
