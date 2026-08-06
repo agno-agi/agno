@@ -249,7 +249,9 @@ async def asave_session(team: "Team", session: TeamSession) -> None:
 
 def generate_session_name(team: "Team", session: TeamSession, _retries: int = 0) -> str:
     """
-    Generate a name for the team session
+    Generate a name for the team session by reusing the existing message
+    history as a prompt-cache-friendly prefix and appending a small naming
+    instruction.
 
     Args:
         session: The TeamSession to generate a name for.
@@ -262,25 +264,26 @@ def generate_session_name(team: "Team", session: TeamSession, _retries: int = 0)
     if team.model is None:
         raise Exception("Model not set")
 
-    gen_session_name_prompt = "Team Conversation\n"
+    # Retrieve messages from the session.
+    existing_messages = session.get_messages()
 
-    # Get team session messages for generating the name
-    messages_for_generating_session_name = session.get_messages()
+    # Clone the list so we never mutate the live session history.
+    generate_name_messages = list(existing_messages)
 
-    for message in messages_for_generating_session_name:
-        gen_session_name_prompt += f"{message.role.upper()}: {message.content}\n"
-
-    gen_session_name_prompt += "\n\nTeam Session Name: "
-
-    system_message = Message(
-        role=team.system_message_role,
-        content="Please provide a suitable name for this conversation in maximum 5 words. "
-        "Remember, do not exceed 5 words.",
+    # Append the naming instruction as a distinct structured message.
+    # By preserving the exact system/user/assistant sequence already used
+    # in the live session, LLM providers that support prompt caching can
+    # hit the cached prefix instead of re-processing from scratch.
+    naming_instruction = Message(
+        role="user",
+        content=(
+            "Please provide a suitable name for this team conversation in maximum 5 words. "
+            "Remember, do not exceed 5 words."
+        ),
     )
-    user_message = Message(role="user", content=gen_session_name_prompt)
-    generate_name_messages = [system_message, user_message]
+    generate_name_messages.append(naming_instruction)
 
-    # Generate name
+    # Generate name using the cached prefix list.
     generated_name = team.model.response(messages=generate_name_messages)
     content = generated_name.content
     if content is None:
