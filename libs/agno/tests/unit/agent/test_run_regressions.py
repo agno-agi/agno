@@ -1,4 +1,6 @@
 import inspect
+import sys
+import types
 from typing import Any, Optional
 
 import pytest
@@ -21,6 +23,26 @@ from agno.run.cancel import (
 from agno.run.cancellation_management.in_memory_cancellation_manager import InMemoryRunCancellationManager
 from agno.run.messages import RunMessages
 from agno.session import AgentSession
+
+
+class _FakeRecordingSpan:
+    def __init__(self) -> None:
+        self.attributes: dict[str, Any] = {}
+
+    def is_recording(self) -> bool:
+        return True
+
+    def set_attribute(self, key: str, value: Any) -> None:
+        self.attributes[key] = value
+
+
+def _install_fake_otel(monkeypatch: pytest.MonkeyPatch, span: _FakeRecordingSpan) -> None:
+    otel_module = types.ModuleType("opentelemetry")
+    trace_module = types.ModuleType("opentelemetry.trace")
+    trace_module.get_current_span = lambda: span  # type: ignore[attr-defined]
+    otel_module.trace = trace_module  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "opentelemetry", otel_module)
+    monkeypatch.setitem(sys.modules, "opentelemetry.trace", trace_module)
 
 
 @pytest.fixture(autouse=True)
@@ -380,6 +402,119 @@ def _patch_continue_dispatch_dependencies(agent: Agent, monkeypatch: pytest.Monk
     monkeypatch.setattr(
         _messages, "get_continue_run_messages", lambda agent, input=None, **kwargs: RunMessages(messages=[])
     )
+
+
+def test_continue_run_trace_attributes_include_trace_context_keys(monkeypatch: pytest.MonkeyPatch):
+    span = _FakeRecordingSpan()
+    _install_fake_otel(monkeypatch, span)
+
+    agent = Agent(id="agent-1", name="trace-agent")
+    run_response = RunOutput(
+        run_id="run-1",
+        session_id="session-1",
+        user_id="run-user",
+        forked_from_run_id="source-run",
+        regenerated_from="regen-run",
+    )
+
+    _run._set_continue_run_trace_attributes(
+        agent,
+        run_response,
+        session_id="fallback-session",
+        user_id="request-user",
+    )
+
+    assert span.attributes["run_id"] == "run-1"
+    assert span.attributes["agno.run.id"] == "run-1"
+    assert span.attributes["session_id"] == "session-1"
+    assert span.attributes["agno.session.id"] == "session-1"
+    assert span.attributes["session.id"] == "session-1"
+    assert span.attributes["user_id"] == "request-user"
+    assert span.attributes["agno.user.id"] == "request-user"
+    assert span.attributes["user.id"] == "request-user"
+    assert span.attributes["agent_id"] == "agent-1"
+    assert span.attributes["agno.agent.id"] == "agent-1"
+    assert span.attributes["forked_from_run_id"] == "source-run"
+    assert span.attributes["agno.run.forked_from_id"] == "source-run"
+    assert span.attributes["regenerated_from"] == "regen-run"
+    assert span.attributes["agno.run.regenerated_from_id"] == "regen-run"
+
+
+def test_continue_run_dispatch_sets_trace_attributes_before_model(monkeypatch: pytest.MonkeyPatch):
+    agent = _make_precedence_test_agent()
+    agent.id = "agent-sync"
+    _patch_continue_dispatch_dependencies(agent, monkeypatch)
+    span = _FakeRecordingSpan()
+    _install_fake_otel(monkeypatch, span)
+
+    def fake_continue_run(
+        agent: Agent,
+        run_response: RunOutput,
+        run_messages: RunMessages,
+        run_context: RunContext,
+        session: AgentSession,
+        tools,
+        **kwargs: Any,
+    ) -> RunOutput:
+        return run_response
+
+    monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
+
+    _run.continue_run_dispatch(
+        agent=agent,
+        run_response=RunOutput(run_id="sync-run", session_id="sync-session", messages=[]),
+        user_id="sync-user",
+        stream=False,
+    )
+
+    assert span.attributes["run_id"] == "sync-run"
+    assert span.attributes["session_id"] == "sync-session"
+    assert span.attributes["user_id"] == "sync-user"
+    assert span.attributes["agent_id"] == "agent-sync"
+
+
+@pytest.mark.asyncio
+async def test_acontinue_run_stream_sets_trace_attributes_before_model(monkeypatch: pytest.MonkeyPatch):
+    agent = Agent(id="agent-async", name="trace-agent")
+    span = _FakeRecordingSpan()
+    _install_fake_otel(monkeypatch, span)
+
+    async def fake_aread_or_create_session(agent: Agent, session_id: str, user_id: Optional[str] = None):
+        return AgentSession(session_id=session_id, user_id=user_id, runs=[])
+
+    async def fail_aget_tools(**kwargs: Any):
+        raise RuntimeError("stop before model")
+
+    async def fake_acleanup_and_store(agent: Agent, **kwargs: Any):
+        return None
+
+    async def fake_disconnect_mcp_tools(agent: Agent):
+        return None
+
+    monkeypatch.setattr(_storage, "aread_or_create_session", fake_aread_or_create_session)
+    monkeypatch.setattr(_storage, "update_metadata", lambda agent, session=None: None)
+    monkeypatch.setattr(_storage, "load_session_state", lambda agent, session=None, session_state=None: session_state)
+    monkeypatch.setattr(agent, "aget_tools", fail_aget_tools)
+    monkeypatch.setattr(_run, "acleanup_and_store", fake_acleanup_and_store)
+    monkeypatch.setattr(_init, "disconnect_connectable_tools", lambda agent: None)
+    monkeypatch.setattr(_init, "disconnect_mcp_tools", fake_disconnect_mcp_tools)
+
+    events = []
+    async for event in _run._acontinue_run_stream(
+        agent=agent,
+        session_id="async-session",
+        run_context=RunContext(run_id="async-run", session_id="async-session", user_id="async-user"),
+        run_response=RunOutput(run_id="async-run", session_id="async-session", messages=[]),
+        user_id="async-user",
+    ):
+        events.append(event)
+
+    assert len(events) == 1
+    assert isinstance(events[0], RunErrorEvent)
+    assert span.attributes["run_id"] == "async-run"
+    assert span.attributes["session_id"] == "async-session"
+    assert span.attributes["user_id"] == "async-user"
+    assert span.attributes["agent_id"] == "agent-async"
 
 
 def test_run_dispatch_respects_run_context_precedence(monkeypatch: pytest.MonkeyPatch):
