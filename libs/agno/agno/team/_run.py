@@ -67,6 +67,7 @@ from agno.run.cancel import (
     raise_if_cancelled,
     register_member_run,
     register_run,
+    reraise_if_paused_on_disconnect,
 )
 from agno.run.cancel import (
     cancel_run as cancel_run_global,
@@ -2365,6 +2366,7 @@ async def _arun_tasks(
         return run_response
 
     except (KeyboardInterrupt, asyncio.CancelledError) as cancel_exc:
+        reraise_if_paused_on_disconnect(run_response.status, cancel_exc)
         run_response = _handle_team_run_cancellation(
             run_response, KeyboardInterrupt(), run_messages, session=team_session
         )
@@ -2887,6 +2889,7 @@ async def _arun_tasks_stream(
         yield run_error
 
     except (KeyboardInterrupt, asyncio.CancelledError, GeneratorExit) as cancel_exc:
+        reraise_if_paused_on_disconnect(run_response.status, cancel_exc)
         run_response = _handle_team_run_cancellation(
             run_response, KeyboardInterrupt(), run_messages, session=team_session
         )
@@ -3287,6 +3290,7 @@ async def _arun(
                 return run_response
 
             except (KeyboardInterrupt, asyncio.CancelledError) as cancel_exc:
+                reraise_if_paused_on_disconnect(run_response.status, cancel_exc)
                 run_response = _handle_team_run_cancellation(
                     run_response, KeyboardInterrupt(), run_messages, session=team_session
                 )
@@ -4011,6 +4015,7 @@ async def _arun_stream(
                 break
 
             except (KeyboardInterrupt, asyncio.CancelledError, GeneratorExit) as cancel_exc:
+                reraise_if_paused_on_disconnect(run_response.status, cancel_exc)
                 run_response = _handle_team_run_cancellation(
                     run_response, KeyboardInterrupt(), run_messages, session=team_session
                 )
@@ -8249,6 +8254,7 @@ async def _acontinue_run(
                 if run_response is None:
                     run_response = TeamRunOutput(run_id=run_id)
                 run_response = cast(TeamRunOutput, run_response)
+                reraise_if_paused_on_disconnect(run_response.status, cancel_exc)
                 run_response = _handle_team_run_cancellation(
                     run_response, KeyboardInterrupt(), run_messages, session=team_session
                 )
@@ -8898,6 +8904,7 @@ async def _acontinue_run_stream(
                 if run_response is None:
                     run_response = TeamRunOutput(run_id=run_id)
                 run_response = cast(TeamRunOutput, run_response)
+                reraise_if_paused_on_disconnect(run_response.status, cancel_exc)
                 run_response = _handle_team_run_cancellation(
                     run_response, KeyboardInterrupt(), run_messages, session=team_session
                 )
