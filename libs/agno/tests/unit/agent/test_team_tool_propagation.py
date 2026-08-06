@@ -190,3 +190,82 @@ def test_toolkit_function_without_instructions_does_not_append_none():
     parse_tools(agent=agent, tools=agent.tools, model=_mock_model())
 
     assert agent._tool_instructions == []
+
+
+# -- Team-only tool filtering (issue #7965) -----------------------------------
+# Member agents must never see delegate_task_to_member or delegate_task_to_members
+# in their tool schema even if those names somehow appear in their tools list.
+
+
+def _make_delegate_function(name: str) -> Function:
+    """Return a bare Function with the given name (no entrypoint needed for schema tests)."""
+    func = Function(name=name)
+    return func
+
+
+def test_delegate_task_to_member_filtered_for_member_agent():
+    """delegate_task_to_member is stripped when the agent has a parent team."""
+    delegate_func = _make_delegate_function("delegate_task_to_member")
+    agent = Agent(tools=[delegate_func])
+    agent._team = _mock_team()
+
+    functions = parse_tools(agent=agent, tools=agent.tools, model=_mock_model())
+
+    names = [f.name for f in functions if isinstance(f, Function)]
+    assert "delegate_task_to_member" not in names
+
+
+def test_delegate_task_to_members_filtered_for_member_agent():
+    """delegate_task_to_members is stripped when the agent has a parent team."""
+    delegate_func = _make_delegate_function("delegate_task_to_members")
+    agent = Agent(tools=[delegate_func])
+    agent._team = _mock_team()
+
+    functions = parse_tools(agent=agent, tools=agent.tools, model=_mock_model())
+
+    names = [f.name for f in functions if isinstance(f, Function)]
+    assert "delegate_task_to_members" not in names
+
+
+def test_delegate_task_to_member_not_filtered_for_standalone_agent():
+    """delegate_task_to_member is kept when the agent has no parent team."""
+    delegate_func = _make_delegate_function("delegate_task_to_member")
+    agent = Agent(tools=[delegate_func])
+    # agent._team is None (default)
+
+    functions = parse_tools(agent=agent, tools=agent.tools, model=_mock_model())
+
+    names = [f.name for f in functions if isinstance(f, Function)]
+    assert "delegate_task_to_member" in names
+
+
+def test_legitimate_tools_kept_alongside_filtered_delegate_tool():
+    """Filtering delegate tools does not remove the agent's own legitimate tools."""
+
+    def send_message(text: str) -> str:
+        return text
+
+    delegate_func = _make_delegate_function("delegate_task_to_member")
+    agent = Agent(tools=[send_message, delegate_func])
+    agent._team = _mock_team()
+
+    functions = parse_tools(agent=agent, tools=agent.tools, model=_mock_model())
+
+    names = [f.name for f in functions if isinstance(f, Function)]
+    assert "send_message" in names
+    assert "delegate_task_to_member" not in names
+
+
+def test_delegate_callable_filtered_for_member_agent():
+    """A raw callable named delegate_task_to_member is also filtered."""
+
+    def delegate_task_to_member(member_id: str, task: str) -> str:
+        return "delegated"
+
+    agent = Agent(tools=[delegate_task_to_member])
+    agent._team = _mock_team()
+
+    functions = parse_tools(agent=agent, tools=agent.tools, model=_mock_model())
+
+    names = [f.name for f in functions if isinstance(f, Function)]
+    assert "delegate_task_to_member" not in names
