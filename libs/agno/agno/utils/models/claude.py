@@ -469,10 +469,21 @@ def format_messages(
     Returns:
         Tuple[List[Dict[str, Union[str, list]]], str]: A tuple containing the list of API messages and the concatenated system messages.
     """
-    from agno.utils.message import normalize_tool_messages
+    from agno.utils.message import (
+        MISSING_TOOL_RESULT_PLACEHOLDER,
+        collect_recorded_tool_call_ids,
+        normalize_tool_messages,
+    )
+
 
     # Backwards compat: expand old Gemini combined tool messages into individual canonical messages
     messages = normalize_tool_messages(messages)
+
+    # Anthropic rejects a tool_use block that has no corresponding tool_result block.
+    # Sessions can hold runs whose tool result was never recorded, so collect the call_ids
+    # that have a formattable result and pair any unpaired tool_use with a placeholder
+    # tool_result at format time.
+    recorded_call_ids = collect_recorded_tool_call_ids(messages)
 
     chat_messages: List[Dict[str, Union[str, list]]] = []
     system_messages: List[str] = []
@@ -559,6 +570,7 @@ def format_messages(
             elif isinstance(message.content, str) and message.content and len(message.content.strip()) > 0:
                 content.append(TextBlock(text=message.content, type="text"))
 
+            unpaired_tool_use_ids: List[str] = []
             if message.tool_calls:
                 for tool_call in message.tool_calls:
                     content.append(
@@ -571,6 +583,8 @@ def format_messages(
                             type="tool_use",
                         )
                     )
+                    if tool_call["id"] not in recorded_call_ids:
+                        unpaired_tool_use_ids.append(tool_call["id"])
         elif message.role == "tool":
             content = []
 
@@ -603,6 +617,24 @@ def format_messages(
             continue
 
         chat_messages.append({"role": ROLE_MAP[message.role], "content": content})  # type: ignore
+
+        # Tool use blocks whose result was never recorded get a placeholder tool_result,
+        # appended as their own user message so the request stays valid. The merge step
+        # below folds it into a following tool result message when one exists.
+        if message.role == "assistant" and unpaired_tool_use_ids:
+            chat_messages.append(
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": call_id,
+                            "content": MISSING_TOOL_RESULT_PLACEHOLDER,
+                        }
+                        for call_id in unpaired_tool_use_ids
+                    ],
+                }
+            )
 
     # Merge consecutive messages with the same role (Claude requires alternating user/assistant roles).
     # This happens when multiple tool results (mapped to "user") appear in sequence, or when a tool

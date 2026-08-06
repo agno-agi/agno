@@ -381,12 +381,49 @@ class OpenAIChat(Model):
         self, messages: List[Message], compress_tool_results: bool = False
     ) -> List[Dict[str, Any]]:
         """Format all messages, remapping foreign tool call IDs to call_ prefix first."""
-        from agno.utils.message import normalize_tool_messages, reformat_tool_call_ids
+        from agno.utils.message import (
+            MISSING_TOOL_RESULT_PLACEHOLDER,
+            collect_recorded_tool_call_ids,
+            normalize_tool_messages,
+            reformat_tool_call_ids,
+        )
 
         # Backwards compat: expand old Gemini combined tool messages into individual canonical messages
         messages = normalize_tool_messages(messages)
         normalized = reformat_tool_call_ids(messages, provider="openai_chat")
-        return [self._format_message(m, compress_tool_results) for m in normalized]
+
+        # Chat Completions rejects an assistant message whose tool_calls are not followed by
+        # a tool message responding to each tool_call_id. Sessions can hold runs whose tool
+        # result was never recorded, so collect the call_ids that have a formattable result
+        # and pair any unpaired call with a placeholder result at format time.
+        recorded_call_ids = collect_recorded_tool_call_ids(normalized)
+
+        formatted_messages: List[Dict[str, Any]] = []
+        repaired_call_ids: List[str] = []
+        for message in normalized:
+            formatted_messages.append(self._format_message(message, compress_tool_results))
+            if message.role == "assistant" and message.tool_calls:
+                unpaired_call_ids: List[str] = []
+                for tool_call in message.tool_calls:
+                    call_id = tool_call.get("id")
+                    if call_id is not None and call_id not in recorded_call_ids:
+                        unpaired_call_ids.append(call_id)
+                for call_id in unpaired_call_ids:
+                    formatted_messages.append(
+                        {
+                            "role": self.role_map["tool"] if self.role_map else self.default_role_map["tool"],
+                            "tool_call_id": call_id,
+                            "content": MISSING_TOOL_RESULT_PLACEHOLDER,
+                        }
+                    )
+                    repaired_call_ids.append(call_id)
+
+        if repaired_call_ids:
+            log_warning(
+                f"No tool result was recorded for tool call(s) {repaired_call_ids}; "
+                "placeholder results were inserted to keep the request valid."
+            )
+        return formatted_messages
 
     def invoke(
         self,

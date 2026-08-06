@@ -363,6 +363,17 @@ class GeminiInteractions(Model):
         - VideoContentParam: {"type": "video", "data": base64, "mime_type": "video/mp4"}
         - DocumentContentParam: {"type": "document", "data": base64, "mime_type": "application/pdf"}
         """
+        from agno.utils.message import (
+            MISSING_TOOL_RESULT_PLACEHOLDER,
+            collect_recorded_tool_call_ids,
+        )
+
+        # Gemini requires every function_call step to be paired with a function_result
+        # step carrying the same call id. Sessions can hold runs whose tool result was
+        # never recorded, so collect the call_ids that have a formattable result and pair
+        # any unpaired function_call with a placeholder function_result at format time.
+        recorded_call_ids = collect_recorded_tool_call_ids(messages)
+
         steps: List[Dict[str, Any]] = []
 
         for message in messages:
@@ -422,14 +433,24 @@ class GeminiInteractions(Model):
                                 args = json.loads(args)
                             except json.JSONDecodeError:
                                 args = {}
+                        call_id = tool_call.get("id", str(uuid4()))
                         steps.append(
                             {
                                 "type": "function_call",
-                                "id": tool_call.get("id", str(uuid4())),
+                                "id": call_id,
                                 "name": func.get("name", ""),
                                 "arguments": args,
                             }
                         )
+                        if call_id not in recorded_call_ids:
+                            steps.append(
+                                {
+                                    "type": "function_result",
+                                    "call_id": call_id,
+                                    "name": func.get("name", ""),
+                                    "result": MISSING_TOOL_RESULT_PLACEHOLDER,
+                                }
+                            )
 
             # Tool result messages become FunctionResultSteps
             elif message.role == "tool" and message.tool_call_id:
