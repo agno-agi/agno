@@ -84,6 +84,14 @@ class CompactionState:
 
 
 @dataclass
+class CompactionResult:
+    """Result of a compaction operation."""
+
+    compacted_messages: List[Message]
+    summary: Optional[str] = None
+
+
+@dataclass
 class ContextCompactionManager:
     """Compacts conversation history to fit within context limits."""
 
@@ -114,16 +122,15 @@ class ContextCompactionManager:
         messages: List[Message],
         session: Optional["AgentSession"] = None,
         run_metrics: Optional["RunMetrics"] = None,
-    ) -> Tuple[List[Message], Optional[str]]:
+    ) -> CompactionResult:
         """Compact messages if threshold exceeded.
 
         Returns:
-            Tuple of (compacted_compacted_messages, new_summary). If no compaction needed,
-            returns (original_messages, None).
+            CompactionResult with view (messages to send) and summary (if compaction occurred).
         """
         # 1. Check if compaction needed
         if self.model is None or not self.should_compact(messages):
-            return messages, None
+            return CompactionResult(compacted_messages=messages)
 
         # 2. Split messages into groups
         system_msgs = [m for m in messages if m.role == "system"]
@@ -131,14 +138,14 @@ class ContextCompactionManager:
         old_messages, preserved_user, recent_messages = self._split_messages(non_system)
 
         if not old_messages:
-            return messages, None
+            return CompactionResult(compacted_messages=messages)
 
         # 3. Summarize old messages (merges with existing summary if available)
         existing_summary = session.compaction.summary if session and session.compaction else None
         new_summary = self._summarize(old_messages, existing_summary, run_metrics)
 
         if not new_summary:
-            return messages, None
+            return CompactionResult(compacted_messages=messages)
 
         # 4. Build compacted compacted_messages: system + new summary + preserved user + recent
         summary_msg = Message(role="user", content=SUMMARY_PREFIX + new_summary, from_history=True)
@@ -154,7 +161,7 @@ class ContextCompactionManager:
         # 6. Update session state
         self._update_session_state(session, old_messages, new_summary)
 
-        return compacted_messages, new_summary
+        return CompactionResult(compacted_messages=compacted_messages, summary=new_summary)
 
     def _split_messages(
         self, messages: List[Message]
@@ -280,11 +287,11 @@ class ContextCompactionManager:
         messages: List[Message],
         session: Optional["AgentSession"] = None,
         run_metrics: Optional["RunMetrics"] = None,
-    ) -> Tuple[List[Message], Optional[str]]:
+    ) -> CompactionResult:
         """Async version of compact()."""
         # 1. Check if compaction needed
         if self.model is None or not await self.ashould_compact(messages):
-            return messages, None
+            return CompactionResult(compacted_messages=messages)
 
         # 2. Split messages into groups
         system_msgs = [m for m in messages if m.role == "system"]
@@ -292,14 +299,14 @@ class ContextCompactionManager:
         old_messages, preserved_user, recent_messages = self._split_messages(non_system)
 
         if not old_messages:
-            return messages, None
+            return CompactionResult(compacted_messages=messages)
 
         # 3. Summarize old messages (merges with existing summary if available)
         existing_summary = session.compaction.summary if session and session.compaction else None
         new_summary = await self._asummarize(old_messages, existing_summary, run_metrics)
 
         if not new_summary:
-            return messages, None
+            return CompactionResult(compacted_messages=messages)
 
         # 4. Build compacted compacted_messages: system + new summary + preserved user + recent
         summary_msg = Message(role="user", content=SUMMARY_PREFIX + new_summary, from_history=True)
@@ -315,7 +322,7 @@ class ContextCompactionManager:
         # 6. Update session state
         self._update_session_state(session, old_messages, new_summary)
 
-        return compacted_messages, new_summary
+        return CompactionResult(compacted_messages=compacted_messages, summary=new_summary)
 
     async def _asummarize(
         self,

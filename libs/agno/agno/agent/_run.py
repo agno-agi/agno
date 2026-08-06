@@ -536,7 +536,7 @@ def _run(
                         run_metrics=run_response.metrics,
                     )
                     if compaction_result.summary:
-                        run_messages.messages = compaction_result.view
+                        run_messages.messages = compaction_result.compacted_messages
 
                 # 7. Generate a response from the Model (includes running function calls)
                 agent.model = cast(Model, agent.model)
@@ -1690,7 +1690,7 @@ async def _arun(
                         run_metrics=run_response.metrics,
                     )
                     if compaction_result.summary:
-                        run_messages.messages = compaction_result.view
+                        run_messages.messages = compaction_result.compacted_messages
 
                 # 10. Generate a response from the Model (includes running function calls)
                 model_response: ModelResponse = await acall_model_with_fallback(
