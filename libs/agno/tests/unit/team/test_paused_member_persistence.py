@@ -3222,3 +3222,65 @@ def test_user_feedback_answer_for_an_unknown_question_is_ignored():
     assert stored_question.question == "Which channel?"
     assert stored_question.selected_options is None
     assert stored.tool_execution.answered is None, "an unanswered question must leave the run unresolved"
+
+
+# ---------------------------------------------------------------------------
+# The approval gate can refuse a continue AFTER the payload has bound, so the
+# merge has to be undoable. Restoring the requirements list is not enough: its
+# entries are the stored requirements the merge wrote into.
+# ---------------------------------------------------------------------------
+
+
+def _mixed_requirements() -> List[RunRequirement]:
+    from agno.tools.function import UserFeedbackOption, UserFeedbackQuestion, UserInputField
+
+    confirm_req = _make_requirement(
+        tool_name="send_email", tool_call_id="tc-c", requires_confirmation=True, approval_type="required"
+    )
+    input_req = _make_requirement(
+        tool_name="transfer",
+        tool_call_id="tc-i",
+        requires_user_input=True,
+        user_input_schema=[UserInputField(name="note", field_type=str)],
+    )
+    input_req.user_input_schema = input_req.tool_execution.user_input_schema
+    feedback_req = _make_requirement(
+        tool_name="notify",
+        tool_call_id="tc-f",
+        user_feedback_schema=[
+            UserFeedbackQuestion(question="Which channel?", options=[UserFeedbackOption(label="sms")])
+        ],
+    )
+    feedback_req.user_feedback_schema = feedback_req.tool_execution.user_feedback_schema
+    return [confirm_req, input_req, feedback_req]
+
+
+def test_restoring_decisions_undoes_the_whole_merge():
+    from agno.team._run import _apply_requirements_payload, _restore_requirement_decisions
+
+    stored = _mixed_requirements()
+    run_response = TeamRunOutput(
+        run_id="run-1",
+        session_id="session-1",
+        requirements=stored,
+        tools=[r.tool_execution for r in stored],
+    )
+    before = [r.to_dict() for r in stored]
+
+    payload = [RunRequirement.from_dict(d) for d in before]
+    payload[0].confirm()
+    payload[1].provide_user_input({"note": "typed"})
+    payload[2].provide_user_feedback({"Which channel?": ["sms"]})
+
+    _, _, decisions = _apply_requirements_payload(run_response, payload)
+
+    # The merge landed on every lane.
+    assert stored[0].tool_execution.confirmed is True
+    assert stored[1].tool_execution.user_input_schema[0].value == "typed"
+    assert stored[2].tool_execution.user_feedback_schema[0].selected_options == ["sms"]
+    assert stored[2].tool_execution.user_feedback_schema[0].options[0].selected is True
+
+    _restore_requirement_decisions(decisions)
+
+    assert [r.to_dict() for r in stored] == before, "the snapshot must cover every field the merge writes"
+    assert not any(r.is_resolved() for r in stored)
