@@ -4456,7 +4456,7 @@ def _cleanup_and_store(
     # Add scrubbed RunOutput to Team Session
     session.upsert_run(run_response=storage_copy)
 
-    # Calculate session metrics (each run counted once, when it is final)
+    # Calculate session metrics
     update_session_metrics(team, session=session, run_response=run_response)
 
     # Update session state before saving the session
@@ -4505,7 +4505,7 @@ async def _acleanup_and_store(
     # Add scrubbed RunOutput to Team Session
     session.upsert_run(run_response=storage_copy)
 
-    # Calculate session metrics (each run counted once, when it is final)
+    # Calculate session metrics
     update_session_metrics(team, session=session, run_response=run_response)
 
     # Update session state before saving the session

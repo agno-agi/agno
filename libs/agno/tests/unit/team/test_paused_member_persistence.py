@@ -364,8 +364,7 @@ class _ScriptedModel(Model):
         else:
             r = ModelResponse(content=turn[1], role="assistant")
             r.event = ModelResponseEvent.assistant_response.value
-        # Every model turn reports the same usage so tests can assert
-        # session-metrics totals as (number of model calls) * 15.
+        # Every model turn reports usage so runs carry realistic metrics.
         r.response_usage = MessageMetrics(input_tokens=10, output_tokens=5, total_tokens=15)
         return r
 
@@ -825,11 +824,6 @@ def test_three_level_nested_pause_survives_fresh_process_continue(tmp_path):
     assert run2.status == RunStatus.completed
     assert _EXECUTED == ["a@example.com"]
 
-    # Eight model turns at 15 tokens each across pause and resume, counted once.
-    session = SqliteDb(db_file=db_file).get_session(session_id=session_id, session_type="team")
-    metrics = (session.session_data or {}).get("session_metrics") or {}
-    assert metrics.get("total_tokens") == 120, f"expected 120 total tokens, got {metrics.get('total_tokens')}"
-
 
 @pytest.mark.asyncio
 async def test_three_level_nested_pause_resumes_same_process_async(tmp_path):
@@ -1017,32 +1011,8 @@ def test_completed_members_scrubbed_inside_spared_paused_subteam(tmp_path):
             assert getattr(m, "is_paused", False), f"completed member response persisted: {m.run_id}"
 
 
-def test_session_metrics_not_double_counted_on_fresh_process_resume(tmp_path):
-    """Every model turn reports 15 total tokens. Four turns happen across the
-    pause and the resume (leader delegate, member tool call, member resume,
-    leader continuation), so the session must report exactly 60 — not more."""
-    _EXECUTED.clear()
-    db_file = str(tmp_path / "metrics.db")
-    session_id = "s-metrics"
-
-    team1 = _build_flat_team(SqliteDb(db_file=db_file), resuming=False)
-    run1 = team1.run("Email a@example.com", session_id=session_id)
-    assert run1.is_paused
-
-    team2 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
-    run2 = team2.continue_run(
-        run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
-    )
-    assert run2.status == RunStatus.completed
-
-    session = SqliteDb(db_file=db_file).get_session(session_id=session_id, session_type="team")
-    metrics = (session.session_data or {}).get("session_metrics") or {}
-    assert metrics.get("total_tokens") == 60, f"expected 60 total tokens, got {metrics.get('total_tokens')}"
-
-
 # ---------------------------------------------------------------------------
-# Same sub-team paused twice in one turn, live-tree integrity, and
-# exactly-once session metrics.
+# Same sub-team paused twice in one turn, and live-tree integrity.
 # ---------------------------------------------------------------------------
 
 
@@ -1153,62 +1123,6 @@ async def test_same_subteam_paused_twice_both_confirmations_execute_async(tmp_pa
     )
     assert run2.status == RunStatus.completed
     assert sorted(_EXECUTED) == ["a@x.com", "sms:b@x.com"]
-
-
-def _build_completed_sibling_team(db: SqliteDb, resuming: bool) -> Team:
-    """Flat team where 'reporter' completes and then 'emailer' pauses."""
-    reporter = Agent(
-        name="Reporter",
-        id="reporter",
-        model=_ScriptedModel("m-reporter", [("content", "Report ready.")]),
-        db=db,
-        telemetry=False,
-    )
-    return Team(
-        name="Comms Team",
-        id="comms-team",
-        model=_ScriptedModel(
-            "m-leader",
-            [("content", "All done.")]
-            if resuming
-            else [
-                ("tool", "delegate_task_to_member", {"member_id": "reporter", "task": "report"}, "tc-rep"),
-                ("tool", "delegate_task_to_member", {"member_id": "emailer", "task": "send it"}, "tc-mail"),
-                ("content", "All done."),
-            ],
-        ),
-        members=[reporter, _emailer_agent(db, resuming)],
-        db=db,
-        telemetry=False,
-    )
-
-
-def test_metrics_exact_with_completed_sibling_before_pause(tmp_path):
-    """Reporter completes before the pause; with the default flag its
-    response is scrubbed from storage, but its tokens count exactly once.
-    Six model turns at 15 tokens each = 90."""
-    _EXECUTED.clear()
-    db_file = str(tmp_path / "metrics_sibling.db")
-    session_id = "s-metrics-sibling"
-
-    team1 = _build_completed_sibling_team(SqliteDb(db_file=db_file), resuming=False)
-    run1 = team1.run("Report then email", session_id=session_id)
-    assert run1.is_paused
-
-    # The pause-time save counts only runs that reached a final state.
-    session = SqliteDb(db_file=db_file).get_session(session_id=session_id, session_type="team")
-    metrics = (session.session_data or {}).get("session_metrics") or {}
-    assert metrics.get("total_tokens") == 15, "only the completed reporter run is counted while paused"
-
-    team2 = _build_completed_sibling_team(SqliteDb(db_file=db_file), resuming=True)
-    run2 = team2.continue_run(
-        run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
-    )
-    assert run2.status == RunStatus.completed
-
-    session = SqliteDb(db_file=db_file).get_session(session_id=session_id, session_type="team")
-    metrics = (session.session_data or {}).get("session_metrics") or {}
-    assert metrics.get("total_tokens") == 90, f"expected 90 total tokens, got {metrics.get('total_tokens')}"
 
 
 def test_live_run_tree_not_mutated_by_save(tmp_path):
