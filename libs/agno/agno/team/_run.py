@@ -4846,7 +4846,7 @@ def _scrub_member_responses(team: "Team", member_responses: List[Union[TeamRunOu
 
 
 def _resolve_run_dependencies(team: "Team", run_context: RunContext) -> None:
-    from inspect import signature
+    from agno.utils.callables import build_injected_kwargs, invoke_callable_with_kwargs
 
     log_debug("Resolving dependencies")
     if not isinstance(run_context.dependencies, dict):
@@ -4859,18 +4859,13 @@ def _resolve_run_dependencies(team: "Team", run_context: RunContext) -> None:
             continue
 
         try:
-            sig = signature(value)
-
-            # Build kwargs for the function
-            kwargs: Dict[str, Any] = {}
-            if "agent" in sig.parameters:
-                kwargs["agent"] = team
-            if "team" in sig.parameters:
-                kwargs["team"] = team
-            if "run_context" in sig.parameters:
-                kwargs["run_context"] = run_context
-
-            resolved_value = value(**kwargs) if kwargs else value()
+            available: Dict[str, Any] = {
+                "agent": team,
+                "team": team,
+                "run_context": run_context,
+            }
+            kwargs = build_injected_kwargs(value, available)
+            resolved_value = invoke_callable_with_kwargs(value, kwargs)
 
             run_context.dependencies[key] = resolved_value
         except Exception as e:
@@ -4878,7 +4873,7 @@ def _resolve_run_dependencies(team: "Team", run_context: RunContext) -> None:
 
 
 async def _aresolve_run_dependencies(team: "Team", run_context: RunContext) -> None:
-    from inspect import iscoroutine, signature
+    from agno.utils.callables import ainvoke_callable_with_kwargs, build_injected_kwargs
 
     log_debug("Resolving context (async)")
     if not isinstance(run_context.dependencies, dict):
@@ -4891,21 +4886,13 @@ async def _aresolve_run_dependencies(team: "Team", run_context: RunContext) -> N
             continue
 
         try:
-            sig = signature(value)
-
-            # Build kwargs for the function
-            kwargs: Dict[str, Any] = {}
-            if "agent" in sig.parameters:
-                kwargs["agent"] = team
-            if "team" in sig.parameters:
-                kwargs["team"] = team
-            if "run_context" in sig.parameters:
-                kwargs["run_context"] = run_context
-
-            resolved_value = value(**kwargs) if kwargs else value()
-
-            if iscoroutine(resolved_value):
-                resolved_value = await resolved_value
+            available: Dict[str, Any] = {
+                "agent": team,
+                "team": team,
+                "run_context": run_context,
+            }
+            kwargs = build_injected_kwargs(value, available)
+            resolved_value = await ainvoke_callable_with_kwargs(value, kwargs)
 
             run_context.dependencies[key] = resolved_value
         except Exception as e:
