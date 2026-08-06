@@ -120,38 +120,52 @@ class ContextCompactionManager:
         session: Optional["AgentSession"] = None,
         run_metrics: Optional["RunMetrics"] = None,
     ) -> CompactionResult:
-        """Compact messages. Returns CompactionResult — call commit() after model success.
+        """Compact messages into a shorter context view.
 
-        Note: Stored summary injection is handled by _messages.py during message build.
-        This method only creates NEW summaries when compaction threshold is exceeded.
+        Two-phase compaction:
+        1. Summarize old history messages (preserves recent messages verbatim)
+        2. If still over token_limit, compress large tool results
+
+        Returns CompactionResult with the compacted view. Session state is updated
+        in-place (persisted when session is saved).
         """
+        # 1. Early exit if no model configured
         if self.model is None:
             return CompactionResult(view=messages)
 
+        # 2. Filter out already-compacted messages (by ID, survives deepcopy)
         compacted_ids = session.compaction.compacted_message_ids if session and session.compaction else set()
         active = [m for m in messages if not (m.id and m.id in compacted_ids)]
         stored_summary = self._get_stored_summary(session)
 
-        # No compaction needed — return messages as-is (summary already injected by _messages.py)
+        # 3. Check threshold — skip if under limit
         if not self._needs_compaction(active):
             return CompactionResult(view=messages)
 
+        # 4. Separate system messages (always kept at top)
         system_msgs = [m for m in active if m.role == "system"]
         non_system = [m for m in active if m.role != "system"]
+
+        # 5. Partition non-system messages:
+        #    - to_compact: older messages to summarize
+        #    - preserved_user: recent user messages (kept verbatim for intent)
+        #    - keep_verbatim: last N messages (tool-pair safe via safe_truncation_index)
         to_compact, preserved_user, keep_verbatim = self._partition(non_system)
 
-        # Nothing to compact — return as-is
+        # 6. Nothing to compact — all messages are in keep_verbatim
         if not to_compact:
             return CompactionResult(view=messages)
 
+        # 7. Generate summary via LLM (merges with previous summary if exists)
         summary = self._summarize(to_compact, stored_summary, run_metrics)
         if not summary:
             return CompactionResult(view=messages)
 
+        # 8. Build compacted view: [system] + [summary] + [preserved_user] + [keep_verbatim]
         view = system_msgs + [self._make_summary_msg(summary)] + preserved_user + keep_verbatim
         log_info(f"[COMPACTION] Compacted {len(to_compact)} messages ({len(summary)} chars)")
 
-        # Phase 2: If still over token_limit, compress tool results in keep_verbatim
+        # 9. Phase 2: If still over token_limit, compress large tool results in keep_verbatim
         if self.token_limit is not None:
             view_tokens = self.model.count_tokens(view)
             if view_tokens > self.token_limit:
@@ -159,7 +173,7 @@ class ContextCompactionManager:
                 view = system_msgs + [self._make_summary_msg(summary)] + preserved_user + keep_verbatim
                 log_info(f"[COMPACTION] Compressed tool results, now {self.model.count_tokens(view)} tokens")
 
-        # Store compaction state on session (persisted when session is saved)
+        # 10. Update session compaction state (persisted when session is saved)
         if session is not None:
             prev = session.compaction
             new_ids = {msg.id for msg in to_compact if msg.id}
@@ -181,34 +195,41 @@ class ContextCompactionManager:
         session: Optional["AgentSession"] = None,
         run_metrics: Optional["RunMetrics"] = None,
     ) -> CompactionResult:
-        """Async version of compact."""
+        """Async version of compact(). See compact() for detailed documentation."""
+        # 1. Early exit if no model configured
         if self.model is None:
             return CompactionResult(view=messages)
 
+        # 2. Filter out already-compacted messages (by ID, survives deepcopy)
         compacted_ids = session.compaction.compacted_message_ids if session and session.compaction else set()
         active = [m for m in messages if not (m.id and m.id in compacted_ids)]
         stored_summary = self._get_stored_summary(session)
 
-        # No compaction needed — return messages as-is (summary already injected by _messages.py)
+        # 3. Check threshold — skip if under limit
         if not await self._aneeds_compaction(active):
             return CompactionResult(view=messages)
 
+        # 4. Separate system messages (always kept at top)
         system_msgs = [m for m in active if m.role == "system"]
         non_system = [m for m in active if m.role != "system"]
+
+        # 5. Partition non-system messages
         to_compact, preserved_user, keep_verbatim = self._partition(non_system)
 
-        # Nothing to compact — return as-is
+        # 6. Nothing to compact — all messages are in keep_verbatim
         if not to_compact:
             return CompactionResult(view=messages)
 
+        # 7. Generate summary via LLM (merges with previous summary if exists)
         summary = await self._asummarize(to_compact, stored_summary, run_metrics)
         if not summary:
             return CompactionResult(view=messages)
 
+        # 8. Build compacted view: [system] + [summary] + [preserved_user] + [keep_verbatim]
         view = system_msgs + [self._make_summary_msg(summary)] + preserved_user + keep_verbatim
         log_info(f"[COMPACTION] Compacted {len(to_compact)} messages ({len(summary)} chars)")
 
-        # Phase 2: If still over token_limit, compress tool results in keep_verbatim
+        # 9. Phase 2: If still over token_limit, compress large tool results in keep_verbatim
         if self.token_limit is not None:
             view_tokens = await self.model.acount_tokens(view)
             if view_tokens > self.token_limit:
@@ -216,7 +237,7 @@ class ContextCompactionManager:
                 view = system_msgs + [self._make_summary_msg(summary)] + preserved_user + keep_verbatim
                 log_info(f"[COMPACTION] Compressed tool results, now {await self.model.acount_tokens(view)} tokens")
 
-        # Store compaction state on session (persisted when session is saved)
+        # 10. Update session compaction state (persisted when session is saved)
         if session is not None:
             prev = session.compaction
             new_ids = {msg.id for msg in to_compact if msg.id}
