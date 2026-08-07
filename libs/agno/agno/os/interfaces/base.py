@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
-from fastapi import APIRouter
+from fastapi import APIRouter, FastAPI
 
 from agno.agent import Agent, RemoteAgent
 from agno.team import RemoteTeam, Team
@@ -26,6 +26,15 @@ class BaseInterface(ABC):
     @abstractmethod
     def get_router(self, use_async: bool = True, **kwargs) -> APIRouter:
         pass
+
+    def get_lifespan(self) -> Optional[Callable[[FastAPI], Any]]:
+        """Optional ASGI lifespan hook, combined into the AgentOS app lifespan.
+
+        Return an ``asynccontextmanager``-style callable to run startup/shutdown
+        work alongside the app (e.g. DiscordGateway starts its background
+        listener here). The default is None: no lifespan for this interface.
+        """
+        return None
 
     def get_scope_mappings(self) -> Dict[str, List[str]]:
         """RBAC scope requirements for this interface's routes, keyed by "METHOD /path".
