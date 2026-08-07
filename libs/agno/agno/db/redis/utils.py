@@ -98,7 +98,7 @@ def apply_sorting(
         return records
 
     try:
-        is_descending = sort_order == "desc"
+        is_descending = sort_order != "asc" if sort_order else True
 
         # Sort using the helper function that handles updated_at -> created_at fallback
         sorted_records = sorted(
