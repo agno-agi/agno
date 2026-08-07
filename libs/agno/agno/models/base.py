@@ -27,6 +27,7 @@ from typing import (
 
 if TYPE_CHECKING:
     from agno.compression.manager import CompressionManager
+    from agno.offload.store import ResultStore
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -657,6 +658,7 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        result_store: Optional["ResultStore"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], None]] = None,
     ) -> ModelResponse:
         """
@@ -753,6 +755,7 @@ class Model(ABC):
                     function_call_results=function_call_results,
                     current_function_call_count=function_call_count,
                     function_call_limit=tool_call_limit,
+                    result_store=result_store,
                 ):
                     if isinstance(function_call_response, ModelResponse):
                         # The session state is updated by the function call
@@ -888,6 +891,7 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        result_store: Optional["ResultStore"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], Awaitable[None]]] = None,
     ) -> ModelResponse:
         """
@@ -975,6 +979,7 @@ class Model(ABC):
                     function_call_results=function_call_results,
                     current_function_call_count=function_call_count,
                     function_call_limit=tool_call_limit,
+                    result_store=result_store,
                 ):
                     if isinstance(function_call_response, ModelResponse):
                         # The session state is updated by the function call
@@ -1370,6 +1375,7 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        result_store: Optional["ResultStore"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], None]] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
@@ -1518,6 +1524,7 @@ class Model(ABC):
                     function_call_results=function_call_results,
                     current_function_call_count=function_call_count,
                     function_call_limit=tool_call_limit,
+                    result_store=result_store,
                 ):
                     if self.cache_response and isinstance(function_call_response, ModelResponse):
                         streaming_responses.append(function_call_response)
@@ -1649,6 +1656,7 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        result_store: Optional["ResultStore"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], Awaitable[None]]] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
@@ -1797,6 +1805,7 @@ class Model(ABC):
                     function_call_results=function_call_results,
                     current_function_call_count=function_call_count,
                     function_call_limit=tool_call_limit,
+                    result_store=result_store,
                 ):
                     if self.cache_response and isinstance(function_call_response, ModelResponse):
                         streaming_responses.append(function_call_response)
@@ -2080,6 +2089,77 @@ class Model(ABC):
                 function_calls_to_run.append(_function_call)
         return function_calls_to_run
 
+    @staticmethod
+    def _offload_candidate(
+        result_store: "ResultStore",
+        function_call: FunctionCall,
+        success: bool,
+        output: str,
+    ) -> Optional[str]:
+        """The output as text when it qualifies for offloading, else None.
+
+        Never offloaded: failed calls (the model needs the error text
+        verbatim), empty results, sub-threshold results, and the read-back
+        tools' own output. Only the message content is ever replaced — media
+        on the FunctionExecutionResult is untouched.
+        """
+        if not success or not output:
+            return None
+        text = output
+        if not result_store.should_offload(function_call.function.name, text):
+            return None
+        if function_call.function._run_context is None:
+            return None
+        return text
+
+    def _substitute_tool_result(
+        self,
+        result_store: "ResultStore",
+        function_call: FunctionCall,
+        success: bool,
+        output: str,
+    ) -> str:
+        """Replace an oversized successful tool result with its envelope."""
+        text = self._offload_candidate(result_store, function_call, success, output)
+        if text is None:
+            return output
+        run_context = function_call.function._run_context
+        assert run_context is not None
+        return result_store.offload_for_model(
+            session_id=run_context.session_id,
+            run_id=run_context.run_id,
+            tool_call_id=function_call.call_id or function_call.function.name,
+            tool_name=function_call.function.name,
+            tool_args=function_call.arguments,
+            output=text,
+            user_id=run_context.user_id,
+            shared=function_call.function._team is not None,
+        )
+
+    async def _asubstitute_tool_result(
+        self,
+        result_store: "ResultStore",
+        function_call: FunctionCall,
+        success: bool,
+        output: str,
+    ) -> str:
+        """Async variant of ``_substitute_tool_result``."""
+        text = self._offload_candidate(result_store, function_call, success, output)
+        if text is None:
+            return output
+        run_context = function_call.function._run_context
+        assert run_context is not None
+        return await result_store.aoffload_for_model(
+            session_id=run_context.session_id,
+            run_id=run_context.run_id,
+            tool_call_id=function_call.call_id or function_call.function.name,
+            tool_name=function_call.function.name,
+            tool_args=function_call.arguments,
+            output=text,
+            user_id=run_context.user_id,
+            shared=function_call.function._team is not None,
+        )
+
     def create_function_call_result(
         self,
         function_call: FunctionCall,
@@ -2135,6 +2215,7 @@ class Model(ABC):
         function_call: FunctionCall,
         function_call_results: List[Message],
         additional_input: Optional[List[Message]] = None,
+        result_store: Optional["ResultStore"] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         # Start function call
         function_call_timer = Timer()
@@ -2274,6 +2355,13 @@ class Model(ABC):
             tool_metrics.end_time = current_time
             tool_metrics.start_time = current_time - function_call_timer.elapsed
 
+        # Replace an oversized successful result with its stored envelope
+        # BEFORE the tool message (and the ToolExecution derived from it) is
+        # built. With no result_store this is a no-op passthrough.
+        if result_store is not None:
+            function_call_output = self._substitute_tool_result(
+                result_store, function_call, function_call_success, function_call_output
+            )
         # Create and yield function call result
         function_call_result = self.create_function_call_result(
             function_call,
@@ -2317,6 +2405,7 @@ class Model(ABC):
         additional_input: Optional[List[Message]] = None,
         current_function_call_count: int = 0,
         function_call_limit: Optional[int] = None,
+        result_store: Optional["ResultStore"] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         # Additional messages from function calls that will be added to the function call results
         if additional_input is None:
@@ -2458,7 +2547,10 @@ class Model(ABC):
                 continue
 
             yield from self.run_function_call(
-                function_call=fc, function_call_results=function_call_results, additional_input=additional_input
+                function_call=fc,
+                function_call_results=function_call_results,
+                additional_input=additional_input,
+                result_store=result_store,
             )
 
         # Add any additional messages at the end
@@ -2515,6 +2607,7 @@ class Model(ABC):
         current_function_call_count: int = 0,
         function_call_limit: Optional[int] = None,
         skip_pause_check: bool = False,
+        result_store: Optional["ResultStore"] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         # Additional messages from function calls that will be added to the function call results
         if additional_input is None:
@@ -2955,6 +3048,13 @@ class Model(ABC):
                 tool_metrics.end_time = current_time
                 tool_metrics.start_time = current_time - function_call_timer.elapsed
 
+            # Replace an oversized successful result with its stored envelope
+            # BEFORE the tool message (and the ToolExecution derived from it)
+            # is built. Async parity: the a-prefixed store methods do the I/O.
+            if result_store is not None:
+                function_call_output = await self._asubstitute_tool_result(
+                    result_store, function_call, function_call_success, function_call_output
+                )
             # Create and yield function call result
             function_call_result = self.create_function_call_result(
                 function_call,

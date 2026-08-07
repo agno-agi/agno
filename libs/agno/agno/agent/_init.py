@@ -211,6 +211,47 @@ def set_compression_manager(agent: Agent) -> None:
         agent.compress_tool_results = True
 
 
+DEFAULT_OFFLOAD_THRESHOLD = 4000
+
+# Result offloading needs the agno_tool_results index table; PostgreSQL and
+# SQLite ship it in 3.0 (DECISIONS.md D10). Anywhere else the flag is honoured
+# as off, with one warning — a run that believes its payloads are recoverable
+# when they are not is the one failure mode worse than no offloading.
+_OFFLOAD_SUPPORTED_DBS = ("SqliteDb", "AsyncSqliteDb", "PostgresDb", "AsyncPostgresDb")
+
+
+def set_result_store(agent: Agent) -> None:
+    """Build the agent's ResultStore, or degrade loudly and leave it off."""
+    if not agent.offload_tool_results:
+        return
+    if agent.db is None:
+        log_warning("offload_tool_results needs a db; offloading is off for this agent.")
+        agent.offload_tool_results = False
+        return
+    backend_name = type(agent.db).__name__
+    if backend_name not in _OFFLOAD_SUPPORTED_DBS:
+        log_warning(
+            f"Result offloading is not implemented for {backend_name}; offloading is off for this agent. "
+            "PostgreSQL and SQLite support it in 3.0."
+        )
+        agent.offload_tool_results = False
+        return
+
+    from agno.fs import FileSystem
+    from agno.offload import ResultStore
+
+    threshold = DEFAULT_OFFLOAD_THRESHOLD if agent.offload_tool_results is True else int(agent.offload_tool_results)
+    try:
+        # The namespace here is a placeholder: every operation rebinds to the
+        # per-session namespace tool-results/{session_id}.
+        fs = FileSystem(backend=agent.db, namespace="tool-results")
+    except Exception as e:
+        log_warning(f"Result offloading could not reach the filesystem backend ({e}); offloading is off.")
+        agent.offload_tool_results = False
+        return
+    agent._result_store = ResultStore(fs, db=agent.db, threshold=threshold, ttl_seconds=agent.result_ttl_seconds)
+
+
 def _initialize_session_state(
     session_state: Dict[str, Any],
     user_id: Optional[str] = None,
@@ -283,6 +324,8 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
         set_session_summary_manager(agent)
     if agent.compress_tool_results or agent.compression_manager is not None:
         set_compression_manager(agent)
+    if agent.offload_tool_results and agent._result_store is None:
+        set_result_store(agent)
     if agent.learning is not None and agent.learning is not False:
         set_learning_machine(agent)
 

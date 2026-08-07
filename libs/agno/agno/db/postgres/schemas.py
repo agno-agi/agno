@@ -318,6 +318,33 @@ def _get_schedule_runs_table_schema(
     }
 
 
+TOOL_RESULTS_TABLE_SCHEMA = {
+    "result_id": {"type": String, "primary_key": True, "nullable": False},
+    "namespace": {"type": String, "nullable": False},
+    "path": {"type": String, "nullable": False},
+    "session_id": {"type": String, "nullable": False},
+    "run_id": {"type": String, "nullable": False},
+    "tool_call_id": {"type": String, "nullable": False},
+    "tool_name": {"type": String, "nullable": False},
+    "args_hash": {"type": String, "nullable": False},
+    "content_type": {"type": String, "nullable": False},
+    "size_bytes": {"type": BigInteger, "nullable": False},
+    "line_count": {"type": BigInteger, "nullable": False},
+    "preview": {"type": Text, "nullable": False},
+    "user_id": {"type": String, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False},
+    "expires_at": {"type": BigInteger, "nullable": True, "index": True},
+    "_unique_constraints": [
+        # Two result ids must never point at one payload.
+        {"name": "uq_tool_results_namespace_path", "columns": ["namespace", "path"]},
+    ],
+    "__composite_indexes__": [
+        # Session cleanup and the newest-first listing.
+        {"name": "session_created_at", "columns": ["session_id", "created_at"]},
+    ],
+}
+
+
 JOBS_TABLE_SCHEMA = {
     # id == run_id, so poll/resume endpoints key identically
     "id": {"type": String, "primary_key": True, "nullable": False},
@@ -479,6 +506,7 @@ def get_table_schema_definition(
         "learnings": LEARNINGS_TABLE_SCHEMA,
         "schedules": SCHEDULE_TABLE_SCHEMA,
         "jobs": JOBS_TABLE_SCHEMA,
+        "tool_results": TOOL_RESULTS_TABLE_SCHEMA,
         "approvals": APPROVAL_TABLE_SCHEMA,
         "auth_tokens": AUTH_TOKEN_TABLE_SCHEMA,
         "service_accounts": SERVICE_ACCOUNT_TABLE_SCHEMA,

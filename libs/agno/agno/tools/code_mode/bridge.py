@@ -21,7 +21,7 @@ import asyncio
 import base64
 import json
 from inspect import iscoroutinefunction
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Sequence, Tuple, Union
 
 from agno.run import RunContext
 from agno.tools.code_mode.kernel import KernelSession
@@ -279,7 +279,11 @@ class ToolBridge:
             key = (session.session_id, str(data.get("id")))
             task = asyncio.get_running_loop().create_task(self._serve(session, data))
             self._pending[key] = task
-            task.add_done_callback(lambda _t, _key=key: self._pending.pop(_key, None))
+
+            def _forget(_finished: "asyncio.Task[None]", _key: Tuple[str, str] = key) -> None:
+                self._pending.pop(_key, None)
+
+            task.add_done_callback(_forget)
 
     async def _serve(self, session: KernelSession, data: Dict[str, Any]) -> None:
         call_id = data.get("id")

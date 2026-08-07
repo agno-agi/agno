@@ -338,9 +338,7 @@ class SnapshotManager:
                 if result.status == "aborted":
                     # The kernel may still be restoring; claiming zero restored
                     # variables here would be a lie the model acts on.
-                    log_warning(
-                        f"CodeMode restore for session {session_id} timed out; emitting no restore notice"
-                    )
+                    log_warning(f"CodeMode restore for session {session_id} timed out; emitting no restore notice")
                     return None
                 marker_payload = parse_marker_line(result.stdout, RESTORE_MARKER)
                 if marker_payload is None:
