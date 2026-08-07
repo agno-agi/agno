@@ -1627,7 +1627,7 @@ def get_continue_run_messages(
     session: Optional[AgentSession] = None,
     add_history_to_context: Optional[bool] = None,
     run_context: Optional[RunContext] = None,
-    compaction_summary: Optional[str] = None,
+    summary_message: Optional[Message] = None,
 ) -> RunMessages:
     """This function returns a RunMessages object with the following attributes:
         - system_message: The system message for this run
@@ -1678,11 +1678,8 @@ def get_continue_run_messages(
         from copy import deepcopy
 
         # Inject compaction summary before history (replaces compacted messages)
-        # Use run's snapshot only — no fallback to session (run may predate compaction)
-        if compaction_summary:
-            from agno.compression.context import create_summary_message
-
-            run_messages.messages.append(create_summary_message(compaction_summary))
+        if summary_message is not None:
+            run_messages.messages.append(summary_message)
 
         # Only skip messages from history when system_message_role is NOT a standard conversation role.
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered

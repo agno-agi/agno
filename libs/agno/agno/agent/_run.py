@@ -3639,6 +3639,13 @@ def continue_run_dispatch(
 
     log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
+    # Create summary message for time-travel (point-in-time compaction snapshot)
+    summary_message = None
+    if run_response.compaction_summary:
+        from agno.compression.context import create_summary_message
+
+        summary_message = create_summary_message(run_response.compaction_summary)
+
     # Prepare run messages
     run_messages = get_continue_run_messages(
         agent,
@@ -3646,7 +3653,7 @@ def continue_run_dispatch(
         session=agent_session,
         add_history_to_context=agent.add_history_to_context,
         run_context=run_context,
-        compaction_summary=run_response.compaction_summary,
+        summary_message=summary_message,
     )
 
     # Reset the run state
@@ -4893,13 +4900,20 @@ async def _acontinue_run(
                     async_mode=True,
                 )
 
-                # 6. Prepare run messages
+                # 6. Create summary message for time-travel
+                summary_message = None
+                if run_response.compaction_summary:
+                    from agno.compression.context import create_summary_message
+
+                    summary_message = create_summary_message(run_response.compaction_summary)
+
+                # 7. Prepare run messages
                 run_messages = get_continue_run_messages(
                     agent,
                     input=input_messages,
                     session=agent_session,
                     add_history_to_context=agent.add_history_to_context,
-                    compaction_summary=run_response.compaction_summary,
+                    summary_message=summary_message,
                 )
 
                 # Reset the run state
@@ -4908,7 +4922,7 @@ async def _acontinue_run(
                 # Register run for cancellation tracking
                 await aregister_run(run_response.run_id)  # type: ignore
 
-                # 7. Handle the updated tools
+                # 8. Handle the updated tools
                 await ahandle_tool_call_updates(
                     agent, run_response=run_response, run_messages=run_messages, tools=_tools
                 )
@@ -5374,13 +5388,20 @@ async def _acontinue_run_stream(
                     async_mode=True,
                 )
 
-                # 6. Prepare run messages
+                # 6. Create summary message for time-travel
+                summary_message = None
+                if run_response.compaction_summary:
+                    from agno.compression.context import create_summary_message
+
+                    summary_message = create_summary_message(run_response.compaction_summary)
+
+                # 7. Prepare run messages
                 run_messages = get_continue_run_messages(
                     agent,
                     input=input_messages,
                     session=agent_session,
                     add_history_to_context=agent.add_history_to_context,
-                    compaction_summary=run_response.compaction_summary,
+                    summary_message=summary_message,
                 )
 
                 # Reset the run state
