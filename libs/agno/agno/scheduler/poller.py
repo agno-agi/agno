@@ -1,10 +1,12 @@
 """Schedule poller -- periodically claims and executes due schedules."""
 
 import asyncio
+import inspect
+import time
 from typing import Any, Dict, Optional, Set, Union
 from uuid import uuid4
 
-from agno.db.schemas.scheduler import Schedule
+from agno.db.schemas.scheduler import Schedule, is_studio_managed_schedule
 from agno.utils.log import log_error, log_info, log_warning
 
 # Default timeout (in seconds) when stopping the poller
@@ -34,9 +36,30 @@ class SchedulePoller:
         self.worker_id = worker_id or f"worker-{uuid4().hex[:8]}"
         self.max_concurrent = max_concurrent
         self.stop_timeout = stop_timeout
+        executor_lock_grace = getattr(executor, "lock_grace_seconds", 300)
+        self.lock_grace_seconds = (
+            executor_lock_grace
+            if isinstance(executor_lock_grace, int)
+            and not isinstance(executor_lock_grace, bool)
+            and executor_lock_grace > 0
+            else 300
+        )
         self._task: Optional[asyncio.Task] = None  # type: ignore[type-arg]
         self._running = False
         self._in_flight: Set[asyncio.Task] = set()  # type: ignore[type-arg]
+
+    async def _call_db(self, method_name: str, *args: Any, **kwargs: Any) -> Any:
+        """Call async adapters natively and keep sync DB work off the event loop."""
+        method = getattr(self.db, method_name, None)
+        if method is None:
+            raise NotImplementedError(f"Database does not support {method_name}")
+        if asyncio.iscoroutinefunction(method):
+            result = await method(*args, **kwargs)
+        else:
+            result = await asyncio.to_thread(method, *args, **kwargs)
+        if inspect.isawaitable(result):
+            return await result
+        return result
 
     async def start(self) -> None:
         """Start the polling loop as a background task."""
@@ -65,10 +88,8 @@ class SchedulePoller:
                     asyncio.gather(*self._in_flight, return_exceptions=True),
                     timeout=self.stop_timeout,
                 )
-            except asyncio.TimeoutError as e:
-                log_warning(
-                    f"Timed out waiting for {len(self._in_flight)} in-flight tasks during shutdown: {e}",
-                )
+            except asyncio.TimeoutError:
+                log_warning(f"Timed out waiting for {len(self._in_flight)} in-flight tasks during shutdown")
 
             self._in_flight.clear()
         # Close the executor's httpx client
@@ -86,8 +107,8 @@ class SchedulePoller:
                 await asyncio.sleep(self.poll_interval)
             except asyncio.CancelledError:
                 break
-            except Exception as exc:
-                log_error(f"Scheduler poll error: {exc}")
+            except Exception:
+                log_error("Scheduler poll error")
                 await asyncio.sleep(self.poll_interval)
 
     async def _poll_once(self) -> None:
@@ -100,10 +121,11 @@ class SchedulePoller:
                 break
 
             try:
-                if asyncio.iscoroutinefunction(getattr(self.db, "claim_due_schedule", None)):
-                    schedule = await self.db.claim_due_schedule(self.worker_id)
-                else:
-                    schedule = self.db.claim_due_schedule(self.worker_id)
+                schedule = await self._call_db(
+                    "claim_due_schedule",
+                    self.worker_id,
+                    lock_grace_seconds=self.lock_grace_seconds,
+                )
 
                 if schedule is None:
                     break
@@ -113,8 +135,8 @@ class SchedulePoller:
                 task = asyncio.create_task(self._execute_safe(sched))
                 self._in_flight.add(task)
                 task.add_done_callback(lambda t: self._in_flight.discard(t))
-            except Exception as exc:
-                log_error(f"Error claiming schedule: {exc}")
+            except Exception:
+                log_error("Error claiming schedule")
                 break
 
     async def _execute_safe(self, schedule: Union[Schedule, Dict[str, Any]]) -> None:
@@ -123,15 +145,15 @@ class SchedulePoller:
             await self.executor.execute(schedule, self.db)
         except Exception as exc:
             sched_id = schedule.id if isinstance(schedule, Schedule) else schedule.get("id")
-            log_error(f"Error executing schedule {sched_id}: {exc}")
+            if is_studio_managed_schedule(schedule):
+                log_error(f"Error executing Studio schedule {sched_id}")
+            else:
+                log_error(f"Error executing schedule {sched_id}: {exc}")
 
     async def trigger(self, schedule_id: str) -> None:
-        """Manually trigger a schedule by ID (immediate execution)."""
+        """Durably enqueue a manual execution by schedule ID."""
         try:
-            if asyncio.iscoroutinefunction(getattr(self.db, "get_schedule", None)):
-                schedule = await self.db.get_schedule(schedule_id)
-            else:
-                schedule = self.db.get_schedule(schedule_id)
+            schedule = await self._call_db("get_schedule", schedule_id)
 
             if schedule is None:
                 log_error(f"Schedule not found: {schedule_id}")
@@ -143,9 +165,21 @@ class SchedulePoller:
                 log_warning(f"Schedule {schedule_id} is disabled, skipping trigger")
                 return
 
-            log_info(f"Manually triggering schedule: {sched.name or schedule_id}")
-            task = asyncio.create_task(self.executor.execute(sched, self.db, release_schedule=False))
-            self._in_flight.add(task)
-            task.add_done_callback(self._in_flight.discard)
-        except Exception as exc:
-            log_error(f"Error triggering schedule {schedule_id}: {exc}")
+            scheduler_api_version = getattr(self.db, "scheduler_api_version", 1)
+            if (
+                isinstance(scheduler_api_version, int)
+                and not isinstance(scheduler_api_version, bool)
+                and scheduler_api_version >= 2
+            ):
+                queued = await self._call_db("trigger_schedule", schedule_id)
+            else:
+                # Legacy scheduler adapters predate the durable trigger queue.
+                # Moving the cursor due preserves their historical trigger
+                # behavior without requiring a v2-only method.
+                queued = await self._call_db("update_schedule", schedule_id, next_run_at=int(time.time()))
+            if queued is None:
+                log_error(f"Schedule not found: {schedule_id}")
+                return
+            log_info(f"Queued manual trigger for schedule: {sched.name or schedule_id}")
+        except Exception:
+            log_error(f"Error triggering schedule {schedule_id}")

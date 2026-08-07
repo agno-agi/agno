@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from agno.db.schemas.scheduler import STUDIO_SCHEDULE_MANAGED_BY
 from agno.scheduler.executor import ScheduleExecutor
 
 
@@ -62,6 +63,184 @@ class TestRetrySucceedsOnSecondAttempt:
         assert mock_db.update_schedule_run.call_count == 2
         # Should have released the schedule
         mock_db.release_schedule.assert_called_once()
+        mock_sleep.assert_awaited_once_with(0)
+
+
+class TestBackgroundSubmissionRetryBoundary:
+    @pytest.mark.asyncio
+    async def test_poll_timeout_does_not_submit_a_second_background_run(self, executor, mock_db):
+        schedule = {
+            "id": "sched-1",
+            "name": "background",
+            "cron_expr": "* * * * *",
+            "timezone": "UTC",
+            "endpoint": "/agents/a1/runs",
+            "method": "POST",
+            "payload": {"message": "work"},
+            "timeout_seconds": 0,
+            "max_retries": 2,
+            "retry_delay_seconds": 0,
+        }
+        response = MagicMock(status_code=200)
+        response.json.return_value = {"run_id": "run-1", "session_id": "session-1"}
+        client = AsyncMock()
+        client.request = AsyncMock(return_value=response)
+
+        with patch.object(executor, "_get_client", AsyncMock(return_value=client)):
+            result = await executor.execute(schedule, mock_db)
+
+        assert result["status"] == "failed"
+        assert result["run_id"] == "run-1"
+        assert "timed out after 0s" in result["error"]
+        client.request.assert_awaited_once()
+        mock_db.create_schedule_run.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_known_terminal_error_retries_and_can_succeed(self, executor, mock_db):
+        schedule = {
+            "id": "sched-1",
+            "name": "background",
+            "cron_expr": "* * * * *",
+            "timezone": "UTC",
+            "endpoint": "/agents/a1/runs",
+            "method": "POST",
+            "payload": {"message": "work"},
+            "timeout_seconds": 60,
+            "max_retries": 1,
+            "retry_delay_seconds": 0,
+        }
+        submitted = MagicMock(status_code=200)
+        submitted.json.return_value = {"run_id": "run-1", "session_id": "session-1"}
+        failed = MagicMock(status_code=200)
+        failed.json.return_value = {"status": "ERROR", "error": "model failed"}
+        resubmitted = MagicMock(status_code=200)
+        resubmitted.json.return_value = {"run_id": "run-2", "session_id": "session-2"}
+        completed = MagicMock(status_code=200)
+        completed.json.return_value = {"status": "COMPLETED"}
+        client = AsyncMock()
+        client.request = AsyncMock(side_effect=[submitted, failed, resubmitted, completed])
+
+        with patch.object(executor, "_get_client", AsyncMock(return_value=client)):
+            result = await executor.execute(schedule, mock_db)
+
+        assert result["status"] == "success"
+        assert result["run_id"] == "run-2"
+        assert client.request.await_count == 4
+        assert mock_db.create_schedule_run.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_terminal_cancelled_run_does_not_resubmit(self, executor, mock_db):
+        schedule = {
+            "id": "sched-1",
+            "name": "background",
+            "cron_expr": "* * * * *",
+            "timezone": "UTC",
+            "endpoint": "/agents/a1/runs",
+            "method": "POST",
+            "payload": {"message": "work"},
+            "timeout_seconds": 60,
+            "max_retries": 2,
+            "retry_delay_seconds": 0,
+        }
+        submitted = MagicMock(status_code=200)
+        submitted.json.return_value = {"run_id": "run-1", "session_id": "session-1"}
+        cancelled = MagicMock(status_code=200)
+        cancelled.json.return_value = {"status": "CANCELLED"}
+        client = AsyncMock()
+        client.request = AsyncMock(side_effect=[submitted, cancelled])
+
+        with patch.object(executor, "_get_client", AsyncMock(return_value=client)):
+            result = await executor.execute(schedule, mock_db)
+
+        assert result["status"] == "failed"
+        assert "cancelled" in result["error"].lower()
+        assert client.request.await_count == 2
+        mock_db.create_schedule_run.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_submission_rejection_remains_retryable(self, executor, mock_db):
+        schedule = {
+            "id": "sched-1",
+            "name": "background",
+            "cron_expr": "* * * * *",
+            "timezone": "UTC",
+            "endpoint": "/agents/a1/runs",
+            "method": "POST",
+            "payload": {"message": "work"},
+            "max_retries": 1,
+            "retry_delay_seconds": 0,
+        }
+        rejected = MagicMock(status_code=503, text="try later")
+        client = AsyncMock()
+        client.request = AsyncMock(return_value=rejected)
+
+        with patch.object(executor, "_get_client", AsyncMock(return_value=client)):
+            result = await executor.execute(schedule, mock_db)
+
+        assert result["status"] == "failed"
+        assert client.request.await_count == 2
+        assert mock_db.create_schedule_run.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_ambiguous_submission_transport_failure_is_not_retried_or_exposed(self, executor, mock_db, caplog):
+        secret = "postgresql://admin:private-password@internal.example/agno"
+        schedule = {
+            "id": "studio-sched-1",
+            "name": "background",
+            "cron_expr": "* * * * *",
+            "timezone": "UTC",
+            "endpoint": "/agents/a1/runs",
+            "method": "POST",
+            "payload": {"message": "work"},
+            "max_retries": 2,
+            "retry_delay_seconds": 0,
+            "managed_by": STUDIO_SCHEDULE_MANAGED_BY,
+            "owner_actor_id": "actor-jose",
+            "target_type": "agent",
+            "target_id": "a1",
+        }
+        client = AsyncMock()
+        client.request = AsyncMock(side_effect=RuntimeError(secret))
+
+        with patch.object(executor, "_get_client", AsyncMock(return_value=client)):
+            result = await executor.execute(schedule, mock_db)
+
+        assert result["status"] == "failed"
+        assert result["error"] == "Background run submission outcome is unknown"
+        client.request.assert_awaited_once()
+        mock_db.create_schedule_run.assert_called_once()
+        assert secret not in caplog.text
+        assert secret not in str(mock_db.update_schedule_run.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_post_accept_run_persistence_failure_never_resubmits(self, executor, mock_db):
+        schedule = {
+            "id": "sched-1",
+            "name": "background",
+            "cron_expr": "* * * * *",
+            "timezone": "UTC",
+            "endpoint": "/agents/a1/runs",
+            "method": "POST",
+            "payload": {"message": "work"},
+            "max_retries": 2,
+            "retry_delay_seconds": 0,
+        }
+        accepted = {
+            "status": "success",
+            "status_code": 200,
+            "error": None,
+            "run_id": "accepted-run",
+            "session_id": "session-1",
+        }
+        mock_db.update_schedule_run.side_effect = RuntimeError("database unavailable")
+
+        with patch.object(executor, "_call_endpoint", AsyncMock(return_value=accepted)) as call_endpoint:
+            result = await executor.execute(schedule, mock_db)
+
+        assert result["status"] == "success"
+        assert result["run_id"] == "accepted-run"
+        call_endpoint.assert_awaited_once()
+        mock_db.create_schedule_run.assert_called_once()
 
 
 class TestRetryAllFail:
@@ -165,6 +344,44 @@ class TestReleaseAlwaysCalled:
 
 
 class TestComputeNextRunFailure:
+    @pytest.mark.asyncio
+    async def test_manual_claim_preserves_cron_cursor_and_fences_release(self, executor):
+        db = MagicMock()
+        db.scheduler_api_version = 2
+        db.create_schedule_run = MagicMock()
+        db.update_schedule_run = MagicMock()
+        db.release_schedule = MagicMock()
+        db.update_schedule = MagicMock()
+        schedule = {
+            "id": "sched-1",
+            "name": "manual",
+            "cron_expr": "INVALID",
+            "timezone": "UTC",
+            "endpoint": "/config",
+            "method": "GET",
+            "payload": None,
+            "max_retries": 0,
+            "retry_delay_seconds": 0,
+            "manual_trigger_claimed": True,
+            "locked_by": "worker-1",
+            "locked_at": 123,
+        }
+
+        with patch.object(
+            executor,
+            "_call_endpoint",
+            AsyncMock(return_value={"status": "success", "status_code": 200, "error": None}),
+        ):
+            await executor.execute(schedule, db)
+
+        db.update_schedule.assert_not_called()
+        db.release_schedule.assert_called_once_with(
+            "sched-1",
+            next_run_at=None,
+            worker_id="worker-1",
+            locked_at=123,
+        )
+
     @pytest.mark.asyncio
     async def test_cron_failure_disables_schedule(self, executor, mock_db):
         """When compute_next_run raises, the schedule gets disabled."""

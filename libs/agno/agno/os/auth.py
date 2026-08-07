@@ -8,6 +8,7 @@ from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from starlette.concurrency import run_in_threadpool
 
+from agno.db.schemas.scheduler import STUDIO_SCHEDULE_ACTOR_HEADER, decode_studio_schedule_actor_id
 from agno.os.scopes import (
     get_accessible_resource_ids,
     get_default_scope_mappings,
@@ -41,6 +42,18 @@ INTERNAL_SERVICE_SCOPES: List[str] = [
     "schedules:write",
     "schedules:delete",
 ]
+
+
+def resolve_internal_scheduler_actor(request: Request) -> str:
+    """Resolve a server-delegated Studio actor carried by the internal token.
+
+    The header is ignored for every other credential path. The scheduler
+    executor derives it only from server-owned schedule provenance.
+    """
+    actor_id = request.headers.get(STUDIO_SCHEDULE_ACTOR_HEADER)
+    if actor_id is None:
+        return "__scheduler__"
+    return decode_studio_schedule_actor_id(actor_id)
 
 
 def get_auth_token_from_request(request: Request) -> Optional[str]:
@@ -230,6 +243,21 @@ def get_authentication_dependency(settings: AgnoAPISettings):
                 request, token, treat_unverifiable_as_anonymous=not instance_has_auth
             )
 
+        # The scheduler's internal token is meaningful even on an otherwise
+        # open AgentOS.  Open instances do not install AuthMiddleware, so this
+        # dependency is the only place that can attach the server-delegated
+        # actor to the run request.  Keep this ahead of the open/JWT fast paths
+        # and trust the actor header only after an exact internal-token match.
+        internal_token = getattr(request.app.state, "internal_service_token", None)
+        if token and internal_token and hmac.compare_digest(token, internal_token):
+            request.state.authenticated = True
+            try:
+                request.state.user_id = resolve_internal_scheduler_actor(request)
+            except ValueError:
+                raise HTTPException(status_code=401, detail="Invalid delegated scheduler actor")
+            request.state.scopes = list(INTERNAL_SERVICE_SCOPES)
+            return True
+
         # Also skip if JWT is configured via environment variables
         if _is_jwt_configured():
             return True
@@ -243,14 +271,6 @@ def get_authentication_dependency(settings: AgnoAPISettings):
             raise HTTPException(status_code=401, detail="Authorization header required")
 
         token = credentials.credentials
-
-        # Check internal service token (used by scheduler executor)
-        internal_token = getattr(request.app.state, "internal_service_token", None)
-        if internal_token and hmac.compare_digest(token, internal_token):
-            request.state.authenticated = True
-            request.state.user_id = "__scheduler__"
-            request.state.scopes = list(INTERNAL_SERVICE_SCOPES)
-            return True
 
         # Verify the token against security key
         if token != settings.os_security_key:

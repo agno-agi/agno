@@ -12,7 +12,11 @@ from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from agno.os.auth import INTERNAL_SERVICE_SCOPES, build_insufficient_permissions_detail
+from agno.os.auth import (
+    INTERNAL_SERVICE_SCOPES,
+    build_insufficient_permissions_detail,
+    resolve_internal_scheduler_actor,
+)
 from agno.os.scopes import (
     AgentOSScope,
     check_route_scopes,
@@ -984,7 +988,15 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if internal_token and hmac.compare_digest(token, internal_token):
             request.state.authenticated = True
             setattr(request.state, _AUTH_COMPLETE_ATTR, True)
-            request.state.user_id = INTERNAL_SCHEDULER_USER_ID
+            try:
+                request.state.user_id = resolve_internal_scheduler_actor(request)
+            except ValueError:
+                return self._create_error_response(
+                    401,
+                    "Invalid delegated scheduler actor",
+                    origin,
+                    cors_allowed_origins,
+                )
             request.state.session_id = None
             internal_scopes = list(INTERNAL_SERVICE_SCOPES)
             request.state.scopes = internal_scopes
