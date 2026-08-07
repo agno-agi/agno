@@ -1,87 +1,10 @@
-from typing import List, Optional
+from typing import List
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from agno.knowledge.content import Content
 from agno.knowledge.document import Document
-from agno.knowledge.knowledge import Knowledge
-from agno.vectordb.base import VectorDb
-
-
-class MockVectorDb(VectorDb):
-    def __init__(self, content_exists: bool = False):
-        self.content_exists = content_exists
-        self.inserted_documents: List[Document] = []
-
-    def create(self) -> None:
-        pass
-
-    async def async_create(self) -> None:
-        pass
-
-    def name_exists(self, name: str) -> bool:
-        return False
-
-    async def async_name_exists(self, name: str) -> bool:
-        return False
-
-    def id_exists(self, id: str) -> bool:
-        return False
-
-    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
-        return self.content_exists
-
-    def insert(self, content_hash: str, documents: List[Document], filters=None) -> None:
-        self.inserted_documents.extend(documents)
-
-    async def async_insert(self, content_hash: str, documents: List[Document], filters=None) -> None:
-        self.inserted_documents.extend(documents)
-
-    def upsert(self, content_hash: str, documents: List[Document], filters=None) -> None:
-        self.inserted_documents.extend(documents)
-
-    async def async_upsert(self, content_hash: str, documents: List[Document], filters=None) -> None:
-        self.inserted_documents.extend(documents)
-
-    def search(self, query: str, limit: int = 5, filters=None) -> List[Document]:
-        return []
-
-    async def async_search(self, query: str, limit: int = 5, filters=None) -> List[Document]:
-        return []
-
-    def drop(self) -> None:
-        pass
-
-    async def async_drop(self) -> None:
-        pass
-
-    def exists(self) -> bool:
-        return True
-
-    async def async_exists(self) -> bool:
-        return True
-
-    def delete(self) -> bool:
-        return True
-
-    def delete_by_id(self, id: str) -> bool:
-        return True
-
-    def delete_by_name(self, name: str) -> bool:
-        return True
-
-    def delete_by_metadata(self, metadata) -> bool:
-        return True
-
-    def update_metadata(self, content_id: str, metadata) -> None:
-        pass
-
-    def delete_by_content_id(self, content_id: str) -> bool:
-        return True
-
-    def get_supported_search_types(self) -> List[str]:
-        return ["vector"]
 
 
 class MockReader:
@@ -97,13 +20,17 @@ class MockReader:
         return [Document(name=topic, content=f"Content for {topic}")]
 
 
+def _as_lightrag(vector_db) -> None:
+    """Knowledge takes the LightRAG branch off the backend class name."""
+    vector_db.__class__ = type("LightRag", (type(vector_db),), {})
+
+
 @pytest.fixture
 def mock_reader():
     return MockReader()
 
 
-def test_load_from_topics_continues_after_skip(mock_reader):
-    knowledge = Knowledge(vector_db=MockVectorDb())
+def test_load_from_topics_continues_after_skip(knowledge, mock_reader):
 
     skip_pattern = [True, False, False]
     skip_index = [0]
@@ -128,8 +55,7 @@ def test_load_from_topics_continues_after_skip(mock_reader):
 
 
 @pytest.mark.asyncio
-async def test_aload_from_topics_continues_after_skip():
-    knowledge = Knowledge(vector_db=MockVectorDb())
+async def test_aload_from_topics_continues_after_skip(knowledge):
     processed_topics = []
 
     skip_pattern = [True, False, False]
@@ -161,8 +87,7 @@ async def test_aload_from_topics_continues_after_skip():
     assert "C" in processed_topics
 
 
-def test_load_from_topics_multiple_skips():
-    knowledge = Knowledge(vector_db=MockVectorDb())
+def test_load_from_topics_multiple_skips(knowledge):
     mock_reader = MockReader()
 
     skip_pattern = [True, True, False, True, False]
@@ -186,8 +111,7 @@ def test_load_from_topics_multiple_skips():
     assert mock_reader.processed_topics == ["C", "E"]
 
 
-def test_load_from_topics_all_skipped():
-    knowledge = Knowledge(vector_db=MockVectorDb())
+def test_load_from_topics_all_skipped(knowledge):
     mock_reader = MockReader()
 
     knowledge._should_skip = MagicMock(return_value=True)
@@ -202,9 +126,8 @@ def test_load_from_topics_all_skipped():
     assert knowledge._update_content.call_count == 3
 
 
-def test_load_from_topics_lightrag_continues():
-    knowledge = Knowledge(vector_db=MockVectorDb())
-    knowledge.vector_db.__class__.__name__ = "LightRag"
+def test_load_from_topics_lightrag_continues(knowledge):
+    _as_lightrag(knowledge.vector_db)
 
     processed_topics = []
     knowledge._process_lightrag_content = MagicMock(
@@ -224,9 +147,8 @@ def test_load_from_topics_lightrag_continues():
 
 
 @pytest.mark.asyncio
-async def test_aload_from_topics_lightrag_continues():
-    knowledge = Knowledge(vector_db=MockVectorDb())
-    knowledge.vector_db.__class__.__name__ = "LightRag"
+async def test_aload_from_topics_lightrag_continues(knowledge):
+    _as_lightrag(knowledge.vector_db)
 
     processed_topics = []
 

@@ -50,7 +50,19 @@ class LangChainVectorDb(VectorDb):
     def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         raise NotImplementedError
 
-    def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> None:
+    def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
+        """
+        Delete documents by content ID.
+        Not implemented for LangChain wrapper.
+
+        Args:
+            content_id (str): The content ID to delete
+            user_id (Optional[str]): Accepted for interface conformance. Ignored - the LangChain
+                vectorstore owns these chunks.
+
+        Raises:
+            NotImplementedError: Always, so a delete is never silently dropped.
+        """
         raise NotImplementedError
 
     def insert(
@@ -85,6 +97,7 @@ class LangChainVectorDb(VectorDb):
 
     async def async_upsert(
         self,
+        content_hash: str,
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
@@ -99,8 +112,21 @@ class LangChainVectorDb(VectorDb):
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         user_id: Optional[str] = None,
     ) -> List[Document]:
-        """Returns relevant documents matching the query"""
+        """
+        Returns relevant documents matching the query.
 
+        Args:
+            query (str): The query string to search for.
+            limit (int): The maximum number of documents to return. Defaults to 5.
+            filters (Optional[Dict[str, Any]]): Filters to apply to the search. Defaults to None.
+            user_id (Optional[str]): Accepted for interface conformance. Ignored - the LangChain
+                vectorstore owns these chunks.
+
+        Returns:
+            List[Document]: A list of relevant documents matching the query.
+        Raises:
+            ValueError: If the knowledge retriever is not of type BaseRetriever.
+        """
         if isinstance(filters, List):
             log_warning(
                 "Filter Expressions are not supported in LangChainDB. No filters will be applied. Use filters as a dictionary."

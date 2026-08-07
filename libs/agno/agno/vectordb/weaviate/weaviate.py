@@ -3,7 +3,7 @@ import json
 import uuid
 from hashlib import md5
 from os import getenv
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Union
 
 try:
     from warnings import filterwarnings
@@ -27,18 +27,16 @@ from agno.vectordb.base import VectorDb
 from agno.vectordb.search import SearchType
 from agno.vectordb.weaviate.index import Distance, VectorIndex
 
-# Per-user RAG isolation. A scalar user_id property scopes each row to its owner.
-# * Inserts with user_id stamp the property; user_id=None leaves it NULL (shared bucket).
-# * Searches with user_id=X match own OR NULL; user_id=None sees all (admin view).
-USER_ID_PROPERTY = "user_id"
-
 
 class Weaviate(VectorDb):
     """
     Weaviate class for managing vector operations with Weaviate vector database (v4 client).
     """
 
-    USER_ID_KEY = USER_ID_PROPERTY
+    # Per-user RAG isolation. A scalar user_id property scopes each row to its owner.
+    # * Inserts with user_id stamp the property; user_id=None leaves it NULL (shared bucket).
+    # * Searches with user_id=X match own OR NULL; user_id=None sees all (admin view).
+    USER_ID_KEY: str = "user_id"
 
     def __init__(
         self,
@@ -95,13 +93,6 @@ class Weaviate(VectorDb):
         self.search_type: SearchType = search_type
         self.reranker: Optional[Reranker] = reranker
         self.hybrid_search_alpha = hybrid_search_alpha
-
-    @staticmethod
-    def _get_doc_uuid(document: Document) -> Tuple[uuid.UUID, str]:
-        cleaned_content = document.content.replace("\x00", "\ufffd")
-        content_hash = md5(cleaned_content.encode()).hexdigest()
-        doc_uuid = uuid.UUID(hex=content_hash[:32])
-        return doc_uuid, cleaned_content
 
     def get_client(self) -> weaviate.WeaviateClient:
         """Initialize and return a Weaviate client instance.
@@ -1041,7 +1032,7 @@ class Weaviate(VectorDb):
         every scope clause, leaking that doc to every caller. Use None for unscoped access.
         """
         if user_id is not None and user_id.strip() == "":
-            raise ValueError("user_id must not be empty or whitespace-only; use None for unscoped access")
+            raise ValueError("user_id must not be empty or whitespace-only")
 
     def _scoped_record_id(self, base_id: str, content_hash: str, user_id: Optional[str]) -> str:
         """Fold the owner into the deterministic record id so two users inserting the

@@ -20,8 +20,13 @@ def knowledge():
     return Knowledge()
 
 
-def _capture_entries(knowledge):
-    """Collect the entries a loader writes, short-circuiting the read/embed work."""
+def _capture_entries(knowledge, skip_owners=None):
+    """Collect the entries a loader writes, short-circuiting the read/embed work.
+
+    ``skip_owners``, when given, collects the owner each ``_should_skip`` call is
+    scoped to. The guard has to look in the same bucket the write lands in, or a
+    scoped user's remote sync never sees its own rows and re-ingests every time.
+    """
     captured = []
 
     async def _acapture(entry):
@@ -30,9 +35,14 @@ def _capture_entries(knowledge):
     async def _anoop(entry):
         return None
 
+    def _should_skip(content_hash, skip_if_exists, user_id=None):
+        if skip_owners is not None:
+            skip_owners.append(user_id)
+        return True
+
     knowledge._insert_contents_db = lambda entry: captured.append(entry)
     knowledge._ainsert_contents_db = _acapture
-    knowledge._should_skip = lambda content_hash, skip_if_exists: True
+    knowledge._should_skip = _should_skip
     knowledge._update_content = lambda entry: None
     knowledge._aupdate_content = _anoop
     return captured
@@ -133,3 +143,58 @@ class TestGCSFolderOwner:
 
         assert len(captured) == 2
         assert [entry.user_id for entry in captured] == ["alice", "alice"]
+
+
+class TestSkipCheckIsOwnerScoped:
+    """The dedup guard has to probe the bucket the write lands in.
+
+    ``_should_skip`` defaults ``user_id`` to None, which addresses the shared
+    bucket, so a loader that leaves the argument off checks shared rows while
+    writing owned ones - the guard can then never fire and every sync re-ingests
+    a full extra copy.
+    """
+
+    def test_s3_skip_check_is_scoped_to_the_owner(self, knowledge):
+        skip_owners: list = []
+        _capture_entries(knowledge, skip_owners)
+
+        knowledge._load_from_s3(_s3_content(), upsert=False, skip_if_exists=True, config=None)
+
+        assert skip_owners == ["alice", "alice"]
+
+    @pytest.mark.asyncio
+    async def test_async_s3_skip_check_is_scoped_to_the_owner(self, knowledge):
+        skip_owners: list = []
+        _capture_entries(knowledge, skip_owners)
+
+        await knowledge._aload_from_s3(_s3_content(), upsert=False, skip_if_exists=True, config=None)
+
+        assert skip_owners == ["alice", "alice"]
+
+    def test_gcs_skip_check_is_scoped_to_the_owner(self, knowledge):
+        skip_owners: list = []
+        _capture_entries(knowledge, skip_owners)
+
+        knowledge._load_from_gcs(_gcs_content(), upsert=False, skip_if_exists=True, config=None)
+
+        assert skip_owners == ["alice", "alice"]
+
+    @pytest.mark.asyncio
+    async def test_async_gcs_skip_check_is_scoped_to_the_owner(self, knowledge):
+        skip_owners: list = []
+        _capture_entries(knowledge, skip_owners)
+
+        await knowledge._aload_from_gcs(_gcs_content(), upsert=False, skip_if_exists=True, config=None)
+
+        assert skip_owners == ["alice", "alice"]
+
+    def test_unowned_sync_still_checks_the_shared_bucket(self, knowledge):
+        """Isolation off / admin syncs keep the old behaviour."""
+        skip_owners: list = []
+        _capture_entries(knowledge, skip_owners)
+        content = _s3_content()
+        content.user_id = None
+
+        knowledge._load_from_s3(content, upsert=False, skip_if_exists=True, config=None)
+
+        assert skip_owners == [None, None]

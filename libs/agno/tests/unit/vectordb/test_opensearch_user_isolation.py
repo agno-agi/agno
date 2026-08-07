@@ -1,28 +1,7 @@
 """OpenSearch per-user RAG isolation contract.
 
-OpenSearch stores the owner in a top-level ``user_id`` keyword field. Chunks
-written without an owner have no field at all, which is the state every
-document written before this feature existed is already in.
-
-* Inserts with ``user_id`` stamp the field and fold the owner into the _id, so
-  two users ingesting the same bytes get two documents instead of overwriting
-  each other.
-* Inserts with ``user_id=None`` leave the field off - the SHARED bucket - and
-  keep the pre-isolation _id.
-* Scoped reads match ``term user_id`` OR ``must_not exists user_id``, so
-  admin-uploaded content stays discoverable by every caller.
-* Scoped deletes match ``term user_id`` alone - a caller can view shared content
-  but cannot delete it, so clearing the shared bucket takes an unscoped call.
-* Unscoped (admin) reads apply no scope and see everything.
-* An empty or whitespace-only owner is refused: the shared bucket is the field
-  being absent, so "" is a third bucket that no other caller can read, no scoped
-  delete can reach, and ``content_hash_exists(user_id=None)`` cannot see.
-
-The query bodies asserted here are the ones a real OpenSearch 2.19 cluster was
-driven with, so they are the contract rather than a call-shape echo. Bucket
-semantics are exercised through ``FakeIndex``, which evaluates the handful of
-clause types the scope filter emits (term, exists, bool.should/must_not/filter)
-the way the server does.
+Owner lives in a top-level ``user_id`` keyword field; the field being absent is the
+shared bucket. ``FakeIndex`` evaluates the clause types the scope filter emits.
 """
 
 from typing import Any, Dict, List
@@ -31,11 +10,11 @@ from unittest.mock import Mock, patch
 import pytest
 
 from agno.knowledge.document import Document
-from agno.knowledge.embedder.base import Embedder
 from agno.vectordb.opensearch import OpenSearch
 from agno.vectordb.opensearch.index import Engine
-from agno.vectordb.opensearch.opensearch import USER_ID_FIELD
 from agno.vectordb.search import SearchType
+
+from .conftest import DeterministicEmbedder
 
 TEST_INDEX_NAME = "isolation_test"
 TEST_DIMENSION = 8
@@ -46,12 +25,7 @@ SHARED = "The office is closed on January 1."
 
 
 class FakeIndex:
-    """An OpenSearch stand-in that really evaluates the clauses the scope filter emits.
-
-    Only the clause types this backend builds are supported; anything else is a
-    match-everything, which keeps the scoring clauses (knn, multi_match) out of
-    the way so a test failure can only mean the scope is wrong.
-    """
+    """An OpenSearch stand-in that really evaluates the clauses the scope filter emits."""
 
     def __init__(self):
         self.docs: Dict[str, Dict[str, Any]] = {}
@@ -159,21 +133,17 @@ class _AsyncFakeIndices:
 
 
 @pytest.fixture
-def mock_embedder():
-    embedder = Mock(spec=Embedder)
-    embedder.get_embedding_and_usage.return_value = ([0.1] * TEST_DIMENSION, {"tokens": 10})
-    embedder.enable_batch = False
-    return embedder
-
-
-@pytest.fixture
-def opensearch_db(mock_embedder):
+def opensearch_db():
     """An OpenSearch wired to FakeIndex, so reads and deletes really run the scope clause."""
     with (
         patch("agno.vectordb.opensearch.opensearch.OpenSearchClient"),
         patch("agno.vectordb.opensearch.opensearch.AsyncOpenSearchClient"),
     ):
-        db = OpenSearch(index_name=TEST_INDEX_NAME, dimension=TEST_DIMENSION, embedder=mock_embedder)
+        db = OpenSearch(
+            index_name=TEST_INDEX_NAME,
+            dimension=TEST_DIMENSION,
+            embedder=DeterministicEmbedder(dimensions=TEST_DIMENSION),
+        )
     db._client = FakeIndex()
     db._async_client = AsyncFakeIndex(db._client)
     return db
@@ -193,13 +163,8 @@ def texts(documents: List[Document]) -> List[str]:
     return sorted(d.content for d in documents)
 
 
-class TestOwnerIsWritten:
+class TestWriteStampsOwner:
     """The owner is a top-level keyword field, not a meta_data entry."""
-
-    def test_user_id_key_constant(self):
-        # Storage compatibility marker: renaming this makes every persisted
-        # owner unreadable by the scope filter.
-        assert USER_ID_FIELD == "user_id"
 
     def test_mapping_declares_user_id_as_keyword(self, opensearch_db):
         # keyword, not text: a text field would match the analyzed tokens of the
@@ -237,11 +202,8 @@ class TestOwnerIsWritten:
         assert len(opensearch_db.client.docs) == 2
         assert sorted(s["user_id"] for s in opensearch_db.client.docs.values()) == ["alice", "bob"]
 
-    def test_underscored_document_id_cannot_collide_with_a_different_split(self, opensearch_db):
-        """The base id is collapsed with the content_hash into a fixed-length digest
-        before the owner is folded in. Without that collapse the '_' boundary moves
-        and ('doc', '1', 'a_lice') and ('doc', '1_a', 'lice') resolve to one _id,
-        letting one owner overwrite the other's document."""
+    def test_underscored_id_does_not_collide(self, opensearch_db):
+        """The base id is collapsed with the content_hash into a fixed-length digest before the owner is folded in."""
         left = doc("doc", "Any content")
         left.meta_data["content_hash"] = "1"
         right = doc("doc", "Any content")
@@ -267,14 +229,7 @@ class TestOwnerIsWritten:
 
 
 class TestOwnerValidation:
-    """An empty or whitespace-only owner is refused at every entry point that takes one.
-
-    The shared bucket is the absence of the field, so "" is a third bucket rather
-    than the shared one: a real 3.8.0 cluster indexes it as a keyword term, which
-    ``must_not exists`` steps over and no named owner's ``term`` clause matches. Its
-    chunks are then invisible to every other caller, invisible to
-    ``content_hash_exists(user_id=None)``, and untouched by every scoped delete.
-    """
+    """An empty or whitespace-only owner is refused at every entry point that takes one."""
 
     @pytest.mark.parametrize("bad", ["", "   \t  "])
     def test_rejects_unsafe_user_id(self, opensearch_db, bad):
@@ -307,13 +262,14 @@ class TestOwnerValidation:
         assert len(opensearch_db.client.docs) == 3, "the guard must fire before anything is written or deleted"
 
     def test_search_rejects_before_the_search_type_dispatch(self, opensearch_db):
-        """An unrecognised search type returns [] without reaching any leaf, so the
-        dispatcher has to check the owner itself rather than lean on the leaf it picks."""
+        """An unrecognised search type returns [] without reaching any leaf, so the dispatcher has to check the
+        owner itself rather than lean on the leaf it picks."""
         opensearch_db.search_type = "not_a_search_type"
 
         with pytest.raises(ValueError, match="user_id must not be empty or whitespace-only"):
             opensearch_db.search("salary", limit=10, user_id="")
 
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "call",
         [
@@ -324,16 +280,16 @@ class TestOwnerValidation:
         ids=["async_insert", "async_upsert", "async_search"],
     )
     async def test_every_async_entry_point_rejects(self, opensearch_db, call):
-        """async_search delegates to search on a worker thread, so the ValueError has
-        to survive the thread hop and the await."""
+        """async_search delegates to search on a worker thread, so the ValueError has to survive the thread hop and
+        the await."""
         seed(opensearch_db)
 
         with pytest.raises(ValueError, match="user_id must not be empty or whitespace-only"):
             await call(opensearch_db)
 
     def test_none_is_not_rejected_anywhere(self, opensearch_db):
-        """None is the shared bucket on a write and the admin view on a read - it is
-        the one value the guard must let through, not the one it exists to catch."""
+        """None is the shared bucket on a write and the admin view on a read - it is the one value the guard must
+        let through, not the one it exists to catch."""
         opensearch_db.insert("h_shared", [doc("shared", SHARED)], user_id=None)
         opensearch_db.upsert("h_shared", [doc("shared", SHARED)], user_id=None)
 
@@ -352,17 +308,8 @@ class TestOwnerValidation:
         assert await opensearch_db.async_search("office", limit=10, user_id=None) != []
 
     @pytest.mark.parametrize("owner", ["a*", "?", "{alice}", "a|b", "a\x1fb", "alice ", "ALICE", "a b"])
-    def test_owners_that_only_a_tag_index_would_have_to_refuse_are_kept(self, opensearch_db, owner):
-        """The guard stops at ""/whitespace on purpose.
-
-        The sibling TAG-indexed backends also refuse wildcards, braces, unions, a
-        record separator and reserved sentinels, because their owner is one token in
-        a packed tag list read back through a query parser. Here the owner is its own
-        keyword field matched by a term clause, there is no sentinel - the shared
-        bucket is the field being absent - and the owner never reaches Lucene's query
-        syntax, so a 3.8.0 cluster round-trips every one of these as an ordinary
-        exact-match owner. Refusing them would be an invented restriction.
-        """
+    def test_exotic_owner_ids_are_accepted(self, opensearch_db, owner):
+        """The guard stops at ""/whitespace on purpose."""
         opensearch_db.insert("h_x", [doc("x", "Only this owner's chunk.")], user_id=owner)
 
         (source,) = opensearch_db.client.docs.values()
@@ -371,7 +318,7 @@ class TestOwnerValidation:
         assert opensearch_db.search("chunk", limit=10, user_id="alice") == []
 
 
-class TestScopedReads:
+class TestSearchScope:
     """search(user_id=X) returns X's chunks plus the shared bucket, never another owner's."""
 
     @pytest.mark.parametrize("search_type", [SearchType.vector, SearchType.keyword, SearchType.hybrid])
@@ -417,7 +364,7 @@ class TestScopedReads:
         assert texts(found) == [ALICE]
 
 
-class TestScopedReadsAsync:
+class TestAsyncIsolation:
     """async_search must be symmetric with search - it delegates to it on a worker thread."""
 
     @pytest.mark.asyncio
@@ -447,7 +394,7 @@ class TestScopedReadsAsync:
         assert sorted(s["user_id"] for s in opensearch_db.client.docs.values()) == ["alice", "bob"]
 
 
-class TestQueryShape:
+class TestSearchQueryShape:
     """The clauses sent to OpenSearch. These bodies were driven against a real 2.19 cluster."""
 
     SCOPE = {
@@ -475,13 +422,13 @@ class TestQueryShape:
         assert opensearch_db._owner_filter("alice") == self.OWNER
 
     def test_shared_bucket_clause_is_the_absence_of_the_field(self, opensearch_db):
-        """The shared bucket is not a sentinel value, so it also covers every
-        document written before this field existed."""
+        """The shared bucket is not a sentinel value, so it also covers every document written before this field
+        existed."""
         assert opensearch_db._shared_bucket_filter() == self.SHARED_BUCKET
 
     def test_vector_query_pre_filters_inside_the_knn_clause(self, opensearch_db):
-        """Post-filtering the k nearest neighbours returns nothing when they all
-        belong to another owner, so a scoped knn query has to filter first."""
+        """Post-filtering the k nearest neighbours returns nothing when they all belong to another owner, so a
+        scoped knn query has to filter first."""
         body = opensearch_db._build_vector_query("q", 5, None, "alice")
 
         assert body["query"]["knn"]["embedding"]["filter"] == {"bool": {"filter": [self.SCOPE]}}
@@ -489,12 +436,13 @@ class TestQueryShape:
 
     def test_vector_query_unscoped_shape_is_unchanged(self, opensearch_db):
         """Callers who never pass user_id must get the exact query they got before."""
+        vector = opensearch_db.embedder.get_embedding("q")
         assert opensearch_db._build_vector_query("q", 5, None, None) == {
             "size": 5,
-            "query": {"knn": {"embedding": {"vector": [0.1] * TEST_DIMENSION, "k": 5}}},
+            "query": {"knn": {"embedding": {"vector": vector, "k": 5}}},
         }
 
-    def test_nmslib_falls_back_to_post_filtering(self, mock_embedder):
+    def test_nmslib_falls_back_to_post_filtering(self):
         """NMSLIB answers a filtered knn query with "does not support filters"."""
         with (
             patch("agno.vectordb.opensearch.opensearch.OpenSearchClient"),
@@ -503,7 +451,7 @@ class TestQueryShape:
             db = OpenSearch(
                 index_name=TEST_INDEX_NAME,
                 dimension=TEST_DIMENSION,
-                embedder=mock_embedder,
+                embedder=DeterministicEmbedder(dimensions=TEST_DIMENSION),
                 engine=Engine.nmslib,
             )
 
@@ -527,7 +475,7 @@ class TestQueryShape:
         assert knn["filter"] == {"bool": {"filter": [self.SCOPE]}}
 
 
-class TestScopedDelete:
+class TestDeleteScope:
     def test_owner_delete_leaves_other_owners_alone(self, opensearch_db):
         seed(opensearch_db)
 
@@ -536,8 +484,8 @@ class TestScopedDelete:
         assert texts(opensearch_db.search("salary", limit=10, user_id=None)) == sorted([BOB, SHARED])
 
     def test_owner_delete_leaves_the_shared_bucket_alone(self, opensearch_db):
-        """A caller can view shared content but cannot delete it, so the shared
-        chunks survive a scoped delete and stay retrievable."""
+        """A caller can view shared content but cannot delete it, so the shared chunks survive a scoped delete and
+        stay retrievable."""
         opensearch_db.insert("h_shared", [doc("shared", SHARED)])
 
         opensearch_db.delete_by_content_id("cid", user_id="alice")
@@ -561,10 +509,7 @@ class TestScopedDelete:
 
 
 class TestContentHashExistsScope:
-    """The dedup existence gate ``Knowledge`` consults for ``skip_if_exists``.
-    Scoped it reads the caller's chunks plus the shared bucket, so an upload
-    another owner made is not judged a duplicate. ``None`` reads the shared
-    bucket alone - the field being absent - rather than every owner."""
+    """The dedup existence gate ``Knowledge`` consults for ``skip_if_exists``."""
 
     def test_owner_sees_his_own_hash(self, opensearch_db):
         seed(opensearch_db)
@@ -577,10 +522,6 @@ class TestContentHashExistsScope:
         assert opensearch_db.content_hash_exists("h_bob", user_id="alice") is False
 
     def test_a_privately_owned_hash_is_not_in_the_shared_bucket(self, opensearch_db):
-        """The regression. ``None`` applied no scope at all, so a hash alice
-        privately held read as a duplicate for the shared bucket - and a later
-        shared publish under ``skip_if_exists`` was swallowed, leaving the shared
-        bucket without the content it was asked to hold."""
         opensearch_db.insert("h_alice", [doc("alice", ALICE)], user_id="alice")
 
         assert opensearch_db.content_hash_exists("h_alice", user_id=None) is False
@@ -596,12 +537,12 @@ class TestContentHashExistsScope:
         opensearch_db.content_hash_exists("h_alice", user_id=None)
 
         assert opensearch_db.client.search_bodies[-1]["query"] == {
-            "bool": {"filter": [{"term": {"content_hash": "h_alice"}}, TestQueryShape.SHARED_BUCKET]}
+            "bool": {"filter": [{"term": {"content_hash": "h_alice"}}, TestSearchQueryShape.SHARED_BUCKET]}
         }
 
     def test_shared_publish_survives_a_private_holder(self, opensearch_db):
-        """The user-visible half: the shared publish is not skipped, so alice's
-        chunk and the shared one both exist and bob can retrieve the shared one."""
+        """The user-visible half: the shared publish is not skipped, so alice's chunk and the shared one both exist
+        and bob can retrieve the shared one."""
         opensearch_db.insert("h_alice", [doc("alice", ALICE)], user_id="alice")
 
         if not opensearch_db.content_hash_exists("h_alice", user_id=None):
@@ -621,8 +562,8 @@ class TestLegacyIndexCompatibility:
         assert texts(found) == ["Legacy handbook."]
 
     def test_documents_without_the_field_are_not_deletable_by_an_owner(self, opensearch_db):
-        """Every document written before this field existed reads as shared, so an
-        owner-scoped delete must not be able to reach any of them."""
+        """Every document written before this field existed reads as shared, so an owner-scoped delete must not be
+        able to reach any of them."""
         opensearch_db.client.docs["old"] = {"content": "Legacy handbook.", "meta_data": {}, "content_id": "cid"}
 
         opensearch_db.delete_by_content_id("cid", user_id="alice")
@@ -630,9 +571,7 @@ class TestLegacyIndexCompatibility:
         assert list(opensearch_db.client.docs) == ["old"]
 
     def test_the_index_mapping_is_never_written_to(self, opensearch_db):
-        """Schema changes ship as an explicit migration, so nothing here alters a
-        mapping the user already has. An index predating this field keeps its own
-        shape until the operator migrates it."""
+        """Schema changes ship as an explicit migration, so nothing here alters a mapping the user already has."""
         opensearch_db.insert("h_alice", [doc("alice", ALICE)], user_id="alice")
         opensearch_db.insert("h_bob", [doc("bob", BOB)], user_id="bob")
 

@@ -1,14 +1,7 @@
 """Cassandra per-user RAG isolation contract.
 
-The adapter stamps the owner into ``metadata['user_id']``: an explicit id for
-scoped chunks, or the ``__shared__`` sentinel when ``user_id`` is None/omitted.
-A scoped search unions the caller's own rows with the shared rows and never
-reaches another user's bucket.
-
-No Cassandra server is required: the cassio table class is patched with an
-in-memory fake and the session is an in-memory fake sharing the same row
-store, so the adapter's real owner-stamping, id-folding, own-OR-shared search
-and scoped-delete logic runs against captured calls.
+Owner lives in ``metadata['user_id']``; the ``__shared__`` sentinel is the shared bucket.
+The cassio table and the session are in-memory fakes, so no server is contacted.
 """
 
 import hashlib
@@ -19,41 +12,13 @@ from unittest.mock import patch
 import pytest
 
 from agno.knowledge.document import Document
-from agno.utils.string import hash_string_sha256
 from agno.vectordb.cassandra import Cassandra
 from agno.vectordb.cassandra.cassandra import SHARED_USER_ID_VALUE, USER_ID_METADATA_KEY
 
+from .conftest import DeterministicEmbedder
+
 # The adapter hardcodes a 1024-dim vector column; keep the fake embedder in sync.
 DIM = 1024
-
-
-class _DeterministicEmbedder:
-    """A tiny embedder that needs no network or API key."""
-
-    dimensions = DIM
-    enable_batch = False
-
-    def get_embedding(self, text):
-        vector = [0.0] * self.dimensions
-        vector[abs(hash(text)) % self.dimensions] = 1.0
-        return vector
-
-    def get_embedding_and_usage(self, text):
-        return self.get_embedding(text), {"total_tokens": 1}
-
-    async def async_get_embedding(self, text):
-        return self.get_embedding(text)
-
-    async def async_get_embedding_and_usage(self, text):
-        return self.get_embedding(text), {"total_tokens": 1}
-
-    def embed(self, document, **kwargs):
-        document.embedding = self.get_embedding(document.content)
-        return document
-
-    async def async_embed(self, document, **kwargs):
-        document.embedding = self.get_embedding(document.content)
-        return document
 
 
 class _Future:
@@ -118,9 +83,7 @@ class _FakeSession:
 
 
 class _FakeTable:
-    """An in-memory stand-in for AgnoMetadataVectorCassandraTable. It records
-    the exact ``row_id`` / ``metadata`` the adapter stamps and simulates
-    cassio's equality-AND metadata filter over the stored rows."""
+    """An in-memory stand-in for AgnoMetadataVectorCassandraTable."""
 
     def __init__(self, session=None, **kwargs):
         self._session = session
@@ -175,7 +138,7 @@ def cassandra_db():
         db = Cassandra(
             table_name="vectors",
             keyspace="iso_test",
-            embedder=_DeterministicEmbedder(),
+            embedder=DeterministicEmbedder(dimensions=DIM),
             session=session,
         )
         assert isinstance(db.table, _FakeTable)
@@ -213,13 +176,8 @@ def _owners_for_content_id(db, content_id: str) -> List[str]:
     )
 
 
-class TestStorageScheme:
-    """Pin the storage contract. Changing these orphans previously written
-    rows — the equality filter would stop matching them."""
-
-    def test_constants(self, cassandra_db):
-        assert USER_ID_METADATA_KEY == "user_id"
-        assert SHARED_USER_ID_VALUE == "__shared__"
+class TestWriteStampsOwner:
+    """Pin the storage contract."""
 
     def test_explicit_user_id_stamped_in_metadata(self, cassandra_db):
         cassandra_db.insert(content_hash="h1", documents=_alice_docs(), user_id="alice")
@@ -227,8 +185,7 @@ class TestStorageScheme:
         assert _owners(cassandra_db) == ["alice"]
 
     def test_none_user_id_stored_as_shared_sentinel(self, cassandra_db):
-        """Shared chunks store the explicit sentinel so the shared-bucket
-        equality query can find them."""
+        """Shared chunks store the explicit sentinel so the shared-bucket equality query can find them."""
         cassandra_db.insert(content_hash="h1", documents=_shared_docs(), user_id=None)
         assert cassandra_db.table.put_calls[0]["metadata"][USER_ID_METADATA_KEY] == SHARED_USER_ID_VALUE
         assert _owners(cassandra_db) == [SHARED_USER_ID_VALUE]
@@ -245,9 +202,9 @@ class TestStorageScheme:
         assert cassandra_db.table.put_calls[0]["metadata"][USER_ID_METADATA_KEY] == "alice"
 
 
-class TestRowIdFolding:
-    """The owner is folded into the primary key so two users' identical content
-    gets distinct rows; a shared row keeps the base id."""
+class TestOwnerFoldedId:
+    """The owner is folded into the primary key so two users' identical content gets distinct rows; a shared row
+    keeps the unfolded id."""
 
     def test_two_owners_identical_content_get_distinct_row_ids(self, cassandra_db):
         cassandra_db.insert(content_hash="h", documents=[_doc("a", "same text")], user_id="alice")
@@ -256,36 +213,33 @@ class TestRowIdFolding:
         bob_id = cassandra_db.table.put_calls[1]["row_id"]
         assert alice_id != bob_id
         base_id = hashlib.md5(b"same text").hexdigest()
-        assert alice_id == hash_string_sha256(f"{hash_string_sha256(base_id)}_alice")
-        assert bob_id == hash_string_sha256(f"{hash_string_sha256(base_id)}_bob")
+        row_id = hashlib.md5(f"{base_id}_h".encode()).hexdigest()
+        assert alice_id == hashlib.md5(f"{row_id}_alice".encode()).hexdigest()
+        assert bob_id == hashlib.md5(f"{row_id}_bob".encode()).hexdigest()
 
-    def test_shared_row_keeps_base_id(self, cassandra_db):
+    def test_shared_row_keeps_unfolded_base_id(self, cassandra_db):
         cassandra_db.insert(content_hash="h", documents=[_doc("s", "same text")], user_id=None)
         base_id = hashlib.md5(b"same text").hexdigest()
-        assert cassandra_db.table.put_calls[0]["row_id"] == base_id
+        assert cassandra_db.table.put_calls[0]["row_id"] == hashlib.md5(f"{base_id}_h".encode()).hexdigest()
 
     def test_no_id_document_falls_back_to_content_hash_key(self, cassandra_db):
-        """A document with no id must still get a deterministic key, never an
-        empty/None row_id."""
+        """A document with no id must still get a deterministic key, never an empty/None row_id."""
         doc = Document(name="noid", content="unindexed body")
         assert doc.id is None
         cassandra_db.insert(content_hash="h", documents=[doc], user_id=None)
-        assert cassandra_db.table.put_calls[0]["row_id"] == hashlib.md5(b"unindexed body").hexdigest()
+        base_id = hashlib.md5(b"unindexed body").hexdigest()
+        assert cassandra_db.table.put_calls[0]["row_id"] == hashlib.md5(f"{base_id}_h".encode()).hexdigest()
 
     def test_no_id_document_scoped_key_folds_owner(self, cassandra_db):
         doc = Document(name="noid", content="unindexed body")
         cassandra_db.insert(content_hash="h", documents=[doc], user_id="alice")
         base_id = hashlib.md5(b"unindexed body").hexdigest()
-        row_id = cassandra_db.table.put_calls[0]["row_id"]
-        assert row_id == hash_string_sha256(f"{hash_string_sha256(base_id)}_alice")
-        assert row_id
+        row_id = hashlib.md5(f"{base_id}_h".encode()).hexdigest()
+        assert cassandra_db.table.put_calls[0]["row_id"] == hashlib.md5(f"{row_id}_alice".encode()).hexdigest()
 
     def test_owner_boundary_cannot_be_shifted(self, cassandra_db):
-        """The base id is caller-controlled, so it is collapsed to a fixed-length
-        digest before the owner is folded in. Without that, ("doc_1", "alice") and
-        ("doc", "1_alice") both join to "doc_1_alice" and land on ONE row_id — and
-        every agno chunk id ends in "_<n>", so a caller passing user_id="1_alice"
-        overwrites alice's chunk 1."""
+        """The base id is caller-controlled, so it is collapsed to a fixed-length digest before the owner is folded
+        in."""
         # The owner is folded into ``doc.id``, so the crafted split has to be on the
         # document id -- varying content_id here would leave the base id untouched.
         cassandra_db.insert(content_hash="h", documents=[_doc("alice-doc", "body", doc_id="doc_1")], user_id="alice")
@@ -295,9 +249,9 @@ class TestRowIdFolding:
         assert len(cassandra_db.session.rows) == 2
 
 
-class TestSearchScopeFilter:
-    """A scoped search issues TWO equality-filtered searches (own + shared) and
-    merges; admin (user_id=None) issues ONE unfiltered search."""
+class TestSearchQueryShape:
+    """A scoped search issues TWO equality-filtered searches (own + shared) and merges; admin (user_id=None) issues
+    ONE unfiltered search."""
 
     def test_scoped_search_issues_own_and_shared_filters(self, cassandra_db):
         cassandra_db.search("q", limit=5, user_id="alice")
@@ -315,124 +269,116 @@ class TestSearchScopeFilter:
         assert cassandra_db.table.search_calls[0]["metadata"] is None
 
 
-class TestSearchIsolationContract:
-    """End-to-end: alice's search returns her chunks plus shared chunks, but
-    never bob's."""
+class TestSearchScope:
+    """End-to-end: alice's search returns her chunks plus shared chunks, but never bob's."""
 
     @pytest.fixture
-    def populated_db(self, cassandra_db):
+    def search_corpus(self, cassandra_db):
         cassandra_db.insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
         cassandra_db.insert(content_hash="hb", documents=_bob_docs(), user_id="bob")
         cassandra_db.insert(content_hash="hs", documents=_shared_docs(), user_id=None)
         return cassandra_db
 
-    def test_alice_sees_her_own_chunk(self, populated_db):
-        names = {d.name for d in populated_db.search("salary", limit=10, user_id="alice")}
+    def test_alice_sees_her_own_chunk(self, search_corpus):
+        names = {d.name for d in search_corpus.search("salary", limit=10, user_id="alice")}
         assert "alice-salary" in names
 
-    def test_alice_sees_shared_chunk(self, populated_db):
-        names = {d.name for d in populated_db.search("holidays", limit=10, user_id="alice")}
+    def test_alice_sees_shared_chunk(self, search_corpus):
+        names = {d.name for d in search_corpus.search("holidays", limit=10, user_id="alice")}
         assert "company-holidays" in names
 
-    def test_alice_never_sees_bobs_chunk(self, populated_db):
-        results = populated_db.search("salary", limit=10, user_id="alice")
+    def test_alice_never_sees_bobs_chunk(self, search_corpus):
+        results = search_corpus.search("salary", limit=10, user_id="alice")
         names = {d.name for d in results}
         assert "bob-salary" not in names
         for d in results:
             assert "Bob salary" not in d.content
 
-    def test_bob_never_sees_alices_chunk(self, populated_db):
-        names = {d.name for d in populated_db.search("salary", limit=10, user_id="bob")}
+    def test_bob_never_sees_alices_chunk(self, search_corpus):
+        names = {d.name for d in search_corpus.search("salary", limit=10, user_id="bob")}
         assert "alice-salary" not in names
 
-    def test_admin_sees_everything(self, populated_db):
-        names = {d.name for d in populated_db.search("salary", limit=10, user_id=None)}
+    def test_admin_sees_everything(self, search_corpus):
+        names = {d.name for d in search_corpus.search("salary", limit=10, user_id=None)}
         assert {"alice-salary", "bob-salary", "company-holidays"} <= names
 
 
-class TestDeleteByContentIdIsolation:
-    """``delete_by_content_id(content_id, user_id=...)`` must scope to the
-    caller's chunks — otherwise a caller could guess someone else's content_id
-    and wipe their (or the shared) chunks."""
+class TestDeleteScope:
+    """``delete_by_content_id(content_id, user_id=...)`` must scope to the caller's chunks — otherwise a caller
+    could guess someone else's content_id and wipe their (or the shared) chunks."""
 
     @pytest.fixture
-    def populated_db(self, cassandra_db):
+    def content_id_corpus(self, cassandra_db):
         cassandra_db.insert(content_hash="ha", documents=[_doc("alice-doc", "Alice secret", "doc-1")], user_id="alice")
         cassandra_db.insert(content_hash="hb", documents=[_doc("bob-doc", "Bob secret", "doc-1")], user_id="bob")
         cassandra_db.insert(content_hash="hs", documents=[_doc("shared-doc", "Shared note", "doc-1")], user_id=None)
         return cassandra_db
 
-    def test_scoped_delete_only_removes_callers_chunks(self, populated_db):
-        assert populated_db.delete_by_content_id("doc-1", user_id="bob") is True
-        assert _owners_for_content_id(populated_db, "doc-1") == [SHARED_USER_ID_VALUE, "alice"]
+    def test_scoped_delete_only_removes_callers_chunks(self, content_id_corpus):
+        assert content_id_corpus.delete_by_content_id("doc-1", user_id="bob") is True
+        assert _owners_for_content_id(content_id_corpus, "doc-1") == [SHARED_USER_ID_VALUE, "alice"]
 
-    def test_alice_can_delete_her_own(self, populated_db):
-        populated_db.delete_by_content_id("doc-1", user_id="alice")
-        owners = _owners_for_content_id(populated_db, "doc-1")
+    def test_alice_can_delete_her_own(self, content_id_corpus):
+        content_id_corpus.delete_by_content_id("doc-1", user_id="alice")
+        owners = _owners_for_content_id(content_id_corpus, "doc-1")
         assert SHARED_USER_ID_VALUE in owners
         assert "alice" not in owners
 
-    def test_unscoped_delete_wipes_everyone(self, populated_db):
-        assert populated_db.delete_by_content_id("doc-1", user_id=None) is True
-        assert _owners_for_content_id(populated_db, "doc-1") == []
+    def test_unscoped_delete_wipes_everyone(self, content_id_corpus):
+        assert content_id_corpus.delete_by_content_id("doc-1", user_id=None) is True
+        assert _owners_for_content_id(content_id_corpus, "doc-1") == []
 
-    def test_scoped_delete_no_op_when_caller_owns_nothing(self, populated_db):
-        assert populated_db.delete_by_content_id("doc-1", user_id="carol") is False
-        assert len(_owners_for_content_id(populated_db, "doc-1")) == 3
+    def test_scoped_delete_no_op_when_caller_owns_nothing(self, content_id_corpus):
+        assert content_id_corpus.delete_by_content_id("doc-1", user_id="carol") is False
+        assert len(_owners_for_content_id(content_id_corpus, "doc-1")) == 3
 
 
-class TestDeleteByContentHashIsolation:
-    """``delete_by_content_hash`` scopes to the owner bucket when user_id is set;
-    None scopes to the shared bucket only so it can't wipe every owner."""
+class TestDedupScope:
+    """``delete_by_content_hash`` scopes to the owner bucket when user_id is set; None scopes to the shared bucket
+    only so it can't wipe every owner."""
 
     @pytest.fixture
-    def populated_db(self, cassandra_db):
+    def content_hash_corpus(self, cassandra_db):
         cassandra_db.insert(content_hash="h", documents=[_doc("a", "alice text")], user_id="alice")
         cassandra_db.insert(content_hash="h", documents=[_doc("b", "bob text")], user_id="bob")
         cassandra_db.insert(content_hash="h", documents=[_doc("s", "shared text")], user_id=None)
         return cassandra_db
 
-    def test_scoped_hash_delete_removes_only_owner(self, populated_db):
-        assert populated_db.delete_by_content_hash("h", user_id="alice") is True
-        assert _owners(populated_db) == [SHARED_USER_ID_VALUE, "bob"]
+    def test_scoped_hash_delete_removes_only_owner(self, content_hash_corpus):
+        assert content_hash_corpus.delete_by_content_hash("h", user_id="alice") is True
+        assert _owners(content_hash_corpus) == [SHARED_USER_ID_VALUE, "bob"]
 
-    def test_none_hash_delete_scopes_to_shared_only(self, populated_db):
-        assert populated_db.delete_by_content_hash("h", user_id=None) is True
-        assert _owners(populated_db) == ["alice", "bob"]
+    def test_none_hash_delete_scopes_to_shared_only(self, content_hash_corpus):
+        assert content_hash_corpus.delete_by_content_hash("h", user_id=None) is True
+        assert _owners(content_hash_corpus) == ["alice", "bob"]
 
 
 class TestContentHashExistsScope:
-    """``content_hash_exists`` is the guard half of the upsert dedup pair, so it
-    means what ``delete_by_content_hash`` means: a set owner checks that owner's
-    rows, ``None`` checks the shared bucket alone — never every owner's rows."""
+    """The guard half of the dedup pair: a set owner checks that owner's rows, ``None`` the shared bucket."""
 
     @pytest.fixture
-    def populated_db(self, cassandra_db):
+    def content_hash_corpus(self, cassandra_db):
         cassandra_db.insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
         cassandra_db.insert(content_hash="hs", documents=_shared_docs(), user_id=None)
         return cassandra_db
 
-    def test_scoped_check_only_sees_own(self, populated_db):
-        assert populated_db.content_hash_exists("ha", user_id="alice") is True
-        assert populated_db.content_hash_exists("ha", user_id="bob") is False
+    def test_scoped_check_only_sees_own(self, content_hash_corpus):
+        assert content_hash_corpus.content_hash_exists("ha", user_id="alice") is True
+        assert content_hash_corpus.content_hash_exists("ha", user_id="bob") is False
 
-    def test_none_check_sees_the_shared_row(self, populated_db):
-        assert populated_db.content_hash_exists("hs", user_id=None) is True
+    def test_none_check_sees_the_shared_row(self, content_hash_corpus):
+        assert content_hash_corpus.content_hash_exists("hs", user_id=None) is True
 
-    def test_none_check_does_not_see_a_privately_owned_row(self, populated_db):
-        """Alice privately holds this content. If ``None`` matched her row, a shared
-        publish of the same bytes would be judged a duplicate and silently skipped,
-        and the shared bucket would never receive it."""
-        assert populated_db.content_hash_exists("ha", user_id=None) is False
+    def test_none_check_does_not_see_a_privately_owned_row(self, content_hash_corpus):
+        assert content_hash_corpus.content_hash_exists("ha", user_id=None) is False
 
-    def test_none_check_is_false_for_an_absent_hash(self, populated_db):
-        assert populated_db.content_hash_exists("nope", user_id=None) is False
+    def test_none_check_is_false_for_an_absent_hash(self, content_hash_corpus):
+        assert content_hash_corpus.content_hash_exists("nope", user_id=None) is False
 
 
-class TestUpsertDedupIsolation:
-    """``upsert`` re-ingest dedups within the caller's bucket only, so two
-    owners' copies of identical content never collide and a shared re-ingest
-    can't steal an owned row."""
+class TestUpsertDedupScope:
+    """``upsert`` re-ingest dedups within the caller's bucket only, so two owners' copies of identical content never
+    collide and a shared re-ingest can't steal an owned row."""
 
     def test_two_owners_identical_content_both_survive(self, cassandra_db):
         cassandra_db.upsert(content_hash="h", documents=[_doc("alice", "shared text")], user_id="alice")
@@ -445,9 +391,7 @@ class TestUpsertDedupIsolation:
         assert _owners(cassandra_db) == ["alice"]
 
     def test_shared_reupsert_does_not_wipe_owned_identical_content(self, cassandra_db):
-        """Alice owns content X; an admin re-ingests identical shared content.
-        The shared dedup delete must scope to the shared bucket and leave
-        Alice's owned row intact."""
+        """Alice owns content X; an admin re-ingests identical shared content."""
         cassandra_db.upsert(content_hash="h", documents=[_doc("alice", "same text")], user_id="alice")
         cassandra_db.upsert(content_hash="h", documents=[_doc("shared", "same text")], user_id=None)
         # Second shared re-ingest triggers the scoped dedup delete.
@@ -455,14 +399,14 @@ class TestUpsertDedupIsolation:
         cassandra_db.upsert(content_hash="h", documents=[_doc("shared", "same text")], user_id=None)
         assert _owners(cassandra_db) == [SHARED_USER_ID_VALUE, "alice"]
         base_id = hashlib.md5(b"same text").hexdigest()
-        alice_row_id = hash_string_sha256(f"{hash_string_sha256(base_id)}_alice")
+        shared_row_id = hashlib.md5(f"{base_id}_h".encode()).hexdigest()
+        alice_row_id = hashlib.md5(f"{shared_row_id}_alice".encode()).hexdigest()
         assert alice_row_id not in cassandra_db.session.deleted_row_ids
-        assert cassandra_db.session.deleted_row_ids == [base_id]
+        assert cassandra_db.session.deleted_row_ids == [shared_row_id]
 
 
-class TestUpdateMetadataOwnershipGuard:
-    """``update_metadata`` must drop an incoming ``user_id`` so a metadata write
-    can never reassign ownership."""
+class TestUpdateMetadataOwnership:
+    """``update_metadata`` must drop an incoming ``user_id`` so a metadata write can never reassign ownership."""
 
     def test_incoming_user_id_is_stripped(self, cassandra_db):
         cassandra_db.insert(content_hash="h", documents=[_doc("a", "body", "doc-1")], user_id="alice")
@@ -476,8 +420,7 @@ class TestUpdateMetadataOwnershipGuard:
 
 
 class TestRowToDocumentHidesOwner:
-    """``_row_to_document`` must never surface ``user_id`` as caller-visible
-    metadata."""
+    """``_row_to_document`` must never surface ``user_id`` as caller-visible metadata."""
 
     def test_user_id_not_in_returned_metadata(self, cassandra_db):
         row = {
@@ -496,6 +439,7 @@ class TestRowToDocumentHidesOwner:
 class TestAsyncIsolation:
     """The search and scoped dedup contracts hold through the async surface too."""
 
+    @pytest.mark.asyncio
     async def test_async_alice_sees_own_and_shared_not_bob(self, cassandra_db):
         await cassandra_db.async_insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
         await cassandra_db.async_insert(content_hash="hb", documents=_bob_docs(), user_id="bob")
@@ -505,6 +449,7 @@ class TestAsyncIsolation:
         assert "company-holidays" in alice
         assert "bob-salary" not in alice
 
+    @pytest.mark.asyncio
     async def test_async_shared_reupsert_does_not_wipe_owned(self, cassandra_db):
         await cassandra_db.async_upsert(content_hash="h", documents=[_doc("alice", "same text")], user_id="alice")
         await cassandra_db.async_upsert(content_hash="h", documents=[_doc("shared", "same text")], user_id=None)

@@ -163,9 +163,7 @@ class ChromaDb(VectorDb):
         # Batch size for ChromaDB operations
         self._batch_size: Optional[int] = batch_size
 
-    # ----------------------------------------------------------------
-    # Per-user collection routing (Chroma multi-tenancy primitive)
-    # ----------------------------------------------------------------
+    # Per-user collection routing (Chroma multi-tenancy primitive).
     # Chroma's vendor-recommended pattern for isolating tenants is one
     # collection per tenant — not metadata filtering. Collections give us
     # physical separation: a scoped search physically cannot see chunks
@@ -173,14 +171,14 @@ class ChromaDb(VectorDb):
     # version-dependent ``where`` filter semantics entirely.
     #
     # Naming:
-    #   - ``user_id`` is a non-empty string  → ``{collection_name}__{user_id}``
-    #   - ``user_id`` is None or ``""``      → ``self.collection_name`` (base,
-    #     backwards-compatible path). Only ``None`` is the UNSCOPED read;
-    #     ``""`` is an owner that happens to resolve to the base collection.
+    #   - ``user_id`` is a string            → ``{collection_name}__{user_id}``
+    #   - ``user_id`` is None                → ``self.collection_name`` (base,
+    #     backwards-compatible path). Only ``None`` is the shared bucket, and
+    #     only ``None`` is the UNSCOPED read; ``""`` is an owner like any other.
     #   - Admin uploads with no owner go to the BASE collection. Scoped
     #     searches always read both the caller's collection AND the base
     #     collection so org-wide content stays discoverable. That's why
-    #     ``user_id=None`` doesn't go to a ``__shared__`` collection —
+    #     ``user_id=None`` doesn't go to a dedicated shared collection —
     #     using the base collection means existing deployments keep
     #     working with no migration.
     #
@@ -206,11 +204,14 @@ class ChromaDb(VectorDb):
     def _collection_name_for(self, user_id: Optional[str]) -> str:
         """Resolve the physical collection name for a scope.
 
-        Empty / None → base collection (unchanged from pre-isolation
-        behaviour, so deployments that don't use ``user_id`` keep working
-        with the same name they always had).
+        ``None`` → base collection (unchanged from pre-isolation behaviour, so
+        deployments that don't use ``user_id`` keep working with the same name
+        they always had). Every other value, ``""`` included, is an owner and
+        gets its own collection — routing ``""`` to the base collection would
+        publish that owner's chunks to every scoped reader, since the base is
+        the shared bucket each of them merges in.
         """
-        if not user_id:
+        if user_id is None:
             return self.collection_name
         safe = self._sanitize_user_id_for_collection(user_id)
         return f"{self.collection_name}__{safe}"
@@ -377,6 +378,10 @@ class ChromaDb(VectorDb):
 
     def name_exists(self, name: str) -> bool:
         """Check if a document with a given name exists in the collection.
+
+        Takes no owner, so it looks across every collection this knowledge base
+        owns — see ``id_exists``.
+
         Args:
             name (str): Name of the document to check.
         Returns:
@@ -386,9 +391,12 @@ class ChromaDb(VectorDb):
             return False
 
         try:
-            collection: Collection = self.client.get_collection(name=self.collection_name)
-            result = collection.get(where=cast(Any, {"name": {"$eq": name}}), limit=1)
-            return len(result.get("ids", [])) > 0
+            for coll in self._all_owner_collections():
+                try:
+                    if coll.get(where=cast(Any, {"name": {"$eq": name}}), limit=1).get("ids", []):
+                        return True
+                except Exception:
+                    log_debug(f"Could not check name '{name}' in collection {coll.name!r}")
         except Exception:
             logger.exception("Error checking name existence")
         return False
@@ -839,6 +847,32 @@ class ChromaDb(VectorDb):
 
         return result
 
+    def _delete_where_across(self, collections: List[Collection], where: Dict[str, Any], description: str) -> bool:
+        """Delete everything matching ``where`` from each of ``collections``.
+
+        The owner is a physical collection here, so a delete that names no
+        owner has to visit each of them in turn — one ``where`` clause cannot
+        span collections the way a column predicate spans rows.
+        """
+        deleted = 0
+        for coll in collections:
+            try:
+                result = coll.get(where=cast(Any, where))
+                ids_to_delete = result.get("ids", [])
+                if not ids_to_delete:
+                    continue
+                coll.delete(ids=ids_to_delete)
+                deleted += len(ids_to_delete)
+            except Exception:
+                log_debug(f"Could not delete by {description} from collection {coll.name!r}")
+
+        if not deleted:
+            log_info(f"No documents found with {description}")
+            return False
+
+        log_info(f"Deleted {deleted} documents with {description}")
+        return True
+
     def _collections_to_query(self, user_id: Optional[str]) -> List[Collection]:
         """Build the list of collections to query for a scoped search.
 
@@ -851,7 +885,7 @@ class ChromaDb(VectorDb):
         The base holds admin / org-wide content uploaded with no owner;
         scoped retrieval includes it so shared content stays discoverable
         alongside the caller's own chunks. ``""`` is a scope like any other:
-        it resolves to the base collection alone, never to the unscoped read.
+        it gets its own collection, never the unscoped read.
 
         Collections that don't exist yet are skipped silently (no rows yet
         for that user is the same as zero results).
@@ -1489,6 +1523,9 @@ class ChromaDb(VectorDb):
         if self.exists():
             log_debug(f"Deleting collection: {self.collection_name}")
             self.client.delete_collection(name=self.collection_name)
+        # The base cache holds a Collection object that no longer exists; a
+        # later ``_get_or_create_collection(None)`` would hand it straight back.
+        self._collection = None
 
     async def async_drop(self) -> None:
         """Drop the collection asynchronously by running in a thread."""
@@ -1508,99 +1545,103 @@ class ChromaDb(VectorDb):
         return await asyncio.to_thread(self.exists)
 
     def get_count(self) -> int:
-        """Get the count of documents in the collection."""
-        if self.exists():
-            try:
-                collection: Collection = self.client.get_collection(name=self.collection_name)
-                return collection.count()
-            except Exception:
-                logger.exception("Error getting count")
-        return 0
+        """Get the count of documents across every collection this knowledge
+        base owns. Counting the base collection alone would under-report by
+        every chunk any owner has written."""
+        total = 0
+        try:
+            for coll in self._all_owner_collections():
+                try:
+                    total += coll.count()
+                except Exception:
+                    log_debug(f"Could not count collection {coll.name!r}")
+        except Exception:
+            logger.exception("Error getting count")
+        return total
 
     def optimize(self) -> None:
         raise NotImplementedError
 
     def delete(self) -> bool:
+        """Clear the knowledge base, including every per-user collection.
+
+        Deleting only the base collection would orphan ``{base}__alice`` and
+        friends on disk, and leave their chunks answering the next scoped
+        search — ``drop`` already clears them for the same reason.
+        """
         try:
+            for name in self._user_collection_names():
+                try:
+                    self.client.delete_collection(name=name)
+                except Exception:
+                    log_debug(f"Could not delete per-user collection {name!r}")
+            self._user_collections.clear()
+
             self.client.delete_collection(name=self.collection_name)
+            self._collection = None
             return True
         except Exception:
             logger.exception("Error clearing collection")
             return False
 
     def delete_by_id(self, id: str) -> bool:
-        """Delete document by ID."""
+        """Delete document by ID.
+
+        Takes no owner, so it spans every collection this knowledge base owns —
+        the same whole-table reach this method has on the column-based backends.
+        The base collection alone would silently no-op for every owned chunk.
+        """
         if not self.client:
             log_error("Client not initialized")
             return False
 
         try:
-            collection: Collection = self.client.get_collection(name=self.collection_name)
-
             # Check if document exists
             if not self.id_exists(id):
                 log_info(f"Document with ID '{id}' not found")
                 return False
 
-            # Delete the document
-            collection.delete(ids=[id])
-            log_info(f"Deleted document with ID '{id}'")
-            return True
+            deleted = False
+            for coll in self._all_owner_collections():
+                try:
+                    if coll.get(ids=[id]).get("ids", []):
+                        coll.delete(ids=[id])
+                        deleted = True
+                except Exception:
+                    log_debug(f"Could not delete ID '{id}' from collection {coll.name!r}")
+
+            if deleted:
+                log_info(f"Deleted document with ID '{id}'")
+            return deleted
         except Exception:
             logger.exception(f"Error deleting document by ID '{id}'")
             return False
 
     def delete_by_name(self, name: str) -> bool:
-        """Delete documents by name."""
+        """Delete documents by name. Spans every owner — see ``delete_by_id``."""
         if not self.client:
             log_error("Client not initialized")
             return False
 
         try:
-            collection: Collection = self.client.get_collection(name=self.collection_name)
-
-            # Find all documents with the given name
-            result = collection.get(where=cast(Any, {"name": {"$eq": name}}))
-            ids_to_delete = result.get("ids", [])
-
-            if not ids_to_delete:
-                log_info(f"No documents found with name '{name}'")
-                return False
-
-            # Delete all matching documents
-            collection.delete(ids=ids_to_delete)
-            log_info(f"Deleted {len(ids_to_delete)} documents with name '{name}'")
-            return True
+            return self._delete_where_across(self._all_owner_collections(), {"name": {"$eq": name}}, f"name '{name}'")
         except Exception:
             logger.exception(f"Error deleting documents by name '{name}'")
             return False
 
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
-        """Delete documents by metadata."""
+        """Delete documents by metadata. Spans every owner — see ``delete_by_id``."""
         if not self.client:
             log_error("Client not initialized")
             return False
 
         try:
-            collection: Collection = self.client.get_collection(name=self.collection_name)
-
             # Build where clause for metadata filtering
             where_clause = {}
             for key, value in metadata.items():
                 where_clause[key] = {"$eq": value}
 
-            # Find all documents with the matching metadata
-            result = collection.get(where=cast(Any, where_clause))
-            ids_to_delete = result.get("ids", [])
-
-            if not ids_to_delete:
-                log_info(f"No documents found with metadata '{metadata}'")
-                return False
-
-            # Delete all matching documents
-            collection.delete(ids=ids_to_delete)
-            log_info(f"Deleted {len(ids_to_delete)} documents with metadata '{metadata}'")
-            return True
+            return self._delete_where_across(self._all_owner_collections(), where_clause, f"metadata '{metadata}'")
         except Exception:
             logger.exception(f"Error deleting documents by metadata '{metadata}'")
             return False
@@ -1608,39 +1649,34 @@ class ChromaDb(VectorDb):
     def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
         """Delete documents by content ID, scoped to ``user_id`` when set.
 
-        With ``user_id``: only the caller's per-user collection is checked.
+        With ``user_id``: only the caller's per-user collection is touched.
         Chroma's collection-based isolation makes this physical — a
         scoped delete cannot reach into another user's collection even by
-        accident. ``None`` deletes from the base collection only (legacy
-        / unscoped behaviour).
+        accident. ``None`` is the admin view and deletes across every owner,
+        which on Chroma means every collection this knowledge base owns: the
+        base one alone would leave each owner's copy of the content behind.
         """
         if not self.client:
             log_error("Client not initialized")
             return False
 
         try:
-            collection_name = self._collection_name_for(user_id)
-            # ``get_collection`` raises if the collection doesn't exist.
-            # Treat that as "nothing to delete" rather than an error —
-            # consistent with the "no rows found" branch below.
-            try:
-                collection: Collection = self.client.get_collection(name=collection_name)
-            except Exception:
-                log_debug(f"No collection {collection_name!r} for content_id={content_id!r} delete; treating as no-op")
-                return False
+            if user_id is None:
+                collections = self._all_owner_collections()
+            else:
+                # ``get_collection`` raises if the collection doesn't exist.
+                # Treat that as "nothing to delete" rather than an error —
+                # consistent with the "no rows found" branch below.
+                name = self._collection_name_for(user_id)
+                try:
+                    collections = [self.client.get_collection(name=name)]
+                except Exception:
+                    log_debug(f"No collection {name!r} for content_id={content_id!r} delete; treating as no-op")
+                    return False
 
-            # Find all documents with the given content_id
-            result = collection.get(where=cast(Any, {"content_id": {"$eq": content_id}}))
-            ids_to_delete = result.get("ids", [])
-
-            if not ids_to_delete:
-                log_info(f"No documents found with content_id '{content_id}' in {collection_name!r}")
-                return False
-
-            # Delete all matching documents
-            collection.delete(ids=ids_to_delete)
-            log_info(f"Deleted {len(ids_to_delete)} documents with content_id '{content_id}' from {collection_name!r}")
-            return True
+            return self._delete_where_across(
+                collections, {"content_id": {"$eq": content_id}}, f"content_id '{content_id}'"
+            )
         except Exception:
             logger.exception(f"Error deleting documents by content_id '{content_id}'")
             return False
@@ -1688,6 +1724,10 @@ class ChromaDb(VectorDb):
     def id_exists(self, id: str) -> bool:
         """Check if a document with the given ID exists in the collection.
 
+        Takes no owner, so it looks across every collection this knowledge base
+        owns — the base one alone would answer False for every owned chunk and
+        make ``delete_by_id`` refuse to touch them.
+
         Args:
             id (str): The document ID to check.
 
@@ -1699,13 +1739,13 @@ class ChromaDb(VectorDb):
             return False
 
         try:
-            collection: Collection = self.client.get_collection(name=self.collection_name)
-            # Try to get the document by ID
-            result = collection.get(ids=[id])
-            found_ids = result.get("ids", [])
-
-            # Return True if the document was found
-            return len(found_ids) > 0
+            for coll in self._all_owner_collections():
+                try:
+                    if coll.get(ids=[id]).get("ids", []):
+                        return True
+                except Exception:
+                    log_debug(f"Could not check ID '{id}' in collection {coll.name!r}")
+            return False
         except Exception:
             logger.exception(f"Error checking if ID '{id}' exists")
             return False
@@ -1774,6 +1814,10 @@ class ChromaDb(VectorDb):
         """
         Update the metadata for documents with the given content_id.
 
+        Takes no owner, so it spans every collection this knowledge base owns.
+        Updating the base collection alone would silently drop the update for
+        every owned chunk, which is what the caller is usually editing.
+
         Args:
             content_id (str): The content ID to update
             metadata (Dict[str, Any]): The metadata to update
@@ -1783,47 +1827,52 @@ class ChromaDb(VectorDb):
                 log_error("Client not initialized")
                 return
 
-            collection: Collection = self.client.get_collection(name=self.collection_name)
+            # Flatten the new metadata first
+            flattened_new_metadata = self._flatten_metadata(metadata)
 
             # Find documents with the given content_id
             try:
-                result = collection.get(where=cast(Any, {"content_id": {"$eq": content_id}}))
+                updated = 0
+                for collection in self._all_owner_collections():
+                    result = collection.get(where=cast(Any, {"content_id": {"$eq": content_id}}))
 
-                # Extract IDs and current metadata
-                if hasattr(result, "get") and callable(result.get):
-                    ids = result.get("ids", [])
-                    current_metadatas = result.get("metadatas", [])
-                elif hasattr(result, "__getitem__"):
-                    ids = result.get("ids", []) if "ids" in result else []
-                    current_metadatas = result.get("metadatas", []) if "metadatas" in result else []
-                else:
-                    ids = []
-                    current_metadatas = []
+                    # Extract IDs and current metadata
+                    if hasattr(result, "get") and callable(result.get):
+                        ids = result.get("ids", [])
+                        current_metadatas = result.get("metadatas", [])
+                    elif hasattr(result, "__getitem__"):
+                        ids = result.get("ids", []) if "ids" in result else []
+                        current_metadatas = result.get("metadatas", []) if "metadatas" in result else []
+                    else:
+                        ids = []
+                        current_metadatas = []
 
-                if not ids:
+                    if not ids:
+                        continue
+
+                    # Merge metadata for each document
+                    updated_metadatas = []
+                    for i, current_meta in enumerate(current_metadatas or []):
+                        if current_meta is None:
+                            meta_dict: Dict[str, Any] = {}
+                        else:
+                            meta_dict = dict(current_meta)  # Convert Mapping to dict
+
+                        # Update with flattened metadata
+                        meta_dict.update(flattened_new_metadata)
+                        updated_metadatas.append(meta_dict)
+
+                    # Convert to the expected type for ChromaDB
+                    chroma_metadatas = cast(List[Mapping[str, Union[str, int, float, bool]]], updated_metadatas)
+                    chroma_metadatas = [{k: v for k, v in m.items() if k and v} for m in chroma_metadatas]
+                    collection.update(ids=ids, metadatas=chroma_metadatas)  # type: ignore
+                    updated += len(ids)
+
+                if not updated:
                     log_debug(f"No documents found with content_id: {content_id}")
                     return
 
-                # Flatten the new metadata first
-                flattened_new_metadata = self._flatten_metadata(metadata)
-
-                # Merge metadata for each document
-                updated_metadatas = []
-                for i, current_meta in enumerate(current_metadatas or []):
-                    if current_meta is None:
-                        meta_dict: Dict[str, Any] = {}
-                    else:
-                        meta_dict = dict(current_meta)  # Convert Mapping to dict
-
-                    # Update with flattened metadata
-                    meta_dict.update(flattened_new_metadata)
-                    updated_metadatas.append(meta_dict)
-
-                # Convert to the expected type for ChromaDB
-                chroma_metadatas = cast(List[Mapping[str, Union[str, int, float, bool]]], updated_metadatas)
-                chroma_metadatas = [{k: v for k, v in m.items() if k and v} for m in chroma_metadatas]
-                collection.update(ids=ids, metadatas=chroma_metadatas)  # type: ignore
-                log_debug(f"Updated metadata for {len(ids)} documents with content_id: {content_id}")
+                log_debug(f"Updated metadata for {updated} documents with content_id: {content_id}")
 
             except TypeError as te:
                 if "object of type 'int' has no len()" in str(te):

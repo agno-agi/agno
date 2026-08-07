@@ -197,7 +197,7 @@ class Clickhouse(VectorDb):
 
             if isinstance(self.index, HNSW):
                 index = (
-                    f"INDEX embedding_index embedding TYPE vector_similarity('hnsw', 'L2Distance', {self.index.quantization}, "
+                    f"INDEX embedding_index embedding TYPE vector_similarity('hnsw', 'L2Distance', {self.embedder.dimensions}, {self.index.quantization}, "
                     f"{self.index.hnsw_max_connections_per_layer}, {self.index.hnsw_candidate_list_size_for_construction})"
                 )
                 await async_client.command("SET allow_experimental_vector_similarity_index = 1")
@@ -275,7 +275,21 @@ class Clickhouse(VectorDb):
         """Reject an empty user_id: "" is the reserved shared-owner sentinel, so a
         scoped caller passing "" would target the shared bucket. Use None for shared."""
         if user_id == "":
-            raise ValueError("user_id must not be an empty string; use None for shared/unscoped access")
+            raise ValueError(
+                "user_id must not be an empty string - that value is reserved to mark content shared with every user"
+            )
+
+    def _scoped_record_id(self, cleaned_content: str, user_id: Optional[str]) -> str:
+        """Fold the owner into the deterministic primary key so two users inserting the
+        same content get distinct rows. None keeps the stable content digest.
+
+        The content is collapsed to a fixed-length digest before the owner is folded
+        in, so the '_' boundary cannot move and let one owner overwrite another's row.
+        """
+        _id = md5(cleaned_content.encode()).hexdigest()
+        if user_id is None:
+            return _id
+        return md5(f"{_id}_{user_id}".encode()).hexdigest()
 
     def insert(
         self,
@@ -290,9 +304,7 @@ class Clickhouse(VectorDb):
         for document in documents:
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
-            _id = md5(cleaned_content.encode()).hexdigest()
-            if user_id is not None:
-                _id = md5(f"{_id}_{user_id}".encode()).hexdigest()
+            _id = self._scoped_record_id(cleaned_content, user_id)
 
             row: List[Any] = [
                 _id,
@@ -380,9 +392,7 @@ class Clickhouse(VectorDb):
 
         for document in documents:
             cleaned_content = document.content.replace("\x00", "\ufffd")
-            _id = md5(cleaned_content.encode()).hexdigest()
-            if user_id is not None:
-                _id = md5(f"{_id}_{user_id}".encode()).hexdigest()
+            _id = self._scoped_record_id(cleaned_content, user_id)
 
             row: List[Any] = [
                 _id,
@@ -490,7 +500,7 @@ class Clickhouse(VectorDb):
             parameters=parameters,
         )
 
-    def _apply_user_scope(self, parameters: Dict[str, Any], user_id: Optional[str]) -> str:
+    def _user_scope_where_clause(self, parameters: Dict[str, Any], user_id: Optional[str]) -> str:
         """Scope WHERE fragment matching the owner's rows plus shared ('') rows.
 
         Returns "" (no scope) when user_id is None. user_id is bound, not interpolated.
@@ -516,7 +526,7 @@ class Clickhouse(VectorDb):
             return []
 
         parameters = self._get_base_parameters()
-        where_query = self._apply_user_scope(parameters, user_id)
+        where_query = self._user_scope_where_clause(parameters, user_id)
 
         order_by_query = ""
         if self.distance == Distance.l2 or self.distance == Distance.max_inner_product:
@@ -582,7 +592,7 @@ class Clickhouse(VectorDb):
             return []
 
         parameters = self._get_base_parameters()
-        where_query = self._apply_user_scope(parameters, user_id)
+        where_query = self._user_scope_where_clause(parameters, user_id)
 
         order_by_query = ""
         if self.distance == Distance.l2 or self.distance == Distance.max_inner_product:

@@ -83,6 +83,7 @@ class LlamaIndexVectorDb(VectorDb):
 
     async def async_upsert(
         self,
+        content_hash: str,
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
@@ -104,7 +105,8 @@ class LlamaIndexVectorDb(VectorDb):
             query (str): The query string to search for.
             limit (int): The maximum number of documents to return. Defaults to 5.
             filters (Optional[Dict[str, Any]]): Filters to apply to the search. Defaults to None.
-            user_id (Optional[str]): Accepted for interface conformance. Ignored - the LlamaIndex retriever owns these chunks.
+            user_id (Optional[str]): Accepted for interface conformance. Ignored - the LlamaIndex
+                retriever owns these chunks.
 
         Returns:
             List[Document]: A list of relevant documents matching the query.
@@ -188,11 +190,17 @@ class LlamaIndexVectorDb(VectorDb):
 
         Args:
             content_id (str): The content ID to delete
-            user_id (Optional[str]): Accepted for interface conformance. Ignored - the LlamaIndex retriever owns these chunks.
+            user_id (Optional[str]): Accepted for interface conformance. Ignored - the LlamaIndex
+                retriever owns these chunks.
 
         Returns:
             bool: False as this operation is not supported
         """
+        if user_id is not None:
+            log_warning(
+                "Per-user isolation is not supported in LlamaIndex. The retriever owns these chunks, "
+                "so user_id is ignored."
+            )
         logger.warning(
             "LlamaIndexVectorDb.delete_by_content_id() not supported - please check the vectorstore manually."
         )

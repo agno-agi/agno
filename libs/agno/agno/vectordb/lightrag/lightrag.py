@@ -68,7 +68,17 @@ class LightRag(VectorDb):
         return False
 
     def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
-        """Check if content with the given hash exists"""
+        """Check if content with the given hash exists.
+
+        Always False: Knowledge routes LightRAG ingestion through
+        ``insert_file_bytes`` / ``insert_text``, and this guard runs before that
+        branch, so answering True would block every LightRAG upload.
+        """
+        if user_id is not None:
+            log_warning(
+                "Per-user isolation is not supported in LightRAG. The LightRAG server owns these chunks, "
+                "so user_id is ignored."
+            )
         return False
 
     def insert(
@@ -79,7 +89,11 @@ class LightRag(VectorDb):
         user_id: Optional[str] = None,
     ) -> None:
         """Insert documents into the vector database"""
-        pass
+        if user_id is not None:
+            log_warning(
+                "Per-user isolation is not supported in LightRAG. The LightRAG server owns these chunks, "
+                "so user_id is ignored."
+            )
 
     async def async_insert(
         self,
@@ -89,7 +103,11 @@ class LightRag(VectorDb):
         user_id: Optional[str] = None,
     ) -> None:
         """Async insert documents into the vector database"""
-        pass
+        if user_id is not None:
+            log_warning(
+                "Per-user isolation is not supported in LightRAG. The LightRAG server owns these chunks, "
+                "so user_id is ignored."
+            )
 
     def upsert(
         self,
@@ -99,20 +117,46 @@ class LightRag(VectorDb):
         user_id: Optional[str] = None,
     ) -> None:
         """Upsert documents into the vector database"""
-        pass
+        if user_id is not None:
+            log_warning(
+                "Per-user isolation is not supported in LightRAG. The LightRAG server owns these chunks, "
+                "so user_id is ignored."
+            )
 
-    def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> None:
-        """Delete documents by content ID"""
-        pass
+    def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
+        """
+        Delete documents by content ID.
+        Not implemented for LightRag - use ``delete_by_external_id``.
+
+        Args:
+            content_id (str): The content ID to delete
+            user_id (Optional[str]): Accepted for interface conformance. Ignored - the LightRAG
+                server owns these chunks.
+
+        Returns:
+            bool: False as this operation is not supported
+        """
+        if user_id is not None:
+            log_warning(
+                "Per-user isolation is not supported in LightRAG. The LightRAG server owns these chunks, "
+                "so user_id is ignored."
+            )
+        log_warning("LightRag.delete_by_content_id() not supported - use delete_by_external_id instead.")
+        return False
 
     async def async_upsert(
         self,
+        content_hash: str,
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
     ) -> None:
         """Async upsert documents into the vector database"""
-        pass
+        if user_id is not None:
+            log_warning(
+                "Per-user isolation is not supported in LightRAG. The LightRAG server owns these chunks, "
+                "so user_id is ignored."
+            )
 
     def search(
         self,
@@ -121,6 +165,19 @@ class LightRag(VectorDb):
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         user_id: Optional[str] = None,
     ) -> List[Document]:
+        """
+        Returns relevant documents matching the query.
+
+        Args:
+            query (str): The query string to search for.
+            limit (int): The maximum number of documents to return. Defaults to 5.
+            filters (Optional[Dict[str, Any]]): Filters to apply to the search. Defaults to None.
+            user_id (Optional[str]): Accepted for interface conformance. Ignored - the LightRAG
+                server owns these chunks.
+
+        Returns:
+            List[Document]: A list of relevant documents matching the query.
+        """
         result = asyncio.run(self.async_search(query, limit=limit, filters=filters, user_id=user_id))
         return result if result is not None else []
 

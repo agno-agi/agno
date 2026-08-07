@@ -175,11 +175,12 @@ def test_upsert(surrealdb_vector, mock_surrealdb_client, sample_documents):
         doc.id = f"doc-{i}"
     surrealdb_vector.upsert(content_hash="test_hash", documents=sample_documents, user_id="user1")
 
-    # Verify query was called for each document
-    assert mock_surrealdb_client.query.call_count == 3
+    # The scoped dedup check runs first, then one UPSERT per document.
+    assert mock_surrealdb_client.query.call_count == 4
+    assert "SELECT * FROM" in mock_surrealdb_client.query.call_args_list[0][0][0]
 
-    # Check args for first call
-    args, _ = mock_surrealdb_client.query.call_args_list[0]
+    # Check args for the first upsert
+    args, _ = mock_surrealdb_client.query.call_args_list[1]
     assert "UPSERT type::record($table, $record_id)" in args[0]
     assert "SET content = $content" in args[0]
     assert "content" in args[1]
@@ -312,11 +313,12 @@ async def test_async_upsert(async_surrealdb_vector, mock_async_surrealdb_client,
         doc.id = f"doc-{i}"
     await async_surrealdb_vector.async_upsert(content_hash="test_hash", documents=sample_documents, user_id="user1")
 
-    # Verify query was called for each document
-    assert mock_async_surrealdb_client.query.await_count == 3
+    # The scoped dedup check runs first, then one UPSERT per document.
+    assert mock_async_surrealdb_client.query.await_count == 4
+    assert "SELECT * FROM" in mock_async_surrealdb_client.query.await_args_list[0][0][0]
 
-    # Check args for first call
-    args, kwargs = mock_async_surrealdb_client.query.await_args_list[0]
+    # Check args for the first upsert
+    args, kwargs = mock_async_surrealdb_client.query.await_args_list[1]
     assert "UPSERT type::record($table, $record_id)" in args[0]
     assert "SET content = $content" in args[0]
     assert "content" in args[1]

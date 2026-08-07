@@ -1,4 +1,5 @@
 import asyncio
+from hashlib import md5
 from typing import Any, Dict, List, Optional, Union
 
 try:
@@ -14,20 +15,16 @@ from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_error, log_info, log_warning, logger
-from agno.utils.string import hash_string_sha256
 from agno.vectordb.base import VectorDb
 
 DEFAULT_NAMESPACE = ""
 
-# Per-user RAG isolation: Upstash has no per-tenant column, so the owner is
-# stamped into a top-level user_id metadata key. Writes with user_id stamp it;
-# None omits it (the shared bucket). Scoped reads/deletes match the caller's own
-# chunks plus the shared bucket; user_id=None applies no scope (admin view).
-USER_ID_METADATA_KEY = "user_id"
 
-# A predicate that can never be true (a field cannot both exist and be absent).
-# Used to fail CLOSED when a value cannot be expressed as an Upstash literal.
-_ALWAYS_FALSE = f"(HAS FIELD {USER_ID_METADATA_KEY} AND HAS NOT FIELD {USER_ID_METADATA_KEY})"
+def _always_false(key: str) -> str:
+    """A predicate over ``key`` that can never be true (a field cannot both exist
+    and be absent). Used to fail CLOSED when a value cannot be expressed as an
+    Upstash literal."""
+    return f"(HAS FIELD {key} AND HAS NOT FIELD {key})"
 
 
 def _quote_value(value: str) -> Optional[str]:
@@ -64,7 +61,7 @@ def _equals_predicate(key: str, value: str) -> str:
     value contains both quote chars (so the equality safely matches nothing)."""
     quoted = _quote_value(value)
     if quoted is None:
-        return _ALWAYS_FALSE
+        return _always_false(key)
     return f"{key} = {quoted}"
 
 
@@ -87,7 +84,11 @@ class UpstashVectorDb(VectorDb):
         **kwargs: Additional keyword arguments.
     """
 
-    USER_ID_KEY = USER_ID_METADATA_KEY
+    # Per-user RAG isolation: Upstash has no per-tenant column, so the owner is
+    # stamped into a top-level user_id metadata key. Writes with user_id stamp it;
+    # None omits it (the shared bucket). Scoped reads/deletes match the caller's own
+    # chunks plus the shared bucket; user_id=None applies no scope (admin view).
+    USER_ID_KEY: str = "user_id"
 
     def __init__(
         self,
@@ -312,7 +313,7 @@ class UpstashVectorDb(VectorDb):
         """
         if user_id is None:
             return base_id
-        return hash_string_sha256(f"{hash_string_sha256(base_id)}_{user_id}")
+        return md5(f"{md5(base_id.encode()).hexdigest()}_{user_id}".encode()).hexdigest()
 
     def upsert(
         self,
@@ -773,6 +774,7 @@ class UpstashVectorDb(VectorDb):
         query: str,
         limit: int = 5,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        namespace: Optional[str] = None,
         user_id: Optional[str] = None,
     ) -> List[Document]:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")

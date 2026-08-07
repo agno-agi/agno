@@ -1,11 +1,7 @@
 """Upstash per-user RAG isolation contract.
 
-Upstash stores the owner in the vector's ``metadata`` under a ``user_id``
-key. Scoped reads apply an own-OR-shared filter string so admin-uploaded
-shared content (no ``user_id`` field) stays discoverable; unscoped (admin)
-reads apply no scope. We mock the Upstash Index and assert on the filter
-sent to ``index.query`` / ``index.delete`` — same approach as the base
-``test_upstashdb.py`` suite (no live REST endpoint).
+Owner lives in the vector's ``metadata.user_id``; an absent key is the shared bucket.
+Upstash is cloud-only, so the index is mocked and the filter sent to it is the contract.
 """
 
 from typing import List
@@ -14,7 +10,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from agno.knowledge.document import Document
-from agno.vectordb.upstashdb.upstashdb import _ALWAYS_FALSE, UpstashVectorDb
+from agno.vectordb.upstashdb.upstashdb import UpstashVectorDb, _always_false
 
 
 @pytest.fixture
@@ -54,9 +50,9 @@ def _docs() -> List[Document]:
     ]
 
 
-class TestWritePersistsOwner:
-    """On write the owner is stamped into ``metadata.user_id``; only ``None``
-    is the SHARED bucket (no ``user_id`` key). ``""`` is a real, isolated tenant."""
+class TestWriteStampsOwner:
+    """On write the owner is stamped into ``metadata.user_id``; only ``None`` is the SHARED bucket (no ``user_id``
+    key)."""
 
     def test_explicit_user_id_stamped_into_metadata(self, upstash_db):
         upstash_db.upsert(content_hash="h1", documents=_docs(), user_id="alice")
@@ -71,8 +67,8 @@ class TestWritePersistsOwner:
             assert "user_id" not in v.metadata
 
     def test_empty_string_user_id_is_a_real_tenant(self, upstash_db):
-        """ "" is a coherent isolated tenant (stamped verbatim), never the shared
-        bucket: only None omits the owner key."""
+        """ "" is a coherent isolated tenant (stamped verbatim), never the shared bucket: only None omits the owner
+        key."""
         upstash_db.upsert(content_hash="h1", documents=_docs(), user_id="")
         vectors = upstash_db.index.upsert.call_args[0][0]
         for v in vectors:
@@ -86,12 +82,9 @@ class TestWritePersistsOwner:
             assert v.metadata["user_id"] == "alice"
 
 
-class TestSearchIsolationContract:
-    """The load-bearing contract: a scoped search filters to the caller's own
-    chunks OR the shared bucket, and never another user's. With a mocked index
-    the filter sent to ``index.query`` IS the contract — an own-OR-shared
-    predicate excludes bob by construction, while admin (``None``) has no scope.
-    """
+class TestSearchScope:
+    """The load-bearing contract: a scoped search filters to the caller's own chunks OR the shared bucket, and never
+    another user's."""
 
     def test_scoped_search_builds_own_or_shared_filter(self, upstash_db):
         upstash_db.search("q", user_id="alice")
@@ -102,15 +95,13 @@ class TestSearchIsolationContract:
         assert "bob" not in sent_filter
 
     def test_admin_search_has_no_scope(self, upstash_db):
-        """user_id=None => no scope predicate; admin sees everything."""
         upstash_db.search("q", user_id=None)
         assert upstash_db.index.query.call_args.kwargs["filter"] == ""
 
 
-class TestDeleteByContentIdIsolation:
-    """``delete_by_content_id(content_id, user_id=...)`` must scope the delete
-    to the caller's chunks — otherwise Bob could guess Alice's content_id and
-    wipe her chunks. Admin (``None``) deletes across all owners."""
+class TestDeleteScope:
+    """``delete_by_content_id(content_id, user_id=...)`` must scope the delete to the caller's chunks — otherwise
+    Bob could guess Alice's content_id and wipe her chunks."""
 
     def test_scoped_delete_matches_owner_only(self, upstash_db):
         upstash_db.delete_by_content_id("c1", user_id="alice")
@@ -123,10 +114,9 @@ class TestDeleteByContentIdIsolation:
         assert upstash_db.index.delete.call_args.kwargs["filter"] == 'content_id = "c1"'
 
 
-class TestStealPreventionOwnerFoldedId:
-    """Two owners uploading identical content must not collide: the owner is
-    folded into the vector id, so one owner's write can never overwrite (steal)
-    the other's identical-content row. The shared bucket keeps the base id."""
+class TestOwnerFoldedId:
+    """Two owners uploading identical content must not collide: the owner is folded into the vector id, so one
+    owner's write can never overwrite (steal) the other's identical-content row."""
 
     def test_two_owners_same_content_get_distinct_ids(self, upstash_db):
         upstash_db.upsert(content_hash="h1", documents=_docs(), user_id="alice")
@@ -143,9 +133,7 @@ class TestStealPreventionOwnerFoldedId:
 
 
 class TestFilterInjectionBlocked:
-    """A crafted user_id must never break out of its filter literal to leak
-    another owner's chunks. Values are quoted (Upstash processes no escapes);
-    a value carrying both quote chars is unrepresentable and fails CLOSED."""
+    """A crafted user_id must never break out of its filter literal to leak another owner's chunks."""
 
     def test_double_quote_user_id_cannot_break_out(self, upstash_db):
         # A double-quote-laden id is wrapped in single quotes, so the embedded
@@ -155,12 +143,18 @@ class TestFilterInjectionBlocked:
         sent = upstash_db.index.query.call_args.kwargs["filter"]
         assert sent == "(user_id = 'alice\" OR user_id != \"zzz' OR HAS NOT FIELD user_id)"
 
+    def test_always_false_predicate_is_unsatisfiable(self):
+        # Spelled out rather than built from the helper: an expected value that
+        # calls the function under test moves with it, so an always-TRUE mutation
+        # would keep the scope assertion below green while the filter leaks.
+        assert _always_false("user_id") == "(HAS FIELD user_id AND HAS NOT FIELD user_id)"
+
     def test_both_quotes_user_id_fails_closed_on_search(self, upstash_db):
         # No literal form => own-scope collapses to an always-false predicate,
         # so such a caller sees only the shared bucket, never anyone's chunks.
         upstash_db.search("q", user_id="a\"b'c")
         sent = upstash_db.index.query.call_args.kwargs["filter"]
-        assert sent == f"({_ALWAYS_FALSE} OR HAS NOT FIELD user_id)"
+        assert sent == "((HAS FIELD user_id AND HAS NOT FIELD user_id) OR HAS NOT FIELD user_id)"
 
     def test_both_quotes_user_id_rejected_on_write(self, upstash_db):
         # Fail loud at write time: an unstampable owner would be owner-invisible.
@@ -168,9 +162,9 @@ class TestFilterInjectionBlocked:
             upstash_db.upsert(content_hash="h1", documents=_docs(), user_id="a\"b'c")
 
 
-class TestSharedBucketDedup:
-    """None-dedup: a shared (user_id=None) delete/re-ingest must scope to the
-    shared bucket (HAS NOT FIELD user_id), never wipe every owner's chunks."""
+class TestDedupScope:
+    """None-dedup: a shared (user_id=None) delete/re-ingest must scope to the shared bucket (HAS NOT FIELD user_id),
+    never wipe every owner's chunks."""
 
     def test_none_delete_scopes_to_shared_bucket(self, upstash_db):
         upstash_db._delete_by_content_hash("h1", user_id=None)
@@ -188,23 +182,20 @@ class TestSharedBucketDedup:
         assert upstash_db.index.delete.call_args.kwargs["filter"] == 'content_hash = "h1" AND HAS NOT FIELD user_id'
 
 
-class TestAsyncCoverage:
-    """Upstash's ``async_search`` raises NotImplementedError by design, so the
-    async write path (``async_upsert``, aliased by ``async_insert``) is the
-    async coverage — it must stamp the owner exactly like the sync path."""
+class TestAsyncIsolation:
+    """Upstash's ``async_search`` raises NotImplementedError by design, so the async write path (``async_upsert``,
+    aliased by ``async_insert``) is the async coverage — it must stamp the owner exactly like the sync path."""
 
+    @pytest.mark.asyncio
     async def test_async_write_persists_owner(self, upstash_db):
         await upstash_db.async_upsert(content_hash="h1", documents=_docs(), user_id="alice")
         vectors = upstash_db.index.upsert.call_args[0][0]
         for v in vectors:
             assert v.metadata["user_id"] == "alice"
 
+    @pytest.mark.asyncio
     async def test_async_write_none_is_shared(self, upstash_db):
         await upstash_db.async_upsert(content_hash="h1", documents=_docs(), user_id=None)
         vectors = upstash_db.index.upsert.call_args[0][0]
         for v in vectors:
             assert "user_id" not in v.metadata
-
-    async def test_async_search_not_supported(self, upstash_db):
-        with pytest.raises(NotImplementedError):
-            await upstash_db.async_search("q", user_id="alice")

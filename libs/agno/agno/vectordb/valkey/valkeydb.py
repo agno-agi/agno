@@ -272,23 +272,33 @@ class ValkeyDB(VectorDb):
         sentinel would let a caller impersonate the shared bucket, a stored
         match-all tag would break the match-all query, braces can never be
         matched by a scope clause, wildcards match other owners' tags even
-        when escaped, and an empty string is an owner tag no scope clause can
-        ever match.
+        when escaped, surrounding whitespace is trimmed at index time so
+        ' alice' indexes as the tag 'alice' and is read by that owner, and an
+        empty string is an owner tag no scope clause can ever match.
+
+        The TAG union character '|' is not rejected: ``_escape_tag_value``
+        escapes it at every interpolation site, and OIDC subject claims
+        ('auth0|...', 'google-oauth2|...') are legitimate owner ids.
         """
         if user_id is None:
             return
         if user_id == "":
-            raise ValueError("user_id must not be an empty string; use None for unscoped access")
+            raise ValueError("user_id must not be an empty string")
         if self.USER_ID_SEPARATOR in user_id:
             raise ValueError("user_id must not contain the reserved separator character (0x1f)")
         if user_id == self.SHARED_OWNER_TAG:
-            raise ValueError(f"user_id must not equal the reserved shared-owner tag '{self.SHARED_OWNER_TAG}'")
+            raise ValueError(
+                f"user_id must not be '{self.SHARED_OWNER_TAG}' - that value is reserved to mark content "
+                "shared with every user"
+            )
         if user_id == self.MATCH_ALL_TAG:
             raise ValueError(f"user_id must not equal the reserved match-all tag '{self.MATCH_ALL_TAG}'")
         if "{" in user_id or "}" in user_id:
             raise ValueError("user_id must not contain brace characters ('{' or '}')")
         if "*" in user_id or "?" in user_id:
             raise ValueError("user_id must not contain wildcard characters ('*' or '?')")
+        if user_id != user_id.strip():
+            raise ValueError("user_id must not have leading or trailing whitespace")
 
     def _scoped_doc_id(self, base_id: str, user_id: Optional[str]) -> str:
         """Fold the owner into the deterministic id so two users uploading the
@@ -881,7 +891,7 @@ class ValkeyDB(VectorDb):
         """Delete documents by content ID.
 
         user_id set  -> delete only the caller's own chunks (must NOT touch
-        the shared bucket). None -> delete across all owners (legacy/admin).
+        the shared bucket). None -> the admin view, deleting across every owner.
         """
         self._validate_user_id(user_id)
         try:

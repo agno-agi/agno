@@ -1,4 +1,5 @@
 import asyncio
+import re
 from typing import Any, Dict, List, Mapping, Optional, Union
 
 try:
@@ -27,6 +28,25 @@ from agno.vectordb.search import SearchType
 RESERVED_HASH_FIELDS = {"id", "name", "content", "embedding", "content_hash", "content_id", "user_id"}
 
 
+# The characters RediSearch treats as special inside a TAG query, taken from
+# redisvl's TokenEscaper (itself from the Redis escaping docs), plus the '|' union
+# character redisvl omits. Escaping only these matters: escaping anything else
+# leaves the backslash in the query literally, so the clause hunts for a value that
+# was never stored and the owner cannot read their own chunks.
+_TAG_SPECIAL_CHARS = re.compile(r"[,.<>{}\[\]\\\"\':;!@#$%^&*()\-+=~\/ \?|]")
+
+
+def _escape_tag_value(value: Any) -> str:
+    """Escape FT.SEARCH TAG special characters so the value matches as one literal tag.
+
+    redisvl's ``Tag`` escapes a backslash but not the '|' union character, so an owner
+    id carrying one (an OIDC ``sub`` such as ``auth0|507f...``) would widen the scope
+    into several owners instead of matching. Build the clause here rather than through
+    Tag, escaping exactly RediSearch's special set.
+    """
+    return _TAG_SPECIAL_CHARS.sub(lambda m: f"\\{m.group(0)}", str(value))
+
+
 class RedisDB(VectorDb):
     """
     Redis class for managing vector operations with Redis and RedisVL.
@@ -39,12 +59,14 @@ class RedisDB(VectorDb):
     # the sentinel owner tag and the owner-OR-shared scope matches either.
     USER_ID_FIELD: str = "user_id"
     SHARED_OWNER_TAG: str = "__shared__"
-    # Reserved owner tag that is never stored by a real caller.
-    MATCH_ALL_TAG: str = "__match_all__"
     # TAG fields split stored values on a separator (default ","), so "a,b,c" would
     # index as three tags. 0x1f never appears in real values, keeping each owner value
     # one atomic tag; the owner field is also case sensitive.
     USER_ID_SEPARATOR: str = "\x1f"
+    # RediSearch truncates an indexed TAG at the first NUL and at 4096 bytes, so an
+    # owner id carrying either would index as a prefix of another owner's tag and write
+    # into their scoped view.
+    MAX_USER_ID_BYTES: int = 4096
 
     def __init__(
         self,
@@ -136,27 +158,37 @@ class RedisDB(VectorDb):
         """Reject user_id values that would break TAG-based isolation.
 
         The separator would index one value as several owner tags, the shared
-        sentinel would let a caller impersonate the shared bucket, a stored
-        match-all tag would break a match-all query, braces can never be matched
-        by a scope clause, wildcards match other owners' tags even when escaped,
-        and an empty string is an owner tag no scope clause can ever match.
+        sentinel would let a caller impersonate the shared bucket, braces can
+        never be matched by a scope clause, wildcards match other owners' tags
+        even when escaped, surrounding whitespace is trimmed at index time so
+        ' alice' indexes as the tag 'alice' and is read by that owner, a NUL byte
+        or an over-long value is truncated at index time so 'victim\\x00attacker'
+        indexes as 'victim' and writes into that owner's view, and an empty string
+        is an owner tag no scope clause can ever match.
+
+        The TAG union character '|' is not rejected: ``_escape_tag_value``
+        escapes it when the scope clause is built, and OIDC subject claims
+        ('auth0|...', 'google-oauth2|...') are legitimate owner ids.
         """
         if user_id is None:
             return
         if user_id == "":
-            raise ValueError("user_id must not be an empty string; use None for unscoped access")
+            raise ValueError("user_id must not be an empty string")
+        if "\x00" in user_id:
+            raise ValueError("user_id must not contain a NUL byte")
+        if len(user_id.encode()) > self.MAX_USER_ID_BYTES:
+            raise ValueError(f"user_id must not exceed {self.MAX_USER_ID_BYTES} bytes")
         if self.USER_ID_SEPARATOR in user_id:
             raise ValueError("user_id must not contain the reserved separator character (0x1f)")
         if user_id == self.SHARED_OWNER_TAG:
-            raise ValueError(f"user_id must not equal the reserved shared-owner tag '{self.SHARED_OWNER_TAG}'")
-        if user_id == self.MATCH_ALL_TAG:
-            raise ValueError(f"user_id must not equal the reserved match-all tag '{self.MATCH_ALL_TAG}'")
+            raise ValueError(
+                f"user_id must not be '{self.SHARED_OWNER_TAG}' - that value is reserved to mark content "
+                "shared with every user"
+            )
         if "{" in user_id or "}" in user_id:
             raise ValueError("user_id must not contain brace characters ('{' or '}')")
         if "*" in user_id or "?" in user_id:
             raise ValueError("user_id must not contain wildcard characters ('*' or '?')")
-        if "|" in user_id:
-            raise ValueError("user_id must not contain the reserved TAG union character ('|')")
         if user_id != user_id.strip():
             raise ValueError("user_id must not have leading or trailing whitespace")
 
@@ -175,7 +207,7 @@ class RedisDB(VectorDb):
 
     def _owner_tag(self, user_id: str) -> str:
         """Tag clause matching the given owner."""
-        return str(Tag(self.USER_ID_FIELD) == user_id)
+        return f"@{self.USER_ID_FIELD}:{{{_escape_tag_value(user_id)}}}"
 
     def _user_scope_filter(self, user_id: Optional[str]) -> Optional["FilterExpression"]:
         """Build the owner-OR-shared scope for a search.
@@ -186,7 +218,8 @@ class RedisDB(VectorDb):
         """
         if user_id is None:
             return None
-        return Tag(self.USER_ID_FIELD) == [user_id, self.SHARED_OWNER_TAG]
+        owners = f"{_escape_tag_value(user_id)}|{_escape_tag_value(self.SHARED_OWNER_TAG)}"
+        return FilterExpression(f"@{self.USER_ID_FIELD}:{{{owners}}}")
 
     def _get_schema(self):
         """Get default redis schema"""
@@ -431,7 +464,7 @@ class RedisDB(VectorDb):
         this content_hash; a shared upsert (None) deletes only shared chunks.
         """
         owner = user_id if user_id is not None else self.SHARED_OWNER_TAG
-        return (Tag("content_hash") == content_hash) & (Tag(self.USER_ID_FIELD) == owner)
+        return (Tag("content_hash") == content_hash) & FilterExpression(self._owner_tag(owner))
 
     def upsert(
         self,
@@ -766,7 +799,7 @@ class RedisDB(VectorDb):
         """Delete documents by content ID.
 
         user_id set  -> delete only the caller's own chunks (must NOT touch
-        the shared bucket). None -> delete across all owners (legacy/admin).
+        the shared bucket). None -> the admin view, deleting across every owner.
         """
         try:
             self._validate_user_id(user_id)
@@ -800,6 +833,14 @@ class RedisDB(VectorDb):
     def update_metadata(self, content_id: str, metadata: Mapping[str, Any]) -> None:
         """Update metadata for documents with the given content ID."""
         try:
+            # Drop keys the adapter owns so caller metadata can't overwrite the id,
+            # embedding or owner and thereby corrupt indexing or escape isolation,
+            # mirroring the insert path (_parse_redis_hash).
+            reserved = {k: v for k, v in metadata.items() if k in RESERVED_HASH_FIELDS}
+            if reserved:
+                log_warning(f"Ignoring reserved meta_data keys that cannot be overwritten: {sorted(reserved)}")
+            metadata = {k: v for k, v in metadata.items() if k not in RESERVED_HASH_FIELDS}
+
             # Find documents with the given content_id
             content_id_filter = Tag("content_id") == content_id
             query = FilterQuery(
@@ -813,7 +854,7 @@ class RedisDB(VectorDb):
             # Update metadata for each found document
             for result in parsed:
                 key = result.get("id")
-                if key:
+                if key and metadata:
                     self.redis_client.hset(key, mapping=metadata)  # type: ignore[arg-type]
 
             log_debug(f"Updated metadata for documents with content_id '{content_id}'")

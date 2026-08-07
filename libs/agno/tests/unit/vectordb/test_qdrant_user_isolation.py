@@ -1,21 +1,7 @@
 """Qdrant per-user RAG isolation contract.
 
-Qdrant's vendor-recommended multi-tenancy is a single collection with a
-tenant-indexed payload field. We index ``user_id`` as a KEYWORD with
-``is_tenant=True`` so the engine stores tenant data contiguously and can
-prune by tenant before walking the HNSW graph.
-
-* Inserts with ``user_id`` stamp the value into the payload's ``user_id``
-  field (NOT inside ``meta_data``).
-* Inserts with ``user_id=None`` leave it NULL — the SHARED bucket.
-* Scoped searches use a Filter with ``should`` matching either the caller's
-  id OR is_empty(user_id), so admin-uploaded shared content stays
-  discoverable.
-* Unscoped (admin) searches apply no scope and see everything.
-
-We use Qdrant's in-memory mode (``location=":memory:"``) so this is a true
-end-to-end test with no mocking of the database itself — same approach as
-the LanceDB isolation tests.
+Owner lives in a tenant-indexed ``user_id`` payload field; NULL is the shared bucket.
+Runs end-to-end against Qdrant's in-memory mode.
 """
 
 from typing import List
@@ -24,6 +10,8 @@ import pytest
 
 from agno.knowledge.document import Document
 from agno.vectordb.qdrant import Qdrant
+
+from .conftest import DeterministicEmbedder
 
 TEST_COLLECTION = "isolation_test"
 
@@ -56,15 +44,8 @@ def _shared_docs() -> List[Document]:
     return [Document(name="company-holidays", content="The office is closed Jan 1.")]
 
 
-class TestPayloadHasUserIdKey:
-    """Pin the contract: ``user_id`` is a top-level payload key, not nested
-    inside ``meta_data``. The payload index relies on this — moving it into
-    a sub-dict would silently degrade reads from O(tenant) back to O(N)."""
-
-    def test_user_id_key_constant_is_user_id(self):
-        # Storage compatibility marker. If this changes, every previously
-        # persisted row's user_id stops being readable by the filter.
-        assert Qdrant.USER_ID_KEY == "user_id"
+class TestWriteStampsOwner:
+    """Pin the contract: ``user_id`` is a top-level payload key, not nested inside ``meta_data``."""
 
     def test_explicit_user_id_persisted_top_level(self, qdrant_db):
         qdrant_db.insert(content_hash="h1", documents=_alice_docs(), user_id="alice")
@@ -75,8 +56,6 @@ class TestPayloadHasUserIdKey:
         assert points[0].payload[Qdrant.USER_ID_KEY] == "alice"
 
     def test_none_user_id_persisted_as_null(self, qdrant_db):
-        """Shared chunks store ``None`` in ``user_id``. The scope filter
-        uses IsEmptyCondition, which matches both None and absent."""
         qdrant_db.insert(content_hash="h1", documents=_shared_docs(), user_id=None)
 
         points, _ = qdrant_db.client.scroll(collection_name=TEST_COLLECTION, limit=10, with_payload=True)
@@ -84,8 +63,8 @@ class TestPayloadHasUserIdKey:
         assert points[0].payload[Qdrant.USER_ID_KEY] is None
 
     def test_user_id_omitted_defaults_to_null(self, qdrant_db):
-        """Backwards-compatible: callers that never pass ``user_id`` get
-        NULL (shared) — they're effectively opting out of isolation."""
+        """Backwards-compatible: callers that never pass ``user_id`` get NULL (shared) — they're effectively opting
+        out of isolation."""
         qdrant_db.insert(content_hash="h1", documents=_shared_docs())
 
         points, _ = qdrant_db.client.scroll(collection_name=TEST_COLLECTION, limit=10, with_payload=True)
@@ -93,9 +72,7 @@ class TestPayloadHasUserIdKey:
 
 
 class TestUserScopeFilter:
-    """The scope-filter builder is small enough to unit-test directly. We
-    catch the OR semantics and the shared-NULL pattern without spinning
-    up the DB at all."""
+    """The scope-filter builder is small enough to unit-test directly."""
 
     def test_none_returns_no_filter(self, qdrant_db):
         assert qdrant_db._user_scope_filter(None) is None
@@ -121,66 +98,82 @@ class TestUserScopeFilter:
         assert qdrant_db._merge_filters(base, None) is base
 
 
-class TestSearchIsolationContract:
-    """The load-bearing test: alice's search returns her chunks plus
-    shared chunks, but never bob's. This is what makes K2 actually work."""
+class TestSearchScope:
+    """The load-bearing test: alice's search returns her chunks plus shared chunks, but never bob's."""
 
     @pytest.fixture
-    def populated_db(self, qdrant_db):
+    def search_corpus(self, qdrant_db):
         """Three rows: one alice, one bob, one shared (NULL)."""
         qdrant_db.insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
         qdrant_db.insert(content_hash="hb", documents=_bob_docs(), user_id="bob")
         qdrant_db.insert(content_hash="hs", documents=_shared_docs(), user_id=None)
         return qdrant_db
 
-    def test_alice_sees_her_own_chunk(self, populated_db):
-        results = populated_db.search(query="salary", limit=10, user_id="alice")
+    def test_alice_sees_her_own_chunk(self, search_corpus):
+        results = search_corpus.search(query="salary", limit=10, user_id="alice")
         names = {d.name for d in results}
         assert "alice-salary" in names
 
-    def test_alice_sees_shared_chunk(self, populated_db):
-        results = populated_db.search(query="anything", limit=10, user_id="alice")
+    def test_alice_sees_shared_chunk(self, search_corpus):
+        results = search_corpus.search(query="anything", limit=10, user_id="alice")
         names = {d.name for d in results}
         assert "company-holidays" in names
 
-    def test_alice_never_sees_bobs_chunk(self, populated_db):
-        """The isolation contract. If this fails the whole feature is
-        broken — alice would be retrieving bob's confidential chunks."""
-        results = populated_db.search(query="salary", limit=10, user_id="alice")
+    def test_alice_never_sees_bobs_chunk(self, search_corpus):
+        """The isolation contract."""
+        results = search_corpus.search(query="salary", limit=10, user_id="alice")
         names = {d.name for d in results}
         assert "bob-salary" not in names
         # Belt and braces: also check content.
         for d in results:
             assert "Bob's salary" not in d.content
 
-    def test_bob_never_sees_alices_chunk(self, populated_db):
-        results = populated_db.search(query="salary", limit=10, user_id="bob")
+    def test_bob_never_sees_alices_chunk(self, search_corpus):
+        results = search_corpus.search(query="salary", limit=10, user_id="bob")
         names = {d.name for d in results}
         assert "alice-salary" not in names
 
-    def test_admin_sees_everything(self, populated_db):
+    def test_admin_sees_everything(self, search_corpus):
         """``user_id=None`` at search time means no scope — admin view."""
-        results = populated_db.search(query="anything", limit=10, user_id=None)
+        results = search_corpus.search(query="anything", limit=10, user_id=None)
         names = {d.name for d in results}
         assert "alice-salary" in names
         assert "bob-salary" in names
         assert "company-holidays" in names
 
+    def test_empty_user_id_is_an_owner_not_an_admin(self, search_corpus):
+        """Only ``None`` means unscoped. An empty string is a (strange) owner, so it
+        must see the shared bucket alone — a falsy check here would hand every
+        caller with a blank id the admin view."""
+        results = search_corpus.search(query="anything", limit=10, user_id="")
+        names = {d.name for d in results}
+        assert names == {"company-holidays"}
 
-class TestDeleteByContentIdIsolation:
-    """``delete_by_content_id(content_id, user_id=...)`` must scope the
-    delete to the caller's chunks — otherwise Bob could guess Alice's
-    content_id and wipe her chunks.
+    @pytest.mark.asyncio
+    async def test_async_search_scopes_to_the_caller(self):
+        """``Knowledge.asearch`` and every agent retrieval land on ``async_search``,
+        and in memory mode the async client is a separate store — so the sync
+        search tests above cannot cover this path at all."""
+        db = Qdrant(collection=TEST_COLLECTION, location=":memory:", embedder=DeterministicEmbedder())
+        await db.async_create()
+        await db.async_insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
+        await db.async_insert(content_hash="hb", documents=_bob_docs(), user_id="bob")
+        await db.async_insert(content_hash="hs", documents=_shared_docs(), user_id=None)
 
-    Qdrant scopes via a ``must`` filter combining ``content_id`` AND
-    ``user_id`` on the server side.
-    """
+        results = await db.async_search(query="salary", limit=10, user_id="alice")
+        names = {d.name for d in results}
+        assert "alice-salary" in names
+        assert "company-holidays" in names
+        assert "bob-salary" not in names
+
+
+class TestDeleteScope:
+    """``delete_by_content_id(content_id, user_id=...)`` must scope the delete to the caller's chunks — otherwise
+    Bob could guess Alice's content_id and wipe her chunks."""
 
     @pytest.fixture
-    def populated_db(self, qdrant_db):
-        """Two users own chunks under the SAME content_id 'doc-1'. The
-        adversarial scenario — Bob guesses the id and tries to delete it.
-        Without ``user_id`` scoping he'd wipe Alice's row too."""
+    def content_id_corpus(self, qdrant_db):
+        """Two users own chunks under the SAME content_id 'doc-1'."""
         alice_doc = Document(name="alice-doc", content="Alice's secret.")
         alice_doc.content_id = "doc-1"
         bob_doc = Document(name="bob-doc", content="Bob's secret.")
@@ -194,25 +187,79 @@ class TestDeleteByContentIdIsolation:
         points, _ = db.client.scroll(collection_name=TEST_COLLECTION, limit=100, with_payload=True)
         return sorted(p.payload[Qdrant.USER_ID_KEY] for p in points)
 
-    def test_scoped_delete_only_removes_callers_chunks(self, populated_db):
-        """Bob asks to delete 'doc-1' under his own scope — Alice's chunk
-        must remain."""
-        populated_db.delete_by_content_id("doc-1", user_id="bob")
+    def test_scoped_delete_only_removes_callers_chunks(self, content_id_corpus):
+        """Bob asks to delete 'doc-1' under his own scope — Alice's chunk must remain."""
+        content_id_corpus.delete_by_content_id("doc-1", user_id="bob")
 
-        assert self._owners(populated_db) == ["alice"], "Isolation broken: bob's scoped delete touched alice's chunks"
+        assert self._owners(content_id_corpus) == ["alice"], (
+            "Isolation broken: bob's scoped delete touched alice's chunks"
+        )
 
-    def test_alice_can_delete_her_own(self, populated_db):
-        populated_db.delete_by_content_id("doc-1", user_id="alice")
-        assert self._owners(populated_db) == ["bob"]
+    def test_alice_can_delete_her_own(self, content_id_corpus):
+        content_id_corpus.delete_by_content_id("doc-1", user_id="alice")
+        assert self._owners(content_id_corpus) == ["bob"]
 
-    def test_unscoped_delete_wipes_everyone(self, populated_db):
-        """Legacy behaviour: ``user_id=None`` deletes across all owners.
-        Pin it so we notice if the default semantics change."""
-        populated_db.delete_by_content_id("doc-1", user_id=None)
+    def test_unscoped_delete_wipes_everyone(self, content_id_corpus):
+        """Legacy behaviour: ``user_id=None`` deletes across all owners."""
+        content_id_corpus.delete_by_content_id("doc-1", user_id=None)
 
-        assert populated_db.get_count() == 0
+        assert content_id_corpus.get_count() == 0
 
-    def test_scoped_delete_misses_when_user_does_not_own_anything(self, populated_db):
-        """Carol has no chunks. Her scoped delete of doc-1 is a no-op."""
-        populated_db.delete_by_content_id("doc-1", user_id="carol")
-        assert populated_db.get_count() == 2
+    def test_scoped_delete_misses_when_user_does_not_own_anything(self, content_id_corpus):
+        content_id_corpus.delete_by_content_id("doc-1", user_id="carol")
+        assert content_id_corpus.get_count() == 2
+
+
+class TestUpsertDedupScope:
+    """The upsert dedup pair. Point ids fold in each chunk's own id, so a re-upsert
+    that splits into fewer chunks writes new ids and orphans the surplus unless the
+    owner's prior chunks are cleared first - and that clear must never reach another
+    owner's rows."""
+
+    @staticmethod
+    def _chunks(n: int) -> List[Document]:
+        return [Document(name=f"c{i}", content=f"chunk number {i}") for i in range(n)]
+
+    @staticmethod
+    def _owners(db) -> List:
+        points, _ = db.client.scroll(collection_name=TEST_COLLECTION, limit=100, with_payload=True)
+        return sorted((p.payload.get(Qdrant.USER_ID_KEY) for p in points), key=str)
+
+    def test_shrinking_reupsert_leaves_no_orphans(self, qdrant_db):
+        qdrant_db.upsert(content_hash="h", documents=self._chunks(3), user_id="alice")
+        qdrant_db.upsert(content_hash="h", documents=self._chunks(1), user_id="alice")
+
+        assert qdrant_db.get_count() == 1, "Surplus chunks from the longer version survived the re-upsert"
+
+    def test_reupsert_never_clears_another_owner(self, qdrant_db):
+        """The dedup delete is the destructive half - it must match the writing owner
+        alone, or one tenant's re-ingest silently destroys another's chunks."""
+        qdrant_db.upsert(content_hash="h", documents=self._chunks(2), user_id="bob")
+        qdrant_db.upsert(content_hash="h", documents=self._chunks(2), user_id="alice")
+        qdrant_db.upsert(content_hash="h", documents=self._chunks(1), user_id="alice")
+
+        assert self._owners(qdrant_db) == ["alice", "bob", "bob"]
+
+    def test_shared_reupsert_never_clears_an_owned_bucket(self, qdrant_db):
+        qdrant_db.upsert(content_hash="h", documents=self._chunks(2), user_id="alice")
+        qdrant_db.upsert(content_hash="h", documents=self._chunks(1), user_id=None)
+
+        assert self._owners(qdrant_db) == [None, "alice", "alice"]
+
+    def test_guard_and_delete_share_one_bucket(self, qdrant_db):
+        """content_hash_exists and _delete_by_content_hash must resolve the same rows;
+        if they drift, a shared publish reads as a duplicate and is silently skipped."""
+        qdrant_db.upsert(content_hash="h", documents=self._chunks(1), user_id="alice")
+
+        assert qdrant_db.content_hash_exists("h", user_id="alice") is True
+        assert qdrant_db.content_hash_exists("h", user_id=None) is False, (
+            "The shared bucket must not see a privately owned row"
+        )
+        qdrant_db._delete_by_content_hash("h", user_id=None)
+        assert self._owners(qdrant_db) == ["alice"], "A shared dedup delete cleared an owned row"
+
+
+def test_user_id_key_is_a_storage_compatibility_marker():
+    """The payload key is written into every stored point, so renaming it strands
+    every row already indexed under the old name."""
+    assert Qdrant.USER_ID_KEY == "user_id"

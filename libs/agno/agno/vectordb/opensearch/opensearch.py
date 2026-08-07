@@ -740,17 +740,10 @@ class OpenSearch(VectorDb):
 
         Note:
             Derived from the document's explicit id (or a hash of its content) combined
-            with the content_hash, so re-indexing the same document resolves to the same
-            _id and upserts update in place instead of creating duplicates. The owner is
-            folded in as well, otherwise two users ingesting the same bytes would resolve
-            to one _id and the second write would silently take ownership of the first.
-            user_id=None keeps the pre-isolation _id so existing documents still update
-            in place.
-
-            The base id is caller-controlled and variable length, so it is collapsed to a
-            fixed-length digest before the owner is folded in - otherwise the '_' boundary
-            moves and ('doc_1', 'alice') and ('doc', '1_alice') fold to the same _id,
-            letting one owner overwrite the other's chunk.
+            with the content_hash, so re-indexing the same document upserts in place.
+            The owner is folded into a fixed-length digest of that base id, so two users
+            ingesting the same bytes get distinct _ids and the '_' boundary cannot be
+            shifted onto another owner; user_id=None keeps the pre-isolation _id.
         """
         cleaned_content = (doc.content or "").replace("\x00", "�")
         base_id = doc.id or md5(cleaned_content.encode()).hexdigest()
@@ -1022,8 +1015,12 @@ class OpenSearch(VectorDb):
 
         Note:
             Creates index if it doesn't exist. Skips documents that fail preparation.
+            Clears the owner's existing chunks for this hash first, so a re-upsert
+            that splits into fewer chunks does not leave the surplus behind.
         """
         self._validate_user_id(user_id)
+        if self.content_hash_exists(content_hash, user_id=user_id):
+            self._delete_by_content_hash(content_hash, user_id=user_id)
         self._apply_content_hash_and_filters(documents, content_hash, filters)
         self._execute_bulk_operation("upsert", documents, self._prepare_bulk_upsert_data, user_id=user_id)
 
@@ -1046,9 +1043,12 @@ class OpenSearch(VectorDb):
 
         Note:
             Creates index if it doesn't exist. Skips documents that fail preparation.
-            Uses batch embedding for improved performance.
+            Uses batch embedding for improved performance. Clears the owner's existing
+            chunks for this hash first.
         """
         self._validate_user_id(user_id)
+        if self.content_hash_exists(content_hash, user_id=user_id):
+            self._delete_by_content_hash(content_hash, user_id=user_id)
         self._apply_content_hash_and_filters(documents, content_hash, filters)
         await self._async_execute_bulk_operation(
             "upsert", documents, self._prepare_bulk_upsert_data, use_batch_embed=True, user_id=user_id
@@ -1837,18 +1837,13 @@ class OpenSearch(VectorDb):
             ValueError: If the owner is empty or whitespace-only
 
         Note:
-            The shared bucket is the absence of the field, not a value, so an empty
-            string is a third bucket rather than the shared one: it is indexed as a
-            keyword term, so must_not exists steps over it and no named owner's term
-            clause matches it. Its chunks are then unreadable by every other caller,
-            unreachable by content_hash_exists(user_id=None) - which probes the shared
-            bucket alone - and untouchable by every scoped delete. A whitespace-only
-            owner is the same accident wearing an identity nobody can see or retype.
-            Both are what an unset form field or a stripped token claim hands over,
-            so they are refused rather than stored. Use None for shared/unscoped access.
+            The shared bucket is the absence of the field, not a value, so an empty or
+            whitespace-only owner is a third bucket rather than the shared one: no other
+            caller can read it, content_hash_exists(user_id=None) cannot probe it and no
+            scoped delete can clear it. Use None for shared/unscoped access.
         """
         if user_id is not None and user_id.strip() == "":
-            raise ValueError("user_id must not be empty or whitespace-only; use None for shared/unscoped access")
+            raise ValueError("user_id must not be empty or whitespace-only")
 
     def _owner_filter(self, user_id: str) -> Dict[str, Any]:
         """
@@ -1880,6 +1875,24 @@ class OpenSearch(VectorDb):
             also covers every document written before this field existed.
         """
         return {"bool": {"must_not": {"exists": {"field": USER_ID_FIELD}}}}
+
+    def _exact_owner_scope(self, user_id: Optional[str]) -> Dict[str, Any]:
+        """
+        Build the scope the dedup pair shares.
+
+        Args:
+            user_id: Owner to scope to, or None for the shared bucket
+
+        Returns:
+            Dict[str, Any]: OpenSearch clause matching exactly one bucket
+
+        Note:
+            Unlike _user_scope_filter this never widens to a second bucket, and unlike
+            it there is no unscoped branch: content_hash_exists and
+            _delete_by_content_hash must address the same rows as each other, so both
+            resolve None to the shared bucket rather than to every owner.
+        """
+        return self._owner_filter(user_id) if user_id is not None else self._shared_bucket_filter()
 
     def _user_scope_filter(self, user_id: Optional[str]) -> Optional[Dict[str, Any]]:
         """
@@ -2131,23 +2144,20 @@ class OpenSearch(VectorDb):
 
         Args:
             content_hash: Content hash to check
-            user_id: Restrict the check to the owner's chunks plus the shared bucket.
-                None restricts it to the shared bucket alone.
+            user_id: Restrict the check to the owner's own chunks. None restricts it
+                to the shared bucket alone.
 
         Returns:
             bool: True if document exists, False otherwise
 
         Note:
-            The scope is the same own-or-shared clause searches use, so an
-            upload another owner made no longer reads as a duplicate - without it
-            skip_if_exists denies the second owner a copy they cannot see. This is the
-            guard half of the upsert dedup pair, so None addresses the shared bucket
-            alone rather than every owner: a private copy one tenant already holds must
-            not silently swallow a later shared publish.
+            The scope is the exact-owner clause, not the own-or-shared clause reads use:
+            as the guard half of the upsert dedup pair it has to match exactly the chunks
+            _delete_by_content_hash clears under the same user_id, never more. None
+            therefore addresses the shared bucket alone rather than every owner.
         """
         self._validate_user_id(user_id)
-        scope = self._user_scope_filter(user_id) if user_id is not None else self._shared_bucket_filter()
-        return self._check_field_exists("content_hash", content_hash, scope)
+        return self._check_field_exists("content_hash", content_hash, self._exact_owner_scope(user_id))
 
     def delete_by_id(self, id: str) -> bool:
         """
@@ -2253,6 +2263,51 @@ class OpenSearch(VectorDb):
             {"bool": {"filter": [content_id_term, self._owner_filter(user_id)]}},
             f"content_id '{content_id}' (user_id={user_id})",
         )
+
+    def _delete_by_content_hash(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        """
+        Delete the owner's chunks carrying the given content hash.
+
+        Args:
+            content_hash: Content hash to delete
+            user_id: Owner to scope the delete to. None scopes to the shared bucket,
+                so a re-ingest of content one owner already holds never clears
+                another owner's identical chunks.
+
+        Returns:
+            bool: True if successful, False otherwise
+
+        Note:
+            The delete half of the upsert dedup pair, sharing content_hash_exists'
+            scope exactly. It cannot be left to doc_as_upsert alone: the _id folds in
+            each chunk's own id, so a re-upsert that splits the same content into
+            fewer chunks writes new _ids and leaves the surplus ones behind, still
+            answering searches.
+        """
+        return self._delete_by_query(
+            self._content_hash_query(content_hash, user_id),
+            f"content_hash '{content_hash}' (user_id={user_id})",
+        )
+
+    def _content_hash_query(self, content_hash: str, user_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Build the query the dedup pair shares.
+
+        Args:
+            content_hash: Content hash to match
+            user_id: Owner to scope to, or None for the shared bucket
+
+        Returns:
+            Dict[str, Any]: OpenSearch query matching one owner's chunks for this hash
+        """
+        return {
+            "bool": {
+                "filter": [
+                    {"term": {"content_hash": content_hash}},
+                    self._exact_owner_scope(user_id),
+                ]
+            }
+        }
 
     def update_metadata(self, content_id: str, metadata: Dict[str, Any]) -> None:
         """
