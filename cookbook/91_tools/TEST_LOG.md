@@ -1,5 +1,13 @@
 # Test Log
 
+### warp_tools.py
+
+**Status:** PENDING
+
+**Description:** WarpTools controls the Warp terminal through the `warp://` URI scheme: `open_window`, `open_tab`, `run_commands` (opens a new Warp tab running startup commands through a generated temporary Tab Config), `open_launch_config`, `open_tab_config`, and an optional `run_agent` backed by the `oz` CLI (disabled by default). The cookbook gates `run_commands` behind `requires_confirmation_tools` following the shell_tools example.
+
+**Result:** Not rerun after changing `run_commands` from legacy Launch Configuration YAML/new-window behavior to temporary Tab Config TOML/new-tab behavior. Unit and live Warp validation are intentionally deferred until explicitly requested.
+
 ### smallest_tools.py (switch to Gemini for audio-input support)
 
 **Status:** PASS
