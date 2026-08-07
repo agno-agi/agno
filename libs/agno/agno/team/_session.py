@@ -189,12 +189,12 @@ def _scrub_tool_results_keeping_unresolved(run: Union[TeamRunOutput, "RunOutput"
 
     if not run.messages:
         return
-    resolved = {message.tool_call_id for message in run.messages if message.role == "tool" and message.tool_call_id}
-    if not resolved:
+    if not any(message.role == "tool" for message in run.messages):
         return
+    resolved = {message.tool_call_id for message in run.messages if message.role == "tool" and message.tool_call_id}
     kept = []
     for message in run.messages:
-        if message.role == "tool" and message.tool_call_id in resolved:
+        if message.role == "tool":
             continue
         if message.role == "assistant" and message.tool_calls:
             remaining = [call for call in message.tool_calls if call.get("id") not in resolved]
@@ -273,7 +273,15 @@ def _storage_view_of_spared_run(
     if member is None:
         member = _resolve_spared_member(team, member_response)
     if member is None:
-        return member_response
+        # The owning member cannot be resolved (e.g. callable Team.members).
+        # Store the strictest view: every storage flag treated as off, with the
+        # paused-aware tool scrub so the pending call stays resumable.
+        view = copy(member_response)
+        isolate_media_scrub_targets(view)
+        scrub_media_from_run_output(view)
+        _scrub_tool_results_keeping_unresolved(view)
+        scrub_history_messages_from_run_output(view)
+        return view
     if member.store_media and member.store_tool_messages and member.store_history_messages:
         return member_response
 

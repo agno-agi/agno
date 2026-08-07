@@ -5471,6 +5471,253 @@ def test_paused_buffer_entries_are_reclaimed_after_the_cleanup_interval():
     assert "r-paused-reclaim" not in buf.run_metadata
 
 
+_FIRED: List[str] = []
+
+
+@tool(requires_confirmation=True)
+@approval(type="required")
+def alpha_action(target: str) -> str:
+    _FIRED.append(f"alpha:{target}")
+    return "alpha done"
+
+
+@tool(requires_confirmation=True)
+@approval(type="required")
+def beta_action(target: str) -> str:
+    _FIRED.append(f"beta:{target}")
+    return "beta done"
+
+
+def _two_member_approval_team(db: SqliteDb, resuming: bool, collide: bool = False) -> Team:
+    """Two members, each pausing on its own approval-gated tool. With collide,
+    both provider tool calls share one provider-local tool_call_id."""
+    alpha_tcid = "call_1"
+    beta_tcid = "call_1" if collide else "call_2"
+    alpha = Agent(
+        name="Alpha",
+        id="alpha",
+        model=_ScriptedModel(
+            "m-alpha",
+            [("content", "Alpha done.")]
+            if resuming
+            else [("tool", "alpha_action", {"target": "A"}, alpha_tcid), ("content", "Alpha done.")],
+        ),
+        tools=[alpha_action],
+        db=db,
+        telemetry=False,
+    )
+    beta = Agent(
+        name="Beta",
+        id="beta",
+        model=_ScriptedModel(
+            "m-beta",
+            [("content", "Beta done.")]
+            if resuming
+            else [("tool", "beta_action", {"target": "B"}, beta_tcid), ("content", "Beta done.")],
+        ),
+        tools=[beta_action],
+        db=db,
+        telemetry=False,
+    )
+    return Team(
+        name="Ops Team",
+        id="ops-team",
+        model=_ScriptedModel(
+            "m-lead",
+            [("content", "All done.")]
+            if resuming
+            else [
+                (
+                    "tools",
+                    [
+                        ("delegate_task_to_member", {"member_id": "alpha", "task": "do alpha"}, "tc-d1"),
+                        ("delegate_task_to_member", {"member_id": "beta", "task": "do beta"}, "tc-d2"),
+                    ],
+                ),
+                ("content", "All done."),
+            ],
+        ),
+        members=[alpha, beta],
+        db=db,
+        telemetry=False,
+    )
+
+
+def _approval_record_for_tool(db: SqliteDb, tool_name: str):
+    records, _ = db.get_approvals(approval_type="required", limit=50)
+    matches = [a for a in records if a["tool_name"] == tool_name]
+    assert matches, f"no approval record for {tool_name}; records: {[a['tool_name'] for a in records]}"
+    return matches[0]
+
+
+def test_one_approval_does_not_resolve_a_sibling_members_tool(tmp_path):
+    """Each member's gated tool is decided by ITS OWN approval record. With one
+    record approved and the other pending, nothing may execute."""
+    _FIRED.clear()
+    db_file = str(tmp_path / "sibling_approvals.db")
+    session_id = "s-sibling-approvals"
+
+    db = SqliteDb(db_file=db_file)
+    run1 = _two_member_approval_team(db, resuming=False).run("Do both", session_id=session_id)
+    assert run1.is_paused
+    records, _ = db.get_approvals(approval_type="required", limit=50)
+    assert len(records) == 2, f"expected one approval record per paused member, got {len(records)}"
+
+    db.update_approval(_approval_record_for_tool(db, "alpha_action")["id"], status="approved", resolution_data=None)
+
+    team2 = _two_member_approval_team(SqliteDb(db_file=db_file), resuming=True)
+    run2 = team2.continue_run(run_id=run1.run_id, session_id=session_id)
+    assert run2.status == RunStatus.paused, f"a pending sibling approval let the run reach {run2.status}"
+    assert _FIRED == [], f"a tool executed while its own approval was pending: {_FIRED}"
+
+    # Resolving the second record completes the run and fires both tools.
+    db2 = SqliteDb(db_file=db_file)
+    db2.update_approval(_approval_record_for_tool(db2, "beta_action")["id"], status="approved", resolution_data=None)
+    team3 = _two_member_approval_team(SqliteDb(db_file=db_file), resuming=True)
+    run3 = team3.continue_run(run_id=run1.run_id, session_id=session_id)
+    assert run3.status == RunStatus.completed, run3.status
+    assert sorted(_FIRED) == ["alpha:A", "beta:B"], _FIRED
+
+
+def test_a_rejected_sibling_does_not_block_or_get_run_by_anothers_approval(tmp_path):
+    """Approve one member, reject the other: the approved tool runs, the
+    rejected one is skipped, and the run completes."""
+    _FIRED.clear()
+    db_file = str(tmp_path / "mixed_approvals.db")
+    session_id = "s-mixed-approvals"
+
+    db = SqliteDb(db_file=db_file)
+    run1 = _two_member_approval_team(db, resuming=False).run("Do both", session_id=session_id)
+    assert run1.is_paused
+
+    db.update_approval(_approval_record_for_tool(db, "alpha_action")["id"], status="approved", resolution_data=None)
+    db.update_approval(_approval_record_for_tool(db, "beta_action")["id"], status="rejected", resolution_data=None)
+
+    team2 = _two_member_approval_team(SqliteDb(db_file=db_file), resuming=True)
+    run2 = team2.continue_run(run_id=run1.run_id, session_id=session_id)
+    assert run2.status == RunStatus.completed, run2.status
+    assert _FIRED == ["alpha:A"], f"the rejected member's tool must not run: {_FIRED}"
+
+
+@pytest.mark.asyncio
+async def test_one_approval_does_not_resolve_a_sibling_with_colliding_tool_call_ids(tmp_path):
+    """Provider-local tool_call_ids can collide across members; the collision
+    must not let one member's approval decide for the other."""
+    _FIRED.clear()
+    db_file = str(tmp_path / "colliding_approvals.db")
+    session_id = "s-colliding-approvals"
+
+    db = SqliteDb(db_file=db_file)
+    run1 = await _two_member_approval_team(db, resuming=False, collide=True).arun("Do both", session_id=session_id)
+    assert run1.is_paused
+
+    db.update_approval(_approval_record_for_tool(db, "alpha_action")["id"], status="approved", resolution_data=None)
+
+    team2 = _two_member_approval_team(SqliteDb(db_file=db_file), resuming=True, collide=True)
+    run2 = await team2.acontinue_run(run_id=run1.run_id, session_id=session_id)
+    assert run2.status == RunStatus.paused, f"a pending sibling approval let the run reach {run2.status}"
+    assert _FIRED == [], f"a tool executed while its own approval was pending: {_FIRED}"
+
+
+def test_a_paused_buffer_entry_reused_by_a_continue_is_not_reclaimed():
+    """A continue reuses the paused run's buffer entry; its stale paused
+    metadata must not let a later cleanup pass delete the live continuation."""
+    from agno.os.managers import EventsBuffer
+
+    buf = EventsBuffer(cleanup_interval=3600)
+    buf.add_event("r-reuse", MagicMock())
+    buf.set_run_completed("r-reuse", RunStatus.paused)
+    assert buf.get_run_status("r-reuse") == RunStatus.paused
+
+    # The continuation's first event takes the run over.
+    buf.add_event("r-reuse", MagicMock())
+    assert buf.get_run_status("r-reuse") == RunStatus.running
+    assert "completed_at" not in buf.run_metadata["r-reuse"]
+
+    buf.cleanup_interval = -1
+    buf.cleanup_runs()
+    assert buf.get_run_status("r-reuse") == RunStatus.running, "cleanup reclaimed a live continuation"
+    assert buf.get_event_count("r-reuse") == 2
+
+
+@pytest.mark.asyncio
+async def test_a_background_fork_from_a_run_object_does_not_orphan_the_original(tmp_path):
+    """A fork executes under a new run id; the original run must keep the
+    status it has instead of being stranded at RUNNING."""
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "fork_orphan.db")
+    session_id = "s-fork-orphan"
+
+    run1 = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email a@example.com", session_id=session_id
+    )
+    assert run1.is_paused
+
+    team2 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
+    async for _ in team2.acontinue_run(
+        run_response=run1,
+        session_id=session_id,
+        requirements=_wire_requirements(run1.requirements),
+        fork=True,
+        stream=True,
+        stream_events=True,
+        background=True,
+    ):
+        pass
+    await _drain_background_tasks()
+
+    stored = [r for r in _reload_runs(db_file, session_id) if r.run_id == run1.run_id][0]
+    assert stored.status == RunStatus.paused, (
+        f"the original run was left {stored.status!r} after a fork branched off it"
+    )
+
+
+def test_idless_tool_results_are_scrubbed_too():
+    """store_tool_messages=False stores NO tool-result message; ids only decide
+    which assistant calls lost their answer. The pending call survives."""
+    from agno.team._session import _scrub_tool_results_keeping_unresolved
+
+    run = RunOutput(run_id="r-idless")
+    run.messages = [
+        Message(role="user", content="do it"),
+        Message(role="assistant", tool_calls=[{"id": "t1", "type": "function", "function": {"name": "a"}}]),
+        Message(role="tool", tool_call_id="t1", content="resolved result"),
+        Message(role="tool", tool_call_id=None, content="LEGACY IDLESS RESULT"),
+        Message(role="assistant", tool_calls=[{"id": "p1", "type": "function", "function": {"name": "gated"}}]),
+    ]
+    _scrub_tool_results_keeping_unresolved(run)
+
+    assert not any(m.role == "tool" for m in run.messages), (
+        f"a tool-result message survived the scrub: {[m.content for m in run.messages if m.role == 'tool']}"
+    )
+    pending = [c["id"] for m in run.messages if m.role == "assistant" for c in (m.tool_calls or [])]
+    assert pending == ["p1"], f"the pending gated call must survive: {pending}"
+
+
+def test_an_unresolvable_member_response_is_stored_fail_closed():
+    """When the owning member cannot be found at storage time, the stored view
+    scrubs as if every storage flag were off; the pending call survives."""
+    from agno.team._session import _storage_view_of_spared_run
+
+    member_run = RunOutput(run_id="r-member", agent_id="ghost")
+    member_run.status = RunStatus.paused
+    member_run.messages = [
+        Message(role="user", content="do it"),
+        Message(role="assistant", tool_calls=[{"id": "t9", "type": "function", "function": {"name": "a"}}]),
+        Message(role="tool", tool_call_id="t9", content="SECRET TOOL RESULT"),
+        Message(role="assistant", tool_calls=[{"id": "p9", "type": "function", "function": {"name": "gated"}}]),
+    ]
+    team = _build_flat_team(SqliteDb(db_file=":memory:"), resuming=True)
+
+    view = _storage_view_of_spared_run(team, member_run)
+
+    assert not any(m.role == "tool" for m in view.messages or []), "an unresolved member's tool result was stored"
+    pending = [c["id"] for m in view.messages or [] if m.role == "assistant" for c in (m.tool_calls or [])]
+    assert "p9" in pending, f"the pending gated call must survive fail-closed storage: {pending}"
+    # The live object the caller holds is untouched.
+    assert any(m.role == "tool" for m in member_run.messages)
+
+
 def test_a_routing_failure_restores_the_callers_team_level_requirements(tmp_path):
     """A plain exception during member routing must leave the caller's run
     object carrying each team-level requirement exactly once."""

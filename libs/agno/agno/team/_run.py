@@ -8138,11 +8138,14 @@ async def _acontinue_run_background_stream(
         ):
             raise RunNotContinuableError(
                 f"Cannot continue run {_run_id}: the stored run has status {status_before_takeover.value} "
-                "and cannot be continued in place. Pass fork=True to branch off a finished run. "
-                "The stored run is unchanged."
+                "and cannot be continued in place. Use acontinue_run(run_id=..., fork=True) to branch off a "
+                "finished run. The stored run is unchanged."
             )
-        run_response.status = RunStatus.running
-        team_session.upsert_run(run_response=run_response)
+        # A fork or regenerate executes under a NEW run id; writing RUNNING
+        # under the original id would strand the original run at RUNNING.
+        if not (fork or regenerate):
+            run_response.status = RunStatus.running
+            team_session.upsert_run(run_response=run_response)
     await asave_session(team, session=team_session)
 
     log_info(f"Background continue-run stream {_run_id} persisted with RUNNING status")

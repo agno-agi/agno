@@ -440,7 +440,106 @@ def _collect_all_approval_tools(run_response: Any) -> List[Any]:
     return result
 
 
-def _sync_requirements_after_approval(run_response: Any, approval_status: str) -> None:
+def _member_run_id_for_tool(run_response: Any, tool: Any) -> Optional[str]:
+    """The member run_id that owns this tool execution, if it came in via a requirement."""
+    for req in getattr(run_response, "requirements", None) or []:
+        te = getattr(req, "tool_execution", None)
+        if te is None:
+            continue
+        if te is tool or (
+            getattr(te, "tool_call_id", None) is not None
+            and getattr(te, "tool_call_id", None) == getattr(tool, "tool_call_id", None)
+            and getattr(te, "tool_name", None) == getattr(tool, "tool_name", None)
+        ):
+            mid = getattr(req, "member_run_id", None)
+            if mid:
+                return mid
+    return None
+
+
+def _group_tools_by_approval(db: Any, run_id: str, run_response: Any, tools: List[Any]) -> List[tuple]:
+    """Pair every approval tool with ITS OWN approval record.
+
+    Each paused member creates its own approval record, so one record must not
+    speak for another member's tool. Resolution order per tool:
+      1. the approval_id stamped on the tool execution at pause time,
+      2. the owning member_run_id,
+      3. the run-level lookup (team run_id first, then any member run_id) -- the
+         pre-existing behaviour, kept so single-member and team-level runs whose
+         tools carry no approval_id still resolve.
+    """
+    cache: Dict[str, Optional[Dict[str, Any]]] = {}
+    fallback_used = False
+    fallback: Optional[Dict[str, Any]] = None
+    pairs: List[tuple] = []
+    for tool in tools:
+        record: Optional[Dict[str, Any]] = None
+        aid = getattr(tool, "approval_id", None)
+        if aid:
+            if aid not in cache:
+                try:
+                    cache[aid] = db.get_approval(aid)
+                except (NotImplementedError, Exception):
+                    cache[aid] = None
+            record = cache[aid]
+        if record is None:
+            mid = _member_run_id_for_tool(run_response, tool)
+            if mid:
+                key = f"run:{mid}"
+                if key not in cache:
+                    cache[key] = _get_approval_for_run(db, mid)
+                record = cache[key]
+        if record is None:
+            if not fallback_used:
+                fallback_used = True
+                for rid in _collect_all_run_ids(run_id, run_response):
+                    fallback = _get_approval_for_run(db, rid)
+                    if fallback is not None:
+                        break
+            record = fallback
+        pairs.append((tool, record))
+    return pairs
+
+
+async def _agroup_tools_by_approval(db: Any, run_id: str, run_response: Any, tools: List[Any]) -> List[tuple]:
+    """Async variant of _group_tools_by_approval."""
+    from inspect import iscoroutinefunction
+
+    cache: Dict[str, Optional[Dict[str, Any]]] = {}
+    fallback_used = False
+    fallback: Optional[Dict[str, Any]] = None
+    pairs: List[tuple] = []
+    get_one = getattr(db, "get_approval", None)
+    for tool in tools:
+        record: Optional[Dict[str, Any]] = None
+        aid = getattr(tool, "approval_id", None)
+        if aid and get_one is not None:
+            if aid not in cache:
+                try:
+                    cache[aid] = await get_one(aid) if iscoroutinefunction(get_one) else get_one(aid)
+                except (NotImplementedError, Exception):
+                    cache[aid] = None
+            record = cache[aid]
+        if record is None:
+            mid = _member_run_id_for_tool(run_response, tool)
+            if mid:
+                key = f"run:{mid}"
+                if key not in cache:
+                    cache[key] = await _aget_approval_for_run(db, mid)
+                record = cache[key]
+        if record is None:
+            if not fallback_used:
+                fallback_used = True
+                for rid in _collect_all_run_ids(run_id, run_response):
+                    fallback = await _aget_approval_for_run(db, rid)
+                    if fallback is not None:
+                        break
+            record = fallback
+        pairs.append((tool, record))
+    return pairs
+
+
+def _sync_requirements_after_approval(run_response: Any, approval_status: str, only_tool: Any = None) -> None:
     """Mirror an applied approval resolution onto the RunRequirement objects.
 
     _apply_approval_to_tools writes ToolExecution fields only, while a
@@ -452,6 +551,8 @@ def _sync_requirements_after_approval(run_response: Any, approval_status: str) -
     for req in getattr(run_response, "requirements", None) or []:
         te = getattr(req, "tool_execution", None)
         if te is None or getattr(te, "approval_type", None) != "required":
+            continue
+        if only_tool is not None and te is not only_tool:
             continue
         if approval_status == "approved":
             if getattr(te, "requires_confirmation", False) and te.confirmed is True:
@@ -504,26 +605,20 @@ def check_and_apply_approval_resolution(db: Any, run_id: str, run_response: Any)
     if not any(getattr(t, "approval_type", None) == "required" for t in all_approval_tools):
         return
 
-    all_run_ids = _collect_all_run_ids(run_id, run_response)
-    approval = None
-    for rid in all_run_ids:
-        approval = _get_approval_for_run(db, rid)
-        if approval is not None:
-            break
-    if approval is None:
+    pairs = _group_tools_by_approval(db, run_id, run_response, all_approval_tools)
+    if any(record is None for _, record in pairs):
         raise RuntimeError(
             "No approval record found for this run. Cannot continue a run that requires external approval."
         )
-
-    status = approval.get("status", "pending")
-    if status == "pending":
+    if any((record or {}).get("status", "pending") == "pending" for _, record in pairs):
         raise RuntimeError("Approval is still pending. Resolve the approval before continuing this run.")
 
-    resolution_data = approval.get("resolution_data")
-    _apply_approval_to_tools(all_approval_tools, status, resolution_data)
-    _sync_requirements_after_approval(run_response, status)
+    for tool, record in pairs:
+        assert record is not None
+        _apply_approval_to_tools([tool], record.get("status", "pending"), record.get("resolution_data"))
+        _sync_requirements_after_approval(run_response, record.get("status", "pending"), only_tool=tool)
 
-    _attach_resolved_approval(run_response, approval)
+    _attach_resolved_approval(run_response, pairs[0][1])
 
 
 async def acheck_and_apply_approval_resolution(db: Any, run_id: str, run_response: Any) -> None:
@@ -536,26 +631,20 @@ async def acheck_and_apply_approval_resolution(db: Any, run_id: str, run_respons
         return
 
     # Search by team run_id first, then fall back to member run_ids
-    all_run_ids = _collect_all_run_ids(run_id, run_response)
-    approval = None
-    for rid in all_run_ids:
-        approval = await _aget_approval_for_run(db, rid)
-        if approval is not None:
-            break
-    if approval is None:
+    pairs = await _agroup_tools_by_approval(db, run_id, run_response, all_approval_tools)
+    if any(record is None for _, record in pairs):
         raise RuntimeError(
             "No approval record found for this run. Cannot continue a run that requires external approval."
         )
-
-    status = approval.get("status", "pending")
-    if status == "pending":
+    if any((record or {}).get("status", "pending") == "pending" for _, record in pairs):
         raise RuntimeError("Approval is still pending. Resolve the approval before continuing this run.")
 
-    resolution_data = approval.get("resolution_data")
-    _apply_approval_to_tools(all_approval_tools, status, resolution_data)
-    _sync_requirements_after_approval(run_response, status)
+    for tool, record in pairs:
+        assert record is not None
+        _apply_approval_to_tools([tool], record.get("status", "pending"), record.get("resolution_data"))
+        _sync_requirements_after_approval(run_response, record.get("status", "pending"), only_tool=tool)
 
-    _attach_resolved_approval(run_response, approval)
+    _attach_resolved_approval(run_response, pairs[0][1])
 
 
 async def acreate_audit_approval(
