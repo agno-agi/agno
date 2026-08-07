@@ -14,7 +14,7 @@ from agno.utils.message import safe_truncation_index
 
 if TYPE_CHECKING:
     from agno.metrics import RunMetrics
-    from agno.session.agent import AgentSession
+    from agno.run.agent import RunOutput
 
 
 DEFAULT_COMPACTION_PROMPT = dedent("""\
@@ -39,6 +39,7 @@ DEFAULT_COMPACTION_PROMPT = dedent("""\
 
     Keep the summary under 2000 tokens while preserving all critical context.
     """)
+
 
 def create_summary_message(summary: str) -> "Message":
     """Create a summary message from a summary string.
@@ -147,7 +148,7 @@ class ContextCompactionManager:
     def compact(
         self,
         messages: List[Message],
-        session: Optional["AgentSession"] = None,
+        run_response: Optional["RunOutput"] = None,
         run_metrics: Optional["RunMetrics"] = None,
     ) -> CompactionResult:
         """Compact messages if threshold exceeded.
@@ -168,7 +169,7 @@ class ContextCompactionManager:
             return CompactionResult(compacted_messages=messages)
 
         # 3. Summarize old messages (merges with existing summary if available)
-        existing_summary = session.compaction.summary if session and session.compaction else None
+        existing_summary = run_response.compaction.summary if run_response and run_response.compaction else None
         new_summary = self._summarize(old_messages, existing_summary, run_metrics)
 
         if not new_summary:
@@ -185,8 +186,8 @@ class ContextCompactionManager:
             compacted_messages = system_msgs + [summary_msg] + preserved_user + recent_messages
             log_info(f"[COMPACTION] Compressed tool results, now {self.model.count_tokens(compacted_messages)} tokens")
 
-        # 6. Update session state
-        self._update_session_state(session, old_messages, new_summary)
+        # 6. Update run compaction state
+        self._update_run_compaction(run_response, old_messages, new_summary)
 
         return CompactionResult(compacted_messages=compacted_messages, summary=new_summary)
 
@@ -269,17 +270,17 @@ class ContextCompactionManager:
         cm = CompressionManager(model=self.model)
         cm.compress(messages, run_metrics)
 
-    def _update_session_state(
+    def _update_run_compaction(
         self,
-        session: Optional["AgentSession"],
+        run_response: Optional["RunOutput"],
         old_messages: List[Message],
         new_summary: str,
     ) -> None:
-        """Update session.compaction with new state."""
-        if session is None:
+        """Update run_response.compaction with new state."""
+        if run_response is None:
             return
 
-        prev = session.compaction
+        prev = run_response.compaction
         # Reuse existing summary_message_id or generate new one
         summary_id = prev.summary_message_id if prev else str(uuid4())
 
@@ -289,7 +290,7 @@ class ContextCompactionManager:
         new_ids.add(summary_id)
         all_ids = new_ids.union(prev.compacted_message_ids if prev else set())
 
-        session.compaction = CompactionState(
+        run_response.compaction = CompactionState(
             summary=new_summary,
             summary_message_id=summary_id,
             compacted_message_ids=all_ids,
@@ -311,7 +312,7 @@ class ContextCompactionManager:
     async def acompact(
         self,
         messages: List[Message],
-        session: Optional["AgentSession"] = None,
+        run_response: Optional["RunOutput"] = None,
         run_metrics: Optional["RunMetrics"] = None,
     ) -> CompactionResult:
         """Async version of compact()."""
@@ -328,7 +329,7 @@ class ContextCompactionManager:
             return CompactionResult(compacted_messages=messages)
 
         # 3. Summarize old messages (merges with existing summary if available)
-        existing_summary = session.compaction.summary if session and session.compaction else None
+        existing_summary = run_response.compaction.summary if run_response and run_response.compaction else None
         new_summary = await self._asummarize(old_messages, existing_summary, run_metrics)
 
         if not new_summary:
@@ -347,8 +348,8 @@ class ContextCompactionManager:
                 f"[COMPACTION] Compressed tool results, now {await self.model.acount_tokens(compacted_messages)} tokens"
             )
 
-        # 6. Update session state
-        self._update_session_state(session, old_messages, new_summary)
+        # 6. Update run compaction state
+        self._update_run_compaction(run_response, old_messages, new_summary)
 
         return CompactionResult(compacted_messages=compacted_messages, summary=new_summary)
 

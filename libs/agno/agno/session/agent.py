@@ -140,6 +140,31 @@ class AgentSession:
                 return run
         return None
 
+    def get_latest_compaction(self) -> Optional["CompactionState"]:
+        """Scan runs backward for most recent compaction state.
+
+        Used by fresh runs to find applicable compaction.
+        """
+        for run in reversed(self.runs or []):
+            if getattr(run, "compaction", None) is not None:
+                return run.compaction
+        return None
+
+    def get_compaction_for_run_id(self, run_id: str) -> Optional["CompactionState"]:
+        """Find compaction state that was active for the given run.
+
+        Used by continue_run to get point-in-time compaction.
+        Scans backward from the run's position.
+        """
+        runs = self.runs or []
+        target_idx = next((i for i, r in enumerate(runs) if r.run_id == run_id), None)
+        if target_idx is None:
+            return None
+        for i in range(target_idx, -1, -1):
+            if getattr(runs[i], "compaction", None) is not None:
+                return runs[i].compaction
+        return None
+
     def get_messages(
         self,
         agent_id: Optional[str] = None,
@@ -150,6 +175,7 @@ class AgentSession:
         skip_statuses: Optional[List[RunStatus]] = None,
         skip_history_messages: bool = True,
         skip_compacted_messages: bool = False,
+        compaction: Optional["CompactionState"] = None,
     ) -> List[Message]:
         """Returns the messages belonging to the session that fit the given criteria.
 
@@ -162,14 +188,17 @@ class AgentSession:
             skip_statuses: Skip messages with these statuses.
             skip_history_messages: Skip messages that were tagged as history in previous runs.
             skip_compacted_messages: Skip messages that were compacted into a summary (for model context).
+            compaction: The compaction state to use for filtering (passed explicitly for point-in-time correctness).
 
         Returns:
             A list of Messages belonging to the session.
         """
         # Build compacted IDs set if filtering is enabled
+        # Use passed compaction state (point-in-time correct) or fall back to session for backwards compat
         compacted_ids: set = set()
-        if skip_compacted_messages and self.compaction:
-            compacted_ids = self.compaction.compacted_message_ids
+        compaction_state = compaction or self.compaction
+        if skip_compacted_messages and compaction_state:
+            compacted_ids = compaction_state.compacted_message_ids
 
         def _should_skip_message(
             message: Message,

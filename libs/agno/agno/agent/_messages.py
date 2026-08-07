@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
+    from agno.compression.context import CompactionState
 
 from agno.agent._utils import convert_dependencies_to_string, convert_documents_to_string
 from agno.filters import FilterExpr
@@ -1289,9 +1290,15 @@ def get_run_messages(
     if add_history_to_context:
         from copy import deepcopy
 
+        # Find applicable compaction state from previous runs
+        compaction = session.get_latest_compaction()
+
         # Inject compaction summary before history (replaces compacted messages)
-        if session.compaction and session.compaction.summary:
-            run_messages.messages.append(session.compaction.get_summary_message())
+        if compaction:
+            run_messages.messages.append(compaction.get_summary_message())
+            # Seed run_response.compaction for mid-loop compaction to build on
+            run_response.compaction = deepcopy(compaction)
+
         # Only skip messages from history when system_message_role is NOT a standard conversation role.
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered
         # to preserve conversation continuity.
@@ -1305,6 +1312,7 @@ def get_run_messages(
             skip_roles=[skip_role] if skip_role else None,
             agent_id=agent.id if agent.team_id is not None else None,
             skip_compacted_messages=True,
+            compaction=compaction,
         )
 
         if len(history) > 0:
@@ -1499,9 +1507,14 @@ async def aget_run_messages(
     if add_history_to_context:
         from copy import deepcopy
 
+        # Find applicable compaction state from previous runs
+        compaction = session.get_latest_compaction()
+
         # Inject compaction summary before history (replaces compacted messages)
-        if session.compaction and session.compaction.summary:
-            run_messages.messages.append(session.compaction.get_summary_message())
+        if compaction:
+            run_messages.messages.append(compaction.get_summary_message())
+            # Seed run_response.compaction for mid-loop compaction to build on
+            run_response.compaction = deepcopy(compaction)
 
         # Only skip messages from history when system_message_role is NOT a standard conversation role.
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered
@@ -1516,6 +1529,7 @@ async def aget_run_messages(
             skip_roles=[skip_role] if skip_role else None,
             agent_id=agent.id if agent.team_id is not None else None,
             skip_compacted_messages=True,
+            compaction=compaction,
         )
 
         if len(history) > 0:
@@ -1627,7 +1641,7 @@ def get_continue_run_messages(
     session: Optional[AgentSession] = None,
     add_history_to_context: Optional[bool] = None,
     run_context: Optional[RunContext] = None,
-    summary_message: Optional[Message] = None,
+    compaction: Optional["CompactionState"] = None,
 ) -> RunMessages:
     """This function returns a RunMessages object with the following attributes:
         - system_message: The system message for this run
@@ -1678,8 +1692,8 @@ def get_continue_run_messages(
         from copy import deepcopy
 
         # Inject compaction summary before history (replaces compacted messages)
-        if summary_message is not None:
-            run_messages.messages.append(summary_message)
+        if compaction is not None:
+            run_messages.messages.append(compaction.get_summary_message())
 
         # Only skip messages from history when system_message_role is NOT a standard conversation role.
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered
@@ -1694,6 +1708,7 @@ def get_continue_run_messages(
             skip_roles=[skip_role] if skip_role else None,
             agent_id=agent.id if agent.team_id is not None else None,
             skip_compacted_messages=True,
+            compaction=compaction,
         )
 
         if len(history) > 0:

@@ -538,7 +538,7 @@ def _run(
                 if agent.context_compaction_manager is not None:
                     compaction_result = agent.context_compaction_manager.compact(
                         run_messages.messages,
-                        session=agent_session,
+                        run_response=run_response,
                         run_metrics=run_response.metrics,
                     )
                     if compaction_result.summary:
@@ -1696,7 +1696,7 @@ async def _arun(
                 if agent.context_compaction_manager is not None:
                     compaction_result = await agent.context_compaction_manager.acompact(
                         run_messages.messages,
-                        session=agent_session,
+                        run_response=run_response,
                         run_metrics=run_response.metrics,
                     )
                     if compaction_result.summary:
@@ -3639,12 +3639,13 @@ def continue_run_dispatch(
 
     log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
-    # Create summary message for time-travel (point-in-time compaction snapshot)
-    summary_message = None
-    if run_response.compaction_summary:
-        from agno.compression.context import create_summary_message
-
-        summary_message = create_summary_message(run_response.compaction_summary)
+    # Get compaction state for time-travel (point-in-time snapshot)
+    # First try run's own compaction (from deepcopy during fork or stored from previous run)
+    # If None, scan backward from the run's position to find applicable state
+    compaction = run_response.compaction
+    if compaction is None:
+        lookup_id = run_response.forked_from_run_id or run_response.run_id
+        compaction = agent_session.get_compaction_for_run_id(lookup_id)
 
     # Prepare run messages
     run_messages = get_continue_run_messages(
@@ -3653,7 +3654,7 @@ def continue_run_dispatch(
         session=agent_session,
         add_history_to_context=agent.add_history_to_context,
         run_context=run_context,
-        summary_message=summary_message,
+        compaction=compaction,
     )
 
     # Reset the run state
@@ -4900,12 +4901,11 @@ async def _acontinue_run(
                     async_mode=True,
                 )
 
-                # 6. Create summary message for time-travel
-                summary_message = None
-                if run_response.compaction_summary:
-                    from agno.compression.context import create_summary_message
-
-                    summary_message = create_summary_message(run_response.compaction_summary)
+                # 6. Get compaction state for time-travel
+                compaction = run_response.compaction
+                if compaction is None:
+                    lookup_id = run_response.forked_from_run_id or run_response.run_id
+                    compaction = agent_session.get_compaction_for_run_id(lookup_id)
 
                 # 7. Prepare run messages
                 run_messages = get_continue_run_messages(
@@ -4913,7 +4913,7 @@ async def _acontinue_run(
                     input=input_messages,
                     session=agent_session,
                     add_history_to_context=agent.add_history_to_context,
-                    summary_message=summary_message,
+                    compaction=compaction,
                 )
 
                 # Reset the run state
@@ -5388,12 +5388,11 @@ async def _acontinue_run_stream(
                     async_mode=True,
                 )
 
-                # 6. Create summary message for time-travel
-                summary_message = None
-                if run_response.compaction_summary:
-                    from agno.compression.context import create_summary_message
-
-                    summary_message = create_summary_message(run_response.compaction_summary)
+                # 6. Get compaction state for time-travel
+                compaction = run_response.compaction
+                if compaction is None:
+                    lookup_id = run_response.forked_from_run_id or run_response.run_id
+                    compaction = agent_session.get_compaction_for_run_id(lookup_id)
 
                 # 7. Prepare run messages
                 run_messages = get_continue_run_messages(
@@ -5401,7 +5400,7 @@ async def _acontinue_run_stream(
                     input=input_messages,
                     session=agent_session,
                     add_history_to_context=agent.add_history_to_context,
-                    summary_message=summary_message,
+                    compaction=compaction,
                 )
 
                 # Reset the run state
@@ -5972,11 +5971,8 @@ def persist_run_in_session(
     if storage_copy is None:
         storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context, isolate_inflight=True)
 
-    # Capture compaction summary snapshot for time-travel (continue_run)
-    if session.compaction and session.compaction.summary:
-        storage_copy.compaction_summary = session.compaction.summary
-
     # Add scrubbed RunOutput to Agent Session
+    # Note: run_response.compaction is already set by the compaction manager during the run
     session.upsert_run(run=storage_copy)
     run_index = resolve_run_index(session, storage_copy)
 
@@ -6014,10 +6010,7 @@ async def apersist_run_in_session(
     if storage_copy is None:
         storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context, isolate_inflight=True)
 
-    # Capture compaction summary snapshot for time-travel (continue_run)
-    if session.compaction and session.compaction.summary:
-        storage_copy.compaction_summary = session.compaction.summary
-
+    # Note: run_response.compaction is already set by the compaction manager during the run
     session.upsert_run(run=storage_copy)
     run_index = resolve_run_index(session, storage_copy)
     update_session_metrics(agent, session=session, run_response=run_response)
@@ -6342,7 +6335,7 @@ def build_after_tool_results_callback(
             )
             result = agent.context_compaction_manager.compact(
                 messages_to_compact,
-                session=session,
+                run_response=run_response,
                 run_metrics=run_response.metrics,
             )
             if result.summary:
@@ -6387,7 +6380,7 @@ def abuild_after_tool_results_callback(
             )
             result = await agent.context_compaction_manager.acompact(
                 messages_to_compact,
-                session=session,
+                run_response=run_response,
                 run_metrics=run_response.metrics,
             )
             if result.summary:
