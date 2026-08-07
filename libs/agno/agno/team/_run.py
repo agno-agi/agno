@@ -7063,6 +7063,38 @@ def continue_run_dispatch(
     has_member = _has_member_requirements(run_response.requirements or [])
     has_team_level = _has_team_level_requirements(run_response.requirements or [])
 
+    # Guard: a member requirement the client left unresolved has to re-pause,
+    # not dispatch. Routing hands it to the member's continue_run, which reads
+    # the pause as settled and runs the gated tool with whatever the schema
+    # holds -- for a requested field left untouched, with None. The team-level
+    # lane already re-pauses on its own unresolved requirements; a requirement
+    # addressed to a member is no less unresolved for being addressed to one.
+    unresolved_member = [
+        r
+        for r in (run_response.requirements or [])
+        if getattr(r, "member_agent_id", None) is not None and not r.is_resolved()
+    ]
+    if unresolved_member:
+        from agno.team import _hooks
+
+        if opts.stream:
+
+            def _member_paused_stream_with_final() -> Iterator[
+                Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]
+            ]:
+                yield from _hooks.handle_team_run_paused_stream(
+                    team, run_response=run_response, session=team_session, run_context=run_context
+                )
+                if opts.yield_run_output:
+                    yield run_response
+
+            return _member_paused_stream_with_final()
+        else:
+            return _hooks.handle_team_run_paused(
+                team, run_response=run_response, session=team_session, run_context=run_context
+            )
+
+
     # Route member requirements to member agents
     member_results: List[str] = []
     if has_member:
@@ -8492,6 +8524,25 @@ async def _acontinue_run(
                 has_member = _has_member_requirements(run_response.requirements or [])
                 has_team_level = _has_team_level_requirements(run_response.requirements or [])
 
+                # Guard: a member requirement the client left unresolved has to re-pause,
+                # not dispatch. Routing hands it to the member's continue_run, which reads
+                # the pause as settled and runs the gated tool with whatever the schema
+                # holds -- for a requested field left untouched, with None. The team-level
+                # lane already re-pauses on its own unresolved requirements; a requirement
+                # addressed to a member is no less unresolved for being addressed to one.
+                unresolved_member = [
+                    r
+                    for r in (run_response.requirements or [])
+                    if getattr(r, "member_agent_id", None) is not None and not r.is_resolved()
+                ]
+                if unresolved_member:
+                    from agno.team import _hooks
+
+                    return await _hooks.ahandle_team_run_paused(
+                        team, run_response=run_response, session=team_session, run_context=run_context
+                    )
+
+
                 # Route member requirements
                 member_results: List[str] = list(routed_member_results)
                 if has_member:
@@ -8932,6 +8983,29 @@ async def _acontinue_run_stream(
                 )
                 has_member = _has_member_requirements(run_response.requirements or [])
                 has_team_level = _has_team_level_requirements(run_response.requirements or [])
+
+                # Guard: a member requirement the client left unresolved has to re-pause,
+                # not dispatch. Routing hands it to the member's continue_run, which reads
+                # the pause as settled and runs the gated tool with whatever the schema
+                # holds -- for a requested field left untouched, with None. The team-level
+                # lane already re-pauses on its own unresolved requirements; a requirement
+                # addressed to a member is no less unresolved for being addressed to one.
+                unresolved_member = [
+                    r
+                    for r in (run_response.requirements or [])
+                    if getattr(r, "member_agent_id", None) is not None and not r.is_resolved()
+                ]
+                if unresolved_member:
+                    from agno.team import _hooks
+
+                    async for item in _hooks.ahandle_team_run_paused_stream(
+                        team, run_response=run_response, session=team_session, run_context=run_context
+                    ):
+                        yield item
+                    if yield_run_output:
+                        yield run_response
+                    return
+
 
                 # Route member requirements. The routing generator appends into
                 # this list in place, so seeding it with the banked results
