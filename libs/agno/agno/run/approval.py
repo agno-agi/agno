@@ -438,6 +438,38 @@ def _collect_all_approval_tools(run_response: Any) -> List[Any]:
     return result
 
 
+def _sync_requirements_after_approval(run_response: Any, approval_status: str) -> None:
+    """Mirror an applied approval resolution onto the RunRequirement objects.
+
+    _apply_approval_to_tools writes ToolExecution fields only, while a
+    requirement's needs_* properties read `answered`, `confirmation` and
+    `external_execution_result`. A requirement counts as answered only when
+    every user-input field carries a value, the same rule as
+    RunRequirement.provide_user_input.
+    """
+    for req in getattr(run_response, "requirements", None) or []:
+        te = getattr(req, "tool_execution", None)
+        if te is None or getattr(te, "approval_type", None) != "required":
+            continue
+        if approval_status == "approved":
+            if getattr(te, "requires_confirmation", False) and te.confirmed is True:
+                req.confirmation = True
+            if getattr(te, "requires_user_input", False):
+                fields = te.user_input_schema or []
+                if req.user_input_schema is not None and req.user_input_schema is not fields:
+                    by_name = {f.name: f.value for f in fields}
+                    for rf in req.user_input_schema:
+                        if rf.name in by_name:
+                            rf.value = by_name[rf.name]
+                if fields and all(f.value is not None for f in fields):
+                    te.answered = True
+            if getattr(te, "external_execution_required", False) and te.result is not None:
+                req.external_execution_result = te.result
+        elif approval_status == "rejected":
+            if te.confirmed is False:
+                req.confirmation = False
+
+
 def _attach_resolved_approval(run_response: Any, approval: Dict[str, Any]) -> None:
     """Expose the resolved approval record to post-hooks via run_response.metadata["approval"]."""
     if run_response.metadata is None:
@@ -478,6 +510,7 @@ def check_and_apply_approval_resolution(db: Any, run_id: str, run_response: Any)
 
     resolution_data = approval.get("resolution_data")
     _apply_approval_to_tools(all_approval_tools, status, resolution_data)
+    _sync_requirements_after_approval(run_response, status)
 
     _attach_resolved_approval(run_response, approval)
 
@@ -509,6 +542,7 @@ async def acheck_and_apply_approval_resolution(db: Any, run_id: str, run_respons
 
     resolution_data = approval.get("resolution_data")
     _apply_approval_to_tools(all_approval_tools, status, resolution_data)
+    _sync_requirements_after_approval(run_response, status)
 
     _attach_resolved_approval(run_response, approval)
 

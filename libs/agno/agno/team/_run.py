@@ -5523,7 +5523,7 @@ def _backfill_approval_to_requirements(
                     f"Cannot continue run {run_id}: the requirement with id '{getattr(req, 'id', None)}' "
                     f"names tool call '{tool_call_id}', but the stored requirement with that id belongs "
                     f"to tool call '{old_te.tool_call_id}'. Resend the requirements exactly as issued. "
-                    f"The run remains paused."
+                    "The run remains paused."
                 )
         if old_req is None and tool_call_id:
             candidates = old_by_tool_call_id.get(tool_call_id, [])
@@ -5533,14 +5533,14 @@ def _backfill_approval_to_requirements(
                 raise RunNotContinuableError(
                     f"Cannot continue run {run_id}: the requirement for tool call '{tool_call_id}' "
                     f"matches {len(candidates)} stored requirements and carries no matching "
-                    f"requirement id. Resend the requirements with their original 'id' values. "
-                    f"The run remains paused."
+                    "requirement id. Resend the requirements with their original 'id' values. "
+                    "The run remains paused."
                 )
         if old_req is None:
             raise RunNotContinuableError(
                 f"Cannot continue run {run_id}: the requirement with id '{getattr(req, 'id', None)}' "
                 f"and tool call '{tool_call_id}' matches no stored requirement of this run. "
-                f"The run remains paused."
+                "The run remains paused."
             )
         if id(old_req) in matched:
             raise RunNotContinuableError(
@@ -5876,7 +5876,7 @@ def _group_requirements_for_continue(
             raise RunNotContinuableError(
                 f"Cannot continue run {run_response.run_id}: requirement routes to member "
                 f"'{member_id}', which is not a member of team '{team.name or team.id}'. "
-                f"The run remains paused."
+                "The run remains paused."
             )
         _, member = route_result
         target = _resolve_member_run_output_for_continue(member, reqs, run_response, session)
@@ -7404,7 +7404,14 @@ def _continue_run_dispatch_stream_with_member_events(
 
     # Phase 1: Yield member streaming events
     try:
-        yield from member_event_stream
+        try:
+            yield from member_event_stream
+        except BaseException:
+            # Phase 1 runs with the team-level requirements stripped off the
+            # run object; every non-normal exit puts them back before anything
+            # persists or returns it.
+            run_response.requirements = team_level_reqs + (run_response.requirements or [])
+            raise
     except RunCancelledException as e:
         run_response = _handle_team_run_cancellation(run_response, e, session=team_session)
         cancelled_event, completed_event = _build_team_cancel_terminal_events(
@@ -7433,11 +7440,6 @@ def _continue_run_dispatch_stream_with_member_events(
         if opts.yield_run_output:
             yield run_response
         return
-    except Exception:
-        # Routing failed mid-flight; put the team-level requirements back so
-        # the caller's run object stays complete for a retry.
-        run_response.requirements = team_level_reqs + (run_response.requirements or [])
-        raise
 
     # Phase 2: After member routing completes, check for chained pauses
     newly_propagated = [r for r in (run_response.requirements or []) if id(r) not in original_member_req_ids]
@@ -8050,6 +8052,17 @@ def _continue_run_stream(
         cleanup_run(run_response.run_id)  # type: ignore
 
 
+def _as_run_status(value: Union[RunStatus, str, None]) -> Union[RunStatus, str, None]:
+    """Coerce a stored status to RunStatus. A run loaded from the DB carries its
+    status as a plain string; an unrecognized value is returned unchanged."""
+    if value is None or isinstance(value, RunStatus):
+        return value
+    try:
+        return RunStatus(value)
+    except ValueError:
+        return value
+
+
 async def _acontinue_run_background_stream(
     team: Team,
     run_context: RunContext,
@@ -8101,19 +8114,26 @@ async def _acontinue_run_background_stream(
     _update_metadata(team, session=team_session)
 
     stored_run = next((r for r in team_session.runs or [] if getattr(r, "run_id", None) == _run_id), None)
-    status_before_takeover = getattr(stored_run, "status", None)
+    status_before_takeover = _as_run_status(getattr(stored_run, "status", None))
+    # The status the caller's object carries at entry; the write below replaces
+    # it with RUNNING. When the session has no stored entry for this run, this
+    # is the only record of the pre-continue state.
+    prior_object_status = _as_run_status(getattr(run_response, "status", None)) if run_response is not None else None
 
     if run_response is not None:
-        # A caller-held run object outlives the run it describes. If it still
-        # reads as paused while the stored run has finished, someone else
-        # continued this run in between and the object is stale: writing it back
-        # would republish a finished run as a pending approval, and its gated
-        # tool could then be approved a second time. Nothing downstream can undo
-        # that, so refuse before the run is touched.
-        if status_before_takeover == RunStatus.completed and getattr(run_response, "is_paused", False):
+        # A caller object that still reads paused over a stored run that reads
+        # COMPLETED or CANCELLED is stale: writing it back republishes the run
+        # as a pending approval, and its gated tool can then be approved a
+        # second time. Other statuses are not checked here.
+        if (
+            isinstance(status_before_takeover, RunStatus)
+            and status_before_takeover in (RunStatus.completed, RunStatus.cancelled)
+            and getattr(run_response, "is_paused", False)
+        ):
             raise RunNotContinuableError(
-                f"Cannot continue run {_run_id}: it has already completed, but the run_response passed in "
-                f"still reads as paused. Re-read the run before continuing it. The stored run is unchanged."
+                f"Cannot continue run {_run_id}: the stored run has status {status_before_takeover.value}, "
+                "but the run_response passed in still reads as paused. Re-read the run before continuing it. "
+                "The stored run is unchanged."
             )
         run_response.status = RunStatus.running
         team_session.upsert_run(run_response=run_response)
@@ -8130,6 +8150,10 @@ async def _acontinue_run_background_stream(
         from agno.os.utils import format_sse_event_with_index
 
         producer_error: Optional[BaseException] = None
+        # The run object the continue actually produced. The caller-supplied
+        # run_response is not updated on the run_id-only path, so the terminal
+        # buffer status below reads this instead.
+        final_output: Optional[TeamRunOutput] = None
 
         async def _dispatch_sse(event: Any) -> None:
             """Buffer an event, hand it to the original client, and fan it out."""
@@ -8168,12 +8192,15 @@ async def _acontinue_run_background_stream(
                 session_id=session_id,
                 response_format=response_format,
                 stream_events=stream_events,
-                yield_run_output=yield_run_output or False,
+                # Always request the final run object; it is captured below and
+                # never forwarded to the client.
+                yield_run_output=True,
                 debug_mode=debug_mode,
                 background_tasks=background_tasks,
                 **kwargs,
             ):
                 if isinstance(event, TeamRunOutput):
+                    final_output = event
                     continue
 
                 await _dispatch_sse(event)
@@ -8182,25 +8209,30 @@ async def _acontinue_run_background_stream(
             producer_error = e
             refused = isinstance(e, RunNotContinuableError)
             if refused:
-                # A refusal is an answer, not a crash. The continue was rejected
-                # precisely so the run would stay paused and resumable, so its
-                # status has to survive: persisting ERROR here would strand the
-                # pause the refusal just protected.
-                #
-                # Step 1 above persisted RUNNING before the producer started, so
-                # putting the pause back is what leaves the run resumable —
-                # otherwise it stays advertised as in-flight for good and no
-                # later continue can pick it up.
+                # A refusal is an answer, not a crash: the run keeps the status
+                # it had before step 1 wrote RUNNING. status_before_takeover is
+                # the stored run's pre-continue status; with no stored entry,
+                # the caller object's own pre-write status is the only record.
                 log_info(f"Background continue-run stream {_run_id} refused the continue: {e}")
                 try:
-                    # Put back exactly what step 1 overwrote. Restoring a blanket
-                    # PAUSED instead would hand a resumable pause to any run that
-                    # had not been paused to begin with, and a pause is an
-                    # invitation to approve its gated tool.
-                    if run_response is not None and status_before_takeover is not None:
-                        run_response.status = status_before_takeover
-                        team_session.upsert_run(run_response=run_response)
-                        await asave_session(team, session=team_session)
+                    restore_status = (
+                        status_before_takeover if status_before_takeover is not None else prior_object_status
+                    )
+                    if run_response is not None and restore_status is not None:
+                        # A legacy string status is restored as-is; to_dict
+                        # serializes both shapes.
+                        run_response.status = cast(RunStatus, restore_status)
+                        # Persist into a fresh session read so runs persisted by
+                        # others since step 1 survive this write, and only while
+                        # the stored run still carries step 1's RUNNING marker;
+                        # any other value means another request owns the run now.
+                        fresh_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
+                        fresh_run = next(
+                            (r for r in fresh_session.runs or [] if getattr(r, "run_id", None) == _run_id), None
+                        )
+                        if fresh_run is not None and fresh_run.status == RunStatus.running:
+                            fresh_session.upsert_run(run_response=run_response)
+                            await asave_session(team, session=fresh_session)
                 except Exception:
                     log_error(
                         f"Failed to restore the pre-continue state for background continue-run stream {_run_id}",
@@ -8208,12 +8240,19 @@ async def _acontinue_run_background_stream(
                     )
             else:
                 log_error(f"Background continue-run stream {_run_id} failed", exc_info=True)
-                # Persist ERROR status
+                # Persist ERROR status. Same rules as the restore above: write
+                # into a fresh session read, and only over step 1's RUNNING
+                # marker, so a state another request persisted meanwhile stays.
                 try:
                     if run_response is not None:
                         run_response.status = RunStatus.error
-                        team_session.upsert_run(run_response=run_response)
-                        await asave_session(team, session=team_session)
+                        fresh_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
+                        fresh_run = next(
+                            (r for r in fresh_session.runs or [] if getattr(r, "run_id", None) == _run_id), None
+                        )
+                        if fresh_run is not None and fresh_run.status == RunStatus.running:
+                            fresh_session.upsert_run(run_response=run_response)
+                            await asave_session(team, session=fresh_session)
                 except Exception:
                     log_error(
                         f"Failed to persist error state for background continue-run stream {_run_id}",
@@ -8243,19 +8282,39 @@ async def _acontinue_run_background_stream(
             except Exception:
                 log_warning(f"Failed to signal primary queue for continue-run {_run_id} completion")
 
-            # Mark the run's terminal state in the event buffer. A producer that
-            # raised never reached one, so its status is whatever the failure
-            # left behind — not completed.
+            # Mark the run's terminal state in the event buffer. The value must
+            # be a RunStatus and must not be RUNNING: /resume formats it with
+            # .value, and treats RUNNING as an in-flight run to keep waiting on.
             try:
                 if isinstance(producer_error, RunNotContinuableError):
-                    # A refusal leaves the run as it was, whatever that was.
-                    # Advertising a blanket PAUSED would tell every reconnecting
-                    # client that a cancelled run is awaiting an approval.
-                    final_status = status_before_takeover or RunStatus.paused
+                    # A refused run keeps the status it had before the takeover.
+                    refused_status = (
+                        status_before_takeover if status_before_takeover is not None else prior_object_status
+                    )
+                    if isinstance(refused_status, RunStatus) and refused_status not in (
+                        RunStatus.running,
+                        RunStatus.pending,
+                    ):
+                        final_status = refused_status
+                    else:
+                        final_status = RunStatus.paused
                 elif producer_error is not None:
                     final_status = RunStatus.error
                 else:
-                    final_status = (run_response.status if run_response else None) or RunStatus.completed
+                    # The run that actually executed. final_output covers the
+                    # run_id-only path, where run_response stays None; a re-pause
+                    # or cancellation must not be advertised as completed.
+                    produced_status = final_output.status if final_output is not None else None
+                    if produced_status is None and run_response is not None:
+                        produced_status = run_response.status
+                    if isinstance(produced_status, RunStatus) and produced_status in (
+                        RunStatus.paused,
+                        RunStatus.cancelled,
+                        RunStatus.error,
+                    ):
+                        final_status = produced_status
+                    else:
+                        final_status = RunStatus.completed
                 event_buffer.set_run_completed(_run_id, final_status)
             except Exception:
                 log_warning(f"Failed to mark continue-run {_run_id} as completed in event buffer")
@@ -8881,8 +8940,9 @@ async def _acontinue_run(
                     raise
                 return run_response
 
-            except ValueError:
-                # Validation errors (e.g. cancelled run, missing args) propagate to the caller
+            except (ValueError, RunNotFoundError):
+                # Validation errors (e.g. cancelled run, unknown run id, missing
+                # args) propagate to the caller
                 raise
             except Exception as e:
                 run_response = cast(TeamRunOutput, run_response)

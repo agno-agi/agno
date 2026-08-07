@@ -16,8 +16,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from agno.agent import Agent
+from agno.approval.decorator import approval
 from agno.db.sqlite import SqliteDb
-from agno.exceptions import RunNotContinuableError
+from agno.exceptions import RunNotContinuableError, RunNotFoundError
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
@@ -4405,8 +4406,12 @@ async def test_background_continue_reports_a_refusal_to_the_client(tmp_path):
 
     assert _EXECUTED == [], "a refused continue must not execute the gated tool"
     assert [c for c in chunks if "RunError" in c], f"the refusal reached the client as an empty stream: {chunks!r}"
-    assert event_buffer.get_run_status(run1.run_id) != RunStatus.completed, (
-        "a refused continue must not be recorded as a completed run"
+    buffer_status = event_buffer.get_run_status(run1.run_id)
+    assert isinstance(buffer_status, RunStatus), (
+        f"the buffer must hold a RunStatus, got {type(buffer_status)}: /resume formats it with .value"
+    )
+    assert buffer_status == RunStatus.paused, (
+        f"a refused continue of a paused run must be recorded as paused, got {buffer_status!r}"
     )
     db_status = [r for r in _reload_runs(db_file, session_id) if r.run_id == run1.run_id][0].status
     assert db_status == RunStatus.paused
@@ -4467,13 +4472,15 @@ async def test_a_stale_run_response_cannot_resurrect_a_finished_run(tmp_path):
     assert done.status == RunStatus.completed
     assert _EXECUTED == ["a@example.com"]
 
-    # The caller still holds the stale paused object from before that completion.
+    # The caller still holds the stale paused object from before that
+    # completion, and sends a payload that would bind: only the guard stands
+    # between this approve and a second execution.
     team3 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
     with pytest.raises(RunNotContinuableError):
         async for _ in team3.acontinue_run(
             run_response=run1,
             session_id=session_id,
-            requirements=_unbindable_payload(run1.requirements),
+            requirements=_wire_requirements(run1.requirements),
             stream=True,
             stream_events=True,
             background=True,
@@ -4493,15 +4500,15 @@ async def test_a_stale_run_response_cannot_resurrect_a_finished_run(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_a_refused_continue_restores_the_status_it_replaced(tmp_path):
-    """The refusal must put back whatever it took over, not a blanket pause.
+async def test_a_stale_run_response_cannot_resurrect_a_cancelled_run(tmp_path):
+    """A stale paused object over a cancelled stored run is refused up front.
 
-    A cancelled run handed a refused continue has to come out cancelled. Coming
-    out paused would turn every terminal state into a resumable approval.
+    Without the guard, step 1 writes RUNNING over the cancellation and the
+    continue then executes the gated tool on a run an operator cancelled.
     """
     _EXECUTED.clear()
-    db_file = str(tmp_path / "restore_status.db")
-    session_id = "s-restore-status"
+    db_file = str(tmp_path / "stale_cancelled.db")
+    session_id = "s-stale-cancelled"
 
     run1 = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
         "Email a@example.com", session_id=session_id
@@ -4515,7 +4522,52 @@ async def test_a_refused_continue_restores_the_status_it_replaced(tmp_path):
             r.status = RunStatus.cancelled
     db.upsert_session(session)
 
-    # The caller still holds the paused object from before the cancellation.
+    # The caller still holds the paused object from before the cancellation and
+    # sends a payload that would bind.
+    team2 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
+    with pytest.raises(RunNotContinuableError):
+        async for _ in team2.acontinue_run(
+            run_response=run1,
+            session_id=session_id,
+            requirements=_wire_requirements(run1.requirements),
+            stream=True,
+            stream_events=True,
+            background=True,
+        ):
+            pass
+    await _drain_background_tasks()
+
+    status = [r for r in _reload_runs(db_file, session_id) if r.run_id == run1.run_id][0].status
+    assert status == RunStatus.cancelled, f"a cancelled run came back as {status!r}"
+    assert _EXECUTED == [], f"the gated tool ran on a cancelled run: {_EXECUTED}"
+
+
+@pytest.mark.asyncio
+async def test_a_refused_continue_restores_the_status_it_replaced(tmp_path):
+    """The refusal must put back whatever it took over, not a blanket pause.
+
+    An errored run handed a refused continue has to come out errored. Coming
+    out paused would turn a terminal state into a resumable approval.
+    """
+    from agno.os.managers import event_buffer
+
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "restore_status.db")
+    session_id = "s-restore-status"
+
+    run1 = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email a@example.com", session_id=session_id
+    )
+    assert run1.is_paused
+
+    db = SqliteDb(db_file=db_file)
+    session = db.get_session(session_id=session_id, session_type="team")
+    for r in session.runs or []:
+        if r.run_id == run1.run_id:
+            r.status = RunStatus.error
+    db.upsert_session(session)
+
+    # The caller still holds the paused object from before the failure.
     team2 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
     async for _ in team2.acontinue_run(
         run_response=run1,
@@ -4529,7 +4581,11 @@ async def test_a_refused_continue_restores_the_status_it_replaced(tmp_path):
     await _drain_background_tasks()
 
     status = [r for r in _reload_runs(db_file, session_id) if r.run_id == run1.run_id][0].status
-    assert status == RunStatus.cancelled, f"a cancelled run came back as {status!r} after a refused continue"
+    assert status == RunStatus.error, f"an errored run came back as {status!r} after a refused continue"
+    buffer_status = event_buffer.get_run_status(run1.run_id)
+    assert isinstance(buffer_status, RunStatus) and buffer_status == RunStatus.error, (
+        f"the buffer must report the restored status, got {buffer_status!r}"
+    )
     assert _EXECUTED == []
 
 
@@ -4570,7 +4626,398 @@ async def test_the_event_buffer_does_not_advertise_a_cancelled_run_as_paused(tmp
         pass
     await _drain_background_tasks()
 
-    assert event_buffer.get_run_status(run1.run_id) != RunStatus.paused, (
-        "the buffer advertises a cancelled run as paused, so every reconnecting client reads it as resumable"
+    buffer_status = event_buffer.get_run_status(run1.run_id)
+    assert isinstance(buffer_status, RunStatus), (
+        f"the buffer must hold a RunStatus, got {type(buffer_status)}: /resume formats it with .value"
+    )
+    assert buffer_status == RunStatus.cancelled, (
+        f"the buffer must report the cancelled run as cancelled, got {buffer_status!r}; advertising it as "
+        "paused tells every reconnecting client it is resumable"
     )
     assert [r for r in _reload_runs(db_file, session_id) if r.run_id == run1.run_id][0].status == RunStatus.cancelled
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_over_a_running_run_never_advertises_running(tmp_path):
+    """A refusal while another continue holds the run must not record RUNNING
+    as the buffer's final status: /resume treats RUNNING as in-flight and waits
+    forever on a producer that already exited."""
+    from agno.os.managers import event_buffer
+
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "running_refusal.db")
+    session_id = "s-running-refusal"
+
+    run1 = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email a@example.com", session_id=session_id
+    )
+    assert run1.is_paused
+
+    db = SqliteDb(db_file=db_file)
+    session = db.get_session(session_id=session_id, session_type="team")
+    for r in session.runs or []:
+        if r.run_id == run1.run_id:
+            r.status = RunStatus.running
+    db.upsert_session(session)
+
+    team2 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
+    async for _ in team2.acontinue_run(
+        run_response=run1,
+        session_id=session_id,
+        requirements=_unbindable_payload(run1.requirements),
+        stream=True,
+        stream_events=True,
+        background=True,
+    ):
+        pass
+    await _drain_background_tasks()
+
+    buffer_status = event_buffer.get_run_status(run1.run_id)
+    assert isinstance(buffer_status, RunStatus) and buffer_status == RunStatus.paused, (
+        f"the buffer's final status is {buffer_status!r}; RUNNING makes every reconnecting client hang"
+    )
+    assert _EXECUTED == []
+
+
+@pytest.mark.asyncio
+async def test_a_refused_continue_of_a_run_missing_from_the_session_stays_resumable(tmp_path):
+    """When the stored session has no entry for the run, the caller's object is
+    the only record of the pre-continue state; a refusal must restore it, not
+    leave the RUNNING marker step 1 wrote."""
+    from agno.os.managers import event_buffer
+
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "missing_run.db")
+    session_id = "s-missing-run"
+
+    run1 = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email a@example.com", session_id=session_id
+    )
+    assert run1.is_paused
+
+    db = SqliteDb(db_file=db_file)
+    session = db.get_session(session_id=session_id, session_type="team")
+    session.runs = [r for r in session.runs or [] if r.run_id != run1.run_id]
+    db.upsert_session(session)
+
+    team2 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
+    async for _ in team2.acontinue_run(
+        run_response=run1,
+        session_id=session_id,
+        requirements=_unbindable_payload(run1.requirements),
+        stream=True,
+        stream_events=True,
+        background=True,
+    ):
+        pass
+    await _drain_background_tasks()
+
+    stored = [r for r in _reload_runs(db_file, session_id) if r.run_id == run1.run_id][0]
+    assert stored.status == RunStatus.paused, (
+        f"the refusal left the run advertised as {stored.status!r}; a RUNNING orphan can never be resumed"
+    )
+    buffer_status = event_buffer.get_run_status(run1.run_id)
+    assert isinstance(buffer_status, RunStatus) and buffer_status == RunStatus.paused, (
+        f"the buffer says {buffer_status!r} while the DB says paused; reconnecting clients read the buffer"
+    )
+
+    team3 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
+    done = await team3.acontinue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+    )
+    assert done.status == RunStatus.completed
+    assert _EXECUTED == ["a@example.com"]
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_does_not_erase_a_concurrently_persisted_run(tmp_path):
+    """The refusal write-back must not save the step-1 session snapshot: a run
+    another request persisted between step 1 and the refusal has to survive."""
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "concurrent_refusal.db")
+    session_id = "s-concurrent-refusal"
+
+    run1 = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email a@example.com", session_id=session_id
+    )
+    assert run1.is_paused
+
+    team2 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
+    team3 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
+
+    async def refused_continue():
+        async for _ in team2.acontinue_run(
+            run_response=run1,
+            session_id=session_id,
+            requirements=_unbindable_payload(run1.requirements),
+            stream=True,
+            stream_events=True,
+            background=True,
+        ):
+            pass
+
+    async def second_ask():
+        return await team3.arun("second ask", session_id=session_id)
+
+    _, second = await asyncio.gather(refused_continue(), second_ask())
+    await _drain_background_tasks()
+
+    runs = _reload_runs(db_file, session_id)
+    ids = [r.run_id for r in runs]
+    assert second.run_id in ids, f"the refusal write-back erased the concurrently persisted run; DB holds {ids}"
+    assert [r for r in runs if r.run_id == run1.run_id][0].status == RunStatus.paused
+
+
+@pytest.mark.asyncio
+async def test_a_background_repause_is_not_advertised_as_completed(tmp_path):
+    """A background continue that re-pauses must record PAUSED in the event
+    buffer. This is the run_id-only shape AgentOS uses, where the producer has
+    no caller-supplied run object to read the status from."""
+    from agno.os.managers import event_buffer
+
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "repause_buffer.db")
+    session_id = "s-repause-buffer"
+
+    run1 = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email a@example.com", session_id=session_id
+    )
+    assert run1.is_paused
+
+    # Bindable payload without a confirmation: the continue binds, the
+    # requirement stays unresolved, and the run re-pauses.
+    unconfirmed = [RunRequirement.from_dict(r.to_dict()) for r in run1.requirements or []]
+    team2 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
+    async for _ in team2.acontinue_run(
+        run_id=run1.run_id,
+        session_id=session_id,
+        requirements=unconfirmed,
+        stream=True,
+        stream_events=True,
+        background=True,
+    ):
+        pass
+    await _drain_background_tasks()
+
+    assert _EXECUTED == []
+    db_status = [r for r in _reload_runs(db_file, session_id) if r.run_id == run1.run_id][0].status
+    assert db_status == RunStatus.paused
+    buffer_status = event_buffer.get_run_status(run1.run_id)
+    assert isinstance(buffer_status, RunStatus) and buffer_status == RunStatus.paused, (
+        f"the DB says paused but the buffer says {buffer_status!r}; a reconnecting client would stop "
+        "waiting for the approval"
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_run_id_raises_run_not_found_in_the_async_non_stream_lane(tmp_path):
+    """All four continue lanes must surface an unknown run id as
+    RunNotFoundError; the async non-stream lane used to crash with
+    AttributeError instead."""
+    db_file = str(tmp_path / "unknown_run.db")
+    team = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
+    with pytest.raises(RunNotFoundError):
+        await team.acontinue_run(run_id="no-such-run", session_id="s-unknown-run")
+
+
+def _build_own_tool_flat_team(db: SqliteDb, resuming: bool) -> Team:
+    """Top-level team with its own gated tool plus a gated member tool, so a
+    pause carries one team-level and one member-level requirement."""
+    script = (
+        [("content", "All done.")]
+        if resuming
+        else [
+            (
+                "tools",
+                [
+                    ("delegate_task_to_member", {"member_id": "emailer", "task": "send it"}, "tc-deleg"),
+                    ("publish", {"item": "release"}, "tc-pub"),
+                ],
+            ),
+            ("content", "All done."),
+        ]
+    )
+    return Team(
+        name="Comms Team",
+        id="comms-team",
+        model=_ScriptedModel("m-leader", script),
+        tools=[publish],
+        members=[_emailer_agent(db, resuming)],
+        db=db,
+        telemetry=False,
+    )
+
+
+def test_a_sync_stream_cancel_keeps_team_level_requirements(tmp_path):
+    """A cancel that lands during member routing must persist the run with its
+    team-level requirements still attached, the same set the async stream
+    persists."""
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "sync_cancel_reqs.db")
+    session_id = "s-sync-cancel-reqs"
+
+    team1 = _build_own_tool_flat_team(SqliteDb(db_file=db_file), resuming=False)
+    run1 = team1.run("Publish the release and email a@example.com", session_id=session_id)
+    assert run1.is_paused
+    names = sorted(r.tool_execution.tool_name for r in run1.requirements or [])
+    assert names == ["publish", "send_email"], names
+
+    team2 = _build_own_tool_flat_team(SqliteDb(db_file=db_file), resuming=True)
+    stream = team2.continue_run(
+        run_id=run1.run_id,
+        session_id=session_id,
+        requirements=_wire_requirements(run1.requirements),
+        stream=True,
+        stream_events=True,
+        yield_run_output=True,
+    )
+    # Cancel before iterating: the cancel lands inside member routing.
+    Team.cancel_run(run1.run_id)
+
+    final = None
+    for ev in stream:
+        if isinstance(ev, TeamRunOutput):
+            final = ev
+
+    assert final is not None and final.status == RunStatus.cancelled
+    final_names = sorted(r.tool_execution.tool_name for r in (final.requirements or []))
+    assert "publish" in final_names, f"the caller's run object lost the team-level requirement: {final_names}"
+    stored = [r for r in _reload_runs(db_file, session_id) if r.run_id == run1.run_id][0]
+    stored_names = sorted(r.tool_execution.tool_name for r in (stored.requirements or []))
+    assert "publish" in stored_names, f"the stored run lost the team-level requirement: {stored_names}"
+
+
+_NOTES: List[Any] = []
+
+
+@tool(requires_user_input=True, user_input_fields=["to"])
+@approval(type="required")
+def send_note(to: str, body: str) -> str:
+    _NOTES.append((to, body))
+    return f"note to {to}: {body}"
+
+
+@tool(external_execution=True)
+@approval(type="required")
+def run_export(target: str) -> str:
+    raise AssertionError("externally executed tools never run in-process")
+
+
+def _approval_team(db: SqliteDb, resuming: bool, member_tool=None) -> Team:
+    member_tool = member_tool if member_tool is not None else send_note
+    tool_name = member_tool.name
+    tool_args = {"body": "hi"} if tool_name == "send_note" else {"target": "reports"}
+    agent = Agent(
+        name="Noter",
+        id="noter",
+        model=_ScriptedModel(
+            "m-noter",
+            [("content", "Sent.")] if resuming else [("tool", tool_name, tool_args, "tc-note"), ("content", "Sent.")],
+        ),
+        tools=[member_tool],
+        db=db,
+        telemetry=False,
+    )
+    return Team(
+        name="Notes Team",
+        id="notes-team",
+        model=_ScriptedModel(
+            "m-lead",
+            [("content", "All done.")]
+            if resuming
+            else [
+                ("tool", "delegate_task_to_member", {"member_id": "noter", "task": "note it"}, "tc-deleg"),
+                ("content", "All done."),
+            ],
+        ),
+        members=[agent],
+        db=db,
+        telemetry=False,
+    )
+
+
+def _resolve_required_approval(db: SqliteDb, run1, resolution_data) -> None:
+    approvals, _ = db.get_approvals(run_id=run1.run_id, approval_type="required", limit=5)
+    if not approvals:
+        for r in run1.requirements or []:
+            aid = getattr(r.tool_execution, "approval_id", None)
+            if aid:
+                record = db.get_approval(aid)
+                if record:
+                    approvals = [record]
+                    break
+    assert approvals, "no approval record was created for the paused run"
+    db.update_approval(approvals[0]["id"], status="approved", resolution_data=resolution_data)
+
+
+def test_an_admin_approved_member_user_input_run_completes(tmp_path):
+    """An approval resolved out of band with the missing input values must let a
+    continue with no requirements payload finish the run."""
+    _NOTES.clear()
+    db_file = str(tmp_path / "admin_approval.db")
+    session_id = "s-admin-approval"
+
+    db = SqliteDb(db_file=db_file)
+    run1 = _approval_team(db, resuming=False).run("Send a note", session_id=session_id)
+    assert run1.is_paused
+
+    _resolve_required_approval(db, run1, {"values": {"to": "bob@example.com"}})
+
+    team2 = _approval_team(SqliteDb(db_file=db_file), resuming=True)
+    run2 = team2.continue_run(run_id=run1.run_id, session_id=session_id)
+    assert run2.status == RunStatus.completed, f"admin-approved run did not complete: {run2.status}"
+    assert _NOTES == [("bob@example.com", "hi")], _NOTES
+
+
+@pytest.mark.asyncio
+async def test_an_admin_approved_member_user_input_run_completes_async(tmp_path):
+    _NOTES.clear()
+    db_file = str(tmp_path / "admin_approval_async.db")
+    session_id = "s-admin-approval-async"
+
+    db = SqliteDb(db_file=db_file)
+    run1 = await _approval_team(db, resuming=False).arun("Send a note", session_id=session_id)
+    assert run1.is_paused
+
+    _resolve_required_approval(db, run1, {"values": {"to": "bob@example.com"}})
+
+    team2 = _approval_team(SqliteDb(db_file=db_file), resuming=True)
+    run2 = await team2.acontinue_run(run_id=run1.run_id, session_id=session_id)
+    assert run2.status == RunStatus.completed, f"admin-approved run did not complete: {run2.status}"
+    assert _NOTES == [("bob@example.com", "hi")], _NOTES
+
+
+def test_an_admin_approved_external_execution_member_run_completes(tmp_path):
+    """An approval resolved with the external tool's result must let the
+    continue finish instead of re-pausing on needs_external_execution."""
+    db_file = str(tmp_path / "admin_approval_ext.db")
+    session_id = "s-admin-approval-ext"
+
+    db = SqliteDb(db_file=db_file)
+    run1 = _approval_team(db, resuming=False, member_tool=run_export).run("Export it", session_id=session_id)
+    assert run1.is_paused
+
+    _resolve_required_approval(db, run1, {"result": "EXPORT_OK"})
+
+    team2 = _approval_team(SqliteDb(db_file=db_file), resuming=True, member_tool=run_export)
+    run2 = team2.continue_run(run_id=run1.run_id, session_id=session_id)
+    assert run2.status == RunStatus.completed, f"admin-approved run did not complete: {run2.status}"
+
+
+def test_an_approval_without_values_keeps_the_run_paused(tmp_path):
+    """An approval that supplies none of the required input values must not let
+    the gated tool run with None arguments; the run asks again."""
+    _NOTES.clear()
+    db_file = str(tmp_path / "admin_approval_empty.db")
+    session_id = "s-admin-approval-empty"
+
+    db = SqliteDb(db_file=db_file)
+    run1 = _approval_team(db, resuming=False).run("Send a note", session_id=session_id)
+    assert run1.is_paused
+
+    _resolve_required_approval(db, run1, None)
+
+    team2 = _approval_team(SqliteDb(db_file=db_file), resuming=True)
+    run2 = team2.continue_run(run_id=run1.run_id, session_id=session_id)
+    assert run2.status == RunStatus.paused, f"an unfilled approval let the run reach {run2.status}"
+    assert _NOTES == [], f"the gated tool ran without its input values: {_NOTES}"
