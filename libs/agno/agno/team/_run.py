@@ -8332,6 +8332,11 @@ async def _acontinue_run(
     # re-binding the same payload against what is left refuses a run the retry
     # was meant to rescue.
     requirements_applied = False
+    # Member results survive retries for the same reason: routing consumed the
+    # member requirements, so a retry after a transient leader failure re-enters
+    # with nothing to route. Without the banked results every dispatch branch is
+    # skipped and the run would complete without the leader ever being called.
+    routed_member_results: List[str] = []
 
     try:
         num_attempts = team.retries + 1
@@ -8477,7 +8482,7 @@ async def _acontinue_run(
                 has_team_level = _has_team_level_requirements(run_response.requirements or [])
 
                 # Route member requirements
-                member_results: List[str] = []
+                member_results: List[str] = list(routed_member_results)
                 if has_member:
                     member_reqs = [
                         r for r in (run_response.requirements or []) if getattr(r, "member_agent_id", None) is not None
@@ -8504,6 +8509,11 @@ async def _acontinue_run(
                         r for r in (run_response.requirements or []) if id(r) not in original_member_req_ids
                     ]
                     run_response.requirements = team_level_reqs + newly_propagated
+                    # This attempt's routing succeeded; bank its results so a
+                    # transient leader failure below retries the leader with
+                    # them instead of completing a leaderless run.
+                    member_results = routed_member_results + member_results
+                    routed_member_results = member_results
 
                     # Check if still paused
                     if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
@@ -8772,8 +8782,12 @@ async def _acontinue_run_stream(
     log_debug(f"Team Continue Run Stream: {run_response.run_id if run_response else run_id}", center=True)
 
     team_session: Optional[TeamSession] = None
-    # See _acontinue_run: the payload binds once, not once per retry.
+    # See _acontinue_run: the payload binds once, not once per retry, and
+    # member results from a routing pass that succeeded are banked so a
+    # transient leader failure retries the leader instead of completing a
+    # run that skipped it.
     requirements_applied = False
+    routed_member_results: List[str] = []
 
     try:
         num_attempts = team.retries + 1
@@ -8908,8 +8922,10 @@ async def _acontinue_run_stream(
                 has_member = _has_member_requirements(run_response.requirements or [])
                 has_team_level = _has_team_level_requirements(run_response.requirements or [])
 
-                # Route member requirements
-                member_results: List[str] = []
+                # Route member requirements. The routing generator appends into
+                # this list in place, so seeding it with the banked results
+                # keeps earlier attempts' routing and this attempt's together.
+                member_results: List[str] = list(routed_member_results)
                 if has_member:
                     member_reqs = [
                         r for r in (run_response.requirements or []) if getattr(r, "member_agent_id", None) is not None
@@ -8940,6 +8956,8 @@ async def _acontinue_run_stream(
                         r for r in (run_response.requirements or []) if id(r) not in original_member_req_ids
                     ]
                     run_response.requirements = team_level_reqs + newly_propagated
+                    # Routing succeeded; bank the accumulated results for a retry.
+                    routed_member_results = member_results
 
                     if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
                         from agno.team import _hooks
