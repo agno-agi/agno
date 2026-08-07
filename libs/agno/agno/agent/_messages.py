@@ -1678,14 +1678,11 @@ def get_continue_run_messages(
         from copy import deepcopy
 
         # Inject compaction summary before history (replaces compacted messages)
-        # Use run's snapshot for time-travel, fallback to session for fresh runs
-        summary_to_inject = compaction_summary or (session.compaction.summary if session.compaction else None)
-        if summary_to_inject:
-            from agno.compression.context import SUMMARY_PREFIX
+        # Use run's snapshot only — no fallback to session (run may predate compaction)
+        if compaction_summary:
+            from agno.compression.context import create_summary_message
 
-            run_messages.messages.append(
-                Message(role="user", content=SUMMARY_PREFIX + summary_to_inject, from_history=True)
-            )
+            run_messages.messages.append(create_summary_message(compaction_summary))
 
         # Only skip messages from history when system_message_role is NOT a standard conversation role.
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered

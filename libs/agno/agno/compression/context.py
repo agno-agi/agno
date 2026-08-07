@@ -40,6 +40,21 @@ DEFAULT_COMPACTION_PROMPT = dedent("""\
     Keep the summary under 2000 tokens while preserving all critical context.
     """)
 
+def create_summary_message(summary: str) -> "Message":
+    """Create a summary message from a summary string.
+
+    Used when we only have the summary text (e.g., from run.compaction_summary)
+    rather than a full CompactionState object.
+    """
+    from agno.models.message import Message
+
+    return Message(
+        role="user",
+        content=SUMMARY_PREFIX + summary,
+        from_history=True,
+    )
+
+
 SUMMARY_PREFIX = dedent("""\
     Another language model started this conversation and produced a summary of the work so far. \
     Use this to continue without duplicating work:
