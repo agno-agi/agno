@@ -1,12 +1,14 @@
+from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agno.utils.json_schema import (
     get_json_schema,
     get_json_schema_for_arg,
     get_json_type_for_py_type,
+    inline_pydantic_schema,
     is_origin_union_type,
 )
 
@@ -45,6 +47,41 @@ class UserProfileModel(BaseModel):
     age: int
     contact_info: ContactInfoModel
     preferences: Dict[str, Any] = field(default_factory=dict)
+
+
+class CatModel(BaseModel):
+    kind: Literal["cat"]
+    lives: int
+
+
+class DogModel(BaseModel):
+    kind: Literal["dog"]
+    breed: str
+
+
+DiscriminatedPet = Annotated[Union[CatModel, DogModel], Field(discriminator="kind")]
+
+
+class PetOwnerModel(BaseModel):
+    name: str
+    pets: List[DiscriminatedPet]
+
+
+class OpaqueSchemaMetadataModel(BaseModel):
+    config: Dict[str, Any] = Field(
+        default={
+            "$defs": {"payload-key": "must survive"},
+            "discriminator": {"mapping": {"payload-tag": "#/$defs/PayloadValue"}},
+        }
+    )
+
+
+def _contains_key(value: Any, key: str) -> bool:
+    if isinstance(value, dict):
+        return key in value or any(_contains_key(item, key) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_key(item, key) for item in value)
+    return False
 
 
 # Nested dataclasses
@@ -374,6 +411,82 @@ def test_get_json_schema_with_nested_pydantic_models():
     preferences = user_profile["properties"]["preferences"]
     assert preferences["type"] == "object"
     assert "additionalProperties" in preferences
+
+
+def test_inline_pydantic_schema_inlines_discriminated_one_of_without_dangling_refs():
+    raw_schema = PetOwnerModel.model_json_schema()
+    original_schema = deepcopy(raw_schema)
+    raw_pet_items = raw_schema["properties"]["pets"]["items"]
+
+    assert "mapping" in raw_pet_items["discriminator"]
+
+    schema = inline_pydantic_schema(raw_schema)
+
+    # Inlining is side-effect free and removes every local definition/ref.
+    assert raw_schema == original_schema
+    assert not _contains_key(schema, "$defs")
+    assert not _contains_key(schema, "$ref")
+
+    pet_items = schema["properties"]["pets"]["items"]
+    assert pet_items["discriminator"] == {"propertyName": "kind"}
+    assert len(pet_items["oneOf"]) == 2
+    assert {branch["properties"]["kind"]["const"] for branch in pet_items["oneOf"]} == {"cat", "dog"}
+
+
+def test_get_json_schema_for_arg_inlines_discriminated_union_model():
+    schema = get_json_schema_for_arg(PetOwnerModel)
+
+    assert schema is not None
+    assert not _contains_key(schema, "$defs")
+    assert not _contains_key(schema, "$ref")
+    pet_items = schema["properties"]["pets"]["items"]
+    assert pet_items["discriminator"] == {"propertyName": "kind"}
+    assert {branch["properties"]["kind"]["const"] for branch in pet_items["oneOf"]} == {"cat", "dog"}
+
+
+def test_inline_pydantic_schema_preserves_opaque_model_defaults():
+    raw_schema = OpaqueSchemaMetadataModel.model_json_schema()
+    original_schema = deepcopy(raw_schema)
+
+    schema = inline_pydantic_schema(raw_schema)
+
+    assert schema["properties"]["config"]["default"] == original_schema["properties"]["config"]["default"]
+    schema["properties"]["config"]["default"]["$defs"]["payload-key"] = "changed"
+    assert raw_schema == original_schema
+
+
+def test_inline_pydantic_schema_preserves_all_opaque_annotation_payloads():
+    opaque = {
+        "$defs": {"payload-key": "must survive"},
+        "discriminator": {"mapping": {"payload-tag": "#/$defs/PayloadValue"}},
+    }
+    raw_schema = {
+        "$defs": {
+            "Payload": {
+                "type": "object",
+                "properties": {"value": {"type": "string"}},
+            }
+        },
+        "type": "object",
+        "properties": {
+            "payload": {
+                "$ref": "#/$defs/Payload",
+                "default": deepcopy(opaque),
+                "examples": [deepcopy(opaque)],
+                "const": deepcopy(opaque),
+                "enum": [deepcopy(opaque)],
+            }
+        },
+    }
+
+    schema = inline_pydantic_schema(raw_schema)
+    payload_schema = schema["properties"]["payload"]
+
+    assert payload_schema["properties"] == {"value": {"type": "string"}}
+    assert payload_schema["default"] == opaque
+    assert payload_schema["examples"] == [opaque]
+    assert payload_schema["const"] == opaque
+    assert payload_schema["enum"] == [opaque]
 
 
 def test_get_json_schema_with_nested_dataclasses():

@@ -251,8 +251,9 @@ halves and record both observations.
 
 ### 22_studio
 
-- Run the standalone StudioTools create, edit, version, and publish lifecycle
-  against a synchronous SQLite database.
+- Run the standalone typed StudioTools create, edit, version, and publish
+  lifecycle against a synchronous SQLite database; verify the exact create,
+  publish, edit, and second-publish confirmations are continued in order.
 - Boot the AgentOS Studio servers and inspect registry primitives, code-defined
   components, and versioning tools.
 - Exercise user-feedback, user-input, and confirmation pauses both on the

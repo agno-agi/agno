@@ -1,74 +1,72 @@
-"""StudioTools -- give agents the ability to compose agents, teams, and workflows.
+"""Typed, authorization-gated Studio control-plane tools.
 
-Uses the AgentOS Registry (tools, models, dbs, functions) and the core
-component APIs (Agent, Team, Workflow, Step) to dynamically create, edit,
-version, and execute components described in natural language.
+``StudioTools`` lets an administrator compose versioned agents, teams, and
+workflows from the live AgentOS registry.  The 2.9 API is intentionally
+breaking: requests and responses are typed, one catalog database is fixed at
+construction time, creates are draft-first, edits use optimistic concurrency,
+and destructive lifecycle operations archive rather than hard-delete.
 
-Typical use:
-    from agno.tools.studio import StudioTools
-
-    studio_agent = Agent(
-        model=Claude(id="claude-sonnet-4-5"),
-        tools=[StudioTools(registry=registry, db=db)],
-    )
-
-    studio_agent.print_response(
-        "Create an agent named 'math-tutor' that uses claude-sonnet-4-5 and "
-        "the calculator toolkit."
-    )
-
-Semantics:
-    * create_* persists a new component with a single published config.
-    * edit_* loads the component, applies the patch, and saves it:
-      - with versions=True the edit is saved as a new immutable draft. Use
-        publish_component() to promote the draft to published+current.
-      - with versions=False (default) the edit is published immediately as a
-        new current version. Each edit creates a new published version; prior
-        versions remain in history (they are immutable).
-    * run_* execute a component as the current user, with one sub-session per
-      calling conversation and PAUSED results that carry their unresolved
-      requirements. The implementation is StudioRunnerTools
-      (agno.tools.studio_runner), which platforms can also mount standalone
-      as a dispatch-only surface -- discovery and execution without the
-      Studio's mutation tools.
-
-Enable flags:
-    * Default: only agent operations are exposed (agents=True, teams=False,
-      workflows=False). Discovery functions are always available.
-    * Pass teams=True / workflows=True to also expose those operations.
-    * Passing agents=False without enabling teams or workflows leaves only
-      discovery tools registered.
-    * Passing agents_list auto-enables teams and workflows (you can build them
-      from those agents). Passing teams_list auto-enables workflows. Explicit
-      False overrides the auto-enable.
-    * Versioning tools (list_versions, get_version, publish_component,
-      set_current_version, delete_version) are exposed only when versions=True.
-    * Schedule tools (create_schedule, list_schedules, get_schedule,
-      get_schedule_runs, trigger_schedule, enable_schedule, disable_schedule,
-      delete_schedule) are exposed only when schedules=True. create_schedule is
-      Studio's own (component-aware targets); the management tools are shared
-      with SchedulerTools.
-
-Persistence:
-    * Studio saves ONLY the component it creates/edits. It does NOT cascade to
-      member agents or step agents -- those are assumed to be code-defined
-      (registry / passed-in lists) or separately persisted by a prior create_*.
+The data-plane ``run_*`` behavior remains owned by :class:`StudioRunnerTools`.
+Studio wraps that runner so authorization is applied consistently without
+duplicating its resolution, rehydration, identity, or pause/resume semantics.
 """
 
 from __future__ import annotations
 
-import json
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Union
+import asyncio
+import inspect
+from collections import Counter
+from copy import deepcopy
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Sequence, Union, cast
 
+from agno.db.schemas.scheduler import (
+    STUDIO_SCHEDULE_MANAGED_BY,
+    Schedule,
+    ScheduleNameConflictError,
+    is_valid_studio_schedule_actor_id,
+)
 from agno.run import RunContext
 from agno.tools.function import Function
-from agno.tools.studio_runner import AmbiguousComponentNameError, StudioRunnerError, StudioRunnerTools, _slugify
+from agno.tools.studio_runner import StudioRunnerError, StudioRunnerTools, _slugify
+from agno.tools.studio_schema import (
+    AgentCreate,
+    AgentPatch,
+    AgentView,
+    AgentWorkflowStep,
+    ComponentActionView,
+    ComponentRef,
+    ComponentSummary,
+    ComponentView,
+    ContextPolicy,
+    FunctionRef,
+    FunctionWorkflowStep,
+    ModelRef,
+    ScheduleActionView,
+    ScheduleCreate,
+    ScheduleRunView,
+    ScheduleView,
+    StudioError,
+    StudioResult,
+    TeamCreate,
+    TeamPatch,
+    TeamView,
+    TeamWorkflowStep,
+    ToolRef,
+    VersionSummary,
+    WorkflowCreate,
+    WorkflowPatch,
+    WorkflowStep,
+    WorkflowView,
+)
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_debug, logger
+from agno.utils.string import generate_id_from_name
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
-    from agno.db.base import BaseDb, ComponentVersionGuard
+    from agno.db.base import BaseDb, ComponentProjection, ComponentType
+    from agno.db.schemas.scheduler import ScheduleRun
     from agno.models.base import Model
     from agno.registry.registry import Registry
     from agno.scheduler.manager import ScheduleManager
@@ -78,114 +76,153 @@ if TYPE_CHECKING:
 
 Component = Union["Agent", "Team", "Workflow"]
 TeamMember = Union["Agent", "Team"]
+SaveStage = Literal["draft", "published"]
+IfExists = Literal["error", "return_existing"]
+StudioAccess = Literal["read", "mutate"]
+StudioAction = Literal[
+    "list_models",
+    "list_tools",
+    "list_functions",
+    "list_agents",
+    "list_teams",
+    "list_workflows",
+    "get_agent",
+    "get_team",
+    "get_workflow",
+    "list_versions",
+    "get_version",
+    "create_agent",
+    "create_team",
+    "create_workflow",
+    "edit_agent",
+    "edit_team",
+    "edit_workflow",
+    "publish_component",
+    "set_current_version",
+    "delete_version",
+    "archive_agent",
+    "archive_team",
+    "archive_workflow",
+    "restore_agent",
+    "restore_team",
+    "restore_workflow",
+    "run_agent",
+    "run_team",
+    "run_workflow",
+    "create_schedule",
+    "list_schedules",
+    "get_schedule",
+    "get_schedule_runs",
+    "trigger_schedule",
+    "enable_schedule",
+    "disable_schedule",
+    "delete_schedule",
+]
+StudioAuthorizer = Callable[[RunContext, StudioAccess, StudioAction], bool]
 
+_STUDIO_CONFIG_KEY = "_agno_studio"
+_STUDIO_SCHEMA_VERSION = 2
 _SCHEDULE_TARGET_TYPES = ("agent", "team", "workflow")
 
 
+@dataclass(frozen=True)
+class _ResolvedRef:
+    component: Component
+    ref: ComponentRef
+    link: Optional[Dict[str, Any]]
+    code_defined: bool
+
+
+class _StudioRequestError(ValueError):
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        details: Optional[Dict[str, Any]] = None,
+        retryable: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.details = details or {}
+        self.retryable = retryable
+
+
 class StudioTools(Toolkit):
-    """Toolkit that lets an agent compose agents, teams, and workflows.
+    """Administrative tools for composing and versioning Studio components.
 
     Args:
-        registry: Registry holding models, tools, databases, and code-defined
-            agents/teams available for composition.
-        db: Database for persisting components. Falls back to ``registry.dbs[0]``.
-        agents_list: Optional live list (e.g. ``agent_os.agents``) used only for
-            discovery in ``list_agents()``. Studio-created components are NOT
-            appended to this list -- they are DB components, so appending would
-            duplicate them in AgentOS's ``/agents`` response.
-        teams_list: Same as ``agents_list`` but for teams.
-        workflows_list: Same as ``agents_list`` but for workflows.
-        default_model_id: Model id to use when a caller omits one.
-        default_num_history_runs: History depth for created agents and teams
-            when a caller omits ``num_history_runs``. None lets the
-            component's own default apply.
-        agents: Expose agent operations. Defaults to True.
-        teams: Expose team operations. Defaults to False (see module docstring
-            for auto-enable rules).
-        workflows: Expose workflow operations. Defaults to False.
-        versions: Expose versioning tools (list_versions, get_version,
-            publish_component, set_current_version, delete_version). Defaults
-            to False; without versioning, edits publish immediately instead of
-            producing drafts.
-        list_limit: Cap on DB components returned by each list tool (default
-            100). The list payloads report 'db_total' so a capped list is
-            visible as capped.
-        schedules: Expose schedule tools: Studio's own create_schedule
-            (component-aware targets) plus the SchedulerTools management tools
-            (list_schedules, get_schedule, get_schedule_runs, trigger_schedule,
-            enable_schedule, disable_schedule, delete_schedule). Defaults to
-            False. Requires the optional scheduler dependencies (croniter and
-            pytz -- ``pip install agno[scheduler]``); when they are missing,
-            the first schedule tool call that needs them returns an error JSON.
+        registry: Live registry that supplies exact models, tools, functions,
+            and code-defined component references.
+        db: The single catalog database used for every Studio lifecycle call.
+        authorize: Required synchronous policy callback. It receives the
+            framework-injected ``RunContext``, access kind, and exact action.
+            Returning false rejects the call before any registry or DB access.
+        agents_list: Optional live code-defined agents used for discovery and
+            draft composition.
+        teams_list: Optional live code-defined teams used for discovery and
+            draft composition.
+        workflows_list: Optional live code-defined workflows used for discovery.
+        default_model: Exact registry reference used when a create/patch model
+            is null. No implicit first-registry-model fallback is used.
+        default_context: Resolved context policy used when a create request's
+            context is null.
+        agents: Expose agent operations (default true).
+        teams: Expose team operations. Supplying ``agents_list`` or
+            ``teams_list`` auto-enables this unless explicitly overridden.
+        workflows: Expose workflow operations. Supplying an agents, teams, or
+            workflows list auto-enables this unless explicitly overridden.
+        schedules: Expose authorization-wrapped schedule operations.
+        list_limit: Maximum DB rows returned per component list.
     """
 
     def __init__(
         self,
         registry: "Registry",
-        db: Optional["BaseDb"] = None,
+        db: "BaseDb",
+        authorize: StudioAuthorizer,
+        *,
         agents_list: Optional[List["Agent"]] = None,
         teams_list: Optional[List["Team"]] = None,
         workflows_list: Optional[List["Workflow"]] = None,
-        default_model_id: Optional[str] = None,
-        default_num_history_runs: Optional[int] = None,
+        default_model: Optional[ModelRef] = None,
+        default_context: Optional[ContextPolicy] = None,
         agents: Optional[bool] = None,
         teams: Optional[bool] = None,
         workflows: Optional[bool] = None,
-        versions: bool = False,
         schedules: bool = False,
         list_limit: int = 100,
         **kwargs: Any,
-    ):
+    ) -> None:
+        if db is None:
+            raise ValueError("StudioTools requires one fixed catalog db")
+        if not getattr(db, "supports_component_persistence", False):
+            raise ValueError(
+                "StudioTools requires a synchronous catalog db with atomic component persistence; "
+                "use SqliteDb or PostgresDb."
+            )
+        if getattr(db, "component_catalog_api_version", 1) < 2:
+            raise ValueError("StudioTools requires component catalog API version 2")
+        if schedules and getattr(db, "scheduler_api_version", 1) < 2:
+            raise ValueError("StudioTools schedules require scheduler API version 2")
+        if not callable(authorize):
+            raise TypeError("StudioTools authorize must be callable")
+        if inspect.iscoroutinefunction(authorize):
+            raise TypeError("StudioTools authorize must be synchronous")
+        if list_limit < 1:
+            raise ValueError("list_limit must be at least 1")
+
         self.registry = registry
-        self.db: Optional["BaseDb"] = db if db is not None else (registry.dbs[0] if registry.dbs else None)
+        self.db = db
+        self.authorize = authorize
         self.agents_list = agents_list
         self.teams_list = teams_list
         self.workflows_list = workflows_list
-        # Rehydration resolves code-defined references through the registry
-        # only; a component reachable solely via these live lists could be
-        # referenced at create time but never reload. Make the lists visible.
-        pending_mirrors: List[tuple] = []
-        for source, bucket, source_name in (
-            (agents_list, registry.agents, "agents_list"),
-            (teams_list, registry.teams, "teams_list"),
-        ):
-            for component in source or []:
-                component_id = getattr(component, "id", None)
-                if not component_id:
-                    continue
-                existing = next((entry for entry in bucket if getattr(entry, "id", None) == component_id), None)
-                if existing is None:
-                    pending_mirrors.append((bucket, component))
-                elif existing is not component:
-                    # Studio lookup prefers the explicit list; rehydration
-                    # resolves through the registry. Two distinct objects under
-                    # one id would build with one and reload as the other.
-                    raise ValueError(
-                        f"{source_name} and the registry define distinct components with id "
-                        f"'{component_id}'; pass the same object to both, or remove one."
-                    )
-        for bucket, component in pending_mirrors:
-            bucket.append(component)
-        self.default_model_id = default_model_id
-        self.default_num_history_runs = default_num_history_runs
-
-        # Execution and component resolution live on StudioRunnerTools -- the
-        # standalone dispatch toolkit. Studio registers its run tools from this
-        # embedded instance and delegates its own lookups to it, so the builder
-        # and a dispatcher resolve and run components one way.
-        self._runner_tools = StudioRunnerTools(
-            registry=registry,
-            db=self.db,
-            agents_list=agents_list,
-            teams_list=teams_list,
-            workflows_list=workflows_list,
-            # The Studio holds the registry as its build palette and its run_* are
-            # the smoke test for what it just composed, so its reach over registry
-            # components is the point rather than an accident. A standalone runner
-            # mounted on a router gets the narrower default.
-            include_all_components=True,
-            list_limit=list_limit,
-        )
+        self._mirror_reference_lists_into_registry()
+        self.default_model = default_model
+        self.default_context = default_context or ContextPolicy()
+        self.list_limit = list_limit
 
         self.enable_agents, self.enable_teams, self.enable_workflows = _resolve_flags(
             agents=agents,
@@ -193,61 +230,41 @@ class StudioTools(Toolkit):
             workflows=workflows,
             has_agents_list=agents_list is not None,
             has_teams_list=teams_list is not None,
+            has_workflows_list=workflows_list is not None,
         )
-        self.enable_versions: bool = versions
-        self.enable_schedules: bool = schedules
-        # Schedule management is shared with SchedulerTools; Studio owns only
-        # create_schedule (component targets, internally built endpoint).
+        self.enable_schedules = schedules
+
+        if self.enable_workflows:
+            self._validate_workflow_function_catalog()
+
+        self._runner_tools = StudioRunnerTools(
+            registry=registry,
+            db=db,
+            agents_list=agents_list,
+            teams_list=teams_list,
+            workflows_list=workflows_list,
+            include_all_components=True,
+            list_limit=list_limit,
+        )
+
         self._scheduler_tools: Optional["SchedulerTools"] = None
-        if self.enable_schedules:
+        if schedules:
             from agno.tools.scheduler import SchedulerTools
 
-            self._scheduler_tools = SchedulerTools(db=self.db)
+            self._scheduler_tools = SchedulerTools(db=db)
 
-        tools: List[Callable] = [
-            # Discovery -- always available regardless of flags.
+        tools: List[Callable[..., Any]] = [
             self.list_models,
             self.list_tools,
             self.list_functions,
-            self.list_dbs,
-            self.list_agents,
-            self.list_teams,
-            self.list_workflows,
+        ]
+        async_tools: List[tuple[Callable[..., Any], str]] = [
+            (self.alist_models, "list_models"),
+            (self.alist_tools, "list_tools"),
+            (self.alist_functions, "list_functions"),
         ]
 
-        if self.enable_agents:
-            tools.extend(
-                [
-                    self.get_agent,
-                    self.create_agent,
-                    self.edit_agent,
-                    self.delete_agent,
-                    self.run_agent,
-                ]
-            )
-        if self.enable_teams:
-            tools.extend(
-                [
-                    self.get_team,
-                    self.create_team,
-                    self.edit_team,
-                    self.delete_team,
-                    self.run_team,
-                ]
-            )
-        if self.enable_workflows:
-            tools.extend(
-                [
-                    self.get_workflow,
-                    self.create_workflow,
-                    self.edit_workflow,
-                    self.delete_workflow,
-                    self.run_workflow,
-                ]
-            )
-
-        # Versioning works on any component type, but is opt-in.
-        if self.enable_versions:
+        if self.enable_agents or self.enable_teams or self.enable_workflows:
             tools.extend(
                 [
                     self.list_versions,
@@ -257,62 +274,6 @@ class StudioTools(Toolkit):
                     self.delete_version,
                 ]
             )
-
-        # Schedules target an existing component by id; opt-in.
-        if self._scheduler_tools is not None:
-            tools.extend(
-                [
-                    self.create_schedule,
-                    self._scheduler_tools.list_schedules,
-                    self._scheduler_tools.get_schedule,
-                    self._scheduler_tools.get_schedule_runs,
-                    self._scheduler_tools.trigger_schedule,
-                    self._scheduler_tools.enable_schedule,
-                    self._scheduler_tools.disable_schedule,
-                    self._scheduler_tools.delete_schedule,
-                ]
-            )
-
-        async_tools: List[tuple[Callable[..., Any], str]] = [
-            (self.alist_models, "list_models"),
-            (self.alist_tools, "list_tools"),
-            (self.alist_functions, "list_functions"),
-            (self.alist_dbs, "list_dbs"),
-            (self.alist_agents, "list_agents"),
-            (self.alist_teams, "list_teams"),
-            (self.alist_workflows, "list_workflows"),
-        ]
-        if self.enable_agents:
-            async_tools.extend(
-                [
-                    (self.aget_agent, "get_agent"),
-                    (self.acreate_agent, "create_agent"),
-                    (self.aedit_agent, "edit_agent"),
-                    (self.adelete_agent, "delete_agent"),
-                    (self.arun_agent, "run_agent"),
-                ]
-            )
-        if self.enable_teams:
-            async_tools.extend(
-                [
-                    (self.aget_team, "get_team"),
-                    (self.acreate_team, "create_team"),
-                    (self.aedit_team, "edit_team"),
-                    (self.adelete_team, "delete_team"),
-                    (self.arun_team, "run_team"),
-                ]
-            )
-        if self.enable_workflows:
-            async_tools.extend(
-                [
-                    (self.aget_workflow, "get_workflow"),
-                    (self.acreate_workflow, "create_workflow"),
-                    (self.aedit_workflow, "edit_workflow"),
-                    (self.adelete_workflow, "delete_workflow"),
-                    (self.arun_workflow, "run_workflow"),
-                ]
-            )
-        if self.enable_versions:
             async_tools.extend(
                 [
                     (self.alist_versions, "list_versions"),
@@ -322,66 +283,153 @@ class StudioTools(Toolkit):
                     (self.adelete_version, "delete_version"),
                 ]
             )
-        if self._scheduler_tools is not None:
+
+        if self.enable_agents:
+            tools.extend(
+                [
+                    self.list_agents,
+                    self.get_agent,
+                    self.create_agent,
+                    self.edit_agent,
+                    self.archive_agent,
+                    self.restore_agent,
+                    self.run_agent,
+                ]
+            )
+            async_tools.extend(
+                [
+                    (self.alist_agents, "list_agents"),
+                    (self.aget_agent, "get_agent"),
+                    (self.acreate_agent, "create_agent"),
+                    (self.aedit_agent, "edit_agent"),
+                    (self.aarchive_agent, "archive_agent"),
+                    (self.arestore_agent, "restore_agent"),
+                    (self.arun_agent, "run_agent"),
+                ]
+            )
+        if self.enable_teams:
+            tools.extend(
+                [
+                    self.list_teams,
+                    self.get_team,
+                    self.create_team,
+                    self.edit_team,
+                    self.archive_team,
+                    self.restore_team,
+                    self.run_team,
+                ]
+            )
+            async_tools.extend(
+                [
+                    (self.alist_teams, "list_teams"),
+                    (self.aget_team, "get_team"),
+                    (self.acreate_team, "create_team"),
+                    (self.aedit_team, "edit_team"),
+                    (self.aarchive_team, "archive_team"),
+                    (self.arestore_team, "restore_team"),
+                    (self.arun_team, "run_team"),
+                ]
+            )
+        if self.enable_workflows:
+            tools.extend(
+                [
+                    self.list_workflows,
+                    self.get_workflow,
+                    self.create_workflow,
+                    self.edit_workflow,
+                    self.archive_workflow,
+                    self.restore_workflow,
+                    self.run_workflow,
+                ]
+            )
+            async_tools.extend(
+                [
+                    (self.alist_workflows, "list_workflows"),
+                    (self.aget_workflow, "get_workflow"),
+                    (self.acreate_workflow, "create_workflow"),
+                    (self.aedit_workflow, "edit_workflow"),
+                    (self.aarchive_workflow, "archive_workflow"),
+                    (self.arestore_workflow, "restore_workflow"),
+                    (self.arun_workflow, "run_workflow"),
+                ]
+            )
+        if schedules:
+            tools.extend(
+                [
+                    self.create_schedule,
+                    self.list_schedules,
+                    self.get_schedule,
+                    self.get_schedule_runs,
+                    self.trigger_schedule,
+                    self.enable_schedule,
+                    self.disable_schedule,
+                    self.delete_schedule,
+                ]
+            )
             async_tools.extend(
                 [
                     (self.acreate_schedule, "create_schedule"),
-                    (self._scheduler_tools.alist_schedules, "list_schedules"),
-                    (self._scheduler_tools.aget_schedule, "get_schedule"),
-                    (self._scheduler_tools.aget_schedule_runs, "get_schedule_runs"),
-                    (self._scheduler_tools.atrigger_schedule, "trigger_schedule"),
-                    (self._scheduler_tools.aenable_schedule, "enable_schedule"),
-                    (self._scheduler_tools.adisable_schedule, "disable_schedule"),
-                    (self._scheduler_tools.adelete_schedule, "delete_schedule"),
+                    (self.alist_schedules, "list_schedules"),
+                    (self.aget_schedule, "get_schedule"),
+                    (self.aget_schedule_runs, "get_schedule_runs"),
+                    (self.atrigger_schedule, "trigger_schedule"),
+                    (self.aenable_schedule, "enable_schedule"),
+                    (self.adisable_schedule, "disable_schedule"),
+                    (self.adelete_schedule, "delete_schedule"),
                 ]
             )
 
         instruction_lines = [
-            "Compose agents, teams, and workflows from registry primitives.",
-            "Discovery: call list_tools/list_functions/list_models/list_dbs first. Tool and function names "
-            "are exact and case-sensitive -- do NOT guess.",
-            "Create: create_agent/create_team/create_workflow. When the user mentions specific "
-            "tools, you MUST include ALL of those names in tool_names; do not silently drop any.",
-            "Created agents and teams remember the session by default; pass "
-            "add_history_to_context=False only for stateless components.",
-            "Edit: ALWAYS call get_agent/get_team/get_workflow first to read the current state, "
-            "then call edit_agent/edit_team/edit_workflow with only the fields that change.",
-            "Run tools execute a component as the current user; a PAUSED result is waiting on human "
-            "approval -- relay its requirements and keep the run_id/session_id for the resume.",
-            "Component lookups accept an exact id or a display name; an ambiguous display name returns "
-            "an error listing the matching ids -- retry with the exact id. Deletes require the exact id.",
-            "Call a given component sequentially within a turn: parallel runs of the same component "
-            "share one session and can overwrite each other.",
+            "Use Studio as an administrative control plane for versioned agents, teams, and workflows.",
+            "Call list_models/list_tools/list_functions and copy their exact typed references; never guess names.",
+            "Create calls take one typed request object and save a draft by default. Component ids are stable; an omitted id is the deterministic slug of the name.",
+            "A component id conflict never creates a suffixed id. Set request.if_exists='return_existing' only to retry an identical request.",
+            "Edits take one typed patch plus expected_version. A version conflict means you must read the latest version and intentionally retry.",
+            "Publish is explicit. Code-defined composite references may be explored in drafts but must be persisted and pinned before publication.",
+            "Create and edit calls require confirmation even for drafts because either call can publish via save_as.",
+            "get_version returns a safe typed view, never the raw persisted configuration.",
+            "Archive requires an exact component id and refuses components or versions that active configs depend on.",
+            "Archived ids remain reserved. Use the matching restore tool with the current-version value observed before archive.",
+            "Run calls use the current published version; a draft is never dispatched as current.",
         ]
-        if self.enable_versions:
-            instruction_lines.extend(
-                [
-                    "Edits produce a draft. Call publish_component to promote the draft to published+current.",
-                    "Versioning: list_versions shows all config versions; set_current_version rolls "
-                    "back to a prior published version; delete_version removes a draft.",
-                ]
-            )
-        else:
-            instruction_lines.append("Edits are published immediately as the new current version.")
         if self.enable_teams:
-            instruction_lines.append(
-                "Team rules: member_ids must be ids returned by create_agent or present in list_agents."
-            )
+            instruction_lines.append("Team members are typed ComponentRef values, including their component type.")
         if self.enable_workflows:
-            instruction_lines.append(
-                "Workflow rules: each step_spec is a dict with 'name' and exactly one of "
-                "'agent_id', 'team_id', or 'function_name'. Use function_name values from list_functions."
-            )
-        if self.enable_schedules:
-            instruction_lines.append(
-                "Schedules: create_schedule targets an existing component by target_type "
-                "('agent'/'team'/'workflow') + target_id (ids from list_agents/list_teams/list_workflows) "
-                "and requires a message. Cron is 5-field; timezone is an IANA name. trigger_schedule "
-                "queues an enabled schedule to run now via the platform poller."
-            )
+            instruction_lines.append("Workflow steps are discriminated by kind: agent, team, or function.")
+        if schedules:
+            instruction_lines.append("Every schedule operation is authorization-gated like component operations.")
 
-        # Toolkit instructions are only injected into the system message when
-        # add_instructions is set, so default it on.
+        # Confirmation is currently configured per tool, not per invocation.
+        # Since every create/edit tool accepts save_as="published", the only
+        # truthful way to guarantee confirmation for all publication paths is
+        # to confirm draft calls too.
+        confirmation_actions = {
+            "create_agent",
+            "create_team",
+            "create_workflow",
+            "edit_agent",
+            "edit_team",
+            "edit_workflow",
+            "publish_component",
+            "set_current_version",
+            "delete_version",
+            "archive_agent",
+            "archive_team",
+            "archive_workflow",
+            "restore_agent",
+            "restore_team",
+            "restore_workflow",
+            "create_schedule",
+            "trigger_schedule",
+            "enable_schedule",
+            "disable_schedule",
+            "delete_schedule",
+        }
+        available_tool_names = {tool.__name__ for tool in tools}
+        configured_confirmations = set(kwargs.pop("requires_confirmation_tools", []) or [])
+        kwargs["requires_confirmation_tools"] = sorted(
+            configured_confirmations | (confirmation_actions & available_tool_names)
+        )
         kwargs.setdefault("add_instructions", True)
         super().__init__(
             name="studio",
@@ -392,109 +440,457 @@ class StudioTools(Toolkit):
         )
 
     # ------------------------------------------------------------------
-    # Registry lookups
+    # Result and authorization helpers
     # ------------------------------------------------------------------
 
-    def _find_model(self, model_id: Optional[str]) -> Optional["Model"]:
-        target = model_id or self.default_model_id
-        if target is None:
-            return self.registry.models[0] if self.registry.models else None
-        for model in self.registry.models:
-            if getattr(model, "id", None) == target:
-                return model
+    @staticmethod
+    def _success(status: str, data: Any, warnings: Optional[List[str]] = None) -> StudioResult[Any]:
+        return StudioResult[Any](ok=True, status=status, data=data, warnings=warnings or [])
+
+    @staticmethod
+    def _failure(
+        code: str,
+        message: str,
+        *,
+        details: Optional[Dict[str, Any]] = None,
+        retryable: bool = False,
+    ) -> StudioResult[Any]:
+        return StudioResult[Any](
+            ok=False,
+            status="error",
+            error=StudioError(code=code, message=message, details=details or {}, retryable=retryable),
+        )
+
+    def _authorize(
+        self,
+        action: StudioAction,
+        access: StudioAccess,
+        run_context: Optional[RunContext],
+    ) -> Optional[StudioResult[Any]]:
+        if not isinstance(run_context, RunContext):
+            return self._failure(
+                "auth_context_required",
+                "Studio requires a framework-injected RunContext.",
+            )
+        if not run_context.user_id:
+            return self._failure("unauthenticated", "Studio requires an authenticated actor.")
+        try:
+            allowed = self.authorize(run_context, access, action)
+        except Exception:
+            logger.error("Studio authorization callback failed for action=%s", action)
+            return self._failure("authorization_failed", "Studio authorization failed.")
+        if not isinstance(allowed, bool):
+            logger.error("Studio authorization callback returned a non-boolean value for action=%s", action)
+            return self._failure("authorization_failed", "Studio authorization failed.")
+        if not allowed:
+            return self._failure("forbidden", "The actor is not allowed to perform this Studio action.")
         return None
 
-    def _find_db(self, db_id: Optional[str]) -> Optional["BaseDb"]:
-        if db_id is None:
-            return self.db
-        return self.registry.get_db(db_id)
+    @staticmethod
+    def _request_failure(error: _StudioRequestError) -> StudioResult[Any]:
+        return StudioTools._failure(
+            error.code,
+            error.message,
+            details=error.details,
+            retryable=error.retryable,
+        )
 
-    def _find_tool(self, name: str) -> Optional[Any]:
-        """Match by Toolkit.name, Function.name, callable __name__, or toolkit function key.
+    @staticmethod
+    def _internal_failure(action: str) -> StudioResult[Any]:
+        # Backend exceptions can contain DSNs, credentials, or private payloads.
+        # Keep the operator signal while leaving exception details to the caller's
+        # explicit diagnostics boundary.
+        logger.error("Studio %s failed", action)
+        return StudioTools._failure("internal_error", f"Studio could not {action}.", retryable=True)
 
-        Top-level name matches take precedence over functions found inside a
-        toolkit. When a name matches more than one distinct registry entry
-        (e.g. two toolkits sharing a name), a ValueError is raised instead of
-        silently returning the first match -- resolving to whichever entry was
-        registered first would wire the agent to the wrong tool.
+    @staticmethod
+    def _validate_save_as(save_as: Any) -> SaveStage:
+        if save_as not in ("draft", "published"):
+            raise _StudioRequestError(
+                "invalid_save_stage",
+                "save_as must be either 'draft' or 'published'.",
+                details={"allowed": ["draft", "published"]},
+            )
+        return cast(SaveStage, save_as)
+
+    @staticmethod
+    def _validate_if_exists(if_exists: Any) -> IfExists:
+        if if_exists not in ("error", "return_existing"):
+            raise _StudioRequestError(
+                "invalid_if_exists",
+                "if_exists must be either 'error' or 'return_existing'.",
+                details={"allowed": ["error", "return_existing"]},
+            )
+        return cast(IfExists, if_exists)
+
+    @staticmethod
+    def _validate_component_id(component_id: Any) -> str:
+        if (
+            not isinstance(component_id, str)
+            or not component_id
+            or not component_id[0].isascii()
+            or not component_id[0].isalnum()
+            or any(
+                not character.isascii() or not (character.isalnum() or character in "._-") for character in component_id
+            )
+        ):
+            raise _StudioRequestError(
+                "invalid_component_id",
+                "component_id must start with an ASCII letter or number and contain only letters, numbers, '.', '_', or '-'.",
+            )
+        return component_id
+
+    def _ensure_component_type_enabled(self, component_type: str) -> None:
+        enabled = {
+            "agent": self.enable_agents,
+            "team": self.enable_teams,
+            "workflow": self.enable_workflows,
+        }.get(component_type)
+        if enabled is None:
+            raise _StudioRequestError("invalid_component_type", "The component type is invalid.")
+        if not enabled:
+            raise _StudioRequestError(
+                "component_type_disabled",
+                f"StudioTools was created with {component_type}s=False.",
+                details={"component_type": component_type},
+            )
+
+    def _validate_workflow_function_catalog(self) -> None:
+        names = [
+            name
+            for function in self.registry.functions
+            if isinstance((name := getattr(function, "__name__", None)), str) and name
+        ]
+        duplicates = sorted(name for name, count in Counter(names).items() if count > 1)
+        if duplicates:
+            raise ValueError(
+                "StudioTools workflows require unique registered function names; duplicates: " + ", ".join(duplicates)
+            )
+
+    def _mirror_reference_lists_into_registry(self) -> None:
+        """Make code-defined composition references reload through the registry.
+
+        Agent and Team rehydration resolves code-defined children through the
+        registry, while Studio discovery can be narrowed with explicit live
+        lists.  A child selected from one of those lists must therefore be the
+        exact object the registry will return for its id.  Mirror valid entries
+        before the runner is constructed and reject split-brain identities
+        without partially mutating the registry.
+
+        Invalid list entries are deliberately ignored here.  Discovery owns
+        their count-only warning and must remain able to isolate a broken or
+        volatile ``id`` property instead of failing Studio construction.
         """
-        matches: List[Any] = []
-        function_matches: List[Any] = []
-        for tool in self.registry.tools:
-            if isinstance(tool, Toolkit):
-                if tool.name == name:
-                    matches.append(tool)
-                elif name in tool.functions:
-                    member = tool.functions[name]
-                    # Stamp the attribution so a component saved with this bare
-                    # Function keeps its "toolkit" key (see Registry.rehydrate_function).
-                    if isinstance(tool.name, str) and tool.name:
-                        member.owning_toolkit = tool.name
-                    function_matches.append(member)
-            elif isinstance(tool, Function):
-                if tool.name == name:
-                    matches.append(tool)
-            elif callable(tool) and getattr(tool, "__name__", None) == name:
-                matches.append(tool)
+        from agno.agent.agent import Agent
+        from agno.team.team import Team
 
-        candidates = matches or function_matches
-        if not candidates:
+        sources: List[tuple[Optional[List[Any]], List[Any], type, str]] = [
+            (cast(Optional[List[Any]], self.agents_list), cast(List[Any], self.registry.agents), Agent, "agents_list"),
+            (cast(Optional[List[Any]], self.teams_list), cast(List[Any], self.registry.teams), Team, "teams_list"),
+        ]
+        pending: Dict[tuple[int, str], tuple[List[Any], Any, str]] = {}
+        for source, bucket, expected_type, source_name in sources:
+            for component in source or []:
+                if not isinstance(component, expected_type):
+                    continue
+                try:
+                    component_id = getattr(component, "id", None)
+                except Exception:
+                    continue
+                if not component_id:
+                    continue
+                matches = [entry for entry in bucket if getattr(entry, "id", None) == component_id]
+                pending_match = pending.get((id(bucket), component_id))
+                distinct = [entry for entry in matches if entry is not component]
+                if pending_match is not None and pending_match[1] is not component:
+                    distinct.append(pending_match[1])
+                if distinct:
+                    raise ValueError(
+                        f"{source_name} and the registry define distinct components with id "
+                        f"'{component_id}'; pass the same object to both, or remove one."
+                    )
+                if not matches and pending_match is None:
+                    pending[(id(bucket), component_id)] = (bucket, component, source_name)
+
+        for bucket, component, _source_name in pending.values():
+            bucket.append(component)
+
+    def _ensure_registry_reference_identity(self, component_type: str, component: Component) -> None:
+        """Keep a live-list child aligned with the registry at selection time.
+
+        Lists are live and may be appended to or replaced after Studio is
+        constructed.  Reconcile again when a reference is persisted so a
+        later strict reload cannot silently bind a different object.
+        """
+        component_id = getattr(component, "id", None)
+        bucket = cast(
+            List[Any],
+            self.registry.agents if component_type == "agent" else self.registry.teams,
+        )
+        matches = [entry for entry in bucket if getattr(entry, "id", None) == component_id]
+        if any(entry is not component for entry in matches):
+            raise _StudioRequestError(
+                "component_identity_mismatch",
+                f"Code-defined {component_type} '{component_id}' is not the registry's object for that id; "
+                "align the live list and registry before persisting the reference.",
+                details={"component_id": component_id, "component_type": component_type},
+            )
+        if not matches:
+            bucket.append(component)
+
+    def _ensure_no_source_collision(self, component_id: str, _component_type: Optional[str] = None) -> None:
+        self._validate_component_id(component_id)
+        stored = self.db.get_component(component_id, include_deleted=True)
+        if stored is None:
+            return
+        code_types = [
+            candidate_type
+            for candidate_type, candidates in (
+                ("agent", self._iter_agents()),
+                ("team", self._iter_teams()),
+                ("workflow", self._iter_workflows()),
+            )
+            if self._contains_component_id(candidates, component_id)
+        ]
+        self._raise_source_collision(component_id, stored, code_types)
+
+    @staticmethod
+    def _raise_source_collision(
+        component_id: str,
+        stored: Dict[str, Any],
+        code_types: Sequence[str],
+    ) -> None:
+        if code_types:
+            raise _StudioRequestError(
+                "component_source_collision",
+                f"Component id '{component_id}' exists in both code and Studio; rename one source before continuing.",
+                details={
+                    "component_id": component_id,
+                    "studio_component_type": stored.get("component_type"),
+                    "code_component_types": code_types,
+                },
+            )
+
+    @staticmethod
+    def _contains_component_id(candidates: Sequence[Component], component_id: str) -> bool:
+        for candidate in candidates:
+            try:
+                if getattr(candidate, "id", None) == component_id:
+                    return True
+            except Exception:
+                # Discovery reports malformed code-defined components via a
+                # count-only warning; collision diagnostics must not re-read a
+                # broken property and turn that safe skip into a list failure.
+                continue
+        return False
+
+    @staticmethod
+    def _safe_dependents(dependents: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        safe: List[Dict[str, Any]] = []
+        for dependent in dependents:
+            parent_id = dependent.get("parent_component_id")
+            parent_version = dependent.get("parent_version")
+            if not isinstance(parent_id, str) or not isinstance(parent_version, int):
+                continue
+            item = {"component_id": parent_id, "version": parent_version}
+            if item not in safe:
+                safe.append(item)
+        return safe
+
+    @staticmethod
+    def _safe_unavailable_dependencies(dependencies: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        safe: List[Dict[str, Any]] = []
+        allowed_reasons = {
+            "component_missing",
+            "component_archived",
+            "version_missing",
+            "version_not_published",
+        }
+        for dependency in dependencies:
+            component_id = dependency.get("component_id")
+            version = dependency.get("version")
+            referenced_by = dependency.get("referenced_by")
+            reason = dependency.get("reason")
+            if (
+                not isinstance(component_id, str)
+                or not isinstance(version, int)
+                or not isinstance(referenced_by, dict)
+                or reason not in allowed_reasons
+            ):
+                continue
+            parent_id = referenced_by.get("component_id")
+            parent_version = referenced_by.get("version")
+            if not isinstance(parent_id, str) or not isinstance(parent_version, int):
+                continue
+            safe.append(
+                {
+                    "component_id": component_id,
+                    "version": version,
+                    "referenced_by": {"component_id": parent_id, "version": parent_version},
+                    "reason": reason,
+                }
+            )
+        return safe
+
+    # ------------------------------------------------------------------
+    # Registry and default resolution
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _model_ref(model: Optional["Model"]) -> Optional[ModelRef]:
+        if model is None or not getattr(model, "id", None):
             return None
-        if len(candidates) > 1:
-            raise ValueError(
-                f"Tool name '{name}' is ambiguous: it matches {len(candidates)} registry entries. "
-                "Give each tool a distinct name (e.g. MCPTools(name=...)) so it can be selected unambiguously."
-            )
-        return candidates[0]
+        return ModelRef(
+            id=cast(str, model.id),
+            provider=getattr(model, "provider", None),
+            name=getattr(model, "name", None),
+        )
 
-    def _resolve_tools(self, names: Optional[List[str]]) -> List[Any]:
-        if not names:
-            return []
-        resolved: List[Any] = []
-        missing: List[str] = []
-        for name in names:
-            found = self._find_tool(name)
-            if found is None:
-                missing.append(name)
-            else:
-                resolved.append(found)
-        if missing:
-            raise ValueError(f"Tools not found in registry: {missing}")
-        # Persisting a component serializes each toolkit's functions; a toolkit
-        # with none (e.g. an MCP toolkit that never connected) would be silently
-        # dropped from the config, permanently. Refuse instead.
-        empty_toolkits = [t.name for t in resolved if isinstance(t, Toolkit) and not t.functions]
-        if empty_toolkits:
-            raise ValueError(
-                f"Toolkits have no functions and cannot be persisted: {empty_toolkits}. "
-                "An MCP toolkit has no functions until it is connected. Connect it before "
-                "creating or editing components with it (AgentOS connects MCP tools found in "
-                "the registry and on agents/teams/workflows at startup)."
+    def _resolve_model(self, model_ref: Optional[ModelRef]) -> tuple["Model", ModelRef]:
+        requested = model_ref or self.default_model
+        if requested is None:
+            raise _StudioRequestError(
+                "model_required",
+                "No model was supplied and Studio has no default_model configured.",
             )
-        return resolved
+        matches = [
+            model
+            for model in self.registry.models
+            if getattr(model, "id", None) == requested.id
+            and (requested.provider is None or getattr(model, "provider", None) == requested.provider)
+            and (requested.name is None or getattr(model, "name", None) == requested.name)
+        ]
+        if not matches:
+            raise _StudioRequestError(
+                "model_not_found",
+                "The exact model reference is not registered.",
+                details={"model": requested.model_dump(exclude_none=True)},
+            )
+        if len(matches) > 1:
+            raise _StudioRequestError(
+                "ambiguous_model",
+                "The model reference matches multiple registry entries; include provider and name.",
+                details={
+                    "model": requested.model_dump(exclude_none=True),
+                    "matches": [
+                        ref.model_dump(exclude_none=True)
+                        for model in matches
+                        if (ref := self._model_ref(model)) is not None
+                    ],
+                },
+            )
+        model = matches[0]
+        resolved = self._model_ref(model)
+        if resolved is None:
+            raise _StudioRequestError("invalid_model", "The registered model has no id.")
+        return model, resolved
 
-    def _normalize_tool_names(self, names: List[str]) -> List[str]:
-        """Collapse toolkit function names back to their toolkit name."""
-        func_to_toolkit: Dict[str, str] = {}
+    def _resolve_context(self, context: Optional[ContextPolicy]) -> ContextPolicy:
+        requested = context or self.default_context
+        history_runs = requested.history_runs
+        if history_runs is None and requested.include_history:
+            history_runs = self.default_context.history_runs
+        return ContextPolicy(
+            include_history=requested.include_history,
+            history_runs=history_runs if requested.include_history else None,
+            include_datetime=requested.include_datetime,
+        )
+
+    def _tool_catalog(self) -> List[tuple[ToolRef, Any]]:
+        catalog: List[tuple[ToolRef, Any]] = []
         for tool in self.registry.tools:
             if isinstance(tool, Toolkit):
-                for fn_name in tool.functions:
-                    func_to_toolkit[fn_name] = tool.name
+                catalog.append((ToolRef(kind="toolkit", name=tool.name), tool))
+                for function_name, function in tool.get_functions().items():
+                    catalog.append((ToolRef(kind="function", name=function_name, toolkit=tool.name), function))
+            elif isinstance(tool, Function):
+                catalog.append((ToolRef(kind="function", name=tool.name), tool))
+            elif callable(tool):
+                name = getattr(tool, "__name__", None)
+                if isinstance(name, str) and name:
+                    catalog.append((ToolRef(kind="function", name=name), tool))
+        return catalog
 
-        normalized: List[str] = []
-        for name in names:
-            mapped = func_to_toolkit.get(name, name)
-            if mapped not in normalized:
-                normalized.append(mapped)
-        return normalized
-
-    # ------------------------------------------------------------------
-    # Component lookup -- delegated to the embedded StudioRunnerTools so the
-    # builder and a standalone dispatcher resolve components one way: exact
-    # ids first (code-defined, then DB), then display names (code-defined,
-    # then DB, where an ambiguous name raises AmbiguousComponentNameError),
-    # then the identifier's slug as an id.
-    # ------------------------------------------------------------------
+    def _resolve_tools(self, refs: Sequence[ToolRef]) -> List[Any]:
+        catalog = self._tool_catalog()
+        resolved: List[Any] = []
+        claimed_names: Dict[str, ToolRef] = {}
+        for ref in refs:
+            matches = [tool for candidate, tool in catalog if candidate == ref]
+            if not matches:
+                raise _StudioRequestError(
+                    "tool_not_found",
+                    "The exact tool reference is not registered.",
+                    details={"tool": ref.model_dump(exclude_none=True)},
+                )
+            if len(matches) > 1:
+                raise _StudioRequestError(
+                    "ambiguous_tool",
+                    "The tool reference matches multiple registry entries.",
+                    details={"tool": ref.model_dump(exclude_none=True)},
+                )
+            tool = matches[0]
+            if ref.kind == "function" and ref.toolkit is None:
+                flat_sources: List[Any] = []
+                for registered in self.registry.tools:
+                    if isinstance(registered, Toolkit):
+                        source = registered.get_functions().get(ref.name)
+                        if source is not None:
+                            flat_sources.append(source)
+                    elif isinstance(registered, Function) and registered.name == ref.name:
+                        flat_sources.append(registered)
+                    elif callable(registered) and getattr(registered, "__name__", None) == ref.name:
+                        flat_sources.append(registered)
+                entrypoint_ids = {
+                    id(source.entrypoint if isinstance(source, Function) and source.entrypoint is not None else source)
+                    for source in flat_sources
+                }
+                if len(entrypoint_ids) > 1:
+                    raise _StudioRequestError(
+                        "ambiguous_tool_binding",
+                        f"Unqualified function '{ref.name}' has multiple live registry entrypoints; qualify the "
+                        "toolkit or give the functions distinct names.",
+                        details={"tool": ref.model_dump(exclude_none=True)},
+                    )
+            if isinstance(tool, Toolkit) and not tool.functions:
+                raise _StudioRequestError(
+                    "toolkit_not_ready",
+                    f"Toolkit '{tool.name}' has no connected functions and cannot be persisted.",
+                )
+            functions = list(tool.get_functions().values()) if isinstance(tool, Toolkit) else [tool]
+            unavailable_functions = sorted(
+                function.name
+                for function in functions
+                if isinstance(function, Function) and function.entrypoint is None and not function.external_execution
+            )
+            if unavailable_functions:
+                raise _StudioRequestError(
+                    "tool_not_ready",
+                    "The selected tool reference contains functions without live entrypoints.",
+                    details={
+                        "tool": ref.model_dump(exclude_none=True),
+                        "functions": unavailable_functions,
+                    },
+                )
+            if isinstance(tool, Function) and ref.toolkit:
+                tool.owning_toolkit = ref.toolkit
+            exposed_names = list(tool.get_functions()) if isinstance(tool, Toolkit) else [ref.name]
+            for function_name in exposed_names:
+                previous = claimed_names.get(function_name)
+                if previous is not None:
+                    raise _StudioRequestError(
+                        "duplicate_tool_name",
+                        f"Selected tool references both expose function name '{function_name}', which Agent would "
+                        "otherwise resolve by registration order.",
+                        details={
+                            "function_name": function_name,
+                            "first": previous.model_dump(exclude_none=True),
+                            "second": ref.model_dump(exclude_none=True),
+                        },
+                    )
+                claimed_names[function_name] = ref
+            resolved.append(tool)
+        return resolved
 
     def _iter_agents(self) -> List["Agent"]:
         return self._runner_tools._iter_agents()
@@ -505,2367 +901,3657 @@ class StudioTools(Toolkit):
     def _iter_workflows(self) -> List["Workflow"]:
         return self._runner_tools._iter_workflows()
 
-    def _find_agent(self, agent_id: str) -> Optional["Agent"]:
-        return self._runner_tools._find_agent(agent_id)
+    def _code_component(self, component_type: str, component_id: str) -> Optional[Component]:
+        candidates: Sequence[Component]
+        if component_type == "agent":
+            candidates = self._iter_agents()
+        elif component_type == "team":
+            candidates = self._iter_teams()
+        else:
+            candidates = self._iter_workflows()
+        matches = [candidate for candidate in candidates if getattr(candidate, "id", None) == component_id]
+        if len(matches) > 1:
+            raise _StudioRequestError(
+                "ambiguous_component",
+                f"Multiple code-defined {component_type}s use component_id '{component_id}'.",
+            )
+        return matches[0] if matches else None
 
-    def _find_team(self, team_id: str) -> Optional["Team"]:
-        return self._runner_tools._find_team(team_id)
+    def _db_component(self, component_type: str, component_id: str) -> Optional[Dict[str, Any]]:
+        from agno.db.base import ComponentType
 
-    def _find_workflow(self, workflow_id: str) -> Optional["Workflow"]:
-        return self._runner_tools._find_workflow(workflow_id)
+        return self.db.get_component(component_id, component_type=ComponentType(component_type))
 
-    # Edit-base lookups: like _find_*, but DB components load from the latest
-    # draft when versioning is enabled, so successive partial edits accumulate
-    # instead of each resetting to the published config.
-
-    def _edit_version_snapshot(self, component_id: str) -> tuple[Optional[int], Optional["ComponentVersionGuard"]]:
-        """Capture the exact config loaded by an edit and its catalog-v2 CAS state."""
-        if self.db is None:
-            return None, None
-        if not self.enable_versions or getattr(self.db, "component_catalog_api_version", 1) < 2:
-            return self._edit_base_version(component_id), None
-
-        from agno.db.base import ComponentVersionGuard
-
-        component = self.db.get_component(component_id)
-        if component is None:
-            return None, None
-        configs = self.db.list_configs(component_id, include_config=False)
-        versions = [row["version"] for row in configs if isinstance(row.get("version"), int)]
-        drafts = [
-            row["version"] for row in configs if row.get("stage") == "draft" and isinstance(row.get("version"), int)
-        ]
-        current_version = component.get("current_version")
-        base_version = max(drafts) if drafts else current_version
-        return base_version, ComponentVersionGuard(
-            latest_version=max(versions) if versions else None,
-            current_version=current_version,
+    def _load_db_component(
+        self,
+        component_type: str,
+        component_id: str,
+        version: Optional[int],
+        *,
+        for_dispatch: bool = False,
+    ) -> Optional[Component]:
+        if component_type == "agent":
+            return self._runner_tools._load_agent_from_db(
+                component_id,
+                version=version,
+                for_dispatch=for_dispatch,
+            )
+        if component_type == "team":
+            return self._runner_tools._load_team_from_db(
+                component_id,
+                version=version,
+                for_dispatch=for_dispatch,
+            )
+        return self._runner_tools._load_workflow_from_db(
+            component_id,
+            version=version,
+            for_dispatch=for_dispatch,
         )
 
-    def _find_agent_for_edit(
-        self, agent_id: str
-    ) -> tuple[Optional["Agent"], Optional[int], Optional["ComponentVersionGuard"]]:
-        for a in self._iter_agents():
-            if getattr(a, "id", None) == agent_id:
-                return a, None, None
-        if self._runner_tools._db_component_exists("agent", agent_id):
-            base_version, guard = self._edit_version_snapshot(agent_id)
-            return self._load_agent_from_db(agent_id, version=base_version), base_version, guard
-        resolved = self._runner_tools._resolve_db_id_by_name_or_slug("agent", agent_id)
-        if resolved is None:
-            return None, None, None
-        base_version, guard = self._edit_version_snapshot(resolved)
-        return self._load_agent_from_db(resolved, version=base_version), base_version, guard
-
-    def _find_team_for_edit(
-        self, team_id: str
-    ) -> tuple[Optional["Team"], Optional[int], Optional["ComponentVersionGuard"]]:
-        for t in self._iter_teams():
-            if getattr(t, "id", None) == team_id:
-                return t, None, None
-        if self._runner_tools._db_component_exists("team", team_id):
-            base_version, guard = self._edit_version_snapshot(team_id)
-            return self._load_team_from_db(team_id, version=base_version), base_version, guard
-        resolved = self._runner_tools._resolve_db_id_by_name_or_slug("team", team_id)
-        if resolved is None:
-            return None, None, None
-        base_version, guard = self._edit_version_snapshot(resolved)
-        return self._load_team_from_db(resolved, version=base_version), base_version, guard
-
-    def _find_workflow_for_edit(
-        self, workflow_id: str
-    ) -> tuple[Optional["Workflow"], Optional[int], Optional["ComponentVersionGuard"]]:
-        for w in self._iter_workflows():
-            if getattr(w, "id", None) == workflow_id:
-                return w, None, None
-        if self._runner_tools._db_component_exists("workflow", workflow_id):
-            base_version, guard = self._edit_version_snapshot(workflow_id)
-            return self._load_workflow_from_db(workflow_id, version=base_version), base_version, guard
-        resolved = self._runner_tools._resolve_db_id_by_name_or_slug("workflow", workflow_id)
-        if resolved is None:
-            return None, None, None
-        base_version, guard = self._edit_version_snapshot(resolved)
-        return self._load_workflow_from_db(resolved, version=base_version), base_version, guard
-
-    def _is_code_defined(self, component_id: str, candidates: List[Any], component_type: str) -> bool:
-        """True if the identifier refers to a code-defined (registry/list) component.
-
-        Code-defined components are not DB-backed, so editing them would write an
-        unreachable DB row that the live object always shadows. edit_* rejects
-        these instead of silently persisting a draft no one can load.
-
-        A display-name match only counts when the identifier is not an exact DB
-        id: exact ids resolve to the DB component on every other path (id-first
-        order), so the edit guard must agree.
-        """
-        for c in candidates:
-            if getattr(c, "id", None) == component_id:
-                return True
-        for c in candidates:
-            if getattr(c, "name", None) == component_id:
-                return not self._runner_tools._db_component_exists(component_type, component_id)
-        return False
-
-    def _edit_base_version(self, component_id: str) -> Optional[int]:
-        """Version to base an edit on: the latest draft when versioning is
-        enabled, else None (the current published version)."""
-        if not self.enable_versions:
-            return None
-        return self._latest_draft_version(component_id)
-
-    def _latest_draft_version(self, component_id: str) -> Optional[int]:
-        if self.db is None:
-            return None
-        configs = self.db.list_configs(component_id, include_config=False)
-        drafts: List[int] = [
-            c["version"] for c in configs if c.get("stage") == "draft" and isinstance(c.get("version"), int)
-        ]
-        return max(drafts) if drafts else None
-
-    def _load_agent_from_db(self, agent_id: str, version: Optional[int] = None) -> Optional["Agent"]:
-        return self._runner_tools._load_agent_from_db(agent_id, version=version)
-
-    def _load_team_from_db(self, team_id: str, version: Optional[int] = None) -> Optional["Team"]:
-        return self._runner_tools._load_team_from_db(team_id, version=version)
-
-    def _load_workflow_from_db(self, workflow_id: str, version: Optional[int] = None) -> Optional["Workflow"]:
-        return self._runner_tools._load_workflow_from_db(workflow_id, version=version)
-
-    # ------------------------------------------------------------------
-    # Discovery tools
-    # ------------------------------------------------------------------
-
-    def list_models(self) -> str:
-        """List models available in the registry.
-
-        Returns:
-            str: JSON object with 'models' (each {id, provider}) and 'count'.
-        """
-        try:
-            models = [{"id": getattr(m, "id", None), "provider": type(m).__name__} for m in self.registry.models]
-            return json.dumps({"models": models, "count": len(models)})
-        except Exception as e:
-            logger.exception("Failed to list models")
-            return json.dumps({"error": str(e) or type(e).__name__})
-
-    def list_tools(self) -> str:
-        """List toolkits and functions available in the registry.
-
-        Returns:
-            str: JSON object with 'tools' (each {name, kind, functions?}) and 'count'.
-                'kind' is 'toolkit', 'function', or 'callable'.
-        """
-        try:
-            result: List[Dict[str, Any]] = []
-            for tool in self.registry.tools:
-                if isinstance(tool, Toolkit):
-                    result.append({"name": tool.name, "kind": "toolkit", "functions": list(tool.functions.keys())})
-                elif isinstance(tool, Function):
-                    result.append({"name": tool.name, "kind": "function"})
-                elif callable(tool):
-                    result.append({"name": getattr(tool, "__name__", repr(tool)), "kind": "callable"})
-            return json.dumps({"tools": result, "count": len(result)})
-        except Exception as e:
-            logger.exception("Failed to list tools")
-            return json.dumps({"error": str(e) or type(e).__name__})
-
-    def list_functions(self) -> str:
-        """List raw functions available in the registry for workflow steps.
-
-        Returns:
-            str: JSON object with 'functions' (each {name, description, signature}) and 'count'.
-        """
-        try:
-            import inspect
-
-            result: List[Dict[str, Any]] = []
-            for func in self.registry.functions:
-                name = getattr(func, "__name__", None) or "anonymous"
-                signature = None
-                try:
-                    signature = str(inspect.signature(func))
-                except (TypeError, ValueError):
-                    pass
-                result.append(
-                    {
-                        "name": name,
-                        "description": inspect.getdoc(func),
-                        "signature": signature,
-                    }
-                )
-            return json.dumps({"functions": result, "count": len(result)})
-        except Exception as e:
-            logger.exception("Failed to list functions")
-            return json.dumps({"error": str(e) or type(e).__name__})
-
-    def list_dbs(self) -> str:
-        """List databases available in the registry.
-
-        Returns:
-            str: JSON object with 'dbs' (each {id, class}) and 'count'.
-        """
-        try:
-            dbs = [{"id": getattr(d, "id", None), "class": type(d).__name__} for d in self.registry.dbs]
-            return json.dumps({"dbs": dbs, "count": len(dbs)})
-        except Exception as e:
-            logger.exception("Failed to list dbs")
-            return json.dumps({"error": str(e) or type(e).__name__})
-
-    def list_agents(self) -> str:
-        """List all known agents: code-defined (registry / agents_list) plus DB components.
-
-        Returns:
-            str: JSON object with 'agents' (each {id, name, model_id, tools, source}), 'count', and
-                'db_total' (DB components in storage; more than the db rows shown means the list
-                is capped -- capped components still resolve by exact id). 'source' is 'code' for
-                registry/list-defined agents, 'db' for DB components.
-        """
-        try:
-            result: List[Dict[str, Any]] = []
-            seen_ids: set[str] = set()
-            idless_names: set[str] = set()  # code ids, plus the names of code components that have no id
-            for a in self._iter_agents():
-                aid = getattr(a, "id", None)
-                name = getattr(a, "name", None)
-                if aid is not None:
-                    seen_ids.add(aid)
-                elif name is not None:
-                    idless_names.add(name)
-                result.append(
-                    {
-                        "id": aid,
-                        "name": name,
-                        "model_id": getattr(getattr(a, "model", None), "id", None),
-                        "tools": _summarize_tools(getattr(a, "tools", None)),
-                        "source": "code",
-                    }
-                )
-            db_rows, db_total = self._list_db_components("agent")
-            # A DB component duplicates a code one when they share an id, or -- for a
-            # code component with no id -- when they share a name. A name collision with
-            # a code component that HAS its own id is a genuinely distinct component and
-            # must stay listed (it is what get_/run_/edit_ resolve to).
-            for row in db_rows:
-                if row["id"] in seen_ids or row["name"] in idless_names:
-                    continue
-                result.append({**row, "source": "db"})
-            return json.dumps({"agents": result, "count": len(result), "db_total": db_total})
-        except Exception as e:
-            logger.exception("Failed to list agents")
-            return json.dumps({"error": str(e) or type(e).__name__})
-
-    def list_teams(self) -> str:
-        """List all known teams: code-defined plus DB components.
-
-        Returns:
-            str: JSON object with 'teams' (each {id, name, model_id, member_ids?, source}), 'count',
-                and 'db_total' (DB components in storage; a capped list is visible as capped).
-        """
-        try:
-            result: List[Dict[str, Any]] = []
-            seen_ids: set[str] = set()
-            idless_names: set[str] = set()  # code ids, plus the names of code components that have no id
-            for team in self._iter_teams():
-                tid = getattr(team, "id", None)
-                name = getattr(team, "name", None)
-                if tid is not None:
-                    seen_ids.add(tid)
-                elif name is not None:
-                    idless_names.add(name)
-                members = getattr(team, "members", None) or []
-                member_ids = [getattr(m, "id", None) for m in members] if not callable(members) else []
-                result.append(
-                    {
-                        "id": tid,
-                        "name": name,
-                        "model_id": getattr(getattr(team, "model", None), "id", None),
-                        "member_ids": member_ids,
-                        "source": "code",
-                    }
-                )
-            db_rows, db_total = self._list_db_components("team")
-            # A DB component duplicates a code one when they share an id, or -- for a
-            # code component with no id -- when they share a name. A name collision with
-            # a code component that HAS its own id is a genuinely distinct component and
-            # must stay listed (it is what get_/run_/edit_ resolve to).
-            for row in db_rows:
-                if row["id"] in seen_ids or row["name"] in idless_names:
-                    continue
-                result.append({**row, "source": "db"})
-            return json.dumps({"teams": result, "count": len(result), "db_total": db_total})
-        except Exception as e:
-            logger.exception("Failed to list teams")
-            return json.dumps({"error": str(e) or type(e).__name__})
-
-    def list_workflows(self) -> str:
-        """List all known workflows: code-defined plus DB components.
-
-        Returns:
-            str: JSON object with 'workflows' (each {id, name, description, steps?, source}), 'count',
-                and 'db_total' (DB components in storage; a capped list is visible as capped).
-        """
-        try:
-            result: List[Dict[str, Any]] = []
-            seen_ids: set[str] = set()
-            idless_names: set[str] = set()  # code ids, plus the names of code components that have no id
-            for wf in self._iter_workflows():
-                wid = getattr(wf, "id", None)
-                name = getattr(wf, "name", None)
-                if wid is not None:
-                    seen_ids.add(wid)
-                elif name is not None:
-                    idless_names.add(name)
-                steps = getattr(wf, "steps", None) or []
-                result.append(
-                    {
-                        "id": wid,
-                        "name": name,
-                        "description": getattr(wf, "description", None),
-                        "steps": [getattr(s, "name", None) for s in steps] if isinstance(steps, list) else [],
-                        "source": "code",
-                    }
-                )
-            db_rows, db_total = self._list_db_components("workflow")
-            # A DB component duplicates a code one when they share an id, or -- for a
-            # code component with no id -- when they share a name. A name collision with
-            # a code component that HAS its own id is a genuinely distinct component and
-            # must stay listed (it is what get_/run_/edit_ resolve to).
-            for row in db_rows:
-                if row["id"] in seen_ids or row["name"] in idless_names:
-                    continue
-                result.append({**row, "source": "db"})
-            return json.dumps({"workflows": result, "count": len(result), "db_total": db_total})
-        except Exception as e:
-            logger.exception("Failed to list workflows")
-            return json.dumps({"error": str(e) or type(e).__name__})
-
-    def _list_db_components(self, component_type: str) -> tuple[List[Dict[str, Any]], int]:
-        """Thin summaries of DB components of a given type plus the total DB count.
-
-        The total makes a capped list visible as capped: components beyond the
-        cap still resolve by exact id."""
-        return self._runner_tools._list_db_component_rows(component_type)
-
-    # ------------------------------------------------------------------
-    # Read one
-    # ------------------------------------------------------------------
-
-    def get_agent(self, agent_id: str) -> str:
-        """Read an agent's current published config. Call this before edit_agent.
-
-        Returns the published version; pending draft edits are not reflected here.
-
-        Args:
-            agent_id (str): The id or name of the agent.
-        """
-        try:
-            agent = self._find_agent(agent_id)
-        except StudioRunnerError as e:
-            return json.dumps({"error": str(e) or type(e).__name__})
-        except Exception as e:
-            logger.exception("Failed to resolve agent")
-            return json.dumps({"error": f"Failed to resolve agent '{agent_id}': {str(e) or type(e).__name__}"})
-        if agent is None:
-            return json.dumps({"error": f"Agent not found: {agent_id}"})
-        return json.dumps(
-            {
-                "id": getattr(agent, "id", None),
-                "name": getattr(agent, "name", None),
-                "model_id": getattr(getattr(agent, "model", None), "id", None),
-                "instructions": getattr(agent, "instructions", None),
-                "description": getattr(agent, "description", None),
-                "tools": self._normalize_tool_names(_summarize_tools(getattr(agent, "tools", None))),
-                "add_history_to_context": getattr(agent, "add_history_to_context", None),
-                "num_history_runs": getattr(agent, "num_history_runs", None),
-                "add_datetime_to_context": getattr(agent, "add_datetime_to_context", None),
-            },
-            default=str,
-        )
-
-    def get_team(self, team_id: str) -> str:
-        """Read a team's current published config. Call this before edit_team.
-
-        Returns the published version; pending draft edits are not reflected here.
-
-        Args:
-            team_id (str): The id or name of the team.
-        """
-        try:
-            team = self._find_team(team_id)
-        except StudioRunnerError as e:
-            return json.dumps({"error": str(e) or type(e).__name__})
-        except Exception as e:
-            logger.exception("Failed to resolve team")
-            return json.dumps({"error": f"Failed to resolve team '{team_id}': {str(e) or type(e).__name__}"})
-        if team is None:
-            return json.dumps({"error": f"Team not found: {team_id}"})
-        members = getattr(team, "members", None) or []
-        return json.dumps(
-            {
-                "id": getattr(team, "id", None),
-                "name": getattr(team, "name", None),
-                "model_id": getattr(getattr(team, "model", None), "id", None),
-                "instructions": getattr(team, "instructions", None),
-                "description": getattr(team, "description", None),
-                "member_ids": [getattr(m, "id", None) for m in members] if not callable(members) else [],
-                "add_history_to_context": getattr(team, "add_history_to_context", None),
-                "num_history_runs": getattr(team, "num_history_runs", None),
-                "add_datetime_to_context": getattr(team, "add_datetime_to_context", None),
-            },
-            default=str,
-        )
-
-    def get_workflow(self, workflow_id: str) -> str:
-        """Read a workflow's current published config. Call this before edit_workflow.
-
-        Returns the published version; pending draft edits are not reflected here.
-
-        Args:
-            workflow_id (str): The id or name of the workflow.
-        """
-        try:
-            wf = self._find_workflow(workflow_id)
-        except StudioRunnerError as e:
-            return json.dumps({"error": str(e) or type(e).__name__})
-        except Exception as e:
-            logger.exception("Failed to resolve workflow")
-            return json.dumps({"error": f"Failed to resolve workflow '{workflow_id}': {str(e) or type(e).__name__}"})
-        if wf is None:
-            return json.dumps({"error": f"Workflow not found: {workflow_id}"})
-        steps = getattr(wf, "steps", None) or []
-        step_summaries: List[Dict[str, Any]] = []
-        for step in steps if isinstance(steps, list) else []:
-            executor = getattr(step, "executor", None)
-            function_name = None
-            if executor is not None:
-                function_name = getattr(executor, "name", None) or getattr(executor, "__name__", None)
-            step_summaries.append(
-                {
-                    "name": getattr(step, "name", None),
-                    "agent_id": getattr(getattr(step, "agent", None), "id", None),
-                    "team_id": getattr(getattr(step, "team", None), "id", None),
-                    "function_name": function_name,
-                }
-            )
-        return json.dumps(
-            {
-                "id": getattr(wf, "id", None),
-                "name": getattr(wf, "name", None),
-                "description": getattr(wf, "description", None),
-                "steps": step_summaries,
-            },
-            default=str,
-        )
-
-    # ------------------------------------------------------------------
-    # Create (published v1)
-    # ------------------------------------------------------------------
-
-    def create_agent(
+    def _resolve_component_ref(
         self,
-        name: str,
-        instructions: str,
-        model_id: Optional[str] = None,
-        tool_names: Optional[List[str]] = None,
-        db_id: Optional[str] = None,
-        description: Optional[str] = None,
-        add_history_to_context: bool = True,
-        num_history_runs: Optional[int] = None,
-        add_datetime_to_context: bool = True,
-    ) -> str:
-        """Create a new agent and persist it as a published component.
-
-        Args:
-            name (str): Display name; also used as the id.
-            instructions (str): System instructions for the agent.
-            model_id (Optional[str]): Model id from the registry (see list_models).
-            tool_names (Optional[List[str]]): Toolkit or function names from the registry
-                (see list_tools). Include EVERY tool the user mentioned.
-            db_id (Optional[str]): Database id from the registry. Uses the default if omitted.
-            description (Optional[str]): Optional human-readable description.
-            add_history_to_context (bool): Include prior turns of the session so the
-                agent remembers the conversation. Defaults to True; pass False for a
-                stateless agent.
-            num_history_runs (Optional[int]): How many prior runs to include when
-                history is on. Omit for the default.
-            add_datetime_to_context (bool): Add the current date and time to the
-                agent's context so it can date and time-reference reliably.
-                Defaults to True; pass False to omit.
-
-        Returns:
-            str: JSON with {status, id, name, model_id, tools, add_history_to_context,
-            add_datetime_to_context, db_version}.
-        """
-        from agno.agent.agent import Agent
-
-        try:
-            model = self._find_model(model_id)
-            if model is None:
-                return json.dumps({"error": f"Model not found: {model_id or 'default'}"})
-            tools = self._resolve_tools(tool_names)
-            db = self._find_db(db_id)
-            if db is None:
-                message = f"Db not found: {db_id}" if db_id is not None else "StudioTools has no db configured."
-                return json.dumps({"error": message})
-
-            agent_id = self._unique_component_id(name, db)
-            agent = Agent(
-                id=agent_id,
-                name=name,
-                model=model,
-                tools=tools or None,
-                instructions=instructions,
-                db=db,
-                description=description,
-                add_history_to_context=add_history_to_context,
-                num_history_runs=num_history_runs if num_history_runs is not None else self.default_num_history_runs,
-                add_datetime_to_context=add_datetime_to_context,
+        ref: ComponentRef,
+        *,
+        link_kind: str,
+        link_key: str,
+        position: int,
+    ) -> _ResolvedRef:
+        self._ensure_no_source_collision(ref.component_id, ref.component_type)
+        row = self.db.get_component(ref.component_id)
+        if row is not None and row.get("component_type") != ref.component_type:
+            raise _StudioRequestError(
+                "component_type_mismatch",
+                f"Component '{ref.component_id}' is not a {ref.component_type}.",
             )
-
-            version = _persist_only(agent, db)
-            log_debug(f"StudioTools created agent id={agent_id} version={version}")
-            return json.dumps(
-                {
-                    "status": "created",
-                    "id": agent_id,
-                    "name": name,
-                    "model_id": getattr(model, "id", None),
-                    "tools": _summarize_tools(tools),
-                    "add_history_to_context": add_history_to_context,
-                    "add_datetime_to_context": add_datetime_to_context,
-                    "db_version": version,
-                }
-            )
-        except Exception as e:
-            logger.exception("Failed to create agent")
-            return json.dumps({"error": str(e) or type(e).__name__})
-
-    def create_team(
-        self,
-        name: str,
-        instructions: str,
-        member_ids: List[str],
-        model_id: Optional[str] = None,
-        db_id: Optional[str] = None,
-        description: Optional[str] = None,
-        add_history_to_context: bool = True,
-        num_history_runs: Optional[int] = None,
-        add_datetime_to_context: bool = True,
-    ) -> str:
-        """Create a new team and persist it as a published component.
-
-        Args:
-            name (str): Display name; also used as the id.
-            instructions (str): Instructions that steer the team leader.
-            member_ids (List[str]): Ids of existing agents or teams (see list_agents/list_teams).
-            model_id (Optional[str]): Model id for the team leader.
-            db_id (Optional[str]): Database id from the registry.
-            description (Optional[str]): Optional description.
-            add_history_to_context (bool): Include prior turns of the session so the
-                team remembers the conversation. Defaults to True; pass False for a
-                stateless team.
-            num_history_runs (Optional[int]): How many prior runs to include when
-                history is on. Omit for the default.
-            add_datetime_to_context (bool): Add the current date and time to the
-                team's context so it can date and time-reference reliably.
-                Defaults to True; pass False to omit.
-
-        Returns:
-            str: JSON with {status, id, name, model_id, member_ids, add_history_to_context,
-            add_datetime_to_context, db_version}.
-        """
-        from agno.team.team import Team
-
-        try:
-            model = self._find_model(model_id)
-            if model is None:
-                return json.dumps({"error": f"Model not found: {model_id or 'default'}"})
-
-            db = self._find_db(db_id)
-            if db is None:
-                message = f"Db not found: {db_id}" if db_id is not None else "StudioTools has no db configured."
-                return json.dumps({"error": message})
-            try:
-                members, missing = self._resolve_members(member_ids, target_db=db)
-            except ValueError as e:
-                # Ambiguity and id-less refusals are validation of model input,
-                # not system failures: no traceback in the operator log.
-                return json.dumps({"error": str(e)})
-            if missing:
-                return json.dumps({"error": f"Members not found: {missing}"})
-            if not members:
-                return json.dumps({"error": "A team must have at least one member"})
-
-            try:
-                members, member_pins = self._bind_members_to_target_db(members, db)
-            except ValueError as e:
-                return json.dumps({"error": str(e)})
-            team_id = self._unique_component_id(name, db)
-            team = Team(
-                id=team_id,
-                name=name,
-                model=model,
-                members=members,
-                instructions=instructions,
-                db=db,
-                description=description,
-                add_history_to_context=add_history_to_context,
-                num_history_runs=num_history_runs if num_history_runs is not None else self.default_num_history_runs,
-                add_datetime_to_context=add_datetime_to_context,
-            )
-
-            version = _persist_only(team, db, links=self._links_for_component(team, db=db, pinned_versions=member_pins))
-            log_debug(f"StudioTools created team id={team_id} members={member_ids} version={version}")
-            return json.dumps(
-                {
-                    "status": "created",
-                    "id": team_id,
-                    "name": name,
-                    "model_id": getattr(model, "id", None),
-                    "member_ids": [getattr(m, "id", None) for m in members],
-                    "add_history_to_context": add_history_to_context,
-                    "add_datetime_to_context": add_datetime_to_context,
-                    "db_version": version,
-                }
-            )
-        except Exception as e:
-            logger.exception("Failed to create team")
-            return json.dumps({"error": str(e) or type(e).__name__})
-
-    def create_workflow(
-        self,
-        name: str,
-        description: str,
-        step_specs: List[Dict[str, Any]],
-        db_id: Optional[str] = None,
-    ) -> str:
-        """Create a new workflow and persist it as a published component.
-
-        Args:
-            name (str): Display name; also used as the id.
-            description (str): What the workflow does.
-            step_specs (List[dict]): Ordered steps. Each dict has 'name' and exactly
-                one of 'agent_id', 'team_id', or 'function_name'. Optional: 'description'.
-            db_id (Optional[str]): Database id from the registry.
-
-        Returns:
-            str: JSON with {status, id, name, description, steps, db_version}.
-        """
-        from agno.workflow.workflow import Workflow
-
-        try:
-            db = self._find_db(db_id)
-            if db is None:
-                message = f"Db not found: {db_id}" if db_id is not None else "StudioTools has no db configured."
-                return json.dumps({"error": message})
-            steps, err = self._build_steps(step_specs, fallback_db=db)
-            if err is not None:
-                return json.dumps({"error": err})
-
-            try:
-                step_pins = self._bind_steps_to_target_db(steps, db)
-            except ValueError as e:
-                return json.dumps({"error": str(e)})
-            workflow_id = self._unique_component_id(name, db)
-            workflow = Workflow(
-                id=workflow_id,
-                name=name,
-                description=description,
-                steps=steps,
-                db=db,
-            )
-
-            version = _persist_only(
-                workflow, db, links=self._links_for_component(workflow, db=db, pinned_versions=step_pins)
-            )
-            log_debug(f"StudioTools created workflow id={workflow_id} steps={len(steps)} version={version}")
-            return json.dumps(
-                {
-                    "status": "created",
-                    "id": workflow_id,
-                    "name": name,
-                    "description": description,
-                    "steps": [s.name for s in steps],
-                    "db_version": version,
-                }
-            )
-        except Exception as e:
-            logger.exception("Failed to create workflow")
-            return json.dumps({"error": str(e) or type(e).__name__})
-
-    # ------------------------------------------------------------------
-    # Edit (produces a draft version)
-    # ------------------------------------------------------------------
-
-    def edit_agent(
-        self,
-        agent_id: str,
-        instructions: Optional[str] = None,
-        model_id: Optional[str] = None,
-        tool_names: Optional[List[str]] = None,
-        description: Optional[str] = None,
-        add_history_to_context: Optional[bool] = None,
-        num_history_runs: Optional[int] = None,
-        add_datetime_to_context: Optional[bool] = None,
-    ) -> str:
-        """Edit an agent.
-
-        Always call get_agent(agent_id) first to read the current state, then
-        pass only the fields that should change. With versioning enabled the
-        edit is saved as a draft (use publish_component to promote it);
-        otherwise it is published immediately as the new current version.
-
-        Args:
-            agent_id (str): The id or display name of the agent to edit.
-            instructions (Optional[str]): New instructions. Omit to keep.
-            model_id (Optional[str]): New model id from the registry. Omit to keep.
-            tool_names (Optional[List[str]]): New tool list (replaces existing). Omit to keep.
-            description (Optional[str]): New description. Omit to keep.
-            add_history_to_context (Optional[bool]): Whether the agent sees prior turns
-                of the session. Omit to keep.
-            num_history_runs (Optional[int]): New history depth. Omit to keep.
-            add_datetime_to_context (Optional[bool]): Whether the agent sees the
-                current date and time. Omit to keep.
-        """
-        if self.db is None:
-            return json.dumps({"error": "StudioTools has no db configured; cannot edit components."})
-        try:
-            # _is_code_defined does DB I/O; keep it inside the try so a db failure here
-            # returns a structured error like every other resolve path, not an unhandled raise.
-            if self._is_code_defined(agent_id, self._iter_agents(), "agent"):
-                hint = ""
-                try:
-                    shadowed = self._runner_tools._resolve_db_id_by_name_or_slug("agent", agent_id)
-                    if shadowed is not None:
-                        hint = f" A Studio-created agent with this name exists: use its exact id '{shadowed}'."
-                except AmbiguousComponentNameError:
-                    pass
-                return json.dumps(
-                    {
-                        "error": f"Cannot edit code-defined agent: {agent_id}. "
-                        f"Only Studio-created components are editable.{hint}"
-                    }
+        if row is not None:
+            version = ref.version if ref.version is not None else row.get("current_version")
+            if version is None:
+                raise _StudioRequestError(
+                    "published_version_required",
+                    f"Component '{ref.component_id}' has no current published version; publish it first.",
                 )
-            agent, edit_base_version, edit_guard = self._find_agent_for_edit(agent_id)
-        except StudioRunnerError as e:
-            return json.dumps({"error": str(e) or type(e).__name__})
-        except Exception as e:
-            logger.exception("Failed to resolve agent")
-            return json.dumps({"error": f"Failed to resolve agent '{agent_id}': {str(e) or type(e).__name__}"})
-        if agent is None:
-            return json.dumps({"error": f"Agent not found: {agent_id}"})
-
-        try:
-            agent = agent.deep_copy()
-            if getattr(agent, "id", None) is None:
-                agent.id = agent_id
-            agent.db = self.db
-            if instructions is not None:
-                agent.instructions = instructions
-            if description is not None:
-                agent.description = description
-            if model_id is not None:
-                model = self._find_model(model_id)
-                if model is None:
-                    return json.dumps({"error": f"Model not found: {model_id}"})
-                agent.model = model
-            if tool_names is not None:
-                agent.tools = self._resolve_tools(tool_names) or None
-            if add_history_to_context is not None:
-                agent.add_history_to_context = add_history_to_context
-            if num_history_runs is not None:
-                agent.num_history_runs = num_history_runs
-                # Mirror Agent.__init__'s resolution: num_history_runs wins
-                # over num_history_messages.
-                agent.num_history_messages = None
-            if add_datetime_to_context is not None:
-                agent.add_datetime_to_context = add_datetime_to_context
-
-            replaced_keys = set()
-            if tool_names is not None:
-                replaced_keys.add("tools")
-            if model_id is not None:
-                replaced_keys.add("model")
-            result = self._save_edit(
-                agent,
-                replaced_keys=replaced_keys,
-                base_version=edit_base_version,
-                guard=edit_guard,
-            )
-            log_debug(f"StudioTools edited agent id={agent.id} result={result}")
-            return json.dumps({"status": "edited", "id": getattr(agent, "id", None) or agent_id, **result})
-        except Exception as e:
-            logger.exception("Failed to edit agent")
-            return json.dumps({"error": str(e) or type(e).__name__})
-
-    def edit_team(
-        self,
-        team_id: str,
-        instructions: Optional[str] = None,
-        model_id: Optional[str] = None,
-        member_ids: Optional[List[str]] = None,
-        description: Optional[str] = None,
-        add_history_to_context: Optional[bool] = None,
-        num_history_runs: Optional[int] = None,
-        add_datetime_to_context: Optional[bool] = None,
-    ) -> str:
-        """Edit a team.
-
-        Always call get_team(team_id) first to read the current state, then
-        pass only the fields that should change. With versioning enabled the
-        edit is saved as a draft (use publish_component to promote it);
-        otherwise it is published immediately as the new current version.
-
-        Args:
-            team_id (str): The id or display name of the team to edit.
-            instructions (Optional[str]): New instructions. Omit to keep.
-            model_id (Optional[str]): New model id. Omit to keep.
-            member_ids (Optional[List[str]]): New member ids (replaces existing). Omit to keep.
-            description (Optional[str]): New description. Omit to keep.
-            add_history_to_context (Optional[bool]): Whether the team sees prior turns
-                of the session. Omit to keep.
-            num_history_runs (Optional[int]): New history depth. Omit to keep.
-            add_datetime_to_context (Optional[bool]): Whether the team sees the
-                current date and time. Omit to keep.
-        """
-        if self.db is None:
-            return json.dumps({"error": "StudioTools has no db configured; cannot edit components."})
-        try:
-            # _is_code_defined does DB I/O; keep it inside the try so a db failure here
-            # returns a structured error like every other resolve path, not an unhandled raise.
-            if self._is_code_defined(team_id, self._iter_teams(), "team"):
-                hint = ""
-                try:
-                    shadowed = self._runner_tools._resolve_db_id_by_name_or_slug("team", team_id)
-                    if shadowed is not None:
-                        hint = f" A Studio-created team with this name exists: use its exact id '{shadowed}'."
-                except AmbiguousComponentNameError:
-                    pass
-                return json.dumps(
-                    {
-                        "error": f"Cannot edit code-defined team: {team_id}. "
-                        f"Only Studio-created components are editable.{hint}"
-                    }
-                )
-            team, edit_base_version, edit_guard = self._find_team_for_edit(team_id)
-        except StudioRunnerError as e:
-            return json.dumps({"error": str(e) or type(e).__name__})
-        except Exception as e:
-            logger.exception("Failed to resolve team")
-            return json.dumps({"error": f"Failed to resolve team '{team_id}': {str(e) or type(e).__name__}"})
-        if team is None:
-            return json.dumps({"error": f"Team not found: {team_id}"})
-
-        try:
-            replaced_pins: Optional[Dict[str, int]] = None
-            team = team.deep_copy()
-            if getattr(team, "id", None) is None:
-                team.id = team_id
-            team.db = self.db
-            if instructions is not None:
-                team.instructions = instructions
-            if description is not None:
-                team.description = description
-            if model_id is not None:
-                model = self._find_model(model_id)
-                if model is None:
-                    return json.dumps({"error": f"Model not found: {model_id}"})
-                team.model = model
-            if member_ids is not None:
-                try:
-                    members, missing = self._resolve_members(member_ids)
-                    if self.db is not None:
-                        members, replaced_pins = self._bind_members_to_target_db(
-                            members, self.db, require_published=not self.enable_versions
-                        )
-                except ValueError as e:
-                    return json.dumps({"error": str(e)})
-                if missing:
-                    return json.dumps({"error": f"Members not found: {missing}"})
-                if not members:
-                    return json.dumps({"error": "A team must have at least one member"})
-                team.members = members
-            else:
-                # Team.from_dict resolves members through the registry and db only,
-                # dropping (with a warning) any it cannot supply -- a code-defined
-                # agents_list entry, for one. Re-serializing that rebuild would
-                # publish a roster silently shrunk by an unrelated edit.
-                resolved_id = getattr(team, "id", None) or team_id
-                row = self.db.get_config(component_id=resolved_id, version=edit_base_version)
-                stored_config = row.get("config") if isinstance(row, dict) else None
-                stored_members = (stored_config or {}).get("members") or []
-                rebuilt_members = team.members if isinstance(team.members, list) else []
-                if len(rebuilt_members) < len(stored_members):
-                    return json.dumps(
-                        {
-                            "error": f"Editing '{resolved_id}' would drop members its rebuild cannot resolve "
-                            f"({len(rebuilt_members)} of {len(stored_members)} resolved). Register the "
-                            "missing members in the registry or database, then retry."
-                        }
-                    )
-            if add_history_to_context is not None:
-                team.add_history_to_context = add_history_to_context
-            if num_history_runs is not None:
-                team.num_history_runs = num_history_runs
-                # Mirror Team.__init__'s resolution: num_history_runs wins
-                # over num_history_messages.
-                team.num_history_messages = None
-            if add_datetime_to_context is not None:
-                team.add_datetime_to_context = add_datetime_to_context
-
-            replaced_keys = set()
-            if member_ids is not None:
-                replaced_keys.add("members")
-            if model_id is not None:
-                replaced_keys.add("model")
-            result = self._save_edit(
-                team,
-                replaced_keys=replaced_keys,
-                pinned_children=replaced_pins,
-                base_version=edit_base_version,
-                guard=edit_guard,
-            )
-            log_debug(f"StudioTools edited team id={team.id} result={result}")
-            return json.dumps({"status": "edited", "id": getattr(team, "id", None) or team_id, **result})
-        except Exception as e:
-            logger.exception("Failed to edit team")
-            return json.dumps({"error": str(e) or type(e).__name__})
-
-    def edit_workflow(
-        self,
-        workflow_id: str,
-        description: Optional[str] = None,
-        step_specs: Optional[List[Dict[str, Any]]] = None,
-    ) -> str:
-        """Edit a workflow.
-
-        Always call get_workflow(workflow_id) first to read the current state,
-        then pass only the fields that should change. With versioning enabled
-        the edit is saved as a draft (use publish_component to promote it);
-        otherwise it is published immediately as the new current version.
-
-        Args:
-            workflow_id (str): The id or display name of the workflow to edit.
-            description (Optional[str]): New description. Omit to keep.
-            step_specs (Optional[List[dict]]): New ordered steps (replaces existing). Omit to keep.
-                Same shape as create_workflow.step_specs.
-        """
-        if self.db is None:
-            return json.dumps({"error": "StudioTools has no db configured; cannot edit components."})
-        try:
-            # _is_code_defined does DB I/O; keep it inside the try so a db failure here
-            # returns a structured error like every other resolve path, not an unhandled raise.
-            if self._is_code_defined(workflow_id, self._iter_workflows(), "workflow"):
-                hint = ""
-                try:
-                    shadowed = self._runner_tools._resolve_db_id_by_name_or_slug("workflow", workflow_id)
-                    if shadowed is not None:
-                        hint = f" A Studio-created workflow with this name exists: use its exact id '{shadowed}'."
-                except AmbiguousComponentNameError:
-                    pass
-                return json.dumps(
-                    {
-                        "error": f"Cannot edit code-defined workflow: {workflow_id}. "
-                        f"Only Studio-created components are editable.{hint}"
-                    }
-                )
-            wf, edit_base_version, edit_guard = self._find_workflow_for_edit(workflow_id)
-        except StudioRunnerError as e:
-            return json.dumps({"error": str(e) or type(e).__name__})
-        except Exception as e:
-            logger.exception("Failed to resolve workflow")
-            return json.dumps({"error": f"Failed to resolve workflow '{workflow_id}': {str(e) or type(e).__name__}"})
-        if wf is None:
-            return json.dumps({"error": f"Workflow not found: {workflow_id}"})
-
-        try:
-            wf = wf.deep_copy()
-            if getattr(wf, "id", None) is None:
-                wf.id = workflow_id
-            wf.db = self.db
-            if description is not None:
-                wf.description = description
-            replaced_pins: Optional[Dict[str, int]] = None
-            if step_specs is not None:
-                steps, err = self._build_steps(step_specs)
-                if err is not None:
-                    return json.dumps({"error": err})
-                if self.db is not None:
-                    try:
-                        replaced_pins = self._bind_steps_to_target_db(
-                            steps, self.db, require_published=not self.enable_versions
-                        )
-                    except ValueError as e:
-                        return json.dumps({"error": str(e)})
-                wf.steps = steps
-
-            result = self._save_edit(
-                wf,
-                replaced_keys={"steps"} if step_specs is not None else None,
-                pinned_children=replaced_pins,
-                base_version=edit_base_version,
-                guard=edit_guard,
-            )
-            log_debug(f"StudioTools edited workflow id={wf.id} result={result}")
-            return json.dumps({"status": "edited", "id": getattr(wf, "id", None) or workflow_id, **result})
-        except Exception as e:
-            logger.exception("Failed to edit workflow")
-            return json.dumps({"error": str(e) or type(e).__name__})
-
-    # ------------------------------------------------------------------
-    # Versioning / configs
-    # ------------------------------------------------------------------
-
-    def list_versions(self, component_id: str) -> str:
-        """List all config versions for a component.
-
-        Args:
-            component_id (str): The component id.
-        """
-        if self.db is None:
-            return json.dumps({"error": "StudioTools has no db configured."})
-        try:
-            component = self.db.get_component(component_id) or {}
-            current_version = component.get("current_version")
-            configs = self.db.list_configs(component_id, include_config=False)
-            versions = [
-                {
-                    "version": c.get("version"),
-                    "stage": c.get("stage"),
-                    "label": c.get("label"),
-                    "created_at": c.get("created_at"),
-                    "is_current": current_version is not None and c.get("version") == current_version,
-                }
-                for c in configs
-            ]
-            return json.dumps({"component_id": component_id, "versions": versions, "count": len(versions)})
-        except Exception as e:
-            logger.exception("Failed to list versions")
-            return json.dumps({"error": str(e) or type(e).__name__})
-
-    def get_version(self, component_id: str, version: Optional[int] = None) -> str:
-        """Get a specific config version. If version is omitted, returns the current version.
-
-        Args:
-            component_id (str): The component id.
-            version (Optional[int]): Version number, or omit for the current version.
-        """
-        if self.db is None:
-            return json.dumps({"error": "StudioTools has no db configured."})
-        try:
-            config = self.db.get_config(component_id=component_id, version=version)
+            config = self.db.get_config(ref.component_id, version=version)
             if config is None:
-                return json.dumps({"error": f"Version not found: component_id={component_id} version={version}"})
-            return json.dumps(config, default=str)
-        except Exception as e:
-            logger.exception("Failed to get version")
-            return json.dumps({"error": str(e) or type(e).__name__})
-
-    def publish_component(self, component_id: str, version: Optional[int] = None) -> str:
-        """Promote a draft to published (and make it the current version).
-
-        Args:
-            component_id (str): The component id.
-            version (Optional[int]): The draft version to publish. If omitted, publishes the
-                latest draft. Re-publishing an already-published version is a no-op and
-                returns status "already_published".
-        """
-        if self.db is None:
-            return json.dumps({"error": "StudioTools has no db configured."})
-        try:
-            from agno.db.base import ComponentVersionGuard
-
-            component = self.db.get_component(component_id)
-            if component is None:
-                return json.dumps({"error": f"Component not found: {component_id}"})
-            catalog_v2 = getattr(self.db, "component_catalog_api_version", 1) >= 2
-            configs = self.db.list_configs(component_id, include_config=False)
-            latest_version = max(
-                (c["version"] for c in configs if isinstance(c.get("version"), int)),
-                default=None,
-            )
-            target = version
-            if target is None:
-                drafts = [c for c in configs if c.get("stage") == "draft"]
-                if not drafts:
-                    return json.dumps({"error": "No draft version to publish."})
-                target = max(d.get("version", 0) for d in drafts)
-            else:
-                # Explicit version: validate it exists and is not already published.
-                match = next((c for c in configs if c.get("version") == target), None)
-                if match is None:
-                    return json.dumps({"error": f"Version not found: {component_id} v{target}"})
-                if match.get("stage") == "published":
-                    if not catalog_v2:
-                        self._sync_component_row(component_id, target)
-                    return json.dumps({"status": "already_published", "id": component_id, "version": target})
-
-            if catalog_v2:
-                result = self.db.upsert_config(
-                    component_id=component_id,
-                    version=target,
-                    stage="published",
-                    guard=ComponentVersionGuard(
-                        latest_version=latest_version,
-                        current_version=component.get("current_version"),
-                    ),
+                raise _StudioRequestError(
+                    "version_not_found",
+                    f"Version {version} was not found for component '{ref.component_id}'.",
                 )
-            else:
-                result = self.db.upsert_config(component_id=component_id, version=target, stage="published")
-            published_version = result.get("version", target)
-            if not catalog_v2:
-                self._sync_component_row(component_id, published_version)
-            return json.dumps(
-                {
-                    "status": "published",
-                    "id": component_id,
-                    "version": published_version,
-                }
+            if config.get("stage") != "published":
+                raise _StudioRequestError(
+                    "published_version_required",
+                    f"Component '{ref.component_id}' v{version} is a draft; publish it before referencing it.",
+                )
+            component = self._load_db_component(ref.component_type, ref.component_id, version)
+            if component is None:
+                raise _StudioRequestError(
+                    "component_rehydration_failed",
+                    f"Component '{ref.component_id}' v{version} could not be faithfully rehydrated.",
+                )
+            pinned_ref = ComponentRef(
+                component_type=ref.component_type,
+                component_id=ref.component_id,
+                version=version,
             )
-        except Exception as e:
-            logger.exception("Failed to publish component")
-            return json.dumps({"error": str(e) or type(e).__name__})
+            return _ResolvedRef(
+                component=component,
+                ref=pinned_ref,
+                link={
+                    "link_kind": link_kind,
+                    "link_key": link_key,
+                    "child_component_id": ref.component_id,
+                    "child_version": version,
+                    "position": position,
+                    "meta": {"type": ref.component_type},
+                },
+                code_defined=False,
+            )
 
-    def set_current_version(self, component_id: str, version: int) -> str:
-        """Roll back to a previously published version (make it current).
+        if ref.version is not None:
+            raise _StudioRequestError(
+                "component_not_found",
+                f"Stored {ref.component_type} '{ref.component_id}' was not found for pinned version {ref.version}.",
+            )
+        component = self._code_component(ref.component_type, ref.component_id)
+        if component is None:
+            raise _StudioRequestError(
+                "component_not_found",
+                f"{ref.component_type.capitalize()} '{ref.component_id}' was not found.",
+            )
+        self._ensure_registry_reference_identity(ref.component_type, component)
+        return _ResolvedRef(component=component, ref=ref, link=None, code_defined=True)
 
-        Args:
-            component_id (str): The component id.
-            version (int): A published version to set as current.
-        """
-        if self.db is None:
-            return json.dumps({"error": "StudioTools has no db configured."})
-        try:
-            ok = self.db.set_current_version(component_id, version=version)
-            if not ok:
-                return json.dumps({"error": f"Component or version not found: {component_id} v{version}"})
-            return json.dumps({"status": "set_current", "id": component_id, "version": version})
-        except Exception as e:
-            logger.exception("Failed to set current version")
-            return json.dumps({"error": str(e) or type(e).__name__})
-
-    def delete_version(self, component_id: str, version: int) -> str:
-        """Delete a draft config version. Published and current versions cannot be deleted.
-
-        Args:
-            component_id (str): The component id.
-            version (int): The draft version to delete.
-        """
-        if self.db is None:
-            return json.dumps({"error": "StudioTools has no db configured."})
-        try:
-            deleted = self.db.delete_config(component_id, version=version)
-            if not deleted:
-                return json.dumps({"error": f"Version not found: {component_id} v{version}"})
-            return json.dumps({"status": "deleted", "id": component_id, "version": version})
-        except Exception as e:
-            logger.exception("Failed to delete version")
-            return json.dumps({"error": str(e) or type(e).__name__})
-
-    # ------------------------------------------------------------------
-    # Delete
-    # ------------------------------------------------------------------
-
-    def delete_agent(self, agent_id: str) -> str:
-        """Hard-delete an agent DB component.
-
-        Args:
-            agent_id (str): The exact id of the agent to delete. Display names
-                do not resolve for destructive operations.
-        """
-        if self.db is None:
-            return json.dumps({"error": "StudioTools has no db configured; cannot delete components."})
-        try:
-            from agno.db.base import ComponentType
-
-            component = self.db.get_component(agent_id, component_type=ComponentType.AGENT)
-            if component is None:
-                resolved = self._runner_tools._resolve_db_id_by_name_or_slug("agent", agent_id)
-                if resolved is not None:
-                    return json.dumps(
-                        {"error": f"Delete requires the exact id: '{agent_id}' resolves to '{resolved}'."}
-                    )
-                return json.dumps({"error": f"Agent not found: {agent_id}"})
-            deleted = self.db.delete_component(agent_id, hard_delete=True)
-            if not deleted:
-                return json.dumps({"error": f"Agent not found: {agent_id}"})
-            return json.dumps({"status": "deleted", "id": agent_id})
-        except Exception as e:
-            logger.exception("Failed to delete agent")
-            return json.dumps({"error": str(e) or type(e).__name__})
-
-    def delete_team(self, team_id: str) -> str:
-        """Hard-delete a team component.
-
-        Args:
-            team_id (str): The exact id of the team to delete. Display names
-                do not resolve for destructive operations.
-        """
-        if self.db is None:
-            return json.dumps({"error": "StudioTools has no db configured; cannot delete components."})
-        try:
-            from agno.db.base import ComponentType
-
-            component = self.db.get_component(team_id, component_type=ComponentType.TEAM)
-            if component is None:
-                resolved = self._runner_tools._resolve_db_id_by_name_or_slug("team", team_id)
-                if resolved is not None:
-                    return json.dumps({"error": f"Delete requires the exact id: '{team_id}' resolves to '{resolved}'."})
-                return json.dumps({"error": f"Team not found: {team_id}"})
-            deleted = self.db.delete_component(team_id, hard_delete=True)
-            if not deleted:
-                return json.dumps({"error": f"Team not found: {team_id}"})
-            return json.dumps({"status": "deleted", "id": team_id})
-        except Exception as e:
-            logger.exception("Failed to delete team")
-            return json.dumps({"error": str(e) or type(e).__name__})
-
-    def delete_workflow(self, workflow_id: str) -> str:
-        """Hard-delete a workflow component.
-
-        Args:
-            workflow_id (str): The exact id of the workflow to delete. Display
-                names do not resolve for destructive operations.
-        """
-        if self.db is None:
-            return json.dumps({"error": "StudioTools has no db configured; cannot delete components."})
-        try:
-            from agno.db.base import ComponentType
-
-            component = self.db.get_component(workflow_id, component_type=ComponentType.WORKFLOW)
-            if component is None:
-                resolved = self._runner_tools._resolve_db_id_by_name_or_slug("workflow", workflow_id)
-                if resolved is not None:
-                    return json.dumps(
-                        {"error": f"Delete requires the exact id: '{workflow_id}' resolves to '{resolved}'."}
-                    )
-                return json.dumps({"error": f"Workflow not found: {workflow_id}"})
-            deleted = self.db.delete_component(workflow_id, hard_delete=True)
-            if not deleted:
-                return json.dumps({"error": f"Workflow not found: {workflow_id}"})
-            return json.dumps({"status": "deleted", "id": workflow_id})
-        except Exception as e:
-            logger.exception("Failed to delete workflow")
-            return json.dumps({"error": str(e) or type(e).__name__})
-
-    # ------------------------------------------------------------------
-    # Public run methods. StudioRunnerTools owns the run semantics
-    # (current-user identity, per-conversation sub-sessions, PAUSED results
-    # that carry their unresolved requirements); these forward to it and add
-    # an 'id' key beside the runner's typed key. __init__ registers THESE
-    # methods for the model, so the model-facing payload carries both keys
-    # and a subclass override sits on the model's path. The paths are
-    # separate methods: a policy gate must override run_agent AND arun_agent
-    # (async_mode picks one), or it guards only half the surface. Only a
-    # standalone StudioRunnerTools serves the typed key alone.
-    # ------------------------------------------------------------------
+    def _assert_no_cycle(self, parent_component_id: str, links: Sequence[Dict[str, Any]]) -> None:
+        pending = [
+            (link.get("child_component_id"), link.get("child_version"))
+            for link in links
+            if link.get("child_component_id")
+        ]
+        seen: set[tuple[str, Optional[int]]] = set()
+        while pending:
+            child_id, child_version = pending.pop()
+            key = (cast(str, child_id), cast(Optional[int], child_version))
+            if key in seen:
+                continue
+            seen.add(key)
+            if child_id == parent_component_id:
+                raise _StudioRequestError(
+                    "component_cycle",
+                    f"Saving '{parent_component_id}' would create a component dependency cycle.",
+                )
+            if child_version is None:
+                continue
+            for child_link in self.db.get_links(cast(str, child_id), cast(int, child_version)):
+                nested_id = child_link.get("child_component_id")
+                if nested_id:
+                    pending.append((nested_id, child_link.get("child_version")))
 
     @staticmethod
-    def _alias_runner_result(result: str) -> str:
-        """The runner payload plus an 'id' key holding the resolved component id.
+    def _ensure_publishable_refs(refs: Sequence[_ResolvedRef]) -> None:
+        code_refs = [resolved.ref.component_id for resolved in refs if resolved.code_defined]
+        if code_refs:
+            raise _StudioRequestError(
+                "code_reference_not_publishable",
+                "Published composites require stored, version-pinned child components.",
+                details={"code_defined_component_ids": code_refs},
+            )
 
-        Error payloads carry no id and pass through unchanged."""
-        try:
-            payload = json.loads(result)
-        except Exception:
-            return result
-        if isinstance(payload, dict) and "error" not in payload:
-            for key in ("agent_id", "team_id", "workflow_id"):
-                if key in payload:
-                    payload.setdefault("id", payload[key])
-                    return json.dumps(payload, default=str)
+    @staticmethod
+    def _actor_metadata(
+        existing: Optional[Dict[str, Any]],
+        run_context: RunContext,
+        action: StudioAction,
+    ) -> Dict[str, Any]:
+        metadata = dict(existing or {})
+        agno_metadata = dict(metadata.get("_agno") or {})
+        studio_metadata = dict(agno_metadata.get("studio") or {})
+        studio_metadata.setdefault("created_by", run_context.user_id)
+        studio_metadata.setdefault("created_run_id", run_context.run_id)
+        studio_metadata.setdefault("created_session_id", run_context.session_id)
+        studio_metadata.update(
+            {
+                "last_actor_id": run_context.user_id,
+                "last_action": action,
+                "last_run_id": run_context.run_id,
+                "last_session_id": run_context.session_id,
+            }
+        )
+        agno_metadata["studio"] = studio_metadata
+        metadata["_agno"] = agno_metadata
+        return metadata
+
+    @staticmethod
+    def _manifest(request: Any) -> Dict[str, Any]:
+        return {
+            "schema_version": _STUDIO_SCHEMA_VERSION,
+            # ``if_exists`` controls only this create attempt. Persisting it
+            # would turn an idempotent retry into component behavior and make
+            # the retry compare unequal to the original create.
+            "request": request.model_dump(mode="json", exclude={"if_exists"}),
+        }
+
+    @staticmethod
+    def _attach_manifest(config: Dict[str, Any], request: Any) -> Dict[str, Any]:
+        result = dict(config)
+        result[_STUDIO_CONFIG_KEY] = StudioTools._manifest(request)
         return result
 
-    # These are what the model calls, not the embedded runner's bound methods, so a
-    # subclass override sits on the path -- the sync and async halves separately,
-    # as everywhere else in agno. They carry the `_agno_run_context` channel for
-    # the same reason the runner does: the framework fills it, it is kept out of
-    # the model-facing schema, and a model-supplied value for it is dropped.
+    @staticmethod
+    def _serialize_component(component: Component, request: Any) -> Dict[str, Any]:
+        """Serialize only the top-level component and remove its catalog DB.
 
-    def run_agent(self, agent_id: str, message: str, _agno_run_context: Optional[RunContext] = None) -> str:
-        """Run an agent by id or display name. Forwards to StudioRunnerTools.
-
-        Args:
-            agent_id (str): Id of the agent to run (a display name or its slug also resolves).
-            message (str): The message to send.
-
-        Returns:
-            str: JSON object with 'agent_id', 'id', 'run_id', 'session_id', 'status',
-                'content' and, when paused, 'requirements'.
+        Persisting ``db`` leaks connection configuration and can make a later
+        runner reconstruct a second catalog.  The fixed runner DB is the only
+        fallback Studio components need.
         """
-        return self._alias_runner_result(self._runner_tools.run_agent(agent_id, message, _agno_run_context))
-
-    def run_team(self, team_id: str, message: str, _agno_run_context: Optional[RunContext] = None) -> str:
-        """Run a team by id or display name. Forwards to StudioRunnerTools.
-
-        Args:
-            team_id (str): Id of the team to run (a display name or its slug also resolves).
-            message (str): The message to send.
-
-        Returns:
-            str: JSON object with 'team_id', 'id', 'run_id', 'session_id', 'status',
-                'content' and, when paused, 'requirements'.
-        """
-        return self._alias_runner_result(self._runner_tools.run_team(team_id, message, _agno_run_context))
-
-    def run_workflow(self, workflow_id: str, message: str, _agno_run_context: Optional[RunContext] = None) -> str:
-        """Run a workflow by id or display name. Forwards to StudioRunnerTools.
-
-        Args:
-            workflow_id (str): Id of the workflow to run (a display name or its slug also resolves).
-            message (str): Input to pass to the first step.
-
-        Returns:
-            str: JSON object with 'workflow_id', 'id', 'run_id', 'session_id', 'status',
-                'content' and, when paused, 'requirements'.
-        """
-        return self._alias_runner_result(self._runner_tools.run_workflow(workflow_id, message, _agno_run_context))
-
-    async def arun_agent(self, agent_id: str, message: str, _agno_run_context: Optional[RunContext] = None) -> str:
-        """Async variant of run_agent.
-
-        Args:
-            agent_id (str): Id of the agent to run (a display name or its slug also resolves).
-            message (str): The message to send.
-        """
-        return self._alias_runner_result(await self._runner_tools.arun_agent(agent_id, message, _agno_run_context))
-
-    async def arun_team(self, team_id: str, message: str, _agno_run_context: Optional[RunContext] = None) -> str:
-        """Async variant of run_team.
-
-        Args:
-            team_id (str): Id of the team to run (a display name or its slug also resolves).
-            message (str): The message to send.
-        """
-        return self._alias_runner_result(await self._runner_tools.arun_team(team_id, message, _agno_run_context))
-
-    async def arun_workflow(
-        self, workflow_id: str, message: str, _agno_run_context: Optional[RunContext] = None
-    ) -> str:
-        """Async variant of run_workflow.
-
-        Args:
-            workflow_id (str): Id of the workflow to run (a display name or its slug also resolves).
-            message (str): Input to pass to the first step.
-        """
-        return self._alias_runner_result(
-            await self._runner_tools.arun_workflow(workflow_id, message, _agno_run_context)
-        )
-
-    # ------------------------------------------------------------------
-    # Schedules (component-aware)
-    # ------------------------------------------------------------------
-
-    def create_schedule(
-        self,
-        name: str,
-        cron: str,
-        target_type: str,
-        target_id: str,
-        message: str,
-        timezone: str = "UTC",
-        description: Optional[str] = None,
-    ) -> str:
-        """Create (or update) a schedule that runs an existing component on a cron cadence.
-
-        Args:
-            name (str): Unique schedule name (e.g. "daily-news-digest"). Re-using an
-                existing name updates that schedule in place.
-            cron (str): 5-field cron expression (e.g. "0 9 * * *" for daily at 9am).
-            target_type (str): One of 'agent', 'team', or 'workflow'.
-            target_id (str): Id (or name) of an existing component -- use ids from
-                list_agents/list_teams/list_workflows.
-            message (str): The message sent to the component on every scheduled run.
-            timezone (str): IANA timezone name for the cron expression
-                (e.g. "America/New_York"). Defaults to "UTC".
-            description (Optional[str]): Human-readable description of the schedule.
-
-        Returns:
-            str: JSON with {status, id, name, cron, target_type, target_id, endpoint,
-                timezone, enabled, next_run_at}.
-        """
-        try:
-            component_id, target_error = self._resolve_schedule_target(target_type, target_id)
-            if target_error is not None:
-                return json.dumps({"error": target_error})
-            if not message or not message.strip():
-                return json.dumps(
-                    {
-                        "error": "message must be a non-empty string; it is the prompt "
-                        "sent to the component on every scheduled run."
-                    }
-                )
-            manager = self._get_schedule_manager()
-            schedule = manager.create(
-                name=name,
-                cron=cron,
-                endpoint=f"/{target_type}s/{component_id}/runs",
-                method="POST",
-                description=description,
-                payload={"message": message},
-                timezone=timezone,
-                if_exists="update",
-            )
-            log_debug(f"StudioTools created schedule name={name} target={target_type}:{component_id}")
-            return json.dumps(
-                {
-                    "status": "created",
-                    "id": schedule.id,
-                    "name": schedule.name,
-                    "cron": schedule.cron_expr,
-                    "target_type": target_type,
-                    "target_id": component_id,
-                    "endpoint": schedule.endpoint,
-                    "timezone": schedule.timezone,
-                    "enabled": schedule.enabled,
-                    "next_run_at": schedule.next_run_at,
-                }
-            )
-        except Exception as e:
-            logger.exception("Failed to create schedule")
-            return json.dumps({"error": str(e) or type(e).__name__})
-
-    # ------------------------------------------------------------------
-    # Async tools
-    # ------------------------------------------------------------------
-
-    async def alist_models(self) -> str:
-        """Async variant of list_models."""
-        return await self._run_sync_tool(self.list_models)
-
-    async def alist_tools(self) -> str:
-        """Async variant of list_tools."""
-        return await self._run_sync_tool(self.list_tools)
-
-    async def alist_functions(self) -> str:
-        """Async variant of list_functions."""
-        return await self._run_sync_tool(self.list_functions)
-
-    async def alist_dbs(self) -> str:
-        """Async variant of list_dbs."""
-        return await self._run_sync_tool(self.list_dbs)
-
-    async def alist_agents(self) -> str:
-        """Async variant of list_agents."""
-        return await self._run_sync_tool(self.list_agents)
-
-    async def alist_teams(self) -> str:
-        """Async variant of list_teams."""
-        return await self._run_sync_tool(self.list_teams)
-
-    async def alist_workflows(self) -> str:
-        """Async variant of list_workflows."""
-        return await self._run_sync_tool(self.list_workflows)
-
-    async def aget_agent(self, agent_id: str) -> str:
-        """Async variant of get_agent."""
-        return await self._run_sync_tool(self.get_agent, agent_id)
-
-    async def aget_team(self, team_id: str) -> str:
-        """Async variant of get_team."""
-        return await self._run_sync_tool(self.get_team, team_id)
-
-    async def aget_workflow(self, workflow_id: str) -> str:
-        """Async variant of get_workflow."""
-        return await self._run_sync_tool(self.get_workflow, workflow_id)
-
-    async def acreate_agent(
-        self,
-        name: str,
-        instructions: str,
-        model_id: Optional[str] = None,
-        tool_names: Optional[List[str]] = None,
-        db_id: Optional[str] = None,
-        description: Optional[str] = None,
-        add_history_to_context: bool = True,
-        num_history_runs: Optional[int] = None,
-        add_datetime_to_context: bool = True,
-    ) -> str:
-        """Async variant of create_agent."""
-        return await self._run_sync_tool(
-            self.create_agent,
-            name,
-            instructions,
-            model_id=model_id,
-            tool_names=tool_names,
-            db_id=db_id,
-            description=description,
-            add_history_to_context=add_history_to_context,
-            num_history_runs=num_history_runs,
-            add_datetime_to_context=add_datetime_to_context,
-        )
-
-    async def acreate_team(
-        self,
-        name: str,
-        instructions: str,
-        member_ids: List[str],
-        model_id: Optional[str] = None,
-        db_id: Optional[str] = None,
-        description: Optional[str] = None,
-        add_history_to_context: bool = True,
-        num_history_runs: Optional[int] = None,
-        add_datetime_to_context: bool = True,
-    ) -> str:
-        """Async variant of create_team."""
-        return await self._run_sync_tool(
-            self.create_team,
-            name,
-            instructions,
-            member_ids,
-            model_id=model_id,
-            db_id=db_id,
-            description=description,
-            add_history_to_context=add_history_to_context,
-            num_history_runs=num_history_runs,
-            add_datetime_to_context=add_datetime_to_context,
-        )
-
-    async def acreate_workflow(
-        self,
-        name: str,
-        description: str,
-        step_specs: List[Dict[str, Any]],
-        db_id: Optional[str] = None,
-    ) -> str:
-        """Async variant of create_workflow."""
-        return await self._run_sync_tool(
-            self.create_workflow,
-            name,
-            description,
-            step_specs,
-            db_id=db_id,
-        )
-
-    async def aedit_agent(
-        self,
-        agent_id: str,
-        instructions: Optional[str] = None,
-        model_id: Optional[str] = None,
-        tool_names: Optional[List[str]] = None,
-        description: Optional[str] = None,
-        add_history_to_context: Optional[bool] = None,
-        num_history_runs: Optional[int] = None,
-        add_datetime_to_context: Optional[bool] = None,
-    ) -> str:
-        """Async variant of edit_agent."""
-        return await self._run_sync_tool(
-            self.edit_agent,
-            agent_id,
-            instructions=instructions,
-            model_id=model_id,
-            tool_names=tool_names,
-            description=description,
-            add_history_to_context=add_history_to_context,
-            num_history_runs=num_history_runs,
-            add_datetime_to_context=add_datetime_to_context,
-        )
-
-    async def aedit_team(
-        self,
-        team_id: str,
-        instructions: Optional[str] = None,
-        model_id: Optional[str] = None,
-        member_ids: Optional[List[str]] = None,
-        description: Optional[str] = None,
-        add_history_to_context: Optional[bool] = None,
-        num_history_runs: Optional[int] = None,
-        add_datetime_to_context: Optional[bool] = None,
-    ) -> str:
-        """Async variant of edit_team."""
-        return await self._run_sync_tool(
-            self.edit_team,
-            team_id,
-            instructions=instructions,
-            model_id=model_id,
-            member_ids=member_ids,
-            description=description,
-            add_history_to_context=add_history_to_context,
-            num_history_runs=num_history_runs,
-            add_datetime_to_context=add_datetime_to_context,
-        )
-
-    async def aedit_workflow(
-        self,
-        workflow_id: str,
-        description: Optional[str] = None,
-        step_specs: Optional[List[Dict[str, Any]]] = None,
-    ) -> str:
-        """Async variant of edit_workflow."""
-        return await self._run_sync_tool(
-            self.edit_workflow,
-            workflow_id,
-            description=description,
-            step_specs=step_specs,
-        )
-
-    async def alist_versions(self, component_id: str) -> str:
-        """Async variant of list_versions."""
-        return await self._run_sync_tool(self.list_versions, component_id)
-
-    async def aget_version(self, component_id: str, version: Optional[int] = None) -> str:
-        """Async variant of get_version."""
-        return await self._run_sync_tool(self.get_version, component_id, version=version)
-
-    async def apublish_component(self, component_id: str, version: Optional[int] = None) -> str:
-        """Async variant of publish_component."""
-        return await self._run_sync_tool(self.publish_component, component_id, version=version)
-
-    async def aset_current_version(self, component_id: str, version: int) -> str:
-        """Async variant of set_current_version."""
-        return await self._run_sync_tool(self.set_current_version, component_id, version)
-
-    async def adelete_version(self, component_id: str, version: int) -> str:
-        """Async variant of delete_version."""
-        return await self._run_sync_tool(self.delete_version, component_id, version)
-
-    async def adelete_agent(self, agent_id: str) -> str:
-        """Async variant of delete_agent."""
-        return await self._run_sync_tool(self.delete_agent, agent_id)
-
-    async def adelete_team(self, team_id: str) -> str:
-        """Async variant of delete_team."""
-        return await self._run_sync_tool(self.delete_team, team_id)
-
-    async def adelete_workflow(self, workflow_id: str) -> str:
-        """Async variant of delete_workflow."""
-        return await self._run_sync_tool(self.delete_workflow, workflow_id)
-
-    async def acreate_schedule(
-        self,
-        name: str,
-        cron: str,
-        target_type: str,
-        target_id: str,
-        message: str,
-        timezone: str = "UTC",
-        description: Optional[str] = None,
-    ) -> str:
-        """Async variant of create_schedule."""
-        return await self._run_sync_tool(
-            self.create_schedule,
-            name,
-            cron,
-            target_type,
-            target_id,
-            message,
-            timezone=timezone,
-            description=description,
-        )
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    async def _run_sync_tool(self, function: Callable[..., str], *args: Any, **kwargs: Any) -> str:
-        import asyncio
-
-        return await asyncio.to_thread(function, *args, **kwargs)
-
-    def _unique_component_id(self, name: str, db: "BaseDb") -> str:
-        """Return a unique id in the DB component namespace.
-
-        Components use ``component_id`` as the primary key, so agents, teams,
-        and workflows intentionally share one id namespace.
-        """
-        base = _slugify(name)
-        candidate = base
-        suffix = 2
-        while self._component_id_exists(candidate, db):
-            candidate = f"{base}-{suffix}"
-            suffix += 1
-        return candidate
-
-    def _get_schedule_manager(self) -> "ScheduleManager":
-        """The shared SchedulerTools instance's manager."""
-        if self.db is None:
-            raise ValueError("StudioTools has no db configured; cannot manage schedules.")
-        if self._scheduler_tools is None:
-            raise ValueError("StudioTools was built with schedules=False; cannot manage schedules.")
-        return self._scheduler_tools.manager
-
-    def _resolve_schedule_target(self, target_type: str, target_id: str) -> tuple[Optional[str], Optional[str]]:
-        """Resolve a schedule target to a real component id.
-
-        Returns ``(component_id, error)``: exactly one side is set. Targets
-        resolve through the Studio lookup path (code-defined lists, then DB;
-        matched by id or name), so schedules always point at a component's
-        real id even when the caller passed its display name.
-        """
-        if target_type not in _SCHEDULE_TARGET_TYPES:
-            return None, f"Invalid target_type: {target_type}. Must be one of {list(_SCHEDULE_TARGET_TYPES)}."
-        finders: Dict[str, Callable[[str], Optional[Any]]] = {
-            "agent": self._find_agent,
-            "team": self._find_team,
-            "workflow": self._find_workflow,
-        }
-        component = finders[target_type](target_id)
-        if component is None:
-            return None, f"{target_type.capitalize()} not found: {target_id}"
-        component_id = getattr(component, "id", None)
-        if component_id is None:
-            return None, f"{target_type.capitalize()} has no id: {target_id}"
-        return component_id, None
-
-    def _component_id_exists(self, component_id: str, db: "BaseDb") -> bool:
-        for component in [*self._iter_agents(), *self._iter_teams(), *self._iter_workflows()]:
-            component_name = getattr(component, "name", None)
-            if (
-                getattr(component, "id", None) == component_id
-                or component_name == component_id
-                or (component_name is not None and _slugify(component_name) == component_id)
-            ):
-                return True
-        return db.get_component(component_id) is not None
-
-    def _bind_child_to_target_db(
-        self, child: Any, target_db: "BaseDb", noun: str, require_published: bool = True
-    ) -> tuple[Any, Optional[int]]:
-        """The object a stored reference will actually reload from ``target_db``,
-        with the version to pin it at.
-
-        Reload resolution is db-first in the target db, then registry, so a
-        child resolved from the catalog must match that outcome: an id claimed
-        by both a code-defined component and a target-db row is a coin flip
-        and refuses; a db-backed child absent from the target db (or stored
-        there as a different component type) can never reload as itself and
-        refuses; a db-backed child present there is strictly re-resolved from
-        that exact db AND version, so the reference, the pin, and the reload
-        name one row - and a row too degraded to rebuild refuses at create
-        instead of persisting a parent guaranteed not to dispatch. A published
-        parent additionally refuses a draft child, whose config can change in
-        place under the pin.
-
-        The db offers no transactions, so the typed-metadata and config reads
-        are re-verified once; a pair that still disagrees (a concurrent
-        replace or delete) refuses rather than persisting a torn snapshot.
-        """
-        from agno.agent.agent import get_agent_by_id
-        from agno.db.base import ComponentType
-        from agno.exceptions import ComponentRehydrationError
-        from agno.team.team import Team, get_team_by_id
-
-        child_id = getattr(child, "id", None)
-        if not isinstance(child_id, str):
-            raise ValueError(f"{noun} has no id and cannot be stored as a reference.")
-        is_team = isinstance(child, Team)
-        expected_type = ComponentType.TEAM if is_team else ComponentType.AGENT
-        candidates = self._iter_teams() if is_team else self._iter_agents()
-        code_defined = any(getattr(candidate, "id", None) == child_id for candidate in candidates)
-        db_label = getattr(target_db, "id", None) or type(target_db).__name__
-
-        def read_snapshot() -> tuple:
-            try:
-                typed_row = target_db.get_component(child_id, component_type=expected_type)
-                untyped = target_db.get_component(child_id) if typed_row is None else typed_row
-                config_row = target_db.get_config(component_id=child_id) if typed_row is not None else None
-            except NotImplementedError:
-                return None, None, None
-            return typed_row, untyped, config_row
-
-        component_row, untyped_row, row = read_snapshot()
-        verify_component_row, verify_untyped_row, verify_row = read_snapshot()
-        torn = (
-            (component_row is None) != (verify_component_row is None)
-            or (row is None) != (verify_row is None)
-            or (
-                isinstance(row, dict)
-                and isinstance(verify_row, dict)
-                and row.get("version") != verify_row.get("version")
-            )
-        )
-        if torn:
-            raise ValueError(
-                f"{noun} '{child_id}' in db '{db_label}' changed while it was being referenced; retry the operation."
-            )
-        untyped_row = verify_untyped_row if untyped_row is None else untyped_row
-
-        if code_defined and row is not None:
-            raise ValueError(
-                f"{noun} id '{child_id}' is claimed by both a code-defined component and a stored "
-                f"row in db '{db_label}'; reloading would bind whichever wins that db's precedence. "
-                "Give them distinct ids."
-            )
-        if code_defined:
-            # Reconcile the live lists with the registry at selection time:
-            # rehydration resolves the registry, so the object being written
-            # about must be the object the registry will answer with.
-            bucket = self.registry.teams if is_team else self.registry.agents
-            registered = next((entry for entry in bucket if getattr(entry, "id", None) == child_id), None)
-            if registered is None:
-                bucket.append(child)
-            elif registered is not child:
-                raise ValueError(
-                    f"{noun} '{child_id}' from the live list is not the registry's object for that "
-                    "id; a reload would bind the registry's. Align the list and the registry."
-                )
-            return child, None
-        if component_row is None and untyped_row is not None:
-            raise ValueError(
-                f"{noun} '{child_id}' is stored in db '{db_label}' as a "
-                f"{untyped_row.get('component_type')}, not the referenced type. Give the "
-                "components distinct ids."
-            )
-        if row is None:
-            raise ValueError(
-                f"{noun} '{child_id}' is not stored in db '{db_label}'. Create it there first, or "
-                "reference a code-defined component."
-            )
-        if require_published and row.get("stage") != "published":
-            raise ValueError(
-                f"{noun} '{child_id}' in db '{db_label}' has only a {row.get('stage')} config, "
-                "which can change in place under a published parent's pin. Publish the child first."
-            )
-        resolved_version = row.get("version") if isinstance(row, dict) else None
-        loader = get_team_by_id if is_team else get_agent_by_id
-        try:
-            rebound = loader(db=target_db, id=child_id, version=resolved_version, registry=self.registry, strict=True)
-        except ComponentRehydrationError as e:
-            raise ValueError(f"{noun} '{child_id}' in db '{db_label}' cannot be rebuilt: {e}") from e
-        if rebound is None:
-            raise ValueError(f"{noun} '{child_id}' could not be loaded from db '{db_label}'.")
-        return rebound, (resolved_version if isinstance(resolved_version, int) else None)
-
-    def _bind_members_to_target_db(
-        self, members: List[Any], target_db: "BaseDb", require_published: bool = True
-    ) -> tuple[List[Any], Dict[str, int]]:
-        bound: List[Any] = []
-        pins: Dict[str, int] = {}
-        for member in members:
-            rebound, version = self._bind_child_to_target_db(
-                member, target_db, "Member", require_published=require_published
-            )
-            bound.append(rebound)
-            if version is not None and getattr(rebound, "id", None):
-                pins[rebound.id] = version
-        return bound, pins
-
-    def _bind_steps_to_target_db(
-        self, steps: List[Any], target_db: "BaseDb", require_published: bool = True
-    ) -> Dict[str, int]:
-        pins: Dict[str, int] = {}
-        for step in steps:
-            for attr, noun in (("agent", "Step agent"), ("team", "Step team")):
-                child = getattr(step, attr, None)
-                if child is None:
-                    continue
-                rebound, version = self._bind_child_to_target_db(
-                    child, target_db, noun, require_published=require_published
-                )
-                setattr(step, attr, rebound)
-                if version is not None and getattr(rebound, "id", None):
-                    pins[rebound.id] = version
-        return pins
-
-    def _target_db_exact(self, identifier: str, target_db: "BaseDb") -> Optional[Any]:
-        """The component ``identifier`` names by exact id in the target db.
-
-        Checked across both types; a target db claiming the id as both an
-        agent and a team is undecidable from the identifier alone.
-        """
-        from agno.agent.agent import get_agent_by_id
-        from agno.db.base import ComponentType
-        from agno.exceptions import ComponentRehydrationError
-        from agno.team.team import get_team_by_id
-
-        try:
-            agent_row = target_db.get_component(identifier, component_type=ComponentType.AGENT)
-            team_row = target_db.get_component(identifier, component_type=ComponentType.TEAM)
-        except NotImplementedError:
-            return None
-        if agent_row is not None and team_row is not None:
-            raise ValueError(
-                f"Ambiguous member id: '{identifier}' is stored in the target db as both an agent "
-                "and a team. Give the components distinct ids."
-            )
-        if agent_row is None and team_row is None:
-            return None
-        loader = get_agent_by_id if agent_row is not None else get_team_by_id
-        try:
-            return loader(db=target_db, id=identifier, registry=self.registry, strict=True)
-        except ComponentRehydrationError as e:
-            raise ValueError(f"Member '{identifier}' in the target db cannot be rebuilt: {e}") from e
-
-    def _resolve_members(
-        self, member_ids: List[str], target_db: Optional["BaseDb"] = None
-    ) -> tuple[List[TeamMember], List[str]]:
-        """Resolve member identifiers to agents or teams, in request order.
-
-        Exact ids resolve before any name matching - across code-defined
-        components, the catalog db, AND the selected target db - so a live
-        component merely named like a stored id can never steal that member
-        slot. An identifier naming a stored component that fails to load
-        counts as missing rather than falling through to name matching.
-        """
-        runner = self._runner_tools
-        members: List[TeamMember] = []
-        missing: List[str] = []
-        for mid in member_ids:
-            agent_match = runner._find_agent_by_exact_id(mid)
-            team_match = runner._find_team_by_exact_id(mid)
-            if agent_match is None and team_match is None and target_db is not None and target_db is not self.db:
-                # Exact ids in the selected target db outrank every name tier.
-                target_match = self._target_db_exact(mid, target_db)
-                if target_match is not None:
-                    members.append(target_match)
-                    continue
-            if agent_match is not None and team_match is not None:
-                # Ids are only unique per type, so an agent and a team may
-                # legally share one; member_ids cannot disambiguate.
-                raise ValueError(
-                    f"Ambiguous member id: '{mid}' matches both an agent and a team. "
-                    "Give the components distinct ids to reference them as members."
-                )
-            member: Optional[TeamMember] = agent_match or team_match
-            if member is None and not (
-                runner._db_component_exists("agent", mid) or runner._db_component_exists("team", mid)
-            ):
-                agent_named = runner._find_agent_by_name(mid)
-                team_named = runner._find_team_by_name(mid)
-                if agent_named is not None and team_named is not None:
-                    raise ValueError(
-                        f"Ambiguous member name: '{mid}' matches both an agent and a team. Use an exact id."
-                    )
-                member = agent_named or team_named
-            if member is None:
-                missing.append(mid)
-            else:
-                if not getattr(member, "id", None):
-                    # Persisting the reference would store a null id; on reload the
-                    # registry lookup by id=None binds whichever id-less component
-                    # it sees first -- silently the wrong one. Falsy, not None:
-                    # the load-side guard refuses an empty-string id the same way.
-                    raise ValueError(
-                        f"Member '{mid}' is code-defined with no id, so a stored reference "
-                        "cannot name it. Set an explicit id on the component."
-                    )
-                members.append(member)
-        return members, missing
-
-    def _build_steps(
-        self, step_specs: List[Dict[str, Any]], fallback_db: Optional["BaseDb"] = None
-    ) -> tuple[List[Any], Optional[str]]:
-        from agno.workflow.step import Step
-
-        if not step_specs:
-            return [], "step_specs must contain at least one step"
-
-        def find_agent(identifier: str) -> Optional[Any]:
-            found = self._runner_tools._find_agent_by_exact_id(identifier)
-            if found is None and fallback_db is not None and fallback_db is not self.db:
-                from agno.agent.agent import get_agent_by_id
-
-                # Exact ids in the selected target db outrank catalog name tiers.
-                found = get_agent_by_id(db=fallback_db, id=identifier, registry=self.registry)
-            return found if found is not None else self._find_agent(identifier)
-
-        def find_team(identifier: str) -> Optional[Any]:
-            found = self._runner_tools._find_team_by_exact_id(identifier)
-            if found is None and fallback_db is not None and fallback_db is not self.db:
-                from agno.team.team import get_team_by_id
-
-                found = get_team_by_id(db=fallback_db, id=identifier, registry=self.registry)
-            return found if found is not None else self._find_team(identifier)
-
-        steps: List[Step] = []
-        for i, spec in enumerate(step_specs):
-            step_name = spec.get("name") or f"step_{i + 1}"
-            step_desc = spec.get("description")
-            if "agent_id" in spec:
-                agent = find_agent(spec["agent_id"])
-                if agent is None:
-                    return [], f"Agent not found for step '{step_name}': {spec['agent_id']}"
-                if not getattr(agent, "id", None):
-                    # A null (or empty) id in the stored step config makes the
-                    # workflow unreconstructable: created and listed, never loadable.
-                    return [], (
-                        f"Agent for step '{step_name}' ('{spec['agent_id']}') is code-defined with no id, "
-                        "so a stored step cannot name it. Set an explicit id on the agent."
-                    )
-                steps.append(Step(name=step_name, agent=agent, description=step_desc))
-            elif "team_id" in spec:
-                team = find_team(spec["team_id"])
-                if team is None:
-                    return [], f"Team not found for step '{step_name}': {spec['team_id']}"
-                if not getattr(team, "id", None):
-                    return [], (
-                        f"Team for step '{step_name}' ('{spec['team_id']}') is code-defined with no id, "
-                        "so a stored step cannot name it. Set an explicit id on the team."
-                    )
-                steps.append(Step(name=step_name, team=team, description=step_desc))
-            elif "function_name" in spec:
-                func = self.registry.get_function(spec["function_name"])
-                if func is None:
-                    return [], f"Function not found for step '{step_name}': {spec['function_name']}"
-                steps.append(Step(name=step_name, executor=func, description=step_desc))
-            else:
-                return [], f"Step '{step_name}' must specify agent_id, team_id, or function_name"
-        return steps, None
-
-    # Reference keys a lenient load drops when they cannot resolve (the three
-    # model keys are serialized but not yet consumed by from_dict); an edit
-    # that did not replace them must not persist the loss.
-    _LENIENT_DROPPABLE_KEYS = (
-        "tools",
-        "input_schema",
-        "output_schema",
-        "knowledge",
-        "reasoning_model",
-        "parser_model",
-        "output_model",
-    )
-
-    def _save_edit(
-        self,
-        component: Component,
-        replaced_keys: Optional[Set[str]] = None,
-        pinned_children: Optional[Dict[str, int]] = None,
-        base_version: Optional[int] = None,
-        guard: Optional["ComponentVersionGuard"] = None,
-    ) -> Dict[str, Any]:
-        """Persist an edited component.
-
-        With versioning enabled the edit is saved as a draft awaiting
-        publish_component; otherwise it is published immediately as the new
-        current version.
-
-        The edit round-trips through a leniently loaded object, so the config
-        written here keeps the stored value for any unresolvable reference the
-        load dropped (unless this edit replaced that key), and re-emits the
-        member/step links so the new version stays pinned.
-        """
-        config = _component_to_dict(component)
-        replaced = replaced_keys or set()
-        component_id = getattr(component, "id", None)
-        self._preserve_unresolved_keys(component_id, config, replaced, base_version)
-        if replaced & {"members", "steps"}:
-            # The edit replaced the composition: pin the new children at the
-            # exact versions the binder rebuilt them from.
-            links = self._links_for_component(component, pinned_versions=pinned_children)
+        from agno.agent.agent import Agent
+        from agno.team.team import Team
+        from agno.workflow.workflow import Workflow
+
+        if isinstance(component, Agent):
+            from agno.agent._storage import to_dict as agent_to_dict
+
+            config = agent_to_dict(component)
+        elif isinstance(component, Team):
+            from agno.team._storage import to_dict as team_to_dict
+
+            config = team_to_dict(component)
+        elif isinstance(component, Workflow):
+            config = component.to_dict()
         else:
-            # Untouched composition keeps the base version's pins verbatim,
-            # including link kinds this walk does not reconstruct.
-            links = self._base_links(component_id, base_version)
-        if self.enable_versions:
-            version = self._upsert_draft(component, config=config, links=links, guard=guard)
-            return {"draft_version": version, "stage": "draft"}
-        version = _persist_only(component, self.db, config=config, links=links)
-        return {"version": version, "stage": "published"}
+            raise TypeError(f"Unsupported component type: {type(component).__name__}")
+        config.pop("db", None)
+        return StudioTools._attach_manifest(config, request)
 
-    def _preserve_unresolved_keys(
-        self,
-        component_id: Optional[str],
-        config: Dict[str, Any],
-        replaced_keys: Set[str],
-        base_version: Optional[int],
-    ) -> None:
-        """Copy stored reference keys the lenient load dropped back into ``config``."""
-        if self.db is None or component_id is None:
-            return
-        base = self._runner_tools._load_config_from_db(component_id, version=base_version)
-        if not isinstance(base, dict):
-            raise ValueError(
-                f"Cannot edit '{component_id}': its stored config could not be read, so an edit would drop "
-                "whatever the rebuild does not carry back."
+    @staticmethod
+    def _component_type(component: Component) -> "ComponentType":
+        from agno.agent.agent import Agent
+        from agno.db.base import ComponentType
+        from agno.team.team import Team
+        from agno.workflow.workflow import Workflow
+
+        if isinstance(component, Agent):
+            return ComponentType.AGENT
+        if isinstance(component, Team):
+            return ComponentType.TEAM
+        if isinstance(component, Workflow):
+            return ComponentType.WORKFLOW
+        raise TypeError(f"Unsupported component type: {type(component).__name__}")
+
+    @staticmethod
+    def _manifest_request(config: Dict[str, Any]) -> Dict[str, Any]:
+        manifest = config.get(_STUDIO_CONFIG_KEY)
+        if not isinstance(manifest, dict) or manifest.get("schema_version") != _STUDIO_SCHEMA_VERSION:
+            raise _StudioRequestError(
+                "unsupported_component_config",
+                "This component is not owned by the typed Studio 2.9 contract and cannot be mutated safely.",
             )
-        # The db reference and untouched composition subtrees are
-        # base-authoritative: no edit surface changes them, the runtime object
-        # cannot improve on them, and re-serializing them churns identity
-        # (fresh step_ids would orphan every carried-forward pin).
-        for key in ("db", "model", "steps", "members"):
-            if key in replaced_keys:
-                continue
-            config.pop(key, None)
-            if key in base:
-                config[key] = base[key]
-        for key in self._LENIENT_DROPPABLE_KEYS:
-            if key in replaced_keys:
-                continue
-            if key in base and base.get(key) is not None and config.get(key) is None:
-                config[key] = base[key]
-                log_debug(f"StudioTools: preserving stored '{key}' the lenient load could not resolve.")
+        request = manifest.get("request")
+        if not isinstance(request, dict):
+            raise _StudioRequestError("invalid_component_config", "The Studio request manifest is invalid.")
+        return request
 
-    def _base_links(self, component_id: Optional[str], base_version: Optional[int]) -> Optional[List[Dict[str, Any]]]:
-        """The base version's links, carried forward verbatim on an edit that
-        did not replace the component's composition."""
-        if self.db is None or component_id is None:
-            return None
-        return self._runner_tools._load_links_from_db(component_id, version=base_version)
+    @staticmethod
+    def _projection(request: Any, metadata: Dict[str, Any]) -> "ComponentProjection":
+        return cast(
+            "ComponentProjection",
+            {
+                "name": request.name,
+                "description": request.description,
+                "metadata": metadata,
+            },
+        )
 
-    def _links_for_component(
+    @staticmethod
+    def _projected_component_state(
+        component: Dict[str, Any],
+        request: Any,
+        metadata: Dict[str, Any],
+        *,
+        current_version: int,
+    ) -> Dict[str, Any]:
+        """Return the component row state committed with a pointer mutation.
+
+        The database mutation already applied these projection values in one
+        transaction. Building the response from that committed input avoids a
+        public re-read that could observe a later archive and falsely report
+        that the successful mutation failed.
+        """
+        projected = dict(component)
+        projected.update(
+            {
+                "name": request.name,
+                "description": request.description,
+                "metadata": metadata,
+                "current_version": current_version,
+            }
+        )
+        return projected
+
+    def _build_agent(
+        self,
+        request: AgentCreate,
+        metadata: Dict[str, Any],
+    ) -> tuple["Agent", AgentCreate]:
+        from agno.agent.agent import Agent
+
+        if request.component_id is None:
+            raise _StudioRequestError("component_id_required", "The effective agent request has no component_id.")
+        model, model_ref = self._resolve_model(request.model)
+        context = self._resolve_context(request.context)
+        tools = self._resolve_tools(request.tools)
+        effective = request.model_copy(
+            update={
+                "component_id": request.component_id,
+                "model": model_ref,
+                "context": context,
+            }
+        )
+        agent = Agent(
+            id=request.component_id,
+            name=request.name,
+            instructions=request.instructions,
+            description=request.description,
+            model=model,
+            tools=tools or None,
+            db=self.db,
+            metadata=metadata,
+            add_history_to_context=context.include_history,
+            num_history_runs=context.history_runs,
+            add_datetime_to_context=context.include_datetime,
+        )
+        return agent, effective
+
+    def _build_team(
+        self,
+        request: TeamCreate,
+        metadata: Dict[str, Any],
+    ) -> tuple["Team", TeamCreate, List[Dict[str, Any]], List[str], List[_ResolvedRef]]:
+        from agno.team.team import Team
+
+        if request.component_id is None:
+            raise _StudioRequestError("component_id_required", "The effective team request has no component_id.")
+        model, model_ref = self._resolve_model(request.model)
+        context = self._resolve_context(request.context)
+        resolved_refs = [
+            self._resolve_component_ref(
+                ref,
+                link_kind="member",
+                link_key=f"member_{position}",
+                position=position,
+            )
+            for position, ref in enumerate(request.members)
+        ]
+        links = [cast(Dict[str, Any], resolved.link) for resolved in resolved_refs if resolved.link is not None]
+        self._assert_no_cycle(request.component_id, links)
+        warnings = [
+            f"Draft references code-defined component '{resolved.ref.component_id}'; persist and pin it before publication."
+            for resolved in resolved_refs
+            if resolved.code_defined
+        ]
+        effective = request.model_copy(
+            update={
+                "component_id": request.component_id,
+                "model": model_ref,
+                "context": context,
+                "members": [resolved.ref for resolved in resolved_refs],
+            }
+        )
+        team = Team(
+            id=request.component_id,
+            name=request.name,
+            instructions=request.instructions,
+            description=request.description,
+            model=model,
+            members=[cast(TeamMember, resolved.component) for resolved in resolved_refs],
+            db=self.db,
+            metadata=metadata,
+            add_history_to_context=context.include_history,
+            num_history_runs=context.history_runs,
+            add_datetime_to_context=context.include_datetime,
+        )
+        return team, effective, links, warnings, resolved_refs
+
+    def _build_workflow(
+        self,
+        request: WorkflowCreate,
+        metadata: Dict[str, Any],
+    ) -> tuple["Workflow", WorkflowCreate, List[Dict[str, Any]], List[str], List[_ResolvedRef]]:
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import Workflow
+
+        if request.component_id is None:
+            raise _StudioRequestError("component_id_required", "The effective workflow request has no component_id.")
+        steps: List[Step] = []
+        effective_steps: List[WorkflowStep] = []
+        links: List[Dict[str, Any]] = []
+        warnings: List[str] = []
+        component_refs: List[_ResolvedRef] = []
+        seen_step_ids: set[str] = set()
+
+        for position, spec in enumerate(request.steps):
+            step_id = spec.step_id or f"{_slugify(spec.name)}-{position + 1}"
+            if step_id in seen_step_ids:
+                raise _StudioRequestError("duplicate_step_id", f"Workflow step_id '{step_id}' is duplicated.")
+            seen_step_ids.add(step_id)
+
+            if isinstance(spec, AgentWorkflowStep):
+                resolved = self._resolve_component_ref(
+                    ComponentRef(component_type="agent", component_id=spec.component_id, version=spec.version),
+                    link_kind="step_agent",
+                    link_key=step_id,
+                    position=position,
+                )
+                step = Step(
+                    name=spec.name,
+                    step_id=step_id,
+                    agent=cast("Agent", resolved.component),
+                    description=spec.description,
+                )
+                effective_spec: WorkflowStep = spec.model_copy(
+                    update={"step_id": step_id, "version": resolved.ref.version}
+                )
+                component_refs.append(resolved)
+            elif isinstance(spec, TeamWorkflowStep):
+                resolved = self._resolve_component_ref(
+                    ComponentRef(component_type="team", component_id=spec.component_id, version=spec.version),
+                    link_kind="step_team",
+                    link_key=step_id,
+                    position=position,
+                )
+                step = Step(
+                    name=spec.name,
+                    step_id=step_id,
+                    team=cast("Team", resolved.component),
+                    description=spec.description,
+                )
+                effective_spec = spec.model_copy(update={"step_id": step_id, "version": resolved.ref.version})
+                component_refs.append(resolved)
+            elif isinstance(spec, FunctionWorkflowStep):
+                matches = [
+                    function
+                    for function in self.registry.functions
+                    if getattr(function, "__name__", None) == spec.function_name
+                ]
+                if not matches:
+                    raise _StudioRequestError(
+                        "function_not_found",
+                        f"Workflow function '{spec.function_name}' is not registered.",
+                    )
+                if len(matches) > 1:
+                    raise _StudioRequestError(
+                        "ambiguous_function",
+                        f"Multiple workflow functions are named '{spec.function_name}'.",
+                    )
+                step = Step(
+                    name=spec.name,
+                    step_id=step_id,
+                    executor=matches[0],
+                    description=spec.description,
+                )
+                effective_spec = spec.model_copy(update={"step_id": step_id})
+            else:  # pragma: no cover - Pydantic's discriminator makes this unreachable
+                raise _StudioRequestError("invalid_workflow_step", "Unsupported workflow step kind.")
+
+            if (
+                component_refs
+                and component_refs[-1].link is not None
+                and isinstance(spec, (AgentWorkflowStep, TeamWorkflowStep))
+            ):
+                links.append(cast(Dict[str, Any], component_refs[-1].link))
+            if (
+                component_refs
+                and component_refs[-1].code_defined
+                and isinstance(spec, (AgentWorkflowStep, TeamWorkflowStep))
+            ):
+                warnings.append(
+                    f"Draft references code-defined component '{component_refs[-1].ref.component_id}'; persist and pin it before publication."
+                )
+            steps.append(step)
+            effective_steps.append(effective_spec)
+
+        self._assert_no_cycle(request.component_id, links)
+        effective = request.model_copy(update={"component_id": request.component_id, "steps": effective_steps})
+        workflow = Workflow(
+            id=request.component_id,
+            name=request.name,
+            description=request.description,
+            steps=cast(Any, steps),
+            db=self.db,
+            metadata=metadata,
+        )
+        return workflow, effective, links, warnings, component_refs
+
+    @staticmethod
+    def _normalized_request(request: Any) -> Dict[str, Any]:
+        return request.model_dump(mode="json", exclude={"if_exists"})
+
+    def _latest_config(self, component_id: str) -> Optional[Dict[str, Any]]:
+        return self.db.get_latest_config(component_id)
+
+    def _existing_create_result(
+        self,
+        component_type: str,
+        request: Any,
+        save_as: SaveStage,
+        if_exists: IfExists,
+    ) -> Optional[StudioResult[Any]]:
+        from agno.db.base import ComponentType
+
+        code_component_types = [
+            candidate_type
+            for candidate_type, candidates in (
+                ("agent", self._iter_agents()),
+                ("team", self._iter_teams()),
+                ("workflow", self._iter_workflows()),
+            )
+            if any(getattr(candidate, "id", None) == request.component_id for candidate in candidates)
+        ]
+        if code_component_types:
+            raise _StudioRequestError(
+                "component_conflict",
+                f"Component id '{request.component_id}' is reserved by a code-defined component.",
+                details={"code_component_types": code_component_types},
+            )
+
+        row = self.db.get_component(
+            request.component_id,
+            component_type=ComponentType(component_type),
+            include_deleted=True,
+        )
+        if row is None:
+            # An id occupied by another type must still conflict because the DB
+            # component namespace is global.
+            other = self.db.get_component(request.component_id, include_deleted=True)
+            if other is None:
+                return None
+            raise _StudioRequestError(
+                "component_conflict",
+                f"Component id '{request.component_id}' is already used by a {other.get('component_type')}.",
+            )
+        if row.get("deleted_at") is not None:
+            raise _StudioRequestError(
+                "component_archived",
+                f"Component id '{request.component_id}' is archived and remains reserved.",
+            )
+        if if_exists == "error":
+            raise _StudioRequestError(
+                "component_conflict",
+                f"Component id '{request.component_id}' already exists.",
+            )
+        latest = self._latest_config(request.component_id)
+        if latest is None or latest.get("stage") != save_as:
+            raise _StudioRequestError(
+                "component_conflict",
+                "The existing component does not have the requested lifecycle stage.",
+            )
+        config = latest.get("config")
+        if not isinstance(config, dict):
+            raise _StudioRequestError("invalid_component_config", "The existing component config is invalid.")
+        stored = self._manifest_request(config)
+        if stored != self._normalized_request(request):
+            raise _StudioRequestError(
+                "component_conflict",
+                "The existing component has a different effective configuration.",
+            )
+        if save_as == "published":
+            if row.get("current_version") != latest.get("version"):
+                raise _StudioRequestError(
+                    "component_conflict",
+                    "The identical published configuration exists but is not the current version.",
+                )
+            existing_request = self._request_from_config_row(component_type, latest)
+            self._validate_publishability(
+                component_type,
+                cast(str, request.component_id),
+                cast(int, latest["version"]),
+                existing_request,
+            )
+        return self._success("existing", self._view_from_record(row, latest))
+
+    def _create_component(
         self,
         component: Component,
-        db: Optional["BaseDb"] = None,
-        pinned_versions: Optional[Dict[str, int]] = None,
-    ) -> Optional[List[Dict[str, Any]]]:
-        """Member/step links for a component snapshot, pinned at each child's
-        current stored version in the SAME db the snapshot is written to.
+        request: Any,
+        save_as: SaveStage,
+        links: Sequence[Dict[str, Any]],
+        warnings: List[str],
+        resolved_refs: Sequence[_ResolvedRef],
+        if_exists: IfExists,
+    ) -> StudioResult[Any]:
+        from agno.db.base import ComponentAlreadyExistsError
 
-        The persist paths do not cascade-save, so children are not re-saved. A
-        child gets no link when it has no stored version in that db, or when a
-        code-defined component claims its exact id: resolution prefers the live
-        object there, and pinning the same-id db row would bind an unrelated
-        shadow.
-        """
+        config = self._serialize_component(component, request)
+        if save_as == "published":
+            self._validate_immediate_publishability(
+                component,
+                self._component_type(component).value,
+                request,
+                resolved_refs,
+            )
+        existing = self._existing_create_result(
+            self._component_type(component).value,
+            request,
+            save_as,
+            if_exists,
+        )
+        if existing is not None:
+            return existing
+
+        try:
+            row, config_row = self.db.create_component_with_config(
+                component_id=request.component_id,
+                component_type=self._component_type(component),
+                name=request.name,
+                description=request.description,
+                metadata=getattr(component, "metadata", None),
+                config=config,
+                stage=save_as,
+                links=list(links) or None,
+            )
+        except ComponentAlreadyExistsError:
+            # The losing side of a concurrent retry re-runs the exact same
+            # typed comparison; a different request remains a conflict.
+            existing = self._existing_create_result(
+                self._component_type(component).value,
+                request,
+                save_as,
+                if_exists,
+            )
+            if existing is not None:
+                return existing
+            raise
+        return self._success("created", self._view_from_record(row, config_row), warnings)
+
+    # ------------------------------------------------------------------
+    # Safe typed projections
+    # ------------------------------------------------------------------
+
+    def _view_from_record(self, component: Dict[str, Any], config_row: Dict[str, Any]) -> ComponentView:
+        config = config_row.get("config")
+        if not isinstance(config, dict):
+            raise _StudioRequestError("invalid_component_config", "The stored component config is invalid.")
+        request_data = self._manifest_request(config)
+        component_type = component.get("component_type")
+        version = config_row.get("version")
+        stage = cast(Literal["draft", "published"], config_row.get("stage"))
+        is_current = component.get("current_version") == version
+
+        if component_type == "agent":
+            agent_request = AgentCreate.model_validate(request_data)
+            if agent_request.model is None or agent_request.context is None:
+                raise _StudioRequestError("invalid_component_config", "The stored agent manifest is unresolved.")
+            return AgentView(
+                component_id=cast(str, agent_request.component_id),
+                name=agent_request.name,
+                instructions=agent_request.instructions,
+                description=agent_request.description,
+                model=agent_request.model,
+                tools=agent_request.tools,
+                context=agent_request.context,
+                version=version,
+                stage=stage,
+                is_current=is_current,
+                source="studio",
+            )
+        if component_type == "team":
+            team_request = TeamCreate.model_validate(request_data)
+            if team_request.model is None or team_request.context is None:
+                raise _StudioRequestError("invalid_component_config", "The stored team manifest is unresolved.")
+            return TeamView(
+                component_id=cast(str, team_request.component_id),
+                name=team_request.name,
+                instructions=team_request.instructions,
+                description=team_request.description,
+                model=team_request.model,
+                members=team_request.members,
+                context=team_request.context,
+                version=version,
+                stage=stage,
+                is_current=is_current,
+                source="studio",
+            )
+        if component_type == "workflow":
+            workflow_request = WorkflowCreate.model_validate(request_data)
+            return WorkflowView(
+                component_id=cast(str, workflow_request.component_id),
+                name=workflow_request.name,
+                description=workflow_request.description,
+                steps=workflow_request.steps,
+                version=version,
+                stage=stage,
+                is_current=is_current,
+                source="studio",
+            )
+        raise _StudioRequestError("invalid_component_type", "The stored component type is invalid.")
+
+    def _view_for_version(self, component_id: str, version: Optional[int]) -> ComponentView:
+        component = self.db.get_component(component_id)
+        if component is None:
+            raise _StudioRequestError("component_not_found", f"Component '{component_id}' was not found.")
+        self._ensure_component_type_enabled(cast(str, component.get("component_type")))
+        config = (
+            self.db.get_current_config(component_id)
+            if version is None
+            else self.db.get_config(component_id, version=version)
+        )
+        if config is None:
+            if version is None:
+                raise _StudioRequestError(
+                    "published_version_not_found",
+                    f"Component '{component_id}' has no current published version.",
+                )
+            raise _StudioRequestError(
+                "version_not_found",
+                f"Version {version} was not found for component '{component_id}'.",
+            )
+        return self._view_from_record(component, config)
+
+    def _summary_from_db_row(self, row: Dict[str, Any], latest: Optional[Dict[str, Any]]) -> ComponentSummary:
+        component_id = cast(str, row["component_id"])
+        component_type = cast(Literal["agent", "team", "workflow"], row.get("component_type"))
+        if latest is None:
+            raise _StudioRequestError(
+                "invalid_component_config",
+                f"Component '{component_id}' has no stored configuration.",
+            )
+        latest_version = latest.get("version")
+        latest_stage = latest.get("stage")
+        if not isinstance(latest_version, int) or latest_stage not in ("draft", "published"):
+            raise _StudioRequestError(
+                "invalid_component_config",
+                f"Component '{component_id}' has invalid latest-version metadata.",
+            )
+        latest_request = self._request_from_config_row(component_type, latest)
+        return ComponentSummary(
+            component_id=component_id,
+            component_type=component_type,
+            # Discovery follows the editable head. ``current_version`` is
+            # reported separately, so a draft rename must not be hidden behind
+            # the older published projection stored on the catalog row.
+            name=latest_request.name,
+            source="studio",
+            latest_version=latest_version,
+            latest_stage=cast(Literal["draft", "published"], latest_stage),
+            current_version=cast(Optional[int], row.get("current_version")),
+        )
+
+    @staticmethod
+    def _summary_from_code(component_type: str, component: Component, component_id: str) -> ComponentSummary:
+        return ComponentSummary(
+            component_id=component_id,
+            component_type=cast(Literal["agent", "team", "workflow"], component_type),
+            name=getattr(component, "name", None) or component_id,
+            source="code",
+            latest_version=None,
+            latest_stage="code",
+            current_version=None,
+        )
+
+    @staticmethod
+    def _tool_refs_from_component(tools: Any) -> List[ToolRef]:
+        if not tools or callable(tools):
+            return []
+        refs: List[ToolRef] = []
+        for tool in tools:
+            if isinstance(tool, Toolkit):
+                refs.append(ToolRef(kind="toolkit", name=tool.name))
+            elif isinstance(tool, Function):
+                toolkit = getattr(tool, "owning_toolkit", None)
+                refs.append(ToolRef(kind="function", name=tool.name, toolkit=toolkit))
+            elif callable(tool):
+                name = getattr(tool, "__name__", None)
+                if isinstance(name, str) and name:
+                    refs.append(ToolRef(kind="function", name=name))
+        return refs
+
+    @staticmethod
+    def _static_instructions(value: Any) -> str:
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list) and all(isinstance(item, str) for item in value):
+            return "\n".join(value)
+        return "Instructions are resolved dynamically at runtime."
+
+    def _code_agent_view(self, agent: "Agent") -> AgentView:
+        model = self._model_ref(getattr(agent, "model", None))
+        if model is None:
+            raise _StudioRequestError("model_not_found", "The code-defined agent has no inspectable model.")
+        return AgentView(
+            component_id=cast(str, agent.id),
+            name=agent.name or cast(str, agent.id),
+            instructions=self._static_instructions(agent.instructions),
+            description=agent.description,
+            model=model,
+            tools=self._tool_refs_from_component(agent.tools),
+            context=ContextPolicy(
+                include_history=bool(agent.add_history_to_context),
+                history_runs=agent.num_history_runs if agent.add_history_to_context else None,
+                include_datetime=bool(agent.add_datetime_to_context),
+            ),
+            version=None,
+            stage="code",
+            is_current=True,
+            source="code",
+        )
+
+    def _code_team_view(self, team: "Team") -> TeamView:
+        model = self._model_ref(getattr(team, "model", None))
+        if model is None:
+            raise _StudioRequestError("model_not_found", "The code-defined team has no inspectable model.")
+        members = team.members if isinstance(team.members, list) else []
+        refs: List[ComponentRef] = []
+        from agno.agent.agent import Agent
+
+        for member in members:
+            member_id = getattr(member, "id", None)
+            if not member_id:
+                continue
+            refs.append(
+                ComponentRef(
+                    component_type="agent" if isinstance(member, Agent) else "team",
+                    component_id=member_id,
+                )
+            )
+        return TeamView(
+            component_id=cast(str, team.id),
+            name=team.name or cast(str, team.id),
+            instructions=self._static_instructions(team.instructions),
+            description=team.description,
+            model=model,
+            members=refs,
+            context=ContextPolicy(
+                include_history=bool(team.add_history_to_context),
+                history_runs=team.num_history_runs if team.add_history_to_context else None,
+                include_datetime=bool(team.add_datetime_to_context),
+            ),
+            version=None,
+            stage="code",
+            is_current=True,
+            source="code",
+        )
+
+    def _code_workflow_view(self, workflow: "Workflow") -> WorkflowView:
+        from agno.agent.agent import Agent
         from agno.team.team import Team
         from agno.workflow.condition import Condition
         from agno.workflow.loop import Loop
         from agno.workflow.parallel import Parallel
         from agno.workflow.router import Router
-        from agno.workflow.step import Step
         from agno.workflow.steps import Steps
         from agno.workflow.workflow import Workflow
 
-        target_db = db if db is not None else self.db
-        if target_db is None:
-            return None
-
-        def code_defined(child_id: Optional[str], candidates: List[Any]) -> bool:
-            return any(getattr(candidate, "id", None) == child_id for candidate in candidates)
-
-        def current_version(child_id: Optional[str], expected_type: Optional[str] = None) -> Optional[int]:
-            if not child_id:
-                return None
-            if pinned_versions is not None and child_id in pinned_versions:
-                # The binder already selected this exact version; a fresh read
-                # could see a publish that happened since.
-                return pinned_versions[child_id]
-            if expected_type is not None:
-                from agno.db.base import ComponentType
-
-                try:
-                    if target_db.get_component(child_id, component_type=ComponentType(expected_type)) is None:
-                        # A same-id row of a different type is not this child.
-                        return None
-                except NotImplementedError:
-                    return None
-            try:
-                row = target_db.get_config(component_id=child_id)
-            except NotImplementedError:
-                return None
-            version = row.get("version") if isinstance(row, dict) else None
-            return version if isinstance(version, int) else None
-
-        links: List[Dict[str, Any]] = []
-        if isinstance(component, Team):
-            from agno.agent.agent import Agent
-
-            code_agents = list(self._iter_agents())
-            code_teams = list(self._iter_teams())
-            members = component.members if isinstance(component.members, list) else []
-            for position, member in enumerate(members):
-                member_id = getattr(member, "id", None)
-                is_member_team = isinstance(member, Team)
-                candidates = code_teams if is_member_team else code_agents
-                if code_defined(member_id, candidates):
-                    continue
-                child_version = current_version(member_id, "team" if is_member_team else "agent")
-                if child_version is None:
-                    continue
-                links.append(
-                    {
-                        "link_kind": "member",
-                        "link_key": f"member_{position}",
-                        "child_component_id": member.id,
-                        "child_version": child_version,
-                        "position": position,
-                        "meta": {"type": "agent" if isinstance(member, Agent) else "team"},
-                    }
-                )
-        elif isinstance(component, Workflow):
-            code_agents = list(self._iter_agents())
-            code_teams = list(self._iter_teams())
-
-            def walk(step: Any, position: int, key_suffix: str = "") -> None:
-                if isinstance(step, Step):
-                    for link in step.get_links(position=position):
-                        child_id = link.get("child_component_id")
-                        link_kind = link.get("link_kind")
-                        candidates: List[Any]
-                        if link_kind == "step_team":
-                            candidates = code_teams
-                            child_type = "team"
-                        elif link_kind == "step_workflow":
-                            candidates = list(self._iter_workflows())
-                            child_type = "workflow"
-                        else:
-                            candidates = code_agents
-                            child_type = "agent"
-                        if code_defined(child_id, candidates):
-                            continue
-                        child_version = current_version(child_id, child_type)
-                        if child_version is None:
-                            continue
-                        link["child_version"] = child_version
-                        if key_suffix:
-                            link["link_key"] = f"{link.get('link_key')}{key_suffix}"
-                        links.append(link)
-                elif isinstance(step, (Parallel, Loop, Steps, Condition)):
-                    for nested_position, nested in enumerate(getattr(step, "steps", None) or []):
-                        walk(nested, nested_position, key_suffix)
-                    for nested_position, nested in enumerate(getattr(step, "else_steps", None) or []):
-                        walk(nested, nested_position, key_suffix + "#else")
-                elif isinstance(step, Router):
-                    for nested_position, nested in enumerate(getattr(step, "choices", None) or []):
-                        walk(nested, nested_position, key_suffix)
-
-            steps = component.steps if isinstance(component.steps, list) else []
-            for position, step in enumerate(steps):
-                walk(step, position)
-            seen_links: Dict[tuple, Dict[str, Any]] = {}
-            deduped: List[Dict[str, Any]] = []
-            for link in links:
-                dedupe_key = (link.get("link_kind"), link.get("link_key"))
-                existing = seen_links.get(dedupe_key)
-                if existing is not None:
-                    if existing.get("child_component_id") == link.get("child_component_id"):
-                        continue
-                    raise ValueError(
-                        f"Workflow '{getattr(component, 'id', None)}' produces two different links "
-                        f"for key '{link.get('link_key')}' ('{existing.get('child_component_id')}' "
-                        f"and '{link.get('child_component_id')}'); give steps distinct names so "
-                        "every pin is kept."
-                    )
-                seen_links[dedupe_key] = link
-                deduped.append(link)
-            links = deduped
+        raw_steps = workflow.steps
+        if raw_steps is None:
+            workflow_steps: List[Any] = []
+        elif isinstance(raw_steps, list):
+            workflow_steps = raw_steps
         else:
-            return None
-        return links
-
-    def _upsert_draft(
-        self,
-        component: Component,
-        config: Optional[Dict[str, Any]] = None,
-        links: Optional[List[Dict[str, Any]]] = None,
-        guard: Optional["ComponentVersionGuard"] = None,
-    ) -> Optional[int]:
-        """Append an immutable draft using the component version observed by this edit.
-
-        The component row's name/description/metadata are NOT updated here --
-        draft-only changes must not leak into listings until the draft is
-        published.
-        """
-        if self.db is None:
-            raise ValueError("db is required for draft persistence")
-
-        component_id = getattr(component, "id", None)
-        if component_id is None:
-            raise ValueError("Component has no id")
-
-        catalog_v2 = getattr(self.db, "component_catalog_api_version", 1) >= 2
-        component_row = self.db.get_component(component_id)
-        if component_row is None:
-            if catalog_v2:
-                raise ValueError(f"Component not found: {component_id}")
-            self.db.upsert_component(
-                component_id=component_id,
-                component_type=_component_type(component),
-                name=getattr(component, "name", component_id),
-                description=getattr(component, "description", None),
-                metadata=getattr(component, "metadata", None),
+            raise _StudioRequestError(
+                "unsupported_workflow_shape",
+                f"Code-defined workflow '{workflow.id}' uses an unrepresentable {type(raw_steps).__name__} "
+                "steps container; Studio refuses to return a lossy view.",
             )
 
-        if not catalog_v2:
-            result = self.db.upsert_config(
-                component_id=component_id,
-                version=self._latest_draft_version(component_id),
-                config=config if config is not None else _component_to_dict(component),
-                stage="draft",
-                links=links,
+        steps: List[WorkflowStep] = []
+        composite_types = (Parallel, Loop, Condition, Router, Steps)
+        for position, step in enumerate(workflow_steps):
+            if isinstance(step, composite_types):
+                raise _StudioRequestError(
+                    "unsupported_workflow_shape",
+                    f"Code-defined workflow '{workflow.id}' contains {type(step).__name__} at position "
+                    f"{position + 1}; Studio refuses to return a view that drops composite branches.",
+                )
+            step_name = getattr(step, "name", None) or f"Step {position + 1}"
+            step_id = getattr(step, "step_id", None)
+            description = getattr(step, "description", None)
+            agent = step if isinstance(step, Agent) else getattr(step, "agent", None)
+            team = step if isinstance(step, Team) else getattr(step, "team", None)
+            agent_id = getattr(agent, "id", None)
+            team_id = getattr(team, "id", None)
+            executor = (
+                step
+                if callable(step) and not isinstance(step, (Agent, Team, Workflow))
+                else getattr(step, "executor", None)
             )
-            return result.get("version")
-
-        if guard is None:
-            raise ValueError("A catalog-v2 draft append requires a component version guard")
-
-        result = self.db.upsert_config(
-            component_id=component_id,
-            config=config if config is not None else _component_to_dict(component),
-            stage="draft",
-            links=links,
-            guard=guard,
+            if isinstance(agent_id, str) and agent_id:
+                steps.append(
+                    AgentWorkflowStep(
+                        kind="agent",
+                        name=step_name,
+                        step_id=step_id,
+                        component_id=agent_id,
+                        description=description,
+                    )
+                )
+            elif isinstance(team_id, str) and team_id:
+                steps.append(
+                    TeamWorkflowStep(
+                        kind="team",
+                        name=step_name,
+                        step_id=step_id,
+                        component_id=team_id,
+                        description=description,
+                    )
+                )
+            elif executor is not None and (getattr(executor, "__name__", None) or getattr(executor, "name", None)):
+                steps.append(
+                    FunctionWorkflowStep(
+                        kind="function",
+                        name=step_name,
+                        step_id=step_id,
+                        function_name=getattr(executor, "__name__", None) or executor.name,
+                        description=description,
+                    )
+                )
+            else:
+                raise _StudioRequestError(
+                    "unsupported_workflow_shape",
+                    f"Code-defined workflow '{workflow.id}' has an unrepresentable {type(step).__name__} at "
+                    f"position {position + 1}; Studio refuses to return a lossy view.",
+                )
+        return WorkflowView(
+            component_id=cast(str, workflow.id),
+            name=workflow.name or cast(str, workflow.id),
+            description=workflow.description,
+            steps=steps,
+            version=None,
+            stage="code",
+            is_current=True,
+            source="code",
         )
-        return result.get("version")
 
-    def _sync_component_row(self, component_id: str, version: Optional[int]) -> None:
-        """Sync legacy catalog-v1 projections after a publication."""
-        if self.db is None:
-            return
+    @staticmethod
+    def _storage_failure(error: Exception) -> Optional[StudioResult[Any]]:
+        from agno.db.base import (
+            ComponentAlreadyExistsError,
+            ComponentCycleError,
+            ComponentDependencyError,
+            ComponentDependencyUnavailableError,
+            ComponentDraftRequiredError,
+            ComponentLastConfigError,
+            ComponentVersionConflictError,
+        )
+
+        if isinstance(error, ComponentAlreadyExistsError):
+            return StudioTools._failure("component_conflict", str(error))
+        if isinstance(error, ComponentCycleError):
+            return StudioTools._failure(
+                "component_cycle",
+                str(error),
+                details={"component_id": error.component_id, "cycle_path": error.cycle_path},
+            )
+        if isinstance(error, ComponentVersionConflictError):
+            return StudioTools._failure(
+                "version_conflict",
+                str(error),
+                details={"expected": error.expected, "actual": error.actual},
+                retryable=True,
+            )
+        if isinstance(error, ComponentDependencyError):
+            return StudioTools._failure(
+                "component_has_dependents",
+                str(error),
+                details={"dependents": StudioTools._safe_dependents(error.dependents)},
+            )
+        if isinstance(error, ComponentDependencyUnavailableError):
+            return StudioTools._failure(
+                "component_dependency_unavailable",
+                str(error),
+                details={
+                    "component_id": error.component_id,
+                    "dependencies": StudioTools._safe_unavailable_dependencies(error.dependencies),
+                },
+            )
+        if isinstance(error, ComponentDraftRequiredError):
+            return StudioTools._failure(
+                "draft_required",
+                str(error),
+                details={"component_id": error.component_id, "version": error.version},
+            )
+        if isinstance(error, ComponentLastConfigError):
+            return StudioTools._failure(
+                "last_config_required",
+                str(error),
+                details={"component_id": error.component_id, "version": error.version},
+            )
+        return None
+
+    # ------------------------------------------------------------------
+    # Typed discovery and reads
+    # ------------------------------------------------------------------
+
+    def list_models(self, _agno_run_context: Optional[RunContext] = None) -> StudioResult[List[ModelRef]]:
+        """List exact model references available for Studio requests."""
+        denied = self._authorize("list_models", "read", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[List[ModelRef]], denied)
+        try:
+            refs = [ref for model in self.registry.models if (ref := self._model_ref(model)) is not None]
+            return StudioResult[List[ModelRef]](ok=True, status="listed", data=refs)
+        except Exception:
+            return cast(StudioResult[List[ModelRef]], self._internal_failure("list models"))
+
+    def list_tools(self, _agno_run_context: Optional[RunContext] = None) -> StudioResult[List[ToolRef]]:
+        """List copyable toolkit and function references available for agents."""
+        denied = self._authorize("list_tools", "read", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[List[ToolRef]], denied)
+        try:
+            return StudioResult[List[ToolRef]](
+                ok=True,
+                status="listed",
+                data=[ref for ref, _ in self._tool_catalog()],
+            )
+        except Exception:
+            return cast(StudioResult[List[ToolRef]], self._internal_failure("list tools"))
+
+    def list_functions(self, _agno_run_context: Optional[RunContext] = None) -> StudioResult[List[FunctionRef]]:
+        """List exact registered functions available for workflow steps."""
+        denied = self._authorize("list_functions", "read", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[List[FunctionRef]], denied)
+        try:
+            refs = [
+                FunctionRef(
+                    name=getattr(function, "__name__", "anonymous"),
+                    description=inspect.getdoc(function),
+                )
+                for function in self.registry.functions
+            ]
+            return StudioResult[List[FunctionRef]](ok=True, status="listed", data=refs)
+        except Exception:
+            return cast(StudioResult[List[FunctionRef]], self._internal_failure("list functions"))
+
+    def _list_components(
+        self,
+        component_type: Literal["agent", "team", "workflow"],
+        code_components: Sequence[Component],
+    ) -> tuple[List[ComponentSummary], List[str]]:
         from agno.db.base import ComponentType
 
-        component = self.db.get_component(component_id)
-        row = self.db.get_config(component_id=component_id, version=version)
-        config = row.get("config") if isinstance(row, dict) else None
-        if component is None or not isinstance(config, dict):
-            return
-        self.db.upsert_component(
+        result: List[ComponentSummary] = []
+        code_ids: set[str] = set()
+        skipped_code = 0
+        for component in code_components:
+            try:
+                component_id = self._validate_component_id(getattr(component, "id", None))
+                summary = self._summary_from_code(component_type, component, component_id)
+            except Exception:
+                skipped_code += 1
+                logger.warning("Studio skipped an invalid code-defined %s during discovery", component_type)
+                continue
+            code_ids.add(component_id)
+            result.append(summary)
+
+        if code_ids:
+            stored_code_rows = self.db.get_components(
+                component_ids=code_ids,
+                include_deleted=True,
+            )
+            if not isinstance(stored_code_rows, list):
+                raise TypeError("Component catalog returned an invalid bulk component result")
+            for stored in stored_code_rows:
+                if not isinstance(stored, dict):
+                    raise TypeError("Component catalog returned an invalid bulk component row")
+                stored_component_id = stored.get("component_id")
+                if not isinstance(stored_component_id, str) or stored_component_id not in code_ids:
+                    raise TypeError("Component catalog returned an unexpected bulk component row")
+                self._raise_source_collision(stored_component_id, stored, [component_type])
+
+        rows, _ = self.db.list_components(
+            component_type=ComponentType(component_type),
+            limit=self.list_limit,
+        )
+        valid_rows: List[tuple[str, Dict[str, Any]]] = []
+        skipped_stored = 0
+        for row in rows:
+            try:
+                if not isinstance(row, dict):
+                    raise TypeError("component row is not an object")
+                component_id = row["component_id"]
+                if not isinstance(component_id, str):
+                    raise TypeError("component_id is not a string")
+            except (KeyError, TypeError):
+                skipped_stored += 1
+                logger.warning("Studio skipped an invalid stored %s row during discovery", component_type)
+                continue
+            valid_rows.append((component_id, row))
+
+        requested_config_ids = {component_id for component_id, _ in valid_rows}
+        latest_by_component = self.db.get_latest_configs(
+            component_ids=requested_config_ids,
+            include_deleted=False,
+        )
+        if not isinstance(latest_by_component, dict):
+            raise TypeError("Component catalog returned an invalid bulk latest-config result")
+        if set(latest_by_component) != requested_config_ids:
+            raise TypeError("Component catalog returned an incomplete bulk latest-config result")
+
+        for component_id, row in valid_rows:
+            try:
+                latest = latest_by_component.get(component_id)
+                if latest is not None and not isinstance(latest, dict):
+                    raise TypeError("latest config row is not an object")
+                result.append(self._summary_from_db_row(row, latest))
+            except (_StudioRequestError, KeyError, TypeError, ValueError):
+                skipped_stored += 1
+                logger.warning("Studio skipped an invalid stored %s row during discovery", component_type)
+
+        warnings = []
+        if skipped_code:
+            warnings.append(f"Skipped {skipped_code} invalid code-defined {component_type}(s) during discovery.")
+        if skipped_stored:
+            warnings.append(f"Skipped {skipped_stored} invalid stored {component_type} row(s) during discovery.")
+        return result, warnings
+
+    def list_agents(self, _agno_run_context: Optional[RunContext] = None) -> StudioResult[List[ComponentSummary]]:
+        """List code-defined and Studio-created agent summaries."""
+        denied = self._authorize("list_agents", "read", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[List[ComponentSummary]], denied)
+        try:
+            self._ensure_component_type_enabled("agent")
+            data, warnings = self._list_components("agent", self._iter_agents())
+            return StudioResult[List[ComponentSummary]](
+                ok=True,
+                status="listed",
+                data=data,
+                warnings=warnings,
+            )
+        except _StudioRequestError as error:
+            return cast(StudioResult[List[ComponentSummary]], self._request_failure(error))
+        except Exception:
+            return cast(StudioResult[List[ComponentSummary]], self._internal_failure("list agents"))
+
+    def list_teams(self, _agno_run_context: Optional[RunContext] = None) -> StudioResult[List[ComponentSummary]]:
+        """List code-defined and Studio-created team summaries."""
+        denied = self._authorize("list_teams", "read", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[List[ComponentSummary]], denied)
+        try:
+            self._ensure_component_type_enabled("team")
+            data, warnings = self._list_components("team", self._iter_teams())
+            return StudioResult[List[ComponentSummary]](
+                ok=True,
+                status="listed",
+                data=data,
+                warnings=warnings,
+            )
+        except _StudioRequestError as error:
+            return cast(StudioResult[List[ComponentSummary]], self._request_failure(error))
+        except Exception:
+            return cast(StudioResult[List[ComponentSummary]], self._internal_failure("list teams"))
+
+    def list_workflows(self, _agno_run_context: Optional[RunContext] = None) -> StudioResult[List[ComponentSummary]]:
+        """List code-defined and Studio-created workflow summaries."""
+        denied = self._authorize("list_workflows", "read", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[List[ComponentSummary]], denied)
+        try:
+            self._ensure_component_type_enabled("workflow")
+            data, warnings = self._list_components("workflow", self._iter_workflows())
+            return StudioResult[List[ComponentSummary]](
+                ok=True,
+                status="listed",
+                data=data,
+                warnings=warnings,
+            )
+        except _StudioRequestError as error:
+            return cast(StudioResult[List[ComponentSummary]], self._request_failure(error))
+        except Exception:
+            return cast(StudioResult[List[ComponentSummary]], self._internal_failure("list workflows"))
+
+    def get_agent(
+        self,
+        component_id: str,
+        version: Optional[int] = None,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[AgentView]:
+        """Get an agent by exact component id and optional config version.
+
+        Args:
+            component_id: Exact agent id returned by Studio discovery.
+            version: Exact stored version, or omit to read the current
+                published version (or the live code-defined agent).
+        """
+        denied = self._authorize("get_agent", "read", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[AgentView], denied)
+        try:
+            self._ensure_component_type_enabled("agent")
+            self._ensure_no_source_collision(component_id, "agent")
+            if self._db_component("agent", component_id) is not None:
+                view = self._view_for_version(component_id, version)
+                if not isinstance(view, AgentView):
+                    raise _StudioRequestError("component_type_mismatch", "The component is not an agent.")
+                return StudioResult[AgentView](ok=True, status="found", data=view)
+            if version is not None:
+                raise _StudioRequestError("component_not_found", f"Agent '{component_id}' was not found.")
+            code = self._code_component("agent", component_id)
+            if code is None:
+                raise _StudioRequestError("component_not_found", f"Agent '{component_id}' was not found.")
+            return StudioResult[AgentView](ok=True, status="found", data=self._code_agent_view(cast("Agent", code)))
+        except _StudioRequestError as error:
+            return cast(StudioResult[AgentView], self._request_failure(error))
+        except Exception:
+            return cast(StudioResult[AgentView], self._internal_failure("get agent"))
+
+    def get_team(
+        self,
+        component_id: str,
+        version: Optional[int] = None,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[TeamView]:
+        """Get a team by exact component id and optional config version.
+
+        Args:
+            component_id: Exact team id returned by Studio discovery.
+            version: Exact stored version, or omit to read the current
+                published version (or the live code-defined team).
+        """
+        denied = self._authorize("get_team", "read", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[TeamView], denied)
+        try:
+            self._ensure_component_type_enabled("team")
+            self._ensure_no_source_collision(component_id, "team")
+            if self._db_component("team", component_id) is not None:
+                view = self._view_for_version(component_id, version)
+                if not isinstance(view, TeamView):
+                    raise _StudioRequestError("component_type_mismatch", "The component is not a team.")
+                return StudioResult[TeamView](ok=True, status="found", data=view)
+            if version is not None:
+                raise _StudioRequestError("component_not_found", f"Team '{component_id}' was not found.")
+            code = self._code_component("team", component_id)
+            if code is None:
+                raise _StudioRequestError("component_not_found", f"Team '{component_id}' was not found.")
+            return StudioResult[TeamView](ok=True, status="found", data=self._code_team_view(cast("Team", code)))
+        except _StudioRequestError as error:
+            return cast(StudioResult[TeamView], self._request_failure(error))
+        except Exception:
+            return cast(StudioResult[TeamView], self._internal_failure("get team"))
+
+    def get_workflow(
+        self,
+        component_id: str,
+        version: Optional[int] = None,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[WorkflowView]:
+        """Get a workflow by exact component id and optional config version.
+
+        Args:
+            component_id: Exact workflow id returned by Studio discovery.
+            version: Exact stored version, or omit to read the current
+                published version (or the live code-defined workflow).
+        """
+        denied = self._authorize("get_workflow", "read", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[WorkflowView], denied)
+        try:
+            self._ensure_component_type_enabled("workflow")
+            self._ensure_no_source_collision(component_id, "workflow")
+            if self._db_component("workflow", component_id) is not None:
+                view = self._view_for_version(component_id, version)
+                if not isinstance(view, WorkflowView):
+                    raise _StudioRequestError("component_type_mismatch", "The component is not a workflow.")
+                return StudioResult[WorkflowView](ok=True, status="found", data=view)
+            if version is not None:
+                raise _StudioRequestError("component_not_found", f"Workflow '{component_id}' was not found.")
+            code = self._code_component("workflow", component_id)
+            if code is None:
+                raise _StudioRequestError("component_not_found", f"Workflow '{component_id}' was not found.")
+            return StudioResult[WorkflowView](
+                ok=True,
+                status="found",
+                data=self._code_workflow_view(cast("Workflow", code)),
+            )
+        except _StudioRequestError as error:
+            return cast(StudioResult[WorkflowView], self._request_failure(error))
+        except Exception:
+            return cast(StudioResult[WorkflowView], self._internal_failure("get workflow"))
+
+    def list_versions(
+        self,
+        component_id: str,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[List[VersionSummary]]:
+        """List safe lifecycle metadata for every config version.
+
+        Args:
+            component_id: Exact Studio component id.
+        """
+        denied = self._authorize("list_versions", "read", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[List[VersionSummary]], denied)
+        try:
+            self._ensure_no_source_collision(component_id)
+            component = self.db.get_component(component_id)
+            if component is None:
+                raise _StudioRequestError("component_not_found", f"Component '{component_id}' was not found.")
+            self._ensure_component_type_enabled(cast(str, component.get("component_type")))
+            current = component.get("current_version")
+            versions = [
+                VersionSummary(
+                    version=config["version"],
+                    stage=config["stage"],
+                    label=config.get("label"),
+                    is_current=config.get("version") == current,
+                    created_at=config.get("created_at"),
+                    updated_at=config.get("updated_at"),
+                )
+                for config in self.db.list_configs(component_id, include_config=False)
+            ]
+            return StudioResult[List[VersionSummary]](ok=True, status="listed", data=versions)
+        except _StudioRequestError as error:
+            return cast(StudioResult[List[VersionSummary]], self._request_failure(error))
+        except Exception:
+            return cast(StudioResult[List[VersionSummary]], self._internal_failure("list versions"))
+
+    def get_version(
+        self,
+        component_id: str,
+        version: int,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[ComponentView]:
+        """Get a safe typed component view for one exact version.
+
+        Persisted config blobs are never returned by this API.
+
+        Args:
+            component_id: Exact Studio component id.
+            version: Exact stored version to inspect.
+        """
+        denied = self._authorize("get_version", "read", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[ComponentView], denied)
+        try:
+            self._ensure_no_source_collision(component_id)
+            return StudioResult[ComponentView](
+                ok=True,
+                status="found",
+                data=self._view_for_version(component_id, version),
+            )
+        except _StudioRequestError as error:
+            return cast(StudioResult[ComponentView], self._request_failure(error))
+        except Exception:
+            return cast(StudioResult[ComponentView], self._internal_failure("get version"))
+
+    # ------------------------------------------------------------------
+    # Atomic, deterministic creates
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _effective_component_id(component_id: Optional[str], name: str) -> str:
+        if component_id is not None:
+            return StudioTools._validate_component_id(component_id)
+        return StudioTools._validate_component_id(generate_id_from_name(name))
+
+    def create_agent(
+        self,
+        request: AgentCreate,
+        save_as: SaveStage = "draft",
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[AgentView]:
+        """Create an agent from one typed request.
+
+        Args:
+            request: Complete declarative agent configuration, including the
+                create-only ``if_exists`` retry policy.
+            save_as: Save as a draft by default or publish immediately.
+        """
+        denied = self._authorize("create_agent", "mutate", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[AgentView], denied)
+        try:
+            assert _agno_run_context is not None
+            self._ensure_component_type_enabled("agent")
+            save_as = self._validate_save_as(save_as)
+            if_exists = self._validate_if_exists(request.if_exists)
+            effective_id = self._effective_component_id(request.component_id, request.name)
+            request = request.model_copy(update={"component_id": effective_id})
+            metadata = self._actor_metadata(None, _agno_run_context, "create_agent")
+            agent, effective = self._build_agent(request, metadata)
+            result = self._create_component(agent, effective, save_as, [], [], [], if_exists)
+            log_debug(f"Studio created agent component_id={effective_id} stage={save_as}")
+            return cast(StudioResult[AgentView], result)
+        except _StudioRequestError as error:
+            return cast(StudioResult[AgentView], self._request_failure(error))
+        except Exception as error:
+            known = self._storage_failure(error)
+            if known is not None:
+                return cast(StudioResult[AgentView], known)
+            return cast(StudioResult[AgentView], self._internal_failure("create agent"))
+
+    def create_team(
+        self,
+        request: TeamCreate,
+        save_as: SaveStage = "draft",
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[TeamView]:
+        """Create a team from typed, version-aware member references.
+
+        Args:
+            request: Complete declarative team configuration, including the
+                create-only ``if_exists`` retry policy.
+            save_as: Save as a draft by default or publish immediately.
+        """
+        denied = self._authorize("create_team", "mutate", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[TeamView], denied)
+        try:
+            assert _agno_run_context is not None
+            self._ensure_component_type_enabled("team")
+            save_as = self._validate_save_as(save_as)
+            if_exists = self._validate_if_exists(request.if_exists)
+            effective_id = self._effective_component_id(request.component_id, request.name)
+            request = request.model_copy(update={"component_id": effective_id})
+            metadata = self._actor_metadata(None, _agno_run_context, "create_team")
+            team, effective, links, warnings, resolved = self._build_team(request, metadata)
+            result = self._create_component(team, effective, save_as, links, warnings, resolved, if_exists)
+            log_debug(f"Studio created team component_id={effective_id} stage={save_as}")
+            return cast(StudioResult[TeamView], result)
+        except _StudioRequestError as error:
+            return cast(StudioResult[TeamView], self._request_failure(error))
+        except Exception as error:
+            known = self._storage_failure(error)
+            if known is not None:
+                return cast(StudioResult[TeamView], known)
+            return cast(StudioResult[TeamView], self._internal_failure("create team"))
+
+    def create_workflow(
+        self,
+        request: WorkflowCreate,
+        save_as: SaveStage = "draft",
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[WorkflowView]:
+        """Create a workflow from discriminated typed steps.
+
+        Args:
+            request: Complete declarative workflow configuration, including the
+                create-only ``if_exists`` retry policy.
+            save_as: Save as a draft by default or publish immediately.
+        """
+        denied = self._authorize("create_workflow", "mutate", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[WorkflowView], denied)
+        try:
+            assert _agno_run_context is not None
+            self._ensure_component_type_enabled("workflow")
+            save_as = self._validate_save_as(save_as)
+            if_exists = self._validate_if_exists(request.if_exists)
+            effective_id = self._effective_component_id(request.component_id, request.name)
+            request = request.model_copy(update={"component_id": effective_id})
+            metadata = self._actor_metadata(None, _agno_run_context, "create_workflow")
+            workflow, effective, links, warnings, resolved = self._build_workflow(request, metadata)
+            result = self._create_component(workflow, effective, save_as, links, warnings, resolved, if_exists)
+            log_debug(f"Studio created workflow component_id={effective_id} stage={save_as}")
+            return cast(StudioResult[WorkflowView], result)
+        except _StudioRequestError as error:
+            return cast(StudioResult[WorkflowView], self._request_failure(error))
+        except Exception as error:
+            known = self._storage_failure(error)
+            if known is not None:
+                return cast(StudioResult[WorkflowView], known)
+            return cast(StudioResult[WorkflowView], self._internal_failure("create workflow"))
+
+    # ------------------------------------------------------------------
+    # Omission-aware CAS edits
+    # ------------------------------------------------------------------
+
+    def _edit_base(
+        self,
+        component_type: str,
+        component_id: str,
+        expected_version: int,
+    ) -> tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+        from agno.db.base import ComponentType
+
+        self._ensure_no_source_collision(component_id, component_type)
+        component = self.db.get_component(component_id, component_type=ComponentType(component_type))
+        if component is None:
+            if self._code_component(component_type, component_id) is not None:
+                raise _StudioRequestError(
+                    "code_component_read_only",
+                    "Code-defined components cannot be edited by Studio.",
+                )
+            raise _StudioRequestError(
+                "component_not_found",
+                f"{component_type.capitalize()} '{component_id}' was not found.",
+            )
+        config_row = self.db.get_config(component_id, version=expected_version)
+        if config_row is None:
+            raise _StudioRequestError(
+                "version_not_found",
+                f"Version {expected_version} was not found for component '{component_id}'.",
+            )
+        config = config_row.get("config")
+        if not isinstance(config, dict):
+            raise _StudioRequestError("invalid_component_config", "The stored component config is invalid.")
+        return component, config_row, self._manifest_request(config)
+
+    def _patched_context(self, current: Optional[ContextPolicy], patch: Any) -> Optional[ContextPolicy]:
+        if patch is None:
+            return current
+        base = current or self.default_context
+        values = base.model_dump()
+        for field, value in patch.model_dump(exclude_unset=True).items():
+            if field == "history_runs" and value is None:
+                values[field] = self.default_context.history_runs
+            else:
+                values[field] = value
+        if (
+            values.get("include_history") is False
+            and "history_runs" in patch.model_fields_set
+            and patch.history_runs is not None
+        ):
+            raise _StudioRequestError(
+                "invalid_context_policy",
+                "history_runs cannot be set while history context is disabled; enable include_history in the same patch.",
+            )
+        if values.get("include_history") is False:
+            values["history_runs"] = None
+        elif values.get("history_runs") is None:
+            values["history_runs"] = self.default_context.history_runs
+        return ContextPolicy.model_validate(values)
+
+    def _apply_agent_patch(self, current: AgentCreate, patch: AgentPatch) -> AgentCreate:
+        updates = {field: getattr(patch, field) for field in patch.model_fields_set}
+        if "context" in patch.model_fields_set:
+            updates["context"] = self._patched_context(current.context, patch.context)
+        return current.model_copy(update=updates)
+
+    def _apply_team_patch(self, current: TeamCreate, patch: TeamPatch) -> TeamCreate:
+        updates = {field: getattr(patch, field) for field in patch.model_fields_set}
+        if "context" in patch.model_fields_set:
+            updates["context"] = self._patched_context(current.context, patch.context)
+        return current.model_copy(update=updates)
+
+    @staticmethod
+    def _apply_workflow_patch(current: WorkflowCreate, patch: WorkflowPatch) -> WorkflowCreate:
+        return current.model_copy(update={field: getattr(patch, field) for field in patch.model_fields_set})
+
+    def _append_edit(
+        self,
+        catalog_row: Dict[str, Any],
+        base_config: Dict[str, Any],
+        component: Component,
+        request: Any,
+        expected_version: int,
+        save_as: SaveStage,
+        links: Sequence[Dict[str, Any]],
+        warnings: List[str],
+        resolved_refs: Sequence[_ResolvedRef],
+        preserve_model: bool = False,
+    ) -> StudioResult[Any]:
+        from agno.db.base import ComponentVersionGuard
+
+        config = self._serialize_component(component, request)
+        if preserve_model:
+            config.pop("model", None)
+            if "model" in base_config:
+                config["model"] = deepcopy(base_config["model"])
+        if save_as == "published":
+            self._validate_immediate_publishability(
+                component,
+                self._component_type(component).value,
+                request,
+                resolved_refs,
+            )
+        component_id = cast(str, request.component_id)
+        guard = ComponentVersionGuard(
+            latest_version=expected_version,
+            current_version=catalog_row.get("current_version"),
+        )
+        config_row = self.db.upsert_config(
             component_id=component_id,
-            component_type=ComponentType(component["component_type"]),
-            name=config.get("name") or component.get("name"),
-            description=config.get("description"),
-            metadata=config.get("metadata"),
+            config=config,
+            stage=save_as,
+            links=list(links),
+            guard=guard,
+            projection=(
+                self._projection(request, cast(Dict[str, Any], getattr(component, "metadata", None) or {}))
+                if save_as == "published"
+                else None
+            ),
+        )
+        response_component = catalog_row
+        if save_as == "published":
+            response_component = self._projected_component_state(
+                catalog_row,
+                request,
+                cast(Dict[str, Any], getattr(component, "metadata", None) or {}),
+                current_version=cast(int, config_row["version"]),
+            )
+        return self._success("edited", self._view_from_record(response_component, config_row), warnings)
+
+    def edit_agent(
+        self,
+        component_id: str,
+        patch: AgentPatch,
+        expected_version: int,
+        save_as: SaveStage = "draft",
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[AgentView]:
+        """Append an omission-aware agent version with optimistic concurrency.
+
+        Args:
+            component_id: Exact Studio agent id.
+            patch: Typed changes to apply; omitted fields stay unchanged.
+            expected_version: Latest version observed by the caller.
+            save_as: Save the new version as a draft by default or publish it
+                immediately.
+        """
+        denied = self._authorize("edit_agent", "mutate", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[AgentView], denied)
+        try:
+            assert _agno_run_context is not None
+            self._ensure_component_type_enabled("agent")
+            save_as = self._validate_save_as(save_as)
+            row, config_row, request_data = self._edit_base("agent", component_id, expected_version)
+            current = AgentCreate.model_validate(request_data)
+            requested = self._apply_agent_patch(current, patch)
+            metadata = self._actor_metadata(row.get("metadata"), _agno_run_context, "edit_agent")
+            agent, effective = self._build_agent(requested, metadata)
+            return cast(
+                StudioResult[AgentView],
+                self._append_edit(
+                    row,
+                    cast(Dict[str, Any], config_row["config"]),
+                    agent,
+                    effective,
+                    expected_version,
+                    save_as,
+                    [],
+                    [],
+                    [],
+                    preserve_model="model" not in patch.model_fields_set,
+                ),
+            )
+        except _StudioRequestError as error:
+            return cast(StudioResult[AgentView], self._request_failure(error))
+        except Exception as error:
+            known = self._storage_failure(error)
+            if known is not None:
+                return cast(StudioResult[AgentView], known)
+            return cast(StudioResult[AgentView], self._internal_failure("edit agent"))
+
+    def edit_team(
+        self,
+        component_id: str,
+        patch: TeamPatch,
+        expected_version: int,
+        save_as: SaveStage = "draft",
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[TeamView]:
+        """Append an omission-aware team version with optimistic concurrency.
+
+        Args:
+            component_id: Exact Studio team id.
+            patch: Typed changes to apply; omitted fields stay unchanged.
+            expected_version: Latest version observed by the caller.
+            save_as: Save the new version as a draft by default or publish it
+                immediately.
+        """
+        denied = self._authorize("edit_team", "mutate", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[TeamView], denied)
+        try:
+            assert _agno_run_context is not None
+            self._ensure_component_type_enabled("team")
+            save_as = self._validate_save_as(save_as)
+            row, config_row, request_data = self._edit_base("team", component_id, expected_version)
+            current = TeamCreate.model_validate(request_data)
+            requested = self._apply_team_patch(current, patch)
+            metadata = self._actor_metadata(row.get("metadata"), _agno_run_context, "edit_team")
+            team, effective, links, warnings, resolved = self._build_team(requested, metadata)
+            return cast(
+                StudioResult[TeamView],
+                self._append_edit(
+                    row,
+                    cast(Dict[str, Any], config_row["config"]),
+                    team,
+                    effective,
+                    expected_version,
+                    save_as,
+                    links,
+                    warnings,
+                    resolved,
+                    preserve_model="model" not in patch.model_fields_set,
+                ),
+            )
+        except _StudioRequestError as error:
+            return cast(StudioResult[TeamView], self._request_failure(error))
+        except Exception as error:
+            known = self._storage_failure(error)
+            if known is not None:
+                return cast(StudioResult[TeamView], known)
+            return cast(StudioResult[TeamView], self._internal_failure("edit team"))
+
+    def edit_workflow(
+        self,
+        component_id: str,
+        patch: WorkflowPatch,
+        expected_version: int,
+        save_as: SaveStage = "draft",
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[WorkflowView]:
+        """Append an omission-aware workflow version with optimistic concurrency.
+
+        Args:
+            component_id: Exact Studio workflow id.
+            patch: Typed changes to apply; omitted fields stay unchanged.
+            expected_version: Latest version observed by the caller.
+            save_as: Save the new version as a draft by default or publish it
+                immediately.
+        """
+        denied = self._authorize("edit_workflow", "mutate", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[WorkflowView], denied)
+        try:
+            assert _agno_run_context is not None
+            self._ensure_component_type_enabled("workflow")
+            save_as = self._validate_save_as(save_as)
+            row, config_row, request_data = self._edit_base("workflow", component_id, expected_version)
+            current = WorkflowCreate.model_validate(request_data)
+            requested = self._apply_workflow_patch(current, patch)
+            metadata = self._actor_metadata(row.get("metadata"), _agno_run_context, "edit_workflow")
+            workflow, effective, links, warnings, resolved = self._build_workflow(requested, metadata)
+            return cast(
+                StudioResult[WorkflowView],
+                self._append_edit(
+                    row,
+                    cast(Dict[str, Any], config_row["config"]),
+                    workflow,
+                    effective,
+                    expected_version,
+                    save_as,
+                    links,
+                    warnings,
+                    resolved,
+                ),
+            )
+        except _StudioRequestError as error:
+            return cast(StudioResult[WorkflowView], self._request_failure(error))
+        except Exception as error:
+            known = self._storage_failure(error)
+            if known is not None:
+                return cast(StudioResult[WorkflowView], known)
+            return cast(StudioResult[WorkflowView], self._internal_failure("edit workflow"))
+
+    # ------------------------------------------------------------------
+    # Atomic publish, rollback, draft deletion, and archive
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _request_for_component_type(component_type: str, request_data: Dict[str, Any]) -> Any:
+        if component_type == "agent":
+            return AgentCreate.model_validate(request_data)
+        if component_type == "team":
+            return TeamCreate.model_validate(request_data)
+        if component_type == "workflow":
+            return WorkflowCreate.model_validate(request_data)
+        raise _StudioRequestError("invalid_component_type", "The stored component type is invalid.")
+
+    def _owned_request_from_config(
+        self,
+        component_type: Literal["agent", "team", "workflow"],
+        component_id: str,
+        config: Dict[str, Any],
+    ) -> Any:
+        """Validate that a config is a complete typed Studio manifest for this row."""
+        request_data = self._manifest_request(config)
+        try:
+            request = self._request_for_component_type(component_type, request_data)
+        except (TypeError, ValueError):
+            raise _StudioRequestError(
+                "invalid_component_config",
+                "The stored Studio request manifest is invalid for this component type.",
+            ) from None
+        canonical_request = request.model_dump(mode="json", exclude={"if_exists"})
+        if request_data != canonical_request:
+            raise _StudioRequestError(
+                "invalid_component_config",
+                "The stored Studio request manifest is not a canonical effective request.",
+            )
+        if request.component_id != component_id:
+            raise _StudioRequestError(
+                "invalid_component_config",
+                "The stored Studio request manifest does not match the catalog component id.",
+            )
+        if isinstance(request, (AgentCreate, TeamCreate)) and (request.model is None or request.context is None):
+            raise _StudioRequestError(
+                "invalid_component_config",
+                "The stored Studio request manifest contains unresolved model or context defaults.",
+            )
+        return request
+
+    def _request_from_config_row(self, component_type: str, config_row: Dict[str, Any]) -> Any:
+        config = config_row.get("config")
+        if not isinstance(config, dict):
+            raise _StudioRequestError("invalid_component_config", "The stored component config is invalid.")
+        return self._request_for_component_type(component_type, self._manifest_request(config))
+
+    def _require_published_pins(
+        self,
+        component_type: str,
+        component_id: str,
+        version: int,
+        request: Any,
+    ) -> None:
+        expected: List[tuple[str, int, str, str]] = []
+        if component_type == "team":
+            for position, ref in enumerate(cast(TeamCreate, request).members):
+                if ref.version is None:
+                    raise _StudioRequestError(
+                        "code_reference_not_publishable",
+                        "Published teams require version-pinned stored members.",
+                        details={"component_id": ref.component_id},
+                    )
+                expected.append((ref.component_id, ref.version, "member", f"member_{position}"))
+        elif component_type == "workflow":
+            for spec in cast(WorkflowCreate, request).steps:
+                if isinstance(spec, AgentWorkflowStep):
+                    if spec.version is None:
+                        raise _StudioRequestError(
+                            "code_reference_not_publishable",
+                            "Published workflows require version-pinned stored step components.",
+                            details={"component_id": spec.component_id},
+                        )
+                    expected.append((spec.component_id, spec.version, "step_agent", cast(str, spec.step_id)))
+                elif isinstance(spec, TeamWorkflowStep):
+                    if spec.version is None:
+                        raise _StudioRequestError(
+                            "code_reference_not_publishable",
+                            "Published workflows require version-pinned stored step components.",
+                            details={"component_id": spec.component_id},
+                        )
+                    expected.append((spec.component_id, spec.version, "step_team", cast(str, spec.step_id)))
+
+        actual = {
+            (
+                link.get("child_component_id"),
+                link.get("child_version"),
+                link.get("link_kind"),
+                link.get("link_key"),
+            )
+            for link in self.db.get_links(component_id, version)
+        }
+        missing_links: List[Dict[str, Any]] = []
+        for child_id, child_version, link_kind, link_key in expected:
+            if (child_id, child_version, link_kind, link_key) not in actual:
+                missing_links.append(
+                    {
+                        "component_id": child_id,
+                        "version": child_version,
+                        "link_kind": link_kind,
+                        "link_key": link_key,
+                    }
+                )
+                continue
+            child = self.db.get_component(child_id)
+            child_config = self.db.get_config(child_id, version=child_version) if child is not None else None
+            if child is None or child_config is None or child_config.get("stage") != "published":
+                raise _StudioRequestError(
+                    "unpublished_dependency",
+                    f"Dependency '{child_id}' v{child_version} is not an active published component.",
+                )
+        if missing_links:
+            raise _StudioRequestError(
+                "missing_component_links",
+                "The draft is missing durable links for one or more component references.",
+                details={"missing": missing_links},
+            )
+
+    def _validate_published_ref_tree(
+        self,
+        resolved_refs: Sequence[_ResolvedRef],
+        seen: set[tuple[str, str, int]],
+    ) -> None:
+        """Revalidate every durable child before a parent can become current."""
+        self._ensure_publishable_refs(resolved_refs)
+        for resolved in resolved_refs:
+            ref = resolved.ref
+            if resolved.code_defined or ref.version is None:
+                raise _StudioRequestError(
+                    "code_reference_not_publishable",
+                    "Published composites require stored, version-pinned child components.",
+                    details={"component_id": ref.component_id},
+                )
+            child = self._db_component(ref.component_type, ref.component_id)
+            child_config = self.db.get_config(ref.component_id, version=ref.version) if child is not None else None
+            if child is None or child_config is None or child_config.get("stage") != "published":
+                raise _StudioRequestError(
+                    "unpublished_dependency",
+                    f"Dependency '{ref.component_id}' v{ref.version} is not an active published component.",
+                )
+            child_request = self._request_from_config_row(ref.component_type, child_config)
+            self._validate_publishability(
+                ref.component_type,
+                ref.component_id,
+                ref.version,
+                child_request,
+                seen,
+            )
+
+    def _validate_immediate_publishability(
+        self,
+        component: Component,
+        component_type: str,
+        request: Any,
+        resolved_refs: Sequence[_ResolvedRef],
+    ) -> None:
+        """Bound a freshly built graph before atomically storing it live.
+
+        The top-level runtime was just built from exact registry objects. Its
+        durable children, however, may have become non-dispatchable since they
+        were published, so validate their complete pinned trees as strictly as
+        the explicit publish and rollback paths do. The root itself does not
+        exist in the catalog yet, so only apply the runner's in-memory graph
+        bound here; stored-runtime fidelity is checked when dispatch loads the
+        committed version.
+        """
+        if request.component_id is None:
+            raise _StudioRequestError("component_id_required", "Published components require a component_id.")
+        if component_type not in ("agent", "team", "workflow"):
+            raise _StudioRequestError("invalid_component_type", "The component type is invalid.")
+        self._validate_published_ref_tree(resolved_refs, set())
+        try:
+            self._runner_tools._require_inspectable_depth(component, component_type, request.component_id)
+        except StudioRunnerError as error:
+            raise _StudioRequestError(
+                "component_not_publishable",
+                str(error),
+                details={
+                    "component_id": request.component_id,
+                    "component_type": component_type,
+                    "reason": type(error).__name__,
+                },
+            ) from error
+
+    @staticmethod
+    def _normalize_runtime_fidelity_config(config: Dict[str, Any]) -> Dict[str, Any]:
+        """Ignore deterministic strict-schema decoration in fidelity checks.
+
+        Rehydration processes Function entrypoints and adds
+        ``additionalProperties: false`` recursively. A freshly registered
+        Toolkit may not have been processed yet, so that generated decoration
+        can differ even though both runtimes hold the same exact registry
+        functions. Typed ToolRefs make the registry identity authoritative;
+        normalize only this generated false marker while retaining every tool,
+        parameter, description, and runtime field.
+        """
+
+        def strip_generated_strictness(value: Any) -> None:
+            if isinstance(value, list):
+                for item in value:
+                    strip_generated_strictness(item)
+                return
+            if not isinstance(value, dict):
+                return
+            if value.get("additionalProperties") is False:
+                value.pop("additionalProperties")
+            for item in value.values():
+                strip_generated_strictness(item)
+
+        tools = config.get("tools")
+        if isinstance(tools, list):
+            for tool in tools:
+                if isinstance(tool, dict):
+                    strip_generated_strictness(tool.get("parameters"))
+        return config
+
+    def _validate_publishability(
+        self,
+        component_type: str,
+        component_id: str,
+        version: int,
+        request: Any,
+        seen: Optional[set[tuple[str, str, int]]] = None,
+    ) -> None:
+        if seen is None:
+            seen = set()
+        identity = (component_type, component_id, version)
+        if identity in seen:
+            return
+        seen.add(identity)
+        if request.component_id != component_id:
+            raise _StudioRequestError(
+                "invalid_component_config",
+                "The stored request component_id does not match its catalog id.",
+            )
+
+        metadata: Dict[str, Any] = {}
+        resolved_refs: Sequence[_ResolvedRef] = []
+        built: Component
+        effective: Union[AgentCreate, TeamCreate, WorkflowCreate]
+        if component_type == "agent":
+            built, effective = self._build_agent(cast(AgentCreate, request), metadata)
+        elif component_type == "team":
+            built, effective, _, _, resolved_refs = self._build_team(cast(TeamCreate, request), metadata)
+        elif component_type == "workflow":
+            built, effective, _, _, resolved_refs = self._build_workflow(cast(WorkflowCreate, request), metadata)
+        else:
+            raise _StudioRequestError("invalid_component_type", "The stored component type is invalid.")
+
+        if self._normalized_request(effective) != self._normalized_request(request):
+            raise _StudioRequestError(
+                "component_not_publishable",
+                "The stored request contains unresolved defaults or references; edit and save a fresh draft first.",
+            )
+        self._ensure_publishable_refs(resolved_refs)
+        self._validate_published_ref_tree(resolved_refs, seen)
+        self._require_published_pins(component_type, component_id, version, request)
+
+        try:
+            rebuilt = self._load_db_component(
+                component_type,
+                component_id,
+                version,
+                for_dispatch=True,
+            )
+        except Exception as error:
+            raise _StudioRequestError(
+                "component_not_publishable",
+                "The component cannot be faithfully rehydrated for dispatch; repair its registry dependencies first.",
+                details={
+                    "component_id": component_id,
+                    "component_type": component_type,
+                    "version": version,
+                    "reason": type(error).__name__,
+                },
+            ) from error
+        if rebuilt is None:
+            raise _StudioRequestError(
+                "component_not_publishable",
+                "The component cannot be faithfully rehydrated for dispatch.",
+                details={
+                    "component_id": component_id,
+                    "component_type": component_type,
+                    "version": version,
+                },
+            )
+
+        expected_config = self._normalize_runtime_fidelity_config(self._serialize_component(built, request))
+        rebuilt_config = self._normalize_runtime_fidelity_config(self._serialize_component(rebuilt, request))
+        # Actor metadata is a component projection and can legitimately be
+        # newer than an immutable config version. Everything else must match
+        # the typed request's fresh rebuild before that version can go live.
+        expected_config.pop("metadata", None)
+        rebuilt_config.pop("metadata", None)
+        if expected_config != rebuilt_config:
+            raise _StudioRequestError(
+                "component_not_publishable",
+                "The persisted runtime config diverges from its typed Studio request; save a fresh draft first.",
+                details={
+                    "component_id": component_id,
+                    "component_type": component_type,
+                    "version": version,
+                },
+            )
+
+    def publish_component(
+        self,
+        component_id: str,
+        version: int,
+        expected_current_version: int | None,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[ComponentView]:
+        """Publish the latest draft using a current-version CAS guard.
+
+        Args:
+            component_id: Exact Studio component id.
+            version: Latest draft version to publish.
+            expected_current_version: Current published version observed by
+                the caller, or null when the component has never been
+                published.
+        """
+        denied = self._authorize("publish_component", "mutate", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[ComponentView], denied)
+        try:
+            assert _agno_run_context is not None
+            from agno.db.base import ComponentVersionGuard
+
+            self._ensure_no_source_collision(component_id)
+            component = self.db.get_component(component_id)
+            if component is None:
+                raise _StudioRequestError("component_not_found", f"Component '{component_id}' was not found.")
+            self._ensure_component_type_enabled(cast(str, component.get("component_type")))
+            config_row = self.db.get_config(component_id, version=version)
+            if config_row is None:
+                raise _StudioRequestError("version_not_found", f"Version {version} was not found.")
+            component_type = cast(str, component["component_type"])
+            request = self._request_from_config_row(component_type, config_row)
+            if config_row.get("stage") == "published" and component.get("current_version") == version:
+                self._validate_publishability(component_type, component_id, version, request)
+                return StudioResult[ComponentView](
+                    ok=True,
+                    status="already_published",
+                    data=self._view_from_record(component, config_row),
+                )
+            if config_row.get("stage") != "draft":
+                raise _StudioRequestError(
+                    "draft_required",
+                    "Only a draft can be published; use set_current_version for an older published version.",
+                )
+            self._validate_publishability(component_type, component_id, version, request)
+            metadata = self._actor_metadata(component.get("metadata"), _agno_run_context, "publish_component")
+            result = self.db.upsert_config(
+                component_id=component_id,
+                version=version,
+                stage="published",
+                guard=ComponentVersionGuard(
+                    latest_version=version,
+                    current_version=expected_current_version,
+                ),
+                projection=self._projection(request, metadata),
+            )
+            response_component = self._projected_component_state(
+                component,
+                request,
+                metadata,
+                current_version=version,
+            )
+            return StudioResult[ComponentView](
+                ok=True,
+                status="published",
+                data=self._view_from_record(response_component, result),
+            )
+        except _StudioRequestError as error:
+            return cast(StudioResult[ComponentView], self._request_failure(error))
+        except Exception as error:
+            known = self._storage_failure(error)
+            if known is not None:
+                return cast(StudioResult[ComponentView], known)
+            return cast(StudioResult[ComponentView], self._internal_failure("publish component"))
+
+    def set_current_version(
+        self,
+        component_id: str,
+        version: int,
+        expected_current_version: int | None,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[ComponentView]:
+        """Make an immutable published version current using CAS.
+
+        Args:
+            component_id: Exact Studio component id.
+            version: Published version to make current.
+            expected_current_version: Current published version observed by
+                the caller, or null when no version is currently published.
+        """
+        denied = self._authorize("set_current_version", "mutate", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[ComponentView], denied)
+        try:
+            assert _agno_run_context is not None
+            from agno.db.base import ComponentVersionGuard
+
+            self._ensure_no_source_collision(component_id)
+            component = self.db.get_component(component_id)
+            if component is None:
+                raise _StudioRequestError("component_not_found", f"Component '{component_id}' was not found.")
+            self._ensure_component_type_enabled(cast(str, component.get("component_type")))
+            config_row = self.db.get_config(component_id, version=version)
+            if config_row is None:
+                raise _StudioRequestError("version_not_found", f"Version {version} was not found.")
+            if config_row.get("stage") != "published":
+                raise _StudioRequestError("published_version_required", "Only a published version can be current.")
+            component_type = cast(str, component["component_type"])
+            request = self._request_from_config_row(component_type, config_row)
+            self._validate_publishability(component_type, component_id, version, request)
+            if component.get("current_version") == version:
+                return StudioResult[ComponentView](
+                    ok=True,
+                    status="already_current",
+                    data=self._view_from_record(component, config_row),
+                )
+            metadata = self._actor_metadata(component.get("metadata"), _agno_run_context, "set_current_version")
+            configs = self.db.list_configs(component_id, include_config=False)
+            latest = max((config["version"] for config in configs), default=None)
+            ok = self.db.set_current_version(
+                component_id,
+                version,
+                guard=ComponentVersionGuard(
+                    latest_version=latest,
+                    current_version=expected_current_version,
+                ),
+                projection=self._projection(request, metadata),
+            )
+            if not ok:
+                raise _StudioRequestError("version_not_found", f"Version {version} was not found.")
+            response_component = self._projected_component_state(
+                component,
+                request,
+                metadata,
+                current_version=version,
+            )
+            return StudioResult[ComponentView](
+                ok=True,
+                status="current_version_set",
+                data=self._view_from_record(response_component, config_row),
+            )
+        except _StudioRequestError as error:
+            return cast(StudioResult[ComponentView], self._request_failure(error))
+        except Exception as error:
+            known = self._storage_failure(error)
+            if known is not None:
+                return cast(StudioResult[ComponentView], known)
+            return cast(StudioResult[ComponentView], self._internal_failure("set current version"))
+
+    def delete_version(
+        self,
+        component_id: str,
+        version: int,
+        expected_latest_version: int,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[ComponentActionView]:
+        """Delete one unreferenced draft version using a latest-version guard.
+
+        Args:
+            component_id: Exact Studio component id.
+            version: Draft version to delete.
+            expected_latest_version: Latest version observed by the caller.
+        """
+        denied = self._authorize("delete_version", "mutate", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[ComponentActionView], denied)
+        try:
+            assert _agno_run_context is not None
+            from agno.db.base import ComponentVersionGuard
+
+            self._ensure_no_source_collision(component_id)
+            component = self.db.get_component(component_id)
+            if component is None:
+                raise _StudioRequestError("component_not_found", f"Component '{component_id}' was not found.")
+            self._ensure_component_type_enabled(cast(str, component.get("component_type")))
+            metadata = self._actor_metadata(component.get("metadata"), _agno_run_context, "delete_version")
+            deleted = self.db.delete_config(
+                component_id,
+                version,
+                guard=ComponentVersionGuard(
+                    latest_version=expected_latest_version,
+                    current_version=component.get("current_version"),
+                ),
+                projection=cast("ComponentProjection", {"metadata": metadata}),
+            )
+            if not deleted:
+                raise _StudioRequestError("version_not_found", f"Version {version} was not found.")
+            return StudioResult[ComponentActionView](
+                ok=True,
+                status="draft_deleted",
+                data=ComponentActionView(
+                    component_id=component_id,
+                    component_type=component["component_type"],
+                    version=version,
+                ),
+            )
+        except _StudioRequestError as error:
+            return cast(StudioResult[ComponentActionView], self._request_failure(error))
+        except Exception as error:
+            known = self._storage_failure(error)
+            if known is not None:
+                return cast(StudioResult[ComponentActionView], known)
+            return cast(StudioResult[ComponentActionView], self._internal_failure("delete draft version"))
+
+    def _archive_component(
+        self,
+        component_type: Literal["agent", "team", "workflow"],
+        component_id: str,
+        expected_current_version: int | None,
+        run_context: RunContext,
+        action: StudioAction,
+    ) -> StudioResult[ComponentActionView]:
+        from agno.db.base import ComponentType, ComponentVersionGuard
+
+        self._ensure_component_type_enabled(component_type)
+        self._ensure_no_source_collision(component_id, component_type)
+        component = self.db.get_component(
+            component_id,
+            component_type=ComponentType(component_type),
+            include_deleted=True,
+        )
+        if component is None:
+            raise _StudioRequestError(
+                "component_not_found",
+                f"{component_type.capitalize()} '{component_id}' was not found.",
+            )
+        latest_config = self.db.get_latest_config(component_id, include_deleted=True)
+        if not isinstance(latest_config, dict):
+            raise _StudioRequestError(
+                "invalid_component_config",
+                f"Component '{component_id}' has no stored configuration.",
+            )
+        stored_config = latest_config.get("config")
+        if not isinstance(stored_config, dict):
+            raise _StudioRequestError("invalid_component_config", "The stored component config is invalid.")
+        self._owned_request_from_config(component_type, component_id, stored_config)
+        latest = latest_config.get("version")
+        if not isinstance(latest, int):
+            raise _StudioRequestError(
+                "invalid_component_config",
+                f"Component '{component_id}' has invalid latest-version metadata.",
+            )
+        if component.get("deleted_at") is not None:
+            return StudioResult[ComponentActionView](
+                ok=True,
+                status="already_archived",
+                data=ComponentActionView(
+                    component_id=component_id,
+                    component_type=component_type,
+                    version=component.get("current_version"),
+                ),
+                warnings=self._schedule_cleanup_warnings(component_type, component_id),
+            )
+        metadata = self._actor_metadata(component.get("metadata"), run_context, action)
+        archive_projection = cast(
+            "ComponentProjection",
+            {
+                "name": component.get("name"),
+                "description": component.get("description"),
+                "metadata": metadata,
+            },
+        )
+        archived = self.db.delete_component(
+            component_id,
+            hard_delete=False,
+            guard=ComponentVersionGuard(
+                latest_version=latest,
+                current_version=expected_current_version,
+            ),
+            require_no_dependents=True,
+            projection=archive_projection,
+        )
+        if not archived:
+            raise _StudioRequestError("component_not_found", f"Component '{component_id}' was not found.")
+        return StudioResult[ComponentActionView](
+            ok=True,
+            status="archived",
+            data=ComponentActionView(
+                component_id=component_id,
+                component_type=component_type,
+                version=component.get("current_version"),
+            ),
+            warnings=self._schedule_cleanup_warnings(component_type, component_id),
         )
 
+    def archive_agent(
+        self,
+        component_id: str,
+        expected_current_version: int | None,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[ComponentActionView]:
+        """Archive an agent if no active component depends on it.
 
-# ----------------------------------------------------------------------
-# Module-level helpers
-# ----------------------------------------------------------------------
+        Args:
+            component_id: Exact Studio agent id.
+            expected_current_version: Current published version observed by
+                the caller, or null when the agent is draft-only.
+        """
+        denied = self._authorize("archive_agent", "mutate", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[ComponentActionView], denied)
+        try:
+            assert _agno_run_context is not None
+            return self._archive_component(
+                "agent", component_id, expected_current_version, _agno_run_context, "archive_agent"
+            )
+        except _StudioRequestError as error:
+            return cast(StudioResult[ComponentActionView], self._request_failure(error))
+        except Exception as error:
+            known = self._storage_failure(error)
+            if known is not None:
+                return cast(StudioResult[ComponentActionView], known)
+            return cast(StudioResult[ComponentActionView], self._internal_failure("archive agent"))
 
+    def archive_team(
+        self,
+        component_id: str,
+        expected_current_version: int | None,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[ComponentActionView]:
+        """Archive a team if no active component depends on it.
 
-def _summarize_tools(tools: Any) -> List[str]:
-    if not tools or callable(tools):
+        Args:
+            component_id: Exact Studio team id.
+            expected_current_version: Current published version observed by
+                the caller, or null when the team is draft-only.
+        """
+        denied = self._authorize("archive_team", "mutate", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[ComponentActionView], denied)
+        try:
+            assert _agno_run_context is not None
+            return self._archive_component(
+                "team", component_id, expected_current_version, _agno_run_context, "archive_team"
+            )
+        except _StudioRequestError as error:
+            return cast(StudioResult[ComponentActionView], self._request_failure(error))
+        except Exception as error:
+            known = self._storage_failure(error)
+            if known is not None:
+                return cast(StudioResult[ComponentActionView], known)
+            return cast(StudioResult[ComponentActionView], self._internal_failure("archive team"))
+
+    def archive_workflow(
+        self,
+        component_id: str,
+        expected_current_version: int | None,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[ComponentActionView]:
+        """Archive a workflow if no active component depends on it.
+
+        Args:
+            component_id: Exact Studio workflow id.
+            expected_current_version: Current published version observed by
+                the caller, or null when the workflow is draft-only.
+        """
+        denied = self._authorize("archive_workflow", "mutate", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[ComponentActionView], denied)
+        try:
+            assert _agno_run_context is not None
+            return self._archive_component(
+                "workflow", component_id, expected_current_version, _agno_run_context, "archive_workflow"
+            )
+        except _StudioRequestError as error:
+            return cast(StudioResult[ComponentActionView], self._request_failure(error))
+        except Exception as error:
+            known = self._storage_failure(error)
+            if known is not None:
+                return cast(StudioResult[ComponentActionView], known)
+            return cast(StudioResult[ComponentActionView], self._internal_failure("archive workflow"))
+
+    def _restore_component(
+        self,
+        component_type: Literal["agent", "team", "workflow"],
+        component_id: str,
+        expected_current_version: int | None,
+        run_context: RunContext,
+        action: StudioAction,
+    ) -> StudioResult[ComponentActionView]:
+        from agno.db.base import ComponentType, ComponentVersionGuard
+
+        self._ensure_component_type_enabled(component_type)
+        self._ensure_no_source_collision(component_id, component_type)
+        component = self.db.get_component(
+            component_id,
+            component_type=ComponentType(component_type),
+            include_deleted=True,
+        )
+        if component is None:
+            other = self.db.get_component(component_id, include_deleted=True)
+            if other is not None:
+                raise _StudioRequestError(
+                    "component_type_mismatch",
+                    f"Component '{component_id}' is not a {component_type}.",
+                )
+            if self._code_component(component_type, component_id) is not None:
+                raise _StudioRequestError(
+                    "code_component_read_only",
+                    "Code-defined components cannot be restored by Studio.",
+                )
+            raise _StudioRequestError(
+                "component_not_found",
+                f"{component_type.capitalize()} '{component_id}' was not found.",
+            )
+        if component.get("deleted_at") is None:
+            raise _StudioRequestError(
+                "component_not_archived",
+                f"{component_type.capitalize()} '{component_id}' is not archived.",
+            )
+
+        latest = self.db.get_latest_config(component_id, include_deleted=True)
+        if not isinstance(latest, dict):
+            raise _StudioRequestError(
+                "invalid_component_config",
+                f"Archived {component_type} '{component_id}' has no stored configuration.",
+            )
+        latest_version = latest.get("version")
+        if not isinstance(latest_version, int):
+            raise _StudioRequestError(
+                "invalid_component_config",
+                f"Archived {component_type} '{component_id}' has no valid latest version.",
+            )
+        stored_config = latest.get("config")
+        if not isinstance(stored_config, dict):
+            raise _StudioRequestError("invalid_component_config", "The stored component config is invalid.")
+        self._owned_request_from_config(component_type, component_id, stored_config)
+
+        metadata = self._actor_metadata(component.get("metadata"), run_context, action)
+        restored = self.db.restore_component(
+            component_id,
+            guard=ComponentVersionGuard(
+                latest_version=latest_version,
+                current_version=expected_current_version,
+            ),
+            projection=cast(
+                "ComponentProjection",
+                {
+                    "name": component.get("name"),
+                    "description": component.get("description"),
+                    "metadata": metadata,
+                },
+            ),
+        )
+        if not restored:
+            raise _StudioRequestError(
+                "component_not_archived",
+                f"{component_type.capitalize()} '{component_id}' is not archived.",
+            )
+        # Restore changes only catalog visibility. It deliberately does not
+        # re-enable schedules that were disabled while the component was
+        # archived; schedule policy remains an explicit separate operation.
+        return StudioResult[ComponentActionView](
+            ok=True,
+            status="restored",
+            data=ComponentActionView(
+                component_id=component_id,
+                component_type=component_type,
+                version=component.get("current_version"),
+            ),
+        )
+
+    def restore_agent(
+        self,
+        component_id: str,
+        expected_current_version: int | None,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[ComponentActionView]:
+        """Restore an archived Studio agent after an exact current-version check.
+
+        Args:
+            component_id: Exact archived Studio agent id.
+            expected_current_version: Current published version observed by
+                the caller before archive, or null for a draft-only agent.
+        """
+        denied = self._authorize("restore_agent", "mutate", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[ComponentActionView], denied)
+        try:
+            assert _agno_run_context is not None
+            return self._restore_component(
+                "agent", component_id, expected_current_version, _agno_run_context, "restore_agent"
+            )
+        except _StudioRequestError as error:
+            return cast(StudioResult[ComponentActionView], self._request_failure(error))
+        except Exception as error:
+            known = self._storage_failure(error)
+            if known is not None:
+                return cast(StudioResult[ComponentActionView], known)
+            return cast(StudioResult[ComponentActionView], self._internal_failure("restore agent"))
+
+    def restore_team(
+        self,
+        component_id: str,
+        expected_current_version: int | None,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[ComponentActionView]:
+        """Restore an archived Studio team after an exact current-version check.
+
+        Args:
+            component_id: Exact archived Studio team id.
+            expected_current_version: Current published version observed by
+                the caller before archive, or null for a draft-only team.
+        """
+        denied = self._authorize("restore_team", "mutate", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[ComponentActionView], denied)
+        try:
+            assert _agno_run_context is not None
+            return self._restore_component(
+                "team", component_id, expected_current_version, _agno_run_context, "restore_team"
+            )
+        except _StudioRequestError as error:
+            return cast(StudioResult[ComponentActionView], self._request_failure(error))
+        except Exception as error:
+            known = self._storage_failure(error)
+            if known is not None:
+                return cast(StudioResult[ComponentActionView], known)
+            return cast(StudioResult[ComponentActionView], self._internal_failure("restore team"))
+
+    def restore_workflow(
+        self,
+        component_id: str,
+        expected_current_version: int | None,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[ComponentActionView]:
+        """Restore an archived Studio workflow after an exact current-version check.
+
+        Args:
+            component_id: Exact archived Studio workflow id.
+            expected_current_version: Current published version observed by
+                the caller before archive, or null for a draft-only workflow.
+        """
+        denied = self._authorize("restore_workflow", "mutate", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[ComponentActionView], denied)
+        try:
+            assert _agno_run_context is not None
+            return self._restore_component(
+                "workflow", component_id, expected_current_version, _agno_run_context, "restore_workflow"
+            )
+        except _StudioRequestError as error:
+            return cast(StudioResult[ComponentActionView], self._request_failure(error))
+        except Exception as error:
+            known = self._storage_failure(error)
+            if known is not None:
+                return cast(StudioResult[ComponentActionView], known)
+            return cast(StudioResult[ComponentActionView], self._internal_failure("restore workflow"))
+
+    # ------------------------------------------------------------------
+    # Authorization-wrapped data-plane dispatch
+    # ------------------------------------------------------------------
+
+    def run_agent(
+        self,
+        agent_id: str,
+        message: str,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> str:
+        """Run an agent through StudioRunnerTools as the authenticated actor.
+
+        Args:
+            agent_id: Exact agent id whose current published version should run.
+            message: Input message sent to the agent.
+        """
+        denied = self._authorize("run_agent", "mutate", _agno_run_context)
+        if denied is not None:
+            return str(denied)
+        try:
+            self._ensure_component_type_enabled("agent")
+            self._ensure_no_source_collision(agent_id, "agent")
+            return self._runner_tools.run_agent(agent_id, message, _agno_run_context)
+        except _StudioRequestError as error:
+            return str(self._request_failure(error))
+        except Exception:
+            return str(self._internal_failure("run agent"))
+
+    def run_team(
+        self,
+        team_id: str,
+        message: str,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> str:
+        """Run a team through StudioRunnerTools as the authenticated actor.
+
+        Args:
+            team_id: Exact team id whose current published version should run.
+            message: Input message sent to the team.
+        """
+        denied = self._authorize("run_team", "mutate", _agno_run_context)
+        if denied is not None:
+            return str(denied)
+        try:
+            self._ensure_component_type_enabled("team")
+            self._ensure_no_source_collision(team_id, "team")
+            return self._runner_tools.run_team(team_id, message, _agno_run_context)
+        except _StudioRequestError as error:
+            return str(self._request_failure(error))
+        except Exception:
+            return str(self._internal_failure("run team"))
+
+    def run_workflow(
+        self,
+        workflow_id: str,
+        message: str,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> str:
+        """Run a workflow through StudioRunnerTools as the authenticated actor.
+
+        Args:
+            workflow_id: Exact workflow id whose current published version should run.
+            message: Input message sent to the workflow.
+        """
+        denied = self._authorize("run_workflow", "mutate", _agno_run_context)
+        if denied is not None:
+            return str(denied)
+        try:
+            self._ensure_component_type_enabled("workflow")
+            self._ensure_no_source_collision(workflow_id, "workflow")
+            return self._runner_tools.run_workflow(workflow_id, message, _agno_run_context)
+        except _StudioRequestError as error:
+            return str(self._request_failure(error))
+        except Exception:
+            return str(self._internal_failure("run workflow"))
+
+    # ------------------------------------------------------------------
+    # Authorization-wrapped schedules
+    # ------------------------------------------------------------------
+
+    def _schedule_manager(self) -> "ScheduleManager":
+        if self._scheduler_tools is None:
+            raise _StudioRequestError("schedules_disabled", "StudioTools was created with schedules=False.")
+        return self._scheduler_tools.manager
+
+    def _catalog_schedule_manager(self) -> "ScheduleManager":
+        """Return a manager for lifecycle cleanup even when schedule tools are hidden."""
+        if self._scheduler_tools is not None:
+            return self._scheduler_tools.manager
+        from agno.scheduler.manager import ScheduleManager
+
+        return ScheduleManager(db=self.db)
+
+    @staticmethod
+    def _scan_schedules(
+        manager: "ScheduleManager",
+        *,
+        enabled: Optional[bool] = None,
+    ) -> List["Schedule"]:
+        """Read every schedule page without looping forever on a broken adapter."""
+        page_size = 100
+        page = 1
+        seen_ids: set[str] = set()
+        schedules: List["Schedule"] = []
+        while True:
+            batch = manager.list(enabled=enabled, limit=page_size, page=page)
+            fresh = [schedule for schedule in batch if schedule.id not in seen_ids]
+            if not fresh:
+                break
+            schedules.extend(fresh)
+            seen_ids.update(schedule.id for schedule in fresh)
+            if len(batch) < page_size:
+                break
+            page += 1
+        return schedules
+
+    @staticmethod
+    def _studio_schedule_metadata(schedule: "Schedule") -> Optional[Dict[str, Any]]:
+        """Return server-owned Studio provenance only when the record is coherent."""
+        if schedule.managed_by != STUDIO_SCHEDULE_MANAGED_BY:
+            return None
+        owner_actor_id = schedule.owner_actor_id
+        target_type = schedule.target_type
+        target_id = schedule.target_id
+        if not is_valid_studio_schedule_actor_id(owner_actor_id):
+            return None
+        assert isinstance(owner_actor_id, str)
+        if target_type not in _SCHEDULE_TARGET_TYPES:
+            return None
+        try:
+            target_id = StudioTools._validate_component_id(target_id)
+        except _StudioRequestError:
+            return None
+        if schedule.method.upper() != "POST" or schedule.endpoint != f"/{target_type}s/{target_id}/runs":
+            return None
+        return {
+            "owner_actor_id": owner_actor_id,
+            "target_type": target_type,
+            "target_id": target_id,
+            "created_by_run_id": schedule.created_by_run_id,
+            "created_by_session_id": schedule.created_by_session_id,
+            "updated_by_run_id": schedule.updated_by_run_id,
+            "updated_by_session_id": schedule.updated_by_session_id,
+        }
+
+    @staticmethod
+    def _schedule_payload(request: ScheduleCreate) -> Dict[str, Any]:
+        """Build the private dispatch payload without ownership metadata."""
+        return {"message": request.message}
+
+    def _create_studio_schedule_record(
+        self,
+        request: ScheduleCreate,
+        target_id: str,
+        run_context: RunContext,
+    ) -> "Schedule":
+        """Atomically insert a schedule carrying server-owned Studio provenance."""
+        import time
+        from uuid import uuid4
+
+        from agno.scheduler.cron import compute_next_run
+
+        assert run_context.user_id is not None
+        schedule = Schedule(
+            id=str(uuid4()),
+            name=request.name,
+            cron_expr=request.cron,
+            endpoint=f"/{request.target_type}s/{target_id}/runs",
+            method="POST",
+            description=request.description,
+            payload=self._schedule_payload(request),
+            timezone=request.timezone,
+            managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+            owner_actor_id=run_context.user_id,
+            target_type=request.target_type,
+            target_id=target_id,
+            created_by_run_id=run_context.run_id,
+            created_by_session_id=run_context.session_id,
+            updated_by_run_id=run_context.run_id,
+            updated_by_session_id=run_context.session_id,
+            enabled=True,
+            next_run_at=compute_next_run(request.cron, request.timezone),
+            created_at=int(time.time()),
+        )
+        stored = self.db.create_schedule(schedule.to_dict())
+        return Schedule.from_dict(stored)
+
+    @staticmethod
+    def _schedule_view(schedule: "Schedule", metadata: Dict[str, Any]) -> ScheduleView:
+        return ScheduleView(
+            schedule_id=schedule.id,
+            name=schedule.name,
+            description=schedule.description,
+            cron=schedule.cron_expr,
+            target_type=cast(Literal["agent", "team", "workflow"], metadata["target_type"]),
+            target_id=metadata["target_id"],
+            timezone=schedule.timezone,
+            enabled=schedule.enabled,
+            next_run_at=schedule.next_run_at,
+            owner_actor_id=metadata["owner_actor_id"],
+            created_at=schedule.created_at,
+            updated_at=schedule.updated_at,
+        )
+
+    @staticmethod
+    def _schedule_action_view(schedule: "Schedule", metadata: Dict[str, Any]) -> ScheduleActionView:
+        return ScheduleActionView(
+            schedule_id=schedule.id,
+            name=schedule.name,
+            target_type=cast(Literal["agent", "team", "workflow"], metadata["target_type"]),
+            target_id=metadata["target_id"],
+            enabled=schedule.enabled,
+        )
+
+    @staticmethod
+    def _schedule_run_view(run: "ScheduleRun") -> ScheduleRunView:
+        return ScheduleRunView(
+            schedule_run_id=run.id,
+            schedule_id=run.schedule_id,
+            attempt=run.attempt,
+            status=run.status,
+            triggered_at=run.triggered_at,
+            completed_at=run.completed_at,
+            status_code=run.status_code,
+            component_run_id=run.run_id,
+            session_id=run.session_id,
+            has_error=run.error is not None,
+            has_requirements=bool(run.requirements),
+            created_at=run.created_at,
+        )
+
+    def _owned_schedule(self, schedule_id: str, run_context: RunContext) -> tuple["Schedule", Dict[str, Any]]:
+        schedule = self._schedule_manager().get(schedule_id)
+        if schedule is None:
+            raise _StudioRequestError("schedule_not_found", f"Schedule '{schedule_id}' was not found.")
+        metadata = self._studio_schedule_metadata(schedule)
+        if metadata is None or metadata["owner_actor_id"] != run_context.user_id:
+            # Do not disclose whether the id belongs to another actor or to a
+            # non-Studio scheduler record in the shared table.
+            raise _StudioRequestError("schedule_not_found", f"Schedule '{schedule_id}' was not found.")
+        return schedule, metadata
+
+    @staticmethod
+    def _validate_schedule_cadence(request: ScheduleCreate) -> None:
+        from agno.scheduler.cron import validate_cron_expr, validate_timezone
+
+        if not validate_cron_expr(request.cron):
+            raise _StudioRequestError("invalid_cron", "Schedule cron must be a valid five-field expression.")
+        if not validate_timezone(request.timezone):
+            raise _StudioRequestError("invalid_timezone", "Schedule timezone must be a valid IANA timezone.")
+
+    def _disable_studio_schedules_for_target(self, component_type: str, component_id: str) -> int:
+        """Atomically disable every Studio-owned schedule for an archived target."""
+        if getattr(self.db, "scheduler_api_version", 1) < 2:
+            raise RuntimeError("Studio schedule cleanup requires scheduler API version 2")
+        return self.db.disable_schedules_for_target(
+            component_type,
+            component_id,
+            managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+        )
+
+    def _schedule_cleanup_warnings(self, component_type: str, component_id: str) -> List[str]:
+        """Disable archived-target schedules and project any backend failure safely."""
+        try:
+            self._disable_studio_schedules_for_target(component_type, component_id)
+        except Exception:
+            # Archival is already committed (or was committed by an earlier
+            # attempt). Report it truthfully rather than returning a failure
+            # for a mutation that happened. A retry gets another cleanup pass.
+            logger.error(
+                "Studio archived %s '%s' but could not disable all of its schedules",
+                component_type,
+                component_id,
+            )
+            return [
+                "The component was archived, but one or more schedules could not be disabled; inspect the scheduler."
+            ]
         return []
-    names: List[str] = []
-    for t in tools:
-        if isinstance(t, Toolkit):
-            names.append(t.name)
-        elif isinstance(t, Function):
-            names.append(t.name)
-        elif callable(t):
-            names.append(getattr(t, "__name__", repr(t)))
-    return names
 
+    def _resolve_schedule_target(self, target_type: str, target_id: str) -> str:
+        if target_type not in _SCHEDULE_TARGET_TYPES:
+            raise _StudioRequestError(
+                "invalid_target_type",
+                f"target_type must be one of {list(_SCHEDULE_TARGET_TYPES)}.",
+            )
+        self._ensure_component_type_enabled(target_type)
+        self._ensure_no_source_collision(target_id, target_type)
+        code = self._code_component(target_type, target_id)
+        if code is not None:
+            return target_id
+        row = self._db_component(target_type, target_id)
+        if row is None or row.get("current_version") is None:
+            raise _StudioRequestError(
+                "published_target_not_found",
+                f"Published {target_type} '{target_id}' was not found.",
+            )
+        return target_id
 
-def _persist_only(
-    component: Component,
-    db: Optional["BaseDb"],
-    stage: str = "published",
-    config: Optional[Dict[str, Any]] = None,
-    links: Optional[List[Dict[str, Any]]] = None,
-) -> Optional[int]:
-    """Save a component WITHOUT cascading to members or step agents.
+    def _revalidate_schedule_target_after_write(
+        self,
+        schedule: "Schedule",
+        target_type: str,
+        target_id: str,
+        *,
+        delete_on_failure: bool = False,
+    ) -> "Schedule":
+        """Close the monotonic archive race around schedule writes.
 
-    Agno's built-in ``component.save()`` recursively persists every member of
-    a team and every agent/team referenced by a workflow step. That pulls
-    code-defined agents (ones you passed via ``agents_list`` or the registry)
-    into the DB as components, which is not what studio should do.
+        Archive commits and then disables every schedule it can see. A create or
+        enable that lands after that scan must perform the other half of the
+        protocol: re-read the target and synchronously disable its own record
+        before returning an error. If the write lands first, archive's scan sees
+        it; if archive lands first, this check sees the archived target.
+        """
+        try:
+            self._resolve_schedule_target(target_type, target_id)
+        except _StudioRequestError as target_error:
+            manager = self._catalog_schedule_manager()
+            if delete_on_failure:
+                cleaned_up = manager.delete(schedule.id) is True
+            else:
+                disabled = manager.disable(schedule.id)
+                cleaned_up = disabled is not None and not disabled.enabled
+            if not cleaned_up:
+                raise RuntimeError(
+                    f"Schedule '{schedule.id}' targeted an archived component and could not be cleaned up"
+                ) from target_error
+            raise
+        return schedule
 
-    This helper saves only the top-level component row and its config. Member
-    / step references travel in the config dict by id; rehydration resolves
-    them via ``get_agent_by_id`` / ``get_team_by_id``, which check the DB.
-    Code-defined members won't be found on a cold reload -- that's the
-    trade-off for keeping them out of DB.
-    """
-    if db is None:
-        raise ValueError("db is required for persistence")
-    component_id = getattr(component, "id", None)
-    if component_id is None:
-        raise ValueError("Component has no id")
-    db.upsert_component(
-        component_id=component_id,
-        component_type=_component_type(component),
-        name=getattr(component, "name", component_id),
-        description=getattr(component, "description", None),
-        metadata=getattr(component, "metadata", None),
-    )
-    result = db.upsert_config(
-        component_id=component_id,
-        config=config if config is not None else _component_to_dict(component),
-        stage=stage,
-        links=links,
-    )
-    return result.get("version")
+    def create_schedule(
+        self,
+        request: ScheduleCreate,
+        if_exists: Literal["error", "update"] = "error",
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[ScheduleView]:
+        """Create an actor-owned schedule from one typed request.
+
+        Args:
+            request: Typed cadence, target, and prompt for the component schedule.
+            if_exists: Refuse a name conflict by default, or update a schedule
+                with the same name owned by the authenticated actor.
+        """
+        denied = self._authorize("create_schedule", "mutate", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[ScheduleView], denied)
+        try:
+            assert _agno_run_context is not None
+            if not is_valid_studio_schedule_actor_id(_agno_run_context.user_id):
+                raise _StudioRequestError(
+                    "invalid_schedule_actor",
+                    "The authenticated actor identifier cannot be delegated to a scheduled run.",
+                )
+            if if_exists not in ("error", "update"):
+                raise _StudioRequestError(
+                    "invalid_if_exists",
+                    "if_exists must be either 'error' or 'update'.",
+                    details={"allowed": ["error", "update"]},
+                )
+            self._validate_schedule_cadence(request)
+            component_id = self._resolve_schedule_target(request.target_type, request.target_id)
+            manager = self._schedule_manager()
+            existing = manager.get_by_name(
+                request.name,
+                managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+                owner_actor_id=_agno_run_context.user_id,
+            )
+            schedule: Optional[Schedule] = None
+            status: Optional[Literal["created", "updated"]] = None
+
+            if existing is None:
+                try:
+                    schedule = self._create_studio_schedule_record(request, component_id, _agno_run_context)
+                except ScheduleNameConflictError:
+                    # The database uniqueness constraint is the concurrency
+                    # authority. Only a same-actor Studio winner is observable
+                    # here; names in other actors' or generic namespaces stay
+                    # independent and undisclosed.
+                    if if_exists == "error":
+                        raise _StudioRequestError(
+                            "schedule_conflict",
+                            "A Studio schedule with that name already exists in this actor's scope.",
+                        ) from None
+                    existing = manager.get_by_name(
+                        request.name,
+                        managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+                        owner_actor_id=_agno_run_context.user_id,
+                    )
+                    if existing is None:
+                        raise _StudioRequestError(
+                            "schedule_conflict",
+                            "The Studio schedule changed concurrently; read this actor's schedules and retry.",
+                            retryable=True,
+                        ) from None
+                else:
+                    status = "created"
+
+            if existing is not None:
+                existing_metadata = self._studio_schedule_metadata(existing)
+                if existing_metadata is None:
+                    raise _StudioRequestError(
+                        "schedule_name_conflict",
+                        "A malformed Studio schedule already occupies that name in this actor's scope.",
+                    )
+                if if_exists == "error":
+                    raise _StudioRequestError("schedule_conflict", "A Studio schedule with that name already exists.")
+                from agno.scheduler.cron import compute_next_run
+
+                updated = manager._update_studio(
+                    existing.id,
+                    cron_expr=request.cron,
+                    endpoint=f"/{request.target_type}s/{component_id}/runs",
+                    method="POST",
+                    description=request.description,
+                    payload=self._schedule_payload(request),
+                    timezone=request.timezone,
+                    next_run_at=compute_next_run(request.cron, request.timezone),
+                    target_type=request.target_type,
+                    target_id=component_id,
+                    updated_by_run_id=_agno_run_context.run_id,
+                    updated_by_session_id=_agno_run_context.session_id,
+                )
+                if updated is None:
+                    raise _StudioRequestError("schedule_not_found", "The schedule no longer exists.", retryable=True)
+                schedule = updated
+                status = "updated"
+
+            if schedule is None or status is None:
+                raise RuntimeError("Studio schedule write did not produce a record")
+            schedule = self._revalidate_schedule_target_after_write(
+                schedule,
+                request.target_type,
+                component_id,
+                delete_on_failure=status == "created",
+            )
+
+            metadata = self._studio_schedule_metadata(schedule)
+            if metadata is None:
+                raise RuntimeError("Studio schedule provenance was not persisted faithfully")
+            return StudioResult[ScheduleView](ok=True, status=status, data=self._schedule_view(schedule, metadata))
+        except _StudioRequestError as error:
+            return cast(StudioResult[ScheduleView], self._request_failure(error))
+        except Exception:
+            return cast(StudioResult[ScheduleView], self._internal_failure("create schedule"))
+
+    def list_schedules(
+        self,
+        enabled_only: bool = False,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[List[ScheduleView]]:
+        """List schedules owned by the authenticated actor.
+
+        Args:
+            enabled_only: Return only schedules currently enabled for execution.
+        """
+        denied = self._authorize("list_schedules", "read", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[List[ScheduleView]], denied)
+        try:
+            assert _agno_run_context is not None
+            if not isinstance(enabled_only, bool):
+                raise _StudioRequestError("invalid_enabled_filter", "enabled_only must be a boolean.")
+            views: List[ScheduleView] = []
+            for schedule in self._scan_schedules(self._schedule_manager(), enabled=True if enabled_only else None):
+                metadata = self._studio_schedule_metadata(schedule)
+                if metadata is not None and metadata["owner_actor_id"] == _agno_run_context.user_id:
+                    views.append(self._schedule_view(schedule, metadata))
+                    if len(views) >= self.list_limit:
+                        break
+            return StudioResult[List[ScheduleView]](ok=True, status="listed", data=views)
+        except _StudioRequestError as error:
+            return cast(StudioResult[List[ScheduleView]], self._request_failure(error))
+        except Exception:
+            return cast(StudioResult[List[ScheduleView]], self._internal_failure("list schedules"))
+
+    def get_schedule(
+        self,
+        schedule_id: str,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[ScheduleView]:
+        """Get one schedule owned by the authenticated actor.
+
+        Args:
+            schedule_id: Exact schedule id returned by list_schedules.
+        """
+        denied = self._authorize("get_schedule", "read", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[ScheduleView], denied)
+        try:
+            assert _agno_run_context is not None
+            schedule, metadata = self._owned_schedule(schedule_id, _agno_run_context)
+            return StudioResult[ScheduleView](ok=True, status="found", data=self._schedule_view(schedule, metadata))
+        except _StudioRequestError as error:
+            return cast(StudioResult[ScheduleView], self._request_failure(error))
+        except Exception:
+            return cast(StudioResult[ScheduleView], self._internal_failure("get schedule"))
+
+    def get_schedule_runs(
+        self,
+        schedule_id: str,
+        limit: int = 10,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[List[ScheduleRunView]]:
+        """List safe run summaries for an actor-owned schedule.
+
+        Args:
+            schedule_id: Exact schedule id returned by list_schedules.
+            limit: Maximum run summaries to return, from 1 through 100.
+        """
+        denied = self._authorize("get_schedule_runs", "read", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[List[ScheduleRunView]], denied)
+        try:
+            assert _agno_run_context is not None
+            if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
+                raise _StudioRequestError("invalid_schedule_run_limit", "limit must be an integer from 1 through 100.")
+            self._owned_schedule(schedule_id, _agno_run_context)
+            runs = self._schedule_manager().get_runs(schedule_id, limit=limit)
+            return StudioResult[List[ScheduleRunView]](
+                ok=True,
+                status="listed",
+                data=[self._schedule_run_view(run) for run in runs],
+            )
+        except _StudioRequestError as error:
+            return cast(StudioResult[List[ScheduleRunView]], self._request_failure(error))
+        except Exception:
+            return cast(StudioResult[List[ScheduleRunView]], self._internal_failure("list schedule runs"))
+
+    def trigger_schedule(
+        self,
+        schedule_id: str,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[ScheduleActionView]:
+        """Durably queue one run of an enabled actor-owned schedule.
+
+        Args:
+            schedule_id: Exact schedule id returned by list_schedules.
+        """
+        denied = self._authorize("trigger_schedule", "mutate", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[ScheduleActionView], denied)
+        try:
+            assert _agno_run_context is not None
+            schedule, metadata = self._owned_schedule(schedule_id, _agno_run_context)
+            if not schedule.enabled:
+                raise _StudioRequestError(
+                    "schedule_disabled",
+                    "The schedule is disabled; enable it before triggering.",
+                )
+            self._resolve_schedule_target(metadata["target_type"], metadata["target_id"])
+            updated = self._schedule_manager().trigger(schedule_id)
+            if updated is None:
+                raise _StudioRequestError("schedule_not_found", "The schedule no longer exists.", retryable=True)
+            return StudioResult[ScheduleActionView](
+                ok=True,
+                status="triggered",
+                data=self._schedule_action_view(updated, metadata),
+            )
+        except _StudioRequestError as error:
+            return cast(StudioResult[ScheduleActionView], self._request_failure(error))
+        except Exception:
+            return cast(StudioResult[ScheduleActionView], self._internal_failure("trigger schedule"))
+
+    def enable_schedule(
+        self,
+        schedule_id: str,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[ScheduleActionView]:
+        """Enable an actor-owned schedule whose target remains publishable.
+
+        Args:
+            schedule_id: Exact schedule id returned by list_schedules.
+        """
+        denied = self._authorize("enable_schedule", "mutate", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[ScheduleActionView], denied)
+        try:
+            assert _agno_run_context is not None
+            schedule, metadata = self._owned_schedule(schedule_id, _agno_run_context)
+            self._resolve_schedule_target(metadata["target_type"], metadata["target_id"])
+            if schedule.enabled:
+                schedule = self._revalidate_schedule_target_after_write(
+                    schedule,
+                    metadata["target_type"],
+                    metadata["target_id"],
+                )
+                return StudioResult[ScheduleActionView](
+                    ok=True,
+                    status="already_enabled",
+                    data=self._schedule_action_view(schedule, metadata),
+                )
+            updated = self._schedule_manager().enable(schedule_id)
+            if updated is None:
+                raise _StudioRequestError("schedule_not_found", "The schedule no longer exists.", retryable=True)
+            updated = self._revalidate_schedule_target_after_write(
+                updated,
+                metadata["target_type"],
+                metadata["target_id"],
+            )
+            return StudioResult[ScheduleActionView](
+                ok=True,
+                status="enabled",
+                data=self._schedule_action_view(updated, metadata),
+            )
+        except _StudioRequestError as error:
+            return cast(StudioResult[ScheduleActionView], self._request_failure(error))
+        except Exception:
+            return cast(StudioResult[ScheduleActionView], self._internal_failure("enable schedule"))
+
+    def disable_schedule(
+        self,
+        schedule_id: str,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[ScheduleActionView]:
+        """Disable an actor-owned schedule without dispatching it.
+
+        Args:
+            schedule_id: Exact schedule id returned by list_schedules.
+        """
+        denied = self._authorize("disable_schedule", "mutate", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[ScheduleActionView], denied)
+        try:
+            assert _agno_run_context is not None
+            schedule, metadata = self._owned_schedule(schedule_id, _agno_run_context)
+            if not schedule.enabled:
+                return StudioResult[ScheduleActionView](
+                    ok=True,
+                    status="already_disabled",
+                    data=self._schedule_action_view(schedule, metadata),
+                )
+            updated = self._schedule_manager().disable(schedule_id)
+            if updated is None:
+                raise _StudioRequestError("schedule_not_found", "The schedule no longer exists.", retryable=True)
+            return StudioResult[ScheduleActionView](
+                ok=True,
+                status="disabled",
+                data=self._schedule_action_view(updated, metadata),
+            )
+        except _StudioRequestError as error:
+            return cast(StudioResult[ScheduleActionView], self._request_failure(error))
+        except Exception:
+            return cast(StudioResult[ScheduleActionView], self._internal_failure("disable schedule"))
+
+    def delete_schedule(
+        self,
+        schedule_id: str,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[ScheduleActionView]:
+        """Delete an actor-owned schedule and its scheduler run history.
+
+        Args:
+            schedule_id: Exact schedule id returned by list_schedules.
+        """
+        denied = self._authorize("delete_schedule", "mutate", _agno_run_context)
+        if denied is not None:
+            return cast(StudioResult[ScheduleActionView], denied)
+        try:
+            assert _agno_run_context is not None
+            schedule, metadata = self._owned_schedule(schedule_id, _agno_run_context)
+            if not self._schedule_manager().delete(schedule_id):
+                raise _StudioRequestError("schedule_not_found", "The schedule no longer exists.", retryable=True)
+            return StudioResult[ScheduleActionView](
+                ok=True,
+                status="deleted",
+                data=self._schedule_action_view(schedule, metadata),
+            )
+        except _StudioRequestError as error:
+            return cast(StudioResult[ScheduleActionView], self._request_failure(error))
+        except Exception:
+            return cast(StudioResult[ScheduleActionView], self._internal_failure("delete schedule"))
+
+    # ------------------------------------------------------------------
+    # Async parity. Sync DB control-plane work runs in a worker thread;
+    # runner dispatch uses its native async methods.
+    # ------------------------------------------------------------------
+
+    async def alist_models(self, _agno_run_context: Optional[RunContext] = None) -> StudioResult[List[ModelRef]]:
+        return await asyncio.to_thread(self.list_models, _agno_run_context)
+
+    async def alist_tools(self, _agno_run_context: Optional[RunContext] = None) -> StudioResult[List[ToolRef]]:
+        return await asyncio.to_thread(self.list_tools, _agno_run_context)
+
+    async def alist_functions(self, _agno_run_context: Optional[RunContext] = None) -> StudioResult[List[FunctionRef]]:
+        return await asyncio.to_thread(self.list_functions, _agno_run_context)
+
+    async def alist_agents(
+        self, _agno_run_context: Optional[RunContext] = None
+    ) -> StudioResult[List[ComponentSummary]]:
+        return await asyncio.to_thread(self.list_agents, _agno_run_context)
+
+    async def alist_teams(self, _agno_run_context: Optional[RunContext] = None) -> StudioResult[List[ComponentSummary]]:
+        return await asyncio.to_thread(self.list_teams, _agno_run_context)
+
+    async def alist_workflows(
+        self, _agno_run_context: Optional[RunContext] = None
+    ) -> StudioResult[List[ComponentSummary]]:
+        return await asyncio.to_thread(self.list_workflows, _agno_run_context)
+
+    async def aget_agent(
+        self,
+        component_id: str,
+        version: Optional[int] = None,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[AgentView]:
+        return await asyncio.to_thread(self.get_agent, component_id, version, _agno_run_context)
+
+    async def aget_team(
+        self,
+        component_id: str,
+        version: Optional[int] = None,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[TeamView]:
+        return await asyncio.to_thread(self.get_team, component_id, version, _agno_run_context)
+
+    async def aget_workflow(
+        self,
+        component_id: str,
+        version: Optional[int] = None,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[WorkflowView]:
+        return await asyncio.to_thread(self.get_workflow, component_id, version, _agno_run_context)
+
+    async def alist_versions(
+        self,
+        component_id: str,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[List[VersionSummary]]:
+        return await asyncio.to_thread(self.list_versions, component_id, _agno_run_context)
+
+    async def aget_version(
+        self,
+        component_id: str,
+        version: int,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[ComponentView]:
+        return await asyncio.to_thread(self.get_version, component_id, version, _agno_run_context)
+
+    async def acreate_agent(
+        self,
+        request: AgentCreate,
+        save_as: SaveStage = "draft",
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[AgentView]:
+        return await asyncio.to_thread(self.create_agent, request, save_as, _agno_run_context)
+
+    async def acreate_team(
+        self,
+        request: TeamCreate,
+        save_as: SaveStage = "draft",
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[TeamView]:
+        return await asyncio.to_thread(self.create_team, request, save_as, _agno_run_context)
+
+    async def acreate_workflow(
+        self,
+        request: WorkflowCreate,
+        save_as: SaveStage = "draft",
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[WorkflowView]:
+        return await asyncio.to_thread(self.create_workflow, request, save_as, _agno_run_context)
+
+    async def aedit_agent(
+        self,
+        component_id: str,
+        patch: AgentPatch,
+        expected_version: int,
+        save_as: SaveStage = "draft",
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[AgentView]:
+        return await asyncio.to_thread(
+            self.edit_agent,
+            component_id,
+            patch,
+            expected_version,
+            save_as,
+            _agno_run_context,
+        )
+
+    async def aedit_team(
+        self,
+        component_id: str,
+        patch: TeamPatch,
+        expected_version: int,
+        save_as: SaveStage = "draft",
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[TeamView]:
+        return await asyncio.to_thread(
+            self.edit_team,
+            component_id,
+            patch,
+            expected_version,
+            save_as,
+            _agno_run_context,
+        )
+
+    async def aedit_workflow(
+        self,
+        component_id: str,
+        patch: WorkflowPatch,
+        expected_version: int,
+        save_as: SaveStage = "draft",
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[WorkflowView]:
+        return await asyncio.to_thread(
+            self.edit_workflow,
+            component_id,
+            patch,
+            expected_version,
+            save_as,
+            _agno_run_context,
+        )
+
+    async def apublish_component(
+        self,
+        component_id: str,
+        version: int,
+        expected_current_version: int | None,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[ComponentView]:
+        return await asyncio.to_thread(
+            self.publish_component,
+            component_id,
+            version,
+            expected_current_version,
+            _agno_run_context,
+        )
+
+    async def aset_current_version(
+        self,
+        component_id: str,
+        version: int,
+        expected_current_version: int | None,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[ComponentView]:
+        return await asyncio.to_thread(
+            self.set_current_version,
+            component_id,
+            version,
+            expected_current_version,
+            _agno_run_context,
+        )
+
+    async def adelete_version(
+        self,
+        component_id: str,
+        version: int,
+        expected_latest_version: int,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[ComponentActionView]:
+        return await asyncio.to_thread(
+            self.delete_version,
+            component_id,
+            version,
+            expected_latest_version,
+            _agno_run_context,
+        )
+
+    async def aarchive_agent(
+        self,
+        component_id: str,
+        expected_current_version: int | None,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[ComponentActionView]:
+        return await asyncio.to_thread(
+            self.archive_agent,
+            component_id,
+            expected_current_version,
+            _agno_run_context,
+        )
+
+    async def aarchive_team(
+        self,
+        component_id: str,
+        expected_current_version: int | None,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[ComponentActionView]:
+        return await asyncio.to_thread(
+            self.archive_team,
+            component_id,
+            expected_current_version,
+            _agno_run_context,
+        )
+
+    async def aarchive_workflow(
+        self,
+        component_id: str,
+        expected_current_version: int | None,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[ComponentActionView]:
+        return await asyncio.to_thread(
+            self.archive_workflow,
+            component_id,
+            expected_current_version,
+            _agno_run_context,
+        )
+
+    async def arestore_agent(
+        self,
+        component_id: str,
+        expected_current_version: int | None,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[ComponentActionView]:
+        return await asyncio.to_thread(
+            self.restore_agent,
+            component_id,
+            expected_current_version,
+            _agno_run_context,
+        )
+
+    async def arestore_team(
+        self,
+        component_id: str,
+        expected_current_version: int | None,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[ComponentActionView]:
+        return await asyncio.to_thread(
+            self.restore_team,
+            component_id,
+            expected_current_version,
+            _agno_run_context,
+        )
+
+    async def arestore_workflow(
+        self,
+        component_id: str,
+        expected_current_version: int | None,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[ComponentActionView]:
+        return await asyncio.to_thread(
+            self.restore_workflow,
+            component_id,
+            expected_current_version,
+            _agno_run_context,
+        )
+
+    async def arun_agent(
+        self,
+        agent_id: str,
+        message: str,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> str:
+        denied = await asyncio.to_thread(self._authorize, "run_agent", "mutate", _agno_run_context)
+        if denied is not None:
+            return str(denied)
+        try:
+            self._ensure_component_type_enabled("agent")
+            await asyncio.to_thread(self._ensure_no_source_collision, agent_id, "agent")
+            return await self._runner_tools.arun_agent(agent_id, message, _agno_run_context)
+        except _StudioRequestError as error:
+            return str(self._request_failure(error))
+        except Exception:
+            return str(self._internal_failure("run agent"))
+
+    async def arun_team(
+        self,
+        team_id: str,
+        message: str,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> str:
+        denied = await asyncio.to_thread(self._authorize, "run_team", "mutate", _agno_run_context)
+        if denied is not None:
+            return str(denied)
+        try:
+            self._ensure_component_type_enabled("team")
+            await asyncio.to_thread(self._ensure_no_source_collision, team_id, "team")
+            return await self._runner_tools.arun_team(team_id, message, _agno_run_context)
+        except _StudioRequestError as error:
+            return str(self._request_failure(error))
+        except Exception:
+            return str(self._internal_failure("run team"))
+
+    async def arun_workflow(
+        self,
+        workflow_id: str,
+        message: str,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> str:
+        denied = await asyncio.to_thread(self._authorize, "run_workflow", "mutate", _agno_run_context)
+        if denied is not None:
+            return str(denied)
+        try:
+            self._ensure_component_type_enabled("workflow")
+            await asyncio.to_thread(self._ensure_no_source_collision, workflow_id, "workflow")
+            return await self._runner_tools.arun_workflow(workflow_id, message, _agno_run_context)
+        except _StudioRequestError as error:
+            return str(self._request_failure(error))
+        except Exception:
+            return str(self._internal_failure("run workflow"))
+
+    async def acreate_schedule(
+        self,
+        request: ScheduleCreate,
+        if_exists: Literal["error", "update"] = "error",
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[ScheduleView]:
+        return await asyncio.to_thread(
+            self.create_schedule,
+            request,
+            if_exists,
+            _agno_run_context,
+        )
+
+    async def alist_schedules(
+        self,
+        enabled_only: bool = False,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[List[ScheduleView]]:
+        return await asyncio.to_thread(self.list_schedules, enabled_only, _agno_run_context)
+
+    async def aget_schedule(
+        self,
+        schedule_id: str,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[ScheduleView]:
+        return await asyncio.to_thread(self.get_schedule, schedule_id, _agno_run_context)
+
+    async def aget_schedule_runs(
+        self,
+        schedule_id: str,
+        limit: int = 10,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[List[ScheduleRunView]]:
+        return await asyncio.to_thread(self.get_schedule_runs, schedule_id, limit, _agno_run_context)
+
+    async def atrigger_schedule(
+        self,
+        schedule_id: str,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[ScheduleActionView]:
+        return await asyncio.to_thread(self.trigger_schedule, schedule_id, _agno_run_context)
+
+    async def aenable_schedule(
+        self,
+        schedule_id: str,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[ScheduleActionView]:
+        return await asyncio.to_thread(self.enable_schedule, schedule_id, _agno_run_context)
+
+    async def adisable_schedule(
+        self,
+        schedule_id: str,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[ScheduleActionView]:
+        return await asyncio.to_thread(self.disable_schedule, schedule_id, _agno_run_context)
+
+    async def adelete_schedule(
+        self,
+        schedule_id: str,
+        _agno_run_context: Optional[RunContext] = None,
+    ) -> StudioResult[ScheduleActionView]:
+        return await asyncio.to_thread(self.delete_schedule, schedule_id, _agno_run_context)
 
 
 def _resolve_flags(
@@ -2874,78 +4560,65 @@ def _resolve_flags(
     workflows: Optional[bool],
     has_agents_list: bool,
     has_teams_list: bool,
+    has_workflows_list: bool,
 ) -> tuple[bool, bool, bool]:
-    """Resolve the enable flags for the three capability groups.
-
-    * Agents are enabled by default unless ``agents=False`` is explicit.
-    * Teams and workflows are disabled by default unless explicitly enabled
-      or auto-enabled by live component lists.
-    * Passing ``agents=False`` without enabling another component type leaves
-      only discovery tools registered.
-    * Passing ``agents_list`` auto-enables teams and workflows (you can build
-      them from those agents). Passing ``teams_list`` auto-enables workflows.
-      Explicit flags take precedence over these auto-enables.
-    """
-    a = bool(agents) if agents is not None else True
-    t = bool(teams) if teams is not None else False
-    w = bool(workflows) if workflows is not None else False
-
-    if has_agents_list and teams is None:
-        t = True
-    if has_agents_list and workflows is None:
-        w = True
-    if has_teams_list and workflows is None:
-        w = True
-
-    return a, t, w
+    agent_enabled = bool(agents) if agents is not None else True
+    team_enabled = bool(teams) if teams is not None else has_agents_list or has_teams_list
+    workflow_enabled = (
+        bool(workflows) if workflows is not None else has_agents_list or has_teams_list or has_workflows_list
+    )
+    return agent_enabled, team_enabled, workflow_enabled
 
 
-def _component_type(component: Component) -> Any:
-    from agno.agent.agent import Agent
-    from agno.db.base import ComponentType
-    from agno.team.team import Team
-    from agno.workflow.workflow import Workflow
+# Async aliases must expose the canonical sync documentation. Toolkit schema
+# processing reads each callable independently, so this keeps descriptions as
+# well as signatures in lockstep instead of letting thin wrappers overwrite the
+# model-facing contract.
+for _sync_name, _async_name in (
+    ("list_models", "alist_models"),
+    ("list_tools", "alist_tools"),
+    ("list_functions", "alist_functions"),
+    ("list_agents", "alist_agents"),
+    ("list_teams", "alist_teams"),
+    ("list_workflows", "alist_workflows"),
+    ("get_agent", "aget_agent"),
+    ("get_team", "aget_team"),
+    ("get_workflow", "aget_workflow"),
+    ("list_versions", "alist_versions"),
+    ("get_version", "aget_version"),
+    ("create_agent", "acreate_agent"),
+    ("create_team", "acreate_team"),
+    ("create_workflow", "acreate_workflow"),
+    ("edit_agent", "aedit_agent"),
+    ("edit_team", "aedit_team"),
+    ("edit_workflow", "aedit_workflow"),
+    ("publish_component", "apublish_component"),
+    ("set_current_version", "aset_current_version"),
+    ("delete_version", "adelete_version"),
+    ("archive_agent", "aarchive_agent"),
+    ("archive_team", "aarchive_team"),
+    ("archive_workflow", "aarchive_workflow"),
+    ("restore_agent", "arestore_agent"),
+    ("restore_team", "arestore_team"),
+    ("restore_workflow", "arestore_workflow"),
+    ("run_agent", "arun_agent"),
+    ("run_team", "arun_team"),
+    ("run_workflow", "arun_workflow"),
+    ("create_schedule", "acreate_schedule"),
+    ("list_schedules", "alist_schedules"),
+    ("get_schedule", "aget_schedule"),
+    ("get_schedule_runs", "aget_schedule_runs"),
+    ("trigger_schedule", "atrigger_schedule"),
+    ("enable_schedule", "aenable_schedule"),
+    ("disable_schedule", "adisable_schedule"),
+    ("delete_schedule", "adelete_schedule"),
+):
+    getattr(StudioTools, _async_name).__doc__ = getattr(StudioTools, _sync_name).__doc__
 
-    if isinstance(component, Agent):
-        return ComponentType.AGENT
-    if isinstance(component, Team):
-        return ComponentType.TEAM
-    if isinstance(component, Workflow):
-        return ComponentType.WORKFLOW
-    raise TypeError(f"Unsupported component type: {type(component).__name__}")
 
-
-# Serialized by to_dict and never read back by from_dict (#9452), so a rebuild
-# drops them. An edit that resaves a rebuild would therefore delete a
-# declaration it never touched -- and quietly lift the dispatch refusal that
-# declaration causes -- so edits carry them forward verbatim.
-_UNRECONSTRUCTED_KEYS = ("reasoning_model", "parser_model", "output_model")
-
-
-def _component_to_dict(component: Component, carry: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    from agno.agent.agent import Agent
-    from agno.team.team import Team
-    from agno.workflow.workflow import Workflow
-
-    if isinstance(component, Agent):
-        from agno.agent._storage import to_dict as agent_to_dict
-
-        config = agent_to_dict(component)
-    elif isinstance(component, Team):
-        from agno.team._storage import to_dict as team_to_dict
-
-        config = team_to_dict(component)
-    elif isinstance(component, Workflow):
-        config = component.to_dict()
-    else:
-        raise TypeError(f"Unsupported component type: {type(component).__name__}")
-    for key, value in (carry or {}).items():
-        # Only what the rebuild lost: a value the component still carries is
-        # the edited one and wins.
-        config.setdefault(key, value)
-    return config
-
-
-# Backward-compatible alias. The toolkit was originally released as ``StudioTool``
-# (singular); ``StudioTools`` is the canonical name. Both refer to the same class.
-StudioTool = StudioTools
+__all__ = [
+    "StudioAccess",
+    "StudioAction",
+    "StudioAuthorizer",
+    "StudioTools",
+]
