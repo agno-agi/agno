@@ -1050,7 +1050,7 @@ class StudioTools(Toolkit):
                 add_datetime_to_context=add_datetime_to_context,
             )
 
-            version = _persist_only(team, db, links=self._links_for_component(team))
+            version = _persist_only(team, db, links=self._links_for_component(team, db=db))
             log_debug(f"StudioTools created team id={team_id} members={member_ids} version={version}")
             return json.dumps(
                 {
@@ -1107,7 +1107,7 @@ class StudioTools(Toolkit):
                 db=db,
             )
 
-            version = _persist_only(workflow, db, links=self._links_for_component(workflow))
+            version = _persist_only(workflow, db, links=self._links_for_component(workflow, db=db))
             log_debug(f"StudioTools created workflow id={workflow_id} steps={len(steps)} version={version}")
             return json.dumps(
                 {
@@ -1211,7 +1211,12 @@ class StudioTools(Toolkit):
             if add_datetime_to_context is not None:
                 agent.add_datetime_to_context = add_datetime_to_context
 
-            result = self._save_edit(agent, replaced_keys={"tools"} if tool_names is not None else None)
+            replaced_keys = set()
+            if tool_names is not None:
+                replaced_keys.add("tools")
+            if model_id is not None:
+                replaced_keys.add("model")
+            result = self._save_edit(agent, replaced_keys=replaced_keys)
             log_debug(f"StudioTools edited agent id={agent.id} result={result}")
             return json.dumps({"status": "edited", "id": getattr(agent, "id", None) or agent_id, **result})
         except Exception as e:
@@ -1328,7 +1333,12 @@ class StudioTools(Toolkit):
             if add_datetime_to_context is not None:
                 team.add_datetime_to_context = add_datetime_to_context
 
-            result = self._save_edit(team, replaced_keys={"members"} if member_ids is not None else None)
+            replaced_keys = set()
+            if member_ids is not None:
+                replaced_keys.add("members")
+            if model_id is not None:
+                replaced_keys.add("model")
+            result = self._save_edit(team, replaced_keys=replaced_keys)
             log_debug(f"StudioTools edited team id={team.id} result={result}")
             return json.dumps({"status": "edited", "id": getattr(team, "id", None) or team_id, **result})
         except Exception as e:
@@ -2229,7 +2239,7 @@ class StudioTools(Toolkit):
         # base-authoritative: no edit surface changes them, the runtime object
         # cannot improve on them, and re-serializing them churns identity
         # (fresh step_ids would orphan every carried-forward pin).
-        for key in ("db", "steps", "members"):
+        for key in ("db", "model", "steps", "members"):
             if key in replaced_keys:
                 continue
             config.pop(key, None)
@@ -2249,13 +2259,17 @@ class StudioTools(Toolkit):
             return None
         return self._runner_tools._load_links_from_db(component_id, version=self._edit_base_version(component_id))
 
-    def _links_for_component(self, component: Component) -> Optional[List[Dict[str, Any]]]:
+    def _links_for_component(
+        self, component: Component, db: Optional["BaseDb"] = None
+    ) -> Optional[List[Dict[str, Any]]]:
         """Member/step links for a component snapshot, pinned at each child's
-        current stored version.
+        current stored version in the SAME db the snapshot is written to.
 
-        The edit paths persist without cascading saves, so children are not
-        re-saved; a child with no stored version (code-defined) gets no link,
-        matching how rehydration resolves it from the registry.
+        The persist paths do not cascade-save, so children are not re-saved. A
+        child gets no link when it has no stored version in that db, or when a
+        code-defined component claims its exact id: resolution prefers the live
+        object there, and pinning the same-id db row would bind an unrelated
+        shadow.
         """
         from agno.team.team import Team
         from agno.workflow.condition import Condition
@@ -2266,22 +2280,36 @@ class StudioTools(Toolkit):
         from agno.workflow.steps import Steps
         from agno.workflow.workflow import Workflow
 
-        if self.db is None:
+        target_db = db if db is not None else self.db
+        if target_db is None:
             return None
+
+        def code_defined(child_id: Optional[str], candidates: List[Any]) -> bool:
+            return any(getattr(candidate, "id", None) == child_id for candidate in candidates)
 
         def current_version(child_id: Optional[str]) -> Optional[int]:
             if not child_id:
                 return None
-            loaded = self._runner_tools._load_config_row_from_db(child_id)
-            return loaded[1] if loaded is not None else None
+            try:
+                row = target_db.get_config(component_id=child_id)
+            except NotImplementedError:
+                return None
+            version = row.get("version") if isinstance(row, dict) else None
+            return version if isinstance(version, int) else None
 
         links: List[Dict[str, Any]] = []
         if isinstance(component, Team):
             from agno.agent.agent import Agent
 
+            code_agents = list(self._iter_agents())
+            code_teams = list(self._iter_teams())
             members = component.members if isinstance(component.members, list) else []
             for position, member in enumerate(members):
-                child_version = current_version(getattr(member, "id", None))
+                member_id = getattr(member, "id", None)
+                candidates = code_teams if isinstance(member, Team) else code_agents
+                if code_defined(member_id, candidates):
+                    continue
+                child_version = current_version(member_id)
                 if child_version is None:
                     continue
                 links.append(
@@ -2295,11 +2323,17 @@ class StudioTools(Toolkit):
                     }
                 )
         elif isinstance(component, Workflow):
+            code_agents = list(self._iter_agents())
+            code_teams = list(self._iter_teams())
 
             def walk(step: Any, position: int, key_suffix: str = "") -> None:
                 if isinstance(step, Step):
                     for link in step.get_links(position=position):
-                        child_version = current_version(link.get("child_component_id"))
+                        child_id = link.get("child_component_id")
+                        candidates = code_teams if link.get("link_kind") == "step_team" else code_agents
+                        if code_defined(child_id, candidates):
+                            continue
+                        child_version = current_version(child_id)
                         if child_version is None:
                             continue
                         link["child_version"] = child_version
@@ -2310,7 +2344,7 @@ class StudioTools(Toolkit):
                     for nested_position, nested in enumerate(getattr(step, "steps", None) or []):
                         walk(nested, nested_position, key_suffix)
                     for nested_position, nested in enumerate(getattr(step, "else_steps", None) or []):
-                        walk(nested, nested_position, "#else")
+                        walk(nested, nested_position, key_suffix + "#else")
                 elif isinstance(step, Router):
                     for nested_position, nested in enumerate(getattr(step, "choices", None) or []):
                         walk(nested, nested_position, key_suffix)

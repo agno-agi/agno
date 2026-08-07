@@ -1397,3 +1397,19 @@ def test_strict_refuses_a_member_of_unknown_type():
 
     lenient = Team.from_dict(config, strict=False)
     assert lenient.members == []
+
+
+def test_strict_refuses_a_wrong_type_registry_copy():
+    """A custom deep_copy returning the wrong type must refuse under strict,
+    not dispatch the impostor."""
+    from agno.exceptions import ComponentRehydrationError
+
+    class ImposterAgent(Agent):
+        def deep_copy(self, *, update=None):
+            return object()
+
+    registry = Registry(agents=[ImposterAgent(id="imp", name="Imp")])
+    config = {"id": "imp-team", "members": [{"type": "agent", "agent_id": "imp"}]}
+
+    with pytest.raises(ComponentRehydrationError, match="not a Agent|not an Agent|object"):
+        Team.from_dict(config, registry=registry, strict=True)

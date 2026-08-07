@@ -742,13 +742,20 @@ def _parse_team_mode(value: Optional[str]) -> Optional["TeamMode"]:
     return TeamMode(value)
 
 
-def _registry_copy(component: Any, label: str, strict: bool) -> Any:
+def _team_type() -> type:
+    from agno.team.team import Team
+
+    return Team
+
+
+def _registry_copy(component: Any, label: str, strict: bool, expected_type: type) -> Any:
     """An isolated copy of a code-defined registry component.
 
-    Strict loads refuse a copy that is the shared registry instance (or a
-    failed copy): team initialization mutates member state, so sharing the
-    singleton corrupts every concurrent load. Lenient loads keep the old
-    shared-instance fallback with a warning.
+    Strict loads refuse a copy that is the shared registry instance, a failed
+    copy, or an object of the wrong type: team initialization mutates member
+    state, so sharing the singleton corrupts every concurrent load, and a
+    custom deep_copy that returns something else would dispatch it. Lenient
+    loads keep the old shared-instance fallback with a warning.
     """
     try:
         copied = component.deep_copy()
@@ -766,6 +773,11 @@ def _registry_copy(component: Any, label: str, strict: bool) -> Any:
                 f"{label} deep_copy returned the shared registry instance; a strict load requires an isolated copy."
             )
         log_warning(f"{label}: deep_copy returned the shared registry instance.")
+    if strict and not isinstance(copied, expected_type):
+        raise ComponentRehydrationError(
+            f"{label} deep_copy returned a {type(copied).__name__}, not a "
+            f"{expected_type.__name__}; a strict load refuses it."
+        )
     return copied
 
 
@@ -877,7 +889,7 @@ def from_dict(
                 if agent is None and registry is not None:
                     registered_agent = registry.get_agent(agent_id)
                     agent = (
-                        _registry_copy(registered_agent, f"{component_label} member agent '{agent_id}'", strict)
+                        _registry_copy(registered_agent, f"{component_label} member agent '{agent_id}'", strict, Agent)
                         if registered_agent is not None
                         else None
                     )
@@ -937,7 +949,9 @@ def from_dict(
                 if nested_team is None and registry is not None:
                     registered_team = registry.get_team(team_id)
                     nested_team = (
-                        _registry_copy(registered_team, f"{component_label} member team '{team_id}'", strict)
+                        _registry_copy(
+                            registered_team, f"{component_label} member team '{team_id}'", strict, _team_type()
+                        )
                         if registered_team is not None
                         else None
                     )

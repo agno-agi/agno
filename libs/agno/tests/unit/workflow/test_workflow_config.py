@@ -1070,3 +1070,46 @@ class TestSaveCollisions:
         condition = loaded.steps[0]
         assert condition.steps[0].agent.description == "if-version"
         assert condition.else_steps[0].agent.description == "else-version"
+
+
+class TestNestedElsePins:
+    def test_doubly_nested_else_branch_resolves_its_own_pin(self, tmp_path):
+        """Nested else branches accumulate '#else' per level; the lookup must
+        match the whole chain so each branch reloads its own pinned version."""
+        from agno.agent.agent import Agent
+        from agno.db.sqlite import SqliteDb
+        from agno.workflow.condition import Condition
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import get_workflow_by_id
+
+        db = SqliteDb(db_file=str(tmp_path / "nested_else.db"))
+        outer_if = Agent(id="ne-agent", name="A", description="outer-if")
+        inner_else = Agent(id="ne-agent", name="A", description="inner-else")
+        Workflow(
+            id="ne-wf",
+            name="WF",
+            steps=[
+                Condition(
+                    name="outer",
+                    evaluator=True,
+                    steps=[Step(step_id="aaa-oif", name="oif", agent=outer_if)],
+                    else_steps=[
+                        Condition(
+                            name="inner",
+                            evaluator=True,
+                            steps=[],
+                            else_steps=[Step(step_id="bbb-iel", name="iel", agent=inner_else)],
+                        )
+                    ],
+                )
+            ],
+        ).save(db=db)
+
+        links = {link["link_key"]: link["child_version"] for link in db.get_links(component_id="ne-wf", version=1)}
+        assert "bbb-iel#else#else" in links
+
+        loaded = get_workflow_by_id(db=db, id="ne-wf", strict=True)
+        assert loaded is not None
+        inner_condition = loaded.steps[0].else_steps[0]
+        assert inner_condition.else_steps[0].agent.description == "inner-else"
+        assert loaded.steps[0].steps[0].agent.description == "outer-if"

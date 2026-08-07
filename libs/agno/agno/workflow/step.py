@@ -100,6 +100,12 @@ StepExecutor = Callable[
 ]
 
 
+def _is_team_instance(candidate: Any) -> bool:
+    from agno.team.team import Team
+
+    return isinstance(candidate, Team)
+
+
 class UnresolvableCallableError(RuntimeError):
     """Raised when a lenient-load placeholder for an unresolved callable executes.
 
@@ -406,7 +412,13 @@ class Step:
                     continue
                 if link.get("child_component_id") != child_id:
                     continue
-                if link.get("link_key") in (step_link_key, f"{step_link_key}#else"):
+                link_key = link.get("link_key")
+                # Nested else branches accumulate one '#else' per level.
+                if link_key == step_link_key or (
+                    isinstance(link_key, str)
+                    and isinstance(step_link_key, str)
+                    and link_key.startswith(f"{step_link_key}#else")
+                ):
                     return link.get("child_version")
                 if fallback is None:
                     fallback = link.get("child_version")
@@ -426,10 +438,15 @@ class Step:
                     try:
                         # Deep copy to isolate mutable state between concurrent requests
                         agent = registry_agent.deep_copy()
-                        if agent is registry_agent and strict:
+                        if strict and agent is registry_agent:
                             raise ComponentRehydrationError(
                                 f"Registry agent '{agent_id}' deep_copy returned the shared "
                                 "instance; a strict load requires an isolated copy."
+                            )
+                        if strict and not isinstance(agent, Agent):
+                            raise ComponentRehydrationError(
+                                f"Registry agent '{agent_id}' deep_copy returned a "
+                                f"{type(agent).__name__}, not an Agent; a strict load refuses it."
                             )
                     except ComponentRehydrationError:
                         raise
@@ -508,10 +525,15 @@ class Step:
                     try:
                         # Deep copy to isolate mutable state between concurrent requests
                         team = registry_team.deep_copy()
-                        if team is registry_team and strict:
+                        if strict and team is registry_team:
                             raise ComponentRehydrationError(
                                 f"Registry team '{team_id}' deep_copy returned the shared "
                                 "instance; a strict load requires an isolated copy."
+                            )
+                        if strict and type(team).__name__ != "Team" and not _is_team_instance(team):
+                            raise ComponentRehydrationError(
+                                f"Registry team '{team_id}' deep_copy returned a "
+                                f"{type(team).__name__}, not a Team; a strict load refuses it."
                             )
                     except ComponentRehydrationError:
                         raise

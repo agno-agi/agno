@@ -1906,3 +1906,51 @@ class TestEditIdentityStability:
         assert config["reasoning_model"] == aux
         assert config["parser_model"] == aux
         assert config["output_model"] == aux
+
+
+class TestPinProvenance:
+    def test_links_skip_children_shadowed_by_code_defined_components(self, tmp_path):
+        """A code-defined component with the child's exact id wins resolution,
+        so pinning the same-id db shadow row would bind an unrelated config."""
+        from agno.db.sqlite import SqliteDb
+        from agno.registry import Registry
+        from agno.team.team import Team
+        from agno.tools.studio import StudioTools
+
+        db = SqliteDb(db_file=str(tmp_path / "shadow.db"))
+        Agent(id="dual", name="DB Shadow").save(db=db)
+        code_agent = Agent(id="dual", name="Live Code Agent")
+        team = Team(id="sh-team", name="Team", members=[code_agent])
+
+        studio = StudioTools(registry=Registry(dbs=[db]), db=db, teams=True, agents_list=[code_agent])
+        links = studio._links_for_component(team)
+
+        assert links == []
+
+    def test_description_edit_preserves_the_exact_stored_model(self, tmp_path):
+        """The primary model subtree is base-authoritative: a lossy round trip
+        must not rewrite fields from_dict does not model."""
+        from agno.db.base import ComponentType
+        from agno.db.sqlite import SqliteDb
+        from agno.models.openai import OpenAIChat
+        from agno.registry import Registry
+        from agno.tools.studio import StudioTools
+
+        db = SqliteDb(db_file=str(tmp_path / "modelkeep.db"))
+        db.upsert_component(component_id="fm-agent", component_type=ComponentType.AGENT, name="A")
+        stored_model = {"provider": "OpenAI", "id": "gpt-5.5", "future_config": {"region": "private"}}
+        db.upsert_config(
+            component_id="fm-agent",
+            config={"id": "fm-agent", "name": "A", "model": stored_model},
+            stage="published",
+        )
+
+        studio = StudioTools(registry=Registry(models=[OpenAIChat(id="gpt-4o-mini")], dbs=[db]), db=db)
+        out = _loads(studio.edit_agent("fm-agent", description="edited"))
+        assert out.get("status") == "edited"
+        assert db.get_config(component_id="fm-agent")["config"]["model"] == stored_model
+
+        # An explicit model edit still replaces it.
+        out = _loads(studio.edit_agent("fm-agent", model_id="gpt-4o-mini"))
+        assert out.get("status") == "edited"
+        assert db.get_config(component_id="fm-agent")["config"]["model"].get("id") == "gpt-4o-mini"
