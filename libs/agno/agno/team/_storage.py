@@ -1013,13 +1013,11 @@ def from_dict(
     # --- Handle tools reconstruction ---
     if "tools" in config and config["tools"]:
         if registry:
+            from agno.agent._storage import _unresolvable_tool_name
+
             rehydrated_tools = registry.rehydrate_functions(config["tools"], strict=strict)
-            # External-execution tools run on the client and never carry a
-            # server entrypoint, so they are not unresolved references.
             unresolved_tools = [
-                f"{f.owning_toolkit}.{f.name}" if f.owning_toolkit else f.name
-                for f in rehydrated_tools
-                if isinstance(f, Function) and f.entrypoint is None and not f.external_execution
+                name for entry in rehydrated_tools if (name := _unresolvable_tool_name(entry)) is not None
             ]
             if unresolved_tools and strict:
                 raise ComponentRehydrationError(
@@ -1031,11 +1029,11 @@ def from_dict(
         elif strict:
             # Provider-run dicts and external-execution tools need no registry;
             # an empty one gives them the same treatment a real one would.
+            from agno.agent._storage import _unresolvable_tool_name
+
             rehydrated_tools = Registry().rehydrate_functions(config["tools"], strict=True)
             unresolved_tools = [
-                f"{f.owning_toolkit}.{f.name}" if f.owning_toolkit else f.name
-                for f in rehydrated_tools
-                if isinstance(f, Function) and f.entrypoint is None and not f.external_execution
+                name for entry in rehydrated_tools if (name := _unresolvable_tool_name(entry)) is not None
             ]
             if unresolved_tools:
                 raise ComponentRehydrationError(

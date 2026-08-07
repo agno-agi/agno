@@ -430,6 +430,23 @@ def get_agent_data(agent: Agent) -> Dict[str, Any]:
     return agent_data
 
 
+def _unresolvable_tool_name(entry: Any) -> Optional[str]:
+    """The display name of a tools entry that cannot execute without a registry.
+
+    A rebuilt Function with no entrypoint (and no client-side execution) lost
+    its implementation. A plain dict carrying only a name - no ``type``, no
+    ``input_schema``, no ``parameters`` - is not a provider-native tool shape
+    either; it is a reference only a registry could satisfy.
+    """
+    if isinstance(entry, Function):
+        if entry.entrypoint is None and not entry.external_execution:
+            return f"{entry.owning_toolkit}.{entry.name}" if entry.owning_toolkit else entry.name
+        return None
+    if isinstance(entry, dict) and "type" not in entry and "input_schema" not in entry and "parameters" not in entry:
+        return str(entry.get("name") or "?")
+    return None
+
+
 def to_dict(agent: Agent) -> Dict[str, Any]:
     """
     Convert the Agent to a dictionary.
@@ -836,12 +853,8 @@ def from_dict(
     if "tools" in config and config["tools"]:
         if registry:
             rehydrated_tools = registry.rehydrate_functions(config["tools"], strict=strict)
-            # External-execution tools run on the client and never carry a
-            # server entrypoint, so they are not unresolved references.
             unresolved_tools = [
-                f"{f.owning_toolkit}.{f.name}" if f.owning_toolkit else f.name
-                for f in rehydrated_tools
-                if isinstance(f, Function) and f.entrypoint is None and not f.external_execution
+                name for entry in rehydrated_tools if (name := _unresolvable_tool_name(entry)) is not None
             ]
             if unresolved_tools and strict:
                 raise ComponentRehydrationError(
@@ -855,9 +868,7 @@ def from_dict(
             # an empty one gives them the same treatment a real one would.
             rehydrated_tools = Registry().rehydrate_functions(config["tools"], strict=True)
             unresolved_tools = [
-                f"{f.owning_toolkit}.{f.name}" if f.owning_toolkit else f.name
-                for f in rehydrated_tools
-                if isinstance(f, Function) and f.entrypoint is None and not f.external_execution
+                name for entry in rehydrated_tools if (name := _unresolvable_tool_name(entry)) is not None
             ]
             if unresolved_tools:
                 raise ComponentRehydrationError(
