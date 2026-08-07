@@ -160,6 +160,9 @@ def _is_framework_typed(hint: Any) -> bool:
     return _reaches_identity(hint)
 
 
+_ANNOTATION_DEPTH_CAP = 16
+
+
 def _reaches_identity(hint: Any, depth: int = 0, seen: Optional[List[Any]] = None) -> bool:
     """Whether an annotation can deliver an identity object the model chose.
 
@@ -182,7 +185,13 @@ def _reaches_identity(hint: Any, depth: int = 0, seen: Optional[List[Any]] = Non
 
     Media never reaches here as identity: it is injected by reserved name
     alone, so hiding a media container would make it unfillable."""
+    if depth > _ANNOTATION_DEPTH_CAP:
+        return True  # Unreadable is not fillable; fail closed.
+    seen = [] if seen is None else seen
     hint = _unwrap_annotation(hint)
+    if any(hint is s for s in seen):
+        return False
+    seen = seen + [hint]
     # RunContext anywhere at all, however deeply wrapped.
     if _annotation_reaches(hint, (RunContext,)):
         return True
@@ -195,6 +204,40 @@ def _reaches_identity(hint: Any, depth: int = 0, seen: Optional[List[Any]] = Non
         arms = [arm for arm in get_args(hint) if arm is not type(None)]
         return bool(arms) and all(_reaches_identity(arm, depth + 1, seen) for arm in arms)
     return any(_reaches_identity(argument, depth + 1, seen) for argument in get_args(hint))
+
+
+def _annotation_binds(hint: Any, wanted: tuple, depth: int = 0, seen: Optional[List[Any]] = None) -> bool:
+    """Whether the framework can put one of these objects INTO this parameter.
+
+    Deliberately narrower than _annotation_reaches, and the pair is not a
+    contradiction: reaching decides what to keep from the model, binding
+    decides what can be handed over. A ``list[RunContext]`` reaches one -- so
+    it is not the model's to fill -- but it holds run contexts, it is not one,
+    and binding the object there would fail validation on every call.
+
+    Unwraps aliases and NewType, follows a TypeVar's bound and constraints, and
+    accepts a union with an arm that binds. A container or a structural wrapper
+    does not bind: nothing the framework has is that shape."""
+    if depth > _ANNOTATION_DEPTH_CAP:
+        return False
+    seen = [] if seen is None else seen
+    hint = _unwrap_annotation(hint)
+    if any(hint is s for s in seen):
+        return False
+    seen = seen + [hint]
+    if isinstance(hint, type):
+        return issubclass(hint, wanted)
+    if isinstance(hint, TypeVar):
+        bound = getattr(hint, "__bound__", None)
+        if bound is not None and _annotation_binds(bound, wanted, depth + 1, seen):
+            return True
+        return any(
+            _annotation_binds(constraint, wanted, depth + 1, seen)
+            for constraint in getattr(hint, "__constraints__", ()) or ()
+        )
+    if _is_union(hint):
+        return any(_annotation_binds(arm, wanted, depth + 1, seen) for arm in get_args(hint))
+    return False
 
 
 def _annotation_reaches(hint: Any, targets: tuple, depth: int = 0, seen: Optional[List[Any]] = None) -> bool:
@@ -212,7 +255,7 @@ def _annotation_reaches(hint: Any, targets: tuple, depth: int = 0, seen: Optiona
     whose own hints will not resolve."""
     from dataclasses import is_dataclass
 
-    if depth > 16:
+    if depth > _ANNOTATION_DEPTH_CAP:
         return True
     seen = [] if seen is None else seen
     hint = _unwrap_annotation(hint)
@@ -808,17 +851,28 @@ class Function(BaseModel):
         reserved = {"return", "self", *FRAMEWORK_INJECTED_PARAMS, *AGNO_INJECTED_PARAMS}
         found = {name for name in sig.parameters if name in reserved}
         try:
-            for param_name, hint in get_type_hints(self.entrypoint).items():
+            hints = get_type_hints(self.entrypoint)
+        except Exception:
+            return found
+        for param_name, hint in hints.items():
+            if param_name not in sig.parameters:
+                continue
+            # Per parameter, not per signature. One annotation this walk cannot
+            # read used to abort the loop, so a recursive alias sitting BEFORE
+            # `ctx: RunContext` left ctx unclassified and model-facing -- the
+            # parameter's own protection undone by an unrelated neighbour.
+            try:
                 # Identity only, not _is_schema_excluded. A bare media parameter is
                 # hidden from the schema, but dropping a value supplied for it
                 # displaces nothing: media is injected by reserved name alone, so the
                 # caller's own media never lands there under any behaviour. Dropping
                 # would only make the parameter unfillable by anything, which v2.8.7
                 # did not do.
-                if param_name in sig.parameters and _is_framework_typed(hint):
-                    found.add(param_name)
-        except Exception:
-            pass
+                owned = _is_framework_typed(hint)
+            except Exception:
+                owned = True  # Cannot classify it, so do not hand it to the model.
+            if owned:
+                found.add(param_name)
         return found
 
     def process_entrypoint(self, strict: bool = False):
@@ -1409,6 +1463,11 @@ class FunctionCall(BaseModel):
                 if not _is_framework_typed(hint):
                     continue
                 hint = _unwrap_annotation(hint)
+                # The same resolver that decided to hide it. Matching only a
+                # bare type or a direct union left the shapes the schema rule
+                # newly recognised -- a TypeVar bound to RunContext, an aliased
+                # or wrapped one -- hidden from the model AND never injected,
+                # so the tool failed on a missing argument every call.
                 matches = [
                     injected
                     for wanted, injected in (
@@ -1416,7 +1475,7 @@ class FunctionCall(BaseModel):
                         ((Team,), self.function._team),
                         ((RunContext,), self.function._run_context),
                     )
-                    if (isinstance(hint, type) and issubclass(hint, wanted)) or _union_names_type(hint, wanted)
+                    if _annotation_binds(hint, wanted)
                 ]
                 if not matches:
                     continue

@@ -1965,6 +1965,52 @@ class TestDispatchCheckInvariants:
 
         assert "Report" in _loads(StudioRunnerTools(registry=registry, db=db).run_team("outer", "hi"))["error"]
 
+    def test_an_anonymous_caller_is_not_written_into_the_targets_user(self, db):
+        """The module promises per-user state lands on the human who asked and
+        never on a service default. Passing None for a caller that HAS a context
+        but no user is indistinguishable from passing no override, so the target
+        fell back to its own configured user_id and the anonymous run was
+        written into that user's memory."""
+        from agno.agent import Agent
+        from agno.registry import Registry
+
+        owned = Agent(id="svc", name="Svc", model=OpenAIResponses(id="gpt-5.4"), user_id="service-default")
+        unowned = Agent(id="plain", name="Plain", model=OpenAIResponses(id="gpt-5.4"))
+        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db]), db=db, agents_list=[owned, unowned])
+        anonymous = RunContext(run_id="r1", session_id="s1", user_id=None)
+
+        error = _loads(runner.run_agent("svc", "hi", _agno_run_context=anonymous)).get("error", "")
+        assert "no user" in error and "service-default" in error
+
+        # The three neighbouring cases must still run. A target with no user of
+        # its own has nothing to capture the run; a caller with no context at
+        # all is not claiming to be anyone, so the component's own
+        # configuration is the only identity there is.
+        assert runner._caller_user_id(anonymous, unowned) is None
+        assert runner._caller_user_id(None, owned) is None
+        assert runner._caller_user_id(RunContext(run_id="r", session_id="s", user_id="alice"), owned) == "alice"
+
+    def test_a_copy_answering_from_another_provider_is_not_faithful(self):
+        """Two providers share a model id readily, so comparing the id alone let
+        a copy answer from a different pipeline under the right name."""
+        from agno.agent import Agent
+        from agno.models.openai import OpenAIChat
+
+        original = Agent(id="x", name="X", model=OpenAIResponses(id="gpt-5.4"))
+        swapped = Agent(id="x", name="X", model=OpenAIChat(id="gpt-5.4"))
+        assert StudioRunnerTools._copy_lost_identity(original, swapped)
+
+        same = Agent(id="x", name="X", model=OpenAIResponses(id="gpt-5.4"))
+        assert not StudioRunnerTools._copy_lost_identity(original, same)
+
+        # Connection settings are deliberately not compared: they are never
+        # serialized, so every DB-loaded component would be refused (#9420).
+        without_endpoint = Agent(id="x", name="X", model=OpenAIResponses(id="gpt-5.4"))
+        with_endpoint = Agent(
+            id="x", name="X", model=OpenAIResponses(id="gpt-5.4", base_url="https://private.internal/v1")
+        )
+        assert not StudioRunnerTools._copy_lost_identity(with_endpoint, without_endpoint)
+
     def test_dispatch_refuses_a_db_it_would_redirect_but_not_one_that_matches(self, db):
         """A declared db that cannot be rebuilt falls back to the catalog db.
         When that is a different store the component's sessions and memory

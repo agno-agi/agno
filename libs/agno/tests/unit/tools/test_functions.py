@@ -2384,6 +2384,99 @@ def test_the_whole_annotation_graph_decides_identity():
     assert [h for h in fillable if _is_framework_typed(h)] == []
 
 
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 type alias syntax needs 3.12")
+def test_one_unreadable_annotation_does_not_unclassify_its_neighbours():
+    """A parameter's protection must not depend on what sits beside it. A
+    recursive alias made the classifier raise, and the whole loop was wrapped
+    in one try, so every parameter after it went unclassified -- `ctx:
+    RunContext` became model-facing and the caller's identity was the model's
+    to choose. Order decided whether the tool was safe."""
+    namespace: Dict[str, Any] = {"RunContext": RunContext}
+    exec("type Tree = list[Tree]", namespace)
+    exec(
+        "def probe(tree: Tree = None, ctx: RunContext = None) -> str:\n"
+        "    return f\"user={getattr(ctx, 'user_id', None)}\"",
+        namespace,
+    )
+
+    func = Function(name="probe", entrypoint=namespace["probe"])
+    func.process_entrypoint()
+    assert "ctx" not in (func.parameters or {}).get("properties", {})
+    assert "ctx" in (func._framework_params or set())
+    # And the alias itself stays the model's to fill: a type that refers to
+    # itself is ordinary, so answering "unreadable, therefore hidden" for it
+    # would take a working parameter away.
+    assert "tree" in (func.parameters or {}).get("properties", {})
+
+    func._run_context = RunContext(run_id="r", session_id="s", user_id="real-owner")
+    result = FunctionCall(
+        function=func,
+        arguments={"tree": [], "ctx": {"run_id": "x", "session_id": "y", "user_id": "ATTACKER"}},
+    ).execute()
+    assert result.status == "success"
+    assert result.result == "user=real-owner"
+
+
+def test_a_parameter_that_cannot_be_classified_does_not_expose_the_others(monkeypatch):
+    """Defence in depth for the bug above. Whatever future annotation makes the
+    classifier raise, the failure has to stay with its own parameter: one
+    signature-wide try meant an unrelated neighbour could strip the protection
+    off an identity parameter, and fail open while doing it."""
+    from agno.tools import function as function_module
+
+    real = function_module._is_framework_typed
+
+    def raising(hint):
+        if hint is str:
+            raise RuntimeError("cannot read this one")
+        return real(hint)
+
+    monkeypatch.setattr(function_module, "_is_framework_typed", raising)
+
+    def probe(note: str, ctx: RunContext = None) -> str:  # type: ignore[assignment]
+        return f"user={getattr(ctx, 'user_id', None)}"
+
+    func = Function(name="probe", entrypoint=probe)
+    func.process_entrypoint()
+    # The neighbour that raised is kept from the model rather than released to
+    # it, and ctx is still classified.
+    assert "ctx" in (func._framework_params or set())
+    assert "note" in (func._framework_params or set())
+
+
+def test_what_the_schema_hides_the_framework_can_still_fill():
+    """Hiding a parameter and being able to fill it are two questions, and
+    answering only the first leaves a tool that fails on a missing argument
+    every call. A TypeVar bound to RunContext is hidden, so it must also be
+    bound; a list of them is hidden and cannot be bound, so it must not be
+    required to be."""
+    from typing import List, TypeVar
+
+    Bound = TypeVar("Bound", bound=RunContext)
+
+    def bindable(query: str, ctx: Bound) -> str:  # no default: injection is the only filler
+        return f"user={getattr(ctx, 'user_id', None)}"
+
+    func = Function(name="bindable", entrypoint=bindable)
+    func.process_entrypoint()
+    assert "ctx" not in (func.parameters or {}).get("properties", {})
+    func._run_context = RunContext(run_id="r", session_id="s", user_id="real-owner")
+    result = FunctionCall(function=func, arguments={"query": "q"}).execute()
+    assert result.status == "success"
+    assert result.result == "user=real-owner"
+
+    # The counterpart: a container holds run contexts, it is not one, so
+    # binding the object into it would fail validation on every call.
+    def not_bindable(query: str, ctxs: List[RunContext] = None) -> str:  # type: ignore[assignment]
+        return f"got={ctxs}"
+
+    other = Function(name="not_bindable", entrypoint=not_bindable)
+    other.process_entrypoint()
+    assert "ctxs" not in (other.parameters or {}).get("properties", {})
+    other._run_context = RunContext(run_id="r", session_id="s", user_id="real-owner")
+    assert FunctionCall(function=other, arguments={"query": "q"}).execute().status == "success"
+
+
 def test_identity_is_found_through_structural_types_and_typevars():
     """The walk resolves what an annotation stands for rather than matching
     shapes by name: a TypedDict or NamedTuple field, a dataclass field stored
