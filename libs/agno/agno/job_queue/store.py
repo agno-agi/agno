@@ -202,23 +202,43 @@ class InMemoryQueueStore:
             job.update(locked_by=worker_id, locked_at=now, updated_at=now)
             return True
 
-    async def fail_swept_job(self, job_id: str, worker_id: str, error: str = "worker lost") -> bool:
-        """Ownership-keyed terminal write: only the sweeper holding the lock
-        (via acquire_sweep) may fail the job. Replaces the old staleness
-        recheck - after acquire_sweep refreshed locked_at, staleness can no
-        longer serve as the fence."""
+    async def settle_swept_job(self, job_id: str, worker_id: str, status: str, error: Optional[str] = None) -> bool:
+        """Ownership-keyed settle for the SWEEPER: only the holder of the
+        sweep lock (via acquire_sweep) may write. The target status matches
+        what the run row actually says instead of always "failed" - the
+        sweep RECONCILES, it does not deface: a falsely-swept leg may have
+        completed, cancelled, or paused before the sweeper looked, and its
+        ticket must record that, not contradict it."""
+        if status not in ("completed", "cancelled", "paused", "failed"):
+            return False
         async with self._lock:
             now = int(time.time())
             job = self._jobs.get(job_id)
             if job is None or job["status"] != "running" or job.get("locked_by") != worker_id:
                 return False
-            job.update(status="failed", error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now)
+            job.update(status=status, error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now)
             return True
+
+    async def fail_swept_job(self, job_id: str, worker_id: str, error: str = "worker lost") -> bool:
+        """Ownership-keyed terminal write: only the sweeper holding the lock
+        (via acquire_sweep) may fail the job. Replaces the old staleness
+        recheck - after acquire_sweep refreshed locked_at, staleness can no
+        longer serve as the fence. Thin wrapper over settle_swept_job."""
+        return await self.settle_swept_job(job_id, worker_id, "failed", error)
 
     async def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
         async with self._lock:
             job = self._jobs.get(job_id)
             return dict(job) if job is not None else None
+
+    async def get_job_strict(self, job_id: str) -> Optional[Dict[str, Any]]:
+        """Like get_job, but store failures PROPAGATE instead of reading as
+        None. None means exactly "no such ticket". Fail-closed consumers
+        (the continue-ownership gate) need the distinction: during a store
+        outage, "no ticket" must not be inferred from "could not look" -
+        that inference reopens the cross-door double-execution race the
+        gate exists to close. In-memory cannot fail, so this is get_job."""
+        return await self.get_job(job_id)
 
     async def count_queued_jobs(self) -> int:
         async with self._lock:
