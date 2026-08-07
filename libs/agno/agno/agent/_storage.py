@@ -36,6 +36,7 @@ from agno.utils.agent import (
     get_last_run_output_util,
     get_run_output_util,
 )
+from agno.utils.db_fallback import require_db_fallback_matches
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.merge_dict import merge_dictionaries
 from agno.utils.string import generate_id_from_name
@@ -1211,6 +1212,8 @@ def load(
     # reconstruct one. Otherwise we'd clobber any custom table names
     # (session_table, memory_table, ...) that were serialized with the agent.
     if agent.db is None:
+        if strict:
+            require_db_fallback_matches(config, db, "agent", id)
         agent.db = db
 
     return agent

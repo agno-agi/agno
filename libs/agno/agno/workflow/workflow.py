@@ -1240,6 +1240,10 @@ class Workflow:
         # (session_table, memory_table, ...) that were serialized with the
         # workflow.
         if workflow.db is None:
+            if strict:
+                from agno.utils.db_fallback import require_db_fallback_matches
+
+                require_db_fallback_matches(config, db, "workflow", id)
             workflow.db = db
 
         return workflow
@@ -10931,6 +10935,10 @@ def get_workflow_by_id(
         # Only fall back to the caller-provided db if the config didn't
         # reconstruct one, matching Workflow.load.
         if workflow.db is None:
+            if strict:
+                from agno.utils.db_fallback import require_db_fallback_matches
+
+                require_db_fallback_matches(cfg, db, "workflow", id)
             workflow.db = db
 
         return workflow

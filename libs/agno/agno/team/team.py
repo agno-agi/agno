@@ -1843,6 +1843,10 @@ def get_team_by_id(
         # Only fall back to the caller-provided db if the config didn't
         # reconstruct one, matching Team.load.
         if team.db is None:
+            if strict:
+                from agno.utils.db_fallback import require_db_fallback_matches
+
+                require_db_fallback_matches(cfg, db, "team", id)
             team.db = db
 
         return team

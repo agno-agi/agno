@@ -574,3 +574,88 @@ class TestKnowledgeRouteScope:
         assert os.registry is not None
         assert os.registry.get_knowledge("member-private-kb") is member_kb
         assert all(getattr(k, "name", None) != "member-private-kb" for k in os.knowledge_instances)
+
+
+class TestResyncLateRegistryKnowledge:
+    """Knowledge the user adds to the registry after construction becomes
+    route-visible on resync; OS-mirrored knowledge stays registry-only."""
+
+    def _os_with_early_kb(self, tmp_path):
+        early_kb = Knowledge(
+            name="early-kb",
+            contents_db=SqliteDb(id="early-db-id", db_file=str(tmp_path / "early.db")),
+            vector_db=MagicMock(),
+        )
+        registry = Registry(knowledge=[early_kb])
+        agent = Agent(id="rk-agent", name="A", telemetry=False)
+        os = AgentOS(agents=[agent], registry=registry, telemetry=False)
+        return os, registry
+
+    def test_late_registered_knowledge_is_consistent_across_registry_config_and_routes(self, tmp_path):
+        from fastapi.testclient import TestClient
+
+        os, registry = self._os_with_early_kb(tmp_path)
+        app = os.get_app()
+        client = TestClient(app, raise_server_exceptions=False)
+
+        late_db = SqliteDb(id="late-db-id", db_file=str(tmp_path / "late.db"))
+        late_kb = Knowledge(name="late-kb", contents_db=late_db, vector_db=MagicMock())
+
+        # Before late registration the knowledge routes do not serve the db.
+        assert client.get("/knowledge/content", params={"db_id": late_db.id}).status_code == 404
+
+        registry.add_knowledge(late_kb)
+        registry_names = {
+            item["name"] for item in client.get("/registry", params={"resource_type": "knowledge"}).json()["data"]
+        }
+        assert "late-kb" in registry_names  # visible on /registry immediately
+
+        os.resync(app)
+
+        # /config lists it beside the initially registered instance.
+        config_names = {item["name"] for item in client.get("/config").json()["knowledge"]["knowledge_instances"]}
+        assert {"early-kb", "late-kb"} <= config_names
+
+        # The rebuilt knowledge routes serve both contents dbs.
+        assert client.get("/knowledge/content", params={"db_id": late_db.id}).status_code == 200
+        assert len([k for k in os.knowledge_instances if getattr(k, "name", None) == "late-kb"]) == 1
+
+    def test_repeated_resyncs_do_not_duplicate_entries(self, tmp_path):
+        from fastapi.testclient import TestClient
+
+        os, registry = self._os_with_early_kb(tmp_path)
+        app = os.get_app()
+
+        late_kb = Knowledge(
+            name="late-kb",
+            contents_db=SqliteDb(id="late-db-id", db_file=str(tmp_path / "late.db")),
+            vector_db=MagicMock(),
+        )
+        registry.add_knowledge(late_kb)
+        os.resync(app)
+        os.resync(app)
+
+        names = [getattr(k, "name", None) for k in os.knowledge_instances]
+        assert names.count("early-kb") == 1
+        assert names.count("late-kb") == 1
+        assert [getattr(k, "name", None) for k in registry.knowledge].count("late-kb") == 1
+
+        client = TestClient(app, raise_server_exceptions=False)
+        config_names = [item["name"] for item in client.get("/config").json()["knowledge"]["knowledge_instances"]]
+        assert config_names.count("early-kb") == 1
+        assert config_names.count("late-kb") == 1
+
+    def test_component_mirrored_knowledge_stays_registry_only_across_resync(self, tmp_path):
+        member_kb = Knowledge(
+            name="member-private-kb", contents_db=SqliteDb(db_file=str(tmp_path / "member.db")), vector_db=MagicMock()
+        )
+        member = Agent(id="rk-member", name="Member", knowledge=member_kb, telemetry=False)
+        team = Team(id="rk-team", name="Team", members=[member], telemetry=False)
+
+        os = AgentOS(teams=[team], telemetry=False)
+        app = os.get_app()
+        os.resync(app)
+
+        assert os.registry is not None
+        assert os.registry.get_knowledge("member-private-kb") is member_kb
+        assert all(getattr(k, "name", None) != "member-private-kb" for k in os.knowledge_instances)

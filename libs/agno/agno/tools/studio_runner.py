@@ -1405,18 +1405,13 @@ class StudioRunnerTools(Toolkit):
         adapters whose connection field cannot serialize (mysql, mongo, redis,
         json, dynamo) working, which is why a blanket refusal was reverted
         before. Only a genuine mismatch is refused."""
-        db_config = config.get("db")
-        if not isinstance(db_config, dict):
+        from agno.utils.db_fallback import db_fallback_divergence
+
+        differing = db_fallback_divergence(config, self.db)
+        if differing is None:
             return
+        db_config = config.get("db") or {}
         declared = db_config.get("id") or db_config.get("type") or "unknown"
-        catalog = self.db.to_dict() if self.db is not None else {}
-        differing = sorted(
-            key
-            for key, value in db_config.items()
-            # An absent key in the stored config is not an override, and the
-            # connection field is never serialized, so neither is a difference.
-            if value is not None and key not in ("type", "connection") and catalog.get(key) != value
-        )
         if not differing:
             logger.warning(
                 "StudioRunnerTools: %s '%s' declares db '%s', which could not be reconstructed; it resolves "

@@ -43,6 +43,7 @@ from agno.utils.agent import (
     get_run_output_util,
     get_session_metrics_util,
 )
+from agno.utils.db_fallback import require_db_fallback_matches
 from agno.utils.log import (
     log_debug,
     log_error,
@@ -1381,6 +1382,8 @@ def _hydrate_from_graph(
     # reconstruct one. Otherwise we'd clobber any custom table names
     # (session_table, memory_table, ...) that were serialized with the team.
     if team.db is None:
+        if strict:
+            require_db_fallback_matches(config, db, "team", team.id)
         team.db = db
 
     # Hydrate members directly from the already-loaded graph children. This
@@ -1403,6 +1406,8 @@ def _hydrate_from_graph(
             agent = Agent.from_dict(child_config, registry=registry, strict=strict)
             agent.id = child_graph["component"]["component_id"]
             if agent.db is None:
+                if strict:
+                    require_db_fallback_matches(child_config, db, "agent", agent.id)
                 agent.db = db
             graph_members[agent.id] = agent
         elif member_type == "team":
