@@ -127,6 +127,10 @@ class ScheduleExecutor:
                     "input": None,
                     "output": None,
                     "requirements": None,
+                    # Denormalise the owner from the parent Schedule so the runs
+                    # router can scope by user_id without a JOIN. ``None`` for
+                    # system / legacy schedules.
+                    "user_id": sched.user_id,
                     "created_at": now,
                 }
 
@@ -268,6 +272,14 @@ class ScheduleExecutor:
             form_payload = {k: _to_form_value(v) for k, v in payload.items() if k not in ("stream", "background")}
             form_payload["stream"] = "false"
             form_payload["background"] = "true"
+
+            # Impersonate the schedule owner so the run + downstream session /
+            # traces / metrics are attributed to them, not to the internal
+            # ``__scheduler__`` service identity. The agent run route only
+            # trusts this form-field user_id when the caller authenticates as
+            # the internal service (see ``agents/router.py``).
+            if schedule.user_id and "user_id" not in form_payload:
+                form_payload["user_id"] = schedule.user_id
 
             resource_type = match.group(1)
             resource_id = match.group(2)
