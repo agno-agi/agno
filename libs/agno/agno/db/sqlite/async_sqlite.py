@@ -762,12 +762,17 @@ class AsyncSqliteDb(AsyncBaseDb):
                 # A NULL index has no position and breaks ORDER BY run_index. ON CONFLICT
                 # preserves the existing index, so this only sets it on a genuine insert.
                 if row.get("run_index") is None:
-                    current_max = (
-                        await sess.execute(
-                            select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
-                        )
-                    ).scalar()
-                    row["run_index"] = (current_max + 1) if current_max is not None else 0
+                    # Computed INSIDE the insert statement: SQLite holds the
+                    # database write lock for the whole statement, so two
+                    # concurrent backfills cannot read the same MAX (the old
+                    # two-statement read-then-insert could - a busy-waiting
+                    # second writer landed a duplicate index after the first
+                    # committed).
+                    row["run_index"] = (
+                        select(func.coalesce(func.max(runs_table.c.run_index) + 1, 0))
+                        .where(runs_table.c.session_id == session_id)
+                        .scalar_subquery()
+                    )
 
                 stmt = sqlite.insert(runs_table).values(**row)
                 stmt = stmt.on_conflict_do_update(
@@ -2379,8 +2384,8 @@ class AsyncSqliteDb(AsyncBaseDb):
         Args:
             id (str): The ID of the knowledge row to delete.
             user_id (Optional[str]): Owner-scoping filter. When set, only
-                deletes if the row is owned by ``user_id`` OR is unowned
-                (NULL).
+                deletes if the row is owned by ``user_id``. Unowned rows are
+                shared content and are not the caller's to delete.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -2393,7 +2398,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = table.delete().where(table.c.id == id)
                 if user_id is not None:
-                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
+                    stmt = stmt.where(table.c.user_id == user_id)
                 await sess.execute(stmt)
 
         except Exception as e:
@@ -2525,6 +2530,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                         "access_count": knowledge_row.access_count,
                         "status": knowledge_row.status,
                         "status_message": knowledge_row.status_message,
+                        "user_id": knowledge_row.user_id,
                         "created_at": knowledge_row.created_at,
                         "updated_at": knowledge_row.updated_at,
                         "external_id": knowledge_row.external_id,
@@ -4275,6 +4281,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         self,
         component_id: str,
         component_type: Optional[ComponentType] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
@@ -4285,6 +4292,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         name: Optional[str] = None,
         description: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
@@ -4292,6 +4300,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         self,
         component_id: str,
         hard_delete: bool = False,
+        user_id: Optional[str] = None,
     ) -> bool:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
@@ -4302,6 +4311,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         limit: int = 20,
         offset: int = 0,
         exclude_component_ids: Optional[Set[str]] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
@@ -4317,6 +4327,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         stage: str = "draft",
         notes: Optional[str] = None,
         links: Optional[List[Dict[str, Any]]] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
@@ -4643,13 +4654,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 offset = (page - 1) * limit
 
                 # Get paginated results
-                stmt = (
-                    select(table)
-                    .where(base_filter)
-                    .order_by(table.c.created_at.desc())
-                    .limit(limit)
-                    .offset(offset)
-                )
+                stmt = select(table).where(base_filter).order_by(table.c.created_at.desc()).limit(limit).offset(offset)
                 result = await sess.execute(stmt)
                 return [dict(row._mapping) for row in result.fetchall()], total_count
         except Exception as e:
@@ -4915,13 +4920,18 @@ class AsyncSqliteDb(AsyncBaseDb):
             log_error(f"Error creating service account: {str(e)}")
             raise
 
-    async def get_service_account(self, service_account_id: str) -> Optional[Dict[str, Any]]:
+    async def get_service_account(
+        self, service_account_id: str, user_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
         try:
             table = await self._get_table(table_type="service_accounts")
             if table is None:
                 return None
             async with self.async_session_factory() as sess:
-                result = await sess.execute(select(table).where(table.c.id == service_account_id))
+                stmt = select(table).where(table.c.id == service_account_id)
+                if user_id is not None:
+                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
+                result = await sess.execute(stmt)
                 row = result.fetchone()
                 return dict(row._mapping) if row else None
         except Exception as e:
@@ -4977,6 +4987,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         page: int = 1,
         sort_by: str = "created_at",
         sort_order: str = "desc",
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = await self._get_table(table_type="service_accounts")
@@ -4987,6 +4998,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                 base_query = select(table)
                 if not include_revoked:
                     base_query = base_query.where(table.c.revoked_at.is_(None))
+                if user_id is not None:
+                    base_query = base_query.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
 
                 # Get total count
                 count_stmt = select(func.count()).select_from(base_query.alias())

@@ -497,6 +497,25 @@ class TestKnowledge:
         valkey_db.delete_knowledge_content(id="k1")
         assert mock_client.delete.called
 
+    def test_delete_knowledge_content_leaves_shared_row_to_admin(self, valkey_db, mock_client):
+        # An unowned row is org-wide content: a scoped caller cannot remove it
+        mock_client.get.return_value = _serialize({"id": "k1", "name": "test"})
+        mock_client.delete.return_value = 1
+        valkey_db.delete_knowledge_content(id="k1", user_id="alice")
+        assert not mock_client.delete.called
+
+    def test_delete_knowledge_content_scoped_to_owner(self, valkey_db, mock_client):
+        mock_client.get.return_value = _serialize({"id": "k1", "name": "test", "user_id": "alice"})
+        mock_client.delete.return_value = 1
+        valkey_db.delete_knowledge_content(id="k1", user_id="alice")
+        assert mock_client.delete.called
+
+    def test_delete_knowledge_content_blocks_other_users_row(self, valkey_db, mock_client):
+        mock_client.get.return_value = _serialize({"id": "k1", "name": "test", "user_id": "bob"})
+        mock_client.delete.return_value = 1
+        valkey_db.delete_knowledge_content(id="k1", user_id="alice")
+        assert not mock_client.delete.called
+
 
 # -- Table exists test --
 

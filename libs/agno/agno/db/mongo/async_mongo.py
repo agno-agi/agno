@@ -14,9 +14,9 @@ if TYPE_CHECKING:
 
 from agno.db.base import AsyncBaseDb, SessionType
 from agno.db.mongo.utils import (
+    abulk_upsert_metrics,
     apply_pagination,
     apply_sorting,
-    bulk_upsert_metrics,
     calculate_date_metrics,
     create_collection_indexes_async,
     deserialize_cultural_knowledge_from_db,
@@ -2207,7 +2207,7 @@ class AsyncMongoDb(AsyncBaseDb):
                 metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             if metrics_records:
-                results = bulk_upsert_metrics(collection, metrics_records)  # type: ignore
+                results = await abulk_upsert_metrics(collection, metrics_records)
 
             return results
 
@@ -2268,9 +2268,7 @@ class AsyncMongoDb(AsyncBaseDb):
             raise e
 
     # -- Knowledge methods --
-
-    # -- Knowledge methods --
-    # The owner-scope predicate is consistently "rows I own, plus rows nobody
+    # The owner-scope predicate for reads is "rows I own, plus rows nobody
     # owns (admin / org-wide shared content)". When ``user_id`` is ``None``
     # the predicate is dropped entirely (admin / RBAC-off / single-user view).
 
@@ -2285,7 +2283,8 @@ class AsyncMongoDb(AsyncBaseDb):
         Args:
             id (str): The ID of the knowledge row to delete.
             user_id (Optional[str]): Owner-scoping filter. When set, only
-                deletes if the row is owned by ``user_id`` OR is unowned (NULL).
+                deletes if the row is owned by ``user_id``. Unowned rows are
+                shared content and are not the caller's to delete.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -2296,9 +2295,8 @@ class AsyncMongoDb(AsyncBaseDb):
                 return
 
             query: Dict[str, Any] = {"id": id}
-            scope = self._knowledge_user_scope_filter(user_id)
-            if scope is not None:
-                query = {"$and": [query, scope]}
+            if user_id is not None:
+                query["user_id"] = user_id
             await collection.delete_one(query)
 
             log_debug(f"Deleted knowledge content with id '{id}'")
@@ -3289,7 +3287,7 @@ class AsyncMongoDb(AsyncBaseDb):
             log_error(f"Error getting spans: {str(e)}")
             return []
 
-    # -- Scheduler methods --
+    # -- Schedule methods --
     # User-facing reads/updates/deletes carry an optional ``user_id`` filter so the
     # routes can scope by owner. The executor pair (``claim_due_schedule`` /
     # ``release_schedule``) intentionally has no user_id — the poller must be

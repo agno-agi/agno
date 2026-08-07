@@ -757,20 +757,33 @@ class Knowledge(RemoteKnowledge):
 
         return self._parse_content_status(content_row.status), content_row.status_message
 
-    def patch_content(self, content: Content) -> Optional[Dict[str, Any]]:
-        return self._update_content(content)
+    def patch_content(self, content: Content, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        return self._update_content(content, user_id=user_id)
 
-    async def apatch_content(self, content: Content) -> Optional[Dict[str, Any]]:
-        return await self._aupdate_content(content)
+    async def apatch_content(self, content: Content, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        return await self._aupdate_content(content, user_id=user_id)
 
     def remove_content_by_id(self, content_id: str, user_id: Optional[str] = None):
         from agno.vectordb import VectorDb
 
         self.vector_db = cast(VectorDb, self.vector_db)
+        # Ownership lives on the contents row, so a vector-only knowledge base
+        # has nothing to check and keeps deleting by id as it always did.
+        scoped = user_id is not None and self.contents_db is not None
+        content = self.get_content_by_id(content_id, user_id=user_id) if scoped else None
+        if scoped and (content is None or self._content_is_shared(content, user_id)):
+            # Not the caller's row to remove, so the contents-db delete would
+            # match nothing. ``delete_by_content_id`` takes no owner, so going
+            # ahead would strip another owner's vectors and leave their row
+            # behind pointing at nothing.
+            log_debug(f"Skipping delete of content {content_id}: not owned by {user_id}")
+            return
+
         if self.vector_db is not None:
             if self.vector_db.__class__.__name__ == "LightRag":
-                # For LightRAG, get the content first to find the external_id
-                content = self.get_content_by_id(content_id, user_id=user_id)
+                # For LightRAG, delete by the external_id on the row
+                if content is None and self.contents_db is not None:
+                    content = self.get_content_by_id(content_id, user_id=user_id)
                 if content and content.external_id:
                     self.vector_db.delete_by_external_id(content.external_id)  # type: ignore
                 else:
@@ -788,10 +801,18 @@ class Knowledge(RemoteKnowledge):
             self.contents_db.delete_knowledge_content(content_id, user_id=user_id)
 
     async def aremove_content_by_id(self, content_id: str, user_id: Optional[str] = None):
+        scoped = user_id is not None and self.contents_db is not None
+        content = await self.aget_content_by_id(content_id, user_id=user_id) if scoped else None
+        if scoped and (content is None or self._content_is_shared(content, user_id)):
+            # See the matching guard in ``remove_content_by_id``.
+            log_debug(f"Skipping delete of content {content_id}: not owned by {user_id}")
+            return
+
         if self.vector_db is not None:
             if self.vector_db.__class__.__name__ == "LightRag":
-                # For LightRAG, get the content first to find the external_id
-                content = await self.aget_content_by_id(content_id, user_id=user_id)
+                # For LightRAG, delete by the external_id on the row
+                if content is None and self.contents_db is not None:
+                    content = await self.aget_content_by_id(content_id, user_id=user_id)
                 if content and content.external_id:
                     self.vector_db.delete_by_external_id(content.external_id)  # type: ignore
                 else:
@@ -809,14 +830,25 @@ class Knowledge(RemoteKnowledge):
     def remove_all_content(self, user_id: Optional[str] = None):
         contents, _ = self.get_content(user_id=user_id)
         for content in contents:
-            if content.id is not None:
+            if content.id is not None and not self._content_is_shared(content, user_id):
                 self.remove_content_by_id(content.id, user_id=user_id)
 
     async def aremove_all_content(self, user_id: Optional[str] = None):
         contents, _ = await self.aget_content(user_id=user_id)
         for content in contents:
-            if content.id is not None:
+            if content.id is not None and not self._content_is_shared(content, user_id):
                 await self.aremove_content_by_id(content.id, user_id=user_id)
+
+    @staticmethod
+    def _content_is_shared(content: Content, user_id: Optional[str]) -> bool:
+        """Whether ``content`` is shared (unowned) content the caller may read but not delete.
+
+        Reads surface a scoped caller's own rows *plus* unowned ones, so a bulk
+        delete that reused that list would destroy org-wide content — including
+        its vectors, which are removed without an owner filter. An unscoped
+        caller (admin / isolation off) still deletes everything.
+        """
+        return user_id is not None and content.user_id is None
 
     def remove_vector_by_id(self, id: str) -> bool:
         from agno.vectordb import VectorDb
@@ -1495,6 +1527,7 @@ class Knowledge(RemoteKnowledge):
                     metadata=content.metadata,
                     description=content.description,
                     reader=content.reader,
+                    user_id=content.user_id,
                 )
                 file_content.content_hash = self._build_content_hash(file_content)
                 file_content.id = generate_id(file_content.content_hash)
@@ -1580,6 +1613,7 @@ class Knowledge(RemoteKnowledge):
                     metadata=content.metadata,
                     description=content.description,
                     reader=content.reader,
+                    user_id=content.user_id,
                 )
                 file_content.content_hash = self._build_content_hash(file_content)
                 file_content.id = generate_id(file_content.content_hash)
@@ -2141,6 +2175,7 @@ class Knowledge(RemoteKnowledge):
                     type="Topic",
                 ),
                 topics=[topic],
+                user_id=content.user_id,
             )
             content.content_hash = self._build_content_hash(content)
             content.id = generate_id(content.content_hash)
@@ -2202,6 +2237,7 @@ class Knowledge(RemoteKnowledge):
                     type="Topic",
                 ),
                 topics=[topic],
+                user_id=content.user_id,
             )
             content.content_hash = self._build_content_hash(content)
             content.id = generate_id(content.content_hash)
@@ -2313,8 +2349,16 @@ class Knowledge(RemoteKnowledge):
           so the same content inserted with different metadata produces distinct hashes
           (this allows `upsert=False` inserts of the same document with different
           metadata to coexist instead of collapsing onto each other).
+        - When the content carries an owner, the owner leads the hash so two users
+          uploading the same file name get distinct rows instead of one user's upload
+          landing on — and taking over — the other's.
         """
         hash_parts = []
+        # Owner first: the id derived from this hash is the row key, so leaving the
+        # owner out lets a second uploader overwrite the first one's row. Unowned
+        # content (isolation off, admin/system uploads) hashes exactly as before.
+        if content.user_id is not None:
+            hash_parts.append(content.user_id)
         if content.name:
             hash_parts.append(content.name)
         if content.description:
@@ -2384,6 +2428,12 @@ class Knowledge(RemoteKnowledge):
         """
         hash_parts = []
 
+        # Owner first, same as ``_build_content_hash``: the per-source id is
+        # derived from this hash and ``_should_skip`` dedups on it against every
+        # owner's vectors, so leaving the owner out makes a second user's crawl
+        # of the same source look like one that is already indexed.
+        if content.user_id is not None:
+            hash_parts.append(content.user_id)
         if content.name:
             hash_parts.append(content.name)
         if content.description:
@@ -2624,7 +2674,7 @@ class Knowledge(RemoteKnowledge):
 
     # --- Content Update ---
 
-    def _update_content(self, content: Content) -> Optional[Dict[str, Any]]:
+    def _update_content(self, content: Content, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         from agno.vectordb import VectorDb
 
         self.vector_db = cast(VectorDb, self.vector_db)
@@ -2639,9 +2689,14 @@ class Knowledge(RemoteKnowledge):
                 return None
 
             # TODO: we shouldn't check for content here, we should trust the upsert method to handle conflicts
-            content_row = self.contents_db.get_knowledge_content(content.id)
+            content_row = self.contents_db.get_knowledge_content(content.id, user_id=user_id)
             if content_row is None:
                 log_warning(f"Content row not found for id: {content.id}, cannot update status")
+                return None
+            if user_id is not None and content_row.user_id is None:
+                # Shared content is readable by a scoped caller but not theirs to
+                # change, the same rule ``remove_content_by_id`` enforces.
+                log_debug(f"Skipping update of content {content.id}: shared content is not owned by {user_id}")
                 return None
 
             # Apply safe string handling for updates as well
@@ -2676,7 +2731,7 @@ class Knowledge(RemoteKnowledge):
         else:
             return None
 
-    async def _aupdate_content(self, content: Content) -> Optional[Dict[str, Any]]:
+    async def _aupdate_content(self, content: Content, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         if self.contents_db:
             if not content.id:
                 log_warning("Content id is required to update Knowledge content")
@@ -2684,11 +2739,15 @@ class Knowledge(RemoteKnowledge):
 
             # TODO: we shouldn't check for content here, we should trust the upsert method to handle conflicts
             if isinstance(self.contents_db, AsyncBaseDb):
-                content_row = await self.contents_db.get_knowledge_content(content.id)
+                content_row = await self.contents_db.get_knowledge_content(content.id, user_id=user_id)
             else:
-                content_row = self.contents_db.get_knowledge_content(content.id)
+                content_row = self.contents_db.get_knowledge_content(content.id, user_id=user_id)
             if content_row is None:
                 log_warning(f"Content row not found for id: {content.id}, cannot update status")
+                return None
+            if user_id is not None and content_row.user_id is None:
+                # See the matching guard in ``_update_content``.
+                log_debug(f"Skipping update of content {content.id}: shared content is not owned by {user_id}")
                 return None
 
             # Apply safe string handling for updates

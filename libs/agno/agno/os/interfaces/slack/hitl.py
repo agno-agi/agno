@@ -144,6 +144,19 @@ class HITLHandler:
     ) -> StreamState:
         state = StreamState(entity_name=self.entity_name, entity_type=self.entity_type)
         try:
+            # Inline-door admission gate: Slack-driven runs are ticketless by
+            # construction today (the interface submits inline), but a durable
+            # ticket for this run_id - however it got here - owns the
+            # continuation; the existing except below turns the 409/503 into
+            # a logged non-execution, never a double-run.
+            from agno.os.job_queue import araise_if_ticket_owns_continue, get_active_queue_worker
+
+            await araise_if_ticket_owns_continue(
+                get_active_queue_worker(),
+                ctx.run_id,
+                component_type=self.entity_type,
+                component_id=getattr(self.entity, "id", None),
+            )
             response_stream: Any = self.entity.acontinue_run(  # type: ignore[union-attr, call-arg, call-overload]
                 run_id=ctx.run_id,
                 requirements=requirements,

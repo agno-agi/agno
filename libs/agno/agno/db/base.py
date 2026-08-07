@@ -54,6 +54,7 @@ class BaseDb(ABC):
         learnings_table: Optional[str] = None,
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
+        job_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
         service_accounts_table: Optional[str] = None,
@@ -66,7 +67,18 @@ class BaseDb(ABC):
     ):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
-        self.runs_table_name = runs_table or "agno_runs"
+        # The runs table foreign-keys to THIS db's session table. If the caller
+        # customized session_table but not runs_table, defaulting to the shared
+        # "agno_runs" would FK-lock it to whichever db created the table first,
+        # silently dropping every other db's runs (the run insert violates the
+        # FK and is swallowed). Derive a session-table-scoped runs name so each
+        # session table owns a correctly foreign-keyed runs table by default.
+        if runs_table:
+            self.runs_table_name = runs_table
+        elif session_table and session_table != "agno_sessions":
+            self.runs_table_name = f"{session_table}_runs"
+        else:
+            self.runs_table_name = "agno_runs"
         self.culture_table_name = culture_table or "agno_culture"
         self.memory_table_name = memory_table or "agno_memories"
         self.metrics_table_name = metrics_table or "agno_metrics"
@@ -81,6 +93,7 @@ class BaseDb(ABC):
         self.learnings_table_name = learnings_table or "agno_learnings"
         self.schedules_table_name = schedules_table or "agno_schedules"
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
+        self.job_table_name = job_table or "agno_jobs"
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
         self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"
@@ -98,6 +111,7 @@ class BaseDb(ABC):
         return {
             "id": self.id,
             "session_table": self.session_table_name,
+            "job_table": self.job_table_name,
             "runs_table": self.runs_table_name,
             "culture_table": self.culture_table_name,
             "memory_table": self.memory_table_name,
@@ -423,12 +437,12 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     # --- Knowledge ---
-    # --- Knowledge ---
     # ``user_id`` semantics:
     # - ``None``: no scoping. Single-user / admin / RBAC-off behaviour — sees
     #   every row including those owned by other users.
-    # - non-empty string: scope to "rows owned by this user OR shared rows
-    #   (user_id IS NULL)". This is what non-admin authenticated routes pass.
+    # - non-empty string: reads scope to "rows owned by this user OR shared
+    #   rows (user_id IS NULL)". This is what non-admin authenticated routes
+    #   pass. Deletes are stricter — see ``delete_knowledge_content``.
     #
     # The "shared bucket" semantics (NULL = visible to all) lets admins
     # publish org-wide knowledge by leaving the owner unset, while per-user
@@ -441,9 +455,10 @@ class BaseDb(ABC):
         Args:
             id (str): The ID of the knowledge row to delete.
             user_id (Optional[str]): When set, only delete if the row is owned
-                by this user (or is shared / NULL-owned, which a non-admin
-                cannot delete — the route layer decides whether to allow
-                that). When None, no ownership check.
+                by this user. Shared / NULL-owned rows are readable by every
+                scoped caller but deletable by none of them: removing shared
+                content is the unscoped (admin) path. When None, no ownership
+                check.
         """
         raise NotImplementedError
 
@@ -793,12 +808,14 @@ class BaseDb(ABC):
         self,
         component_id: str,
         component_type: Optional[ComponentType] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Get a component by ID.
 
         Args:
             component_id: The component ID.
             component_type: Optional filter by type (agent|team|workflow).
+            user_id: If set, only return the component if owned by this user.
 
         Returns:
             Component dictionary or None if not found.
@@ -813,6 +830,7 @@ class BaseDb(ABC):
         description: Optional[str] = None,
         current_version: Optional[int] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create or update a component.
 
@@ -823,6 +841,7 @@ class BaseDb(ABC):
             description: Optional description.
             current_version: Optional current version.
             metadata: Optional metadata dict.
+            user_id: Owner to set when creating; scopes the update to this user when set.
 
         Returns:
             Created/updated component dictionary.
@@ -836,12 +855,14 @@ class BaseDb(ABC):
         self,
         component_id: str,
         hard_delete: bool = False,
+        user_id: Optional[str] = None,
     ) -> bool:
         """Delete a component and all its configs/links.
 
         Args:
             component_id: The component ID.
             hard_delete: If True, permanently delete. Otherwise soft-delete.
+            user_id: If set, only delete the component if owned by this user.
 
         Returns:
             True if deleted, False if not found or already deleted.
@@ -855,6 +876,7 @@ class BaseDb(ABC):
         limit: int = 20,
         offset: int = 0,
         exclude_component_ids: Optional[Set[str]] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List components with pagination.
 
@@ -864,6 +886,7 @@ class BaseDb(ABC):
             limit: Maximum number of items to return.
             offset: Number of items to skip.
             exclude_component_ids: Component IDs to exclude from results.
+            user_id: If set, only list components owned by this user.
 
         Returns:
             Tuple of (list of component dicts, total count).
@@ -882,6 +905,7 @@ class BaseDb(ABC):
         stage: str = "draft",
         notes: Optional[str] = None,
         links: Optional[List[Dict[str, Any]]] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Create a component with its initial config atomically.
 
@@ -896,12 +920,13 @@ class BaseDb(ABC):
             stage: "draft" or "published".
             notes: Optional notes.
             links: Optional list of links. Each must have child_version set.
+            user_id: Owner to attribute the component to.
 
         Returns:
             Tuple of (component dict, config dict).
 
         Raises:
-            ValueError: If component already exists, invalid stage, or link missing child_version.
+            ValueError: If component ID is already taken, invalid stage, or link missing child_version.
         """
         raise NotImplementedError
 
@@ -1580,8 +1605,15 @@ class BaseDb(ABC):
         """Create a service account. Raises on failure (including duplicate active name)."""
         raise NotImplementedError
 
-    def get_service_account(self, service_account_id: str) -> Optional[Dict[str, Any]]:
-        """Get a service account by ID."""
+    def get_service_account(self, service_account_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get a service account by ID.
+
+        Args:
+            service_account_id (str): The ID of the service account.
+            user_id (Optional[str]): Owner-scoping filter. When set, only
+                returns the account if it is owned by ``user_id`` or is a
+                workspace-level account (no owner).
+        """
         raise NotImplementedError
 
     def get_service_account_by_token_hash(self, token_hash: str) -> Optional[Dict[str, Any]]:
@@ -1599,6 +1631,7 @@ class BaseDb(ABC):
         page: int = 1,
         sort_by: str = "created_at",
         sort_order: str = "desc",
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List service accounts.
 
@@ -1644,13 +1677,25 @@ class AsyncBaseDb(ABC):
         learnings_table: Optional[str] = None,
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
+        job_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
         service_accounts_table: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
-        self.runs_table_name = runs_table or "agno_runs"
+        # The runs table foreign-keys to THIS db's session table. If the caller
+        # customized session_table but not runs_table, defaulting to the shared
+        # "agno_runs" would FK-lock it to whichever db created the table first,
+        # silently dropping every other db's runs (the run insert violates the
+        # FK and is swallowed). Derive a session-table-scoped runs name so each
+        # session table owns a correctly foreign-keyed runs table by default.
+        if runs_table:
+            self.runs_table_name = runs_table
+        elif session_table and session_table != "agno_sessions":
+            self.runs_table_name = f"{session_table}_runs"
+        else:
+            self.runs_table_name = "agno_runs"
         self.memory_table_name = memory_table or "agno_memories"
         self.metrics_table_name = metrics_table or "agno_metrics"
         self.eval_table_name = eval_table or "agno_eval_runs"
@@ -1662,6 +1707,7 @@ class AsyncBaseDb(ABC):
         self.learnings_table_name = learnings_table or "agno_learnings"
         self.schedules_table_name = schedules_table or "agno_schedules"
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
+        self.job_table_name = job_table or "agno_jobs"
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
         self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"
@@ -2462,15 +2508,11 @@ class AsyncBaseDb(ABC):
     # --- Schedules (Optional) ---
     # See "Notes on user_id" on the sync BaseDb above. Same semantics here.
 
-    async def get_schedule(
-        self, schedule_id: str, user_id: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
+    async def get_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get a schedule by ID."""
         raise NotImplementedError
 
-    async def get_schedule_by_name(
-        self, name: str, user_id: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
+    async def get_schedule_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get a schedule by name."""
         raise NotImplementedError
 
@@ -2520,9 +2562,7 @@ class AsyncBaseDb(ABC):
         """Update a schedule run record. SYSTEM CONTEXT — executor writes."""
         raise NotImplementedError
 
-    async def get_schedule_run(
-        self, run_id: str, user_id: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
+    async def get_schedule_run(self, run_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get a schedule run by ID."""
         raise NotImplementedError
 
@@ -2616,8 +2656,17 @@ class AsyncBaseDb(ABC):
         """Create a service account. Raises on failure (including duplicate active name)."""
         raise NotImplementedError
 
-    async def get_service_account(self, service_account_id: str) -> Optional[Dict[str, Any]]:
-        """Get a service account by ID."""
+    async def get_service_account(
+        self, service_account_id: str, user_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Get a service account by ID.
+
+        Args:
+            service_account_id (str): The ID of the service account.
+            user_id (Optional[str]): Owner-scoping filter. When set, only
+                returns the account if it is owned by ``user_id`` or is a
+                workspace-level account (no owner).
+        """
         raise NotImplementedError
 
     async def get_service_account_by_token_hash(self, token_hash: str) -> Optional[Dict[str, Any]]:
@@ -2635,6 +2684,7 @@ class AsyncBaseDb(ABC):
         page: int = 1,
         sort_by: str = "created_at",
         sort_order: str = "desc",
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List service accounts.
 

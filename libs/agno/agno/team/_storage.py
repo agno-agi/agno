@@ -237,6 +237,13 @@ def _upsert_run(
     try:
         if not team.db:
             return
+        from agno.run.status_persist import persist_worker_owned_run
+
+        # Queue-worker-owned runs save through the attempt-fenced primitive;
+        # member-run saves pass through untouched (their run_ids are never
+        # registered - a zombie leg's member writes orphan, not clobber)
+        if persist_worker_owned_run(team.db, run, session_id=session_id, user_id=user_id):
+            return
         team.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
     except NotImplementedError:
         log_debug(f"{type(team.db).__name__} does not implement upsert_run; skipping per-run write")
@@ -256,6 +263,12 @@ async def _aupsert_run(
 
     try:
         if not team.db:
+            return
+        from agno.run.status_persist import apersist_worker_owned_run
+
+        # Queue-worker-owned runs save through the attempt-fenced primitive;
+        # member-run saves pass through untouched (see _upsert_run)
+        if await apersist_worker_owned_run(team.db, run, session_id=session_id, user_id=user_id):
             return
         if _has_async_db(team):
             await team.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr,misc]
@@ -408,9 +421,7 @@ async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optio
 
                 if _has_async_db(team):
                     await asave_session(team, session=team_session)
-                    await _aupsert_run(
-                        team, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0
-                    )
+                    await _aupsert_run(team, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
                 else:
                     save_session(team, session=team_session)
                     _upsert_run(team, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
@@ -618,10 +629,23 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         for tool in team.tools:
             try:
                 if isinstance(tool, Function):
-                    serialized_tools.append(tool.to_dict())
+                    func_dict = tool.to_dict()
+                    # A rehydrated team holds bare Functions; re-stamp the
+                    # attribution they carry so it survives the round trip.
+                    if tool.owning_toolkit:
+                        func_dict["toolkit"] = tool.owning_toolkit
+                    serialized_tools.append(func_dict)
                 elif isinstance(tool, Toolkit):
-                    for func in tool.functions.values():
-                        serialized_tools.append(func.to_dict())
+                    # get_functions() is the exposed subset -- the only functions
+                    # the team runtime ever calls.
+                    for func in tool.get_functions().values():
+                        func_dict = func.to_dict()
+                        # Record the owning toolkit so rehydration can re-bind
+                        # same-named functions to the right toolkit (see
+                        # Registry.rehydrate_function).
+                        if isinstance(tool.name, str) and tool.name:
+                            func_dict["toolkit"] = tool.name
+                        serialized_tools.append(func_dict)
                 elif callable(tool):
                     func = Function.from_callable(tool)
                     serialized_tools.append(func.to_dict())
@@ -824,6 +848,11 @@ def from_dict(
     members: Optional[List[Union[Agent, "Team"]]] = None
     from agno.agent import get_agent_by_id
     from agno.team import get_team_by_id
+    from agno.utils.component_scope import get_component_owner_scope
+
+    # Resolve DB-backed members as the component owner (if scoped), so a stored
+    # reference to another user's private component is not rehydrated here.
+    owner_user_id = get_component_owner_scope()
 
     if "members" in config and config["members"]:
         members = []
@@ -832,7 +861,11 @@ def from_dict(
             if member_type == "agent":
                 agent_id = member_data["agent_id"]
                 # TODO: Make sure to pass the correct version to get_agent_by_id. Right now its returning the latest version.
-                agent = get_agent_by_id(id=agent_id, db=db, registry=registry) if db is not None else None
+                agent = (
+                    get_agent_by_id(id=agent_id, db=db, registry=registry, user_id=owner_user_id)
+                    if db is not None
+                    else None
+                )
                 # Fall back to a code-defined agent registered in the registry.
                 # These are legitimately not persisted as DB components (e.g. agents
                 # passed to AgentOS(agents=[...])), so a DB lookup returns nothing.
@@ -848,7 +881,11 @@ def from_dict(
             elif member_type == "team":
                 # Handle nested teams as members
                 team_id = member_data["team_id"]
-                nested_team = get_team_by_id(id=team_id, db=db, registry=registry) if db is not None else None
+                nested_team = (
+                    get_team_by_id(id=team_id, db=db, registry=registry, user_id=owner_user_id)
+                    if db is not None
+                    else None
+                )
                 # Fall back to a code-defined team registered in the registry.
                 # Deep copy so the shared registry singleton isn't mutated on run.
                 if nested_team is None and registry is not None:
@@ -889,7 +926,7 @@ def from_dict(
     # --- Handle tools reconstruction ---
     if "tools" in config and config["tools"]:
         if registry:
-            config["tools"] = [registry.rehydrate_function(t) for t in config["tools"]]
+            config["tools"] = registry.rehydrate_functions(config["tools"])
         else:
             log_warning("No registry provided, tools will not be rehydrated.")
             del config["tools"]
@@ -1218,7 +1255,7 @@ def _hydrate_from_graph(
         member_type = link_meta.get("type")
 
         if member_type == "agent":
-            agent = Agent.from_dict(child_config)
+            agent = Agent.from_dict(child_config, registry=registry)
             agent.id = child_graph["component"]["component_id"]
             if agent.db is None:
                 agent.db = db

@@ -227,11 +227,15 @@ def test_metrics_flow(postgres_db_real: PostgresDb, sample_agent_sessions_for_me
     assert len(metrics) > 0
     assert latest_update is not None
 
-    # Step 5: Verify relevant metrics fields are there
-    assert metrics[0] is not None and len(metrics) == 1
+    # Step 5: Metrics are bucketed per user -- the 3 sessions have 3 distinct
+    # owners, so the day has 3 rows that sum to the day's totals.
+    assert len(metrics) == 3
+    assert {m["user_id"] for m in metrics} == {"test_user_0", "test_user_1", "test_user_2"}
+    assert sum(m["agent_runs_count"] for m in metrics) == 3
+
     metrics_obj = metrics[0]
     assert metrics_obj["completed"] is True
-    assert metrics_obj["agent_runs_count"] == 3
+    assert metrics_obj["agent_runs_count"] == 1
     assert metrics_obj["team_runs_count"] == 0
     assert metrics_obj["workflow_runs_count"] == 0
     assert metrics_obj["updated_at"] is not None
@@ -323,36 +327,40 @@ def test_calculate_metrics_multiple_days(postgres_db_real: PostgresDb, sample_mu
     result = postgres_db_real.calculate_metrics()
     assert result is not None
     assert isinstance(result, list)
-    assert len(result) == 3  # Should have 3 metrics records for 3 different days
+    # One record per (user, day): day 1 has 2 owners, day 2 has 3, day 3 has 1.
+    assert len(result) == 6
 
     # Retrieve all metrics
     metrics, latest_update = postgres_db_real.get_metrics()
-    assert len(metrics) == 3  # Should have 3 rows, one per day
+    assert len(metrics) == 6
     assert latest_update is not None
 
-    # Sort metrics by date for consistent checking
-    metrics_sorted = sorted(metrics, key=lambda x: x["date"])
+    # Fold the per-user rows back into per-day totals for the assertions below
+    by_date: dict = {}
+    for row in metrics:
+        day = by_date.setdefault(row["date"], {"agent_runs_count": 0, "team_runs_count": 0, "workflow_runs_count": 0})
+        for field in day:
+            day[field] += row[field]
+    metrics_sorted = [by_date[d] for d in sorted(by_date)]
+    assert all(row["completed"] is True for row in metrics)
 
     # Verify Day 1 metrics (2 sessions)
     day1_metrics = metrics_sorted[0]
     assert day1_metrics["agent_runs_count"] == 2
     assert day1_metrics["team_runs_count"] == 0
     assert day1_metrics["workflow_runs_count"] == 0
-    assert day1_metrics["completed"] is True
 
     # Verify Day 2 metrics (3 sessions)
     day2_metrics = metrics_sorted[1]
     assert day2_metrics["agent_runs_count"] == 3
     assert day2_metrics["team_runs_count"] == 0
     assert day2_metrics["workflow_runs_count"] == 0
-    assert day2_metrics["completed"] is True
 
     # Verify Day 3 metrics (1 session)
     day3_metrics = metrics_sorted[2]
     assert day3_metrics["agent_runs_count"] == 1
     assert day3_metrics["team_runs_count"] == 0
     assert day3_metrics["workflow_runs_count"] == 0
-    assert day3_metrics["completed"] is True
 
 
 def test_calculate_metrics_mixed_session_types_multiple_days(postgres_db_real: PostgresDb):
@@ -466,19 +474,24 @@ def test_get_metrics_date_range_multiple_days(postgres_db_real: PostgresDb, samp
     first_session_date = datetime.fromtimestamp(sample_multi_day_sessions[0].created_at, tz=timezone.utc).date()
     last_session_date = datetime.fromtimestamp(sample_multi_day_sessions[-1].created_at, tz=timezone.utc).date()
 
-    # Test getting metrics for the full range
+    # Rows are per (user, day), so count distinct dates rather than rows.
     metrics_full, _ = postgres_db_real.get_metrics(starting_date=first_session_date, ending_date=last_session_date)
-    assert len(metrics_full) == 3  # All 3 days
+    assert {m["date"] for m in metrics_full} == {
+        first_session_date,
+        first_session_date + timedelta(days=1),
+        last_session_date,
+    }
 
     # Test getting metrics for partial range (first 2 days)
     second_day = first_session_date + timedelta(days=1)
     metrics_partial, _ = postgres_db_real.get_metrics(starting_date=first_session_date, ending_date=second_day)
-    assert len(metrics_partial) == 2  # First 2 days only
+    assert {m["date"] for m in metrics_partial} == {first_session_date, second_day}
 
     # Test getting metrics for single day
     metrics_single, _ = postgres_db_real.get_metrics(starting_date=first_session_date, ending_date=first_session_date)
-    assert len(metrics_single) == 1  # First day only
-    assert metrics_single[0]["agent_runs_count"] == 2  # Day 1 had 2 sessions
+    assert {m["date"] for m in metrics_single} == {first_session_date}
+    assert len(metrics_single) == 2  # Day 1 had 2 sessions, one per owner
+    assert sum(m["agent_runs_count"] for m in metrics_single) == 2
 
 
 def test_metrics_calculation_multiple_days(postgres_db_real: PostgresDb):

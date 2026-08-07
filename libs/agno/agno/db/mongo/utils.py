@@ -3,7 +3,7 @@
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from uuid import uuid4
 
 from agno.db.mongo.schemas import get_collection_indexes
@@ -14,6 +14,9 @@ try:
     from pymongo.collection import Collection
 except ImportError:
     raise ImportError("`pymongo` not installed. Please install it using `pip install pymongo`")
+
+if TYPE_CHECKING:
+    from agno.db.mongo.async_mongo import AsyncMongoCollectionType
 
 
 # -- DB util methods --
@@ -232,6 +235,48 @@ def bulk_upsert_metrics(collection: Collection, metrics_records: List[Dict[str, 
             # records (written before user_id was tracked) still match a
             # single bucket per (date, period).
             collection.replace_one(
+                {
+                    "user_id": record.get("user_id", ""),
+                    "date": record["date"],
+                    "aggregation_period": record["aggregation_period"],
+                },
+                record,
+                upsert=True,
+            )
+
+            results.append(record)
+
+        except Exception as e:
+            log_error(f"Error upserting metrics record: {str(e)}")
+            continue
+
+    return results
+
+
+async def abulk_upsert_metrics(
+    collection: "AsyncMongoCollectionType", metrics_records: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Async bulk upsert metrics into the database.
+
+    Args:
+        collection (AsyncMongoCollectionType): The async collection to upsert the metrics into.
+        metrics_records (List[Dict[str, Any]]): The list of metrics records to upsert.
+
+    Returns:
+        The list of upserted metrics records.
+    """
+    if not metrics_records:
+        return []
+
+    results = []
+    for record in metrics_records:
+        record["date"] = record["date"].isoformat() if isinstance(record["date"], date) else record["date"]
+        try:
+            # The unique key is (user_id, date, aggregation_period). Default
+            # the user_id to the empty-string sentinel for safety so legacy
+            # records (written before user_id was tracked) still match a
+            # single bucket per (date, period).
+            await collection.replace_one(
                 {
                     "user_id": record.get("user_id", ""),
                     "date": record["date"],

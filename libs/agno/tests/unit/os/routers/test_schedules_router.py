@@ -70,6 +70,29 @@ def client(mock_db, settings):
     return TestClient(app)
 
 
+@pytest.fixture
+def scoped_client(mock_db, settings):
+    """Build a client whose requests carry a scope set, as the auth layer would.
+
+    The default ``client`` runs with auth disabled, so no scopes are attached
+    and the run-scope check is a no-op.
+    """
+
+    def _make(scopes, authorization_enabled=True):
+        app = FastAPI()
+
+        @app.middleware("http")
+        async def _attach_scopes(request, call_next):
+            request.state.scopes = list(scopes)
+            request.state.authorization_enabled = authorization_enabled
+            return await call_next(request)
+
+        app.include_router(get_schedule_router(os_db=mock_db, settings=settings))
+        return TestClient(app)
+
+    return _make
+
+
 # =============================================================================
 # Tests: GET /schedules
 # =============================================================================
@@ -155,7 +178,7 @@ class TestCreateSchedule:
             json={
                 "name": "daily-check",
                 "cron_expr": "0 9 * * *",
-                "endpoint": "/test",
+                "endpoint": "/agents/a1/runs",
             },
         )
         assert resp.status_code == 409
@@ -388,7 +411,7 @@ class TestScheduleCreateValidation:
             json={
                 "name": "!invalid name!",
                 "cron_expr": "0 9 * * *",
-                "endpoint": "/test",
+                "endpoint": "/agents/a1/runs",
             },
         )
         assert resp.status_code == 422
@@ -421,8 +444,116 @@ class TestScheduleCreateValidation:
             json={
                 "name": "test",
                 "cron_expr": "0 9 * * *",
-                "endpoint": "/test",
+                "endpoint": "/agents/a1/runs",
                 "method": "INVALID",
             },
         )
         assert resp.status_code == 422
+
+    @pytest.mark.parametrize(
+        "endpoint",
+        ["/agents/a1/runs", "/teams/t1/runs", "/workflows/w1/runs", "/agents/a1/runs/"],
+    )
+    def test_run_endpoints_accepted(self, client, mock_db, endpoint):
+        resp = client.post(
+            "/schedules",
+            json={
+                "name": "test",
+                "cron_expr": "0 9 * * *",
+                "endpoint": endpoint,
+            },
+        )
+        assert resp.status_code == 201
+
+
+class TestScheduleNameUniqueness:
+    """A schedule name is unique per owner, not globally -- the router checks with a
+    scoped ``get_schedule_by_name`` and answers 409, so two users can both own one."""
+
+    def _body(self):
+        return {"name": "nightly", "cron_expr": "0 9 * * *", "endpoint": "/agents/a1/runs"}
+
+    def test_two_owners_may_share_a_name(self, client, mock_db):
+        owned = {"alice": _make_schedule_dict(name="nightly")}
+        mock_db.get_schedule_by_name = MagicMock(side_effect=lambda name, user_id=None: owned.get(user_id))
+
+        with patch("agno.os.routers.schedules.router.get_scoped_user_id", return_value="bob"):
+            resp = client.post("/schedules", json=self._body())
+
+        assert resp.status_code == 201
+
+    def test_same_owner_reusing_a_name_is_a_conflict(self, client, mock_db):
+        owned = {"alice": _make_schedule_dict(name="nightly")}
+        mock_db.get_schedule_by_name = MagicMock(side_effect=lambda name, user_id=None: owned.get(user_id))
+
+        with patch("agno.os.routers.schedules.router.get_scoped_user_id", return_value="alice"):
+            resp = client.post("/schedules", json=self._body())
+
+        assert resp.status_code == 409
+
+
+class TestScheduleRunScope:
+    """The executor fires a schedule with the internal service token, so the
+    creator must hold the permission for the endpoint it targets."""
+
+    def _body(self, endpoint="/agents/a1/runs"):
+        return {"name": "test", "cron_expr": "0 9 * * *", "endpoint": endpoint}
+
+    def test_missing_run_scope_is_forbidden(self, scoped_client, mock_db):
+        resp = scoped_client(["schedules:write"]).post("/schedules", json=self._body())
+        assert resp.status_code == 403
+
+    def test_non_run_endpoint_is_admin_only(self, scoped_client, mock_db):
+        """Any other route is an arbitrary first-party call once the executor
+        fires it with the internal service token."""
+        body = self._body("/schedules/someone-elses")
+        assert scoped_client(["schedules:write"]).post("/schedules", json=body).status_code == 403
+        assert scoped_client(["agent_os:admin"]).post("/schedules", json=body).status_code == 201
+
+    def test_run_scope_allows_create(self, scoped_client, mock_db):
+        resp = scoped_client(["schedules:write", "agents:run"]).post("/schedules", json=self._body())
+        assert resp.status_code == 201
+
+    def test_per_resource_run_scope_allows_create(self, scoped_client, mock_db):
+        resp = scoped_client(["schedules:write", "agents:a1:run"]).post("/schedules", json=self._body())
+        assert resp.status_code == 201
+
+    def test_run_scope_for_another_component_is_forbidden(self, scoped_client, mock_db):
+        resp = scoped_client(["schedules:write", "agents:run"]).post("/schedules", json=self._body("/teams/t1/runs"))
+        assert resp.status_code == 403
+
+    def test_authorization_disabled_skips_the_check(self, scoped_client, mock_db):
+        """With RBAC off, scopes are unenforced everywhere else -- don't enforce here."""
+        client = scoped_client([], authorization_enabled=False)
+        assert client.post("/schedules", json=self._body()).status_code == 201
+        assert client.post("/schedules", json=self._body("/health")).status_code == 201
+
+    def test_non_post_method_on_a_run_path_is_admin_only(self, scoped_client, mock_db):
+        """Only POST reaches a run endpoint, so any other method is an arbitrary call."""
+        body = {**self._body(), "method": "DELETE"}
+        assert scoped_client(["schedules:write", "agents:run"]).post("/schedules", json=body).status_code == 403
+        assert scoped_client(["agent_os:admin"]).post("/schedules", json=body).status_code == 201
+
+    def test_reserved_principal_may_not_own_a_schedule(self, mock_db, settings):
+        """The internal service token authenticates as a reserved principal."""
+        app = FastAPI()
+
+        @app.middleware("http")
+        async def _attach_reserved_principal(request, call_next):
+            request.state.user_id = "__scheduler__"
+            return await call_next(request)
+
+        app.include_router(get_schedule_router(os_db=mock_db, settings=settings))
+        resp = TestClient(app).post("/schedules", json=self._body())
+
+        assert resp.status_code == 403
+        mock_db.create_schedule.assert_not_called()
+
+    def test_admin_may_create(self, scoped_client, mock_db):
+        resp = scoped_client(["agent_os:admin"]).post("/schedules", json=self._body())
+        assert resp.status_code == 201
+
+    def test_repointing_endpoint_rechecks_scope(self, scoped_client, mock_db):
+        mock_db.get_schedule = MagicMock(return_value=_make_schedule_dict())
+        resp = scoped_client(["schedules:write"]).patch("/schedules/sched-1", json={"endpoint": "/teams/t1/runs"})
+        assert resp.status_code == 403
