@@ -319,6 +319,58 @@ def _get_schedule_runs_table_schema(
     }
 
 
+JOBS_TABLE_SCHEMA = {
+    # id == run_id, so poll/resume endpoints key identically
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "component_type": {"type": String, "nullable": False},  # agent | team | workflow
+    "job_type": {"type": String, "nullable": False},  # "run" today; future: other AgentOS job types
+    # Claim affinity: NULL = any worker; set = only workers whose
+    # QueueConfig.deployment_id matches (filtered in the claim predicate)
+    "deployment_id": {"type": String, "nullable": True},
+    "component_id": {"type": String, "nullable": False, "index": True},
+    "session_id": {"type": String, "nullable": False, "index": True},
+    "user_id": {"type": String, "nullable": True},
+    "payload": {"type": JSONB, "nullable": False},  # serialized run params
+    # queued | running | completed | failed | cancelled
+    "status": {"type": String, "nullable": False, "index": True},
+    "attempt": {"type": BigInteger, "nullable": False},  # doubles as fencing generation
+    "max_attempts": {"type": BigInteger, "nullable": False},
+    "idempotency_key": {"type": String, "nullable": True},
+    "available_at": {"type": BigInteger, "nullable": False},
+    "locked_by": {"type": String, "nullable": True},
+    "locked_at": {"type": BigInteger, "nullable": True},  # heartbeat-refreshed
+    "error": {"type": Text, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "completed_at": {"type": BigInteger, "nullable": True},
+    "__composite_indexes__": [
+        {"name": "status_available_at", "columns": ["status", "available_at"]},
+    ],
+    # Client-supplied dedup key (Stripe pattern): duplicate submits return the
+    # existing run instead of enqueueing twice. Unique only when set.
+    "_partial_unique_indexes": [
+        {
+            "name": "uq_jobs_idempotency_key",
+            # user_id scopes the dedup namespace: a second tenant reusing a
+            # key must not attach to (and observe) the first tenant's run
+            "columns": ["idempotency_key", "user_id"],
+            "where": "idempotency_key IS NOT NULL",
+        },
+        {
+            "name": "uq_jobs_idempotency_key_anon",
+            # Anonymous submits (user_id IS NULL) need their own index: the
+            # composite index above treats every NULL user_id as distinct, so
+            # two CONCURRENT anonymous submits with the same key both insert
+            # (the IS NOT DISTINCT FROM pre-check only catches the sequential
+            # case). A single-column partial index is used instead of
+            # NULLS NOT DISTINCT, which requires PG15+.
+            "columns": ["idempotency_key"],
+            "where": "idempotency_key IS NOT NULL AND user_id IS NULL",
+        },
+    ],
+}
+
+
 APPROVAL_TABLE_SCHEMA = {
     "id": {"type": String, "primary_key": True, "nullable": False},
     "run_id": {"type": String, "nullable": False, "index": True},
@@ -427,6 +479,7 @@ def get_table_schema_definition(
         "component_links": COMPONENT_LINKS_TABLE_SCHEMA,
         "learnings": LEARNINGS_TABLE_SCHEMA,
         "schedules": SCHEDULE_TABLE_SCHEMA,
+        "jobs": JOBS_TABLE_SCHEMA,
         "approvals": APPROVAL_TABLE_SCHEMA,
         "auth_tokens": AUTH_TOKEN_TABLE_SCHEMA,
         "service_accounts": SERVICE_ACCOUNT_TABLE_SCHEMA,

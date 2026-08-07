@@ -963,10 +963,17 @@ class SqliteDb(BaseDb):
                 # (e.g. a background/continue save that couldn't resolve its position).
                 # A NULL index has no position and breaks ORDER BY run_index.
                 if row.get("run_index") is None:
-                    current_max = sess.execute(
-                        select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
-                    ).scalar()
-                    row["run_index"] = (current_max + 1) if current_max is not None else 0
+                    # Computed INSIDE the insert statement: SQLite holds the
+                    # database write lock for the whole statement, so two
+                    # concurrent backfills cannot read the same MAX (the old
+                    # two-statement read-then-insert could - a busy-waiting
+                    # second writer landed a duplicate index after the first
+                    # committed). ON CONFLICT still preserves existing indexes.
+                    row["run_index"] = (
+                        select(func.coalesce(func.max(runs_table.c.run_index) + 1, 0))
+                        .where(runs_table.c.session_id == session_id)
+                        .scalar_subquery()
+                    )
 
                 stmt = sqlite.insert(runs_table).values(**row)
                 stmt = stmt.on_conflict_do_update(
@@ -4983,12 +4990,14 @@ class SqliteDb(BaseDb):
         self,
         component_id: str,
         version: Optional[int] = None,
+        label: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Load a component with its full resolved graph.
 
         Args:
             component_id: The component ID.
             version: Specific version or None for current.
+            label: Optional label of the component.
 
         Returns:
             Dictionary with component, config, links, and resolved children.

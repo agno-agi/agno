@@ -54,6 +54,7 @@ class BaseDb(ABC):
         learnings_table: Optional[str] = None,
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
+        job_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
         service_accounts_table: Optional[str] = None,
@@ -66,7 +67,18 @@ class BaseDb(ABC):
     ):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
-        self.runs_table_name = runs_table or "agno_runs"
+        # The runs table foreign-keys to THIS db's session table. If the caller
+        # customized session_table but not runs_table, defaulting to the shared
+        # "agno_runs" would FK-lock it to whichever db created the table first,
+        # silently dropping every other db's runs (the run insert violates the
+        # FK and is swallowed). Derive a session-table-scoped runs name so each
+        # session table owns a correctly foreign-keyed runs table by default.
+        if runs_table:
+            self.runs_table_name = runs_table
+        elif session_table and session_table != "agno_sessions":
+            self.runs_table_name = f"{session_table}_runs"
+        else:
+            self.runs_table_name = "agno_runs"
         self.culture_table_name = culture_table or "agno_culture"
         self.memory_table_name = memory_table or "agno_memories"
         self.metrics_table_name = metrics_table or "agno_metrics"
@@ -81,6 +93,7 @@ class BaseDb(ABC):
         self.learnings_table_name = learnings_table or "agno_learnings"
         self.schedules_table_name = schedules_table or "agno_schedules"
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
+        self.job_table_name = job_table or "agno_jobs"
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
         self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"
@@ -98,6 +111,7 @@ class BaseDb(ABC):
         return {
             "id": self.id,
             "session_table": self.session_table_name,
+            "job_table": self.job_table_name,
             "runs_table": self.runs_table_name,
             "culture_table": self.culture_table_name,
             "memory_table": self.memory_table_name,
@@ -1605,13 +1619,25 @@ class AsyncBaseDb(ABC):
         learnings_table: Optional[str] = None,
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
+        job_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
         service_accounts_table: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
-        self.runs_table_name = runs_table or "agno_runs"
+        # The runs table foreign-keys to THIS db's session table. If the caller
+        # customized session_table but not runs_table, defaulting to the shared
+        # "agno_runs" would FK-lock it to whichever db created the table first,
+        # silently dropping every other db's runs (the run insert violates the
+        # FK and is swallowed). Derive a session-table-scoped runs name so each
+        # session table owns a correctly foreign-keyed runs table by default.
+        if runs_table:
+            self.runs_table_name = runs_table
+        elif session_table and session_table != "agno_sessions":
+            self.runs_table_name = f"{session_table}_runs"
+        else:
+            self.runs_table_name = "agno_runs"
         self.memory_table_name = memory_table or "agno_memories"
         self.metrics_table_name = metrics_table or "agno_metrics"
         self.eval_table_name = eval_table or "agno_eval_runs"
@@ -1623,6 +1649,7 @@ class AsyncBaseDb(ABC):
         self.learnings_table_name = learnings_table or "agno_learnings"
         self.schedules_table_name = schedules_table or "agno_schedules"
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
+        self.job_table_name = job_table or "agno_jobs"
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
         self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"

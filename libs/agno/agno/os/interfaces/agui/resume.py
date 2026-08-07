@@ -136,6 +136,19 @@ async def resume_paused_run(
     if paused_run.run_id:
         run_context.run_id = paused_run.run_id
 
+    # Inline-door admission gate (see agno.os.job_queue): a durable ticket
+    # owns this run's continuation - AG-UI must not execute it inline while
+    # an HTTP durable continue CASes the ticket. 409/503 HTTPException raises
+    # into the AG-UI route.
+    from agno.os.job_queue import araise_if_ticket_owns_continue, get_active_queue_worker
+
+    await araise_if_ticket_owns_continue(
+        get_active_queue_worker(),
+        paused_run.run_id,
+        component_type="team" if isinstance(entity, Team) else "agent",
+        component_id=getattr(entity, "id", None),
+    )
+
     return entity.acontinue_run(  # type: ignore
         run_id=paused_run.run_id,
         session_id=session_id,
