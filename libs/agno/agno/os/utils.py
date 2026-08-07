@@ -1224,6 +1224,7 @@ def get_agent_by_id(
     create_fresh: bool = False,
     ctx: Optional[RequestContext] = None,
     strict: bool = True,
+    published_only: bool = True,
 ) -> Optional[Union[Agent, RemoteAgent, AgentProtocol]]:
     """Get an agent by ID, optionally creating a fresh instance for request isolation.
 
@@ -1242,6 +1243,9 @@ def get_agent_by_id(
         strict: If True (the default here, unlike the from_dict/load APIs), a
             db-backed agent whose references cannot be rehydrated raises
             instead of loading degraded
+        published_only: If True (the runtime-safe default), an unversioned DB
+            lookup resolves only the current published config. Detail reads
+            explicitly disable this to expose a draft-only component.
 
     Returns:
         The agent instance (shared or fresh copy based on create_fresh)
@@ -1278,7 +1282,14 @@ def get_agent_by_id(
         from agno.agent.agent import get_agent_by_id as get_agent_by_id_db
 
         try:
-            db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry, strict=strict)
+            db_agent = get_agent_by_id_db(
+                db=db,
+                id=agent_id,
+                version=version,
+                registry=registry,
+                strict=strict,
+                published_only=published_only,
+            )
             return db_agent
         except ComponentRehydrationError:
             # Broken is not "not found": propagate so the caller can refuse loudly.
@@ -1299,8 +1310,9 @@ async def get_agent_by_id_async(
     create_fresh: bool = False,
     ctx: Optional[RequestContext] = None,
     strict: bool = True,
+    published_only: bool = True,
 ) -> Optional[Union[Agent, RemoteAgent, AgentProtocol]]:
-    """Async variant of get_agent_by_id that supports async factories."""
+    """Async resolver; DB lookups default to current published runtime state."""
     if agent_id is None:
         return None
 
@@ -1328,7 +1340,14 @@ async def get_agent_by_id_async(
         from agno.agent.agent import get_agent_by_id as get_agent_by_id_db
 
         try:
-            db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry, strict=strict)
+            db_agent = get_agent_by_id_db(
+                db=db,
+                id=agent_id,
+                version=version,
+                registry=registry,
+                strict=strict,
+                published_only=published_only,
+            )
             return db_agent
         except ComponentRehydrationError:
             # Broken is not "not found": propagate so the caller can refuse loudly.
@@ -1349,6 +1368,7 @@ def get_team_by_id(
     registry: Optional[Registry] = None,
     ctx: Optional[RequestContext] = None,
     strict: bool = True,
+    published_only: bool = True,
 ) -> Optional[Union[Team, RemoteTeam]]:
     """Get a team by ID, optionally creating a fresh instance for request isolation.
 
@@ -1366,6 +1386,9 @@ def get_team_by_id(
         strict: If True (the default here, unlike the from_dict/load APIs), a
             db-backed team whose members or references cannot be rehydrated
             raises instead of loading degraded
+        published_only: If True (the runtime-safe default), an unversioned DB
+            lookup resolves only the current published config. Detail reads
+            explicitly disable this to expose a draft-only component.
 
     Returns:
         The team instance (shared or fresh copy based on create_fresh)
@@ -1395,7 +1418,14 @@ def get_team_by_id(
         from agno.team.team import get_team_by_id as get_team_by_id_db
 
         try:
-            db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry, strict=strict)
+            db_team = get_team_by_id_db(
+                db=db,
+                id=team_id,
+                version=version,
+                registry=registry,
+                strict=strict,
+                published_only=published_only,
+            )
             return db_team
         except ComponentRehydrationError:
             # Broken is not "not found": propagate so the caller can refuse loudly.
@@ -1416,8 +1446,9 @@ async def get_team_by_id_async(
     registry: Optional[Registry] = None,
     ctx: Optional[RequestContext] = None,
     strict: bool = True,
+    published_only: bool = True,
 ) -> Optional[Union[Team, RemoteTeam]]:
-    """Async variant of get_team_by_id that supports async factories."""
+    """Async resolver; DB lookups default to current published runtime state."""
     if team_id is None:
         return None
 
@@ -1439,7 +1470,14 @@ async def get_team_by_id_async(
         from agno.team.team import get_team_by_id as get_team_by_id_db
 
         try:
-            db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry, strict=strict)
+            db_team = get_team_by_id_db(
+                db=db,
+                id=team_id,
+                version=version,
+                registry=registry,
+                strict=strict,
+                published_only=published_only,
+            )
             return db_team
         except ComponentRehydrationError:
             # Broken is not "not found": propagate so the caller can refuse loudly.
@@ -1460,6 +1498,7 @@ def get_workflow_by_id(
     registry: Optional[Registry] = None,
     ctx: Optional[RequestContext] = None,
     strict: bool = True,
+    published_only: bool = True,
 ) -> Optional[Union[Workflow, RemoteWorkflow]]:
     """Get a workflow by ID, optionally creating a fresh instance for request isolation.
 
@@ -1480,6 +1519,9 @@ def get_workflow_by_id(
         strict: If True (the default here, unlike the from_dict/load APIs), a
             db-backed workflow whose references cannot be rehydrated raises
             instead of loading degraded
+        published_only: If True (the runtime-safe default), an unversioned DB
+            lookup resolves only the current published config. Detail reads
+            explicitly disable this to expose a draft-only component.
 
     Returns:
         The workflow instance (shared or fresh copy based on create_fresh)
@@ -1512,7 +1554,12 @@ def get_workflow_by_id(
 
         try:
             db_workflow = get_workflow_by_id_db(
-                db=db, id=workflow_id, version=version, registry=registry, strict=strict
+                db=db,
+                id=workflow_id,
+                version=version,
+                registry=registry,
+                strict=strict,
+                published_only=published_only,
             )
             return db_workflow
         except ComponentRehydrationError:
@@ -1534,8 +1581,9 @@ async def get_workflow_by_id_async(
     registry: Optional[Registry] = None,
     ctx: Optional[RequestContext] = None,
     strict: bool = True,
+    published_only: bool = True,
 ) -> Optional[Union[Workflow, RemoteWorkflow]]:
-    """Async variant of get_workflow_by_id that supports async factories."""
+    """Async resolver; DB lookups default to current published runtime state."""
     if workflow_id is None:
         return None
 
@@ -1560,7 +1608,12 @@ async def get_workflow_by_id_async(
 
         try:
             db_workflow = get_workflow_by_id_db(
-                db=db, id=workflow_id, version=version, registry=registry, strict=strict
+                db=db,
+                id=workflow_id,
+                version=version,
+                registry=registry,
+                strict=strict,
+                published_only=published_only,
             )
             return db_workflow
         except ComponentRehydrationError:
@@ -1865,7 +1918,7 @@ def collect_mcp_tools_from_registry(registry: Optional[Registry], mcp_tools: Lis
     Registry tools are not attached to any agent, team or workflow, so the
     other collectors never see them. They still must be connected in the
     AgentOS lifespan: components created from registry tools (e.g. via
-    StudioTool) serialize a toolkit's functions at persist time, and an
+    StudioTools) serialize a toolkit's functions at persist time, and an
     unconnected MCP toolkit has none -- its tools would be silently dropped.
     """
     if registry is None or not registry.tools:

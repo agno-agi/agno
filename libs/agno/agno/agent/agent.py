@@ -965,8 +965,33 @@ class Agent:
         *,
         db: Optional["BaseDb"] = None,
         hard_delete: bool = False,
+        require_no_dependents: bool = True,
     ) -> bool:
-        return _storage.delete(self, db=db, hard_delete=hard_delete)
+        """Delete this agent's persisted component.
+
+        Args:
+            db: The database to delete the component from.
+            hard_delete: Permanently delete the component and its history.
+            require_no_dependents: Refuse deletion while another component
+                references this agent. Setting this to False bypasses
+                dependency validation and can leave active components with
+                dangling links; use it only for a deliberate repair or
+                migration. Catalog-v1 adapters retain their historical
+                unguarded deletion behavior.
+
+        Returns:
+            True if the component was deleted, False otherwise.
+
+        Raises:
+            ComponentDependencyError: If a dependent component references
+                this agent and require_no_dependents is True.
+        """
+        return _storage.delete(
+            self,
+            db=db,
+            hard_delete=hard_delete,
+            require_no_dependents=require_no_dependents,
+        )
 
     def get_run_output(
         self, run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
@@ -1722,13 +1747,15 @@ def get_agent_by_id(
     label: Optional[str] = None,
     registry: Optional["Registry"] = None,
     strict: bool = False,
+    published_only: bool = False,
 ) -> Optional["Agent"]:
     """
     Get an Agent by id from the database (new entities/configs schema).
 
     Resolution order:
     - if label is provided: load that labeled version
-    - else: load component.current_version
+    - else: load the current published version, or the latest draft when the
+      component has never been published
 
     Args:
         db: Database handle.
@@ -1737,6 +1764,9 @@ def get_agent_by_id(
         registry: Optional Registry for reconstructing unserializable components.
         strict: If True, unresolvable registry references raise
             ComponentRehydrationError; None strictly means the agent was not found.
+        published_only: Resolve only the current published config when neither
+            an exact version nor label is supplied. Runtime dispatch uses this;
+            ordinary reads retain the draft-only fallback.
 
     Returns:
         Agent instance or None.
@@ -1748,7 +1778,11 @@ def get_agent_by_id(
     from agno.utils.log import log_error
 
     try:
-        row = db.get_config(component_id=id, label=label, version=version)
+        row = (
+            db.get_current_config(component_id=id)
+            if published_only and version is None and label is None
+            else db.get_config(component_id=id, label=label, version=version)
+        )
         if row is None:
             return None
 
@@ -1796,7 +1830,7 @@ def get_agents(
         )
         for component in components:
             try:
-                config = db.get_config(component_id=component["component_id"])
+                config = db.get_latest_config(component_id=component["component_id"])
                 if config is not None:
                     agent_config = config.get("config")
                     if agent_config is not None:
@@ -1807,7 +1841,7 @@ def get_agents(
                         # components so they stay visible and fixable.
                         agent = Agent.from_dict(agent_config, registry=registry, strict=False)
                         agent.id = component_id
-                        agent._version = component.get("current_version")
+                        agent._version = config.get("version")
                         agent._stage = config.get("stage")
                         agents.append(agent)
             except Exception as e:

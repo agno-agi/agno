@@ -278,6 +278,16 @@ SCHEDULE_TABLE_SCHEMA = {
     "timeout_seconds": {"type": BigInteger, "nullable": False},
     "max_retries": {"type": BigInteger, "nullable": False},
     "retry_delay_seconds": {"type": BigInteger, "nullable": False},
+    "managed_by": {"type": String, "nullable": True, "index": True},
+    "owner_actor_id": {"type": String, "nullable": True, "index": True},
+    "target_type": {"type": String, "nullable": True},
+    "target_id": {"type": String, "nullable": True},
+    "created_by_run_id": {"type": String, "nullable": True},
+    "created_by_session_id": {"type": String, "nullable": True},
+    "updated_by_run_id": {"type": String, "nullable": True},
+    "updated_by_session_id": {"type": String, "nullable": True},
+    "pending_trigger_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "manual_trigger_claimed": {"type": Boolean, "nullable": False, "default": False},
     "enabled": {"type": Boolean, "nullable": False, "default": True},
     "next_run_at": {"type": BigInteger, "nullable": True, "index": True},
     "locked_by": {"type": String, "nullable": True},
@@ -286,6 +296,18 @@ SCHEDULE_TABLE_SCHEMA = {
     "updated_at": {"type": BigInteger, "nullable": True},
     "__composite_indexes__": [
         {"name": "enabled_next_run_at", "columns": ["enabled", "next_run_at"]},
+    ],
+    "_partial_unique_indexes": [
+        {
+            "name": "uq_generic_name",
+            "columns": ["name"],
+            "where": "managed_by IS DISTINCT FROM 'studio'",
+        },
+        {
+            "name": "uq_studio_owner_name",
+            "columns": ["owner_actor_id", "name"],
+            "where": "managed_by = 'studio'",
+        },
     ],
 }
 

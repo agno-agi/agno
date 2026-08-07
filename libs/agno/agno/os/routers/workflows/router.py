@@ -1413,6 +1413,7 @@ def get_workflow_router(
                 registry=os.registry,
                 create_fresh=True,
                 version=version,
+                published_only=False,
             )  # type: ignore[assignment]
         except ComponentRehydrationError as rehydration_error:
             raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
@@ -1476,7 +1477,10 @@ def get_workflow_router(
             None, description="Session ID for conversation continuity. If not provided, a new session is created"
         ),
         user_id: Optional[str] = Form(None, description="User identifier for tracking and personalization"),
-        version: Optional[int] = Form(None, description="Workflow version to use for this run"),
+        version: Optional[int] = Form(
+            None,
+            description="Exact Workflow version to use for this run, including a draft version for explicit preview",
+        ),
         factory_input: Optional[str] = Form(
             None,
             description="JSON object with factory-specific parameters for dynamic workflow construction",

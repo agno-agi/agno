@@ -28,6 +28,21 @@ from agno.team.team import Team, get_team_by_id, get_teams
 # =============================================================================
 
 
+def _corrupt_delete_config_row(db: SqliteDb, component_id: str, version: int) -> None:
+    """Simulate an externally corrupted pin without weakening the public API."""
+    configs_table = db._get_table(table_type="component_configs")
+    assert configs_table is not None
+    with db.Session() as session:
+        result = session.execute(
+            configs_table.delete().where(
+                configs_table.c.component_id == component_id,
+                configs_table.c.version == version,
+            )
+        )
+        session.commit()
+    assert result.rowcount == 1
+
+
 def _create_mock_db_class():
     """Create a concrete BaseDb subclass with all abstract methods stubbed."""
     abstract_methods = {}
@@ -43,12 +58,17 @@ def mock_db():
     """Create a mock database instance that passes isinstance(db, BaseDb)."""
     MockDbClass = _create_mock_db_class()
     db = MockDbClass()
+    db.component_catalog_api_version = 2
 
     # Configure common mock methods
+    db.get_component = MagicMock(return_value=None)
+    db.create_component_with_config = MagicMock(return_value=({"component_id": "test-team"}, {"version": 1}))
     db.upsert_component = MagicMock()
     db.upsert_config = MagicMock(return_value={"version": 1})
     db.delete_component = MagicMock(return_value=True)
     db.get_config = MagicMock()
+    db.get_current_config = db.get_config
+    db.get_latest_config = db.get_config
     db.list_components = MagicMock()
     db.upsert_component_link = MagicMock()
     db.load_component_graph = MagicMock()
@@ -649,24 +669,28 @@ class TestTeamFromDict:
 class TestTeamSave:
     """Tests for Team.save() method."""
 
-    def test_save_calls_upsert_component(self, basic_team, mock_db):
-        """Test save calls upsert_component with correct parameters."""
-        mock_db.upsert_config.return_value = {"version": 1}
-
+    def test_save_creates_component_and_initial_config_atomically(self, basic_team, mock_db):
+        """Test first save creates the component and config together."""
         basic_team.db = mock_db
         version = basic_team.save()
 
-        mock_db.upsert_component.assert_called_once_with(
-            component_id="test-team",
-            component_type=ComponentType.TEAM,
-            name="Test Team",
-            description="A test team for unit testing",
-            metadata=None,
-        )
+        call_args = mock_db.create_component_with_config.call_args
+        assert call_args.kwargs["component_id"] == "test-team"
+        assert call_args.kwargs["component_type"] == ComponentType.TEAM
+        assert call_args.kwargs["name"] == "Test Team"
+        assert call_args.kwargs["description"] == "A test team for unit testing"
+        assert call_args.kwargs["config"]["id"] == "test-team"
+        mock_db.upsert_component.assert_not_called()
+        mock_db.upsert_config.assert_not_called()
         assert version == 1
 
-    def test_save_calls_upsert_config(self, basic_team, mock_db):
-        """Test save calls upsert_config with team config."""
+    def test_existing_save_upserts_config_with_projection(self, basic_team, mock_db):
+        """Test a published save updates config and projection together."""
+        mock_db.get_component.return_value = {
+            "component_id": "test-team",
+            "component_type": "team",
+            "deleted_at": None,
+        }
         mock_db.upsert_config.return_value = {"version": 2}
 
         basic_team.db = mock_db
@@ -676,6 +700,11 @@ class TestTeamSave:
         call_args = mock_db.upsert_config.call_args
         assert call_args.kwargs["component_id"] == "test-team"
         assert "config" in call_args.kwargs
+        assert call_args.kwargs["projection"] == {
+            "name": "Test Team",
+            "description": "A test team for unit testing",
+            "metadata": None,
+        }
         assert version == 2
 
     def test_save_with_members_saves_each_member(self, mock_db, member_agent):
@@ -709,8 +738,8 @@ class TestTeamSave:
         )
         team.save()
 
-        # Check that links were passed to upsert_config
-        call_args = mock_db.upsert_config.call_args
+        # Check that links were committed with the initial config
+        call_args = mock_db.create_component_with_config.call_args
         links = call_args.kwargs.get("links")
         assert links is not None
         assert len(links) == 1
@@ -721,33 +750,47 @@ class TestTeamSave:
 
     def test_save_with_explicit_db(self, basic_team, mock_db):
         """Test save uses explicitly provided db."""
-        mock_db.upsert_config.return_value = {"version": 1}
-
         version = basic_team.save(db=mock_db)
 
-        mock_db.upsert_component.assert_called_once()
-        mock_db.upsert_config.assert_called_once()
+        mock_db.create_component_with_config.assert_called_once()
+        mock_db.upsert_component.assert_not_called()
+        mock_db.upsert_config.assert_not_called()
         assert version == 1
 
     def test_save_with_label(self, basic_team, mock_db):
-        """Test save passes label to upsert_config."""
-        mock_db.upsert_config.return_value = {"version": 1}
-
+        """Test first save passes the label to the atomic create."""
         basic_team.db = mock_db
         basic_team.save(label="production")
 
-        call_args = mock_db.upsert_config.call_args
+        call_args = mock_db.create_component_with_config.call_args
         assert call_args.kwargs["label"] == "production"
 
     def test_save_with_stage(self, basic_team, mock_db):
-        """Test save passes stage to upsert_config."""
-        mock_db.upsert_config.return_value = {"version": 1}
-
+        """Test first save passes the stage to the atomic create."""
         basic_team.db = mock_db
         basic_team.save(stage="draft")
 
-        call_args = mock_db.upsert_config.call_args
+        call_args = mock_db.create_component_with_config.call_args
         assert call_args.kwargs["stage"] == "draft"
+
+    def test_save_draft_team_with_draft_member_on_real_sqlite(self, tmp_path):
+        """A draft composite may pin a draft child; publication validates it later."""
+        db = SqliteDb(db_file=str(tmp_path / "draft_team.db"))
+        member = Agent(id="draft-member", name="Draft Member")
+        team = Team(id="draft-team", name="Draft Team", members=[member], db=db)
+
+        version = team.save(stage="draft")
+
+        assert version == 1
+        assert db.get_config("draft-member", version=1)["stage"] == "draft"  # type: ignore[index]
+        assert db.get_config("draft-team", version=1)["stage"] == "draft"  # type: ignore[index]
+        links = db.get_links("draft-team", 1)
+        assert len(links) == 1
+        assert links[0]["link_kind"] == "member"
+        assert links[0]["link_key"] == "member_0"
+        assert links[0]["child_component_id"] == "draft-member"
+        assert links[0]["child_version"] == 1
+        assert links[0]["meta"] == {"type": "agent"}
 
     def test_save_without_db_raises_error(self, basic_team):
         """Test save raises error when no db is available."""
@@ -756,7 +799,7 @@ class TestTeamSave:
 
     def test_save_handles_db_error(self, basic_team, mock_db):
         """Test save raises error when database operation fails."""
-        mock_db.upsert_component.side_effect = Exception("Database error")
+        mock_db.create_component_with_config.side_effect = Exception("Database error")
 
         basic_team.db = mock_db
 
@@ -1064,7 +1107,9 @@ class TestTeamDelete:
         basic_team.db = mock_db
         result = basic_team.delete()
 
-        mock_db.delete_component.assert_called_once_with(component_id="test-team", hard_delete=False)
+        mock_db.delete_component.assert_called_once_with(
+            component_id="test-team", hard_delete=False, require_no_dependents=True
+        )
         assert result is True
 
     def test_delete_with_hard_delete(self, basic_team, mock_db):
@@ -1074,8 +1119,35 @@ class TestTeamDelete:
         basic_team.db = mock_db
         result = basic_team.delete(hard_delete=True)
 
-        mock_db.delete_component.assert_called_once_with(component_id="test-team", hard_delete=True)
+        mock_db.delete_component.assert_called_once_with(
+            component_id="test-team", hard_delete=True, require_no_dependents=True
+        )
         assert result is True
+
+    def test_delete_can_explicitly_bypass_dependency_check(self, basic_team, mock_db):
+        """Test delete forwards the dangerous dependency-check escape hatch."""
+        basic_team.db = mock_db
+
+        assert basic_team.delete(require_no_dependents=False) is True
+
+        mock_db.delete_component.assert_called_once_with(
+            component_id="test-team", hard_delete=False, require_no_dependents=False
+        )
+
+    def test_delete_uses_exact_catalog_v1_signature(self, basic_team, mock_db):
+        """The v2 dependency keyword must never reach a legacy override."""
+        calls = []
+
+        def legacy_delete(component_id, hard_delete=False):
+            calls.append((component_id, hard_delete))
+            return True
+
+        mock_db.component_catalog_api_version = 1
+        mock_db.delete_component = legacy_delete
+        basic_team.db = mock_db
+
+        assert basic_team.delete(require_no_dependents=False) is True
+        assert calls == [("test-team", False)]
 
     def test_delete_with_explicit_db(self, basic_team, mock_db):
         """Test delete uses explicitly provided db."""
@@ -1132,6 +1204,37 @@ class TestGetTeamById:
         assert team is not None
         assert team.id == "found-team"
         assert team.name == "Found Team"
+        mock_db.get_config.assert_called_once_with(component_id="found-team", version=None, label=None)
+
+    def test_get_team_by_id_returns_draft_only_team_and_member(self, tmp_path):
+        """Draft fallback also applies to an unpinned member loaded by Team.from_dict."""
+        db = SqliteDb(db_file=str(tmp_path / "draft-only-team.db"))
+        member = Agent(id="draft-member", name="Draft Member", db=db)
+        assert member.save(stage="draft") == 1
+        assert db.get_current_config("draft-member") is None
+
+        db.upsert_component(
+            component_id="draft-team",
+            component_type=ComponentType.TEAM,
+            name="Draft Team",
+        )
+        db.upsert_config(
+            component_id="draft-team",
+            stage="draft",
+            config={
+                "id": "draft-team",
+                "name": "Draft Team",
+                "members": [{"type": "agent", "agent_id": "draft-member"}],
+            },
+        )
+        assert db.get_current_config("draft-team") is None
+
+        loaded = get_team_by_id(db=db, id="draft-team")
+
+        assert loaded is not None
+        assert loaded.id == "draft-team"
+        assert len(loaded.members) == 1
+        assert loaded.members[0].id == "draft-member"
 
     def test_get_team_by_id_with_version(self, mock_db):
         """Test get_team_by_id retrieves specific version."""
@@ -1214,16 +1317,20 @@ class TestGetTeams:
             ],
             None,
         )
-        mock_db.get_config.side_effect = [
-            {"config": {"id": "team-1", "name": "Team 1"}},
-            {"config": {"id": "team-2", "name": "Team 2"}},
-        ]
+        mock_db.get_latest_config = MagicMock(
+            side_effect=[
+                {"config": {"id": "team-1", "name": "Team 1"}},
+                {"config": {"id": "team-2", "name": "Team 2"}},
+            ]
+        )
 
         teams = get_teams(db=mock_db)
 
         assert len(teams) == 2
         assert teams[0].id == "team-1"
         assert teams[1].id == "team-2"
+        assert mock_db.get_latest_config.call_count == 2
+        mock_db.get_config.assert_not_called()
 
     def test_get_teams_filters_by_type(self, mock_db):
         """Test get_teams filters by TEAM component type."""
@@ -1340,7 +1447,7 @@ class TestMemberPinFailures:
         member.save(db=db)
         links = db.get_links(component_id="pm-team", version=1)
         pinned = next(link for link in links if link["link_kind"] == "member")["child_version"]
-        assert db.delete_config(component_id="pm-member", version=pinned)
+        _corrupt_delete_config_row(db, "pm-member", pinned)
 
         with pytest.raises(ComponentRehydrationError, match=f"pins member agent 'pm-member' at version {pinned}"):
             get_team_by_id(db=db, id="pm-team", strict=True)
@@ -1357,7 +1464,7 @@ class TestMemberPinFailures:
         member.save(db=db)
         links = db.get_links(component_id="ps-team", version=1)
         pinned = next(link for link in links if link["link_kind"] == "member")["child_version"]
-        assert db.delete_config(component_id="ps-member", version=pinned)
+        _corrupt_delete_config_row(db, "ps-member", pinned)
         registry = Registry(agents=[Agent(id="ps-member", name="Code Member")])
 
         with pytest.raises(ComponentRehydrationError, match="pins member agent 'ps-member'"):

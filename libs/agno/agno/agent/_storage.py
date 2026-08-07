@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
 from agno.db.base import BaseDb, ComponentType, SessionType
-from agno.db.utils import resolve_db_from_config
+from agno.db.utils import resolve_db_from_config, save_component_config
 from agno.exceptions import ComponentRehydrationError
 from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
@@ -1299,18 +1299,13 @@ def save(
         agent.id = generate_id_from_name(agent.name)
 
     try:
-        # Create or update component
-        db_.upsert_component(
+        config = save_component_config(
+            db_,
             component_id=agent.id,
             component_type=ComponentType.AGENT,
             name=getattr(agent, "name", agent.id),
             description=getattr(agent, "description", None),
             metadata=getattr(agent, "metadata", None),
-        )
-
-        # Create or update config
-        config = db_.upsert_config(
-            component_id=agent.id,
             config=to_dict(agent),
             label=label,
             stage=stage,
@@ -1377,6 +1372,7 @@ def delete(
     *,
     db: Optional[BaseDb] = None,
     hard_delete: bool = False,
+    require_no_dependents: bool = True,
 ) -> bool:
     """
     Delete the agent component.
@@ -1385,9 +1381,18 @@ def delete(
         agent: The Agent instance.
         db: The database to delete the component from.
         hard_delete: Whether to hard delete the component.
+        require_no_dependents: Refuse deletion while another active component
+            references this agent. Setting this to False bypasses dependency
+            validation and can leave active components with dangling links;
+            use it only for a deliberate repair or migration. Catalog-v1
+            adapters retain their historical unguarded deletion behavior.
 
     Returns:
         True if the component was deleted, False otherwise.
+
+    Raises:
+        ComponentDependencyError: If a dependent component references this
+            agent and require_no_dependents is True.
     """
     db_ = db or agent.db
     if not db_:
@@ -1397,4 +1402,12 @@ def delete(
     if agent.id is None:
         raise ValueError("Cannot delete agent without an id")
 
-    return db_.delete_component(component_id=agent.id, hard_delete=hard_delete)
+    if getattr(db_, "component_catalog_api_version", 1) < 2:
+        # Preserve the exact pre-2.9 adapter call shape. Third-party catalog-v1
+        # implementations cannot accept the v2-only keyword-only policy.
+        return db_.delete_component(component_id=agent.id, hard_delete=hard_delete)
+    return db_.delete_component(
+        component_id=agent.id,
+        hard_delete=hard_delete,
+        require_no_dependents=require_no_dependents,
+    )

@@ -908,15 +908,15 @@ class TestEditAgent:
         assert out["stage"] == "draft"
         assert out["draft_version"] == 2
 
-    def test_second_edit_updates_same_draft_in_place(self, studio_versioned):
+    def test_second_edit_appends_an_immutable_draft(self, studio_versioned):
         self._create(studio_versioned)
         studio_versioned.edit_agent(agent_id="tutor", instructions="updated once")
         out = _loads(studio_versioned.edit_agent(agent_id="tutor", instructions="updated twice"))
-        assert out["draft_version"] == 2  # same draft, no new version
+        assert out["draft_version"] == 3
 
         versions = _loads(studio_versioned.list_versions("tutor"))
         stages = [v["stage"] for v in versions["versions"]]
-        assert stages.count("draft") == 1
+        assert stages.count("draft") == 2
         assert stages.count("published") == 1
 
     def test_successive_partial_edits_accumulate_in_draft(self, studio_versioned):
@@ -948,7 +948,7 @@ class TestEditAgent:
         assert got["add_history_to_context"] is True  # untouched from create
         assert got["num_history_runs"] == 7
 
-    def test_history_edit_accumulates_in_same_draft(self, studio_versioned):
+    def test_history_edit_accumulates_in_latest_draft(self, studio_versioned):
         self._create(studio_versioned)
         studio_versioned.edit_agent(agent_id="tutor", add_history_to_context=False)
         out = _loads(studio_versioned.edit_agent(agent_id="tutor", description="new description"))
@@ -956,6 +956,33 @@ class TestEditAgent:
         draft = _loads(studio_versioned.get_version("tutor", version=out["draft_version"]))
         assert "add_history_to_context" not in draft["config"]  # history off survives edit 2
         assert draft["config"]["description"] == "new description"
+
+    def test_edit_rejects_a_competing_append_after_its_snapshot(self, studio_versioned, db, monkeypatch):
+        from agno.db.base import ComponentVersionGuard
+
+        self._create(studio_versioned)
+        original_save = studio_versioned._save_edit
+
+        def save_after_competing_append(*args, **kwargs):
+            stored = db.get_config("tutor", version=1)
+            assert stored is not None
+            competing = dict(stored["config"])
+            competing["description"] = "competing edit"
+            db.upsert_config(
+                component_id="tutor",
+                config=competing,
+                stage="draft",
+                guard=ComponentVersionGuard(latest_version=1, current_version=1),
+            )
+            return original_save(*args, **kwargs)
+
+        monkeypatch.setattr(studio_versioned, "_save_edit", save_after_competing_append)
+        out = _loads(studio_versioned.edit_agent(agent_id="tutor", instructions="stale edit"))
+
+        assert "version conflict" in out["error"]
+        versions = sorted(db.list_configs("tutor", include_config=True), key=lambda row: row["version"])
+        assert [row["version"] for row in versions] == [1, 2]
+        assert versions[1]["config"]["description"] == "competing edit"
 
     def test_get_agent_reports_history_settings(self, studio):
         self._create(studio)
@@ -1162,6 +1189,60 @@ class TestVersioning:
         out = _loads(studio_versioned.publish_component("tutor", version=2))
         assert out["status"] == "already_published"
         assert out["version"] == 2
+
+    def test_publish_rejects_a_competing_append_after_its_snapshot(self, studio_versioned, db, monkeypatch):
+        from agno.db.base import ComponentVersionGuard
+
+        self._create_and_edit(studio_versioned)
+        original_upsert = db.upsert_config
+
+        def upsert_after_competing_append(*args, **kwargs):
+            stored = db.get_config("tutor", version=2)
+            assert stored is not None
+            competing = dict(stored["config"])
+            competing["description"] = "newer draft"
+            original_upsert(
+                component_id="tutor",
+                config=competing,
+                stage="draft",
+                guard=ComponentVersionGuard(latest_version=2, current_version=1),
+            )
+            return original_upsert(*args, **kwargs)
+
+        monkeypatch.setattr(db, "upsert_config", upsert_after_competing_append)
+        out = _loads(studio_versioned.publish_component("tutor"))
+
+        assert "version conflict" in out["error"]
+        assert db.get_component("tutor")["current_version"] == 1
+        versions = sorted(db.list_configs("tutor"), key=lambda row: row["version"])
+        assert [(row["version"], row["stage"]) for row in versions] == [
+            (1, "published"),
+            (2, "draft"),
+            (3, "draft"),
+        ]
+
+    def test_catalog_v1_bridge_keeps_legacy_upsert_call_shape(self, studio_versioned, db, monkeypatch):
+        self._create_and_edit(studio_versioned)
+        calls: list[Dict[str, Any]] = []
+
+        def capture_upsert(*args, **kwargs):
+            calls.append(kwargs)
+            return {"version": kwargs.get("version") or 3}
+
+        monkeypatch.setattr(db, "component_catalog_api_version", 1)
+        monkeypatch.setattr(db, "upsert_config", capture_upsert)
+
+        edited = _loads(studio_versioned.edit_agent("tutor", description="legacy edit"))
+        published = _loads(studio_versioned.publish_component("tutor"))
+
+        assert edited["status"] == "edited"
+        assert published["status"] == "published"
+        assert len(calls) == 2
+        assert calls[0]["version"] == 2
+        assert calls[0]["stage"] == "draft"
+        assert calls[1]["version"] == 2
+        assert calls[1]["stage"] == "published"
+        assert all("guard" not in call for call in calls)
 
     def test_publish_unknown_version_returns_error(self, studio_versioned):
         studio_versioned.create_agent(name="tutor", instructions="i", model_id="gpt-5.4")
@@ -1670,16 +1751,16 @@ class TestLifecycle:
         )
         assert out["db_version"] == 1
 
-        # Edit twice — should collapse into one draft
+        # Every edit appends an immutable draft and builds on the latest one.
         studio_versioned.edit_agent(agent_id="lc", instructions="edit1")
         studio_versioned.edit_agent(agent_id="lc", instructions="edit2")
 
         versions: list[Dict[str, Any]] = _loads(studio_versioned.list_versions("lc"))["versions"]
-        assert len(versions) == 2
+        assert len(versions) == 3
 
-        # Publish draft
+        # Publish the latest draft.
         pub = _loads(studio_versioned.publish_component("lc"))
-        assert pub["version"] == 2
+        assert pub["version"] == 3
 
         # Rollback
         rb = _loads(studio_versioned.set_current_version("lc", 1))

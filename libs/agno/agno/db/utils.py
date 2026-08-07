@@ -2,6 +2,7 @@
 
 import json
 import time
+from copy import deepcopy
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 from uuid import UUID
@@ -12,7 +13,7 @@ from agno.run.base import HISTORY_SKIP_STATUSES as _RUN_HISTORY_SKIP_STATUSES
 from agno.utils.log import log_error, log_warning
 
 if TYPE_CHECKING:
-    from agno.db.base import AsyncBaseDb, BaseDb, SessionType
+    from agno.db.base import AsyncBaseDb, BaseDb, ComponentProjection, ComponentType, SessionType
     from agno.registry.registry import Registry
     from agno.session import Session
 
@@ -48,6 +49,142 @@ DB_TABLE_NAME_KEYS: frozenset = frozenset(
         "mcp_oauth_keys_table",
     }
 )
+
+
+def save_component_config(
+    db: "BaseDb",
+    *,
+    component_id: str,
+    component_type: "ComponentType",
+    name: Optional[str],
+    description: Optional[str],
+    metadata: Optional[Dict[str, Any]],
+    config: Dict[str, Any],
+    stage: str,
+    label: Optional[str] = None,
+    notes: Optional[str] = None,
+    links: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Persist a component config through the adapter's declared catalog contract.
+
+    A component's first config is created in the same transaction as its
+    component row when the adapter supports the 2.9 atomic primitive. Legacy
+    custom adapters fall back to their pre-2.9 upsert sequence. Later published
+    configs atomically update the denormalized component fields with the
+    current-version pointer. A draft updates the projection only while the
+    component has never had a published version; once published, later drafts
+    cannot leak into the current projection.
+
+    A concurrent creator may occupy the ID between the initial lookup and the
+    insert. In that case, validate the winning row and continue through the
+    existing-component path, matching the append-on-save behavior of the
+    component APIs.
+    """
+    from agno.db.base import ComponentAlreadyExistsError, ComponentType
+
+    if stage not in {"draft", "published"}:
+        raise ValueError(f"Invalid stage: {stage}")
+
+    effective_name = name or component_id
+    # A config version owns the complete denormalized catalog projection. Keep
+    # explicit nulls in the immutable payload so a future rollback can clear a
+    # description or metadata introduced by a newer version. Serializers often
+    # omit None values, and mutating their dictionary here would leak storage
+    # concerns back into the live component.
+    config = deepcopy(config)
+    config.update(
+        {
+            "name": effective_name,
+            "description": description,
+            "metadata": deepcopy(metadata),
+        }
+    )
+
+    catalog_api_version = getattr(db, "component_catalog_api_version", 1)
+    if catalog_api_version < 2:
+        # The compatibility path must use the exact pre-2.9 call shapes. In
+        # particular, do not probe new keyword-only parameters and then catch
+        # TypeError: a third-party override rejects those arguments before any
+        # NotImplementedError fallback can run.
+        component = db.get_component(component_id)
+        if component is not None:
+            actual_type = component.get("component_type")
+            if isinstance(actual_type, ComponentType):
+                actual_type = actual_type.value
+            if actual_type is not None and actual_type != component_type.value:
+                raise ValueError(f"Component {component_id} has type {actual_type}, not {component_type.value}")
+
+        log_warning(
+            f"Database {type(db).__name__} uses component catalog API v1; component and config writes are not atomic"
+        )
+        db.upsert_component(
+            component_id=component_id,
+            component_type=component_type,
+            name=effective_name,
+            description=description,
+            metadata=metadata,
+        )
+        return db.upsert_config(
+            component_id=component_id,
+            config=config,
+            label=label,
+            stage=stage,
+            notes=notes,
+            links=links,
+        )
+
+    component = db.get_component(component_id, include_deleted=True)
+
+    if component is None:
+        try:
+            _, config_row = db.create_component_with_config(
+                component_id=component_id,
+                component_type=component_type,
+                name=effective_name,
+                description=description,
+                metadata=metadata,
+                config=config,
+                label=label,
+                stage=stage,
+                notes=notes,
+                links=links,
+            )
+            return config_row
+        except ComponentAlreadyExistsError:
+            component = db.get_component(component_id, include_deleted=True)
+            if component is None:
+                raise
+
+    actual_type = component.get("component_type")
+    if isinstance(actual_type, ComponentType):
+        actual_type = actual_type.value
+    expected_type = component_type.value
+    if actual_type != expected_type:
+        raise ValueError(f"Component {component_id} has type {actual_type}, not {expected_type}")
+
+    restore_if_deleted = component.get("deleted_at") is not None
+
+    # Always provide the complete desired projection. Version-2 adapters make
+    # the draft-only decision while holding the component write lock, so a
+    # concurrent publish between the read above and this append cannot turn a
+    # valid draft save into a false conflict or leak draft metadata.
+    projection: "ComponentProjection" = {
+        "name": effective_name,
+        "description": description,
+        "metadata": metadata,
+    }
+
+    return db.upsert_config(
+        component_id=component_id,
+        config=config,
+        label=label,
+        stage=stage,
+        notes=notes,
+        links=links,
+        projection=projection,
+        restore_if_deleted=restore_if_deleted,
+        expected_component_type=component_type,
+    )
 
 
 def detect_session_type(record: Dict[str, Any]) -> str:

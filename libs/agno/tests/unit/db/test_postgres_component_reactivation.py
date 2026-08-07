@@ -1,4 +1,4 @@
-"""Regression coverage for PostgreSQL component reactivation."""
+"""Regression coverage for PostgreSQL component reactivation boundaries."""
 
 from unittest.mock import patch
 
@@ -34,14 +34,17 @@ def postgres_components_db(tmp_path):
     def get_table(table_type, create_table_if_not_found=False):
         return components if table_type == "components" else None
 
-    with patch.object(db, "_get_table", side_effect=get_table):
+    with (
+        patch.object(db, "_get_table", side_effect=get_table),
+        patch.object(db, "_lock_component_graph_writes"),
+    ):
         yield db
 
     db.Session.remove()
     engine.dispose()
 
 
-def test_upsert_component_reactivates_soft_deleted_component(postgres_components_db):
+def test_upsert_component_does_not_reactivate_soft_deleted_component(postgres_components_db):
     db = postgres_components_db
 
     created = db.upsert_component(
@@ -58,17 +61,15 @@ def test_upsert_component_reactivates_soft_deleted_component(postgres_components
     assert total == 1
     assert deleted_rows[0]["deleted_at"] is not None
 
-    reactivated = db.upsert_component(
-        component_id="agent-1",
-        component_type=ComponentType.AGENT,
-        name="after",
-    )
-
-    assert reactivated["component_id"] == "agent-1"
-    assert reactivated["component_type"] == ComponentType.AGENT.value
-    assert reactivated["name"] == "after"
-    assert reactivated["deleted_at"] is None
+    with pytest.raises(ValueError, match="archived and remains reserved"):
+        db.upsert_component(
+            component_id="agent-1",
+            component_type=ComponentType.AGENT,
+            name="after",
+        )
 
     all_rows, total = db.list_components(include_deleted=True)
     assert total == 1
     assert [row["component_id"] for row in all_rows] == ["agent-1"]
+    assert all_rows[0]["name"] == "before"
+    assert all_rows[0]["deleted_at"] is not None

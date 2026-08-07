@@ -1582,8 +1582,33 @@ class Team:
         *,
         db: Optional["BaseDb"] = None,
         hard_delete: bool = False,
+        require_no_dependents: bool = True,
     ) -> bool:
-        return _storage.delete(self, db=db, hard_delete=hard_delete)
+        """Delete this team's persisted component.
+
+        Args:
+            db: The database to delete the component from.
+            hard_delete: Permanently delete the component and its history.
+            require_no_dependents: Refuse deletion while another component
+                references this team. Setting this to False bypasses
+                dependency validation and can leave active components with
+                dangling links; use it only for a deliberate repair or
+                migration. Catalog-v1 adapters retain their historical
+                unguarded deletion behavior.
+
+        Returns:
+            True if the component was deleted, False otherwise.
+
+        Raises:
+            ComponentDependencyError: If a dependent component references
+                this team and require_no_dependents is True.
+        """
+        return _storage.delete(
+            self,
+            db=db,
+            hard_delete=hard_delete,
+            require_no_dependents=require_no_dependents,
+        )
 
     # -*- Public convenience functions
     def get_run_output(
@@ -1785,6 +1810,7 @@ def get_team_by_id(
     label: Optional[str] = None,
     registry: Optional["Registry"] = None,
     strict: bool = False,
+    published_only: bool = False,
 ) -> Optional["Team"]:
     """
     Get a Team by id from the database.
@@ -1792,7 +1818,8 @@ def get_team_by_id(
     Resolution order:
     - if version is provided: load that version
     - elif label is provided: load that labeled version
-    - else: load component.current_version
+    - else: load the current published version, or the latest draft when the
+      component has never been published
 
     Args:
         db: Database handle.
@@ -1802,6 +1829,9 @@ def get_team_by_id(
         registry: Optional Registry for reconstructing unserializable components.
         strict: If True, unresolvable members and registry references
             raise ComponentRehydrationError; None strictly means the team was not found.
+        published_only: Resolve only the current published config when neither
+            an exact version nor label is supplied. Runtime dispatch uses this;
+            ordinary reads retain the draft-only fallback.
 
     Returns:
         Team instance or None.
@@ -1812,7 +1842,11 @@ def get_team_by_id(
     from agno.exceptions import ComponentRehydrationError
 
     try:
-        row = db.get_config(component_id=id, version=version, label=label)
+        row = (
+            db.get_current_config(component_id=id)
+            if published_only and version is None and label is None
+            else db.get_config(component_id=id, version=version, label=label)
+        )
         if row is None:
             return None
 
@@ -1875,7 +1909,7 @@ def get_teams(
         for component in components:
             component_id = component["component_id"]
             try:
-                config = db.get_config(component_id=component_id)
+                config = db.get_latest_config(component_id=component_id)
                 if config is not None:
                     team_config = config.get("config")
                     if team_config is not None:
@@ -1887,7 +1921,7 @@ def get_teams(
                         # per-version pin links are a detail-read concern.
                         team = Team.from_dict(team_config, db=db, registry=registry, strict=False)
                         team.id = component_id
-                        team._version = component.get("current_version")
+                        team._version = config.get("version")
                         team._stage = config.get("stage")
                         teams.append(team)
             except Exception as e:

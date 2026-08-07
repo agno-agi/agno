@@ -617,7 +617,10 @@ def get_team_router(
         files: Optional[List[UploadFile]] = File(
             None, description="Files to upload (images, audio, video, or documents)"
         ),
-        version: Optional[int] = Form(None, description="Team version to use for this run"),
+        version: Optional[int] = Form(
+            None,
+            description="Exact Team version to use for this run, including a draft version for explicit preview",
+        ),
         background: bool = Form(
             False, description="Run in background and return immediately with run metadata (requires database)"
         ),
@@ -1853,7 +1856,14 @@ def get_team_router(
             return TeamResponse.from_factory(factory)
 
         try:
-            team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+            team = get_team_by_id(
+                team_id=team_id,
+                teams=os.teams,
+                db=os.db,
+                registry=registry,
+                create_fresh=True,
+                published_only=False,
+            )  # type: ignore[assignment]
         except ComponentRehydrationError as rehydration_error:
             raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
         except Exception as e:

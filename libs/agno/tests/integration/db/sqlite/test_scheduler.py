@@ -7,7 +7,9 @@ import uuid
 
 import pytest
 
+from agno.db.schemas.scheduler import STUDIO_SCHEDULE_MANAGED_BY, ScheduleNameConflictError
 from agno.db.sqlite import SqliteDb
+from agno.db.sqlite.async_sqlite import AsyncSqliteDb
 
 
 @pytest.fixture
@@ -99,6 +101,42 @@ class TestScheduleCRUD:
         result = db.get_schedule_by_name("nonexistent")
         assert result is None
 
+    def test_generic_and_studio_names_are_isolated_per_actor(self, db):
+        generic = _make_schedule(name="shared-name")
+        studio_a = _make_schedule(
+            name="shared-name",
+            managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+            owner_actor_id="actor-a",
+        )
+        studio_b = _make_schedule(
+            name="shared-name",
+            managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+            owner_actor_id="actor-b",
+        )
+        db.create_schedule(generic)
+        db.create_schedule(studio_a)
+        db.create_schedule(studio_b)
+
+        assert (
+            db.get_schedule_by_name("shared-name", exclude_managed_by=STUDIO_SCHEDULE_MANAGED_BY)["id"] == generic["id"]
+        )
+        assert (
+            db.get_schedule_by_name(
+                "shared-name",
+                managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+                owner_actor_id="actor-a",
+            )["id"]
+            == studio_a["id"]
+        )
+        with pytest.raises(ScheduleNameConflictError):
+            db.create_schedule(
+                _make_schedule(
+                    name="shared-name",
+                    managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+                    owner_actor_id="actor-a",
+                )
+            )
+
     def test_get_not_found(self, db):
         result = db.get_schedule("nonexistent-id")
         assert result is None
@@ -116,6 +154,36 @@ class TestScheduleCRUD:
         assert s1["id"] in ids
         assert s2["id"] in ids
 
+    def test_list_excludes_studio_before_count_and_pagination(self, db):
+        studio = _make_schedule(
+            name="aaa-studio-hidden",
+            created_at=3,
+            managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+            owner_actor_id="studio-actor",
+            target_type="agent",
+            target_id="studio-agent",
+        )
+        ordinary_first = _make_schedule(name="bbb-ordinary-first", created_at=2)
+        ordinary_second = _make_schedule(name="ccc-ordinary-second", created_at=1)
+        db.create_schedule(studio)
+        db.create_schedule(ordinary_first)
+        db.create_schedule(ordinary_second)
+
+        page_one, total_count = db.get_schedules(
+            limit=1,
+            page=1,
+            exclude_managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+        )
+        page_two, second_total_count = db.get_schedules(
+            limit=1,
+            page=2,
+            exclude_managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+        )
+
+        assert total_count == second_total_count == 2
+        assert [schedule["id"] for schedule in page_one] == [ordinary_first["id"]]
+        assert [schedule["id"] for schedule in page_two] == [ordinary_second["id"]]
+
     def test_update_schedule(self, db):
         sched = _make_schedule()
         db.create_schedule(sched)
@@ -124,6 +192,51 @@ class TestScheduleCRUD:
         assert updated is not None
         assert updated["description"] == "Updated description"
         assert updated["updated_at"] is not None
+
+    def test_disable_schedules_for_target_is_atomic_and_scoped(self, db):
+        matching = [
+            _make_schedule(
+                name=f"studio-target-{index}",
+                managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+                owner_actor_id="actor-a",
+                target_type="agent",
+                target_id="agent-a",
+            )
+            for index in range(101)
+        ]
+        other_target = _make_schedule(
+            name="studio-other-target",
+            managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+            owner_actor_id="actor-a",
+            target_type="agent",
+            target_id="agent-b",
+        )
+        generic_same_target = _make_schedule(
+            name="generic-same-target",
+            target_type="agent",
+            target_id="agent-a",
+        )
+        for schedule in [*matching, other_target, generic_same_target]:
+            db.create_schedule(schedule)
+
+        disabled = db.disable_schedules_for_target(
+            "agent",
+            "agent-a",
+            managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+        )
+
+        assert disabled == 101
+        assert (
+            db.disable_schedules_for_target(
+                "agent",
+                "agent-a",
+                managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+            )
+            == 0
+        )
+        assert all(db.get_schedule(schedule["id"])["enabled"] is False for schedule in matching)
+        assert db.get_schedule(other_target["id"])["enabled"] is True
+        assert db.get_schedule(generic_same_target["id"])["enabled"] is True
 
     def test_delete_schedule(self, db):
         sched = _make_schedule()
@@ -167,6 +280,135 @@ class TestEnabledFilter:
 
 
 class TestClaimAndRelease:
+    def test_manual_trigger_survives_an_in_flight_release_and_is_consumed_once(self, db):
+        future = int(time.time()) + 9999
+        sched = _make_schedule(
+            next_run_at=future,
+            enabled=True,
+            locked_by="worker-1",
+            locked_at=int(time.time()),
+        )
+        db.create_schedule(sched)
+
+        queued = db.trigger_schedule(sched["id"])
+        assert queued is not None and queued["pending_trigger_count"] == 1
+        assert db.claim_due_schedule("worker-2") is None
+
+        assert (
+            db.release_schedule(
+                sched["id"],
+                next_run_at=future,
+                worker_id="worker-1",
+                locked_at=sched["locked_at"],
+            )
+            is True
+        )
+        claimed = db.claim_due_schedule("worker-2")
+        assert claimed is not None
+        assert claimed["id"] == sched["id"]
+        assert claimed["pending_trigger_count"] == 0
+        assert claimed["manual_trigger_claimed"] is True
+        assert claimed["next_run_at"] == future
+
+        assert (
+            db.release_schedule(
+                sched["id"],
+                worker_id=claimed["locked_by"],
+                locked_at=claimed["locked_at"],
+            )
+            is True
+        )
+        assert db.claim_due_schedule("worker-3") is None
+
+    def test_due_cron_and_manual_trigger_are_claimed_as_two_executions(self, db):
+        now = int(time.time())
+        future = now + 9999
+        sched = _make_schedule(next_run_at=now - 1, enabled=True)
+        db.create_schedule(sched)
+        assert db.trigger_schedule(sched["id"])["pending_trigger_count"] == 1
+
+        cron_claim = db.claim_due_schedule("cron-worker")
+        assert cron_claim is not None
+        assert cron_claim["pending_trigger_count"] == 1
+        assert cron_claim["manual_trigger_claimed"] is False
+        assert (
+            db.release_schedule(
+                sched["id"],
+                next_run_at=future,
+                worker_id=cron_claim["locked_by"],
+                locked_at=cron_claim["locked_at"],
+            )
+            is True
+        )
+
+        manual_claim = db.claim_due_schedule("manual-worker")
+        assert manual_claim is not None
+        assert manual_claim["pending_trigger_count"] == 0
+        assert manual_claim["manual_trigger_claimed"] is True
+        assert manual_claim["next_run_at"] == future
+
+        assert (
+            db.release_schedule(
+                sched["id"],
+                worker_id=manual_claim["locked_by"],
+                locked_at=manual_claim["locked_at"],
+            )
+            is True
+        )
+        assert db.claim_due_schedule("extra-worker") is None
+
+    def test_stale_manual_claim_is_recovered_once_without_swallowing_due_cron(self, db):
+        now = int(time.time())
+        future = now + 9999
+        sched = _make_schedule(next_run_at=future, enabled=True)
+        db.create_schedule(sched)
+        db.trigger_schedule(sched["id"])
+
+        abandoned = db.claim_due_schedule("dead-worker")
+        assert abandoned is not None
+        assert abandoned["pending_trigger_count"] == 0
+        assert abandoned["manual_trigger_claimed"] is True
+
+        # The worker dies. By the time its lock is stale, the cron occurrence
+        # is also due; recovery must finish the manual unit first.
+        db.update_schedule(sched["id"], locked_at=now - 600, next_run_at=now - 1)
+        recovered = db.claim_due_schedule("recovery-worker")
+        assert recovered is not None
+        assert recovered["pending_trigger_count"] == 0
+        assert recovered["manual_trigger_claimed"] is True
+
+        assert (
+            db.release_schedule(
+                sched["id"],
+                worker_id=abandoned["locked_by"],
+                locked_at=abandoned["locked_at"],
+            )
+            is False
+        )
+        assert db.get_schedule(sched["id"])["manual_trigger_claimed"] is True
+
+        assert (
+            db.release_schedule(
+                sched["id"],
+                worker_id=recovered["locked_by"],
+                locked_at=recovered["locked_at"],
+            )
+            is True
+        )
+        cron_claim = db.claim_due_schedule("cron-worker")
+        assert cron_claim is not None
+        assert cron_claim["manual_trigger_claimed"] is False
+        assert (
+            db.release_schedule(
+                sched["id"],
+                next_run_at=future,
+                worker_id=cron_claim["locked_by"],
+                locked_at=cron_claim["locked_at"],
+            )
+            is True
+        )
+        assert db.claim_due_schedule("extra-worker") is None
+
     def test_claim_due_schedule(self, db):
         now = int(time.time())
         sched = _make_schedule(next_run_at=now - 10, enabled=True)
@@ -237,6 +479,185 @@ class TestClaimAndRelease:
         assert refreshed["locked_by"] is None
         assert refreshed["locked_at"] is None
         assert refreshed["next_run_at"] == next_run
+
+    def test_renew_schedule_claim_rotates_fence_without_touching_manual_work(self, db, monkeypatch):
+        sched = _make_schedule(
+            locked_by="worker-1",
+            locked_at=100,
+            pending_trigger_count=2,
+            manual_trigger_claimed=True,
+        )
+        db.create_schedule(sched)
+
+        monkeypatch.setattr("agno.db.sqlite.sqlite.time.time", lambda: 100)
+        renewed_at = db.renew_schedule_claim(
+            sched["id"],
+            worker_id="worker-1",
+            locked_at=100,
+        )
+
+        assert renewed_at == 101
+        refreshed = db.get_schedule(sched["id"])
+        assert refreshed["pending_trigger_count"] == 2
+        assert refreshed["manual_trigger_claimed"] is True
+        assert not db.release_schedule(sched["id"], worker_id="worker-1", locked_at=100)
+        assert db.release_schedule(sched["id"], worker_id="worker-1", locked_at=renewed_at)
+
+
+@pytest.mark.asyncio
+async def test_async_due_cron_and_manual_trigger_are_claimed_as_two_executions(tmp_path):
+    db = AsyncSqliteDb(db_file=str(tmp_path / "async-due-and-manual.db"))
+    now = int(time.time())
+    future = now + 9999
+    sched = _make_schedule(next_run_at=now - 1, enabled=True)
+    try:
+        await db.create_schedule(sched)
+        queued = await db.trigger_schedule(sched["id"])
+        assert queued is not None and queued["pending_trigger_count"] == 1
+
+        cron_claim = await db.claim_due_schedule("cron-worker")
+        assert cron_claim is not None
+        assert cron_claim["pending_trigger_count"] == 1
+        assert cron_claim["manual_trigger_claimed"] is False
+        assert (
+            await db.release_schedule(
+                sched["id"],
+                next_run_at=future,
+                worker_id=cron_claim["locked_by"],
+                locked_at=cron_claim["locked_at"],
+            )
+            is True
+        )
+
+        manual_claim = await db.claim_due_schedule("manual-worker")
+        assert manual_claim is not None
+        assert manual_claim["pending_trigger_count"] == 0
+        assert manual_claim["manual_trigger_claimed"] is True
+        assert manual_claim["next_run_at"] == future
+
+        assert (
+            await db.release_schedule(
+                sched["id"],
+                worker_id=manual_claim["locked_by"],
+                locked_at=manual_claim["locked_at"],
+            )
+            is True
+        )
+        assert await db.claim_due_schedule("extra-worker") is None
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_async_stale_manual_claim_is_recovered_exactly_once(tmp_path):
+    db = AsyncSqliteDb(db_file=str(tmp_path / "async-stale-manual.db"))
+    now = int(time.time())
+    future = now + 9999
+    sched = _make_schedule(next_run_at=future, enabled=True)
+    try:
+        await db.create_schedule(sched)
+        await db.trigger_schedule(sched["id"])
+        abandoned = await db.claim_due_schedule("dead-worker")
+        assert abandoned is not None and abandoned["manual_trigger_claimed"] is True
+
+        await db.update_schedule(sched["id"], locked_at=now - 600, next_run_at=now - 1)
+        recovered = await db.claim_due_schedule("recovery-worker")
+        assert recovered is not None
+        assert recovered["pending_trigger_count"] == 0
+        assert recovered["manual_trigger_claimed"] is True
+
+        assert (
+            await db.release_schedule(
+                sched["id"],
+                worker_id=abandoned["locked_by"],
+                locked_at=abandoned["locked_at"],
+            )
+            is False
+        )
+        assert (
+            await db.release_schedule(
+                sched["id"],
+                worker_id=recovered["locked_by"],
+                locked_at=recovered["locked_at"],
+            )
+            is True
+        )
+
+        cron_claim = await db.claim_due_schedule("cron-worker")
+        assert cron_claim is not None and cron_claim["manual_trigger_claimed"] is False
+        assert (
+            await db.release_schedule(
+                sched["id"],
+                next_run_at=future,
+                worker_id=cron_claim["locked_by"],
+                locked_at=cron_claim["locked_at"],
+            )
+            is True
+        )
+        assert await db.claim_due_schedule("extra-worker") is None
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_async_renew_schedule_claim_rotates_fence_without_touching_manual_work(tmp_path, monkeypatch):
+    db = AsyncSqliteDb(db_file=str(tmp_path / "async-heartbeat.db"))
+    sched = _make_schedule(
+        locked_by="worker-1",
+        locked_at=100,
+        pending_trigger_count=2,
+        manual_trigger_claimed=True,
+    )
+    try:
+        await db.create_schedule(sched)
+
+        monkeypatch.setattr("agno.db.sqlite.async_sqlite.time.time", lambda: 100)
+        renewed_at = await db.renew_schedule_claim(
+            sched["id"],
+            worker_id="worker-1",
+            locked_at=100,
+        )
+
+        assert renewed_at == 101
+        refreshed = await db.get_schedule(sched["id"])
+        assert refreshed["pending_trigger_count"] == 2
+        assert refreshed["manual_trigger_claimed"] is True
+        assert not await db.release_schedule(sched["id"], worker_id="worker-1", locked_at=100)
+        assert await db.release_schedule(sched["id"], worker_id="worker-1", locked_at=renewed_at)
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_async_disable_schedules_for_target_is_atomic_and_scoped(tmp_path):
+    db = AsyncSqliteDb(db_file=str(tmp_path / "async-disable-target.db"))
+    matching = _make_schedule(
+        managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+        owner_actor_id="actor-a",
+        target_type="workflow",
+        target_id="workflow-a",
+    )
+    unrelated = _make_schedule(
+        managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+        owner_actor_id="actor-a",
+        target_type="workflow",
+        target_id="workflow-b",
+    )
+    try:
+        await db.create_schedule(matching)
+        await db.create_schedule(unrelated)
+
+        disabled = await db.disable_schedules_for_target(
+            "workflow",
+            "workflow-a",
+            managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+        )
+
+        assert disabled == 1
+        assert (await db.get_schedule(matching["id"]))["enabled"] is False
+        assert (await db.get_schedule(unrelated["id"]))["enabled"] is True
+    finally:
+        await db.close()
 
 
 # =============================================================================

@@ -1807,7 +1807,12 @@ def get_agent_router(
 
         try:
             agent = get_agent_by_id(
-                agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                agent_id=agent_id,
+                agents=os.agents,
+                db=os.db,
+                registry=os.registry,
+                create_fresh=True,
+                published_only=False,
             )  # type: ignore[assignment]
         except ComponentRehydrationError as rehydration_error:
             raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))

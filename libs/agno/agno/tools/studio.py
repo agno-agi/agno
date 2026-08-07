@@ -20,8 +20,7 @@ Typical use:
 Semantics:
     * create_* persists a new component with a single published config.
     * edit_* loads the component, applies the patch, and saves it:
-      - with versions=True the edit is saved as a draft (an existing draft is
-        updated in place; otherwise a new draft version is created). Use
+      - with versions=True the edit is saved as a new immutable draft. Use
         publish_component() to promote the draft to published+current.
       - with versions=False (default) the edit is published immediately as a
         new current version. Each edit creates a new published version; prior
@@ -69,7 +68,7 @@ from agno.utils.log import log_debug, logger
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
-    from agno.db.base import BaseDb
+    from agno.db.base import BaseDb, ComponentVersionGuard
     from agno.models.base import Model
     from agno.registry.registry import Registry
     from agno.scheduler.manager import ScheduleManager
@@ -519,38 +518,74 @@ class StudioTools(Toolkit):
     # draft when versioning is enabled, so successive partial edits accumulate
     # instead of each resetting to the published config.
 
-    def _find_agent_for_edit(self, agent_id: str) -> Optional["Agent"]:
+    def _edit_version_snapshot(self, component_id: str) -> tuple[Optional[int], Optional["ComponentVersionGuard"]]:
+        """Capture the exact config loaded by an edit and its catalog-v2 CAS state."""
+        if self.db is None:
+            return None, None
+        if not self.enable_versions or getattr(self.db, "component_catalog_api_version", 1) < 2:
+            return self._edit_base_version(component_id), None
+
+        from agno.db.base import ComponentVersionGuard
+
+        component = self.db.get_component(component_id)
+        if component is None:
+            return None, None
+        configs = self.db.list_configs(component_id, include_config=False)
+        versions = [row["version"] for row in configs if isinstance(row.get("version"), int)]
+        drafts = [
+            row["version"] for row in configs if row.get("stage") == "draft" and isinstance(row.get("version"), int)
+        ]
+        current_version = component.get("current_version")
+        base_version = max(drafts) if drafts else current_version
+        return base_version, ComponentVersionGuard(
+            latest_version=max(versions) if versions else None,
+            current_version=current_version,
+        )
+
+    def _find_agent_for_edit(
+        self, agent_id: str
+    ) -> tuple[Optional["Agent"], Optional[int], Optional["ComponentVersionGuard"]]:
         for a in self._iter_agents():
             if getattr(a, "id", None) == agent_id:
-                return a
+                return a, None, None
         if self._runner_tools._db_component_exists("agent", agent_id):
-            return self._load_agent_from_db(agent_id, version=self._edit_base_version(agent_id))
+            base_version, guard = self._edit_version_snapshot(agent_id)
+            return self._load_agent_from_db(agent_id, version=base_version), base_version, guard
         resolved = self._runner_tools._resolve_db_id_by_name_or_slug("agent", agent_id)
         if resolved is None:
-            return None
-        return self._load_agent_from_db(resolved, version=self._edit_base_version(resolved))
+            return None, None, None
+        base_version, guard = self._edit_version_snapshot(resolved)
+        return self._load_agent_from_db(resolved, version=base_version), base_version, guard
 
-    def _find_team_for_edit(self, team_id: str) -> Optional["Team"]:
+    def _find_team_for_edit(
+        self, team_id: str
+    ) -> tuple[Optional["Team"], Optional[int], Optional["ComponentVersionGuard"]]:
         for t in self._iter_teams():
             if getattr(t, "id", None) == team_id:
-                return t
+                return t, None, None
         if self._runner_tools._db_component_exists("team", team_id):
-            return self._load_team_from_db(team_id, version=self._edit_base_version(team_id))
+            base_version, guard = self._edit_version_snapshot(team_id)
+            return self._load_team_from_db(team_id, version=base_version), base_version, guard
         resolved = self._runner_tools._resolve_db_id_by_name_or_slug("team", team_id)
         if resolved is None:
-            return None
-        return self._load_team_from_db(resolved, version=self._edit_base_version(resolved))
+            return None, None, None
+        base_version, guard = self._edit_version_snapshot(resolved)
+        return self._load_team_from_db(resolved, version=base_version), base_version, guard
 
-    def _find_workflow_for_edit(self, workflow_id: str) -> Optional["Workflow"]:
+    def _find_workflow_for_edit(
+        self, workflow_id: str
+    ) -> tuple[Optional["Workflow"], Optional[int], Optional["ComponentVersionGuard"]]:
         for w in self._iter_workflows():
             if getattr(w, "id", None) == workflow_id:
-                return w
+                return w, None, None
         if self._runner_tools._db_component_exists("workflow", workflow_id):
-            return self._load_workflow_from_db(workflow_id, version=self._edit_base_version(workflow_id))
+            base_version, guard = self._edit_version_snapshot(workflow_id)
+            return self._load_workflow_from_db(workflow_id, version=base_version), base_version, guard
         resolved = self._runner_tools._resolve_db_id_by_name_or_slug("workflow", workflow_id)
         if resolved is None:
-            return None
-        return self._load_workflow_from_db(resolved, version=self._edit_base_version(resolved))
+            return None, None, None
+        base_version, guard = self._edit_version_snapshot(resolved)
+        return self._load_workflow_from_db(resolved, version=base_version), base_version, guard
 
     def _is_code_defined(self, component_id: str, candidates: List[Any], component_type: str) -> bool:
         """True if the identifier refers to a code-defined (registry/list) component.
@@ -1211,7 +1246,7 @@ class StudioTools(Toolkit):
                         f"Only Studio-created components are editable.{hint}"
                     }
                 )
-            agent = self._find_agent_for_edit(agent_id)
+            agent, edit_base_version, edit_guard = self._find_agent_for_edit(agent_id)
         except StudioRunnerError as e:
             return json.dumps({"error": str(e) or type(e).__name__})
         except Exception as e:
@@ -1251,7 +1286,12 @@ class StudioTools(Toolkit):
                 replaced_keys.add("tools")
             if model_id is not None:
                 replaced_keys.add("model")
-            result = self._save_edit(agent, replaced_keys=replaced_keys)
+            result = self._save_edit(
+                agent,
+                replaced_keys=replaced_keys,
+                base_version=edit_base_version,
+                guard=edit_guard,
+            )
             log_debug(f"StudioTools edited agent id={agent.id} result={result}")
             return json.dumps({"status": "edited", "id": getattr(agent, "id", None) or agent_id, **result})
         except Exception as e:
@@ -1307,7 +1347,7 @@ class StudioTools(Toolkit):
                         f"Only Studio-created components are editable.{hint}"
                     }
                 )
-            team = self._find_team_for_edit(team_id)
+            team, edit_base_version, edit_guard = self._find_team_for_edit(team_id)
         except StudioRunnerError as e:
             return json.dumps({"error": str(e) or type(e).__name__})
         except Exception as e:
@@ -1351,7 +1391,7 @@ class StudioTools(Toolkit):
                 # agents_list entry, for one. Re-serializing that rebuild would
                 # publish a roster silently shrunk by an unrelated edit.
                 resolved_id = getattr(team, "id", None) or team_id
-                row = self.db.get_config(component_id=resolved_id, version=self._edit_base_version(resolved_id))
+                row = self.db.get_config(component_id=resolved_id, version=edit_base_version)
                 stored_config = row.get("config") if isinstance(row, dict) else None
                 stored_members = (stored_config or {}).get("members") or []
                 rebuilt_members = team.members if isinstance(team.members, list) else []
@@ -1378,7 +1418,13 @@ class StudioTools(Toolkit):
                 replaced_keys.add("members")
             if model_id is not None:
                 replaced_keys.add("model")
-            result = self._save_edit(team, replaced_keys=replaced_keys, pinned_children=replaced_pins)
+            result = self._save_edit(
+                team,
+                replaced_keys=replaced_keys,
+                pinned_children=replaced_pins,
+                base_version=edit_base_version,
+                guard=edit_guard,
+            )
             log_debug(f"StudioTools edited team id={team.id} result={result}")
             return json.dumps({"status": "edited", "id": getattr(team, "id", None) or team_id, **result})
         except Exception as e:
@@ -1423,7 +1469,7 @@ class StudioTools(Toolkit):
                         f"Only Studio-created components are editable.{hint}"
                     }
                 )
-            wf = self._find_workflow_for_edit(workflow_id)
+            wf, edit_base_version, edit_guard = self._find_workflow_for_edit(workflow_id)
         except StudioRunnerError as e:
             return json.dumps({"error": str(e) or type(e).__name__})
         except Exception as e:
@@ -1457,6 +1503,8 @@ class StudioTools(Toolkit):
                 wf,
                 replaced_keys={"steps"} if step_specs is not None else None,
                 pinned_children=replaced_pins,
+                base_version=edit_base_version,
+                guard=edit_guard,
             )
             log_debug(f"StudioTools edited workflow id={wf.id} result={result}")
             return json.dumps({"status": "edited", "id": getattr(wf, "id", None) or workflow_id, **result})
@@ -1525,7 +1573,17 @@ class StudioTools(Toolkit):
         if self.db is None:
             return json.dumps({"error": "StudioTools has no db configured."})
         try:
+            from agno.db.base import ComponentVersionGuard
+
+            component = self.db.get_component(component_id)
+            if component is None:
+                return json.dumps({"error": f"Component not found: {component_id}"})
+            catalog_v2 = getattr(self.db, "component_catalog_api_version", 1) >= 2
             configs = self.db.list_configs(component_id, include_config=False)
+            latest_version = max(
+                (c["version"] for c in configs if isinstance(c.get("version"), int)),
+                default=None,
+            )
             target = version
             if target is None:
                 drafts = [c for c in configs if c.get("stage") == "draft"]
@@ -1538,12 +1596,25 @@ class StudioTools(Toolkit):
                 if match is None:
                     return json.dumps({"error": f"Version not found: {component_id} v{target}"})
                 if match.get("stage") == "published":
-                    self._sync_component_row(component_id, target)
+                    if not catalog_v2:
+                        self._sync_component_row(component_id, target)
                     return json.dumps({"status": "already_published", "id": component_id, "version": target})
 
-            result = self.db.upsert_config(component_id=component_id, version=target, stage="published")
+            if catalog_v2:
+                result = self.db.upsert_config(
+                    component_id=component_id,
+                    version=target,
+                    stage="published",
+                    guard=ComponentVersionGuard(
+                        latest_version=latest_version,
+                        current_version=component.get("current_version"),
+                    ),
+                )
+            else:
+                result = self.db.upsert_config(component_id=component_id, version=target, stage="published")
             published_version = result.get("version", target)
-            self._sync_component_row(component_id, published_version)
+            if not catalog_v2:
+                self._sync_component_row(component_id, published_version)
             return json.dumps(
                 {
                     "status": "published",
@@ -2449,6 +2520,8 @@ class StudioTools(Toolkit):
         component: Component,
         replaced_keys: Optional[Set[str]] = None,
         pinned_children: Optional[Dict[str, int]] = None,
+        base_version: Optional[int] = None,
+        guard: Optional["ComponentVersionGuard"] = None,
     ) -> Dict[str, Any]:
         """Persist an edited component.
 
@@ -2464,7 +2537,7 @@ class StudioTools(Toolkit):
         config = _component_to_dict(component)
         replaced = replaced_keys or set()
         component_id = getattr(component, "id", None)
-        self._preserve_unresolved_keys(component_id, config, replaced)
+        self._preserve_unresolved_keys(component_id, config, replaced, base_version)
         if replaced & {"members", "steps"}:
             # The edit replaced the composition: pin the new children at the
             # exact versions the binder rebuilt them from.
@@ -2472,20 +2545,24 @@ class StudioTools(Toolkit):
         else:
             # Untouched composition keeps the base version's pins verbatim,
             # including link kinds this walk does not reconstruct.
-            links = self._base_links(component_id)
+            links = self._base_links(component_id, base_version)
         if self.enable_versions:
-            version = self._upsert_draft(component, config=config, links=links)
+            version = self._upsert_draft(component, config=config, links=links, guard=guard)
             return {"draft_version": version, "stage": "draft"}
         version = _persist_only(component, self.db, config=config, links=links)
         return {"version": version, "stage": "published"}
 
     def _preserve_unresolved_keys(
-        self, component_id: Optional[str], config: Dict[str, Any], replaced_keys: Set[str]
+        self,
+        component_id: Optional[str],
+        config: Dict[str, Any],
+        replaced_keys: Set[str],
+        base_version: Optional[int],
     ) -> None:
         """Copy stored reference keys the lenient load dropped back into ``config``."""
         if self.db is None or component_id is None:
             return
-        base = self._runner_tools._load_config_from_db(component_id, version=self._edit_base_version(component_id))
+        base = self._runner_tools._load_config_from_db(component_id, version=base_version)
         if not isinstance(base, dict):
             raise ValueError(
                 f"Cannot edit '{component_id}': its stored config could not be read, so an edit would drop "
@@ -2508,12 +2585,12 @@ class StudioTools(Toolkit):
                 config[key] = base[key]
                 log_debug(f"StudioTools: preserving stored '{key}' the lenient load could not resolve.")
 
-    def _base_links(self, component_id: Optional[str]) -> Optional[List[Dict[str, Any]]]:
+    def _base_links(self, component_id: Optional[str], base_version: Optional[int]) -> Optional[List[Dict[str, Any]]]:
         """The base version's links, carried forward verbatim on an edit that
         did not replace the component's composition."""
         if self.db is None or component_id is None:
             return None
-        return self._runner_tools._load_links_from_db(component_id, version=self._edit_base_version(component_id))
+        return self._runner_tools._load_links_from_db(component_id, version=base_version)
 
     def _links_for_component(
         self,
@@ -2661,12 +2738,13 @@ class StudioTools(Toolkit):
         component: Component,
         config: Optional[Dict[str, Any]] = None,
         links: Optional[List[Dict[str, Any]]] = None,
+        guard: Optional["ComponentVersionGuard"] = None,
     ) -> Optional[int]:
-        """Save a component as a draft. Updates the latest draft in place, else creates one.
+        """Append an immutable draft using the component version observed by this edit.
 
         The component row's name/description/metadata are NOT updated here --
         draft-only changes must not leak into listings until the draft is
-        published (publish_component syncs the row).
+        published.
         """
         if self.db is None:
             raise ValueError("db is required for draft persistence")
@@ -2675,7 +2753,11 @@ class StudioTools(Toolkit):
         if component_id is None:
             raise ValueError("Component has no id")
 
-        if self.db.get_component(component_id) is None:
+        catalog_v2 = getattr(self.db, "component_catalog_api_version", 1) >= 2
+        component_row = self.db.get_component(component_id)
+        if component_row is None:
+            if catalog_v2:
+                raise ValueError(f"Component not found: {component_id}")
             self.db.upsert_component(
                 component_id=component_id,
                 component_type=_component_type(component),
@@ -2684,19 +2766,30 @@ class StudioTools(Toolkit):
                 metadata=getattr(component, "metadata", None),
             )
 
-        # Reuse an existing draft if there is one; otherwise create a new draft version.
+        if not catalog_v2:
+            result = self.db.upsert_config(
+                component_id=component_id,
+                version=self._latest_draft_version(component_id),
+                config=config if config is not None else _component_to_dict(component),
+                stage="draft",
+                links=links,
+            )
+            return result.get("version")
+
+        if guard is None:
+            raise ValueError("A catalog-v2 draft append requires a component version guard")
+
         result = self.db.upsert_config(
             component_id=component_id,
-            version=self._latest_draft_version(component_id),
             config=config if config is not None else _component_to_dict(component),
             stage="draft",
             links=links,
+            guard=guard,
         )
         return result.get("version")
 
     def _sync_component_row(self, component_id: str, version: Optional[int]) -> None:
-        """Bring the component row's name/description/metadata in line with a
-        newly published config version."""
+        """Sync legacy catalog-v1 projections after a publication."""
         if self.db is None:
             return
         from agno.db.base import ComponentType

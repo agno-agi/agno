@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 
 from agno.agent.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
-from agno.db.utils import resolve_db_from_config
+from agno.db.utils import resolve_db_from_config, save_component_config
 from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
@@ -1167,6 +1167,13 @@ class Workflow:
                         link.get("child_component_id"),
                         link.get("child_version"),
                     ):
+                        # Preserve the historical warn-and-keep-first behavior
+                        # when dropping this row cannot discard a distinct pin.
+                        log_warning(
+                            f"Workflow '{self.id}': dropping duplicate {link.get('link_kind')} link for "
+                            f"key '{link.get('link_key')}' (child '{link.get('child_component_id')}'); "
+                            "give steps distinct names so each pin is kept."
+                        )
                         continue
                     # A save that silently drops one of two different pins
                     # would float that child to its latest version forever.
@@ -1181,15 +1188,13 @@ class Workflow:
                 deduped_links.append(link)
             all_links = deduped_links
 
-            db_.upsert_component(
+            config = save_component_config(
+                db_,
                 component_id=self.id,
                 component_type=ComponentType.WORKFLOW,
                 name=self.name,
                 description=self.description,
                 metadata=self.metadata,
-            )
-            config = db_.upsert_config(
-                component_id=self.id,
                 config=self.to_dict(),
                 links=all_links,
                 label=label,
@@ -1269,6 +1274,7 @@ class Workflow:
         *,
         db: Optional["BaseDb"] = None,
         hard_delete: bool = False,
+        require_no_dependents: bool = True,
     ) -> bool:
         """
         Delete the workflow component.
@@ -1276,9 +1282,19 @@ class Workflow:
         Args:
             db: The database to delete the workflow from.
             hard_delete: Whether to hard delete the workflow.
+            require_no_dependents: Refuse deletion while another active
+                component references this workflow. Setting this to False
+                bypasses dependency validation and can leave active components
+                with dangling links; use it only for a deliberate repair or
+                migration. Catalog-v1 adapters retain their historical
+                unguarded deletion behavior.
 
         Returns:
             True if the workflow was deleted, False otherwise.
+
+        Raises:
+            ComponentDependencyError: If a dependent component references
+                this workflow and require_no_dependents is True.
         """
         db_ = db or self.db
         if not db_:
@@ -1288,7 +1304,15 @@ class Workflow:
         if self.id is None:
             raise ValueError("Cannot delete workflow without an id")
 
-        return db_.delete_component(component_id=self.id, hard_delete=hard_delete)
+        if getattr(db_, "component_catalog_api_version", 1) < 2:
+            # Preserve the exact pre-2.9 adapter call shape. Third-party
+            # catalog-v1 implementations cannot accept the v2-only policy.
+            return db_.delete_component(component_id=self.id, hard_delete=hard_delete)
+        return db_.delete_component(
+            component_id=self.id,
+            hard_delete=hard_delete,
+            require_no_dependents=require_no_dependents,
+        )
 
     async def aget_run_output(
         self, run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
@@ -11232,6 +11256,7 @@ def get_workflow_by_id(
     label: Optional[str] = None,
     registry: Optional["Registry"] = None,
     strict: bool = False,
+    published_only: bool = False,
 ) -> Optional["Workflow"]:
     """
     Get a Workflow by id from the database (new entities/configs schema).
@@ -11239,7 +11264,8 @@ def get_workflow_by_id(
     Resolution order:
     - if version is provided: load that version
     - elif label is provided: load that labeled version
-    - else: load entity.current_version
+    - else: load the current published version, or the latest draft when the
+      component has never been published
 
     Args:
         db: Database handle.
@@ -11249,6 +11275,9 @@ def get_workflow_by_id(
         registry: Optional Registry for reconstructing unserializable components.
         strict: If True, unresolvable registry references raise
             ComponentRehydrationError; None strictly means the workflow was not found.
+        published_only: Resolve only the current published config when neither
+            an exact version nor label is supplied. Runtime dispatch uses this;
+            ordinary reads retain the draft-only fallback.
 
     Returns:
         Workflow instance or None.
@@ -11259,7 +11288,11 @@ def get_workflow_by_id(
     from agno.exceptions import ComponentRehydrationError
 
     try:
-        row = db.get_config(component_id=id, version=version, label=label)
+        row = (
+            db.get_current_config(component_id=id)
+            if published_only and version is None and label is None
+            else db.get_config(component_id=id, version=version, label=label)
+        )
         if row is None:
             return None
 
@@ -11312,7 +11345,7 @@ def get_workflows(
         components, _ = db.list_components(component_type=ComponentType.WORKFLOW)
         for component in components:
             try:
-                config = db.get_config(component_id=component["component_id"])
+                config = db.get_latest_config(component_id=component["component_id"])
                 if config is not None:
                     workflow_config = config.get("config")
                     if workflow_config is not None:
@@ -11323,7 +11356,7 @@ def get_workflows(
                         # components so they stay visible and fixable.
                         workflow = Workflow.from_dict(workflow_config, db=db, registry=registry, strict=False)
                         workflow.id = component_id
-                        workflow._version = component.get("current_version")
+                        workflow._version = config.get("version")
                         workflow._stage = config.get("stage")
                         workflows.append(workflow)
             except Exception as e:
