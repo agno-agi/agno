@@ -44,12 +44,12 @@ Semantics:
         - what a callable members/tools/steps factory returns, since it is
           built per run and cached while cache_callables is on. Dispatch warns
           when it meets one.
-        - a tool or member that declines to be copied (no deep_copy, or a
-          __deepcopy__ returning self). The copier keeps the original, the
-          same way _shared_member treats a member that cannot be copied as
-          shared by design, so a toolkit holding per-call state of its own is
-          shared between callers. Give such a class a real deep_copy if its
-          state must not cross runs.
+        - a tool whose ``__deepcopy__`` returns self or raises. An ordinary
+          toolkit is deep-copied like any other object and is NOT shared; it is
+          only these two that the field-level fallback keeps by reference, so a
+          toolkit holding per-call state that way is shared between callers.
+          Returning self is a deliberate choice; raising is not, and that half
+          is a swallowed failure (#9445).
     * A PAUSED result carries the unresolved requirements plus the
       run_id/session_id a continue call must address (the same shape the
       AgentOS MCP plane returns) -- human-in-the-loop pauses are relayed.
@@ -874,8 +874,13 @@ class StudioRunnerTools(Toolkit):
             return
         _seen.add(key)
         needs: List[str] = []
-        if config.get("tools"):
-            needs.append("tools")
+        # Tools are deliberately NOT pre-guarded on "the config declares some".
+        # Not every serialized tool needs the registry -- a provider-native tool
+        # and an external_execution one carry themselves -- and refusing on the
+        # declaration would refuse those for what their neighbours need.
+        # _require_faithful_rebuild answers the real question afterwards, by
+        # comparing what came back against what was declared, so a tool that
+        # genuinely could not be rebuilt is still refused and named.
         if config.get("knowledge"):
             needs.append("knowledge")
         if isinstance(config.get("input_schema"), str) or isinstance(config.get("output_schema"), str):
@@ -1318,22 +1323,48 @@ class StudioRunnerTools(Toolkit):
             getattr(model, "id", None) or type(model).__name__,
         )
 
-    def _warn_if_declared_db_dropped(self, config: Dict[str, Any], component_type: str, component_id: str) -> None:
-        """Log when a config declared a db that could not be reconstructed.
+    def _require_matching_db(self, config: Dict[str, Any], component_type: str, component_id: str) -> None:
+        """Refuse a component whose declared db is not the one it would get.
 
         db_from_dict rebuilds postgres, sqlite and clickhouse configs that
         carry their connection field; anything else resolves through the
-        registry. When neither supplies it, the component falls back to the
-        catalog db, so its sessions and memory land elsewhere than configured."""
+        registry. When neither supplies it the component falls back to the
+        catalog db -- and if that is a different store, its sessions and memory
+        durably land somewhere other than configured, which the caller cannot
+        see from the answer it gets back.
+
+        The comparison is what makes this narrow enough to be safe. When the
+        declared db names the catalog db, with the same table overrides, the
+        fallback is not a redirection and the component runs: that keeps the
+        adapters whose connection field cannot serialize (mysql, mongo, redis,
+        json, dynamo) working, which is why a blanket refusal was reverted
+        before. Only a genuine mismatch is refused."""
         db_config = config.get("db")
         if not isinstance(db_config, dict):
             return
-        logger.warning(
-            "StudioRunnerTools: %s '%s' declares db '%s', which could not be reconstructed; "
-            "the component falls back to the catalog db.",
-            component_type,
-            component_id,
-            db_config.get("id") or db_config.get("type") or "unknown",
+        declared = db_config.get("id") or db_config.get("type") or "unknown"
+        catalog = self.db.to_dict() if self.db is not None else {}
+        differing = sorted(
+            key
+            for key, value in db_config.items()
+            # An absent key in the stored config is not an override, and the
+            # connection field is never serialized, so neither is a difference.
+            if value is not None and key not in ("type", "connection") and catalog.get(key) != value
+        )
+        if not differing:
+            logger.warning(
+                "StudioRunnerTools: %s '%s' declares db '%s', which could not be reconstructed; it resolves "
+                "to the catalog db, which matches what it declared.",
+                component_type,
+                component_id,
+                declared,
+            )
+            return
+        raise ComponentNotDispatchableError(
+            f"{component_type.capitalize()} '{component_id}' declares db '{declared}', which could not be "
+            f"reconstructed, and the catalog db it would fall back to differs ({', '.join(differing)}); running it "
+            "would write its sessions and memory somewhere other than configured. Register that db, or run it "
+            "against the db it declares."
         )
 
     @staticmethod
@@ -1486,13 +1517,23 @@ class StudioRunnerTools(Toolkit):
         self._require_registry_for("agent", agent_id, config, version=resolved_version)
         from agno.agent.agent import Agent
 
+        fell_back_to_catalog = False
         try:
             agent = Agent.from_dict(config, registry=self.registry, strict=for_dispatch)
             agent.id = agent_id
             # The catalog db is a fallback only: a config-declared db (resolved
             # by from_dict, possibly with table overrides) must keep winning.
             if getattr(agent, "db", None) is None:
-                self._warn_if_declared_db_dropped(config, "agent", agent_id)
+                # Announced on every load, including reads. Whether the
+                # fallback is a REDIRECTION is a dispatch question, and cannot
+                # be raised from inside this try: the handler below would
+                # report the refusal as a rebuild failure.
+                logger.warning(
+                    "StudioRunnerTools: agent '%s' declares a db that could not be reconstructed; "
+                    "it falls back to the catalog db.",
+                    agent_id,
+                )
+                fell_back_to_catalog = True
                 agent.db = self.db
         except ComponentRehydrationError as rehydration_error:
             raise self._dispatch_refusal(
@@ -1507,6 +1548,8 @@ class StudioRunnerTools(Toolkit):
             logger.warning("StudioRunnerTools: Agent.from_dict failed for %s", agent_id, exc_info=True)
             return None
         if for_dispatch:
+            if fell_back_to_catalog:
+                self._require_matching_db(config, "agent", agent_id)
             self._require_dispatchable(agent, config, "agent", agent_id, version=resolved_version)
         return agent
 
@@ -1527,12 +1570,22 @@ class StudioRunnerTools(Toolkit):
         from agno.team.team import Team
 
         links = self._load_links_from_db(team_id, version=resolved_version)
+        fell_back_to_catalog = False
         try:
             team = Team.from_dict(config, db=self.db, registry=self.registry, links=links, strict=for_dispatch)
             team.id = team_id
             # The catalog db is a fallback only; a config-declared db wins.
             if getattr(team, "db", None) is None:
-                self._warn_if_declared_db_dropped(config, "team", team_id)
+                # Announced on every load, including reads. Whether the
+                # fallback is a REDIRECTION is a dispatch question, and cannot
+                # be raised from inside this try: the handler below would
+                # report the refusal as a rebuild failure.
+                logger.warning(
+                    "StudioRunnerTools: team '%s' declares a db that could not be reconstructed; "
+                    "it falls back to the catalog db.",
+                    team_id,
+                )
+                fell_back_to_catalog = True
                 team.db = self.db
         except ComponentRehydrationError as rehydration_error:
             raise self._dispatch_refusal(
@@ -1547,6 +1600,8 @@ class StudioRunnerTools(Toolkit):
             logger.warning("StudioRunnerTools: Team.from_dict failed for %s", team_id, exc_info=True)
             return None
         if for_dispatch:
+            if fell_back_to_catalog:
+                self._require_matching_db(config, "team", team_id)
             self._require_dispatchable(team, config, "team", team_id, version=resolved_version)
         return team
 
@@ -1567,12 +1622,22 @@ class StudioRunnerTools(Toolkit):
         from agno.workflow.workflow import Workflow
 
         links = self._load_links_from_db(workflow_id, version=resolved_version)
+        fell_back_to_catalog = False
         try:
             wf = Workflow.from_dict(config, db=self.db, registry=self.registry, links=links, strict=for_dispatch)
             wf.id = workflow_id
             # The catalog db is a fallback only; a config-declared db wins.
             if getattr(wf, "db", None) is None:
-                self._warn_if_declared_db_dropped(config, "workflow", workflow_id)
+                # Announced on every load, including reads. Whether the
+                # fallback is a REDIRECTION is a dispatch question, and cannot
+                # be raised from inside this try: the handler below would
+                # report the refusal as a rebuild failure.
+                logger.warning(
+                    "StudioRunnerTools: workflow '%s' declares a db that could not be reconstructed; "
+                    "it falls back to the catalog db.",
+                    workflow_id,
+                )
+                fell_back_to_catalog = True
                 wf.db = self.db
         except ComponentRehydrationError as rehydration_error:
             raise self._dispatch_refusal(
@@ -1587,6 +1652,8 @@ class StudioRunnerTools(Toolkit):
             logger.warning("StudioRunnerTools: Workflow.from_dict failed for %s", workflow_id, exc_info=True)
             return None
         if for_dispatch:
+            if fell_back_to_catalog:
+                self._require_matching_db(config, "workflow", workflow_id)
             self._require_dispatchable(wf, config, "workflow", workflow_id, version=resolved_version)
         return wf
 

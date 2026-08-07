@@ -2384,6 +2384,76 @@ def test_the_whole_annotation_graph_decides_identity():
     assert [h for h in fillable if _is_framework_typed(h)] == []
 
 
+def test_identity_is_found_through_structural_types_and_typevars():
+    """The walk resolves what an annotation stands for rather than matching
+    shapes by name: a TypedDict or NamedTuple field, a dataclass field stored
+    as a string under `from __future__ import annotations`, and a TypeVar's
+    bound or constraints all carry identity just as a plain field does."""
+    from typing import NamedTuple, TypedDict, TypeVar
+
+    from agno.tools.function import _is_framework_typed
+
+    class Payload(TypedDict):
+        ctx: RunContext
+        note: str
+
+    class Row(NamedTuple):
+        ctx: RunContext
+        note: str = ""
+
+    Bound = TypeVar("Bound", bound=RunContext)
+    Constrained = TypeVar("Constrained", str, RunContext)
+
+    for hint in (Payload, Row, Bound, Constrained):
+        assert _is_framework_typed(hint), hint
+
+    # A field whose annotation is a string, which is every annotation in a
+    # module using postponed evaluation.
+    namespace: Dict[str, Any] = {"RunContext": RunContext}
+    exec(
+        "from dataclasses import dataclass\n@dataclass\nclass Postponed:\n    ctx: 'RunContext'\n    note: str = ''\n",
+        namespace,
+    )
+    assert _is_framework_typed(namespace["Postponed"])
+
+    # An annotation this walk cannot read is not one to hand the model.
+    class Unresolvable:
+        __annotations__ = {"ctx": "NameThatDoesNotExistAnywhere"}
+        __total__ = True
+
+    assert _is_framework_typed(Unresolvable)
+
+
+@pytest.mark.parametrize(
+    "annotation",
+    ["Union[str, Agent]", "Union[str, List[Agent]]", "Optional[Union[str, Agent]]"],
+)
+def test_a_model_fillable_identity_union_registers_and_runs(annotation):
+    """Calling a shape model-fillable is only true if it survives registration.
+    `Union[str, list[Agent]]` satisfied the schema rule while validate_call
+    still tried to introspect it, failed on Agent's own forward references, and
+    took the whole tool's registration down -- so the predicate said supported
+    and the tool did not exist."""
+    from typing import List, Optional, Union
+
+    from agno.agent.agent import Agent
+
+    namespace: Dict[str, Any] = {"Agent": Agent, "Union": Union, "List": List, "Optional": Optional}
+    exec(f"def notify(owner: {annotation}, note: str) -> str:\n    return f'owner={{owner}}'", namespace)
+
+    # Both construction paths, since they resolve framework types differently.
+    from_callable = Function.from_callable(namespace["notify"])
+    assert "owner" in (from_callable.parameters or {}).get("properties", {})
+
+    func = Function(name="notify", entrypoint=namespace["notify"])
+    func.process_entrypoint()
+    assert "owner" in (func.parameters or {}).get("properties", {})
+
+    result = FunctionCall(function=func, arguments={"owner": "ashpreet", "note": "n"}).execute()
+    assert result.status == "success"
+    assert result.result == "owner=ashpreet"
+
+
 def test_no_container_shape_can_smuggle_a_model_chosen_identity():
     """The truth table above, driven through a real call: whatever the shape,
     the tool must read the caller's identity and not the model's."""

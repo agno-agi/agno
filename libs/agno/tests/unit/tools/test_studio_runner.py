@@ -1965,6 +1965,57 @@ class TestDispatchCheckInvariants:
 
         assert "Report" in _loads(StudioRunnerTools(registry=registry, db=db).run_team("outer", "hi"))["error"]
 
+    def test_dispatch_refuses_a_db_it_would_redirect_but_not_one_that_matches(self, db):
+        """A declared db that cannot be rebuilt falls back to the catalog db.
+        When that is a different store the component's sessions and memory
+        durably land somewhere other than configured, which the caller cannot
+        see from the answer it gets. Refusing every fallback was tried and
+        reverted -- it makes each adapter whose connection cannot serialize
+        undispatchable -- so only a genuine mismatch is refused."""
+        model_config = {"name": "OpenAIResponses", "id": "gpt-5.4", "provider": "OpenAI"}
+        for component_id, db_config in (
+            ("elsewhere", {"type": "redis", "id": "tenant-private"}),
+            ("retabled", {"id": db.id, "session_table": "somewhere_else"}),
+            ("matching", {"id": db.id}),
+        ):
+            db.upsert_component(component_id=component_id, component_type="agent", name=component_id)
+            db.upsert_config(
+                component_id=component_id,
+                stage="published",
+                config={"id": component_id, "model": model_config, "db": db_config},
+            )
+
+        runner = StudioRunnerTools(db=db)
+        for component_id in ("elsewhere", "retabled"):
+            error = _loads(runner.run_agent(component_id, "hi")).get("error", "")
+            assert "somewhere other than configured" in error, component_id
+
+        # The one that names the db it would actually get still dispatches --
+        # that is what keeps the unserializable adapters working.
+        assert runner._agent_for_run("matching") is not None
+
+        # And a read still loads either way, so the reference stays repairable.
+        assert runner._find_agent("elsewhere") is not None
+
+    def test_a_tool_is_refused_for_what_it_lost_not_for_being_declared(self, db):
+        # Not every serialized tool needs the registry: a provider-native tool
+        # and an external_execution one carry themselves. Refusing because the
+        # config declares tools at all would refuse those for what their
+        # neighbours need, so the refusal has to come from comparing what came
+        # back against what was declared -- and to name it.
+        model_config = {"id": "gpt-5.4", "provider": "OpenAI"}
+        db.upsert_component(component_id="armed", component_type="agent", name="armed")
+        db.upsert_config(
+            component_id="armed",
+            stage="published",
+            config={"id": "armed", "name": "armed", "model": model_config, "tools": [{"name": "calculator"}]},
+        )
+
+        error = _loads(StudioRunnerTools(db=db).run_agent("armed", "hi"))["error"]
+        # The honest check names what was lost; the blanket pre-guard could only
+        # say the config mentioned tools.
+        assert "calculator" in error or "1 of 1" in error
+
     def test_no_reference_walk_reads_the_callers_own_data(self):
         # A step carries free-form user JSON beside its own fields. A walk over
         # every value reads a key named agent_id there as a graph reference.
