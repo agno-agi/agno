@@ -2275,6 +2275,56 @@ def test_chained_type_aliases_are_unwrapped_to_the_end(annotation):
     assert result.result == "RunContext:real-user"
 
 
+def test_a_hand_written_schema_cannot_hand_the_model_an_identity_parameter():
+    """A tool's schema is not always framework-built -- an MCP server supplies
+    one verbatim -- and re-declaring an identity parameter there put it back
+    under model control. Identity is owned by the annotation as much as by the
+    name, so `ctx: RunContext` is protected exactly as `run_context` is."""
+
+    def read_records(query: str, ctx: RunContext = None) -> str:  # type: ignore[assignment]
+        return f"user={getattr(ctx, 'user_id', None)}"
+
+    func = Function(
+        name="read_records",
+        entrypoint=read_records,
+        parameters={
+            "type": "object",
+            "properties": {"query": {"type": "string"}, "ctx": {"type": "object"}},
+            "required": ["query"],
+        },
+    )
+    func.process_entrypoint()
+
+    func._run_context = RunContext(run_id="r1", session_id="s1", user_id="real-owner")
+    result = FunctionCall(
+        function=func,
+        arguments={"query": "q", "ctx": {"run_id": "r9", "session_id": "s9", "user_id": "ATTACKER"}},
+    ).execute()
+    assert result.status == "success"
+    assert result.result == "user=real-owner"
+
+
+def test_a_hand_written_schema_still_owns_its_media_parameters():
+    """The control for the rule above: media is injected by reserved name
+    alone, so a schema that declares it is the only way such a parameter can be
+    filled at all. Protecting it would leave it unfillable by anything."""
+    from agno.media import Image
+
+    def caption(pic: Image = None, note: str = "") -> str:  # type: ignore[assignment]
+        return f"pic={type(pic).__name__}"
+
+    func = Function(
+        name="caption",
+        entrypoint=caption,
+        parameters={"type": "object", "properties": {"pic": {"type": "object"}, "note": {"type": "string"}}},
+    )
+    func.process_entrypoint()
+
+    result = FunctionCall(function=func, arguments={"pic": {"url": "http://example/x.png"}, "note": "n"}).execute()
+    assert result.status == "success"
+    assert result.result == "pic=Image"
+
+
 def test_model_copy_deep_isolates_user_input_schema():
     """model_copy(deep=True) is the per-run copy parse_tools hands the model,
     and the model layer writes the user's answers into user_input_schema in
