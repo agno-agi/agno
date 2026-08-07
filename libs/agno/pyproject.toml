@@ -168,6 +168,7 @@ async-postgres = ["asyncpg"]
 firestore = ["google-cloud-firestore"]
 gcs = ["google-cloud-storage"]
 mysql = ["pymysql", "asyncmy"]
+oracle = ["sqlalchemy", "oracledb"]
 postgres = ["psycopg-binary"]
 redis = ["redis", "redisvl>=0.12.1"]
 sql = ["sqlalchemy"]
@@ -321,6 +322,7 @@ storage = [
   "agno[firestore]",
   "agno[gcs]",
   "agno[mysql]",
+  "agno[oracle]",
   "agno[postgres]",
   "agno[redis]",  # also listed under vectordbs (redis serves both roles)
   "agno[sql]",
@@ -576,6 +578,7 @@ module = [
   "opensearchpy.*",
   "cv2.*",
   "openbb.*",
+  "oracledb.*",
   "pandas.*",
   "pgvector.*",
   "PIL.*",

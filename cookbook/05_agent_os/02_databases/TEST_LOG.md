@@ -19,6 +19,14 @@ through `POST /sessions` was read back from `GET /sessions`.
 
 ---
 
+### oracle.py
+
+**Status:** PENDING
+
+**Description:** Oracle Database Backend (sync and async adapters).
+
+---
+
 ### postgres.py
 
 **Status:** PASS
