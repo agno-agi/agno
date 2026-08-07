@@ -36,6 +36,7 @@ from agno.db.utils import (
     deserialize_sessions,
     filter_context_runs,
     merge_runs_table_with_legacy_blob,
+    metric_record_day,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -1422,13 +1423,16 @@ class RedisDb(BaseDb):
                 completed_metrics = [m for m in all_metrics if m.get("completed", False)]
                 if completed_metrics:
                     latest_completed = max(completed_metrics, key=lambda x: x.get("date", ""))
-                    return datetime.fromisoformat(latest_completed["date"]).date() + timedelta(days=1)
+                    latest_day = metric_record_day(latest_completed)
+                    if latest_day is not None:
+                        return latest_day + timedelta(days=1)
                 else:
                     # Find the earliest incomplete metric
                     incomplete_metrics = [m for m in all_metrics if not m.get("completed", False)]
                     if incomplete_metrics:
-                        earliest_incomplete = min(incomplete_metrics, key=lambda x: x.get("date", ""))
-                        return datetime.fromisoformat(earliest_incomplete["date"]).date()
+                        earliest_day = metric_record_day(min(incomplete_metrics, key=lambda x: x.get("date", "")))
+                        if earliest_day is not None:
+                            return earliest_day
 
             # No metrics records, find first session
             sessions_raw, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
@@ -1486,17 +1490,18 @@ class RedisDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
+                # calculate_date_metrics now returns a LIST: one record per
+                # distinct user_id (plus the empty-string bucket for unowned
+                # sessions). Iterate and upsert each.
+                for metrics_record in calculate_date_metrics(date_to_process, sessions_for_date):
+                    # Preserve created_at across re-runs.
+                    existing_record = self._get_record("metrics", metrics_record["id"])
+                    if existing_record:
+                        metrics_record["created_at"] = existing_record.get("created_at", metrics_record["created_at"])
 
-                # Check if a record already exists for this date and aggregation period
-                existing_record = self._get_record("metrics", metrics_record["id"])
-                if existing_record:
-                    # Update the existing record while preserving created_at
-                    metrics_record["created_at"] = existing_record.get("created_at", metrics_record["created_at"])
-
-                success = self._store_record("metrics", metrics_record["id"], metrics_record)
-                if success:
-                    results.append(metrics_record)
+                    success = self._store_record("metrics", metrics_record["id"], metrics_record)
+                    if success:
+                        results.append(metrics_record)
 
             log_debug("Updated metrics calculations")
 
@@ -1510,12 +1515,16 @@ class RedisDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
         Args:
             starting_date (Optional[date]): The starting date to filter by.
             ending_date (Optional[date]): The ending date to filter by.
+            user_id (Optional[str]): When provided, returns only that user's
+                per-user bucket. When ``None``, returns ALL buckets including
+                the empty-string unowned bucket.
 
         Returns:
             Tuple[List[dict], Optional[int]]: A tuple containing the list of metrics and the latest updated_at.
@@ -1530,7 +1539,9 @@ class RedisDb(BaseDb):
             if starting_date is not None or ending_date is not None:
                 filtered_metrics = []
                 for metric in all_metrics:
-                    metric_date = datetime.fromisoformat(metric.get("date", "")).date()
+                    metric_date = metric_record_day(metric)
+                    if metric_date is None:
+                        continue
                     if starting_date is not None and metric_date < starting_date:
                         continue
                     if ending_date is not None and metric_date > ending_date:
@@ -1538,40 +1549,70 @@ class RedisDb(BaseDb):
                     filtered_metrics.append(metric)
                 all_metrics = filtered_metrics
 
+            # Filter by user_id if requested.
+            if user_id is not None:
+                all_metrics = [m for m in all_metrics if m.get("user_id") == user_id]
+
             # Get latest updated_at
             latest_updated_at = None
             if all_metrics:
                 latest_updated_at = max(metric.get("updated_at", 0) for metric in all_metrics)
 
-            return all_metrics, latest_updated_at
+            # Map the sentinel empty-string user_id back to None.
+            cleaned: List[dict] = []
+            for metric in all_metrics:
+                row = dict(metric)
+                if row.get("user_id") == "":
+                    row["user_id"] = None
+                cleaned.append(row)
+            return cleaned, latest_updated_at
 
         except Exception as e:
             log_error(f"Error getting metrics: {str(e)}")
             raise e
 
     # -- Knowledge methods --
+    # Redis stores records as serialized dicts; we filter in Python. A row
+    # is visible if its ``user_id`` matches the caller OR is unset. When the
+    # caller passes ``user_id=None`` we skip the check entirely.
 
-    def delete_knowledge_content(self, id: str):
+    @staticmethod
+    def _knowledge_doc_is_visible(doc: Dict[str, Any], user_id: Optional[str]) -> bool:
+        if user_id is None:
+            return True
+        owner = doc.get("user_id")
+        return owner is None or owner == user_id
+
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): Owner-scoping filter. When set, only
+                deletes if the row is owned by ``user_id``. Unowned rows are
+                shared content and are not the caller's to delete.
 
         Raises:
             Exception: If any error occurs while deleting the knowledge content.
         """
         try:
+            if user_id is not None:
+                existing = self._get_record("knowledge", id)
+                if existing is None or existing.get("user_id") != user_id:
+                    log_debug(f"Skipping delete of knowledge content {id}: not owned by {user_id}")
+                    return
             self._delete_record("knowledge", id)
 
         except Exception as e:
             log_error(f"Error deleting knowledge content: {str(e)}")
             raise e
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): Owner-scoping filter; see module note.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -1582,6 +1623,8 @@ class RedisDb(BaseDb):
         try:
             document_raw = self._get_record("knowledge", id)
             if document_raw is None:
+                return None
+            if not self._knowledge_doc_is_visible(document_raw, user_id):
                 return None
 
             return KnowledgeRow.model_validate(document_raw)
@@ -1597,6 +1640,7 @@ class RedisDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1606,6 +1650,7 @@ class RedisDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): Owner-scoping filter; see module note.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1621,6 +1666,10 @@ class RedisDb(BaseDb):
             # Apply linked_to filter if provided
             if linked_to is not None:
                 all_documents = [doc for doc in all_documents if doc.get("linked_to") == linked_to]
+
+            # Owner scoping: drop rows the caller isn't allowed to see.
+            if user_id is not None:
+                all_documents = [doc for doc in all_documents if self._knowledge_doc_is_visible(doc, user_id)]
 
             total_count = len(all_documents)
 

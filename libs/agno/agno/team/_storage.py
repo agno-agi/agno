@@ -848,6 +848,11 @@ def from_dict(
     members: Optional[List[Union[Agent, "Team"]]] = None
     from agno.agent import get_agent_by_id
     from agno.team import get_team_by_id
+    from agno.utils.component_scope import get_component_owner_scope
+
+    # Resolve DB-backed members as the component owner (if scoped), so a stored
+    # reference to another user's private component is not rehydrated here.
+    owner_user_id = get_component_owner_scope()
 
     if "members" in config and config["members"]:
         members = []
@@ -856,7 +861,11 @@ def from_dict(
             if member_type == "agent":
                 agent_id = member_data["agent_id"]
                 # TODO: Make sure to pass the correct version to get_agent_by_id. Right now its returning the latest version.
-                agent = get_agent_by_id(id=agent_id, db=db, registry=registry) if db is not None else None
+                agent = (
+                    get_agent_by_id(id=agent_id, db=db, registry=registry, user_id=owner_user_id)
+                    if db is not None
+                    else None
+                )
                 # Fall back to a code-defined agent registered in the registry.
                 # These are legitimately not persisted as DB components (e.g. agents
                 # passed to AgentOS(agents=[...])), so a DB lookup returns nothing.
@@ -872,7 +881,11 @@ def from_dict(
             elif member_type == "team":
                 # Handle nested teams as members
                 team_id = member_data["team_id"]
-                nested_team = get_team_by_id(id=team_id, db=db, registry=registry) if db is not None else None
+                nested_team = (
+                    get_team_by_id(id=team_id, db=db, registry=registry, user_id=owner_user_id)
+                    if db is not None
+                    else None
+                )
                 # Fall back to a code-defined team registered in the registry.
                 # Deep copy so the shared registry singleton isn't mutated on run.
                 if nested_team is None and registry is not None:

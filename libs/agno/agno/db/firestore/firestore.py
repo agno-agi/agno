@@ -1894,8 +1894,10 @@ class FirestoreDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
-                metrics_records.append(metrics_record)
+                # calculate_date_metrics now returns a LIST: one record per
+                # distinct user_id (plus the empty-string bucket for unowned
+                # sessions). Flatten into the bulk-upsert list.
+                metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             if metrics_records:
                 results = bulk_upsert_metrics(collection_ref, metrics_records)
@@ -1912,8 +1914,17 @@ class FirestoreDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[dict], Optional[int]]:
-        """Get all metrics matching the given date range."""
+        """Get all metrics matching the given date range.
+
+        Args:
+            starting_date (Optional[date]): The starting date to filter metrics by.
+            ending_date (Optional[date]): The ending date to filter metrics by.
+            user_id (Optional[str]): When provided, returns only that user's
+                per-user bucket. When ``None``, returns ALL buckets including
+                the empty-string unowned bucket.
+        """
         try:
             collection_ref = self._get_collection(table_type="metrics")
             if collection_ref is None:
@@ -1924,6 +1935,8 @@ class FirestoreDb(BaseDb):
                 query = query.where(filter=FieldFilter("date", ">=", starting_date.isoformat()))
             if ending_date:
                 query = query.where(filter=FieldFilter("date", "<=", ending_date.isoformat()))
+            if user_id is not None:
+                query = query.where(filter=FieldFilter("user_id", "==", user_id))
 
             docs = query.stream()
             records = []
@@ -1931,6 +1944,9 @@ class FirestoreDb(BaseDb):
 
             for doc in docs:
                 data = doc.to_dict()
+                # Map the sentinel empty-string user_id back to None.
+                if data.get("user_id") == "":
+                    data["user_id"] = None
                 records.append(data)
                 updated_at = data.get("updated_at", 0)
                 if updated_at > latest_updated_at:
@@ -1946,32 +1962,51 @@ class FirestoreDb(BaseDb):
             raise e
 
     # -- Knowledge methods --
+    # Firestore lacks a native OR predicate across "user_id == X OR user_id
+    # IS NULL", so we post-filter in Python. A row is visible if its
+    # ``user_id`` matches the caller OR is unset (None / missing). When
+    # ``user_id=None`` the predicate is dropped (admin / RBAC-off view).
 
-    def delete_knowledge_content(self, id: str):
+    @staticmethod
+    def _knowledge_row_is_visible(row: KnowledgeRow, user_id: Optional[str]) -> bool:
+        if user_id is None:
+            return True
+        owner = getattr(row, "user_id", None)
+        return owner is None or owner == user_id
+
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): Owner-scoping filter. When set, only
+                deletes if the row is owned by ``user_id``. Unowned rows are
+                shared content and are not the caller's to delete.
 
         Raises:
             Exception: If an error occurs during deletion.
         """
         try:
             collection_ref = self._get_collection(table_type="knowledge")
-            docs = collection_ref.where(filter=FieldFilter("id", "==", id)).stream()
+            docs = list(collection_ref.where(filter=FieldFilter("id", "==", id)).stream())
 
             for doc in docs:
+                if user_id is not None:
+                    data = doc.to_dict() or {}
+                    if data.get("user_id") != user_id:
+                        continue
                 doc.reference.delete()
 
         except Exception as e:
             log_error(f"Error deleting knowledge content: {str(e)}")
             raise e
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): Owner-scoping filter; see module note.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -1985,7 +2020,10 @@ class FirestoreDb(BaseDb):
 
             for doc in docs:
                 data = doc.to_dict()
-                return KnowledgeRow.model_validate(data)
+                row = KnowledgeRow.model_validate(data)
+                if not self._knowledge_row_is_visible(row, user_id):
+                    return None
+                return row
 
             return None
 
@@ -2000,6 +2038,7 @@ class FirestoreDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -2009,6 +2048,7 @@ class FirestoreDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): Owner-scoping filter; see module note.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -2030,8 +2070,12 @@ class FirestoreDb(BaseDb):
             # Apply sorting
             query = apply_sorting(query, sort_by, sort_order)
 
-            # Apply pagination
-            query = apply_pagination(query, limit, page)
+            # We have to post-filter for user_id (Firestore lacks an OR
+            # predicate that can target both ``== uid`` and ``IS NULL``), so
+            # defer pagination until after the filter — otherwise pagination
+            # would slice the unfiltered set.
+            if user_id is None:
+                query = apply_pagination(query, limit, page)
 
             docs = query.stream()
             records = []
@@ -2039,7 +2083,14 @@ class FirestoreDb(BaseDb):
                 records.append(doc.to_dict())
 
             knowledge_rows = [KnowledgeRow.model_validate(record) for record in records]
-            total_count = len(knowledge_rows)  # Simplified count
+            if user_id is not None:
+                knowledge_rows = [r for r in knowledge_rows if self._knowledge_row_is_visible(r, user_id)]
+                total_count = len(knowledge_rows)
+                if limit:
+                    start = (page - 1) * limit if (page and page > 1) else 0
+                    knowledge_rows = knowledge_rows[start : start + limit]
+            else:
+                total_count = len(knowledge_rows)
 
             return knowledge_rows, total_count
 

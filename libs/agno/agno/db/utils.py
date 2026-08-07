@@ -469,6 +469,26 @@ def validate_pagination(limit: Optional[int], page: Optional[int]) -> None:
         raise ValueError(f"`page` must be >= 1 (pages are 1-indexed); got {page}.")
 
 
+def metric_record_day(record: Dict[str, Any]) -> Optional[date]:
+    """Read the day off a stored metric record, or ``None`` if it has no usable one.
+
+    Key-value backends store the date as an ISO string, so a record written by a
+    different version — or hand-edited — can carry something ``fromisoformat``
+    refuses. Every metrics read walks the whole table, so raising there takes the
+    metrics API down for one bad row; skip that row and say so instead.
+    """
+    raw = record.get("date")
+    if isinstance(raw, datetime):
+        return raw.date()
+    if isinstance(raw, date):
+        return raw
+    try:
+        return datetime.fromisoformat(raw).date()  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        log_warning(f"Skipping metrics record {record.get('id')}: date {raw!r} is not a day")
+        return None
+
+
 def get_sort_value(record: Dict[str, Any], sort_by: str) -> Any:
     """Get the sort value for a record, with fallback to created_at for updated_at.
 

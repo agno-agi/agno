@@ -716,6 +716,7 @@ class ClickhouseDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
         return [], None
 
@@ -723,10 +724,10 @@ class ClickhouseDb(BaseDb):
         return None
 
     # --- Knowledge ---
-    def delete_knowledge_content(self, id: str):
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         raise NotImplementedError(_TRACES_ONLY_ERROR)
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         return None
 
     def get_knowledge_contents(self, *args, **kwargs):  # type: ignore[override]
@@ -786,6 +787,7 @@ class ClickhouseDb(BaseDb):
         self,
         component_id: str,
         component_type: Optional[ComponentType] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         return None
 

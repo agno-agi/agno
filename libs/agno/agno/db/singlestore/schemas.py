@@ -101,6 +101,9 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "created_at": {"type": BigInteger, "nullable": True},
     "updated_at": {"type": BigInteger, "nullable": True},
     "external_id": {"type": lambda: String(128), "nullable": True},
+    # Per-user knowledge ownership; reads scope on
+    # ``(user_id = :uid OR user_id IS NULL)``.
+    "user_id": {"type": lambda: String(128), "nullable": True, "index": True},
 }
 
 METRICS_TABLE_SCHEMA = {
@@ -116,9 +119,21 @@ METRICS_TABLE_SCHEMA = {
     "model_metrics": {"type": JSON, "nullable": False, "default": {}},
     "date": {"type": Date, "nullable": False, "index": True},
     "aggregation_period": {"type": lambda: String(20), "nullable": False, "index": True},
+    # Owner of this metric bucket. Stored as an empty string for "no owner"
+    # (RBAC off / pre-isolation deployments / system runs) so lookup keys
+    # behave predictably. ``get_metrics`` maps ``""`` back to ``None`` for API
+    # consumers.
+    "user_id": {"type": lambda: String(128), "nullable": False, "default": "", "index": True},
     "created_at": {"type": BigInteger, "nullable": False},
     "updated_at": {"type": BigInteger, "nullable": True},
     "completed": {"type": Boolean, "nullable": False, "default": False},
+    # SingleStore columnstore rejects a second multi-column UNIQUE alongside
+    # the ``id`` PRIMARY KEY (error 1706 — "multiple UNIQUE indexes with at
+    # least one spanning multiple columns"), so we cannot declare
+    # ``UNIQUE(user_id, date, aggregation_period)`` here. Uniqueness on that
+    # triple is enforced in ``bulk_upsert_metrics`` (SELECT-then-UPDATE-or-
+    # INSERT). The generic table creation path in ``_create_table`` would
+    # otherwise fail at DDL time and metrics would never be created.
 }
 
 CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {
