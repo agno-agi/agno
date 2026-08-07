@@ -127,6 +127,27 @@ def get_scoped_user_id(request: Request) -> Optional[str]:
         return None
 
     if not user_id:
+        # Isolation is ON and the caller is neither admin nor a service account.
+        # An *authenticated* caller that resolves to no identity — a validly
+        # signed JWT that carries scopes but no ``sub``, or a deployment whose
+        # ``user_id_claim`` does not match the claim the token actually puts the
+        # identity in — must NOT be handed ``None`` here. ``None`` means "no owner
+        # filter": the unscoped, admin-equivalent view of *every* user's sessions,
+        # memories, and runs. Granting that to a token the server cannot attribute
+        # to any user silently defeats the isolation the operator opted into (the
+        # sanctioned cross-user path is the admin scope — see the docstring). Fail
+        # closed. Anonymous, unauthenticated callers keep the legacy ``None`` so
+        # open / no-JWT deployments are unchanged.
+        if getattr(request.state, "authenticated", False):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "This AgentOS enforces per-user isolation, but the presented token "
+                    "carries no user identity. Ensure the JWT includes the configured "
+                    "user-id claim (default 'sub'), or grant the admin scope for "
+                    "cross-user access."
+                ),
+            )
         return None
 
     return user_id
