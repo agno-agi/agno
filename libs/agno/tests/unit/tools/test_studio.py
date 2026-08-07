@@ -13,9 +13,11 @@ from typing import Any, Dict
 import pytest
 
 from agno.agent import Agent
+from agno.agent._tools import parse_tools
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.registry import Registry
+from agno.session import AgentSession
 from agno.tools.calculator import CalculatorTools
 from agno.tools.duckduckgo import DuckDuckGoTools
 from agno.tools.function import Function
@@ -543,6 +545,99 @@ class TestToolNameResolution:
 
         assert isinstance(member, Function)
         assert member.owning_toolkit == "agent_files"
+
+
+class TestToolkitInstructionPersistence:
+    def test_source_toolkit_survives_every_copy_path(self):
+        """The live Toolkit must survive both copy entry points, including
+        pydantic's own model_copy(deep=True), which calls __deepcopy__() with
+        no memo."""
+        from copy import deepcopy
+
+        from pydantic import BaseModel
+
+        def read_file(path: str) -> str:
+            return path
+
+        toolkit = Toolkit(name="agent_files", tools=[read_file])
+        function = toolkit.get_functions()["read_file"].model_copy()
+        function.source_toolkit = toolkit
+
+        assert deepcopy(function).source_toolkit is toolkit
+        assert function.model_copy(deep=True).source_toolkit is toolkit
+        assert BaseModel.model_copy(function, deep=True).source_toolkit is toolkit
+
+        # The pin must not overwrite a stand-in the in-progress copy already
+        # made: one original may not end up with two stand-ins.
+        copied_toolkit, copied_function = deepcopy([toolkit, function])
+        assert copied_function.source_toolkit is copied_toolkit
+
+    def test_db_loaded_agent_includes_live_toolkit_guidance_once(self, db):
+        creation_guidance = "CREATION_TOOLKIT_GUIDANCE"
+        live_guidance = "LIVE_TOOLKIT_GUIDANCE"
+        first_guidance = "FIRST_FUNCTION_GUIDANCE"
+        second_guidance = "SECOND_FUNCTION_GUIDANCE"
+
+        def first_tool() -> str:
+            return "first"
+
+        def second_tool() -> str:
+            return "second"
+
+        toolkit = Toolkit(
+            name="guided_tools",
+            tools=[first_tool, second_tool],
+            instructions=creation_guidance,
+            add_instructions=True,
+        )
+        toolkit.functions["first_tool"].instructions = first_guidance
+        toolkit.functions["second_tool"].instructions = second_guidance
+        registry = Registry(
+            tools=[toolkit],
+            models=[OpenAIResponses(id="gpt-5.5")],
+            dbs=[db],
+        )
+        studio = StudioTools(registry=registry, db=db)
+
+        result = _loads(
+            studio.create_agent(
+                name="guided-agent",
+                instructions="Base agent guidance.",
+                model_id="gpt-5.5",
+                tool_names=[toolkit.name],
+            )
+        )
+        assert result["status"] == "created"
+
+        persisted_tools = db.get_config("guided-agent")["config"]["tools"]
+        assert len(persisted_tools) == 2
+        assert all(tool["toolkit"] == toolkit.name for tool in persisted_tools)
+        assert all("instructions" not in tool for tool in persisted_tools)
+        assert all("add_instructions" not in tool for tool in persisted_tools)
+
+        # A registry edit after persistence must be visible on the next load.
+        toolkit.instructions = live_guidance
+
+        loaded = studio._load_agent_from_db("guided-agent")
+        assert loaded is not None
+        # AgentOS request resolution deep-copies DB-loaded components.
+        loaded = loaded.deep_copy()
+        assert loaded.tools is not None
+        assert loaded.model is not None
+        assert all(isinstance(tool, Function) for tool in loaded.tools)
+        assert all(tool.source_toolkit is toolkit for tool in loaded.tools if isinstance(tool, Function))
+
+        model_tools = parse_tools(agent=loaded, tools=loaded.tools, model=loaded.model)
+        assert loaded._tool_instructions == [first_guidance, second_guidance, live_guidance]
+        message = loaded.get_system_message(
+            session=AgentSession(session_id="test-session", agent_id=loaded.id),
+            tools=model_tools,
+        )
+
+        assert message is not None
+        assert isinstance(message.content, str)
+        assert creation_guidance not in message.content
+        assert message.content.count(live_guidance) == 1
 
 
 class TestMCPToolkitPersistence:

@@ -919,6 +919,59 @@ class TestTeamLoad:
         assert len(loaded.members) == 1
         assert loaded.members[0].id == "rt-agent"
 
+    def test_load_rehydrates_member_agent_tools(self, tmp_path):
+        """A member agent's tools must be rehydrated against the same registry
+        the team was loaded with. Without it Agent.from_dict takes its
+        no-registry branch, drops the tools outright, and the member comes back
+        with none -- the nested-team branch already forwards the registry."""
+        from agno.models.openai import OpenAIResponses
+        from agno.tools.toolkit import Toolkit
+
+        def search_web(query: str) -> str:
+            """Search the web."""
+            return "results"
+
+        toolkit = Toolkit(
+            name="web",
+            tools=[search_web],
+            instructions="Cite every source.",
+            add_instructions=True,
+        )
+        model = OpenAIResponses(id="gpt-5.5")
+        db = SqliteDb(db_file=str(tmp_path / "team_member_tools.db"))
+        member = Agent(id="member", name="Member", model=model, tools=[toolkit])
+        Team(id="tool-team", name="Tool Team", model=model, members=[member]).save(db=db)
+
+        loaded = Team.load(id="tool-team", db=db, registry=Registry(tools=[toolkit], models=[model]))
+
+        assert loaded is not None
+        member_tools = loaded.members[0].tools or []
+        assert [tool.name for tool in member_tools] == ["search_web"]
+        assert member_tools[0].entrypoint is not None
+        # And the toolkit came with them, so its guidance survives the reload.
+        assert member_tools[0].source_toolkit is toolkit
+
+    def test_load_passes_member_provider_dict_tools_through(self, tmp_path):
+        """Provider-run tools persist as plain dicts, typed builtins and
+        untyped custom shapes alike. Rehydrating one as a Function config
+        raised a ValidationError that took the whole team load down; they must
+        ride through the member's tools untouched instead."""
+        from agno.models.openai import OpenAIResponses
+
+        provider_dicts = [
+            {"type": "web_search"},
+            {"name": "get_weather", "description": "Weather", "input_schema": {"type": "object"}},
+        ]
+        model = OpenAIResponses(id="gpt-5.5")
+        db = SqliteDb(db_file=str(tmp_path / "team_builtin_tools.db"))
+        member = Agent(id="builtin-member", name="Member", model=model, tools=list(provider_dicts))
+        Team(id="builtin-team", name="Builtin Team", model=model, members=[member]).save(db=db)
+
+        loaded = Team.load(id="builtin-team", db=db, registry=Registry(models=[model]))
+
+        assert loaded is not None
+        assert loaded.members[0].tools == provider_dicts
+
 
 # =============================================================================
 # delete() Tests
