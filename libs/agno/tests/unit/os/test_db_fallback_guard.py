@@ -95,7 +95,9 @@ class TestLenientAndMatchingFallbacksSurvive:
         """A declared db that IS the caller's db (mysql/mongo-style: identity
         serialized, connection not) keeps working under strict."""
         Agent(id="same-db-agent", name="SA", model=OpenAIChat(id="gpt-4o-mini")).save(db=catalog_db)
-        _rewrite_stored_db(catalog_db, "same-db-agent", {"type": "postgres", "id": catalog_db.id})
+        _rewrite_stored_db(
+            catalog_db, "same-db-agent", {"id": catalog_db.id, "session_table": catalog_db.session_table_name}
+        )
 
         agent = Agent.load(id="same-db-agent", db=catalog_db, strict=True)
         assert agent is not None

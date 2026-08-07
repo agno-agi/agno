@@ -8,11 +8,13 @@ def db_fallback_divergence(config: Dict[str, Any], fallback_db: Any) -> Optional
 
     Returns None when the config declares no db (nothing to compare), else the
     sorted keys on which the declared db differs from the fallback db. An empty
-    list means the fallback IS the declared db: same identity, same table
-    overrides.
+    list means the fallback routes like the declared db: same identity, same
+    table overrides.
 
     An absent key in the stored config is not an override, and the connection
-    field is never serialized, so neither counts as a difference.
+    field is never serialized, so neither counts as a difference. A key the
+    fallback db does not report cannot be compared at all -- identity mismatch
+    still surfaces through ``id``, which every db serializes.
     """
     db_config = config.get("db")
     if not isinstance(db_config, dict):
@@ -21,7 +23,7 @@ def db_fallback_divergence(config: Dict[str, Any], fallback_db: Any) -> Optional
     return sorted(
         key
         for key, value in db_config.items()
-        if value is not None and key not in ("type", "connection") and fallback.get(key) != value
+        if value is not None and key != "connection" and key in fallback and fallback[key] != value
     )
 
 
