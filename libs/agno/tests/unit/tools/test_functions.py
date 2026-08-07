@@ -3935,3 +3935,58 @@ def test_a_result_that_answers_a_copy_with_itself_is_not_cached(tmp_path):
 
     assert outputs == ["items=['raw', 'hook']"] * 3
     assert list(tmp_path.rglob("*.json")) == []
+
+
+def test_a_warm_entry_is_not_served_once_a_hook_rewrites_the_argument(tmp_path):
+    """A hook may leave the arguments alone on one call and rewrite them on the
+    next. The stored value answers the question the key names, so once the call
+    stops asking that question the tool has to run."""
+    rewriting = {"on": False}
+    executions = []
+
+    def resolve(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        if rewriting["on"]:
+            arguments["customer"] = "profile-v2"
+        return function_call(**arguments)
+
+    def lookup(customer: str) -> str:
+        executions.append(customer)
+        return f"data for {customer}"
+
+    func = Function(name="lookup", entrypoint=lookup, cache_results=True, cache_dir=str(tmp_path), tool_hooks=[resolve])
+
+    first = FunctionCall(function=func, arguments={"customer": "123"}).execute()
+    rewriting["on"] = True
+    second = FunctionCall(function=func, arguments={"customer": "123"}).execute()
+
+    assert first.result == "data for 123"
+    assert second.result == "data for profile-v2"
+    assert executions == ["123", "profile-v2"]
+
+
+@pytest.mark.asyncio
+async def test_a_warm_entry_is_not_served_once_a_hook_rewrites_the_argument_async(tmp_path):
+    """Async variant of the warm entry a later call no longer asks for."""
+    rewriting = {"on": False}
+    executions = []
+
+    async def resolve(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        if rewriting["on"]:
+            arguments["customer"] = "profile-v2"
+        return await function_call(**arguments)
+
+    async def lookup(customer: str) -> str:
+        executions.append(customer)
+        return f"data for {customer}"
+
+    func = Function(
+        name="lookup_async", entrypoint=lookup, cache_results=True, cache_dir=str(tmp_path), tool_hooks=[resolve]
+    )
+
+    first = await FunctionCall(function=func, arguments={"customer": "123"}).aexecute()
+    rewriting["on"] = True
+    second = await FunctionCall(function=func, arguments={"customer": "123"}).aexecute()
+
+    assert first.result == "data for 123"
+    assert second.result == "data for profile-v2"
+    assert executions == ["123", "profile-v2"]

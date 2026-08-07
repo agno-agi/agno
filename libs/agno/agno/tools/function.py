@@ -1923,13 +1923,17 @@ class FunctionCall(BaseModel):
         entrypoint_args: Dict[str, Any],
         cached_result: Optional[Any] = None,
         raw_results: Optional[List[Any]] = None,
+        cache_key: Optional[str] = None,
     ):
         """Build a nested chain of hook executions with the entrypoint at the center.
 
         This creates a chain where each hook wraps the next one, with the function call
         at the innermost level. Returns bubble back up through each hook.
 
-        On a cache hit, cached_result stands in for the entrypoint call, so the
+        On a cache hit, cached_result stands in for the entrypoint call only
+        while the call still asks what the key names: a hook may rewrite an
+        argument before the entrypoint is reached, and the stored value answers
+        the earlier question. When that happens the tool runs for real, so the
         hooks run over the value the entrypoint gave them on the miss and what
         the caller gets back is what the miss produced. Entrypoint returns are
         recorded in raw_results, detached so a hook that edits one in place
@@ -1942,7 +1946,7 @@ class FunctionCall(BaseModel):
 
         def execute_entrypoint(name, func, args):
             """Execute the entrypoint function."""
-            if cached_result is not None:
+            if cached_result is not None and not self._moved_its_key(cache_key, entrypoint_args):
                 return _detached(cached_result)
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
@@ -1985,6 +1989,18 @@ class FunctionCall(BaseModel):
         chain = reduce(create_hook_wrapper, hooks, execute_entrypoint)
         return chain
 
+    def _moved_its_key(self, cache_key: Optional[str], entrypoint_args: Dict[str, Any]) -> bool:
+        """Whether anything the key is built from changed since the lookup.
+
+        Hooks hold the live arguments and the run context, so by the time the
+        entrypoint is reached the call may be asking something other than what
+        the key names. Such a call is neither answered from the entry under
+        that key nor stored under it.
+        """
+        if cache_key is None:
+            return False
+        return self.function._get_cache_key(entrypoint_args, self.arguments) != cache_key
+
     def _save_entrypoint_result(
         self, cache_key: str, cache_file: str, entrypoint_args: Dict[str, Any], raw_results: List[Any]
     ) -> None:
@@ -2023,7 +2039,7 @@ class FunctionCall(BaseModel):
         if isgenerator(result_to_cache) or isasyncgen(result_to_cache):
             return
 
-        if self.function._get_cache_key(entrypoint_args, self.arguments) != cache_key:
+        if self._moved_its_key(cache_key, entrypoint_args):
             log_debug(
                 f"Skipping cache for {self.function.name}: the call changed what it was asked, "
                 "so the result does not answer the question the key names"
@@ -2083,6 +2099,7 @@ class FunctionCall(BaseModel):
                     entrypoint_args=entrypoint_args,
                     cached_result=cached_result,
                     raw_results=raw_results if cacheable else None,
+                    cache_key=cache_key if cacheable else None,
                 )
                 result = execution_chain(self.function.name, self.function.entrypoint, self.arguments or {})
             elif from_cache:
@@ -2208,6 +2225,7 @@ class FunctionCall(BaseModel):
         entrypoint_args: Dict[str, Any],
         cached_result: Optional[Any] = None,
         raw_results: Optional[List[Any]] = None,
+        cache_key: Optional[str] = None,
     ):
         """Build a nested chain of async hook executions with the entrypoint at the center.
 
@@ -2219,7 +2237,7 @@ class FunctionCall(BaseModel):
 
         async def execute_entrypoint_async(name, func, args):
             """Execute the entrypoint function asynchronously."""
-            if cached_result is not None:
+            if cached_result is not None and not self._moved_its_key(cache_key, entrypoint_args):
                 return _detached(cached_result)
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
@@ -2235,7 +2253,7 @@ class FunctionCall(BaseModel):
 
         def execute_entrypoint(name, func, args):
             """Execute the entrypoint function synchronously."""
-            if cached_result is not None:
+            if cached_result is not None and not self._moved_its_key(cache_key, entrypoint_args):
                 return _detached(cached_result)
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
@@ -2339,6 +2357,7 @@ class FunctionCall(BaseModel):
                     entrypoint_args,
                     cached_result=cached_result,
                     raw_results=raw_results if cacheable else None,
+                    cache_key=cache_key if cacheable else None,
                 )
                 self.result = await execution_chain(self.function.name, self.function.entrypoint, self.arguments or {})
             elif from_cache:
