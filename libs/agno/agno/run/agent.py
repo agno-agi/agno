@@ -654,6 +654,9 @@ class RunOutput:
     metadata: Optional[Dict[str, Any]] = None
     session_state: Optional[Dict[str, Any]] = None
 
+    # Point-in-time compaction summary for continue_run time travel
+    compaction_summary: Optional[str] = None
+
     created_at: int = field(default_factory=lambda: int(time()))
 
     events: Optional[List[RunOutputEvent]] = None

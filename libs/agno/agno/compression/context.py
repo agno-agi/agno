@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from textwrap import dedent
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
+from uuid import uuid4
 
 from agno.models.base import Model
 from agno.models.message import Message
@@ -51,18 +52,28 @@ class CompactionState:
     """Tracks context compaction state for a session."""
 
     summary: str = ""
+    summary_message_id: str = field(default_factory=lambda: str(uuid4()))
     compacted_message_ids: Set[str] = field(default_factory=set)
     compacted_count: int = 0
     total_compactions: int = 0
     updated_at: Optional[datetime] = None
 
     def get_summary_message(self) -> Message:
-        """Create the summary message to inject into conversation."""
-        return Message(role="user", content=SUMMARY_PREFIX + self.summary, from_history=True)
+        """Create the summary message to inject into conversation.
+
+        Uses a consistent ID so old summaries can be filtered out when loading history.
+        """
+        return Message(
+            id=self.summary_message_id,
+            role="user",
+            content=SUMMARY_PREFIX + self.summary,
+            from_history=True,
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "summary": self.summary,
+            "summary_message_id": self.summary_message_id,
             "compacted_message_ids": list(self.compacted_message_ids),
             "compacted_count": self.compacted_count,
             "total_compactions": self.total_compactions,
@@ -76,6 +87,7 @@ class CompactionState:
             updated_at = datetime.fromisoformat(updated_at)
         return cls(
             summary=data.get("summary", ""),
+            summary_message_id=data.get("summary_message_id") or str(uuid4()),
             compacted_message_ids=set(data.get("compacted_message_ids", [])),
             compacted_count=data.get("compacted_count", 0),
             total_compactions=data.get("total_compactions", 0),
@@ -163,9 +175,7 @@ class ContextCompactionManager:
 
         return CompactionResult(compacted_messages=compacted_messages, summary=new_summary)
 
-    def _split_messages(
-        self, messages: List[Message]
-    ) -> Tuple[List[Message], List[Message], List[Message]]:
+    def _split_messages(self, messages: List[Message]) -> Tuple[List[Message], List[Message], List[Message]]:
         """Split messages into: old_messages (to summarize), preserved_user, recent_messages."""
         if not messages:
             return [], [], []
@@ -220,13 +230,9 @@ class ContextCompactionManager:
         # Build prompt: system + existing summary (if any) + old messages + instruction
         prompt_messages: List[Message] = [Message(role="system", content=system_prompt)]
         if existing_summary:
-            prompt_messages.append(
-                Message(role="user", content=f"Previous summary to update:\n{existing_summary}")
-            )
+            prompt_messages.append(Message(role="user", content=f"Previous summary to update:\n{existing_summary}"))
         prompt_messages.extend(old_messages)
-        prompt_messages.append(
-            Message(role="user", content="Now provide a concise summary of the conversation above.")
-        )
+        prompt_messages.append(Message(role="user", content="Now provide a concise summary of the conversation above."))
 
         try:
             response = self.model.response(messages=prompt_messages)
@@ -241,9 +247,7 @@ class ContextCompactionManager:
             log_error(f"Compaction LLM call failed: {e}")
             return None
 
-    def _compress_tool_results(
-        self, messages: List[Message], run_metrics: Optional["RunMetrics"]
-    ) -> None:
+    def _compress_tool_results(self, messages: List[Message], run_metrics: Optional["RunMetrics"]) -> None:
         """Compress large tool results using CompressionManager."""
         from agno.compression.manager import CompressionManager
 
@@ -261,11 +265,18 @@ class ContextCompactionManager:
             return
 
         prev = session.compaction
+        # Reuse existing summary_message_id or generate new one
+        summary_id = prev.summary_message_id if prev else str(uuid4())
+
+        # Collect IDs of compacted messages + the summary message ID
+        # (so old summaries get filtered when loading history)
         new_ids = {msg.id for msg in old_messages if msg.id}
+        new_ids.add(summary_id)
         all_ids = new_ids.union(prev.compacted_message_ids if prev else set())
 
         session.compaction = CompactionState(
             summary=new_summary,
+            summary_message_id=summary_id,
             compacted_message_ids=all_ids,
             compacted_count=(prev.compacted_count if prev else 0) + len(old_messages),
             total_compactions=(prev.total_compactions if prev else 0) + 1,
@@ -317,7 +328,9 @@ class ContextCompactionManager:
         if self.token_limit and await self.model.acount_tokens(compacted_messages) > self.token_limit:
             await self._acompress_tool_results(recent_messages, run_metrics)
             compacted_messages = system_msgs + [summary_msg] + preserved_user + recent_messages
-            log_info(f"[COMPACTION] Compressed tool results, now {await self.model.acount_tokens(compacted_messages)} tokens")
+            log_info(
+                f"[COMPACTION] Compressed tool results, now {await self.model.acount_tokens(compacted_messages)} tokens"
+            )
 
         # 6. Update session state
         self._update_session_state(session, old_messages, new_summary)
@@ -339,13 +352,9 @@ class ContextCompactionManager:
         # Build prompt: system + existing summary (if any) + old messages + instruction
         prompt_messages: List[Message] = [Message(role="system", content=system_prompt)]
         if existing_summary:
-            prompt_messages.append(
-                Message(role="user", content=f"Previous summary to update:\n{existing_summary}")
-            )
+            prompt_messages.append(Message(role="user", content=f"Previous summary to update:\n{existing_summary}"))
         prompt_messages.extend(old_messages)
-        prompt_messages.append(
-            Message(role="user", content="Now provide a concise summary of the conversation above.")
-        )
+        prompt_messages.append(Message(role="user", content="Now provide a concise summary of the conversation above."))
 
         try:
             response = await self.model.aresponse(messages=prompt_messages)
@@ -360,9 +369,7 @@ class ContextCompactionManager:
             log_error(f"Compaction LLM call failed: {e}")
             return None
 
-    async def _acompress_tool_results(
-        self, messages: List[Message], run_metrics: Optional["RunMetrics"]
-    ) -> None:
+    async def _acompress_tool_results(self, messages: List[Message], run_metrics: Optional["RunMetrics"]) -> None:
         """Async version of _compress_tool_results()."""
         from agno.compression.manager import CompressionManager
 

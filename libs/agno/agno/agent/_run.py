@@ -541,12 +541,7 @@ def _run(
                         session=agent_session,
                         run_metrics=run_response.metrics,
                     )
-                    if compaction_result.summary and agent_session and agent_session.compaction:
-                        # 1. Insert summary into messages (canonical list for DB)
-                        summary_msg = agent_session.compaction.get_summary_message()
-                        insert_idx = next((i for i, m in enumerate(run_messages.messages) if m.role != "system"), 1)
-                        run_messages.messages.insert(insert_idx, summary_msg)
-                        # 2. Initialize compacted_messages with compressed view for model
+                    if compaction_result.summary:
                         run_messages.compacted_messages = compaction_result.compacted_messages
 
                 # 7. Generate a response from the Model (includes running function calls)
@@ -1704,12 +1699,7 @@ async def _arun(
                         session=agent_session,
                         run_metrics=run_response.metrics,
                     )
-                    if compaction_result.summary and agent_session and agent_session.compaction:
-                        # 1. Insert summary into messages (canonical list for DB)
-                        summary_msg = agent_session.compaction.get_summary_message()
-                        insert_idx = next((i for i, m in enumerate(run_messages.messages) if m.role != "system"), 1)
-                        run_messages.messages.insert(insert_idx, summary_msg)
-                        # 2. Initialize compacted_messages with compressed view for model
+                    if compaction_result.summary:
                         run_messages.compacted_messages = compaction_result.compacted_messages
 
                 # 10. Generate a response from the Model (includes running function calls)
@@ -3656,6 +3646,7 @@ def continue_run_dispatch(
         session=agent_session,
         add_history_to_context=agent.add_history_to_context,
         run_context=run_context,
+        compaction_summary=run_response.compaction_summary,
     )
 
     # Reset the run state
@@ -4908,6 +4899,7 @@ async def _acontinue_run(
                     input=input_messages,
                     session=agent_session,
                     add_history_to_context=agent.add_history_to_context,
+                    compaction_summary=run_response.compaction_summary,
                 )
 
                 # Reset the run state
@@ -5388,6 +5380,7 @@ async def _acontinue_run_stream(
                     input=input_messages,
                     session=agent_session,
                     add_history_to_context=agent.add_history_to_context,
+                    compaction_summary=run_response.compaction_summary,
                 )
 
                 # Reset the run state
@@ -5958,6 +5951,10 @@ def persist_run_in_session(
     if storage_copy is None:
         storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context, isolate_inflight=True)
 
+    # Capture compaction summary snapshot for time-travel (continue_run)
+    if session.compaction and session.compaction.summary:
+        storage_copy.compaction_summary = session.compaction.summary
+
     # Add scrubbed RunOutput to Agent Session
     session.upsert_run(run=storage_copy)
     run_index = resolve_run_index(session, storage_copy)
@@ -5995,6 +5992,10 @@ async def apersist_run_in_session(
 
     if storage_copy is None:
         storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context, isolate_inflight=True)
+
+    # Capture compaction summary snapshot for time-travel (continue_run)
+    if session.compaction and session.compaction.summary:
+        storage_copy.compaction_summary = session.compaction.summary
 
     session.upsert_run(run=storage_copy)
     run_index = resolve_run_index(session, storage_copy)
@@ -6323,13 +6324,8 @@ def build_after_tool_results_callback(
                 session=session,
                 run_metrics=run_response.metrics,
             )
-            if result.summary and session and session.compaction:
-                # 1. Insert summary into messages (canonical list for DB storage)
-                summary_msg = session.compaction.get_summary_message()
-                insert_idx = next((i for i, m in enumerate(run_messages.messages) if m.role != "system"), 1)
-                run_messages.messages.insert(insert_idx, summary_msg)
-
-                # 2. Update compacted_messages with new compressed view
+            if result.summary:
+                # Update compacted_messages with new compressed view
                 # MUST use clear()+extend() to mutate in place, not assignment
                 # base.py holds a reference to this list; assignment would orphan it
                 if run_messages.compacted_messages is None:
@@ -6373,13 +6369,8 @@ def abuild_after_tool_results_callback(
                 session=session,
                 run_metrics=run_response.metrics,
             )
-            if result.summary and session and session.compaction:
-                # 1. Insert summary into messages (canonical list for DB storage)
-                summary_msg = session.compaction.get_summary_message()
-                insert_idx = next((i for i, m in enumerate(run_messages.messages) if m.role != "system"), 1)
-                run_messages.messages.insert(insert_idx, summary_msg)
-
-                # 2. Update compacted_messages with new compressed view
+            if result.summary:
+                # Update compacted_messages with new compressed view
                 # MUST use clear()+extend() to mutate in place, not assignment
                 # base.py holds a reference to this list; assignment would orphan it
                 if run_messages.compacted_messages is None:
