@@ -5,10 +5,10 @@ Warp Tools
 Demonstrates controlling the Warp terminal (https://www.warp.dev).
 
 WarpTools can open Warp windows and tabs, open saved launch and tab configs,
-and run shell commands in a new Warp window via a generated launch
-configuration. Opening terminals is fire-and-forget: Warp does not expose an
-API to read output back from GUI sessions. The optional ``run_agent`` tool
-(backed by the ``oz`` CLI) runs a Warp agent and does capture output.
+and run shell commands in a new Warp tab via a generated temporary Tab Config.
+Opening terminals is fire-and-forget: Warp does not expose an API to read
+output back from GUI sessions. The optional ``run_agent`` tool (backed by the
+``oz`` CLI) runs a Warp agent and does capture output.
 
 ``run_commands`` executes arbitrary commands on the host OS. Under prompt
 injection that makes the agent an RCE sink, so this example gates the tool
@@ -36,9 +36,7 @@ agent = Agent(
 # Run Agent
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    run_response = agent.run(
-        "Open a new Warp terminal in my home directory and run 'ls -la' in it"
-    )
+    run_response = agent.run("Run 'ls -la' in a new Warp tab in my home directory")
 
     # run_commands is gated, so the run pauses for confirmation.
     if run_response.active_requirements:

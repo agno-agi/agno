@@ -1,12 +1,12 @@
 """Unit tests for WarpTools class."""
 
+import json
 import os
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-import yaml
 
 from agno.tools.warp import WarpTools
 
@@ -14,7 +14,11 @@ from agno.tools.warp import WarpTools
 @pytest.fixture
 def warp_tools(tmp_path):
     """Create a WarpTools instance with all tools enabled and an isolated config dir."""
-    return WarpTools(all=True, launch_config_dir=tmp_path / "launch_configurations")
+    return WarpTools(
+        all=True,
+        launch_config_dir=tmp_path / "launch_configurations",
+        tab_config_dir=tmp_path / "tab_configs",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -72,6 +76,13 @@ def test_initialization_custom_launch_config_dir(tmp_path):
     assert tools.launch_config_dir == tmp_path
 
 
+def test_initialization_custom_tab_config_dir(tmp_path):
+    """A custom tab_config_dir is stored as a Path."""
+    tools = WarpTools(tab_config_dir=str(tmp_path))
+
+    assert tools.tab_config_dir == tmp_path
+
+
 # ---------------------------------------------------------------------------
 # Default launch configuration directory
 # ---------------------------------------------------------------------------
@@ -101,6 +112,34 @@ def test_default_launch_config_dir_linux_without_xdg(monkeypatch):
 def test_default_launch_config_dir_windows(monkeypatch):
     monkeypatch.setenv("APPDATA", "C:\\appdata")
     assert WarpTools._default_launch_config_dir() == Path("C:\\appdata/warp/Warp/data/launch_configurations")
+
+
+# ---------------------------------------------------------------------------
+# Default Tab Config directory
+# ---------------------------------------------------------------------------
+
+
+def test_default_tab_config_dir_macos():
+    with patch("agno.tools.warp.sys.platform", "darwin"):
+        assert WarpTools._default_tab_config_dir() == Path.home() / ".warp" / "tab_configs"
+
+
+def test_default_tab_config_dir_linux(monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", "/custom/data")
+    with patch("agno.tools.warp.sys.platform", "linux"), patch("agno.tools.warp.os.name", "posix"):
+        assert WarpTools._default_tab_config_dir() == Path("/custom/data/warp-terminal/tab_configs")
+
+
+def test_default_tab_config_dir_linux_without_xdg(monkeypatch):
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    with patch("agno.tools.warp.sys.platform", "linux"), patch("agno.tools.warp.os.name", "posix"):
+        assert WarpTools._default_tab_config_dir() == Path.home() / ".local" / "share" / "warp-terminal" / "tab_configs"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="WindowsPath cannot be built on posix systems")
+def test_default_tab_config_dir_windows(monkeypatch):
+    monkeypatch.setenv("APPDATA", "C:\\appdata")
+    assert WarpTools._default_tab_config_dir() == Path("C:\\appdata/warp/Warp/data/tab_configs")
 
 
 # ---------------------------------------------------------------------------
@@ -192,35 +231,94 @@ def test_open_tab_with_path_is_url_encoded(warp_tools, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_run_commands_writes_launch_config_and_opens_it(warp_tools, tmp_path):
+def test_run_commands_writes_tab_config_and_opens_it(warp_tools, tmp_path):
     with patch.object(WarpTools, "_open_uri", return_value=None) as mock_open:
-        result = warp_tools.run_commands(commands=["echo hello", "ls -la"], path=str(tmp_path), title="My Tab")
+        with patch.object(WarpTools, "_schedule_tab_config_cleanup") as mock_cleanup:
+            result = warp_tools.run_commands(commands=["echo hello", "ls -la"], path=str(tmp_path), title="My Tab")
 
-    config_files = list(warp_tools.launch_config_dir.glob("agno_*.yaml"))
+    config_files = list(warp_tools.tab_config_dir.glob("agno_*.toml"))
     assert len(config_files) == 1
 
-    config = yaml.safe_load(config_files[0].read_text())
-    layout = config["windows"][0]["tabs"][0]["layout"]
-    assert config["name"] == config_files[0].stem
-    assert config["windows"][0]["tabs"][0]["title"] == "My Tab"
-    assert layout["cwd"] == str(tmp_path.resolve())
-    assert layout["commands"] == [{"exec": "echo hello"}, {"exec": "ls -la"}]
+    config = config_files[0].read_text(encoding="utf-8")
+    assert 'name = "My Tab"' in config
+    assert 'title = "My Tab"' in config
+    assert "[[panes]]" in config
+    assert 'id = "main"' in config
+    assert 'type = "terminal"' in config
+    assert f"directory = {json.dumps(str(tmp_path.resolve()))}" in config
+    assert f"commands = {json.dumps(['echo hello', 'ls -la'])}" in config
+    assert "is_focused = true" in config
 
     uri = mock_open.call_args[0][0]
-    assert uri.startswith("warp://launch/")
-    assert config_files[0].name in uri
+    assert uri == f"warp://tab_config/{config_files[0].stem}"
+    mock_cleanup.assert_called_once_with(config_files[0])
 
     assert "echo hello" in result
     assert str(config_files[0]) in result
+    assert "new Warp tab" in result
 
 
 def test_run_commands_defaults_to_current_directory(warp_tools):
     with patch.object(WarpTools, "_open_uri", return_value=None):
-        warp_tools.run_commands(commands=["echo hello"])
+        with patch.object(WarpTools, "_schedule_tab_config_cleanup"):
+            warp_tools.run_commands(commands=["echo hello"])
 
-    config_files = list(warp_tools.launch_config_dir.glob("agno_*.yaml"))
-    config = yaml.safe_load(config_files[0].read_text())
-    assert config["windows"][0]["tabs"][0]["layout"]["cwd"] == str(Path.cwd())
+    config_files = list(warp_tools.tab_config_dir.glob("agno_*.toml"))
+    config = config_files[0].read_text(encoding="utf-8")
+    assert f"directory = {json.dumps(str(Path.cwd()))}" in config
+
+
+def test_run_commands_escapes_tab_config_values(warp_tools, tmp_path):
+    commands = ['printf "hello\\world"', "echo café"]
+    title = 'Agno "Dev"'
+    with patch.object(WarpTools, "_open_uri", return_value=None):
+        with patch.object(WarpTools, "_schedule_tab_config_cleanup"):
+            warp_tools.run_commands(commands=commands, path=str(tmp_path), title=title)
+
+    config_files = list(warp_tools.tab_config_dir.glob("agno_*.toml"))
+    config = config_files[0].read_text(encoding="utf-8")
+    assert f"name = {json.dumps(title, ensure_ascii=False)}" in config
+    assert f"directory = {json.dumps(str(tmp_path.resolve()), ensure_ascii=False)}" in config
+    assert f"commands = {json.dumps(commands, ensure_ascii=False)}" in config
+
+
+def test_write_tab_config_produces_valid_toml(warp_tools, tmp_path):
+    tomllib = pytest.importorskip("tomllib")
+    config_path = warp_tools._write_tab_config(
+        commands=["echo hello", "ls -la"],
+        cwd=str(tmp_path),
+        title="My Tab",
+        config_name="valid_config",
+    )
+
+    config = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    assert config == {
+        "name": "My Tab",
+        "title": "My Tab",
+        "panes": [
+            {
+                "id": "main",
+                "type": "terminal",
+                "directory": str(tmp_path),
+                "commands": ["echo hello", "ls -la"],
+                "is_focused": True,
+            }
+        ],
+    }
+
+
+def test_schedule_tab_config_cleanup_removes_file(tmp_path):
+    config_path = tmp_path / "generated.toml"
+    config_path.write_text('name = "generated"', encoding="utf-8")
+    with patch("agno.tools.warp.Timer") as mock_timer:
+        WarpTools._schedule_tab_config_cleanup(config_path, delay=5.0)
+
+    cleanup_callback = mock_timer.call_args.args[1]
+    cleanup_callback()
+    assert not config_path.exists()
+    assert mock_timer.call_args.args[0] == 5.0
+    assert mock_timer.return_value.daemon is True
+    mock_timer.return_value.start.assert_called_once_with()
 
 
 def test_run_commands_without_commands_returns_error(warp_tools):
@@ -230,10 +328,10 @@ def test_run_commands_without_commands_returns_error(warp_tools):
 
 
 def test_run_commands_write_failure_returns_error(warp_tools):
-    with patch.object(WarpTools, "_write_launch_config", side_effect=OSError("disk full")):
+    with patch.object(WarpTools, "_write_tab_config", side_effect=OSError("disk full")):
         result = warp_tools.run_commands(commands=["echo hello"])
 
-    assert "Error writing launch configuration" in result
+    assert "Error writing Tab Config" in result
     assert "disk full" in result
 
 
@@ -242,6 +340,7 @@ def test_run_commands_propagates_open_error(warp_tools):
         result = warp_tools.run_commands(commands=["echo hello"])
 
     assert result == "Error opening Warp URI: boom"
+    assert list(warp_tools.tab_config_dir.glob("agno_*.toml")) == []
 
 
 # ---------------------------------------------------------------------------

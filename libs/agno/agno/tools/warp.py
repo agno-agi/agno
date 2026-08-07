@@ -1,8 +1,10 @@
+import json
 import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from threading import Timer
+from typing import Any, List, Optional, Union
 from urllib.parse import quote
 from uuid import uuid4
 
@@ -13,12 +15,12 @@ from agno.utils.log import log_debug, log_info, log_warning
 class WarpTools(Toolkit):
     """Control the Warp terminal (https://www.warp.dev).
 
-    Uses two integration surfaces:
+    Uses Warp's desktop integration and optional agent CLI:
 
     - The ``warp://`` URI scheme to open windows, tabs, tab configs and
       launch configurations in the Warp desktop app.
-    - Generated launch configuration YAML files to open a new Warp window
-      that runs a set of startup commands.
+    - Generated temporary Tab Config TOML files to open a new Warp tab that
+      runs a set of startup commands.
     - The ``oz`` CLI (optional) to run Warp agents and capture their output.
 
     Opening windows, tabs and launch configurations is fire-and-forget: Warp
@@ -36,14 +38,15 @@ class WarpTools(Toolkit):
         enable_open_tab_config: bool = True,
         enable_run_agent: bool = False,
         all: bool = False,
+        tab_config_dir: Optional[Union[Path, str]] = None,
         **kwargs,
     ):
         """Initialize WarpTools.
 
         Args:
-            launch_config_dir: Directory where generated launch configuration
-                files are written. Defaults to Warp's platform-specific
-                launch configurations directory.
+            launch_config_dir: Directory containing saved launch configuration
+                files. Defaults to Warp's platform-specific launch
+                configurations directory.
             enable_open_window: Enable the open_window tool.
             enable_open_tab: Enable the open_tab tool.
             enable_run_commands: Enable the run_commands tool.
@@ -52,10 +55,13 @@ class WarpTools(Toolkit):
             enable_run_agent: Enable the run_agent tool (requires the ``oz``
                 CLI to be installed and authenticated).
             all: Enable all tools.
+            tab_config_dir: Directory where generated Tab Config files are
+                written. Defaults to Warp's platform-specific Tab Config
+                directory.
 
         .. warning::
-            ``run_commands`` executes arbitrary commands in a new Warp
-            terminal on the host OS — an RCE sink if the agent is
+            ``run_commands`` executes arbitrary commands in a new Warp tab on
+            the host OS — an RCE sink if the agent is
             prompt-injected. To require human approval before any command
             executes, gate the tool through the toolkit's confirmation
             mechanism::
@@ -64,6 +70,9 @@ class WarpTools(Toolkit):
         """
         self.launch_config_dir: Path = (
             Path(launch_config_dir) if launch_config_dir is not None else self._default_launch_config_dir()
+        )
+        self.tab_config_dir: Path = (
+            Path(tab_config_dir) if tab_config_dir is not None else self._default_tab_config_dir()
         )
 
         tools: List[Any] = []
@@ -93,6 +102,16 @@ class WarpTools(Toolkit):
         return Path(xdg_data_home) / "warp-terminal" / "launch_configurations"
 
     @staticmethod
+    def _default_tab_config_dir() -> Path:
+        if sys.platform == "darwin":
+            return Path.home() / ".warp" / "tab_configs"
+        if os.name == "nt":
+            appdata = os.environ.get("APPDATA", str(Path.home() / "AppData" / "Roaming"))
+            return Path(appdata) / "warp" / "Warp" / "data" / "tab_configs"
+        xdg_data_home = os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share"))
+        return Path(xdg_data_home) / "warp-terminal" / "tab_configs"
+
+    @staticmethod
     def _open_uri(uri: str) -> Optional[str]:
         """Open a warp:// URI with the OS handler. Returns an error message or None."""
         log_debug(f"Opening Warp URI: {uri}")
@@ -108,30 +127,41 @@ class WarpTools(Toolkit):
         except Exception as e:
             return f"Error opening Warp URI: {e}"
 
-    def _write_launch_config(self, commands: List[str], cwd: str, title: str, config_name: str) -> Path:
-        """Write a Warp launch configuration YAML file and return its path."""
-        import yaml
-
-        config: Dict[str, Any] = {
-            "name": config_name,
-            "windows": [
-                {
-                    "tabs": [
-                        {
-                            "title": title,
-                            "layout": {
-                                "cwd": cwd,
-                                "commands": [{"exec": command} for command in commands],
-                            },
-                        }
-                    ]
-                }
-            ],
-        }
-        self.launch_config_dir.mkdir(parents=True, exist_ok=True)
-        config_path = self.launch_config_dir / f"{config_name}.yaml"
-        config_path.write_text(yaml.safe_dump(config, sort_keys=False))
+    def _write_tab_config(self, commands: List[str], cwd: str, title: str, config_name: str) -> Path:
+        """Write a Warp Tab Config TOML file and return its path."""
+        display_name = title or "Agno"
+        config = "\n".join(
+            [
+                f"name = {json.dumps(display_name, ensure_ascii=False)}",
+                f"title = {json.dumps(display_name, ensure_ascii=False)}",
+                "",
+                "[[panes]]",
+                'id = "main"',
+                'type = "terminal"',
+                f"directory = {json.dumps(cwd, ensure_ascii=False)}",
+                f"commands = {json.dumps(commands, ensure_ascii=False)}",
+                "is_focused = true",
+                "",
+            ]
+        )
+        self.tab_config_dir.mkdir(parents=True, exist_ok=True)
+        config_path = self.tab_config_dir / f"{config_name}.toml"
+        config_path.write_text(config, encoding="utf-8")
         return config_path
+
+    @staticmethod
+    def _schedule_tab_config_cleanup(config_path: Path, delay: float = 30.0) -> None:
+        """Remove a generated Tab Config after Warp has had time to open it."""
+
+        def remove_config() -> None:
+            try:
+                config_path.unlink(missing_ok=True)
+            except OSError as e:
+                log_warning(f"Failed to remove generated Warp Tab Config {config_path}: {e}")
+
+        cleanup_timer = Timer(delay, remove_config)
+        cleanup_timer.daemon = True
+        cleanup_timer.start()
 
     def open_window(self, path: Optional[str] = None) -> str:
         """Opens a new Warp terminal window, optionally at a given directory.
@@ -170,8 +200,9 @@ class WarpTools(Toolkit):
         return f"Opened a new Warp tab{f' at {path}' if path else ''}."
 
     def run_commands(self, commands: List[str], path: Optional[str] = None, title: str = "Agno") -> str:
-        """Opens a new Warp window and runs the given shell commands in it.
+        """Opens a new Warp tab and runs the given shell commands in it.
 
+        A temporary Tab Config is removed after Warp has had time to open it.
         The commands run in a visible Warp terminal session. Output is not
         captured — the session stays open for the user to inspect.
 
@@ -193,18 +224,23 @@ class WarpTools(Toolkit):
         cwd = str(Path(path).expanduser().resolve()) if path else str(Path.cwd())
         config_name = f"agno_{uuid4().hex[:8]}"
         try:
-            config_path = self._write_launch_config(commands=commands, cwd=cwd, title=title, config_name=config_name)
+            config_path = self._write_tab_config(commands=commands, cwd=cwd, title=title, config_name=config_name)
         except Exception as e:
-            log_warning(f"Failed to write Warp launch configuration: {e}")
-            return f"Error writing launch configuration: {e}"
-        log_info(f"Running {len(commands)} command(s) in a new Warp window (cwd={cwd})")
-        error = self._open_uri(f"warp://launch/{quote(str(config_path), safe='/')}")
+            log_warning(f"Failed to write Warp Tab Config: {e}")
+            return f"Error writing Tab Config: {e}"
+        log_info(f"Running {len(commands)} command(s) in a new Warp tab (cwd={cwd})")
+        error = self._open_uri(f"warp://tab_config/{quote(config_name)}")
         if error:
+            try:
+                config_path.unlink(missing_ok=True)
+            except OSError as e:
+                log_warning(f"Failed to remove unused Warp Tab Config {config_path}: {e}")
             return error
+        self._schedule_tab_config_cleanup(config_path)
         return (
-            f"Opened a new Warp window at {cwd} running: {'; '.join(commands)}. "
-            f"Launch configuration saved to {config_path}. "
-            "Output is shown in the Warp window and is not captured here."
+            f"Opened a new Warp tab at {cwd} running: {'; '.join(commands)}. "
+            f"Temporary Tab Config created at {config_path} and scheduled for cleanup. "
+            "Output is shown in the Warp tab and is not captured here."
         )
 
     def open_launch_config(self, config: str) -> str:

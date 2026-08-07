@@ -56,6 +56,7 @@ surface.
 | [23_skills](./23_skills/) | Serve local skills through an Agent and execute checked-in skill scripts through the AgentOS run API. |
 | [24_showcase](./24_showcase/) | Run the secure, traced capstone with RAG, web and finance research, a Team, and a real evaluation. |
 | [25_agentos_tools](./25_agentos_tools/) | Answer platform ops questions (usage, latency, tool statistics) with an agent using AgentOSTools. |
+| [26_warp_tools](./26_warp_tools/) | Control Warp windows, tabs, configurations, commands, and Oz agents through AgentOS. |
 
 ## Canonical ports
 
@@ -102,6 +103,7 @@ surface.
 | `23_skills` | `OPENAI_API_KEY` | Local sample-skill files with executable Python scripts |
 | `24_showcase` | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OS_SECURITY_KEY` | `./cookbook/scripts/run_pgvector.sh`, internet access, and tracing |
 | `25_agentos_tools` | `OPENAI_API_KEY` | Local SQLite with tracing enabled |
+| `26_warp_tools` | `OPENAI_API_KEY`; Warp/Oz authentication for `run_agent` | Warp desktop in a local GUI session, the `oz` CLI, and local SQLite |
 
 Run cookbook files with `.venvs/demo/bin/python`. Development checks use
 `.venv`.
