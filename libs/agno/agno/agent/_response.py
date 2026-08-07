@@ -894,21 +894,18 @@ def get_response_format(
                 return json_response_format
 
         elif model.supports_json_schema_outputs:
-            if agent.use_json_mode or (not agent.structured_outputs):
-                log_debug("Setting Model.response_format to JSON response mode")
-                # Handle JSON schema - pass through directly (user provides full provider format)
-                if isinstance(output_schema, dict):
-                    return output_schema
-                # Handle Pydantic schema
-                return {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": output_schema.__name__,
-                        "schema": output_schema.model_json_schema(),
-                    },
-                }
-            else:
-                return None
+            log_debug("Setting Model.response_format to JSON schema")
+            # Handle JSON schema - pass through directly (user provides full provider format)
+            if isinstance(output_schema, dict):
+                return output_schema
+            # Handle Pydantic schema
+            return {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": output_schema.__name__,
+                    "schema": output_schema.model_json_schema(),
+                },
+            }
 
         else:
             log_debug("Model does not support structured or JSON schema outputs.")
