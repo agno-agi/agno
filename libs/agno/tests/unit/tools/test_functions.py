@@ -3471,3 +3471,163 @@ def test_a_cache_directory_others_can_write_is_refused(tmp_path):
     assert second.status == "success"
     assert len(executions) == 2
     assert list(hostile.glob("*.json")) == []
+
+
+# =============================================================================
+# What the call may not change under the cache
+# =============================================================================
+
+
+def test_a_tool_that_changes_the_caller_cannot_store_under_the_new_identity(tmp_path):
+    """The key is decided before the tool runs. A tool that edits the run
+    context would otherwise file its result under whoever it left behind, and
+    the next caller would be served it."""
+    executions = []
+
+    def leaky(run_context: RunContext) -> str:
+        executions.append(run_context.user_id)
+        secret = f"secret for {run_context.user_id}"
+        run_context.user_id = "bob"
+        return secret
+
+    func = Function(name="leaky", entrypoint=leaky, cache_results=True, cache_dir=str(tmp_path))
+
+    func._run_context = RunContext(run_id="r1", session_id="s1", user_id="alice")
+    assert FunctionCall(function=func).execute().result == "secret for alice"
+
+    func._run_context = RunContext(run_id="r2", session_id="s1", user_id="bob")
+    assert FunctionCall(function=func).execute().result == "secret for bob"
+    assert executions == ["alice", "bob"]
+
+
+def test_a_stored_value_must_come_back_as_its_own_type(tmp_path):
+    """Equality is too weak. An IntEnum member equals the integer it is written
+    as, so a hook reading its name would work on the miss and fail on the hit."""
+    from enum import IntEnum
+
+    class Status(IntEnum):
+        READY = 1
+
+    def read_name(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        return f"status={function_call(**arguments).name}"
+
+    def status() -> Status:
+        return Status.READY
+
+    func = Function(
+        name="status", entrypoint=status, cache_results=True, cache_dir=str(tmp_path), tool_hooks=[read_name]
+    )
+
+    first = FunctionCall(function=func, arguments={}).execute()
+    second = FunctionCall(function=func, arguments={}).execute()
+
+    assert first.status == "success"
+    assert second.status == "success"
+    assert second.result == first.result == "status=READY"
+
+
+def test_each_entrypoint_call_on_a_hit_gets_its_own_value(tmp_path):
+    """A hook may call the tool more than once, and on a miss each call returns
+    its own object. One shared object would let the first call's edits show up
+    in the second."""
+
+    def payload() -> dict:
+        return {"items": ["raw"]}
+
+    seen = []
+
+    def twice(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        first = function_call(**arguments)
+        second = function_call(**arguments)
+        seen.append(first is second)
+        first["items"].append("A")
+        second["items"].append("B")
+        return {"a": first["items"], "b": second["items"]}
+
+    # A single-call path writes the entry, so the two-call hook meets a warm one.
+    warm = Function(name="twice_over", entrypoint=payload, cache_results=True, cache_dir=str(tmp_path))
+    FunctionCall(function=warm, arguments={}).execute()
+
+    hooked = Function(
+        name="twice_over", entrypoint=payload, cache_results=True, cache_dir=str(tmp_path), tool_hooks=[twice]
+    )
+    result = FunctionCall(function=hooked, arguments={}).execute()
+
+    assert seen == [False]
+    assert result.result == {"a": ["raw", "A"], "b": ["raw", "B"]}
+
+
+def test_media_anywhere_inside_a_result_keeps_it_out_of_the_cache(tmp_path):
+    """The cache excludes media wherever it sits, not only at the top."""
+    from agno.media import Image
+
+    class Wrapper(BaseModel):
+        inner: ToolResult
+
+    executions = []
+
+    def wrapped() -> Wrapper:
+        executions.append(1)
+        return Wrapper(inner=ToolResult(content="see it", images=[Image(filepath="/tmp/secret.png")]))
+
+    func = Function(name="wrapped", entrypoint=wrapped, cache_results=True, cache_dir=str(tmp_path))
+
+    FunctionCall(function=func, arguments={}).execute()
+    FunctionCall(function=func, arguments={}).execute()
+
+    assert executions == [1, 1]
+    assert list(tmp_path.rglob("*.json")) == []
+
+
+def test_an_entry_holding_media_below_the_top_level_is_discarded(tmp_path):
+    """An entry carrying media did not come from here, however deeply it is
+    buried."""
+    import json
+    from time import time
+
+    from agno.media import Image
+
+    executions = []
+
+    def listed() -> List[ToolResult]:
+        executions.append(1)
+        return [ToolResult(content="clean")]
+
+    func = Function(name="listed", entrypoint=listed, cache_results=True, cache_dir=str(tmp_path))
+
+    planted = [ToolResult(content="planted", images=[Image(filepath="/etc/passwd")]).model_dump()]
+    cache_file = func._get_cache_file_path(func._get_cache_key({}, {}))
+    with open(cache_file, "w", encoding="utf-8") as f:
+        json.dump({"timestamp": time(), "cache_format": function_module.CACHE_FORMAT, "result": planted}, f)
+
+    result = FunctionCall(function=func, arguments={}).execute()
+    assert result.result[0].content == "clean"
+    assert result.result[0].images is None
+    assert executions == [1]
+
+
+@pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 type alias syntax needs 3.12")
+def test_a_generic_alias_return_keeps_what_it_was_given(tmp_path):
+    """A subscripted generic alias holds its argument only while it stays
+    subscripted. Unwrapping it to the alias body loses the model, and the hit
+    would hand back a plain dict where the miss returned one."""
+
+    class Weather(BaseModel):
+        city: str
+
+    namespace: Dict[str, Any] = {}
+    exec("type Maybe[T] = T | None", namespace)
+
+    def forecast():
+        return Weather(city="Lisbon")
+
+    forecast.__annotations__["return"] = namespace["Maybe"][Weather]
+
+    func = Function(name="generic_forecast", entrypoint=forecast, cache_results=True, cache_dir=str(tmp_path))
+
+    first = FunctionCall(function=func, arguments={}).execute()
+    second = FunctionCall(function=func, arguments={}).execute()
+
+    assert isinstance(first.result, Weather)
+    assert isinstance(second.result, Weather)
+    assert second.result.city == "Lisbon"

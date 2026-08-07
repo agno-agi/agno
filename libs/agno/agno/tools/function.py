@@ -134,6 +134,69 @@ def _start_entrypoint_call(raw_results: List[Any]) -> int:
     return len(raw_results) - 1
 
 
+def _detached(value: Any) -> Any:
+    """A copy of a cached value for one entrypoint call to keep.
+
+    A hook may call the entrypoint more than once, and on a miss each call
+    returns its own object. Handing every call the same stored object would let
+    one call's edits show up in the next."""
+    from copy import deepcopy
+
+    try:
+        return deepcopy(value)
+    except Exception:
+        return value
+
+
+def _carries_media(value: Any, depth: int = 0) -> bool:
+    """Whether a ToolResult holding media sits anywhere inside this value.
+
+    Media never reaches a cache file, so a stored value that holds some did not
+    come from here, and one about to be stored would lose it. The walk follows
+    types rather than names, so an ordinary dict with an "images" key is not
+    mistaken for one."""
+    if depth > 32:
+        return False
+    if isinstance(value, ToolResult):
+        if value.images or value.videos or value.audios or value.files:
+            return True
+    if isinstance(value, BaseModel):
+        parts: Any = list(value.__dict__.values()) + list((value.__pydantic_extra__ or {}).values())
+    elif isinstance(value, dict):
+        parts = list(value.values())
+    elif isinstance(value, (list, tuple, set)):
+        parts = list(value)
+    else:
+        return False
+    return any(_carries_media(part, depth + 1) for part in parts)
+
+
+def _faithful(original: Any, rebuilt: Any, depth: int = 0) -> bool:
+    """Whether a value read back from the cache is the value that was stored.
+
+    Equality alone is too weak: an IntEnum member equals the plain integer it
+    was written as, and a hook that reads .name off it would work on the miss
+    and fail on the hit. Every node has to come back as its own type."""
+    if depth > 32:
+        return original == rebuilt
+    if type(original) is not type(rebuilt):
+        return False
+    if isinstance(original, BaseModel):
+        return all(
+            key in rebuilt.__dict__ and _faithful(value, rebuilt.__dict__[key], depth + 1)
+            for key, value in original.__dict__.items()
+        )
+    if isinstance(original, dict):
+        if set(map(type, original)) != set(map(type, rebuilt)) or original.keys() != rebuilt.keys():
+            return False
+        return all(_faithful(value, rebuilt[key], depth + 1) for key, value in original.items())
+    if isinstance(original, (list, tuple)):
+        if len(original) != len(rebuilt):
+            return False
+        return all(_faithful(a, b, depth + 1) for a, b in zip(original, rebuilt))
+    return bool(original == rebuilt)
+
+
 def _record_entrypoint_result(raw_results: List[Any], slot: int, result: Any) -> None:
     """Record what the entrypoint returned, detached from the caller.
 
@@ -158,6 +221,11 @@ def _unwrap_annotation(hint: Any) -> Any:
     reuse."""
     seen: List[Any] = []
     while True:
+        if isinstance(hint, types.GenericAlias) and hasattr(get_origin(hint), "__value__"):
+            # A subscripted generic alias (``Maybe[Weather]``) keeps what it was
+            # given only while it stays subscripted. Its __value__ is the body
+            # with the parameter still loose, so following it loses the Weather.
+            return hint
         unwrapped = getattr(hint, "__value__", hint)
         if unwrapped is hint or any(unwrapped is s for s in seen):
             return hint
@@ -1250,6 +1318,7 @@ class Function(BaseModel):
             # the file a cache hit reads.
             fd = os.open(cache_file, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
             with os.fdopen(fd, "r", encoding="utf-8") as f:
+                entry_id = os.fstat(f.fileno()).st_ino
                 cache_data = json.load(f)
 
             timestamp = cache_data.get("timestamp", 0)
@@ -1262,8 +1331,11 @@ class Function(BaseModel):
                 except _StaleCacheEntry as e:
                     log_debug(f"Discarding the cache entry for {self.name}: {e}")
 
-            # Remove the expired or unusable entry
-            cache_path.unlink()
+            # Remove the entry that was read, not whatever stands at that
+            # name now: a writer replaces the file whole, and unlinking by name
+            # alone would throw away an entry written since the read.
+            if cache_path.stat().st_ino == entry_id:
+                cache_path.unlink()
         except Exception:
             log_exception("Error reading cache")
 
@@ -1272,7 +1344,7 @@ class Function(BaseModel):
     def _survives_the_cache(self, cache_data: Dict[str, Any], result: Any) -> bool:
         """Whether reading this entry back gives what the tool just returned."""
         try:
-            return bool(self._cached_value(cache_data.get("result"), cache_data.get("result_type")) == result)
+            return _faithful(result, self._cached_value(cache_data.get("result"), cache_data.get("result_type")))
         except Exception:
             return False
 
@@ -1313,11 +1385,11 @@ class Function(BaseModel):
             except Exception as e:
                 raise _StaleCacheEntry(f"the payload is not a valid ToolResult: {e}")
 
-        if isinstance(value, ToolResult) and (value.images or value.videos or value.audios or value.files):
+        if _carries_media(value):
             # Media is never written to the cache, so an entry carrying it did
             # not come from here. Rebuilding it would hand the model media that
             # a cache file chose.
-            raise _StaleCacheEntry("a cached ToolResult must not carry media")
+            raise _StaleCacheEntry("a cached result must not carry media")
 
         return value
 
@@ -1342,8 +1414,15 @@ class Function(BaseModel):
 
         try:
             cache_data: Dict[str, Any] = {"timestamp": time(), "cache_format": CACHE_FORMAT}
+            if _carries_media(result):
+                # The cache holds JSON, and it excludes media by design: media
+                # is forwarded from the live result rather than rebuilt from a
+                # file. Skipping the write keeps the media intact on every call
+                # at the cost of re-executing.
+                log_debug(f"Skipping cache for {self.name}: a result carrying media is not cacheable")
+                return
             if isinstance(result, ToolResult):
-                if result.images or result.videos or result.audios or result.files:
+                if False:
                     # The cache holds JSON, and it excludes media by design:
                     # media is forwarded from the live result rather than
                     # rebuilt from a file. Skipping the write keeps the media
@@ -1739,7 +1818,7 @@ class FunctionCall(BaseModel):
         def execute_entrypoint(name, func, args):
             """Execute the entrypoint function."""
             if cached_result is not None:
-                return cached_result
+                return _detached(cached_result)
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
                 arguments.update(self.arguments)
@@ -1781,7 +1860,7 @@ class FunctionCall(BaseModel):
         chain = reduce(create_hook_wrapper, hooks, execute_entrypoint)
         return chain
 
-    def _save_entrypoint_result(self, entrypoint_args: Dict[str, Any], raw_results: List[Any]) -> None:
+    def _save_entrypoint_result(self, cache_file: str, raw_results: List[Any]) -> None:
         """Store what the entrypoint returned, so a hit replays the hooks over
         the same value the miss handed them.
 
@@ -1789,6 +1868,11 @@ class FunctionCall(BaseModel):
         value: a hook that retried produced several and a hook that answered by
         itself produced none, and replaying over either would not reproduce the
         miss. Those calls stay uncached.
+
+        The caller passes the file the lookup used. The tool and its hooks can
+        reach the run context and the arguments the key is built from, so a key
+        worked out after they have run may name a different file, and the entry
+        would land under whichever identity the call left behind.
         """
         from inspect import isasyncgen, isgenerator
 
@@ -1808,8 +1892,6 @@ class FunctionCall(BaseModel):
         if isgenerator(result_to_cache) or isasyncgen(result_to_cache):
             return
 
-        cache_key = self.function._get_cache_key(entrypoint_args, self.arguments)
-        cache_file = self.function._get_cache_file_path(cache_key)
         self.function._save_to_cache(cache_file, result_to_cache)
 
     def execute(self) -> FunctionExecutionResult:
@@ -1888,7 +1970,7 @@ class FunctionCall(BaseModel):
                 # Only cache non-generator results, and never re-save a result
                 # that was just served from cache
                 if cacheable and not from_cache:
-                    self._save_entrypoint_result(entrypoint_args, raw_results)
+                    self._save_entrypoint_result(cache_file, raw_results)
 
                 updated_session_state = None
                 run_context = entrypoint_args.get("run_context") or entrypoint_args.get("_agno_run_context")
@@ -2000,7 +2082,7 @@ class FunctionCall(BaseModel):
         async def execute_entrypoint_async(name, func, args):
             """Execute the entrypoint function asynchronously."""
             if cached_result is not None:
-                return cached_result
+                return _detached(cached_result)
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
                 arguments.update(self.arguments)
@@ -2016,7 +2098,7 @@ class FunctionCall(BaseModel):
         def execute_entrypoint(name, func, args):
             """Execute the entrypoint function synchronously."""
             if cached_result is not None:
-                return cached_result
+                return _detached(cached_result)
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
                 arguments.update(self.arguments)
@@ -2142,7 +2224,7 @@ class FunctionCall(BaseModel):
             # Only cache if not a generator, and never re-save a result that
             # was just served from cache
             if cacheable and not from_cache:
-                self._save_entrypoint_result(entrypoint_args, raw_results)
+                self._save_entrypoint_result(cache_file, raw_results)
 
             # For generators, don't capture updated_session_state -
             # session_state is passed by reference, so mutations made during
