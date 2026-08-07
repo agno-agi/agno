@@ -912,10 +912,13 @@ class StudioRunnerTools(Toolkit):
         The dispatch guards name both the component the caller asked for and
         the nested piece that failed, so they inspect a lenient rebuild first.
         A loss deeper than the guards see falls through to the rehydration
-        error, which names the component that raised. A pin failure already
-        names the pinned version and the remedy, which no guard improves on.
+        error, which names the component that raised. A dangling pin (a pinned
+        version that no longer exists, raised with no cause) already names the
+        version and the remedy, which no guard improves on; a pin that failed
+        to REBUILD wraps the real cause, and the guards describe that cause
+        better.
         """
-        if isinstance(error, ComponentPinError):
+        if isinstance(error, ComponentPinError) and error.__cause__ is None:
             return ComponentNeedsRegistryError(str(error))
         try:
             self._require_dispatchable(rebuild_leniently(), config, component_type, component_id, version=version)
@@ -1254,9 +1257,9 @@ class StudioRunnerTools(Toolkit):
         runner does not refuse it -- the shape is supported and the caching is
         deliberate -- but it says so rather than implying a guarantee it cannot
         make."""
-        from agno.utils.callables import is_callable_factory
         from agno.tools.function import Function
         from agno.tools.toolkit import Toolkit
+        from agno.utils.callables import is_callable_factory
 
         for node in [component] + self._descendants(component):
             for attribute in ("members", "tools", "steps"):

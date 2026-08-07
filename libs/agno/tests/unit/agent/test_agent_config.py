@@ -1145,3 +1145,20 @@ class TestMalformedFunctionDicts:
 
         lenient = Agent.from_dict(config, registry=Registry(), strict=False)
         assert lenient.tools == [{"name": "broken", "parameters": 5}]
+
+
+def test_strict_refuses_constructor_supplied_ambiguous_knowledge():
+    """Registry(knowledge=[first, second]) never passes through add_knowledge,
+    so ambiguity is computed at resolution, not trusted from the add path."""
+    from agno.exceptions import ComponentRehydrationError
+
+    class KB:
+        def __init__(self, marker):
+            self.name = "shared"
+            self.marker = marker
+
+    registry = Registry(knowledge=[KB("first"), KB("second")])
+    config = {"id": "kb-agent", "knowledge": {"name": "shared"}, "search_knowledge": True}
+
+    with pytest.raises(ComponentRehydrationError, match="two distinct"):
+        Agent.from_dict(config, registry=registry, strict=True)

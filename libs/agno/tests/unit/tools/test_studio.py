@@ -1778,3 +1778,73 @@ class TestEditPreservation:
         version = out.get("version") or out.get("draft_version")
         links = db.get_links(component_id="rw-wf", version=version)
         assert "rw-agent" in [link["child_component_id"] for link in links]
+
+
+class TestSnapshotSafety:
+    def test_create_team_pins_members_at_creation(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+        from agno.models.openai import OpenAIChat
+        from agno.registry import Registry
+        from agno.team.team import Team
+        from agno.tools.studio import StudioTools
+
+        db = SqliteDb(db_file=str(tmp_path / "create_pin.db"))
+        Agent(id="cp-member", name="Member").save(db=db)
+        model = OpenAIChat(id="gpt-4o-mini")
+        studio = StudioTools(registry=Registry(models=[model], dbs=[db]), db=db, teams=True)
+
+        out = _loads(
+            studio.create_team(name="CP Crew", instructions="i", member_ids=["cp-member"], model_id="gpt-4o-mini")
+        )
+        assert out.get("status") == "created"
+
+        links = db.get_links(component_id=out["id"], version=1)
+        assert [link["child_component_id"] for link in links] == ["cp-member"]
+
+    def test_unrelated_edit_carries_base_pins_forward(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+        from agno.registry import Registry
+        from agno.team.team import Team
+        from agno.tools.studio import StudioTools
+
+        db = SqliteDb(db_file=str(tmp_path / "carry.db"))
+        member = Agent(id="cf-member", name="Member", description="v1")
+        Team(id="cf-team", name="Team", members=[member]).save(db=db)
+        base_pin = next(
+            link["child_version"]
+            for link in db.get_links(component_id="cf-team", version=1)
+            if link["link_kind"] == "member"
+        )
+        member.description = "v2"
+        member.save(db=db)
+
+        studio = StudioTools(registry=Registry(dbs=[db]), db=db, teams=True)
+        out = _loads(studio.edit_team("cf-team", description="edited"))
+        assert out.get("status") == "edited"
+
+        version = out.get("version") or out.get("draft_version")
+        links = db.get_links(component_id="cf-team", version=version)
+        assert [link["child_version"] for link in links if link["link_kind"] == "member"] == [base_pin]
+
+    def test_unrelated_edit_keeps_the_stored_db_reference(self, tmp_path):
+        from agno.db.base import ComponentType
+        from agno.db.sqlite import SqliteDb
+        from agno.registry import Registry
+        from agno.tools.studio import StudioTools
+
+        db = SqliteDb(db_file=str(tmp_path / "dbref.db"))
+        db.upsert_component(component_id="opaque-agent", component_type=ComponentType.AGENT, name="A")
+        stored_db = {"id": "private", "type": "custom-opaque"}
+        db.upsert_config(
+            component_id="opaque-agent",
+            config={"id": "opaque-agent", "name": "A", "db": stored_db},
+            stage="published",
+        )
+
+        studio = StudioTools(registry=Registry(dbs=[db]), db=db)
+        out = _loads(studio.edit_agent("opaque-agent", description="edited"))
+        assert out.get("status") == "edited"
+
+        row = db.get_config(component_id="opaque-agent")
+        assert row["config"]["db"] == stored_db
+        assert row["config"]["description"] == "edited"

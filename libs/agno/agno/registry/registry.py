@@ -558,6 +558,18 @@ class Registry:
     def get_function(self, name: str) -> Optional[Callable]:
         return next((f for f in self.functions if f.__name__ == name), None)
 
+    def knowledge_name_is_ambiguous(self, name: str) -> bool:
+        """Whether two distinct knowledge instances claim ``name``.
+
+        Covers both construction paths: instances handed to the constructor
+        (scanned here) and instances add_knowledge refused to append (recorded
+        in the ambiguity set).
+        """
+        if name in self._ambiguous_knowledge_names:
+            return True
+        matches = [k for k in self.knowledge if getattr(k, "name", None) == name]
+        return len(matches) > 1 and any(match is not matches[0] for match in matches)
+
     def get_knowledge(self, name: str) -> Optional[Any]:
         """Get a knowledge instance by name from the registry."""
         if self.knowledge:

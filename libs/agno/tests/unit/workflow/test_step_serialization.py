@@ -285,12 +285,13 @@ class TestStepFromDict:
             "agent_id": "nonexistent-agent",
         }
 
+        from agno.workflow.step import UnresolvableCallableError
+
         step = Step.from_dict(data, strict=False)
 
         assert step.agent is None
-        output = step.executor(MagicMock())
-        assert output.success is False
-        assert "nonexistent-agent" in output.content
+        with pytest.raises(UnresolvableCallableError, match="nonexistent-agent"):
+            step.executor(MagicMock())
         assert step.to_dict().get("agent_id") == "nonexistent-agent"
         assert "executor_ref" not in step.to_dict()
 
@@ -315,11 +316,13 @@ class TestStepFromDict:
             "team_id": "nonexistent-team",
         }
 
+        from agno.workflow.step import UnresolvableCallableError
+
         step = Step.from_dict(data, strict=False)
 
         assert step.team is None
-        output = step.executor(MagicMock())
-        assert output.success is False
+        with pytest.raises(UnresolvableCallableError, match="nonexistent-team"):
+            step.executor(MagicMock())
         assert step.to_dict().get("team_id") == "nonexistent-team"
 
     def test_from_dict_with_executor(self, registry_with_functions):
@@ -468,10 +471,12 @@ class TestStrictExecutorRefs:
     def test_from_dict_unresolvable_executor_builds_a_refusing_placeholder_when_lenient(self):
         data = {"type": "Step", "name": "fn-step", "executor_ref": "missing_fn"}
 
+        from agno.workflow.step import UnresolvableCallableError
+
         step = Step.from_dict(data, registry=Registry(), strict=False)
 
-        output = step.executor(MagicMock())
-        assert output.success is False
+        with pytest.raises(UnresolvableCallableError, match="missing_fn"):
+            step.executor(MagicMock())
         assert step.to_dict().get("executor_ref") == "missing_fn"
 
 
@@ -489,9 +494,11 @@ class TestNestedWorkflowRefs:
     def test_from_dict_nested_workflow_placeholder_round_trips_when_lenient(self):
         data = {"type": "Step", "name": "nested", "workflow_id": "inner-wf"}
 
+        from agno.workflow.step import UnresolvableCallableError
+
         step = Step.from_dict(data, strict=False)
 
-        output = step.executor(MagicMock())
-        assert output.success is False
+        with pytest.raises(UnresolvableCallableError, match="inner-wf"):
+            step.executor(MagicMock())
         assert step.to_dict().get("workflow_id") == "inner-wf"
         assert "executor_ref" not in step.to_dict()

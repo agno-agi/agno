@@ -933,12 +933,7 @@ def from_dict(
     # since it holds live db/vector_db connections that cannot be serialized.
     if "knowledge" in config and isinstance(config["knowledge"], dict):
         knowledge_name = config["knowledge"].get("name")
-        if (
-            strict
-            and registry
-            and knowledge_name
-            and knowledge_name in getattr(registry, "_ambiguous_knowledge_names", set())
-        ):
+        if strict and registry and knowledge_name and registry.knowledge_name_is_ambiguous(knowledge_name):
             raise ComponentRehydrationError(
                 f"{component_label} references knowledge '{knowledge_name}', but two distinct "
                 "knowledge instances share that name, so the reference could bind the wrong "

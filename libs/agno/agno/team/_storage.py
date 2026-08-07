@@ -742,6 +742,33 @@ def _parse_team_mode(value: Optional[str]) -> Optional["TeamMode"]:
     return TeamMode(value)
 
 
+def _registry_copy(component: Any, label: str, strict: bool) -> Any:
+    """An isolated copy of a code-defined registry component.
+
+    Strict loads refuse a copy that is the shared registry instance (or a
+    failed copy): team initialization mutates member state, so sharing the
+    singleton corrupts every concurrent load. Lenient loads keep the old
+    shared-instance fallback with a warning.
+    """
+    try:
+        copied = component.deep_copy()
+    except Exception as e:
+        if strict:
+            raise ComponentRehydrationError(
+                f"{label} could not be copied out of the registry (deep_copy failed: {e}); a "
+                "strict load refuses to share the registry instance."
+            ) from e
+        log_warning(f"{label}: deep_copy failed ({e}); using the shared registry instance.")
+        return component
+    if copied is component:
+        if strict:
+            raise ComponentRehydrationError(
+                f"{label} deep_copy returned the shared registry instance; a strict load requires an isolated copy."
+            )
+        log_warning(f"{label}: deep_copy returned the shared registry instance.")
+    return copied
+
+
 def from_dict(
     cls,
     data: Dict[str, Any],
@@ -849,7 +876,11 @@ def from_dict(
                 # owning team runs (initialize_team sets team_id/_team on members).
                 if agent is None and registry is not None:
                     registered_agent = registry.get_agent(agent_id)
-                    agent = registered_agent.deep_copy() if registered_agent is not None else None
+                    agent = (
+                        _registry_copy(registered_agent, f"{component_label} member agent '{agent_id}'", strict)
+                        if registered_agent is not None
+                        else None
+                    )
                 if agent is not None:
                     members.append(agent)
                 elif strict:
@@ -905,7 +936,11 @@ def from_dict(
                 # Deep copy so the shared registry singleton isn't mutated on run.
                 if nested_team is None and registry is not None:
                     registered_team = registry.get_team(team_id)
-                    nested_team = registered_team.deep_copy() if registered_team is not None else None
+                    nested_team = (
+                        _registry_copy(registered_team, f"{component_label} member team '{team_id}'", strict)
+                        if registered_team is not None
+                        else None
+                    )
                 if nested_team is not None:
                     members.append(nested_team)
                 elif strict:
@@ -916,6 +951,14 @@ def from_dict(
                     )
                 else:
                     log_warning(f"Team member team not found in db or registry: {team_id}")
+            else:
+                if strict:
+                    raise ComponentRehydrationError(
+                        f"{component_label} member of unknown type {member_type!r} cannot be "
+                        "reconstructed. Fix the stored config, or pass strict=False to load the "
+                        "team without it."
+                    )
+                log_warning(f"Team member of unknown type skipped: {member_type!r}")
 
     # --- Handle reasoning_model reconstruction ---
     # TODO: implement reasoning model deserialization
@@ -1039,12 +1082,7 @@ def from_dict(
     # since it holds live db/vector_db connections that cannot be serialized.
     if "knowledge" in config and isinstance(config["knowledge"], dict):
         knowledge_name = config["knowledge"].get("name")
-        if (
-            strict
-            and registry
-            and knowledge_name
-            and knowledge_name in getattr(registry, "_ambiguous_knowledge_names", set())
-        ):
+        if strict and registry and knowledge_name and registry.knowledge_name_is_ambiguous(knowledge_name):
             raise ComponentRehydrationError(
                 f"{component_label} references knowledge '{knowledge_name}', but two distinct "
                 "knowledge instances share that name, so the reference could bind the wrong "

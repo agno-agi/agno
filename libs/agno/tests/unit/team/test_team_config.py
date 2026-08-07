@@ -1380,3 +1380,20 @@ def test_from_dict_without_registry_loads_registry_free_tools_under_strict():
     team = Team.from_dict(config, strict=True)
 
     assert team.tools is not None and len(team.tools) == 2
+
+
+def test_strict_refuses_a_member_of_unknown_type():
+    """A member kind the loader does not model must refuse under strict, not
+    silently dispatch a reduced team."""
+    from agno.exceptions import ComponentRehydrationError
+
+    config = {
+        "id": "future-team",
+        "members": [{"type": "future-member", "future_id": "x"}],
+    }
+
+    with pytest.raises(ComponentRehydrationError, match="future-member"):
+        Team.from_dict(config, strict=True)
+
+    lenient = Team.from_dict(config, strict=False)
+    assert lenient.members == []

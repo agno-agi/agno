@@ -2315,7 +2315,7 @@ class TestMemberStructureFidelity:
         runner = StudioRunnerTools(registry=registry, db=db)
 
         result = _loads(runner.run_team("crew", "hello"))
-        assert "shared registry instance of member 'worker'" in result["error"]
+        assert "deep_copy returned the shared registry instance" in result["error"]
 
     def test_callable_factory_members_and_tools_do_not_crash_the_graph_walk(self):
         """members= and tools= accept callable factories, so the nested-tools walk

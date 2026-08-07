@@ -119,7 +119,7 @@ from agno.workflow.condition import Condition
 from agno.workflow.loop import Loop
 from agno.workflow.parallel import Parallel
 from agno.workflow.router import Router
-from agno.workflow.step import Step
+from agno.workflow.step import Step, UnresolvableCallableError
 from agno.workflow.steps import Steps
 from agno.workflow.types import (
     StepInput,
@@ -1132,18 +1132,27 @@ class Workflow:
             # The links table keys on (link_kind, link_key): a remaining
             # duplicate (steps sharing a name across containers) would fail
             # the whole save, so keep the first and say what was dropped.
-            seen_link_keys: set = set()
+            seen_links: Dict[tuple, Dict[str, Any]] = {}
             deduped_links: List[Dict[str, Any]] = []
             for link in all_links:
                 dedupe_key = (link.get("link_kind"), link.get("link_key"))
-                if dedupe_key in seen_link_keys:
-                    log_warning(
-                        f"Workflow '{self.id}': dropping duplicate {link.get('link_kind')} link for "
-                        f"key '{link.get('link_key')}' (child '{link.get('child_component_id')}'); "
-                        "give steps distinct names so each pin is kept."
+                existing = seen_links.get(dedupe_key)
+                if existing is not None:
+                    if (existing.get("child_component_id"), existing.get("child_version")) == (
+                        link.get("child_component_id"),
+                        link.get("child_version"),
+                    ):
+                        continue
+                    # A save that silently drops one of two different pins
+                    # would float that child to its latest version forever.
+                    raise ValueError(
+                        f"Workflow '{self.id}' produces two different links for key "
+                        f"'{link.get('link_key')}' ('{existing.get('child_component_id')}' "
+                        f"v{existing.get('child_version')} and "
+                        f"'{link.get('child_component_id')}' v{link.get('child_version')}); "
+                        "give steps distinct names so every pin is kept."
                     )
-                    continue
-                seen_link_keys.add(dedupe_key)
+                seen_links[dedupe_key] = link
                 deduped_links.append(link)
             all_links = deduped_links
 
@@ -2242,6 +2251,10 @@ class Workflow:
                         )
                     except RunCancelledException:
                         raise
+                    except UnresolvableCallableError:
+                        # A placeholder for an unresolved reference executed: skipping
+                        # would silently complete a run that could not do its work.
+                        raise
                     except Exception as step_error:
                         # Handle step execution error based on on_error policy
                         step_on_error = (
@@ -2730,6 +2743,10 @@ class Workflow:
                                 ):
                                     yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
                     except RunCancelledException:
+                        raise
+                    except UnresolvableCallableError:
+                        # A placeholder for an unresolved reference executed: skipping
+                        # would silently complete a run that could not do its work.
                         raise
                     except Exception as step_error:
                         step_error_occurred = True
@@ -3268,6 +3285,10 @@ class Workflow:
                             add_session_state_to_context=add_session_state_to_context,
                         )
                     except RunCancelledException:
+                        raise
+                    except UnresolvableCallableError:
+                        # A placeholder for an unresolved reference executed: skipping
+                        # would silently complete a run that could not do its work.
                         raise
                     except Exception as step_error:
                         # Handle step execution error based on on_error policy
@@ -3809,6 +3830,10 @@ class Workflow:
                         if draining_after_cancel:
                             raise RunCancelledException(f"Run {workflow_run_response.run_id} was cancelled")
                     except RunCancelledException:
+                        raise
+                    except UnresolvableCallableError:
+                        # A placeholder for an unresolved reference executed: skipping
+                        # would silently complete a run that could not do its work.
                         raise
                     except Exception as step_error:
                         step_error_occurred = True
@@ -6389,6 +6414,10 @@ class Workflow:
                     )
                 except RunCancelledException:
                     raise
+                except UnresolvableCallableError:
+                    # A placeholder for an unresolved reference executed: skipping
+                    # would silently complete a run that could not do its work.
+                    raise
                 except Exception as step_error:
                     # Handle step execution error based on on_error policy
                     step_on_error = getattr(step, "on_error", "fail") if isinstance(step, Step) else "fail"
@@ -7416,6 +7445,10 @@ class Workflow:
                         raise RunCancelledException(f"Run {workflow_run_response.run_id} was cancelled")
                 except RunCancelledException:
                     raise
+                except UnresolvableCallableError:
+                    # A placeholder for an unresolved reference executed: skipping
+                    # would silently complete a run that could not do its work.
+                    raise
                 except Exception as step_error:
                     step_error_occurred = True
                     step_error_exception = step_error
@@ -8402,6 +8435,10 @@ class Workflow:
                     )
                 except RunCancelledException:
                     raise
+                except UnresolvableCallableError:
+                    # A placeholder for an unresolved reference executed: skipping
+                    # would silently complete a run that could not do its work.
+                    raise
                 except Exception as step_error:
                     # Handle step execution error based on on_error policy
                     step_on_error = getattr(step, "on_error", "fail") if isinstance(step, Step) else "fail"
@@ -9164,6 +9201,10 @@ class Workflow:
                     if draining_after_cancel:
                         raise RunCancelledException(f"Run {workflow_run_response.run_id} was cancelled")
                 except RunCancelledException:
+                    raise
+                except UnresolvableCallableError:
+                    # A placeholder for an unresolved reference executed: skipping
+                    # would silently complete a run that could not do its work.
                     raise
                 except Exception as step_error:
                     step_error_occurred = True

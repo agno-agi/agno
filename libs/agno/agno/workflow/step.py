@@ -136,9 +136,9 @@ def _unresolvable_ref_placeholder(config: Dict[str, Any], kind: str, ref: Any) -
     """
 
     def _unresolvable(step_input: StepInput) -> StepOutput:
-        return StepOutput(
-            content=f"Step {kind} '{ref}' is not resolvable from the registry or db, so this step cannot execute.",
-            success=False,
+        raise UnresolvableCallableError(
+            f"Step {kind} '{ref}' is not resolvable from the registry or db, so this step "
+            "cannot execute. Restore the reference and reload."
         )
 
     # An unnamed Step derives its name from the executor, so the placeholder
@@ -406,7 +406,7 @@ class Step:
                     continue
                 if link.get("child_component_id") != child_id:
                     continue
-                if link.get("link_key") == step_link_key:
+                if link.get("link_key") in (step_link_key, f"{step_link_key}#else"):
                     return link.get("child_version")
                 if fallback is None:
                     fallback = link.get("child_version")
@@ -426,7 +426,19 @@ class Step:
                     try:
                         # Deep copy to isolate mutable state between concurrent requests
                         agent = registry_agent.deep_copy()
+                        if agent is registry_agent and strict:
+                            raise ComponentRehydrationError(
+                                f"Registry agent '{agent_id}' deep_copy returned the shared "
+                                "instance; a strict load requires an isolated copy."
+                            )
+                    except ComponentRehydrationError:
+                        raise
                     except Exception as e:
+                        if strict:
+                            raise ComponentRehydrationError(
+                                f"Registry agent '{agent_id}' could not be copied (deep_copy "
+                                f"failed: {e}); a strict load refuses the shared registry instance."
+                            ) from e
                         log_warning(
                             f"deep_copy() failed for registry agent '{agent_id}', using shared instance: {e}",
                         )
@@ -490,7 +502,19 @@ class Step:
                     try:
                         # Deep copy to isolate mutable state between concurrent requests
                         team = registry_team.deep_copy()
+                        if team is registry_team and strict:
+                            raise ComponentRehydrationError(
+                                f"Registry team '{team_id}' deep_copy returned the shared "
+                                "instance; a strict load requires an isolated copy."
+                            )
+                    except ComponentRehydrationError:
+                        raise
                     except Exception as e:
+                        if strict:
+                            raise ComponentRehydrationError(
+                                f"Registry team '{team_id}' could not be copied (deep_copy "
+                                f"failed: {e}); a strict load refuses the shared registry instance."
+                            ) from e
                         log_warning(
                             f"deep_copy() failed for registry team '{team_id}', using shared instance: {e}",
                         )
@@ -563,9 +587,9 @@ class Step:
             # Create a placeholder executor so validation doesn't crash.
             # The step won't be re-executable until Registry supports workflows.
             def _placeholder(step_input: StepInput) -> StepOutput:
-                return StepOutput(
-                    content=f"Nested workflow '{workflow_id}' cannot be re-executed (not yet reconstructable)",
-                    success=False,
+                raise UnresolvableCallableError(
+                    f"Nested workflow '{workflow_id}' cannot be re-executed (not yet "
+                    "reconstructable). Load the parent strictly for a typed refusal instead."
                 )
 
             _placeholder.__name__ = str(workflow_id)

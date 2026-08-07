@@ -1050,7 +1050,7 @@ class StudioTools(Toolkit):
                 add_datetime_to_context=add_datetime_to_context,
             )
 
-            version = _persist_only(team, db)
+            version = _persist_only(team, db, links=self._links_for_component(team))
             log_debug(f"StudioTools created team id={team_id} members={member_ids} version={version}")
             return json.dumps(
                 {
@@ -1107,7 +1107,7 @@ class StudioTools(Toolkit):
                 db=db,
             )
 
-            version = _persist_only(workflow, db)
+            version = _persist_only(workflow, db, links=self._links_for_component(workflow))
             log_debug(f"StudioTools created workflow id={workflow_id} steps={len(steps)} version={version}")
             return json.dumps(
                 {
@@ -1328,7 +1328,7 @@ class StudioTools(Toolkit):
             if add_datetime_to_context is not None:
                 team.add_datetime_to_context = add_datetime_to_context
 
-            result = self._save_edit(team)
+            result = self._save_edit(team, replaced_keys={"members"} if member_ids is not None else None)
             log_debug(f"StudioTools edited team id={team.id} result={result}")
             return json.dumps({"status": "edited", "id": getattr(team, "id", None) or team_id, **result})
         except Exception as e:
@@ -1395,7 +1395,7 @@ class StudioTools(Toolkit):
                     return json.dumps({"error": err})
                 wf.steps = steps
 
-            result = self._save_edit(wf)
+            result = self._save_edit(wf, replaced_keys={"steps"} if step_specs is not None else None)
             log_debug(f"StudioTools edited workflow id={wf.id} result={result}")
             return json.dumps({"status": "edited", "id": getattr(wf, "id", None) or workflow_id, **result})
         except Exception as e:
@@ -2190,8 +2190,17 @@ class StudioTools(Toolkit):
         member/step links so the new version stays pinned.
         """
         config = _component_to_dict(component)
-        self._preserve_unresolved_keys(getattr(component, "id", None), config, replaced_keys or set())
-        links = self._links_for_component(component)
+        replaced = replaced_keys or set()
+        component_id = getattr(component, "id", None)
+        self._preserve_unresolved_keys(component_id, config, replaced)
+        if replaced & {"members", "steps"}:
+            # The edit replaced the composition: pin the new children at their
+            # current versions, the same snapshot a create takes.
+            links = self._links_for_component(component)
+        else:
+            # Untouched composition keeps the base version's pins verbatim,
+            # including link kinds this walk does not reconstruct.
+            links = self._base_links(component_id)
         if self.enable_versions:
             version = self._upsert_draft(component, config=config, links=links)
             return {"draft_version": version, "stage": "draft"}
@@ -2210,9 +2219,24 @@ class StudioTools(Toolkit):
         for key in self._LENIENT_DROPPABLE_KEYS:
             if key in replaced_keys:
                 continue
+            if key == "db":
+                # No edit surface changes the db, and the runtime catalog-db
+                # assignment must not overwrite the stored reference: the base
+                # config's db key is authoritative, present or absent.
+                config.pop("db", None)
+                if "db" in base:
+                    config["db"] = base["db"]
+                continue
             if key in base and key not in config:
                 config[key] = base[key]
                 log_debug(f"StudioTools: preserving stored '{key}' the lenient load could not resolve.")
+
+    def _base_links(self, component_id: Optional[str]) -> Optional[List[Dict[str, Any]]]:
+        """The base version's links, carried forward verbatim on an edit that
+        did not replace the component's composition."""
+        if self.db is None or component_id is None:
+            return None
+        return self._runner_tools._load_links_from_db(component_id, version=self._edit_base_version(component_id))
 
     def _links_for_component(self, component: Component) -> Optional[List[Dict[str, Any]]]:
         """Member/step links for a component snapshot, pinned at each child's
@@ -2283,13 +2307,21 @@ class StudioTools(Toolkit):
             steps = component.steps if isinstance(component.steps, list) else []
             for position, step in enumerate(steps):
                 walk(step, position)
-            seen_keys: Set[tuple] = set()
+            seen_links: Dict[tuple, Dict[str, Any]] = {}
             deduped: List[Dict[str, Any]] = []
             for link in links:
                 dedupe_key = (link.get("link_kind"), link.get("link_key"))
-                if dedupe_key in seen_keys:
-                    continue
-                seen_keys.add(dedupe_key)
+                existing = seen_links.get(dedupe_key)
+                if existing is not None:
+                    if existing.get("child_component_id") == link.get("child_component_id"):
+                        continue
+                    raise ValueError(
+                        f"Workflow '{getattr(component, 'id', None)}' produces two different links "
+                        f"for key '{link.get('link_key')}' ('{existing.get('child_component_id')}' "
+                        f"and '{link.get('child_component_id')}'); give steps distinct names so "
+                        "every pin is kept."
+                    )
+                seen_links[dedupe_key] = link
                 deduped.append(link)
             links = deduped
         else:

@@ -934,3 +934,83 @@ class TestWritePathFidelity:
         links = db.get_links(component_id="parent-wf", version=1)
         nested = [link for link in links if link["child_component_id"] == "sub-wf"]
         assert nested and nested[0]["child_version"] is not None
+
+
+class TestLenientRunHonesty:
+    def test_default_lenient_run_does_not_false_complete_over_a_placeholder(self, tmp_path):
+        """A run over an unresolved step must fail loudly, never report
+        COMPLETED with the step silently skipped."""
+        from agno.db.sqlite import SqliteDb
+        from agno.registry import Registry
+        from agno.run.base import RunStatus
+        from agno.workflow.step import Step, StepInput, StepOutput, UnresolvableCallableError
+
+        def enrich(step_input: StepInput) -> StepOutput:
+            return StepOutput(content="x")
+
+        db = SqliteDb(db_file=str(tmp_path / "honest.db"))
+        Workflow(id="h-wf", name="WF", steps=[Step(name="s1", executor=enrich)]).save(db=db)
+
+        loaded = Workflow.load(id="h-wf", db=db, registry=Registry())
+        assert loaded is not None
+
+        try:
+            output = loaded.run(input="go")
+            status = getattr(output, "status", None)
+        except UnresolvableCallableError:
+            status = "refused"
+        assert status != RunStatus.completed
+
+
+class TestSaveCollisions:
+    def test_save_fails_loudly_when_two_pins_collide_on_one_key(self, tmp_path):
+        from agno.agent.agent import Agent
+        from agno.db.sqlite import SqliteDb
+        from agno.workflow.loop import Loop
+        from agno.workflow.step import Step
+
+        db = SqliteDb(db_file=str(tmp_path / "collide.db"))
+        # Auto-generated step_ids keep link keys unique; an explicit shared
+        # step_id is the collision the save must refuse to half-persist.
+        workflow = Workflow(
+            id="col-wf",
+            name="WF",
+            steps=[
+                Loop(name="l1", steps=[Step(step_id="dup", name="dup", agent=Agent(id="col-a", name="A"))]),
+                Loop(name="l2", steps=[Step(step_id="dup", name="dup", agent=Agent(id="col-b", name="B"))]),
+            ],
+        )
+
+        assert workflow.save(db=db) is None
+
+    def test_else_branch_pin_resolves_to_its_own_version(self, tmp_path):
+        """The same child id pinned differently in the if and else branches
+        must reload each branch at its own pin."""
+        from agno.agent.agent import Agent
+        from agno.db.sqlite import SqliteDb
+        from agno.workflow.condition import Condition
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import get_workflow_by_id
+
+        db = SqliteDb(db_file=str(tmp_path / "else_pin.db"))
+        if_agent = Agent(id="eb-agent", name="A", description="if-version")
+        else_agent = Agent(id="eb-agent", name="A", description="else-version")
+        Workflow(
+            id="eb-wf",
+            name="WF",
+            steps=[
+                Condition(
+                    name="branch",
+                    evaluator=True,
+                    steps=[Step(name="if-step", agent=if_agent)],
+                    else_steps=[Step(name="else-step", agent=else_agent)],
+                )
+            ],
+        ).save(db=db)
+
+        loaded = get_workflow_by_id(db=db, id="eb-wf", strict=True)
+
+        assert loaded is not None
+        condition = loaded.steps[0]
+        assert condition.steps[0].agent.description == "if-version"
+        assert condition.else_steps[0].agent.description == "else-version"
