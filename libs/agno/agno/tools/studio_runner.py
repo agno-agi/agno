@@ -551,7 +551,14 @@ class StudioRunnerTools(Toolkit):
         was_model, now_model = getattr(original, "model", None), getattr(fresh, "model", None)
         if was_model is not None and now_model is not None:
             # A copier legitimately rebuilds the model object, so compare which
-            # model it is rather than which instance.
+            # model it is rather than which instance -- but the class as well as
+            # the id, since two providers share an id readily and answering from
+            # the other one is a different pipeline under the same name.
+            # Connection settings are deliberately NOT compared here: they are
+            # never serialized, so a rebuild always lacks them, and refusing on
+            # that would refuse every DB-loaded component (tracked in #9420).
+            if type(was_model) is not type(now_model):
+                return True
             if getattr(was_model, "id", None) != getattr(now_model, "id", None):
                 return True
         was_instructions = getattr(original, "instructions", None)
@@ -1323,6 +1330,33 @@ class StudioRunnerTools(Toolkit):
                 "dispatch it separately."
             )
 
+    @staticmethod
+    def _caller_user_id(run_context: Optional[RunContext], component: Any) -> Optional[str]:
+        """The user a dispatched run belongs to, or a refusal.
+
+        The runner's whole point is that per-user state lands on the human who
+        asked. Passing None for a caller who HAS a context but no user is
+        indistinguishable from passing no override at all, so the target falls
+        back to its own configured user_id -- and an anonymous run is written
+        into that user's memory and learning. That is the failure this toolkit
+        exists to prevent, so it is refused rather than attributed.
+
+        A caller with no context at all is a different case: a direct Python
+        call is not claiming to be anyone, and the component's own
+        configuration is the only identity there is."""
+        if run_context is None:
+            return None
+        if run_context.user_id is not None:
+            return run_context.user_id
+        target_user = getattr(component, "user_id", None)
+        if target_user is None:
+            return None
+        label = getattr(component, "id", None) or getattr(component, "name", None) or "component"
+        raise ComponentNotDispatchableError(
+            f"The caller has no user, and '{label}' is configured for user '{target_user}', so this run would be "
+            "written into that user's memory and learning. Give the caller a user_id, or clear the target's."
+        )
+
     def _registry_instances(self) -> List[Any]:
         """The shared singletons a rebuild can hand back instead of a copy."""
         if self.registry is None:
@@ -1684,7 +1718,7 @@ class StudioRunnerTools(Toolkit):
             response = agent.run(
                 message,
                 stream=False,
-                user_id=_agno_run_context.user_id if _agno_run_context is not None else None,
+                user_id=self._caller_user_id(_agno_run_context, agent),
                 session_id=self._sub_session_id(_agno_run_context, "agent", component_id),
             )
             return self._run_payload("agent_id", component_id, response)
@@ -1723,7 +1757,7 @@ class StudioRunnerTools(Toolkit):
             response = team.run(
                 message,
                 stream=False,
-                user_id=_agno_run_context.user_id if _agno_run_context is not None else None,
+                user_id=self._caller_user_id(_agno_run_context, team),
                 session_id=self._sub_session_id(_agno_run_context, "team", component_id),
             )
             return self._run_payload("team_id", component_id, response)
@@ -1762,7 +1796,7 @@ class StudioRunnerTools(Toolkit):
             response = wf.run(
                 input=message,
                 stream=False,
-                user_id=_agno_run_context.user_id if _agno_run_context is not None else None,
+                user_id=self._caller_user_id(_agno_run_context, wf),
                 session_id=self._sub_session_id(_agno_run_context, "workflow", component_id),
             )
             return self._run_payload("workflow_id", component_id, response)
@@ -1793,7 +1827,7 @@ class StudioRunnerTools(Toolkit):
             response = await agent.arun(
                 message,
                 stream=False,
-                user_id=_agno_run_context.user_id if _agno_run_context is not None else None,
+                user_id=self._caller_user_id(_agno_run_context, agent),
                 session_id=self._sub_session_id(_agno_run_context, "agent", component_id),
             )
             return self._run_payload("agent_id", component_id, response)
@@ -1823,7 +1857,7 @@ class StudioRunnerTools(Toolkit):
             response = await team.arun(
                 message,
                 stream=False,
-                user_id=_agno_run_context.user_id if _agno_run_context is not None else None,
+                user_id=self._caller_user_id(_agno_run_context, team),
                 session_id=self._sub_session_id(_agno_run_context, "team", component_id),
             )
             return self._run_payload("team_id", component_id, response)
@@ -1855,7 +1889,7 @@ class StudioRunnerTools(Toolkit):
             response = await wf.arun(
                 input=message,
                 stream=False,
-                user_id=_agno_run_context.user_id if _agno_run_context is not None else None,
+                user_id=self._caller_user_id(_agno_run_context, wf),
                 session_id=self._sub_session_id(_agno_run_context, "workflow", component_id),
             )
             return self._run_payload("workflow_id", component_id, response)
