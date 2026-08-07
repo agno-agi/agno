@@ -8004,6 +8004,8 @@ def _continue_run_stream(
                 log_error(f"Validation failed: {str(e)} | Check: {e.check_trigger}")
                 _cleanup_and_store(team, run_response=run_response, session=session)
                 yield run_error
+                if yield_run_output:
+                    yield run_response
                 break
 
             except KeyboardInterrupt:
@@ -8047,6 +8049,8 @@ def _continue_run_stream(
                 log_error(f"Error in Team continue_run stream: {str(e)}")
                 _cleanup_and_store(team, run_response=run_response, session=session)
                 yield run_error
+                if yield_run_output:
+                    yield run_response
     finally:
         _disconnect_connectable_tools(team)
         cleanup_run(run_response.run_id)  # type: ignore
@@ -8103,7 +8107,7 @@ async def _acontinue_run_background_stream(
     4. Yields SSE-formatted strings via an asyncio.Queue
     """
     from agno.team._session import asave_session
-    from agno.team._storage import _aread_or_create_session, _update_metadata
+    from agno.team._storage import _aread_or_create_session, _aread_session, _update_metadata
 
     _run_id = run_id or (run_response.run_id if run_response else None)
     if not _run_id:
@@ -8121,18 +8125,20 @@ async def _acontinue_run_background_stream(
     prior_object_status = _as_run_status(getattr(run_response, "status", None)) if run_response is not None else None
 
     if run_response is not None:
-        # A caller object that still reads paused over a stored run that reads
-        # COMPLETED or CANCELLED is stale: writing it back republishes the run
-        # as a pending approval, and its gated tool can then be approved a
-        # second time. Other statuses are not checked here.
+        # Continuability is decided from the STORED run, never from the caller's
+        # object: a stale paused object over a finished run would republish it
+        # as a pending approval, and a gated tool could then be approved a
+        # second time. fork and regenerate branch off a finished run and stay
+        # allowed. The run_id-only shape resolves the stored run downstream and
+        # has its own cancelled refusal.
         if (
             isinstance(status_before_takeover, RunStatus)
             and status_before_takeover in (RunStatus.completed, RunStatus.cancelled)
-            and getattr(run_response, "is_paused", False)
+            and not (fork or regenerate)
         ):
             raise RunNotContinuableError(
-                f"Cannot continue run {_run_id}: the stored run has status {status_before_takeover.value}, "
-                "but the run_response passed in still reads as paused. Re-read the run before continuing it. "
+                f"Cannot continue run {_run_id}: the stored run has status {status_before_takeover.value} "
+                "and cannot be continued in place. Pass fork=True to branch off a finished run. "
                 "The stored run is unchanged."
             )
         run_response.status = RunStatus.running
@@ -8219,20 +8225,39 @@ async def _acontinue_run_background_stream(
                         status_before_takeover if status_before_takeover is not None else prior_object_status
                     )
                     if run_response is not None and restore_status is not None:
-                        # A legacy string status is restored as-is; to_dict
-                        # serializes both shapes.
-                        run_response.status = cast(RunStatus, restore_status)
-                        # Persist into a fresh session read so runs persisted by
-                        # others since step 1 survive this write, and only while
-                        # the stored run still carries step 1's RUNNING marker;
-                        # any other value means another request owns the run now.
-                        fresh_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
-                        fresh_run = next(
-                            (r for r in fresh_session.runs or [] if getattr(r, "run_id", None) == _run_id), None
+                        # Persist into a fresh, uncached session read so runs
+                        # persisted by others since step 1 survive this write,
+                        # and only while the stored run still carries step 1's
+                        # RUNNING marker; any other value means another request
+                        # owns the run now. The read comes FIRST: with
+                        # cache_session the session's entry for this run IS
+                        # run_response, so mutating it before the read would
+                        # erase the marker being tested.
+                        fresh_session = cast(
+                            Optional[TeamSession],
+                            await _aread_session(team, session_id=session_id, user_id=user_id),
                         )
-                        if fresh_run is not None and fresh_run.status == RunStatus.running:
-                            fresh_session.upsert_run(run_response=run_response)
-                            await asave_session(team, session=fresh_session)
+                        if fresh_session is None:
+                            # The read failed. Restoring into the step-1 session
+                            # trades a rare clobber of a concurrent write for a
+                            # guaranteed restore; a run left RUNNING can never
+                            # be resumed.
+                            run_response.status = cast(RunStatus, restore_status)
+                            team_session.upsert_run(run_response=run_response)
+                            await asave_session(team, session=team_session)
+                        else:
+                            fresh_run = next(
+                                (r for r in fresh_session.runs or [] if getattr(r, "run_id", None) == _run_id),
+                                None,
+                            )
+                            if fresh_run is not None and _as_run_status(fresh_run.status) == RunStatus.running:
+                                # A legacy string status is restored as-is;
+                                # to_dict serializes both shapes.
+                                run_response.status = cast(RunStatus, restore_status)
+                                fresh_session.upsert_run(run_response=run_response)
+                                await asave_session(team, session=fresh_session)
+                                if team.cache_session:
+                                    team._cached_session = fresh_session
                 except Exception:
                     log_error(
                         f"Failed to restore the pre-continue state for background continue-run stream {_run_id}",
@@ -8245,14 +8270,26 @@ async def _acontinue_run_background_stream(
                 # marker, so a state another request persisted meanwhile stays.
                 try:
                     if run_response is not None:
-                        run_response.status = RunStatus.error
-                        fresh_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
-                        fresh_run = next(
-                            (r for r in fresh_session.runs or [] if getattr(r, "run_id", None) == _run_id), None
+                        # Same rules as the restore above, including read
+                        # before mutation.
+                        fresh_session = cast(
+                            Optional[TeamSession],
+                            await _aread_session(team, session_id=session_id, user_id=user_id),
                         )
-                        if fresh_run is not None and fresh_run.status == RunStatus.running:
-                            fresh_session.upsert_run(run_response=run_response)
-                            await asave_session(team, session=fresh_session)
+                        run_response.status = RunStatus.error
+                        if fresh_session is None:
+                            team_session.upsert_run(run_response=run_response)
+                            await asave_session(team, session=team_session)
+                        else:
+                            fresh_run = next(
+                                (r for r in fresh_session.runs or [] if getattr(r, "run_id", None) == _run_id),
+                                None,
+                            )
+                            if fresh_run is not None and _as_run_status(fresh_run.status) == RunStatus.running:
+                                fresh_session.upsert_run(run_response=run_response)
+                                await asave_session(team, session=fresh_session)
+                                if team.cache_session:
+                                    team._cached_session = fresh_session
                 except Exception:
                     log_error(
                         f"Failed to persist error state for background continue-run stream {_run_id}",
@@ -8303,8 +8340,14 @@ async def _acontinue_run_background_stream(
                 else:
                     # The run that actually executed. final_output covers the
                     # run_id-only path, where run_response stays None; a re-pause
-                    # or cancellation must not be advertised as completed.
-                    produced_status = final_output.status if final_output is not None else None
+                    # or cancellation must not be advertised as completed. A
+                    # fork or regenerate produces a run with a DIFFERENT id;
+                    # its status must not land under this run's key.
+                    produced_status = (
+                        final_output.status
+                        if final_output is not None and getattr(final_output, "run_id", None) == _run_id
+                        else None
+                    )
                     if produced_status is None and run_response is not None:
                         produced_status = run_response.status
                     if isinstance(produced_status, RunStatus) and produced_status in (
@@ -9600,6 +9643,8 @@ async def _acontinue_run_stream(
                 if team_session is not None:
                     await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 yield run_error
+                if yield_run_output:
+                    yield run_response
                 break
 
             except (KeyboardInterrupt, asyncio.CancelledError, GeneratorExit) as cancel_exc:
@@ -9663,6 +9708,8 @@ async def _acontinue_run_stream(
                 if team_session is not None:
                     await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 yield run_error
+                if yield_run_output:
+                    yield run_response
 
     finally:
         _disconnect_connectable_tools(team)

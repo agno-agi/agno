@@ -4492,10 +4492,8 @@ async def test_a_stale_run_response_cannot_resurrect_a_finished_run(tmp_path):
     assert status == RunStatus.completed, f"a finished run was resurrected to {status!r}"
 
     team4 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
-    try:
-        await team4.acontinue_run(run_id=run1.run_id, session_id=session_id, requirements=good)
-    except Exception:
-        pass
+    retry = await team4.acontinue_run(run_id=run1.run_id, session_id=session_id, requirements=good)
+    assert retry.status == RunStatus.completed
     assert _EXECUTED == ["a@example.com"], f"the gated tool ran a second time: {_EXECUTED}"
 
 
@@ -4903,10 +4901,27 @@ def run_export(target: str) -> str:
     raise AssertionError("externally executed tools never run in-process")
 
 
+_PINGS: List[Any] = []
+
+
+@tool(requires_user_input=True)
+@approval(type="required")
+def run_ping() -> str:
+    _PINGS.append("ping")
+    return "pong"
+
+
+_APPROVAL_TOOL_ARGS: Dict[str, Dict[str, Any]] = {
+    "send_note": {"body": "hi"},
+    "run_export": {"target": "reports"},
+    "run_ping": {},
+}
+
+
 def _approval_team(db: SqliteDb, resuming: bool, member_tool=None) -> Team:
     member_tool = member_tool if member_tool is not None else send_note
     tool_name = member_tool.name
-    tool_args = {"body": "hi"} if tool_name == "send_note" else {"target": "reports"}
+    tool_args = _APPROVAL_TOOL_ARGS[tool_name]
     agent = Agent(
         name="Noter",
         id="noter",
@@ -4936,7 +4951,7 @@ def _approval_team(db: SqliteDb, resuming: bool, member_tool=None) -> Team:
     )
 
 
-def _resolve_required_approval(db: SqliteDb, run1, resolution_data) -> None:
+def _resolve_required_approval(db: SqliteDb, run1, resolution_data, status: str = "approved") -> None:
     approvals, _ = db.get_approvals(run_id=run1.run_id, approval_type="required", limit=5)
     if not approvals:
         for r in run1.requirements or []:
@@ -4947,7 +4962,7 @@ def _resolve_required_approval(db: SqliteDb, run1, resolution_data) -> None:
                     approvals = [record]
                     break
     assert approvals, "no approval record was created for the paused run"
-    db.update_approval(approvals[0]["id"], status="approved", resolution_data=resolution_data)
+    db.update_approval(approvals[0]["id"], status=status, resolution_data=resolution_data)
 
 
 def test_an_admin_approved_member_user_input_run_completes(tmp_path):
@@ -5021,3 +5036,467 @@ def test_an_approval_without_values_keeps_the_run_paused(tmp_path):
     run2 = team2.continue_run(run_id=run1.run_id, session_id=session_id)
     assert run2.status == RunStatus.paused, f"an unfilled approval let the run reach {run2.status}"
     assert _NOTES == [], f"the gated tool ran without its input values: {_NOTES}"
+
+
+def test_a_rejected_member_approval_skips_the_tool_and_completes(tmp_path):
+    """A rejected approval must settle the requirement: the tool is skipped and
+    the run finishes instead of re-pausing forever with nothing left to change."""
+    _NOTES.clear()
+    db_file = str(tmp_path / "admin_approval_rejected.db")
+    session_id = "s-admin-approval-rejected"
+
+    db = SqliteDb(db_file=db_file)
+    run1 = _approval_team(db, resuming=False).run("Send a note", session_id=session_id)
+    assert run1.is_paused
+
+    _resolve_required_approval(db, run1, None, status="rejected")
+
+    team2 = _approval_team(SqliteDb(db_file=db_file), resuming=True)
+    run2 = team2.continue_run(run_id=run1.run_id, session_id=session_id)
+    assert run2.status == RunStatus.completed, f"a rejected approval left the run {run2.status}"
+    assert _NOTES == [], f"the rejected tool executed: {_NOTES}"
+
+
+def test_an_approved_zero_field_user_input_tool_completes(tmp_path):
+    """An approved requirement with no input fields to fill is resolved; the
+    empty schema must not read as 'not fully filled'."""
+    _PINGS.clear()
+    db_file = str(tmp_path / "admin_approval_zero.db")
+    session_id = "s-admin-approval-zero"
+
+    db = SqliteDb(db_file=db_file)
+    run1 = _approval_team(db, resuming=False, member_tool=run_ping).run("Ping it", session_id=session_id)
+    assert run1.is_paused
+
+    _resolve_required_approval(db, run1, None)
+
+    team2 = _approval_team(SqliteDb(db_file=db_file), resuming=True, member_tool=run_ping)
+    run2 = team2.continue_run(run_id=run1.run_id, session_id=session_id)
+    assert run2.status == RunStatus.completed, f"an approved zero-field tool left the run {run2.status}"
+    assert _PINGS == ["ping"], _PINGS
+
+
+_DEPLOYS: List[Any] = []
+
+
+@tool(requires_confirmation=True)
+@approval(type="required")
+def deploy(target: str) -> str:
+    _DEPLOYS.append(target)
+    return f"deployed {target}"
+
+
+def _team_level_approval_team(db: SqliteDb, resuming: bool) -> Team:
+    return Team(
+        name="Deploy Team",
+        id="deploy-team",
+        model=_ScriptedModel(
+            "m-deploy",
+            [("content", "Done.")]
+            if resuming
+            else [("tool", "deploy", {"target": "prod"}, "tc-dep"), ("content", "Done.")],
+        ),
+        tools=[deploy],
+        members=[_emailer_agent(db, resuming)],
+        db=db,
+        telemetry=False,
+    )
+
+
+def test_a_team_level_approval_resolves_after_a_session_reload(tmp_path):
+    """After a reload, run.tools and the requirement hold distinct copies of the
+    gated tool call; the approved resolution must land on both."""
+    _DEPLOYS.clear()
+    db_file = str(tmp_path / "team_level_approval.db")
+    session_id = "s-team-level-approval"
+
+    db = SqliteDb(db_file=db_file)
+    run1 = _team_level_approval_team(db, resuming=False).run("Deploy prod", session_id=session_id)
+    assert run1.is_paused
+
+    _resolve_required_approval(db, run1, None)
+
+    team2 = _team_level_approval_team(SqliteDb(db_file=db_file), resuming=True)
+    run2 = team2.continue_run(run_id=run1.run_id, session_id=session_id)
+    assert run2.status == RunStatus.completed, f"the approved team-level run came back {run2.status}"
+    assert _DEPLOYS == ["prod"], _DEPLOYS
+
+
+def test_sync_requirements_after_approval_mirrors_the_resolution():
+    """Unit contract of _sync_requirements_after_approval: every field the
+    requirement's needs_* properties read is mirrored from the applied tools."""
+    from agno.run.approval import _sync_requirements_after_approval
+    from agno.tools.function import UserInputField
+
+    # Approved confirmation tool: the requirement-side confirmation is set.
+    te = ToolExecution(
+        tool_call_id="tc-c", tool_name="deploy", requires_confirmation=True, confirmed=True, approval_type="required"
+    )
+    req = RunRequirement(tool_execution=te)
+    holder = MagicMock(requirements=[req])
+    _sync_requirements_after_approval(holder, "approved")
+    assert req.confirmation is True
+
+    # Approved user-input tool with a DISTINCT schema copy: values are copied
+    # onto the requirement's schema and the tool reads answered.
+    te2 = ToolExecution(
+        tool_call_id="tc-u",
+        tool_name="send_note",
+        requires_user_input=True,
+        approval_type="required",
+        user_input_schema=[UserInputField(name="to", field_type=str, value="bob@example.com")],
+    )
+    req2 = RunRequirement(tool_execution=te2)
+    req2.user_input_schema = [UserInputField(name="to", field_type=str, value=None)]
+    holder2 = MagicMock(requirements=[req2])
+    _sync_requirements_after_approval(holder2, "approved")
+    assert te2.answered is True
+    assert [f.value for f in req2.user_input_schema] == ["bob@example.com"]
+    assert req2.is_resolved()
+
+    # Rejected user-input tool: settled through the reject lane, never answered
+    # for execution.
+    te3 = ToolExecution(
+        tool_call_id="tc-r",
+        tool_name="send_note",
+        requires_user_input=True,
+        approval_type="required",
+        user_input_schema=[UserInputField(name="to", field_type=str, value=None)],
+    )
+    req3 = RunRequirement(tool_execution=te3)
+    holder3 = MagicMock(requirements=[req3])
+    _sync_requirements_after_approval(holder3, "rejected")
+    assert te3.requires_user_input is False
+    assert te3.requires_confirmation is True and te3.confirmed is False
+    assert req3.confirmation is False
+    assert req3.is_resolved()
+
+
+@pytest.mark.asyncio
+async def test_a_reread_cancelled_run_is_refused_too(tmp_path):
+    """A caller who re-reads a cancelled run and continues with the fresh
+    object gets the same refusal the run_id lane gives."""
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "reread_cancelled.db")
+    session_id = "s-reread-cancelled"
+
+    run1 = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email a@example.com", session_id=session_id
+    )
+    assert run1.is_paused
+
+    db = SqliteDb(db_file=db_file)
+    session = db.get_session(session_id=session_id, session_type="team")
+    for r in session.runs or []:
+        if r.run_id == run1.run_id:
+            r.status = RunStatus.cancelled
+    db.upsert_session(session)
+
+    fresh = [r for r in _reload_runs(db_file, session_id) if r.run_id == run1.run_id][0]
+    assert fresh.is_paused is False
+
+    team2 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
+    with pytest.raises(RunNotContinuableError):
+        async for _ in team2.acontinue_run(
+            run_response=fresh,
+            session_id=session_id,
+            requirements=_wire_requirements(run1.requirements),
+            stream=True,
+            stream_events=True,
+            background=True,
+        ):
+            pass
+    await _drain_background_tasks()
+
+    status = [r for r in _reload_runs(db_file, session_id) if r.run_id == run1.run_id][0].status
+    assert status == RunStatus.cancelled, f"a cancelled run came back as {status!r}"
+    assert _EXECUTED == [], f"the gated tool ran on a cancelled run: {_EXECUTED}"
+
+
+@pytest.mark.asyncio
+async def test_a_completed_run_object_cannot_be_continued_in_place(tmp_path):
+    """A second background continue with the (now completed) caller object must
+    refuse, not edit the finished run in place and fire its tool again."""
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "completed_in_place.db")
+    session_id = "s-completed-in-place"
+
+    run1 = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email a@example.com", session_id=session_id
+    )
+    assert run1.is_paused
+    good = _wire_requirements(run1.requirements)
+
+    team2 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
+    async for _ in team2.acontinue_run(
+        run_response=run1,
+        session_id=session_id,
+        requirements=good,
+        stream=True,
+        stream_events=True,
+        background=True,
+    ):
+        pass
+    await _drain_background_tasks()
+    assert _EXECUTED == ["a@example.com"]
+
+    team3 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
+    with pytest.raises(RunNotContinuableError):
+        async for _ in team3.acontinue_run(
+            run_response=run1,
+            session_id=session_id,
+            requirements=_wire_requirements(run1.requirements),
+            stream=True,
+            stream_events=True,
+            background=True,
+        ):
+            pass
+    await _drain_background_tasks()
+    assert _EXECUTED == ["a@example.com"], f"the gated tool ran a second time: {_EXECUTED}"
+
+
+@pytest.mark.asyncio
+async def test_a_background_fork_does_not_restamp_the_original_runs_buffer(tmp_path):
+    """A fork produces a run with a different id; the forked run's status must
+    not land under the original run's event-buffer key."""
+    from agno.os.managers import event_buffer
+
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "fork_buffer.db")
+    session_id = "s-fork-buffer"
+
+    run1 = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email a@example.com", session_id=session_id
+    )
+    assert run1.is_paused
+    await _build_flat_team(SqliteDb(db_file=db_file), resuming=True).acontinue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+    )
+    assert [r for r in _reload_runs(db_file, session_id) if r.run_id == run1.run_id][0].status == RunStatus.completed
+
+    # A resuming=False team replays the delegation, so the fork pauses on its
+    # own approval.
+    async for _ in _build_flat_team(SqliteDb(db_file=db_file), resuming=False).acontinue_run(
+        run_id=run1.run_id,
+        session_id=session_id,
+        fork=True,
+        stream=True,
+        stream_events=True,
+        background=True,
+    ):
+        pass
+    await _drain_background_tasks()
+
+    buffer_status = event_buffer.get_run_status(run1.run_id)
+    assert buffer_status == RunStatus.completed, (
+        f"the original completed run's buffer entry took the fork's status: {buffer_status!r}"
+    )
+
+
+class _BoomModel(_ScriptedModel):
+    def invoke(self, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("leader boom")
+
+    def invoke_stream(self, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("leader boom")
+
+    async def ainvoke(self, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("leader boom")
+
+    async def ainvoke_stream(self, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("leader boom")
+        yield
+
+
+@pytest.mark.asyncio
+async def test_a_failed_background_continue_is_not_advertised_as_completed(tmp_path):
+    """A background continue whose team leader fails must record ERROR in the
+    event buffer, matching the DB and the error event the client received."""
+    from agno.os.managers import event_buffer
+
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "leader_error.db")
+    session_id = "s-leader-error"
+
+    run1 = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email a@example.com", session_id=session_id
+    )
+    assert run1.is_paused
+
+    team2 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
+    team2.model = _BoomModel("m-leader", [("content", "All done.")])
+
+    chunks = []
+    async for chunk in team2.acontinue_run(
+        run_id=run1.run_id,
+        session_id=session_id,
+        requirements=_wire_requirements(run1.requirements),
+        stream=True,
+        stream_events=True,
+        background=True,
+    ):
+        chunks.append(chunk)
+    await _drain_background_tasks()
+
+    assert [c for c in chunks if "TeamRunError" in c], "the failure must reach the client"
+    db_status = [r for r in _reload_runs(db_file, session_id) if r.run_id == run1.run_id][0].status
+    assert db_status == RunStatus.error, db_status
+    buffer_status = event_buffer.get_run_status(run1.run_id)
+    assert buffer_status == RunStatus.error, (
+        f"the DB says {db_status!r} but reconnecting clients are told {buffer_status!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_cached_team_refusal_still_restores_the_stored_status(tmp_path):
+    """With cache_session the handler's session read can hand back the very
+    object step 1 wrote; the restore must still land in the DB."""
+    from agno.os.managers import event_buffer
+
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "cached_refusal.db")
+    session_id = "s-cached-refusal"
+
+    run1 = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email a@example.com", session_id=session_id
+    )
+    assert run1.is_paused
+
+    team2 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True, cache_session=True)
+    async for _ in team2.acontinue_run(
+        run_response=run1,
+        session_id=session_id,
+        requirements=_unbindable_payload(run1.requirements),
+        stream=True,
+        stream_events=True,
+        background=True,
+    ):
+        pass
+    await _drain_background_tasks()
+
+    stored = [r for r in _reload_runs(db_file, session_id) if r.run_id == run1.run_id][0]
+    assert stored.status == RunStatus.paused, (
+        f"the cached-team refusal left the stored run {stored.status!r}; it can no longer be resumed"
+    )
+    buffer_status = event_buffer.get_run_status(run1.run_id)
+    assert isinstance(buffer_status, RunStatus) and buffer_status == RunStatus.paused
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_does_not_overwrite_a_run_another_request_finished(tmp_path):
+    """The restore writes only over step 1's RUNNING marker: a run another
+    request completed during the window must stay completed."""
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "cas_window.db")
+    session_id = "s-cas-window"
+
+    run1 = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email a@example.com", session_id=session_id
+    )
+    assert run1.is_paused
+
+    async def _finish_then_refuse(*args: Any, **kwargs: Any):
+        db2 = SqliteDb(db_file=db_file)
+        session = db2.get_session(session_id=session_id, session_type="team")
+        for r in session.runs or []:
+            if r.run_id == run1.run_id:
+                r.status = RunStatus.completed
+        db2.upsert_session(session)
+        raise RunNotContinuableError("another request finished this run")
+        yield
+
+    team2 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
+    with patch("agno.team._run._acontinue_run_stream", new=_finish_then_refuse):
+        async for _ in team2.acontinue_run(
+            run_response=run1,
+            session_id=session_id,
+            requirements=_unbindable_payload(run1.requirements),
+            stream=True,
+            stream_events=True,
+            background=True,
+        ):
+            pass
+    await _drain_background_tasks()
+
+    status = [r for r in _reload_runs(db_file, session_id) if r.run_id == run1.run_id][0].status
+    assert status == RunStatus.completed, (
+        f"the refusal stamped {status!r} over a run another request finished; its approval is live again"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_read_failure_during_refusal_still_restores_the_run(tmp_path):
+    """When the handler's session read fails, the restore falls back to the
+    step-1 session instead of leaving the run advertised as RUNNING."""
+    from agno.os.managers import event_buffer
+
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "read_failure.db")
+    session_id = "s-read-failure"
+
+    run1 = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email a@example.com", session_id=session_id
+    )
+    assert run1.is_paused
+
+    team2 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
+    with patch("agno.team._storage._aread_session", new_callable=AsyncMock, return_value=None):
+        async for _ in team2.acontinue_run(
+            run_response=run1,
+            session_id=session_id,
+            requirements=_unbindable_payload(run1.requirements),
+            stream=True,
+            stream_events=True,
+            background=True,
+        ):
+            pass
+    await _drain_background_tasks()
+
+    stored = [r for r in _reload_runs(db_file, session_id) if r.run_id == run1.run_id][0]
+    assert stored.status == RunStatus.paused, f"a failed session read left the run advertised as {stored.status!r}"
+    assert event_buffer.get_run_status(run1.run_id) == RunStatus.paused
+
+
+def test_paused_buffer_entries_are_reclaimed_after_the_cleanup_interval():
+    """A pause can wait on an approval forever; its buffer entry must not pin
+    memory for the process lifetime. A reclaimed entry is rebuilt by add_event
+    when the run is continued."""
+    from agno.os.managers import EventsBuffer
+
+    buf = EventsBuffer(cleanup_interval=-1)
+    buf.add_event("r-paused-reclaim", MagicMock())
+    buf.set_run_completed("r-paused-reclaim", RunStatus.paused)
+    buf.cleanup_runs()
+    assert buf.get_run_status("r-paused-reclaim") is None, "the paused buffer entry was never reclaimed"
+    assert "r-paused-reclaim" not in buf.run_metadata
+
+
+def test_a_routing_failure_restores_the_callers_team_level_requirements(tmp_path):
+    """A plain exception during member routing must leave the caller's run
+    object carrying each team-level requirement exactly once."""
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "routing_failure_reqs.db")
+    session_id = "s-routing-failure-reqs"
+
+    team1 = _build_own_tool_flat_team(SqliteDb(db_file=db_file), resuming=False)
+    run1 = team1.run("Publish the release and email a@example.com", session_id=session_id)
+    assert run1.is_paused
+
+    def _boom_stream(*args: Any, **kwargs: Any):
+        raise RuntimeError("router boom")
+        yield
+
+    team2 = _build_own_tool_flat_team(SqliteDb(db_file=db_file), resuming=True)
+    with patch("agno.team._run._route_requirements_to_members_stream", new=_boom_stream):
+        with pytest.raises(RuntimeError, match="router boom"):
+            for _ in team2.continue_run(
+                run_response=run1,
+                session_id=session_id,
+                requirements=_wire_requirements(run1.requirements),
+                stream=True,
+                stream_events=True,
+            ):
+                pass
+
+    names = [r.tool_execution.tool_name for r in (run1.requirements or [])]
+    assert names.count("publish") == 1, f"the caller's run object carries: {names}"

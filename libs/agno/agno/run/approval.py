@@ -432,8 +432,10 @@ def _collect_all_approval_tools(run_response: Any) -> List[Any]:
     for req in getattr(run_response, "requirements", None) or []:
         te = getattr(req, "tool_execution", None)
         if te and getattr(te, "approval_type", None) is not None:
-            # Avoid duplicates (same tool_call_id already in result)
-            if not any(getattr(r, "tool_call_id", None) == te.tool_call_id for r in result):
+            # Dedupe by object identity: after a DB reload, run_response.tools
+            # and the requirement hold DISTINCT copies of the same tool call,
+            # and the resolution must land on both.
+            if not any(r is te for r in result):
                 result.append(te)
     return result
 
@@ -461,11 +463,20 @@ def _sync_requirements_after_approval(run_response: Any, approval_status: str) -
                     for rf in req.user_input_schema:
                         if rf.name in by_name:
                             rf.value = by_name[rf.name]
-                if fields and all(f.value is not None for f in fields):
+                if all(f.value is not None for f in fields):
                     te.answered = True
             if getattr(te, "external_execution_required", False) and te.result is not None:
                 req.external_execution_result = te.result
         elif approval_status == "rejected":
+            if getattr(te, "requires_user_input", False) or getattr(te, "external_execution_required", False):
+                # A rejected tool is routed through the reject lane the
+                # dispatchers already handle: nothing left to answer,
+                # execution refused.
+                te.answered = True
+                te.requires_user_input = False
+                te.external_execution_required = False
+                te.requires_confirmation = True
+                te.confirmed = False
             if te.confirmed is False:
                 req.confirmation = False
 

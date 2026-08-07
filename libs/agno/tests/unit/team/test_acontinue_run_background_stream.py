@@ -166,6 +166,11 @@ class TestAcontinueRunBackgroundStream:
                 new_callable=AsyncMock,
                 return_value=team_session,
             ),
+            patch(
+                "agno.team._storage._aread_session",
+                new_callable=AsyncMock,
+                return_value=team_session,
+            ),
             patch("agno.team._storage._update_metadata"),
             patch("agno.team._session.asave_session", new_callable=AsyncMock) as mock_save,
             patch("agno.os.managers.event_buffer") as mock_eb,

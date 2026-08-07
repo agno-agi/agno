@@ -328,8 +328,10 @@ class EventsBuffer:
         runs_to_cleanup = []
 
         for run_id, metadata in self.run_metadata.items():
-            # Only cleanup completed runs
-            if metadata["status"] in [RunStatus.completed, RunStatus.error, RunStatus.cancelled]:
+            # Terminal runs, plus paused runs: a pause can wait on an approval
+            # forever, and a reclaimed paused entry is rebuilt by add_event
+            # when the run is eventually continued.
+            if metadata["status"] in [RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused]:
                 completed_at = metadata.get("completed_at", metadata["last_updated"])
                 if current_time - completed_at > self.cleanup_interval:
                     runs_to_cleanup.append(run_id)
