@@ -5601,10 +5601,12 @@ def _apply_requirements_payload(
 
     Normalizes the payload, binds it to the stored requirements
     (_backfill_approval_to_requirements), and merges the bound tool
-    executions into run_response.tools. On a binding refusal the run object
-    gets its requirements and tools back before the raise: the refusal asks
-    the client to resend the stored ids, which a caller-supplied live run
-    object only still has if nothing was overwritten.
+    executions into run_response.tools. On a refusal the run object gets its
+    requirements, tools, and decision fields back before the raise: the
+    refusal asks the client to resend the stored ids, which a caller-supplied
+    live run object only still has if nothing was overwritten — and a merge
+    that raised mid-payload has already banked the earlier entries' decisions
+    onto the stored requirements.
 
     Returns (old_requirements, old_tools, decisions) so the caller can restore
     all three if a later step of its payload apply raises.
@@ -5618,6 +5620,10 @@ def _apply_requirements_payload(
     except Exception:
         run_response.requirements = old_requirements
         run_response.tools = old_tools
+        # The merge loop can raise on a malformed entry after earlier entries
+        # already wrote their decisions onto the stored requirements; the list
+        # references alone leave those banked.
+        _restore_requirement_decisions(decisions)
         raise
     # Merge the bound tool executions into the run's tools, preserving
     # approval fields the FE omits. After binding these are the stored
