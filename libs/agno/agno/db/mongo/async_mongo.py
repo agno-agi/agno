@@ -28,6 +28,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.schemas.scheduler import ScheduleNameConflictError
 from agno.db.utils import deserialize_session, deserialize_session_json_fields, deserialize_sessions
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
@@ -97,6 +98,15 @@ _CLIENT_TYPE_PYMONGO_ASYNC = "pymongo_async"
 _CLIENT_TYPE_UNKNOWN = "unknown"
 
 
+def _is_schedule_name_conflict(error: DuplicateKeyError) -> bool:
+    """Match only MongoDB's generic or actor-scoped name indexes."""
+    details = error.details
+    return isinstance(details, dict) and details.get("keyPattern") in (
+        {"name": 1},
+        {"owner_actor_id": 1, "name": 1},
+    )
+
+
 def _detect_client_type(client: Any) -> str:
     """Detect whether a client is Motor or PyMongo async."""
     if client is None:
@@ -136,6 +146,8 @@ def _detect_client_type(client: Any) -> str:
 
 
 class AsyncMongoDb(AsyncBaseDb):
+    scheduler_api_version = 2
+
     # Client type constants (class-level access to module constants)
     CLIENT_TYPE_MOTOR = _CLIENT_TYPE_MOTOR
     CLIENT_TYPE_PYMONGO_ASYNC = _CLIENT_TYPE_PYMONGO_ASYNC
@@ -2880,31 +2892,46 @@ class AsyncMongoDb(AsyncBaseDb):
 
             result.pop("_id", None)
             return result
-        except Exception as e:
-            log_debug(f"Error getting schedule: {e}")
-            return None
+        except Exception:
+            log_debug("Error getting schedule")
+            raise
 
-    async def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+    async def get_schedule_by_name(
+        self,
+        name: str,
+        *,
+        managed_by: Optional[str] = None,
+        owner_actor_id: Optional[str] = None,
+        exclude_managed_by: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         try:
             collection = await self._get_collection(table_type="schedules")
             if collection is None:
                 return None
 
-            result = await collection.find_one({"name": name})
+            query: Dict[str, Any] = {"name": name}
+            if managed_by is not None:
+                query["managed_by"] = managed_by
+            if owner_actor_id is not None:
+                query["owner_actor_id"] = owner_actor_id
+            if exclude_managed_by is not None:
+                query["managed_by"] = {"$ne": exclude_managed_by}
+            result = await collection.find_one(query)
             if result is None:
                 return None
 
             result.pop("_id", None)
             return result
-        except Exception as e:
-            log_debug(f"Error getting schedule by name: {e}")
-            return None
+        except Exception:
+            log_debug("Error getting schedule by name")
+            raise
 
     async def get_schedules(
         self,
         enabled: Optional[bool] = None,
         limit: int = 100,
         page: int = 1,
+        exclude_managed_by: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             collection = await self._get_collection(table_type="schedules")
@@ -2914,6 +2941,8 @@ class AsyncMongoDb(AsyncBaseDb):
             query: Dict[str, Any] = {}
             if enabled is not None:
                 query["enabled"] = enabled
+            if exclude_managed_by is not None:
+                query["managed_by"] = {"$ne": exclude_managed_by}
 
             total_count = await collection.count_documents(query)
             offset = (page - 1) * limit
@@ -2922,12 +2951,14 @@ class AsyncMongoDb(AsyncBaseDb):
             for schedule in schedules:
                 schedule.pop("_id", None)
             return schedules, total_count
-        except Exception as e:
-            log_debug(f"Error listing schedules: {e}")
-            return [], 0
+        except Exception:
+            log_debug("Error listing schedules")
+            raise
 
     async def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
         try:
+            schedule_data.setdefault("pending_trigger_count", 0)
+            schedule_data.setdefault("manual_trigger_claimed", False)
             collection = await self._get_collection(table_type="schedules", create_collection_if_not_found=True)
             if collection is None:
                 raise RuntimeError("Failed to get or create schedules collection")
@@ -2935,9 +2966,14 @@ class AsyncMongoDb(AsyncBaseDb):
             await collection.insert_one(schedule_data)
             schedule_data.pop("_id", None)
             return schedule_data
-        except Exception as e:
-            log_error(f"Error creating schedule: {e}")
-            raise e
+        except DuplicateKeyError as error:
+            if _is_schedule_name_conflict(error):
+                raise ScheduleNameConflictError(schedule_data["name"]) from None
+            log_error("Error creating schedule")
+            raise
+        except Exception:
+            log_error("Error creating schedule")
+            raise
 
     async def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
         try:
@@ -2950,9 +2986,55 @@ class AsyncMongoDb(AsyncBaseDb):
             if result.matched_count == 0:
                 return None
             return await self.get_schedule(schedule_id)
-        except Exception as e:
-            log_debug(f"Error updating schedule: {e}")
+        except DuplicateKeyError as error:
+            name = kwargs.get("name")
+            if isinstance(name, str) and _is_schedule_name_conflict(error):
+                raise ScheduleNameConflictError(name) from None
+            log_debug("Error updating schedule")
+            raise
+        except Exception:
+            log_debug("Error updating schedule")
+            raise
+
+    async def trigger_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+        """Durably enqueue one manual execution for a schedule."""
+        collection = await self._get_collection(table_type="schedules")
+        if collection is None:
             return None
+        result = await collection.find_one_and_update(
+            {"id": schedule_id},
+            {
+                "$inc": {"pending_trigger_count": 1},
+                "$set": {"updated_at": int(time.time())},
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        if result is None:
+            return None
+        result.pop("_id", None)
+        return result
+
+    async def disable_schedules_for_target(
+        self,
+        target_type: str,
+        target_id: str,
+        *,
+        managed_by: str,
+    ) -> int:
+        """Atomically disable enabled schedules for one managed target."""
+        collection = await self._get_collection(table_type="schedules")
+        if collection is None:
+            return 0
+        result = await collection.update_many(
+            {
+                "managed_by": managed_by,
+                "target_type": target_type,
+                "target_id": target_id,
+                "enabled": True,
+            },
+            {"$set": {"enabled": False, "updated_at": int(time.time())}},
+        )
+        return int(result.modified_count)
 
     async def delete_schedule(self, schedule_id: str) -> bool:
         try:
@@ -2966,8 +3048,8 @@ class AsyncMongoDb(AsyncBaseDb):
 
             result = await schedules_collection.delete_one({"id": schedule_id})
             return result.deleted_count > 0
-        except Exception as e:
-            log_debug(f"Error deleting schedule: {e}")
+        except Exception:
+            log_debug("Error deleting schedule")
             return False
 
     async def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
@@ -2979,42 +3061,121 @@ class AsyncMongoDb(AsyncBaseDb):
             now = int(time.time())
             stale_lock_threshold = now - lock_grace_seconds
 
+            lock_query = {
+                "$or": [
+                    {"locked_by": None},
+                    {"locked_at": {"$lte": stale_lock_threshold}},
+                ]
+            }
             result = await collection.find_one_and_update(
                 {
                     "enabled": True,
-                    "next_run_at": {"$lte": now},
-                    "$or": [
-                        {"locked_by": None},
-                        {"locked_at": {"$lte": stale_lock_threshold}},
-                    ],
+                    "manual_trigger_claimed": True,
+                    **lock_query,
                 },
                 {"$set": {"locked_by": worker_id, "locked_at": now}},
-                sort=[("next_run_at", 1)],
+                sort=[("locked_at", 1)],
                 return_document=ReturnDocument.AFTER,
             )
+            if result is None:
+                result = await collection.find_one_and_update(
+                    {
+                        "enabled": True,
+                        "manual_trigger_claimed": {"$ne": True},
+                        "pending_trigger_count": {"$gt": 0},
+                        "$nor": [{"next_run_at": {"$lte": now}}],
+                        **lock_query,
+                    },
+                    {
+                        "$inc": {"pending_trigger_count": -1},
+                        "$set": {
+                            "locked_by": worker_id,
+                            "locked_at": now,
+                            "manual_trigger_claimed": True,
+                        },
+                    },
+                    sort=[("created_at", 1)],
+                    return_document=ReturnDocument.AFTER,
+                )
+            if result is None:
+                result = await collection.find_one_and_update(
+                    {
+                        "enabled": True,
+                        "manual_trigger_claimed": {"$ne": True},
+                        "next_run_at": {"$lte": now},
+                        **lock_query,
+                    },
+                    {
+                        "$set": {
+                            "locked_by": worker_id,
+                            "locked_at": now,
+                            "manual_trigger_claimed": False,
+                        }
+                    },
+                    sort=[("next_run_at", 1)],
+                    return_document=ReturnDocument.AFTER,
+                )
             if result is None:
                 return None
 
             result.pop("_id", None)
             return result
-        except Exception as e:
-            log_debug(f"Error claiming schedule: {e}")
-            return None
+        except Exception:
+            log_debug("Error claiming schedule")
+            raise
 
-    async def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
+    async def renew_schedule_claim(
+        self,
+        schedule_id: str,
+        *,
+        worker_id: str,
+        locked_at: int,
+    ) -> Optional[int]:
+        """Renew a claim only while its worker/timestamp fence still matches."""
+        collection = await self._get_collection(table_type="schedules")
+        if collection is None:
+            return None
+        renewed_at = max(int(time.time()), locked_at + 1)
+        result = await collection.find_one_and_update(
+            {"id": schedule_id, "locked_by": worker_id, "locked_at": locked_at},
+            {"$set": {"locked_at": renewed_at}},
+            return_document=ReturnDocument.AFTER,
+        )
+        return renewed_at if result is not None else None
+
+    async def release_schedule(
+        self,
+        schedule_id: str,
+        next_run_at: Optional[int] = None,
+        *,
+        worker_id: Optional[str] = None,
+        locked_at: Optional[int] = None,
+    ) -> bool:
         try:
+            if (worker_id is None) != (locked_at is None):
+                return False
             collection = await self._get_collection(table_type="schedules")
             if collection is None:
                 return False
 
-            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None, "updated_at": int(time.time())}
+            updates: Dict[str, Any] = {
+                "locked_by": None,
+                "locked_at": None,
+                "manual_trigger_claimed": False,
+                "updated_at": int(time.time()),
+            }
             if next_run_at is not None:
                 updates["next_run_at"] = next_run_at
 
-            result = await collection.update_one({"id": schedule_id}, {"$set": updates})
+            query: Dict[str, Any] = {"id": schedule_id}
+            if worker_id is None:
+                query["manual_trigger_claimed"] = {"$ne": True}
+            else:
+                query.update(locked_by=worker_id, locked_at=locked_at)
+            result = await collection.update_one(query, {"$set": updates})
             return result.matched_count > 0
-        except Exception as e:
-            log_debug(f"Error releasing schedule: {e}")
+        except Exception:
+            log_debug("Error releasing schedule")
             return False
 
     async def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -3026,9 +3187,9 @@ class AsyncMongoDb(AsyncBaseDb):
             await collection.insert_one(run_data)
             run_data.pop("_id", None)
             return run_data
-        except Exception as e:
-            log_error(f"Error creating schedule run: {e}")
-            raise e
+        except Exception:
+            log_error("Error creating schedule run")
+            raise
 
     async def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
         try:
@@ -3040,8 +3201,8 @@ class AsyncMongoDb(AsyncBaseDb):
             if result.matched_count == 0:
                 return None
             return await self.get_schedule_run(schedule_run_id)
-        except Exception as e:
-            log_debug(f"Error updating schedule run: {e}")
+        except Exception:
+            log_debug("Error updating schedule run")
             return None
 
     async def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
@@ -3056,9 +3217,9 @@ class AsyncMongoDb(AsyncBaseDb):
 
             result.pop("_id", None)
             return result
-        except Exception as e:
-            log_debug(f"Error getting schedule run: {e}")
-            return None
+        except Exception:
+            log_debug("Error getting schedule run")
+            raise
 
     async def get_schedule_runs(
         self,
@@ -3079,9 +3240,9 @@ class AsyncMongoDb(AsyncBaseDb):
             for run in runs:
                 run.pop("_id", None)
             return runs, total_count
-        except Exception as e:
-            log_debug(f"Error getting schedule runs: {e}")
-            return [], 0
+        except Exception:
+            log_debug("Error getting schedule runs")
+            raise
 
     # -- Learning methods --
     async def get_learning(

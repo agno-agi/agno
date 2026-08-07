@@ -4,6 +4,7 @@ import pytest
 
 from agno.db.mongo import AsyncMongoDb, MongoDb
 from agno.db.mongo.schemas import get_collection_indexes
+from agno.db.mongo.utils import create_collection_indexes, create_collection_indexes_async
 
 
 @pytest.fixture
@@ -138,6 +139,31 @@ def test_mongo_update_schedule_updates_and_returns_schedule(monkeypatch: pytest.
     assert collection.update_one.call_count == 1
 
 
+def test_mongo_disable_schedules_for_target_is_atomic_and_scoped(monkeypatch: pytest.MonkeyPatch):
+    db = MongoDb(db_client=MagicMock(), db_name="test_db")  # type: ignore[arg-type]
+    collection = Mock()
+    update_result = Mock(modified_count=101)
+    collection.update_many.return_value = update_result
+    monkeypatch.setattr(db, "_get_collection", lambda table_type: collection)
+
+    disabled = db.disable_schedules_for_target(
+        "agent",
+        "agent-a",
+        managed_by="studio",
+    )
+
+    assert disabled == 101
+    query, update = collection.update_many.call_args.args
+    assert query == {
+        "managed_by": "studio",
+        "target_type": "agent",
+        "target_id": "agent-a",
+        "enabled": True,
+    }
+    assert update["$set"]["enabled"] is False
+    assert isinstance(update["$set"]["updated_at"], int)
+
+
 def test_mongo_delete_schedule_cascades_runs(monkeypatch: pytest.MonkeyPatch):
     db = MongoDb(db_client=MagicMock(), db_name="test_db")  # type: ignore[arg-type]
     schedules_collection = Mock()
@@ -183,6 +209,87 @@ def test_mongo_claim_due_schedule_returns_claimed_schedule(monkeypatch: pytest.M
         "locked_by": "worker-1",
     }
     assert collection.find_one_and_update.call_count == 1
+
+
+def test_mongo_claims_due_cron_without_consuming_pending_manual_work(monkeypatch: pytest.MonkeyPatch):
+    db = MongoDb(db_client=MagicMock(), db_name="test_db")  # type: ignore[arg-type]
+    collection = Mock()
+    collection.find_one_and_update.side_effect = [
+        None,
+        None,
+        {
+            "_id": "mongo-id",
+            "id": "sched-1",
+            "enabled": True,
+            "next_run_at": 123,
+            "pending_trigger_count": 1,
+            "locked_by": "worker-1",
+        },
+    ]
+    monkeypatch.setattr(db, "_get_collection", lambda table_type: collection)
+
+    result = db.claim_due_schedule("worker-1", lock_grace_seconds=300)
+
+    assert result is not None and result["pending_trigger_count"] == 1
+    recovery_query, recovery_update = collection.find_one_and_update.call_args_list[0].args[:2]
+    manual_query, manual_update = collection.find_one_and_update.call_args_list[1].args[:2]
+    cron_query, cron_update = collection.find_one_and_update.call_args_list[2].args[:2]
+    assert recovery_query["manual_trigger_claimed"] is True
+    assert "$inc" not in recovery_update
+    assert "$nor" in manual_query
+    assert "$inc" in manual_update
+    assert "next_run_at" in cron_query
+    assert "$inc" not in cron_update
+
+
+def test_mongo_recovers_stale_manual_claim_without_consuming_another_trigger(monkeypatch: pytest.MonkeyPatch):
+    db = MongoDb(db_client=MagicMock(), db_name="test_db")  # type: ignore[arg-type]
+    collection = Mock()
+    collection.find_one_and_update.return_value = {
+        "_id": "mongo-id",
+        "id": "sched-1",
+        "enabled": True,
+        "next_run_at": 123,
+        "pending_trigger_count": 0,
+        "manual_trigger_claimed": True,
+        "locked_by": "recovery-worker",
+        "locked_at": 456,
+    }
+    monkeypatch.setattr(db, "_get_collection", lambda table_type: collection)
+
+    recovered = db.claim_due_schedule("recovery-worker", lock_grace_seconds=300)
+
+    assert recovered is not None and recovered["manual_trigger_claimed"] is True
+    query, update = collection.find_one_and_update.call_args.args[:2]
+    assert query["manual_trigger_claimed"] is True
+    assert "$inc" not in update
+
+    collection.update_one.return_value = Mock(matched_count=1)
+    assert db.release_schedule("sched-1", worker_id="recovery-worker", locked_at=456) is True
+    release_query, release_update = collection.update_one.call_args.args
+    assert release_query == {"id": "sched-1", "locked_by": "recovery-worker", "locked_at": 456}
+    assert release_update["$set"]["manual_trigger_claimed"] is False
+    assert "next_run_at" not in release_update["$set"]
+
+
+def test_mongo_renews_only_the_exact_claim_fence(monkeypatch: pytest.MonkeyPatch):
+    db = MongoDb(db_client=MagicMock(), db_name="test_db")  # type: ignore[arg-type]
+    collection = Mock()
+    collection.find_one_and_update.return_value = {"id": "sched-1"}
+    monkeypatch.setattr(db, "_get_collection", lambda table_type: collection)
+    monkeypatch.setattr("agno.db.mongo.mongo.time.time", lambda: 123)
+
+    renewed_at = db.renew_schedule_claim("sched-1", worker_id="worker-1", locked_at=123)
+
+    assert renewed_at == 124
+    query, update = collection.find_one_and_update.call_args.args
+    assert query == {"id": "sched-1", "locked_by": "worker-1", "locked_at": 123}
+    assert update["$set"]["locked_at"] == renewed_at
+    assert "manual_trigger_claimed" not in update["$set"]
+    assert "pending_trigger_count" not in update["$set"]
+    collection.update_one.side_effect = [Mock(matched_count=0), Mock(matched_count=1)]
+    assert not db.release_schedule("sched-1", worker_id="worker-1", locked_at=123)
+    assert db.release_schedule("sched-1", worker_id="worker-1", locked_at=renewed_at)
 
 
 def test_mongo_release_schedule_unlocks_and_returns_true(monkeypatch: pytest.MonkeyPatch):
@@ -308,9 +415,144 @@ def test_scheduler_index_schemas_registered():
     schedule_runs_indexes = get_collection_indexes("schedule_runs")
 
     assert any(i.get("key") == "id" and i.get("unique") for i in schedules_indexes)
-    assert any(i.get("key") == "name" and i.get("unique") for i in schedules_indexes)
+    assert any(
+        i.get("key") == [("name", 1), ("managed_by", 1)]
+        and i.get("unique")
+        and i.get("name") == "uq_generic_name"
+        and i.get("partialFilterExpression") == {"managed_by": None}
+        for i in schedules_indexes
+    )
+    assert any(
+        i.get("key") == [("owner_actor_id", 1), ("name", 1)]
+        and i.get("unique")
+        and i.get("name") == "uq_studio_owner_name"
+        for i in schedules_indexes
+    )
+    assert any(i.get("key") == "pending_trigger_count" for i in schedules_indexes)
+    assert any(i.get("key") == "manual_trigger_claimed" for i in schedules_indexes)
     assert any(i.get("key") == "id" and i.get("unique") for i in schedule_runs_indexes)
     assert any(i.get("key") == "schedule_id" for i in schedule_runs_indexes)
+
+
+def test_schedule_index_migration_fails_loudly_before_dropping_legacy_authority():
+    collection = MagicMock()
+    collection.list_indexes.return_value = [{"name": "name_1", "key": {"name": 1}, "unique": True}]
+
+    def create_index(_keys, **options):
+        if options.get("name") == "uq_studio_owner_name":
+            raise RuntimeError("cannot build actor index")
+
+    collection.create_index.side_effect = create_index
+
+    with pytest.raises(RuntimeError, match="actor index"):
+        create_collection_indexes(collection, "schedules")
+
+    collection.drop_index.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_async_schedule_index_migration_fails_loudly_before_dropping_legacy_authority():
+    class AsyncCursor:
+        def __init__(self, rows):
+            self.rows = iter(rows)
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self.rows)
+            except StopIteration:
+                raise StopAsyncIteration
+
+    collection = MagicMock()
+    collection.list_indexes = AsyncMock(
+        return_value=AsyncCursor([{"name": "name_1", "key": {"name": 1}, "unique": True}])
+    )
+
+    async def create_index(_keys, **options):
+        if options.get("name") == "uq_studio_owner_name":
+            raise RuntimeError("cannot build actor index")
+
+    collection.create_index = AsyncMock(side_effect=create_index)
+    collection.drop_index = AsyncMock()
+
+    with pytest.raises(RuntimeError, match="actor index"):
+        await create_collection_indexes_async(collection, "schedules")
+
+    collection.drop_index.assert_not_awaited()
+
+
+def test_schedule_index_migration_uses_distinct_key_before_dropping_legacy_authority():
+    collection = MagicMock()
+    collection.list_indexes.return_value = [{"name": "name_1", "key": {"name": 1}, "unique": True}]
+    created_names = []
+
+    def create_index(keys, **options):
+        # Real upgraded MongoDB collections reject a replacement index that
+        # reuses the legacy key pattern with different partial options.
+        if keys == [("name", 1)] and options.get("name") == "uq_generic_name":
+            raise RuntimeError("cannot coexist with legacy same-key index")
+        created_names.append(options.get("name"))
+
+    def drop_index(index_name):
+        assert "uq_generic_name" in created_names
+        assert "uq_studio_owner_name" in created_names
+        assert index_name == "name_1"
+
+    collection.create_index.side_effect = create_index
+    collection.drop_index.side_effect = drop_index
+
+    create_collection_indexes(collection, "schedules")
+
+    generic_call = next(
+        call for call in collection.create_index.call_args_list if call.kwargs.get("name") == "uq_generic_name"
+    )
+    assert generic_call.args[0] == [("name", 1), ("managed_by", 1)]
+    collection.drop_index.assert_called_once_with("name_1")
+
+
+@pytest.mark.asyncio
+async def test_async_schedule_index_migration_uses_distinct_key_before_dropping_legacy_authority():
+    class AsyncCursor:
+        def __init__(self, rows):
+            self.rows = iter(rows)
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self.rows)
+            except StopIteration:
+                raise StopAsyncIteration
+
+    collection = MagicMock()
+    collection.list_indexes = AsyncMock(
+        return_value=AsyncCursor([{"name": "name_1", "key": {"name": 1}, "unique": True}])
+    )
+    created_names = []
+
+    async def create_index(keys, **options):
+        if keys == [("name", 1)] and options.get("name") == "uq_generic_name":
+            raise RuntimeError("cannot coexist with legacy same-key index")
+        created_names.append(options.get("name"))
+
+    async def drop_index(index_name):
+        assert "uq_generic_name" in created_names
+        assert "uq_studio_owner_name" in created_names
+        assert index_name == "name_1"
+
+    collection.create_index = AsyncMock(side_effect=create_index)
+    collection.drop_index = AsyncMock(side_effect=drop_index)
+
+    await create_collection_indexes_async(collection, "schedules")
+
+    generic_call = next(
+        call for call in collection.create_index.call_args_list if call.kwargs.get("name") == "uq_generic_name"
+    )
+    assert generic_call.args[0] == [("name", 1), ("managed_by", 1)]
+    collection.drop_index.assert_awaited_once_with("name_1")
 
 
 def test_async_mongo_constructor_maps_scheduler_collections():
@@ -428,6 +670,33 @@ async def test_async_mongo_update_schedule_updates_and_returns_schedule(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_async_mongo_disable_schedules_for_target_is_atomic_and_scoped(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
+    collection = AsyncMock()
+    collection.update_many.return_value = MagicMock(modified_count=2)
+    monkeypatch.setattr(db, "_get_collection", AsyncMock(return_value=collection))
+
+    disabled = await db.disable_schedules_for_target(
+        "team",
+        "team-a",
+        managed_by="studio",
+    )
+
+    assert disabled == 2
+    query, update = collection.update_many.call_args.args
+    assert query == {
+        "managed_by": "studio",
+        "target_type": "team",
+        "target_id": "team-a",
+        "enabled": True,
+    }
+    assert update["$set"]["enabled"] is False
+    assert isinstance(update["$set"]["updated_at"], int)
+
+
+@pytest.mark.asyncio
 async def test_async_mongo_delete_schedule_cascades_runs(monkeypatch: pytest.MonkeyPatch):
     db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
     schedules_collection = AsyncMock()
@@ -474,6 +743,94 @@ async def test_async_mongo_claim_due_schedule_returns_claimed_schedule(monkeypat
         "locked_by": "worker-1",
     }
     collection.find_one_and_update.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_async_mongo_claims_due_cron_without_consuming_pending_manual_work(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
+    collection = AsyncMock()
+    collection.find_one_and_update.side_effect = [
+        None,
+        None,
+        {
+            "_id": "mongo-id",
+            "id": "sched-1",
+            "enabled": True,
+            "next_run_at": 123,
+            "pending_trigger_count": 1,
+            "locked_by": "worker-1",
+        },
+    ]
+    monkeypatch.setattr(db, "_get_collection", AsyncMock(return_value=collection))
+
+    result = await db.claim_due_schedule("worker-1", lock_grace_seconds=300)
+
+    assert result is not None and result["pending_trigger_count"] == 1
+    recovery_query, recovery_update = collection.find_one_and_update.call_args_list[0].args[:2]
+    manual_query, manual_update = collection.find_one_and_update.call_args_list[1].args[:2]
+    cron_query, cron_update = collection.find_one_and_update.call_args_list[2].args[:2]
+    assert recovery_query["manual_trigger_claimed"] is True
+    assert "$inc" not in recovery_update
+    assert "$nor" in manual_query
+    assert "$inc" in manual_update
+    assert "next_run_at" in cron_query
+    assert "$inc" not in cron_update
+
+
+@pytest.mark.asyncio
+async def test_async_mongo_recovers_stale_manual_claim_without_consuming_another_trigger(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
+    collection = AsyncMock()
+    collection.find_one_and_update.return_value = {
+        "_id": "mongo-id",
+        "id": "sched-1",
+        "enabled": True,
+        "next_run_at": 123,
+        "pending_trigger_count": 0,
+        "manual_trigger_claimed": True,
+        "locked_by": "recovery-worker",
+        "locked_at": 456,
+    }
+    monkeypatch.setattr(db, "_get_collection", AsyncMock(return_value=collection))
+
+    recovered = await db.claim_due_schedule("recovery-worker", lock_grace_seconds=300)
+
+    assert recovered is not None and recovered["manual_trigger_claimed"] is True
+    query, update = collection.find_one_and_update.call_args.args[:2]
+    assert query["manual_trigger_claimed"] is True
+    assert "$inc" not in update
+
+    collection.update_one.return_value = MagicMock(matched_count=1)
+    assert await db.release_schedule("sched-1", worker_id="recovery-worker", locked_at=456) is True
+    release_query, release_update = collection.update_one.call_args.args
+    assert release_query == {"id": "sched-1", "locked_by": "recovery-worker", "locked_at": 456}
+    assert release_update["$set"]["manual_trigger_claimed"] is False
+    assert "next_run_at" not in release_update["$set"]
+
+
+@pytest.mark.asyncio
+async def test_async_mongo_renews_only_the_exact_claim_fence(monkeypatch: pytest.MonkeyPatch):
+    db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
+    collection = AsyncMock()
+    collection.find_one_and_update.return_value = {"id": "sched-1"}
+    monkeypatch.setattr(db, "_get_collection", AsyncMock(return_value=collection))
+    monkeypatch.setattr("agno.db.mongo.async_mongo.time.time", lambda: 123)
+
+    renewed_at = await db.renew_schedule_claim("sched-1", worker_id="worker-1", locked_at=123)
+
+    assert renewed_at == 124
+    query, update = collection.find_one_and_update.call_args.args
+    assert query == {"id": "sched-1", "locked_by": "worker-1", "locked_at": 123}
+    assert update["$set"]["locked_at"] == renewed_at
+    assert "manual_trigger_claimed" not in update["$set"]
+    assert "pending_trigger_count" not in update["$set"]
+    collection.update_one.side_effect = [MagicMock(matched_count=0), MagicMock(matched_count=1)]
+    assert not await db.release_schedule("sched-1", worker_id="worker-1", locked_at=123)
+    assert await db.release_schedule("sched-1", worker_id="worker-1", locked_at=renewed_at)
 
 
 @pytest.mark.asyncio

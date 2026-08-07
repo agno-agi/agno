@@ -1,7 +1,23 @@
+import base64
+import re
+import unicodedata
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional, Union
 
 from agno.utils.dttm import now_epoch_s, to_epoch_s
+
+STUDIO_SCHEDULE_MANAGED_BY = "studio"
+STUDIO_SCHEDULE_ACTOR_HEADER = "X-Agno-Studio-Schedule-Actor"
+_STUDIO_SCHEDULE_ACTOR_ENCODING = "v1."
+_BASE64URL_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+class ScheduleNameConflictError(ValueError):
+    """Raised when a schedule write violates the database-unique name constraint."""
+
+    def __init__(self, name: str):
+        self.name = name
+        super().__init__(f"Schedule with name '{name}' already exists")
 
 
 @dataclass
@@ -19,6 +35,22 @@ class Schedule:
     timeout_seconds: int = 3600
     max_retries: int = 0
     retry_delay_seconds: int = 60
+    # Server-owned control-plane provenance. Generic schedule APIs never accept
+    # or mutate these fields; Studio writes them through its trusted catalog DB.
+    managed_by: Optional[str] = None
+    owner_actor_id: Optional[str] = None
+    target_type: Optional[str] = None
+    target_id: Optional[str] = None
+    created_by_run_id: Optional[str] = None
+    created_by_session_id: Optional[str] = None
+    updated_by_run_id: Optional[str] = None
+    updated_by_session_id: Optional[str] = None
+    # Manual triggers are durable work, not a temporary rewrite of
+    # ``next_run_at``. A claim atomically moves one pending trigger into the
+    # in-flight marker so a stale lock can recover it without consuming a
+    # second trigger.
+    pending_trigger_count: int = 0
+    manual_trigger_claimed: bool = False
     enabled: bool = True
     next_run_at: Optional[int] = None
     locked_by: Optional[str] = None
@@ -34,6 +66,8 @@ class Schedule:
             self.next_run_at = int(self.next_run_at)
         if self.locked_at is not None:
             self.locked_at = int(self.locked_at)
+        self.pending_trigger_count = max(0, int(self.pending_trigger_count or 0))
+        self.manual_trigger_claimed = bool(self.manual_trigger_claimed)
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to dict. Preserves None values (important for DB updates)."""
@@ -49,6 +83,16 @@ class Schedule:
             "timeout_seconds": self.timeout_seconds,
             "max_retries": self.max_retries,
             "retry_delay_seconds": self.retry_delay_seconds,
+            "managed_by": self.managed_by,
+            "owner_actor_id": self.owner_actor_id,
+            "target_type": self.target_type,
+            "target_id": self.target_id,
+            "created_by_run_id": self.created_by_run_id,
+            "created_by_session_id": self.created_by_session_id,
+            "updated_by_run_id": self.updated_by_run_id,
+            "updated_by_session_id": self.updated_by_session_id,
+            "pending_trigger_count": self.pending_trigger_count,
+            "manual_trigger_claimed": self.manual_trigger_claimed,
             "enabled": self.enabled,
             "next_run_at": self.next_run_at,
             "locked_by": self.locked_by,
@@ -72,6 +116,16 @@ class Schedule:
             "timeout_seconds",
             "max_retries",
             "retry_delay_seconds",
+            "managed_by",
+            "owner_actor_id",
+            "target_type",
+            "target_id",
+            "created_by_run_id",
+            "created_by_session_id",
+            "updated_by_run_id",
+            "updated_by_session_id",
+            "pending_trigger_count",
+            "manual_trigger_claimed",
             "enabled",
             "next_run_at",
             "locked_by",
@@ -81,6 +135,56 @@ class Schedule:
         }
         filtered = {k: v for k, v in data.items() if k in valid_keys}
         return cls(**filtered)
+
+
+def is_studio_managed_schedule(schedule: Union[Schedule, Mapping[str, Any]]) -> bool:
+    """Return whether a record carries server-owned Studio provenance."""
+    managed_by = schedule.managed_by if isinstance(schedule, Schedule) else schedule.get("managed_by")
+    return managed_by == STUDIO_SCHEDULE_MANAGED_BY
+
+
+def is_valid_studio_schedule_actor_id(actor_id: Any) -> bool:
+    """Return whether an opaque actor ID is safe to delegate.
+
+    Actor IDs may contain Unicode. Header transport is handled separately by
+    :func:`encode_studio_schedule_actor_id`; raw control, formatting, surrogate,
+    and line-separator characters are rejected so control-like or
+    non-canonical header values never become principals.
+    """
+    if not isinstance(actor_id, str) or not actor_id or actor_id != actor_id.strip() or len(actor_id) > 255:
+        return False
+    try:
+        encoded_size = len(actor_id.encode("utf-8"))
+    except UnicodeEncodeError:
+        return False
+    if encoded_size > 1024:
+        return False
+    return not any(unicodedata.category(character) in {"Cc", "Cf", "Cs", "Zl", "Zp"} for character in actor_id)
+
+
+def encode_studio_schedule_actor_id(actor_id: str) -> str:
+    """Encode one validated opaque actor ID into an ASCII-only header value."""
+    if not is_valid_studio_schedule_actor_id(actor_id):
+        raise ValueError("Invalid delegated scheduler actor")
+    encoded = base64.urlsafe_b64encode(actor_id.encode("utf-8")).decode("ascii").rstrip("=")
+    return f"{_STUDIO_SCHEDULE_ACTOR_ENCODING}{encoded}"
+
+
+def decode_studio_schedule_actor_id(value: Any) -> str:
+    """Decode and validate the canonical internal scheduler actor header."""
+    if not isinstance(value, str) or not value.startswith(_STUDIO_SCHEDULE_ACTOR_ENCODING):
+        raise ValueError("Invalid delegated scheduler actor")
+    encoded = value[len(_STUDIO_SCHEDULE_ACTOR_ENCODING) :]
+    if not encoded or _BASE64URL_RE.fullmatch(encoded) is None:
+        raise ValueError("Invalid delegated scheduler actor")
+    try:
+        padding = "=" * (-len(encoded) % 4)
+        actor_id = base64.b64decode(encoded + padding, altchars=b"-_", validate=True).decode("utf-8")
+    except (UnicodeDecodeError, ValueError):
+        raise ValueError("Invalid delegated scheduler actor") from None
+    if not is_valid_studio_schedule_actor_id(actor_id) or encode_studio_schedule_actor_id(actor_id) != value:
+        raise ValueError("Invalid delegated scheduler actor")
+    return actor_id
 
 
 @dataclass

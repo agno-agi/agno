@@ -21,7 +21,7 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
-from agno.db.utils import resolve_db_from_config
+from agno.db.utils import resolve_db_from_config, save_component_config
 from agno.exceptions import ComponentPinError, ComponentRehydrationError
 from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
@@ -1326,18 +1326,13 @@ def save(
                 }
             )
 
-        # Create or update component
-        db_.upsert_component(
+        config = save_component_config(
+            db_,
             component_id=team.id,
             component_type=ComponentType.TEAM,
             name=getattr(team, "name", team.id),
             description=getattr(team, "description", None),
             metadata=getattr(team, "metadata", None),
-        )
-
-        # Create or update config with links
-        config = db_.upsert_config(
-            component_id=team.id,
             config=team.to_dict(),
             links=all_links if all_links else None,
             label=label,
@@ -1480,6 +1475,7 @@ def delete(
     *,
     db: Optional["BaseDb"] = None,
     hard_delete: bool = False,
+    require_no_dependents: bool = True,
 ) -> bool:
     """
     Delete the team component.
@@ -1487,9 +1483,18 @@ def delete(
     Args:
         db: The database to delete the component from.
         hard_delete: Whether to hard delete the component.
+        require_no_dependents: Refuse deletion while another active component
+            references this team. Setting this to False bypasses dependency
+            validation and can leave active components with dangling links;
+            use it only for a deliberate repair or migration. Catalog-v1
+            adapters retain their historical unguarded deletion behavior.
 
     Returns:
         True if the component was deleted, False otherwise.
+
+    Raises:
+        ComponentDependencyError: If a dependent component references this
+            team and require_no_dependents is True.
     """
     db_ = db or team.db
     if not db_:
@@ -1499,7 +1504,15 @@ def delete(
     if team.id is None:
         raise ValueError("Cannot delete team without an id")
 
-    return db_.delete_component(component_id=team.id, hard_delete=hard_delete)
+    if getattr(db_, "component_catalog_api_version", 1) < 2:
+        # Preserve the exact pre-2.9 adapter call shape. Third-party catalog-v1
+        # implementations cannot accept the v2-only keyword-only policy.
+        return db_.delete_component(component_id=team.id, hard_delete=hard_delete)
+    return db_.delete_component(
+        component_id=team.id,
+        hard_delete=hard_delete,
+        require_no_dependents=require_no_dependents,
+    )
 
 
 def get_session_metrics(team: "Team", session_id: Optional[str] = None):

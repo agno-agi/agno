@@ -46,7 +46,7 @@ from agno.os.interfaces.base import BaseInterface
 from agno.os.router import get_base_router, get_info_router, get_websocket_router
 from agno.os.routers.agents import get_agent_router
 from agno.os.routers.approvals import get_approval_router
-from agno.os.routers.components import get_components_router
+from agno.os.routers.components import get_components_router, supports_component_routes
 from agno.os.routers.database import get_database_router
 from agno.os.routers.evals import get_eval_router
 from agno.os.routers.health import get_health_router
@@ -224,6 +224,11 @@ def _get_disabled_feature_router(prefix: str, tag: str, requires: str) -> APIRou
         raise HTTPException(status_code=503, detail=detail)
 
     return router
+
+
+def _supports_component_routes(db: Union[BaseDb, AsyncBaseDb]) -> bool:
+    """Return whether this DB can safely back the synchronous Components API."""
+    return supports_component_routes(db)
 
 
 class AgentOS:
@@ -460,7 +465,7 @@ class AgentOS:
 
         # Track MCP tools declared on the registry so they connect in the same
         # lifespan as agent/team/workflow MCP tools (e.g. for components created
-        # from registry tools via StudioTool)
+        # from registry tools via StudioTools)
         collect_mcp_tools_from_registry(self.registry, self.mcp_tools)
 
         # Check for duplicate IDs
@@ -592,10 +597,14 @@ class AgentOS:
         ]
         # Routes that require a database
         if self.db is not None:
-            if isinstance(self.db, BaseDb):
+            if _supports_component_routes(self.db):
                 updated_routers.append(get_components_router(os_db=self.db, registry=self.registry))
             else:
-                updated_routers.append(_get_disabled_feature_router("/components", "Components", "sync db (BaseDb)"))
+                updated_routers.append(
+                    _get_disabled_feature_router(
+                        "/components", "Components", "sync db with component persistence support"
+                    )
+                )
             updated_routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
             updated_routers.append(get_approval_router(os_db=self.db, settings=self.settings))
             updated_routers.append(get_service_accounts_router(os_db=self.db, settings=self.settings))
@@ -1134,10 +1143,14 @@ class AgentOS:
         ]
         # Routes that require a database
         if self.db is not None:
-            if isinstance(self.db, BaseDb):
+            if _supports_component_routes(self.db):
                 routers.append(get_components_router(os_db=self.db, registry=self.registry))
             else:
-                routers.append(_get_disabled_feature_router("/components", "Components", "sync db (BaseDb)"))
+                routers.append(
+                    _get_disabled_feature_router(
+                        "/components", "Components", "sync db with component persistence support"
+                    )
+                )
             routers.append(get_schedule_router(os_db=self.db, settings=self.settings))
             routers.append(get_approval_router(os_db=self.db, settings=self.settings))
             routers.append(get_service_accounts_router(os_db=self.db, settings=self.settings))

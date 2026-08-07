@@ -115,9 +115,28 @@ LEARNINGS_COLLECTION_SCHEMA = [
 
 SCHEDULES_COLLECTION_SCHEMA = [
     {"key": "id", "unique": True},
-    {"key": "name", "unique": True},
+    {
+        # Keep this key pattern distinct from the pre-2.9 global {name: 1}
+        # index. MongoDB cannot build the partial replacement alongside that
+        # legacy index when both use the same key pattern, which would make a
+        # fail-safe create-before-drop migration impossible.
+        "key": [("name", 1), ("managed_by", 1)],
+        "name": "uq_generic_name",
+        "unique": True,
+        "partialFilterExpression": {"managed_by": None},
+    },
+    {
+        "key": [("owner_actor_id", 1), ("name", 1)],
+        "name": "uq_studio_owner_name",
+        "unique": True,
+        "partialFilterExpression": {"managed_by": "studio"},
+    },
+    {"key": "managed_by"},
+    {"key": "owner_actor_id"},
     {"key": "enabled"},
     {"key": "next_run_at"},
+    {"key": "pending_trigger_count"},
+    {"key": "manual_trigger_claimed"},
     {"key": "locked_by"},
     {"key": "locked_at"},
     {"key": "created_at"},
