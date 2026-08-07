@@ -567,3 +567,85 @@ def test_search_deduplicates_preserves_unique(lance_db):
     contents = [doc.content for doc in results]
     assert len(contents) == len(set(contents))
     assert len(contents) == 3
+
+
+
+def test_init_basic_pattern_name_uri_table_name(mock_embedder):
+    """Scenario 1: Basic initialization pattern of name + uri + table_name + embedder + search_type"""
+    os.makedirs(TEST_PATH, exist_ok=True)
+    try:
+        db = LanceDb(
+            uri=TEST_PATH,
+            table_name=TEST_TABLE,
+            embedder=mock_embedder,
+            search_type=SearchType.hybrid,
+        )
+        db.create()
+
+        assert db.table_name == TEST_TABLE
+        assert db.search_type == SearchType.hybrid
+        assert db.exists() is True
+
+        db.drop()
+    finally:
+        if os.path.exists(TEST_PATH):
+            shutil.rmtree(TEST_PATH)
+
+
+def test_init_reuses_existing_connection_and_table(mock_embedder):
+    """Scenario 2: Reuse externally created lancedb connections and table instances"""
+    import lancedb
+
+    os.makedirs(TEST_PATH, exist_ok=True)
+    try:
+        setup_db = LanceDb(uri=TEST_PATH, table_name=TEST_TABLE, embedder=mock_embedder)
+        setup_db.create()
+        assert setup_db.exists() is True
+
+        lancedb_client = lancedb.connect(TEST_PATH)
+        table = lancedb_client.open_table(TEST_TABLE)
+        assert table.name == TEST_TABLE
+
+        db = LanceDb(
+            connection=lancedb_client,
+            table=table,
+            embedder=mock_embedder,
+            search_type=SearchType.hybrid,
+        )
+        assert db.connection is lancedb_client
+        assert db.table is table
+        assert db.table_name == table.name
+        assert db.search_type == SearchType.hybrid
+
+        db.drop()
+    finally:
+        if os.path.exists(TEST_PATH):
+            shutil.rmtree(TEST_PATH)
+
+
+def test_init_table_argument_overrides_table_name(mock_embedder):
+    """Scenario 3: When table argument overrides table_name, table.name must be used"""
+    import lancedb
+
+    os.makedirs(TEST_PATH, exist_ok=True)
+    try:
+        setup_db = LanceDb(uri=TEST_PATH, table_name=TEST_TABLE, embedder=mock_embedder)
+        setup_db.create()
+
+        lancedb_client = lancedb.connect(TEST_PATH)
+        table = lancedb_client.open_table(TEST_TABLE)
+
+        db = LanceDb(
+            connection=lancedb_client,
+            table=table,
+            table_name="other_table",
+            embedder=mock_embedder,
+            search_type=SearchType.hybrid,
+        )
+
+        assert db.table_name == table.name
+
+        db.drop()
+    finally:
+        if os.path.exists(TEST_PATH):
+            shutil.rmtree(TEST_PATH)
