@@ -778,6 +778,15 @@ def _registry_copy(component: Any, label: str, strict: bool, expected_type: type
             f"{label} deep_copy returned a {type(copied).__name__}, not a "
             f"{expected_type.__name__}; a strict load refuses it."
         )
+    if strict:
+        from agno.utils.copies import copy_divergence
+
+        divergence = copy_divergence(component, copied)
+        if divergence is not None:
+            raise ComponentRehydrationError(
+                f"{label} deep_copy lost state: {divergence}. A strict load refuses a copy that "
+                "does not serialize like its original; give the subclass a faithful deep_copy."
+            )
     return copied
 
 

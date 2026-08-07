@@ -109,26 +109,40 @@ class Parallel:
         db: Optional[Any] = None,
         links: Optional[List[Dict[str, Any]]] = None,
         strict: bool = False,
+        branch_suffix: str = "",
     ) -> "Parallel":
         from agno.workflow.condition import Condition
         from agno.workflow.loop import Loop
         from agno.workflow.router import Router
         from agno.workflow.steps import Steps
 
-        def deserialize_step(step_data: Dict[str, Any]) -> Any:
+        def deserialize_step(step_data: Dict[str, Any], suffix: Optional[str] = None) -> Any:
+            suffix = branch_suffix if suffix is None else suffix
             step_type = step_data.get("type", "Step")
             if step_type == "Loop":
-                return Loop.from_dict(step_data, registry=registry, db=db, links=links, strict=strict)
+                return Loop.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             elif step_type == "Parallel":
-                return cls.from_dict(step_data, registry=registry, db=db, links=links, strict=strict)
+                return cls.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             elif step_type == "Steps":
-                return Steps.from_dict(step_data, registry=registry, db=db, links=links, strict=strict)
+                return Steps.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             elif step_type == "Condition":
-                return Condition.from_dict(step_data, registry=registry, db=db, links=links, strict=strict)
+                return Condition.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             elif step_type == "Router":
-                return Router.from_dict(step_data, registry=registry, db=db, links=links, strict=strict)
+                return Router.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             else:
-                return Step.from_dict(step_data, registry=registry, db=db, links=links, strict=strict)
+                return Step.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
 
         deserialized_steps = [deserialize_step(step) for step in data.get("steps", [])]
         return cls(

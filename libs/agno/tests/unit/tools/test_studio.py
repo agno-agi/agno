@@ -1954,3 +1954,80 @@ class TestPinProvenance:
         out = _loads(studio.edit_agent("fm-agent", model_id="gpt-4o-mini"))
         assert out.get("status") == "edited"
         assert db.get_config(component_id="fm-agent")["config"]["model"].get("id") == "gpt-4o-mini"
+
+
+class TestTargetDbBinding:
+    def _studio(self, db, **kwargs):
+        from agno.models.openai import OpenAIChat
+        from agno.registry import Registry
+        from agno.tools.studio import StudioTools
+
+        model = OpenAIChat(id="gpt-4o-mini")
+        registry = Registry(models=[model], dbs=kwargs.pop("dbs"))
+        return StudioTools(registry=registry, db=db, teams=True, workflows=True, **kwargs), model
+
+    def test_create_refuses_a_member_absent_from_the_target_db(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+
+        db_a = SqliteDb(id="cat-a", db_file=str(tmp_path / "a.db"))
+        db_b = SqliteDb(id="cat-b", db_file=str(tmp_path / "b.db"))
+        Agent(id="only-a", name="A").save(db=db_a)
+        studio, _ = self._studio(db_a, dbs=[db_a, db_b])
+
+        out = _loads(
+            studio.create_team(
+                name="XT", instructions="i", member_ids=["only-a"], db_id="cat-b", model_id="gpt-4o-mini"
+            )
+        )
+
+        assert "not stored in db 'cat-b'" in out.get("error", "")
+
+    def test_create_into_b_binds_and_pins_bs_row(self, tmp_path):
+        """A same-id child existing in both catalogs must resolve, pin and
+        reload exclusively from the selected target db."""
+        from agno.db.sqlite import SqliteDb
+        from agno.team.team import get_team_by_id
+
+        db_a = SqliteDb(id="cat-a", db_file=str(tmp_path / "a2.db"))
+        db_b = SqliteDb(id="cat-b", db_file=str(tmp_path / "b2.db"))
+        Agent(id="dual", name="A", description="from-A").save(db=db_a)
+        Agent(id="dual", name="A", description="from-B").save(db=db_b)
+        studio, _ = self._studio(db_a, dbs=[db_a, db_b])
+
+        out = _loads(
+            studio.create_team(name="BT", instructions="i", member_ids=["dual"], db_id="cat-b", model_id="gpt-4o-mini")
+        )
+        assert out.get("status") == "created"
+
+        loaded = get_team_by_id(db=db_b, id=out["id"], strict=True)
+        assert loaded is not None
+        assert loaded.members[0].description == "from-B"
+
+    def test_create_refuses_an_id_claimed_by_code_and_the_target_db(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+
+        db = SqliteDb(id="cat", db_file=str(tmp_path / "amb.db"))
+        Agent(id="both", name="DB Row").save(db=db)
+        code_agent = Agent(id="both", name="Live Code")
+        studio, _ = self._studio(db, dbs=[db], agents_list=[code_agent])
+
+        out = _loads(studio.create_team(name="AT", instructions="i", member_ids=["both"], model_id="gpt-4o-mini"))
+
+        assert "claimed by both" in out.get("error", "")
+
+    def test_agents_list_member_survives_a_strict_reload(self, tmp_path):
+        """List members mirror into the registry, so a stored reference to
+        them rehydrates instead of vanishing."""
+        from agno.db.sqlite import SqliteDb
+        from agno.team.team import get_team_by_id
+
+        db = SqliteDb(id="cat", db_file=str(tmp_path / "list.db"))
+        list_agent = Agent(id="listed", name="Listed")
+        studio, _ = self._studio(db, dbs=[db], agents_list=[list_agent])
+
+        out = _loads(studio.create_team(name="LT", instructions="i", member_ids=["listed"], model_id="gpt-4o-mini"))
+        assert out.get("status") == "created"
+
+        loaded = get_team_by_id(db=db, id=out["id"], registry=studio.registry, strict=True)
+        assert loaded is not None
+        assert loaded.members[0].id == "listed"

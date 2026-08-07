@@ -142,6 +142,14 @@ class StudioTools(Toolkit):
         self.agents_list = agents_list
         self.teams_list = teams_list
         self.workflows_list = workflows_list
+        # Rehydration resolves code-defined references through the registry
+        # only; a component reachable solely via these live lists could be
+        # referenced at create time but never reload. Make the lists visible.
+        for source, bucket in ((agents_list, registry.agents), (teams_list, registry.teams)):
+            for component in source or []:
+                component_id = getattr(component, "id", None)
+                if component_id and all(getattr(existing, "id", None) != component_id for existing in bucket):
+                    bucket.append(component)
         self.default_model_id = default_model_id
         self.default_num_history_runs = default_num_history_runs
 
@@ -1036,6 +1044,10 @@ class StudioTools(Toolkit):
             if db is None:
                 message = f"Db not found: {db_id}" if db_id is not None else "StudioTools has no db configured."
                 return json.dumps({"error": message})
+            try:
+                members = self._bind_members_to_target_db(members, db)
+            except ValueError as e:
+                return json.dumps({"error": str(e)})
             team_id = self._unique_component_id(name, db)
             team = Team(
                 id=team_id,
@@ -1098,6 +1110,10 @@ class StudioTools(Toolkit):
             if db is None:
                 message = f"Db not found: {db_id}" if db_id is not None else "StudioTools has no db configured."
                 return json.dumps({"error": message})
+            try:
+                self._bind_steps_to_target_db(steps, db)
+            except ValueError as e:
+                return json.dumps({"error": str(e)})
             workflow_id = self._unique_component_id(name, db)
             workflow = Workflow(
                 id=workflow_id,
@@ -1298,6 +1314,8 @@ class StudioTools(Toolkit):
             if member_ids is not None:
                 try:
                     members, missing = self._resolve_members(member_ids)
+                    if self.db is not None:
+                        members = self._bind_members_to_target_db(members, self.db)
                 except ValueError as e:
                     return json.dumps({"error": str(e)})
                 if missing:
@@ -2094,6 +2112,56 @@ class StudioTools(Toolkit):
             ):
                 return True
         return db.get_component(component_id) is not None
+
+    def _bind_child_to_target_db(self, child: Any, target_db: "BaseDb", noun: str) -> Any:
+        """The object a stored reference will actually reload from ``target_db``.
+
+        Reload resolution is db-first in the target db, then registry. A child
+        resolved from the catalog must match that outcome: an id claimed by
+        both a code-defined component and a target-db row is a coin flip and
+        refuses; a db-backed child absent from the target db can never reload
+        and refuses; a db-backed child present there is re-resolved from that
+        exact db so the pinned version names the row that will serve it.
+        """
+        from agno.agent.agent import get_agent_by_id
+        from agno.team.team import Team, get_team_by_id
+
+        child_id = getattr(child, "id", None)
+        is_team = isinstance(child, Team)
+        candidates = self._iter_teams() if is_team else self._iter_agents()
+        code_defined = any(getattr(candidate, "id", None) == child_id for candidate in candidates)
+        try:
+            row = target_db.get_config(component_id=child_id)
+        except NotImplementedError:
+            row = None
+        db_label = getattr(target_db, "id", None) or type(target_db).__name__
+        if code_defined and row is not None:
+            raise ValueError(
+                f"{noun} id '{child_id}' is claimed by both a code-defined component and a stored "
+                f"row in db '{db_label}'; reloading would bind whichever wins that db's precedence. "
+                "Give them distinct ids."
+            )
+        if code_defined:
+            return child
+        if row is None:
+            raise ValueError(
+                f"{noun} '{child_id}' is not stored in db '{db_label}'. Create it there first, or "
+                "reference a code-defined component."
+            )
+        rebound = (get_team_by_id if is_team else get_agent_by_id)(db=target_db, id=child_id, registry=self.registry)
+        if rebound is None:
+            raise ValueError(f"{noun} '{child_id}' could not be loaded from db '{db_label}'.")
+        return rebound
+
+    def _bind_members_to_target_db(self, members: List[Any], target_db: "BaseDb") -> List[Any]:
+        return [self._bind_child_to_target_db(member, target_db, "Member") for member in members]
+
+    def _bind_steps_to_target_db(self, steps: List[Any], target_db: "BaseDb") -> None:
+        for step in steps:
+            if getattr(step, "agent", None) is not None:
+                step.agent = self._bind_child_to_target_db(step.agent, target_db, "Step agent")
+            if getattr(step, "team", None) is not None:
+                step.team = self._bind_child_to_target_db(step.team, target_db, "Step team")
 
     def _resolve_members(self, member_ids: List[str]) -> tuple[List[TeamMember], List[str]]:
         """Resolve member identifiers to agents or teams.

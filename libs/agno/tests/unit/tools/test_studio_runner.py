@@ -1529,10 +1529,11 @@ class TestStudioEmbedding:
         )
         assert "no id" in created.get("error", "")
 
-    def test_edit_team_refuses_to_drop_unresolvable_members(self, registry, db):
-        # Team.from_dict resolves members through the registry and db only; a
-        # code-defined agents_list member is invisible to it, so an unrelated
-        # edit must refuse rather than publish the silently shrunken roster.
+    def test_edit_team_keeps_agents_list_members_resolvable(self, registry, db):
+        # StudioTools mirrors agents_list into the registry so rehydration can
+        # see those members: an unrelated edit now succeeds and the stored
+        # roster survives, where it previously had to refuse to avoid
+        # publishing a silently shrunken version.
         from agno.agent.agent import Agent as AgentClass
 
         worker = AgentClass(id="worker", name="Worker", model=OpenAIResponses(id="gpt-5.4"))
@@ -1541,12 +1542,13 @@ class TestStudioEmbedding:
         assert "error" not in created
 
         out = _loads(studio.edit_team("crew", instructions="new"))
-        assert "would drop members" in out.get("error", "")
+        assert out.get("status") == "edited"
 
         # The stored roster is intact and still names the member.
-        row = db.get_config(component_id="crew")
+        version = out.get("version") or out.get("draft_version")
+        row = db.get_config(component_id="crew", version=version)
         stored = row.get("config") if isinstance(row, dict) else {}
-        assert (stored or {}).get("members"), "edit must not have persisted a memberless version"
+        assert [m.get("agent_id") for m in (stored or {}).get("members", [])] == ["worker"]
 
     def test_runner_refuses_team_with_idless_member(self, registry, db):
         # A legacy or externally persisted config can still carry agent_id null

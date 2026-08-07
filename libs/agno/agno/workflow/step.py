@@ -373,6 +373,7 @@ class Step:
         db: Optional["BaseDb"] = None,
         links: Optional[List[Dict[str, Any]]] = None,
         strict: bool = False,
+        branch_suffix: str = "",
     ) -> "Step":
         """
         Create a Step from a dictionary.
@@ -401,28 +402,39 @@ class Step:
         executor = None
         workflow = None
 
-        # Prefer the link written for this step; when the step's link_key does
-        # not match (e.g. the step was renamed), any link for the child serves.
+        # A step's own pin is the link whose key is its step_id (or name)
+        # qualified by the branch it sits on: nested else branches accumulate
+        # one '#else' per level, and the exact key wins. Without an exact
+        # match, the child's links may still pin it - but only when they all
+        # agree; picking one of several different pins would silently run the
+        # wrong version, so strict refuses the ambiguity.
         step_link_key = config.get("step_id") or config.get("name")
+        qualified_link_key = f"{step_link_key}{branch_suffix}" if step_link_key else None
 
         def _pinned_version(child_id: Optional[str]) -> Optional[int]:
-            fallback = None
-            for link in links or []:
-                if link.get("link_kind") not in ("step_agent", "step_team"):
-                    continue
-                if link.get("child_component_id") != child_id:
-                    continue
-                link_key = link.get("link_key")
-                # Nested else branches accumulate one '#else' per level.
-                if link_key == step_link_key or (
-                    isinstance(link_key, str)
-                    and isinstance(step_link_key, str)
-                    and link_key.startswith(f"{step_link_key}#else")
-                ):
+            child_links = [
+                link
+                for link in links or []
+                if link.get("link_kind") in ("step_agent", "step_team") and link.get("child_component_id") == child_id
+            ]
+            if not child_links:
+                return None
+            for link in child_links:
+                if qualified_link_key is not None and link.get("link_key") == qualified_link_key:
                     return link.get("child_version")
-                if fallback is None:
-                    fallback = link.get("child_version")
-            return fallback
+            versions = {link.get("child_version") for link in child_links}
+            if len(versions) == 1:
+                return child_links[0].get("child_version")
+            message = (
+                f"Step '{config.get('name')}' reference '{child_id}' matches no link for its own "
+                f"key '{qualified_link_key}', and the workflow pins that child at multiple versions "
+                f"({sorted(v for v in versions if v is not None)}). Re-save the workflow so every "
+                "step's pin is keyed to it."
+            )
+            if strict:
+                raise ComponentRehydrationError(message)
+            log_warning(message)
+            return None
 
         # --- Handle Agent reconstruction ---
         if "agent_id" in config and config["agent_id"]:
@@ -448,6 +460,16 @@ class Step:
                                 f"Registry agent '{agent_id}' deep_copy returned a "
                                 f"{type(agent).__name__}, not an Agent; a strict load refuses it."
                             )
+                        if strict:
+                            from agno.utils.copies import copy_divergence
+
+                            divergence = copy_divergence(registry_agent, agent)
+                            if divergence is not None:
+                                raise ComponentRehydrationError(
+                                    f"Registry agent '{agent_id}' deep_copy lost state: {divergence}. "
+                                    "A strict load refuses a copy that does not serialize like its "
+                                    "original; give the subclass a faithful deep_copy."
+                                )
                     except ComponentRehydrationError:
                         raise
                     except Exception as e:
@@ -535,6 +557,16 @@ class Step:
                                 f"Registry team '{team_id}' deep_copy returned a "
                                 f"{type(team).__name__}, not a Team; a strict load refuses it."
                             )
+                        if strict:
+                            from agno.utils.copies import copy_divergence
+
+                            divergence = copy_divergence(registry_team, team)
+                            if divergence is not None:
+                                raise ComponentRehydrationError(
+                                    f"Registry team '{team_id}' deep_copy lost state: {divergence}. "
+                                    "A strict load refuses a copy that does not serialize like its "
+                                    "original; give the subclass a faithful deep_copy."
+                                )
                     except ComponentRehydrationError:
                         raise
                     except Exception as e:

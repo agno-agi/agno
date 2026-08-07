@@ -1413,3 +1413,20 @@ def test_strict_refuses_a_wrong_type_registry_copy():
 
     with pytest.raises(ComponentRehydrationError, match="not a Agent|not an Agent|object"):
         Team.from_dict(config, registry=registry, strict=True)
+
+
+def test_strict_refuses_a_copy_that_lost_serialized_state():
+    """A subclass whose __init__ swallows kwargs turns the inherited deep_copy
+    into an empty shell; strict must refuse the lossy copy, not dispatch it."""
+    from agno.exceptions import ComponentRehydrationError
+
+    class PolicyAgent(Agent):
+        def __init__(self, *args, policy=None, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.policy = policy
+
+    registry = Registry(agents=[PolicyAgent(id="pol", name="Pol", instructions="policy says", policy="strict")])
+    config = {"id": "pol-team", "members": [{"type": "agent", "agent_id": "pol"}]}
+
+    with pytest.raises(ComponentRehydrationError, match="lost state"):
+        Team.from_dict(config, registry=registry, strict=True)

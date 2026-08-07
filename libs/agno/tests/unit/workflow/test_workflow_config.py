@@ -1113,3 +1113,107 @@ class TestNestedElsePins:
         inner_condition = loaded.steps[0].else_steps[0]
         assert inner_condition.else_steps[0].agent.description == "inner-else"
         assert loaded.steps[0].steps[0].agent.description == "outer-if"
+
+
+class TestBranchQualifiedPins:
+    def test_duplicate_step_ids_across_branches_resolve_their_own_pins(self, tmp_path):
+        """Explicit duplicate step_ids in the if and else branches must each
+        reload their own pinned version via the branch-qualified key."""
+        from agno.agent.agent import Agent
+        from agno.db.sqlite import SqliteDb
+        from agno.workflow.condition import Condition
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import get_workflow_by_id
+
+        db = SqliteDb(db_file=str(tmp_path / "dup_branch.db"))
+        if_agent = Agent(id="db-agent", name="A", description="if-v")
+        else_agent = Agent(id="db-agent", name="A", description="else-v")
+        Workflow(
+            id="db-wf",
+            name="WF",
+            steps=[
+                Condition(
+                    name="branch",
+                    evaluator=True,
+                    steps=[Step(step_id="dup", name="dup", agent=if_agent)],
+                    else_steps=[Step(step_id="dup", name="dup", agent=else_agent)],
+                )
+            ],
+        ).save(db=db)
+
+        loaded = get_workflow_by_id(db=db, id="db-wf", strict=True)
+
+        assert loaded is not None
+        condition = loaded.steps[0]
+        assert condition.steps[0].agent.description == "if-v"
+        assert condition.else_steps[0].agent.description == "else-v"
+
+    def test_lookalike_link_key_never_satisfies_another_step(self, tmp_path):
+        """A step_id like 'x#else-other' is its own exact key; it must not be
+        claimed by step 'x' via prefix matching."""
+        from agno.agent.agent import Agent
+        from agno.db.sqlite import SqliteDb
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import get_workflow_by_id
+
+        db = SqliteDb(db_file=str(tmp_path / "lookalike.db"))
+        first = Agent(id="la-agent", name="A", description="x-v")
+        second = Agent(id="la-agent", name="A", description="other-v")
+        Workflow(
+            id="la-wf",
+            name="WF",
+            steps=[
+                Step(step_id="x", name="x", agent=first),
+                Step(step_id="x#else-other", name="other", agent=second),
+            ],
+        ).save(db=db)
+
+        loaded = get_workflow_by_id(db=db, id="la-wf", strict=True)
+
+        assert loaded is not None
+        assert loaded.steps[0].agent.description == "x-v"
+        assert loaded.steps[1].agent.description == "other-v"
+
+    def test_strict_refuses_ambiguous_legacy_pins(self, tmp_path):
+        """With no exact key match and multiple disagreeing pins for a child,
+        strict refuses instead of silently picking the first link."""
+        from agno.agent.agent import Agent
+        from agno.db.base import ComponentType
+        from agno.db.sqlite import SqliteDb
+        from agno.exceptions import ComponentRehydrationError
+        from agno.workflow.workflow import get_workflow_by_id
+
+        db = SqliteDb(db_file=str(tmp_path / "legacy_amb.db"))
+        agent = Agent(id="am-agent", name="A", description="v1")
+        agent.save(db=db)
+        agent.description = "v2"
+        agent.save(db=db)
+        db.upsert_component(component_id="am-wf", component_type=ComponentType.WORKFLOW, name="WF")
+        db.upsert_config(
+            component_id="am-wf",
+            config={
+                "id": "am-wf",
+                "name": "WF",
+                "steps": [{"type": "Step", "step_id": "renamed", "name": "renamed", "agent_id": "am-agent"}],
+            },
+            links=[
+                {
+                    "link_kind": "step_agent",
+                    "link_key": "old-key-1",
+                    "child_component_id": "am-agent",
+                    "child_version": 1,
+                    "position": 0,
+                },
+                {
+                    "link_kind": "step_agent",
+                    "link_key": "old-key-2",
+                    "child_component_id": "am-agent",
+                    "child_version": 2,
+                    "position": 1,
+                },
+            ],
+            stage="published",
+        )
+
+        with pytest.raises(ComponentRehydrationError, match="multiple versions"):
+            get_workflow_by_id(db=db, id="am-wf", strict=True)
