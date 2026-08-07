@@ -20,7 +20,7 @@ Typical usage::
 """
 
 from datetime import date, datetime, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple
 
 from agno.db.base import BaseDb, ComponentType
 from agno.db.clickhouse.schemas import SPANS_DDL, TRACES_DDL, VERSIONS_DDL
@@ -436,7 +436,13 @@ class ClickhouseDb(BaseDb):
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
         filter_expr: Optional[Dict[str, Any]] = None,
+        group_by: Literal["session", "agent", "team", "workflow", "endpoint"] = "session",
     ) -> Tuple[List[Dict[str, Any]], int]:
+        if group_by != "session":
+            raise NotImplementedError(
+                f"get_trace_stats with group_by={group_by!r} is not supported by {self.__class__.__name__}. "
+                "Only the default 'session' grouping is available."
+            )
         try:
             qualified = self._get_table("traces")
             if qualified is None:
