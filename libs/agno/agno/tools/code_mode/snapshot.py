@@ -1,0 +1,330 @@
+"""Per-variable dill snapshots of the kernel namespace into AgentFS.
+
+Each top-level name is pickled independently, so one socket or open file
+handle is skipped and reported rather than aborting the whole snapshot. The
+store is the database (AgentFS over the agent's db): nothing about resume
+depends on a container's disk surviving. Payloads are base64 text because
+AgentFS v1 is text-only.
+
+Restore never raises — a missing or corrupt file yields an empty restore and
+a logged warning — and runs BEFORE the bootstrap cell that rebinds the live
+toolkit handles, so a stale pickled handle loses to this run's live one.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import json
+import time
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+from agno.fs import FileSystem
+from agno.tools.code_mode.kernel import KernelSession, parse_marker_line
+from agno.utils.log import log_debug, log_warning
+
+SNAPSHOT_MARKER = "__AGNO_CM_SNAPSHOT__"
+RESTORE_MARKER = "__AGNO_CM_RESTORE__"
+
+# Pickles each candidate name independently. Builtins go through the _cm_b
+# alias so a user variable named ``list`` or ``open`` cannot break the save.
+_SNAPSHOT_CODE_TEMPLATE = (
+    "import base64 as _cm_b64\n"
+    "import builtins as _cm_b\n"
+    "import json as _cm_json\n"
+    "try:\n"
+    "    import dill as _cm_dill\n"
+    "except Exception as _cm_e:\n"
+    "    _cm_b.print('\\n{marker}' + _cm_json.dumps({{'error': 'dill unavailable: ' + _cm_b.str(_cm_e)}}))\n"
+    "else:\n"
+    "    _cm_skip = _cm_b.set(_cm_json.loads(_cm_b64.b64decode('{skip_b64}').decode('utf-8')))\n"
+    "    _cm_skip.update(('In', 'Out', 'get_ipython', 'exit', 'quit'))\n"
+    "    _cm_base = _cm_b.globals().get('_agno_cm_baseline', {{}})\n"
+    "    _cm_entries = []\n"
+    "    _cm_skipped = []\n"
+    "    for _cm_k in _cm_b.list(_cm_b.globals()):\n"
+    "        if _cm_k.startswith('_') or _cm_k in _cm_skip:\n"
+    "            continue\n"
+    "        _cm_v = _cm_b.globals()[_cm_k]\n"
+    "        if _cm_k in _cm_base and _cm_base[_cm_k] is _cm_v:\n"
+    "            continue\n"
+    "        try:\n"
+    "            _cm_payload = _cm_dill.dumps(_cm_v)\n"
+    "        except Exception as _cm_e:\n"
+    "            _cm_skipped.append({{'name': _cm_k, 'reason': _cm_b.type(_cm_e).__name__ + ': ' + _cm_b.str(_cm_e)[:200]}})\n"
+    "            continue\n"
+    "        if _cm_b.len(_cm_payload) > {max_variable_bytes}:\n"
+    "            _cm_skipped.append({{'name': _cm_k, 'reason': 'pickle is ' + _cm_b.str(_cm_b.len(_cm_payload)) + ' bytes, over the {max_variable_bytes}-byte cap'}})\n"
+    "            continue\n"
+    "        _cm_entries.append({{'name': _cm_k, 'data': _cm_b64.b64encode(_cm_payload).decode('ascii'), 'bytes': _cm_b.len(_cm_payload), 'type': _cm_b.type(_cm_v).__name__}})\n"
+    "    _cm_b.print('\\n{marker}' + _cm_json.dumps({{'entries': _cm_entries, 'skipped': _cm_skipped}}))\n"
+)
+
+# Restores each payload independently; a failure names the variable instead of
+# aborting the rest.
+_RESTORE_CODE_TEMPLATE = (
+    "import base64 as _cm_b64\n"
+    "import builtins as _cm_b\n"
+    "import json as _cm_json\n"
+    "try:\n"
+    "    import dill as _cm_dill\n"
+    "except Exception as _cm_e:\n"
+    "    _cm_b.print('\\n{marker}' + _cm_json.dumps({{'restored': [], 'failed': [['*', 'dill unavailable: ' + _cm_b.str(_cm_e)]]}}))\n"
+    "else:\n"
+    "    _cm_payloads = _cm_json.loads(_cm_b64.b64decode('{payloads_b64}').decode('utf-8'))\n"
+    "    _cm_restored = []\n"
+    "    _cm_failed = []\n"
+    "    for _cm_k, _cm_data in _cm_payloads:\n"
+    "        try:\n"
+    "            _cm_b.globals()[_cm_k] = _cm_dill.loads(_cm_b64.b64decode(_cm_data))\n"
+    "            _cm_restored.append(_cm_k)\n"
+    "        except Exception as _cm_e:\n"
+    "            _cm_failed.append([_cm_k, _cm_b.type(_cm_e).__name__ + ': ' + _cm_b.str(_cm_e)[:200]])\n"
+    "    _cm_b.print('\\n{marker}' + _cm_json.dumps({{'restored': _cm_restored, 'failed': _cm_failed}}))\n"
+)
+
+
+def apply_snapshot_budget(
+    entries: List[Dict[str, Any]], max_snapshot_bytes: int
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Enforce the cumulative snapshot budget.
+
+    Entries are taken in manifest order — smallest first, largest last — and
+    cut when the running total would cross ``max_snapshot_bytes``, so one
+    oversized DataFrame does not evict the small variables that carry the
+    reasoning. Returns (kept, cut); cut entries carry a ``reason``.
+    """
+    ordered = sorted(entries, key=lambda e: (int(e.get("bytes", 0)), str(e.get("name", ""))))
+    kept: List[Dict[str, Any]] = []
+    cut: List[Dict[str, Any]] = []
+    total = 0
+    for entry in ordered:
+        size = int(entry.get("bytes", 0))
+        if total + size <= max_snapshot_bytes:
+            kept.append(entry)
+            total += size
+        else:
+            cut.append(
+                {
+                    "name": entry.get("name"),
+                    "reason": f"over the {max_snapshot_bytes}-byte snapshot budget ({size} bytes)",
+                }
+            )
+    return kept, cut
+
+
+def build_restored_notice(restored: Sequence[str], not_restored: Sequence[str]) -> Optional[str]:
+    """The in-band notice prefixed to the next execute result after a restore."""
+    if not restored and not not_restored:
+        return None
+    lines = ["<code_mode_restored>"]
+    if restored:
+        lines.append(f"Restored {len(restored)} variables: " + ", ".join(restored) + ".")
+    else:
+        lines.append("Restored 0 variables.")
+    if not_restored:
+        lines.append("Not restored (unpicklable): " + ", ".join(not_restored) + ".")
+    lines.append("</code_mode_restored>")
+    return "\n".join(lines)
+
+
+class SnapshotManager:
+    """Schedules, writes, restores, and clears per-session snapshots."""
+
+    def __init__(
+        self,
+        fs: FileSystem,
+        *,
+        debounce: float = 1.5,
+        max_variable_bytes: int = 2_000_000,
+        max_snapshot_bytes: int = 64_000_000,
+        skip_names: Optional[Sequence[str]] = None,
+    ) -> None:
+        self.fs = fs
+        self.debounce = debounce
+        self.max_variable_bytes = max_variable_bytes
+        self.max_snapshot_bytes = max_snapshot_bytes
+        self.skip_names = list(skip_names or [])
+        self._timers: Dict[str, "asyncio.Task[None]"] = {}
+
+    # ------------------------------------------------------------------
+    # Paths
+    # ------------------------------------------------------------------
+
+    def _manifest_path(self, session_id: str) -> str:
+        return f"kernel/{session_id}/manifest.json"
+
+    def _vars_dir(self, session_id: str) -> str:
+        return f"kernel/{session_id}/vars"
+
+    def _var_path(self, session_id: str, name: str) -> str:
+        return f"kernel/{session_id}/vars/{name}.b64"
+
+    # ------------------------------------------------------------------
+    # Scheduling
+    # ------------------------------------------------------------------
+
+    def schedule(self, session: KernelSession) -> None:
+        """Schedule a debounced snapshot after a successful cell."""
+        existing = self._timers.pop(session.session_id, None)
+        if existing is not None:
+            existing.cancel()
+        self._timers[session.session_id] = asyncio.get_running_loop().create_task(self._debounced(session))
+
+    async def _debounced(self, session: KernelSession) -> None:
+        try:
+            await asyncio.sleep(self.debounce)
+            async with session.lock:
+                if session.running:
+                    await self.flush_locked(session)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log_warning(f"CodeMode snapshot for session {session.session_id} failed: {e}")
+        finally:
+            self._timers.pop(session.session_id, None)
+
+    # ------------------------------------------------------------------
+    # Snapshot
+    # ------------------------------------------------------------------
+
+    async def flush_locked(self, session: KernelSession) -> None:
+        """Write a snapshot now. The caller holds the session lock."""
+        if not session.running:
+            return
+        skip_b64 = base64.b64encode(json.dumps(self.skip_names).encode("utf-8")).decode("ascii")
+        code = _SNAPSHOT_CODE_TEMPLATE.format(
+            marker=SNAPSHOT_MARKER, skip_b64=skip_b64, max_variable_bytes=self.max_variable_bytes
+        )
+        result = await session._run_silent(code, timeout=120.0, max_chars=self.max_snapshot_bytes * 2 + 1_000_000)
+        payload = parse_marker_line(result.stdout, SNAPSHOT_MARKER)
+        if payload is None:
+            log_warning(
+                f"CodeMode snapshot for session {session.session_id} produced no data: "
+                f"{result.traceback or result.stderr or 'no output'}"
+            )
+            return
+        data = json.loads(payload)
+        if "error" in data:
+            log_warning(f"CodeMode snapshot for session {session.session_id} failed: {data['error']}")
+            return
+        kept, cut = apply_snapshot_budget(data.get("entries", []), self.max_snapshot_bytes)
+        skipped = list(data.get("skipped", [])) + cut
+
+        session_id = session.session_id
+        written: List[Dict[str, Any]] = []
+        for entry in kept:
+            name = str(entry["name"])
+            try:
+                await self.fs.awrite(self._var_path(session_id, name), str(entry["data"]))
+                written.append({"name": name, "type": entry.get("type"), "bytes": int(entry.get("bytes", 0))})
+            except Exception as e:
+                skipped.append({"name": name, "reason": f"store refused the write: {e}"})
+
+        # Drop var files for names that no longer exist, so a deleted variable
+        # cannot resurrect on the next restore.
+        try:
+            current = {w["name"] for w in written}
+            for meta in await self.fs.alist(self._vars_dir(session_id)):
+                file_name = meta.path.rsplit("/", 1)[-1]
+                if file_name.endswith(".b64") and file_name[: -len(".b64")] not in current:
+                    await self.fs.adelete(meta.path)
+        except Exception as e:
+            log_debug(f"CodeMode snapshot cleanup for session {session_id}: {e}")
+
+        manifest = {
+            "schema": 1,
+            "saved_at": int(time.time()),
+            "execution_count": session.execution_count,
+            "variables": written,
+            "skipped": skipped,
+        }
+        try:
+            await self.fs.awrite(self._manifest_path(session_id), json.dumps(manifest))
+        except Exception as e:
+            log_warning(f"CodeMode snapshot manifest write failed for session {session_id}: {e}")
+            return
+        log_debug(f"CodeMode snapshot for session {session_id}: {len(written)} variables, {len(skipped)} skipped")
+
+    # ------------------------------------------------------------------
+    # Restore
+    # ------------------------------------------------------------------
+
+    async def restore(self, session: KernelSession) -> Optional[str]:
+        """Restore the last snapshot into a fresh kernel. Never raises.
+
+        Returns the ``<code_mode_restored>`` notice, or None when there was
+        nothing to restore. Runs before the bootstrap cell by contract.
+        """
+        session_id = session.session_id
+        try:
+            manifest_text = await self.fs.aread(self._manifest_path(session_id))
+        except Exception as e:
+            log_warning(f"CodeMode restore for session {session_id}: manifest read failed: {e}")
+            return None
+        if manifest_text is None:
+            return None
+        try:
+            manifest = json.loads(manifest_text)
+            variables = list(manifest.get("variables", []))
+            manifest_skipped = [str(s.get("name")) for s in manifest.get("skipped", [])]
+        except Exception as e:
+            log_warning(f"CodeMode restore for session {session_id}: corrupt manifest: {e}")
+            return None
+
+        payloads: List[List[str]] = []
+        failed: List[str] = []
+        for var in variables:
+            name = str(var.get("name"))
+            try:
+                data = await self.fs.aread(self._var_path(session_id, name))
+            except Exception as e:
+                log_warning(f"CodeMode restore for session {session_id}: read of '{name}' failed: {e}")
+                data = None
+            if data is None:
+                failed.append(name)
+            else:
+                payloads.append([name, data])
+
+        restored: List[str] = []
+        if payloads:
+            payloads_b64 = base64.b64encode(json.dumps(payloads).encode("utf-8")).decode("ascii")
+            code = _RESTORE_CODE_TEMPLATE.format(marker=RESTORE_MARKER, payloads_b64=payloads_b64)
+            try:
+                result = await session._run_silent(code, timeout=120.0)
+                marker_payload = parse_marker_line(result.stdout, RESTORE_MARKER)
+                if marker_payload is None:
+                    log_warning(
+                        f"CodeMode restore for session {session_id} produced no result: "
+                        f"{result.traceback or result.stderr or 'no output'}"
+                    )
+                    failed.extend(name for name, _ in payloads)
+                else:
+                    outcome = json.loads(marker_payload)
+                    restored = [str(n) for n in outcome.get("restored", [])]
+                    for name, reason in outcome.get("failed", []):
+                        log_warning(f"CodeMode restore for session {session_id}: '{name}' failed: {reason}")
+                        if name != "*":
+                            failed.append(str(name))
+            except Exception as e:
+                log_warning(f"CodeMode restore for session {session_id} failed: {e}")
+                failed.extend(name for name, _ in payloads)
+
+        not_restored = manifest_skipped + [name for name in failed if name not in manifest_skipped]
+        return build_restored_notice(restored, not_restored)
+
+    # ------------------------------------------------------------------
+    # Clear
+    # ------------------------------------------------------------------
+
+    async def clear(self, session_id: str) -> None:
+        """Delete the session's snapshot. Used by the restart tool."""
+        timer = self._timers.pop(session_id, None)
+        if timer is not None:
+            timer.cancel()
+        try:
+            await self.fs.adelete(self._manifest_path(session_id))
+            for meta in await self.fs.alist(self._vars_dir(session_id)):
+                await self.fs.adelete(meta.path)
+        except Exception as e:
+            log_warning(f"CodeMode snapshot clear for session {session_id} failed: {e}")
