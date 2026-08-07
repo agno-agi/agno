@@ -38,19 +38,18 @@ def _toolkit_key(toolkit: "Toolkit") -> ToolkitKey:
 
 def _group_source_toolkits(
     tools: Sequence[Any],
-) -> Tuple[Dict[ToolkitKey, int], Dict[ToolkitKey, Set[str]], Dict[int, ToolkitKey]]:
+) -> Tuple[Dict[ToolkitKey, int], Dict[ToolkitKey, Set[str]], Dict[int, ToolkitKey], Set[ToolkitKey]]:
     """Index the bare Functions that a live Toolkit was flattened into.
 
     Returns the last index each toolkit's members occupy in ``tools`` and the
     member names present, both keyed by :func:`_toolkit_key`, plus the key
-    itself memoized per live Toolkit object. The key folds the toolkit's whole
-    function surface, so rebuilding it per member Function would make one
-    collection pass quadratic in the toolkit's size; every later key read must
-    come from the memo.
+    itself memoized per live Toolkit object, and the set of keys that were
+    persisted as a complete toolkit (``toolkit_complete``).
     """
     last_index: Dict[ToolkitKey, int] = {}
     members: Dict[ToolkitKey, Set[str]] = {}
     keys_by_id: Dict[int, ToolkitKey] = {}
+    complete_keys: Set[ToolkitKey] = set()
     for index, tool in enumerate(tools):
         if not isinstance(tool, Function):
             continue
@@ -62,7 +61,9 @@ def _group_source_toolkits(
             key = keys_by_id[id(source_toolkit)] = _toolkit_key(source_toolkit)
         last_index[key] = index
         members.setdefault(key, set()).add(tool.name)
-    return last_index, members, keys_by_id
+        if getattr(tool, "toolkit_complete", None):
+            complete_keys.add(key)
+    return last_index, members, keys_by_id, complete_keys
 
 
 def _emits_toolkit_instructions(
@@ -72,6 +73,7 @@ def _emits_toolkit_instructions(
     last_index: Dict[ToolkitKey, int],
     members: Dict[ToolkitKey, Set[str]],
     async_mode: bool = False,
+    complete_keys: Set[ToolkitKey] | None = None,
 ) -> bool:
     """Whether the bare Function at ``index`` should emit its toolkit's guidance.
 
@@ -92,6 +94,10 @@ def _emits_toolkit_instructions(
     """
     if last_index.get(key) != index:
         return False
+    # Persisted whole-toolkit components keep their guidance even if the live
+    # toolkit later gains or loses members (#9405).
+    if complete_keys is not None and key in complete_keys:
+        return True
     # Measured against the set this run would actually deliver: in async mode a
     # live Toolkit contributes its async variants too, and the registry cannot
     # rehydrate those, so an async-only member always leaves a gap here.
