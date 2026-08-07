@@ -575,15 +575,15 @@ class AsyncMongoDb(AsyncBaseDb):
             aggregate_cursor_or_coro = await aggregate_cursor_or_coro
         return await aggregate_cursor_or_coro.to_list(length=length)
 
-    def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
+    async def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
         """Get the latest version of the database schema.
 
         ``table_name`` is accepted for parity with the SQL adapters and the
-        ``BaseDb`` contract; MongoDB is schemaless so it is ignored.
+        ``AsyncBaseDb`` contract; MongoDB is schemaless so it is ignored.
         """
         return None
 
-    def upsert_schema_version(self, table_name: str = "", version: str = "") -> None:
+    async def upsert_schema_version(self, table_name: str = "", version: str = "") -> None:
         """Upsert the schema version. ``table_name`` is ignored — see
         ``get_latest_schema_version``."""
         pass
@@ -645,7 +645,7 @@ class AsyncMongoDb(AsyncBaseDb):
                 {"$sort": {"_ri": -1, "_ca": -1}},
                 {"$limit": limit},
             ]
-            docs = await runs_collection.aggregate(pipeline).to_list(length=limit)
+            docs = await self._aggregate_to_list(runs_collection, pipeline, length=limit)
             run_docs = [doc["run_data"] for doc in docs if "run_data" in doc]
             run_docs.reverse()  # back to chronological order
             return run_docs
@@ -655,7 +655,7 @@ class AsyncMongoDb(AsyncBaseDb):
             {"$addFields": {"_ri": {"$ifNull": ["$run_index", 0]}, "_ca": {"$ifNull": ["$created_at", 0]}}},
             {"$sort": {"_ri": 1, "_ca": 1}},
         ]
-        docs = await runs_collection.aggregate(pipeline).to_list(length=None)
+        docs = await self._aggregate_to_list(runs_collection, pipeline, length=None)
         return [doc["run_data"] for doc in docs if "run_data" in doc]
 
     async def _get_sessions_runs_docs(

@@ -327,15 +327,17 @@ class SingleStoreDb(BaseDb):
 
                         # Add primary key and shard key. The runs table is sharded by
                         # session_id (not run_id) so that all runs for a session live on
-                        # the same partition — keeps session reads cheap.
+                        # the same partition — keeps session reads cheap. SingleStore
+                        # requires every unique key to contain the whole shard key, so
+                        # the runs primary key carries session_id next to run_id.
                         if table_type == "sessions":
-                            pk_col, shard_col = "session_id", "session_id"
+                            pk_cols, shard_col = "session_id", "session_id"
                         else:
-                            pk_col, shard_col = "run_id", "session_id"
+                            pk_cols, shard_col = "run_id, session_id", "session_id"
 
                         table_sql = f"""CREATE TABLE IF NOT EXISTS {table_ref} (
                             {columns_def},
-                            PRIMARY KEY ({pk_col}),
+                            PRIMARY KEY ({pk_cols}),
                             SHARD KEY ({shard_col})
                         )"""
 
