@@ -2749,15 +2749,15 @@ class Model(ABC):
                             function_call_output += str(item)
                             item.tool_call_id = function_call.call_id
 
-                            # For WorkflowCompletedEvent, extract content for final output
-                            from agno.run.workflow import WorkflowCompletedEvent
+                        # For WorkflowCompletedEvent, extract content for final output
+                        from agno.run.workflow import WorkflowCompletedEvent
 
-                            if isinstance(item, WorkflowCompletedEvent):
-                                if item.content is not None:
-                                    if isinstance(item.content, BaseModel):
-                                        function_call_output += item.content.model_dump_json()
-                                    else:
-                                        function_call_output += str(item.content)
+                        if isinstance(item, WorkflowCompletedEvent):
+                            if item.content is not None:
+                                if isinstance(item.content, BaseModel):
+                                    function_call_output += item.content.model_dump_json()
+                                else:
+                                    function_call_output += str(item.content)
 
                         # Put the event into the queue to be yielded
                         await event_queue.put(item)
@@ -2886,6 +2886,16 @@ class Model(ABC):
                             elif isinstance(item, CustomEvent):
                                 function_call_output += str(item)
                                 item.tool_call_id = function_call.call_id
+
+                            # For WorkflowCompletedEvent, extract content for final output
+                            from agno.run.workflow import WorkflowCompletedEvent
+
+                            if isinstance(item, WorkflowCompletedEvent):
+                                if item.content is not None:
+                                    if isinstance(item.content, BaseModel):
+                                        function_call_output += item.content.model_dump_json()
+                                    else:
+                                        function_call_output += str(item.content)
 
                             # Yield the event itself to bubble it up
                             yield item
