@@ -748,8 +748,11 @@ class StudioRunnerTools(Toolkit):
         Refusing says which id is taken; substituting would answer a different
         question than the caller asked.
 
-        Dispatch only. Reads and edits still resolve the stored component by
-        name, which is how it gets fixed."""
+        Dispatch only, so a name that is not itself taken still reads and edits
+        the stored component -- which is how the id gets changed. When the code
+        component took the display name as well, the stored one is not
+        reachable through this toolkit at all and the collision has to be
+        resolved where the id was set."""
         shadowing = {row["id"] for row in self._admitted_code_components(component_type)}
         if resolved_id not in shadowing:
             return

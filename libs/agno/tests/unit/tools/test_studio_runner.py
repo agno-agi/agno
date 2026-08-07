@@ -2113,6 +2113,67 @@ class TestDispatchCheckInvariants:
         assert (stored.get("config") or {}).get("reasoning_model") is not None
         assert "reasoning_model" in _loads(runner.run_agent("rich", "hi"))["error"]
 
+    def test_an_edit_refuses_rather_than_guessing_when_it_cannot_read_the_original(self, db, registry):
+        """A read that fails is not evidence there was nothing to carry. Taking
+        it as an empty set publishes an edit that deletes the declaration and
+        lifts the refusal it causes, so the failure has to reach the caller."""
+        from agno.agent import Agent
+
+        Agent(
+            id="rich",
+            name="Rich",
+            model=OpenAIResponses(id="gpt-5.4"),
+            reasoning_model=OpenAIResponses(id="o3-deep"),
+        ).save(db=db)
+
+        studio = StudioTools(registry=registry, db=db)
+        original = studio._runner_tools._load_config_from_db
+        calls = {"count": 0}
+
+        def failing(component_id, **kwargs):
+            calls["count"] += 1
+            if calls["count"] > 1 and component_id == "rich":
+                raise RuntimeError("transient db failure")
+            return original(component_id, **kwargs)
+
+        studio._runner_tools._load_config_from_db = failing  # type: ignore[method-assign]
+        result = _loads(studio.edit_agent("rich", description="an unrelated change"))
+        studio._runner_tools._load_config_from_db = original  # type: ignore[method-assign]
+
+        assert "error" in result
+        stored = (db.get_config(component_id="rich") or {}).get("config") or {}
+        assert stored.get("reasoning_model") is not None
+
+    def test_a_teams_reasoning_model_survives_being_saved(self, db, registry):
+        """It was dropped at save time, so the loader had nothing to notice and
+        the team dispatched without the reasoning it was configured for -- the
+        exact different-pipeline outcome the refusal exists to prevent. Nothing
+        reads it back yet (#9452), but losing it before anything can is a
+        separate loss."""
+        from agno.agent import Agent
+        from agno.team import Team
+
+        Team(
+            id="crew",
+            name="Crew",
+            model=OpenAIResponses(id="gpt-5.4"),
+            members=[Agent(id="m", name="M", model=OpenAIResponses(id="gpt-5.4"))],
+            reasoning_model=OpenAIResponses(id="o3-deep"),
+        ).save(db=db)
+
+        stored = (db.get_config(component_id="crew") or {}).get("config") or {}
+        assert stored.get("reasoning_model") is not None
+        assert "reasoning_model" in _loads(StudioRunnerTools(registry=registry, db=db).run_team("crew", "hi"))["error"]
+
+        # A team that declares none is untouched.
+        Team(
+            id="plain",
+            name="Plain",
+            model=OpenAIResponses(id="gpt-5.4"),
+            members=[Agent(id="m2", name="M2", model=OpenAIResponses(id="gpt-5.4"))],
+        ).save(db=db)
+        assert StudioRunnerTools(registry=registry, db=db)._team_for_run("plain") is not None
+
     def test_a_name_cannot_reach_a_component_its_id_shadows(self, db, registry):
         """An exact id resolves to the code component and the listing shows
         only that one, so letting the display name reach the stored component

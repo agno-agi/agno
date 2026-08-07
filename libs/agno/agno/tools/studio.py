@@ -2196,14 +2196,16 @@ class StudioTools(Toolkit):
         edit that never mentioned it."""
         if component_id is None or self.db is None:
             return {}
-        try:
-            stored = self._runner_tools._load_config_from_db(
-                component_id, version=self._edit_base_version(component_id)
+        # Deliberately unguarded. A read that fails is not evidence that there
+        # was nothing to carry, and treating it as such publishes an edit that
+        # deletes a declaration -- and lifts the dispatch refusal it causes.
+        # The caller's handler turns this into a structured error.
+        stored = self._runner_tools._load_config_from_db(component_id, version=self._edit_base_version(component_id))
+        if stored is None:
+            raise ValueError(
+                f"Cannot edit '{component_id}': its stored config could not be read, so an edit would drop "
+                "whatever the rebuild does not carry back."
             )
-        except Exception:
-            return {}
-        if not isinstance(stored, dict):
-            return {}
         return {key: stored[key] for key in _UNRECONSTRUCTED_KEYS if stored.get(key) is not None}
 
     def _upsert_draft(self, component: Component, carry: Optional[Dict[str, Any]] = None) -> Optional[int]:
