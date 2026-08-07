@@ -786,6 +786,7 @@ class ClickhouseDb(BaseDb):
         self,
         component_id: str,
         component_type: Optional[ComponentType] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         return None
 

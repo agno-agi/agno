@@ -4096,12 +4096,14 @@ class SqliteDb(BaseDb):
         self,
         component_id: str,
         component_type: Optional[ComponentType] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Get a component by ID.
 
         Args:
             component_id: The component ID.
             component_type: Optional type filter (agent|team|workflow).
+            user_id: If set, only return the component if owned by this user.
 
         Returns:
             Component dictionary or None if not found.
@@ -4118,6 +4120,8 @@ class SqliteDb(BaseDb):
                 )
                 if component_type is not None:
                     stmt = stmt.where(table.c.component_type == component_type.value)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
 
                 result = sess.execute(stmt).fetchone()
                 return dict(result._mapping) if result else None
@@ -4134,6 +4138,7 @@ class SqliteDb(BaseDb):
         description: Optional[str] = None,
         current_version: Optional[int] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create or update a component.
 
@@ -4144,6 +4149,7 @@ class SqliteDb(BaseDb):
             description: Optional description.
             current_version: Optional current version.
             metadata: Optional metadata dict.
+            user_id: Owner to set when creating; scopes the update to this user when set.
 
         Returns:
             Created/updated component dictionary.
@@ -4157,9 +4163,21 @@ class SqliteDb(BaseDb):
                 raise ValueError("Components table not found")
 
             with self.Session() as sess, sess.begin():
-                existing = sess.execute(select(table).where(table.c.component_id == component_id)).fetchone()
+                existing_stmt = select(table).where(table.c.component_id == component_id)
+                if user_id is not None:
+                    existing_stmt = existing_stmt.where(table.c.user_id == user_id)
+                existing = sess.execute(existing_stmt).fetchone()
 
                 if existing is None:
+                    # Scoped lookup missed: if the row exists under another owner,
+                    # fail closed instead of falling through to a create (PK violation).
+                    if user_id is not None:
+                        unscoped = sess.execute(
+                            select(table.c.component_id).where(table.c.component_id == component_id)
+                        ).fetchone()
+                        if unscoped is not None:
+                            raise ValueError(f"Component {component_id} not found")
+
                     # Create new component
                     if component_type is None:
                         raise ValueError("component_type is required when creating a new component")
@@ -4169,6 +4187,7 @@ class SqliteDb(BaseDb):
                             component_id=component_id,
                             component_type=component_type.value if hasattr(component_type, "value") else component_type,
                             name=name or component_id,
+                            user_id=user_id,
                             description=description,
                             current_version=None,
                             metadata=metadata,
@@ -4216,7 +4235,7 @@ class SqliteDb(BaseDb):
                     sess.execute(table.update().where(table.c.component_id == component_id).values(**updates))
                     log_debug(f"Updated component {component_id}")
 
-            result = self.get_component(component_id)
+            result = self.get_component(component_id, user_id=user_id)
             if result is None:
                 raise ValueError(f"Failed to get component {component_id} after upsert")
             return result
@@ -4229,12 +4248,14 @@ class SqliteDb(BaseDb):
         self,
         component_id: str,
         hard_delete: bool = False,
+        user_id: Optional[str] = None,
     ) -> bool:
         """Delete a component and all its configs/links.
 
         Args:
             component_id: The component ID.
             hard_delete: If True, permanently delete. Otherwise soft-delete.
+            user_id: If set, only delete the component if owned by this user.
 
         Returns:
             True if deleted, False if not found.
@@ -4245,6 +4266,10 @@ class SqliteDb(BaseDb):
             links_table = self._get_table(table_type="component_links")
 
             if components_table is None:
+                return False
+
+            # Scope to owner: a non-owner must not delete the component or its configs/links.
+            if user_id is not None and self.get_component(component_id, user_id=user_id) is None:
                 return False
 
             with self.Session() as sess, sess.begin():
@@ -4282,6 +4307,7 @@ class SqliteDb(BaseDb):
         limit: int = 20,
         offset: int = 0,
         exclude_component_ids: Optional[Set[str]] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List components with pagination.
 
@@ -4291,6 +4317,7 @@ class SqliteDb(BaseDb):
             limit: Maximum number of items to return.
             offset: Number of items to skip.
             exclude_component_ids: Component IDs to exclude from results.
+            user_id: If set, only list components owned by this user.
 
         Returns:
             Tuple of (list of component dicts, total count).
@@ -4305,6 +4332,8 @@ class SqliteDb(BaseDb):
                 where_clauses = []
                 if component_type is not None:
                     where_clauses.append(table.c.component_type == component_type.value)
+                if user_id is not None:
+                    where_clauses.append(table.c.user_id == user_id)
                 if not include_deleted:
                     where_clauses.append(table.c.deleted_at.is_(None))
                 if exclude_component_ids:
@@ -4344,6 +4373,7 @@ class SqliteDb(BaseDb):
         stage: str = "draft",
         notes: Optional[str] = None,
         links: Optional[List[Dict[str, Any]]] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Create a component with its initial config atomically.
 
@@ -4358,12 +4388,13 @@ class SqliteDb(BaseDb):
             stage: "draft" or "published".
             notes: Optional notes.
             links: Optional list of links. Each must have child_version set.
+            user_id: Owner to attribute the component to.
 
         Returns:
             Tuple of (component dict, config dict).
 
         Raises:
-            ValueError: If component already exists, invalid stage, or link missing child_version.
+            ValueError: If component ID is already taken, invalid stage, or link missing child_version.
         """
         if stage not in {"draft", "published"}:
             raise ValueError(f"Invalid stage: {stage}")
@@ -4391,7 +4422,9 @@ class SqliteDb(BaseDb):
                 ).scalar_one_or_none()
 
                 if existing is not None:
-                    raise ValueError(f"Component {component_id} already exists")
+                    # Generic wording: under user isolation this must not confirm
+                    # the existence of another user's component.
+                    raise ValueError(f"Component ID {component_id} is not available")
 
                 # Check label uniqueness
                 if label is not None:
@@ -4413,6 +4446,7 @@ class SqliteDb(BaseDb):
                         component_id=component_id,
                         component_type=component_type.value,
                         name=name,
+                        user_id=user_id,
                         description=description,
                         metadata=metadata,
                         current_version=version if stage == "published" else None,

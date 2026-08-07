@@ -495,13 +495,22 @@ def get_websocket_router(
                     # client cannot attribute a run to another user by spoofing
                     # the field.
                     auth_user_id = websocket_user_context.get("user_id")
+                    is_admin = False
                     if auth_user_id:
                         is_admin = ws_admin_scope in websocket_user_context.get("scopes", [])
                         if is_admin:
                             message.setdefault("user_id", auth_user_id)
                         else:
                             message["user_id"] = auth_user_id
-                    await handle_workflow_via_websocket(websocket, message, os, ws_user_context=websocket_user_context)
+
+                    ws_auth = WebSocketAuthContext(
+                        jwt_enabled=scope_enforcement_active(),
+                        is_admin=is_admin,
+                        user_isolation_enabled=ws_user_isolation_enabled,
+                    )
+                    await handle_workflow_via_websocket(
+                        websocket, message, os, ws_user_context=websocket_user_context, ws_auth=ws_auth
+                    )
 
                 elif action == "reconnect":
                     # Force user_id from the authenticated identity for non-admins

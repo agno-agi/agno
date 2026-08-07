@@ -15,6 +15,7 @@ from agno.os.middleware.user_scope import (
     apply_scope_to_kwargs,
     enforce_owner_on_entity,
     get_scoped_user_id,
+    get_scoped_user_id_for_ws,
     resolve_db_and_scope,
 )
 
@@ -394,3 +395,43 @@ class TestEnforceOwnerOnEntity:
         # are a known footgun; the helper is expected to warn and move on.
         enforce_owner_on_entity(request, entity, kind="session")
         assert any("unable to coerce" in m for m in calls)
+
+
+class TestGetScopedUserIdFromParts:
+    """The WebSocket handlers have no Request, so they scope from explicit auth
+    flags. This must match get_scoped_user_id's precedence exactly."""
+
+    def test_regular_user_scopes_only_when_isolation_on(self):
+        assert (
+            get_scoped_user_id_for_ws("user-123", jwt_enabled=True, is_admin=False, user_isolation_enabled=True)
+            == "user-123"
+        )
+        assert (
+            get_scoped_user_id_for_ws("user-123", jwt_enabled=True, is_admin=False, user_isolation_enabled=False)
+            is None
+        )
+
+    def test_admin_is_unscoped(self):
+        assert (
+            get_scoped_user_id_for_ws("user-123", jwt_enabled=True, is_admin=True, user_isolation_enabled=True) is None
+        )
+
+    def test_sa_self_scopes_regardless_of_isolation(self):
+        # The bug this guards: over the WS a service account was unscoped when
+        # isolation was off, while get_scoped_user_id self-scopes it.
+        assert (
+            get_scoped_user_id_for_ws("sa:bot", jwt_enabled=True, is_admin=False, user_isolation_enabled=False)
+            == "sa:bot"
+        )
+        assert (
+            get_scoped_user_id_for_ws("sa:bot", jwt_enabled=True, is_admin=False, user_isolation_enabled=True)
+            == "sa:bot"
+        )
+
+    def test_sa_with_admin_reads_across_users(self):
+        assert (
+            get_scoped_user_id_for_ws("sa:bot", jwt_enabled=True, is_admin=True, user_isolation_enabled=False) is None
+        )
+
+    def test_no_user_id_is_unscoped(self):
+        assert get_scoped_user_id_for_ws(None, jwt_enabled=True, is_admin=False, user_isolation_enabled=True) is None

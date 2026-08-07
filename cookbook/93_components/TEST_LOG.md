@@ -40,3 +40,15 @@ Test results for `cookbook/93_components/` examples.
 **Result:** Registry contained the member agents' models and tool with no registry passed. App built successfully.
 
 ---
+
+### user_isolation_os.py
+
+**Status:** PASS
+
+**Description:** Serves an AgentOS with `AuthorizationConfig(user_isolation=True)` and no code-defined components, so every agent/team/workflow is DB-backed and owner-scoped. Driven over HTTP against a real uvicorn server on Postgres with two JWTs (`alice`, `bob`), following the flow in the module docstring.
+
+**Result:** `POST /components` as alice returned 201 with `user_id: "alice"`. As bob, `GET /components` returned `total_count: 0`, `GET /agents` returned `[]`, and `GET /components/{alice_id}` returned 404. Alice continued to see her component on both `/components` and `/agents`. 7/7 assertions passed.
+
+**Note:** an existing `agno_components` table created before the `user_id` column was added fails with `Table ai.agno_components has an invalid schema`. Adding the column (`ALTER TABLE ... ADD COLUMN user_id VARCHAR`) is what the deferred `user_id` migration will do; fresh databases are unaffected.
+
+---
