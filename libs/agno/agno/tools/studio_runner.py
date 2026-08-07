@@ -1243,22 +1243,48 @@ class StudioRunnerTools(Toolkit):
             getattr(model, "id", None) or type(model).__name__,
         )
 
-    def _warn_if_declared_db_dropped(self, config: Dict[str, Any], component_type: str, component_id: str) -> None:
-        """Log when a config declared a db that could not be reconstructed.
+    def _require_matching_db(self, config: Dict[str, Any], component_type: str, component_id: str) -> None:
+        """Refuse a component whose declared db is not the one it would get.
 
         db_from_dict rebuilds postgres, sqlite and clickhouse configs that
         carry their connection field; anything else resolves through the
-        registry. When neither supplies it, the component falls back to the
-        catalog db, so its sessions and memory land elsewhere than configured."""
+        registry. When neither supplies it the component falls back to the
+        catalog db -- and if that is a different store, its sessions and memory
+        durably land somewhere other than configured, which the caller cannot
+        see from the answer it gets back.
+
+        The comparison is what makes this narrow enough to be safe. When the
+        declared db names the catalog db, with the same table overrides, the
+        fallback is not a redirection and the component runs: that keeps the
+        adapters whose connection field cannot serialize (mysql, mongo, redis,
+        json, dynamo) working, which is why a blanket refusal was reverted
+        before. Only a genuine mismatch is refused."""
         db_config = config.get("db")
         if not isinstance(db_config, dict):
             return
-        logger.warning(
-            "StudioRunnerTools: %s '%s' declares db '%s', which could not be reconstructed; "
-            "the component falls back to the catalog db.",
-            component_type,
-            component_id,
-            db_config.get("id") or db_config.get("type") or "unknown",
+        declared = db_config.get("id") or db_config.get("type") or "unknown"
+        catalog = self.db.to_dict() if self.db is not None else {}
+        differing = sorted(
+            key
+            for key, value in db_config.items()
+            # An absent key in the stored config is not an override, and the
+            # connection field is never serialized, so neither is a difference.
+            if value is not None and key not in ("type", "connection") and catalog.get(key) != value
+        )
+        if not differing:
+            logger.warning(
+                "StudioRunnerTools: %s '%s' declares db '%s', which could not be reconstructed; it resolves "
+                "to the catalog db, which matches what it declared.",
+                component_type,
+                component_id,
+                declared,
+            )
+            return
+        raise ComponentNotDispatchableError(
+            f"{component_type.capitalize()} '{component_id}' declares db '{declared}', which could not be "
+            f"reconstructed, and the catalog db it would fall back to differs ({', '.join(differing)}); running it "
+            "would write its sessions and memory somewhere other than configured. Register that db, or run it "
+            "against the db it declares."
         )
 
     @staticmethod
@@ -1410,18 +1436,30 @@ class StudioRunnerTools(Toolkit):
         self._require_registry_for("agent", agent_id, config)
         from agno.agent.agent import Agent
 
+        fell_back_to_catalog = False
         try:
             agent = Agent.from_dict(config, registry=self.registry)
             agent.id = agent_id
             # The catalog db is a fallback only: a config-declared db (resolved
             # by from_dict, possibly with table overrides) must keep winning.
             if getattr(agent, "db", None) is None:
-                self._warn_if_declared_db_dropped(config, "agent", agent_id)
+                # Announced on every load, including reads. Whether the
+                # fallback is a REDIRECTION is a dispatch question, and cannot
+                # be raised from inside this try: the handler below would
+                # report the refusal as a rebuild failure.
+                logger.warning(
+                    "StudioRunnerTools: agent '%s' declares a db that could not be reconstructed; "
+                    "it falls back to the catalog db.",
+                    agent_id,
+                )
+                fell_back_to_catalog = True
                 agent.db = self.db
         except Exception:
             logger.warning("StudioRunnerTools: Agent.from_dict failed for %s", agent_id, exc_info=True)
             return None
         if for_dispatch:
+            if fell_back_to_catalog:
+                self._require_matching_db(config, "agent", agent_id)
             self._require_inspectable_depth(agent, "agent", agent_id)
             self._require_faithful_rebuild(agent, config, "agent", agent_id)
         return agent
@@ -1441,17 +1479,29 @@ class StudioRunnerTools(Toolkit):
         self._require_registry_for("team", team_id, config)
         from agno.team.team import Team
 
+        fell_back_to_catalog = False
         try:
             team = Team.from_dict(config, db=self.db, registry=self.registry)
             team.id = team_id
             # The catalog db is a fallback only; a config-declared db wins.
             if getattr(team, "db", None) is None:
-                self._warn_if_declared_db_dropped(config, "team", team_id)
+                # Announced on every load, including reads. Whether the
+                # fallback is a REDIRECTION is a dispatch question, and cannot
+                # be raised from inside this try: the handler below would
+                # report the refusal as a rebuild failure.
+                logger.warning(
+                    "StudioRunnerTools: team '%s' declares a db that could not be reconstructed; "
+                    "it falls back to the catalog db.",
+                    team_id,
+                )
+                fell_back_to_catalog = True
                 team.db = self.db
         except Exception:
             logger.warning("StudioRunnerTools: Team.from_dict failed for %s", team_id, exc_info=True)
             return None
         if for_dispatch:
+            if fell_back_to_catalog:
+                self._require_matching_db(config, "team", team_id)
             self._require_inspectable_depth(team, "team", team_id)
             self._require_faithful_rebuild(team, config, "team", team_id)
             self._require_faithful_registry_copies(team, "team", team_id)
@@ -1473,17 +1523,29 @@ class StudioRunnerTools(Toolkit):
         self._require_registry_for("workflow", workflow_id, config)
         from agno.workflow.workflow import Workflow
 
+        fell_back_to_catalog = False
         try:
             wf = Workflow.from_dict(config, db=self.db, registry=self.registry)
             wf.id = workflow_id
             # The catalog db is a fallback only; a config-declared db wins.
             if getattr(wf, "db", None) is None:
-                self._warn_if_declared_db_dropped(config, "workflow", workflow_id)
+                # Announced on every load, including reads. Whether the
+                # fallback is a REDIRECTION is a dispatch question, and cannot
+                # be raised from inside this try: the handler below would
+                # report the refusal as a rebuild failure.
+                logger.warning(
+                    "StudioRunnerTools: workflow '%s' declares a db that could not be reconstructed; "
+                    "it falls back to the catalog db.",
+                    workflow_id,
+                )
+                fell_back_to_catalog = True
                 wf.db = self.db
         except Exception:
             logger.warning("StudioRunnerTools: Workflow.from_dict failed for %s", workflow_id, exc_info=True)
             return None
         if for_dispatch:
+            if fell_back_to_catalog:
+                self._require_matching_db(config, "workflow", workflow_id)
             self._require_inspectable_depth(wf, "workflow", workflow_id)
             self._require_reconstructable_steps(config, workflow_id)
             self._require_faithful_rebuild(wf, config, "workflow", workflow_id)
