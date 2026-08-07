@@ -1760,6 +1760,141 @@ class TestStudioEmbedding:
         assert "ambiguous display name" in instructions.lower()
 
 
+class TestDispatchCheckInvariants:
+    """Properties every dispatch check has to share.
+
+    Four review rounds found the same shape each time: a rule applied to the
+    one place it was reported and not to its siblings. These assert the class,
+    so the next sibling cannot be missed quietly."""
+
+    def _walkers(self):
+        import inspect
+
+        from agno.tools import studio_runner as module
+
+        return inspect.getsource(module)
+
+    def test_every_graph_walk_shares_one_depth_bound(self):
+        # A walk that stops earlier than the gate that admitted the graph
+        # reports "nothing wrong" for a graph it never finished reading.
+        source = self._walkers()
+        assert "depth > 12" not in source, "a walk still carries its own depth bound"
+        assert source.count("_GRAPH_DEPTH_CAP") >= 6
+
+    def test_the_depth_bound_refuses_rather_than_returns(self, db):
+        from agno.agent import Agent
+        from agno.registry import Registry
+        from agno.team import Team
+
+        node: Any = Agent(id="leaf", name="Leaf", model=OpenAIResponses(id="gpt-5.4"))
+        for index in range(40):
+            node = Team(id=f"t{index}", name=f"t{index}", model=OpenAIResponses(id="gpt-5.4"), members=[node])
+        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db]), db=db, teams_list=[node])
+        assert "nests deeper than" in _loads(runner.run_team(node.id, "hi"))["error"]
+
+    def test_shared_member_search_reaches_past_the_old_bound(self):
+        from agno.agent import Agent
+        from agno.team import Team
+
+        leaf = Agent(id="leaf", name="Leaf", model=OpenAIResponses(id="gpt-5.4"))
+        node: Any = Team(id="t0", name="t0", model=OpenAIResponses(id="gpt-5.4"), members=[leaf])
+        for index in range(1, 20):
+            node = Team(id=f"t{index}", name=f"t{index}", model=OpenAIResponses(id="gpt-5.4"), members=[node])
+        assert StudioRunnerTools._shared_registry_instance(node, [leaf]) is leaf
+
+    def test_every_id_map_carries_the_component_type(self):
+        # Ids are unique per type only, so an agent and a team may share one.
+        from agno.agent import Agent
+        from agno.team import Team
+
+        agent = Agent(id="dup", name="AnAgent", model=OpenAIResponses(id="gpt-5.4"))
+        team = Team(id="dup", name="ATeam", model=OpenAIResponses(id="gpt-5.4"), members=[agent])
+        holder = Team(id="holder", name="holder", model=OpenAIResponses(id="gpt-5.4"), members=[team])
+        by_id = StudioRunnerTools._components_by_id(holder)
+        assert ("team", "dup") in by_id and ("agent", "dup") in by_id
+        assert by_id[("team", "dup")] is team and by_id[("agent", "dup")] is agent
+
+    def test_a_copy_that_changed_behaviour_is_not_faithful(self):
+        # Identity is not just the label: a copy answering from another model,
+        # under other instructions, or without the tools it had is a different
+        # component wearing the right name.
+        from agno.agent import Agent
+        from agno.tools.calculator import CalculatorTools
+
+        def agent(model_id="gpt-5.4", instructions="ORIGINAL", with_tools=True):
+            built = Agent(id="x", name="X", model=OpenAIResponses(id=model_id), instructions=instructions)
+            if with_tools:
+                built.tools = [CalculatorTools()]
+            return built
+
+        original = agent()
+        # One dimension differs at a time, so each is asserted on its own
+        # rather than riding on another's refusal.
+        assert StudioRunnerTools._copy_lost_identity(original, agent(model_id="gpt-4o-mini"))
+        assert StudioRunnerTools._copy_lost_identity(original, agent(instructions="REWRITTEN"))
+        assert StudioRunnerTools._copy_lost_identity(original, agent(with_tools=False))
+        assert not StudioRunnerTools._copy_lost_identity(original, agent())
+
+    def test_the_same_tools_in_another_shape_are_still_the_same_reach(self):
+        # A toolkit here and its expanded functions there are one set of tools.
+        # Comparing the objects would call a healthy copy degraded, which is
+        # the false refusal this check has to avoid.
+        from agno.agent import Agent
+        from agno.tools.calculator import CalculatorTools
+        from agno.tools.function import Function
+
+        toolkit = CalculatorTools()
+        held_as_toolkit = Agent(id="x", name="X", model=OpenAIResponses(id="gpt-5.4"), tools=[toolkit])
+        held_as_functions = Agent(id="x", name="X", model=OpenAIResponses(id="gpt-5.4"))
+        held_as_functions.tools = [Function(name=name) for name in toolkit.functions]
+        assert not StudioRunnerTools._copy_lost_identity(held_as_toolkit, held_as_functions)
+
+    def test_a_callable_factory_is_reported_rather_than_silently_skipped(self, db, caplog):
+        # members=/tools=/steps= accept a factory the framework resolves per run,
+        # so there is nothing to inspect at dispatch and the per-run-copy promise
+        # does not reach what it returns. Supported, so not refused -- but said.
+        from agno.agent import Agent
+        from agno.registry import Registry
+        from agno.team import Team
+
+        member = Agent(id="m", name="M", model=OpenAIResponses(id="gpt-5.4"))
+        lazy = Team(id="lazy", name="Lazy", model=OpenAIResponses(id="gpt-5.4"), members=lambda: [member])
+        runner = StudioRunnerTools(registry=Registry(name="R", dbs=[db]), db=db, teams_list=[lazy])
+
+        with caplog.at_level("WARNING"):
+            assert runner._team_for_run("lazy") is not None
+        assert any("callable members factory" in record.message for record in caplog.records)
+
+    def test_no_reference_walk_reads_the_callers_own_data(self):
+        # A step carries free-form user JSON beside its own fields. A walk over
+        # every value reads a key named agent_id there as a graph reference.
+        from agno.tools.studio_runner import (
+            _component_references,
+            _references_executors,
+            _references_idless_components,
+        )
+
+        noisy = {
+            "steps": [
+                {
+                    "name": "s",
+                    "agent_id": "real",
+                    "human_review": {
+                        "user_input_schema": [{"agent_id": "NOISE", "team_id": None, "executor_ref": "NOISE"}]
+                    },
+                }
+            ]
+        }
+        assert _component_references("workflow", noisy) == [("agent", "real")]
+        assert not _references_executors("workflow", noisy)
+        assert not _references_idless_components("workflow", noisy)
+
+        # The same walks must still see what a step really declares.
+        real = {"steps": [{"name": "s", "steps": [{"name": "n", "team_id": "crew", "executor_ref": "fn"}]}]}
+        assert _component_references("workflow", real) == [("team", "crew")]
+        assert _references_executors("workflow", real)
+
+
 class TestSubSessionDerivation:
     """The derived id keys one session per component per calling conversation, so
     it has to be stable, injective and bounded."""
@@ -1794,12 +1929,31 @@ class TestSubSessionDerivation:
         assert StudioRunnerTools._sub_session_id(None, "agent", "a1") is None
         assert StudioRunnerTools._sub_session_id(_context(session_id=""), "agent", "a1") is None
 
+    def test_two_users_on_one_caller_session_get_their_own(self):
+        # Two people can share a caller session -- a team channel, a shared
+        # assistant -- and the target must not hand them one conversation.
+        alice = RunContext(run_id="r1", session_id="shared", user_id="alice")
+        bob = RunContext(run_id="r2", session_id="shared", user_id="bob")
+        assert StudioRunnerTools._sub_session_id(alice, "agent", "a1") != StudioRunnerTools._sub_session_id(
+            bob, "agent", "a1"
+        )
+
+    def test_an_anonymous_caller_cannot_be_impersonated(self):
+        # The sentinel standing in for "no user" has to be one no real user id
+        # can spell, or naming yourself after it would take over that session.
+        anonymous = RunContext(run_id="r1", session_id="shared", user_id=None)
+        impostor = RunContext(run_id="r2", session_id="shared", user_id="anonymous")
+        assert StudioRunnerTools._sub_session_id(anonymous, "agent", "a1") != StudioRunnerTools._sub_session_id(
+            impostor, "agent", "a1"
+        )
+
     def test_derivation_is_frozen(self):
         # The derived id is persisted in session rows, so a change to the
         # derivation orphans every existing sub-session. This literal is the
-        # contract: sha256 of the length-prefixed parts, first 32 hex chars,
-        # prefixed with the component type.
-        assert _sub_session("agent", "a1") == "agent-f08679ca57837826037ef1af09fc5b35"
+        # contract: sha256 of the length-prefixed parts (caller session, caller
+        # user, component type, component id), first 32 hex chars, prefixed
+        # with the component type.
+        assert _sub_session("agent", "a1") == "agent-f6767baa5b7618d17f8691ef84c1b2fb"
 
 
 class TestResultMedia:

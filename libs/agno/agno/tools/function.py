@@ -1330,6 +1330,22 @@ class FunctionCall(BaseModel):
 
         return entrypoint_args
 
+    def _identity_owned_params(self) -> Set[str]:
+        """Parameter names whose value the model may never choose.
+
+        The reserved identity names, plus every name the framework claimed by
+        ANNOTATION. Both paths that populate ``_framework_params``
+        (``Function._resolve_framework_params`` and ``from_callable``) add a
+        typed parameter only when ``_is_framework_typed`` says it is
+        identity-bearing, never for media, so anything there that is not a
+        reserved name got there by being identity-typed.
+
+        Media is deliberately not included: it is injected by reserved name
+        alone, so a schema that declares ``images`` is the only way such a
+        parameter can be filled at all."""
+        typed = set(self.function._framework_params or ()) - set(FRAMEWORK_INJECTED_PARAMS) - {"return", "self"}
+        return set(IDENTITY_INJECTED_PARAMS) | typed
+
     def _drop_injected_overrides(self, entrypoint_args: Dict[str, Any]) -> None:
         """Drop tool-call arguments that collide with framework-injected parameters.
 
@@ -1345,8 +1361,10 @@ class FunctionCall(BaseModel):
 
         A name that does appear in the tool's schema is left alone: an MCP
         server is free to expose an argument called "files", and the schema is
-        what says so. The identity names are the exception -- no schema can hand
-        the model a say over whose data a tool reads.
+        what says so. Identity is the exception -- no schema can hand the model
+        a say over whose data a tool reads -- and identity is decided by the
+        annotation as well as the name, so ``ctx: RunContext`` is as protected
+        as ``run_context`` is.
         """
         if not self.arguments:
             return
@@ -1361,11 +1379,12 @@ class FunctionCall(BaseModel):
         # A name is framework-owned if this entrypoint declares it as one, or if we injected
         # it. Being in the schema releases it back to the model, except for identity.
         reserved = set(self.function._framework_params or ()) | set(entrypoint_args)
+        identity_owned = self._identity_owned_params()
         dropped = {
             key
             for key in self.arguments
             if key in AGNO_INJECTED_PARAMS
-            or (key in reserved and (key not in schema_properties or key in IDENTITY_INJECTED_PARAMS))
+            or (key in reserved and (key not in schema_properties or key in identity_owned))
         }
         if dropped:
             # The pre-drop dict is already referenced by the ToolExecution emitted on
