@@ -608,6 +608,13 @@ def handle_user_input_update(agent: Agent, tool: ToolExecution):
         tool.tool_args[field.name] = field.value
 
 
+def _is_user_input_complete(tool: ToolExecution) -> bool:
+    """Return whether a user-input tool has a complete, acknowledged answer."""
+    if tool.answered is not True:
+        return False
+    return not tool.user_input_schema or all(field.value is not None for field in tool.user_input_schema)
+
+
 def handle_get_user_input_tool_update(agent: Agent, run_messages: RunMessages, tool: ToolExecution):
     import json
 
@@ -941,7 +948,7 @@ def handle_tool_call_updates(
             _t.answered = True
 
         # Case 4: Handle user input required tools
-        elif _t.requires_user_input is not None and _t.requires_user_input is True:
+        elif _t.requires_user_input is True and _is_user_input_complete(_t):
             handle_user_input_update(agent, tool=_t)
             _t.requires_user_input = False
             _t.answered = True
@@ -994,7 +1001,7 @@ def handle_tool_call_updates_stream(
             _t.answered = True
 
         # Case 4: Handle user input required tools
-        elif _t.requires_user_input is not None and _t.requires_user_input is True:
+        elif _t.requires_user_input is True and _is_user_input_complete(_t):
             handle_user_input_update(agent, tool=_t)
             yield from run_tool(
                 agent, run_response, run_messages, _t, functions=_functions, stream_events=stream_events
@@ -1042,7 +1049,7 @@ async def ahandle_tool_call_updates(
             _t.requires_user_input = False
             _t.answered = True
         # Case 4: Handle user input required tools
-        elif _t.requires_user_input is not None and _t.requires_user_input is True:
+        elif _t.requires_user_input is True and _is_user_input_complete(_t):
             handle_user_input_update(agent, tool=_t)
             async for _ in arun_tool(agent, run_response, run_messages, _t, functions=_functions):
                 pass
@@ -1095,7 +1102,7 @@ async def ahandle_tool_call_updates_stream(
             _t.requires_user_input = False
             _t.answered = True
         # Case 4: Handle user input required tools
-        elif _t.requires_user_input is not None and _t.requires_user_input is True:
+        elif _t.requires_user_input is True and _is_user_input_complete(_t):
             handle_user_input_update(agent, tool=_t)
             async for event in arun_tool(
                 agent, run_response, run_messages, _t, functions=_functions, stream_events=stream_events
