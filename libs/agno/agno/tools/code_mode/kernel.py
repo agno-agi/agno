@@ -185,6 +185,7 @@ class KernelSession:
         self.pending_notice: Optional[str] = None
         self._ever_started = False
         self._evict_task: Optional[asyncio.Task] = None
+        self._cell_idle_seen = False
         # Bridge wiring (set by ToolBridge.attach): comm messages seen on iopub
         # are routed to comm_handler; interrupt_hook unblocks in-flight bridged
         # tool calls when the cell is interrupted or cancelled.
@@ -228,16 +229,23 @@ class KernelSession:
         self.kc = kc
         self.execution_count = 0
         self.maybe_busy = False
-        if not self.allow_shell:
-            # Footgun reducer, not a boundary: remove the bash cell magic so a
-            # cell cannot reach it through run_cell_magic either.
-            await self._run_silent("get_ipython().magics_manager.magics['cell'].pop('bash', None)")
-        if self.startup_code:
-            await self._run_silent(self.startup_code)
-        await self._run_silent(BASELINE_CODE)
         notice: Optional[str] = None
-        if self.setup_hook is not None:
-            notice = await self.setup_hook(self)
+        try:
+            if not self.allow_shell:
+                # Footgun reducer, not a boundary: remove the bash cell magic so a
+                # cell cannot reach it through run_cell_magic either.
+                await self._run_silent("get_ipython().magics_manager.magics['cell'].pop('bash', None)")
+            if self.startup_code:
+                await self._run_silent(self.startup_code)
+            await self._run_silent(BASELINE_CODE)
+            if self.setup_hook is not None:
+                notice = await self.setup_hook(self)
+        except BaseException:
+            # A cancellation or failure mid-setup must not leave a kernel that
+            # looks started but skipped restore and bootstrap — the next flush
+            # would snapshot an empty namespace over the durable state.
+            await asyncio.shield(self._teardown_kernel())
+            raise
         if notice is not None:
             self.pending_notice = notice
         elif self._ever_started and self.pending_notice is None:
@@ -250,11 +258,16 @@ class KernelSession:
         log_debug(f"CodeMode kernel started for session {self.session_id}")
 
     async def shutdown(self) -> None:
-        """Kill the kernel and stop the eviction timer. Idempotent."""
+        """Kill the kernel and stop the eviction timer. Idempotent.
+
+        Takes the session lock so an in-flight cell finishes (or aborts)
+        before the channels vanish under it.
+        """
         if self._evict_task is not None:
             self._evict_task.cancel()
             self._evict_task = None
-        await self._teardown_kernel()
+        async with self.lock:
+            await self._teardown_kernel()
 
     async def _teardown_kernel(self) -> None:
         kc, km = self.kc, self.km
@@ -272,10 +285,17 @@ class KernelSession:
                 pass
         self.maybe_busy = False
 
-    async def restart(self) -> str:
-        """Tear the kernel down, start a fresh one, and return the reset notice."""
+    async def restart(self, before_start: Optional[Callable[[], Coroutine[Any, Any, None]]] = None) -> str:
+        """Tear the kernel down, start a fresh one, and return the reset notice.
+
+        ``before_start`` runs under the session lock after teardown — the
+        snapshot clear goes here so a debounced flush can never land between
+        the clear and the fresh start and resurrect discarded state.
+        """
         async with self.lock:
             await self._teardown_kernel()
+            if before_start is not None:
+                await before_start()
             self.pending_notice = None
             await self.ensure_started()
             # A deliberate restart discards state: the reset notice wins over
@@ -315,27 +335,38 @@ class KernelSession:
     # Execution
     # ------------------------------------------------------------------
 
-    async def execute_cell(self, code: str, timeout: Optional[float] = None) -> CellResult:
-        """Run one cell, serialized on the per-session lock."""
+    async def execute_cell(
+        self, code: str, timeout: Optional[float] = None, run_context: Optional[Any] = None
+    ) -> CellResult:
+        """Run one cell, serialized on the per-session lock.
+
+        A busy kernel that does not clear within ``busy_wait`` raises
+        ``KernelBusyError``; the on_busy_kernel="restart" policy is applied by
+        the caller (CodeMode), which owns the snapshot store the restart must
+        also clear.
+        """
         async with self.lock:
+            # Stamp the run context under the lock: bridged tool calls of THIS
+            # cell must see this run's context, not a later queued run's.
+            if run_context is not None:
+                self.run_context = run_context
             await self.ensure_started()
             if self.maybe_busy:
                 cleared = await self._clear_busy()
                 if not cleared:
-                    if self.on_busy_kernel == "restart":
-                        await self._teardown_kernel()
-                        await self.ensure_started()
-                        self.pending_notice = RESET_NOTICE
-                    else:
-                        raise KernelBusyError()
+                    raise KernelBusyError()
             await self._drain_channels()
+            self._cell_idle_seen = False
             try:
                 result = await self._execute_locked(code, timeout)
             except asyncio.CancelledError:
-                # The run was cancelled mid-cell: interrupt the kernel, flag it
-                # possibly busy for the next cell, and propagate.
-                await self._interrupt_quietly()
-                self.maybe_busy = True
+                # The run was cancelled mid-cell. If the kernel already went
+                # idle (cancellation landed between idle and the shell reply),
+                # it is NOT busy — flagging it would spuriously wedge or, under
+                # the restart policy, wipe a healthy namespace.
+                if not self._cell_idle_seen:
+                    self.maybe_busy = True
+                    await self._interrupt_quietly()
                 raise
             self.touch()
             return result
@@ -416,6 +447,7 @@ class KernelSession:
                 traceback_text = _strip_ansi("\n".join(content.get("traceback", [])))
                 status = "error"
             elif msg_type == "status" and content.get("execution_state") == "idle":
+                self._cell_idle_seen = True
                 break
 
         execution_count = await self._consume_shell_reply(msg_id)
@@ -512,6 +544,10 @@ class KernelSession:
                     await self._on_kernel_death()
                     await self.ensure_started()
                     return True
+                continue
+            if self._route_comm(msg):
+                # A busy cell can still issue bridge calls; eating one here
+                # would leave its stub blocked forever and the kernel wedged.
                 continue
             if msg["msg_type"] == "status" and msg["content"].get("execution_state") == "idle":
                 self.maybe_busy = False

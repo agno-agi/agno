@@ -253,3 +253,52 @@ def test_notice_absent_when_bootstrap_fails(snapshot_fs, make_code_mode, monkeyp
     revived = cm.execute(_ctx(sid), "'ran-anyway'")
     assert "<code_mode_restored>" not in revived.content
     assert "ran-anyway" in revived.content
+
+
+# ------------------------------------------------------------------
+# Reviewer regressions
+# ------------------------------------------------------------------
+
+
+def test_two_cells_then_restart_leaves_no_manifest(snapshot_fs, make_code_mode):
+    # Two cells inside the debounce window orphaned the first timer's
+    # bookkeeping; its flush then fired after restart's clear and resurrected
+    # the manifest. Deterministic under this cadence before the fix.
+    cm = make_code_mode(fs=snapshot_fs, snapshot_debounce=0.4)
+    sid = _sid("timer-orphan")
+    cm.execute(_ctx(sid), "a = 1")
+    cm.execute(_ctx(sid), "b = 2")
+    cm.restart(_ctx(sid))
+    time.sleep(1.5)  # long enough for any straggler debounced flush to land
+    assert snapshot_fs.read(f"kernel/{sid}/manifest.json") is None
+
+
+def test_refused_variable_keeps_previous_good_copy(snapshot_fs, make_code_mode):
+    cm = make_code_mode(fs=snapshot_fs, snapshot_debounce=0.05, max_variable_bytes=50_000)
+    sid = _sid("keep-copy")
+    cm.execute(_ctx(sid), "grows = 'small'")
+    cm.close()
+    var_path = f"kernel/{sid}/vars/grows.b64"
+    assert snapshot_fs.read(var_path) is not None
+    previous = snapshot_fs.read(var_path)
+    cm.execute(_ctx(sid), "grows = 'x' * 200_000")
+    cm.close()
+    manifest = json.loads(snapshot_fs.read(f"kernel/{sid}/manifest.json"))
+    assert "grows" in {s["name"] for s in manifest["skipped"]}
+    assert "grows" not in {v["name"] for v in manifest["variables"]}
+    # The last good copy survives; it is simply not restored (manifest governs).
+    assert snapshot_fs.read(var_path) == previous
+
+
+def test_hostile_session_id_round_trips_and_does_not_nest(snapshot_fs, make_code_mode):
+    cm = make_code_mode(fs=snapshot_fs, snapshot_debounce=0.05)
+    parent = "u1"
+    nested = "u1/vars"
+    cm.execute(_ctx(parent), "mine = 'parent'")
+    cm.execute(_ctx(nested), "theirs = 'nested'")
+    cm.close()
+    cm.shutdown()
+    revived_parent = cm.execute(_ctx(parent), "mine")
+    revived_nested = cm.execute(_ctx(nested), "theirs")
+    assert "parent" in revived_parent.content
+    assert "nested" in revived_nested.content

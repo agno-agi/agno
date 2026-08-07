@@ -23,8 +23,8 @@ from typing import Any, Callable, Coroutine, Dict, List, Optional, Sequence, Uni
 from agno.fs import FileSystem
 from agno.run import RunContext
 from agno.tools.code_mode.bridge import ToolBridge
-from agno.tools.code_mode.errors import KernelDiedError
-from agno.tools.code_mode.kernel import KernelSession, LoopRunner, parse_marker_line
+from agno.tools.code_mode.errors import KernelBusyError, KernelDiedError
+from agno.tools.code_mode.kernel import RESET_NOTICE, KernelSession, LoopRunner, parse_marker_line
 from agno.tools.code_mode.naming import derive_handle_name, handle_names_for  # noqa: F401  (re-exported)
 from agno.tools.code_mode.snapshot import SnapshotManager
 from agno.tools.code_mode.types import CellResult
@@ -399,13 +399,36 @@ class CodeMode(Toolkit):
     def _rejects_shell(self, code: str) -> bool:
         return not self.allow_shell and code.lstrip().startswith("%%bash")
 
+    def _snapshot_clear_hook(self, session_id: str) -> Optional[Callable[[], Coroutine[Any, Any, None]]]:
+        if self._snapshots is None:
+            return None
+        snapshots = self._snapshots
+
+        async def _clear() -> None:
+            await snapshots.clear(session_id)
+
+        return _clear
+
+    async def _execute_with_busy_policy(
+        self, session: KernelSession, code: str, run_context: Optional[RunContext]
+    ) -> CellResult:
+        """One cell, applying on_busy_kernel. The restart policy lives here —
+        beside the snapshot store a restart must also clear — not in the
+        kernel session."""
+        try:
+            return await session.execute_cell(code, timeout=self.cell_timeout, run_context=run_context)
+        except KernelBusyError:
+            if self.on_busy_kernel != "restart":
+                raise
+            await session.restart(before_start=self._snapshot_clear_hook(session.session_id))
+            session.pending_notice = RESET_NOTICE
+            return await session.execute_cell(code, timeout=self.cell_timeout, run_context=run_context)
+
     async def _aexecute_impl(self, session_id: str, code: str, run_context: Optional[RunContext] = None) -> ToolResult:
         if self._rejects_shell(code):
             return ToolResult(content="Error: %%bash cells are disabled (allow_shell=False).")
         session = self._session_for(session_id)
-        if run_context is not None:
-            session.run_context = run_context
-        cell = await session.execute_cell(code, timeout=self.cell_timeout)
+        cell = await self._execute_with_busy_policy(session, code, run_context)
         if cell.status == "ok" and self._snapshots is not None:
             self._snapshots.schedule(session)
         notice = session.take_notice()
@@ -416,17 +439,15 @@ class CodeMode(Toolkit):
 
     async def _arestart_impl(self, session_id: str) -> str:
         session = self._session_for(session_id)
-        # A deliberate restart discards state everywhere: a later resume must
-        # not resurrect pre-restart variables from the snapshot store.
-        if self._snapshots is not None:
-            await self._snapshots.clear(session_id)
-        return await session.restart()
+        # The snapshot clear runs under the session lock (before_start) so a
+        # debounced flush can never land after it and resurrect state.
+        return await session.restart(before_start=self._snapshot_clear_hook(session_id))
 
     async def _arun_impl(self, session_id: str, code: str) -> CellResult:
         if self._rejects_shell(code):
             return CellResult(status="error", stderr="Error: %%bash cells are disabled (allow_shell=False).")
         session = self._session_for(session_id)
-        cell = await session.execute_cell(code, timeout=self.cell_timeout)
+        cell = await self._execute_with_busy_policy(session, code, run_context=None)
         if cell.status == "ok" and self._snapshots is not None:
             self._snapshots.schedule(session)
         return cell

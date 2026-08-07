@@ -8,6 +8,7 @@ reply must travel on the control channel. A wrong implementation here does not
 fail; it hangs forever. This test exists to make that hang a test failure.
 """
 
+import asyncio
 import time
 
 import pytest
@@ -275,3 +276,62 @@ def test_bridged_tool_receives_run_context_of_the_run(make_code_mode):
     result = cm.execute(_ctx(sid), "await context.whoami()")
     assert sid in result.content
     assert "bridge-user" in result.content
+
+
+# ------------------------------------------------------------------
+# Reviewer regressions: two sessions on one bridge
+# ------------------------------------------------------------------
+
+
+class SlowTools(Toolkit):
+    def __init__(self, **kwargs):
+        super().__init__(name="slow_tools", tools=[self.nap, self.quick], **kwargs)
+
+    def nap(self, seconds: float) -> str:
+        """Sleep for the given seconds.
+
+        Args:
+            seconds: How long to sleep.
+        """
+        import time as _time
+
+        _time.sleep(seconds)
+        return f"napped {seconds}"
+
+    def quick(self, tag: str) -> str:
+        """Return the tag immediately.
+
+        Args:
+            tag: The tag to echo.
+        """
+        return "quick:" + tag
+
+
+async def test_two_sessions_do_not_cross_talk_bridge_replies(make_code_mode):
+    # Kernel-side call ids are a per-kernel counter, so two sessions both use
+    # id "1"; the pending map must key by session or replies cross-talk.
+    cm = make_code_mode(tools=[SlowTools()])
+    sid_a, sid_b = _sid("xtalk-a"), _sid("xtalk-b")
+    result_a, result_b = await asyncio.gather(
+        cm.aexecute(_ctx(sid_a), "await slow.quick(tag='A')"),
+        cm.aexecute(_ctx(sid_b), "await slow.quick(tag='B')"),
+    )
+    assert "quick:A" in result_a.content
+    assert "quick:B" in result_b.content
+
+
+async def test_interrupting_one_session_does_not_cancel_the_other(make_code_mode):
+    cm = make_code_mode(tools=[SlowTools()], timeout=30, busy_wait=1.0)
+    sid_a, sid_b = _sid("intr-a"), _sid("intr-b")
+    # Warm both kernels so the timing below is deterministic.
+    await asyncio.gather(cm.aexecute(_ctx(sid_a), "1"), cm.aexecute(_ctx(sid_b), "1"))
+    # Both bridge calls in flight; cancelling A's run must abort only A's
+    # pending tool call, never B's.
+    task_a = asyncio.ensure_future(cm.aexecute(_ctx(sid_a), "await slow.nap(seconds=30)"))
+    task_b = asyncio.ensure_future(cm.aexecute(_ctx(sid_b), "await slow.nap(seconds=3)"))
+    await asyncio.sleep(1.0)
+    task_a.cancel()
+    result_b = await task_b
+    assert "napped 3" in result_b.content, f"B was collateral damage: {result_b.content}"
+    with pytest.raises(asyncio.CancelledError):
+        await task_a

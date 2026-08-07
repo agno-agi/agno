@@ -172,7 +172,10 @@ class ToolBridge:
         # (handle, method) -> Function; top-level callables bind under handle "".
         self._registry: Dict[Tuple[str, str], Function] = {}
         self._spec: Dict[str, Any] = {"toolkits": [], "functions": []}
-        self._pending: Dict[str, "asyncio.Task[None]"] = {}
+        # In-flight calls keyed by (session_id, call_id): call ids are a
+        # per-kernel counter, so two sessions of one CodeMode collide on the
+        # bare id and an interrupt in one must never cancel the other's calls.
+        self._pending: Dict[Tuple[str, str], "asyncio.Task[None]"] = {}
         self._build(tools)
 
     # ------------------------------------------------------------------
@@ -273,10 +276,10 @@ class ToolBridge:
             return
         if msg_type == "comm_msg" and content.get("comm_id") == getattr(session, "bridge_comm_id", None):
             data = content.get("data") or {}
-            call_id = str(data.get("id"))
+            key = (session.session_id, str(data.get("id")))
             task = asyncio.get_running_loop().create_task(self._serve(session, data))
-            self._pending[call_id] = task
-            task.add_done_callback(lambda _t, _id=call_id: self._pending.pop(_id, None))
+            self._pending[key] = task
+            task.add_done_callback(lambda _t, _key=key: self._pending.pop(_key, None))
 
     async def _serve(self, session: KernelSession, data: Dict[str, Any]) -> None:
         call_id = data.get("id")
@@ -365,11 +368,13 @@ class ToolBridge:
         kc.control_channel.send(message)
 
     async def cancel_pending(self, session: KernelSession, reason: str) -> None:
-        """Cancel in-flight tool calls and unblock their kernel-side stubs."""
-        for call_id, task in list(self._pending.items()):
+        """Cancel THIS session's in-flight tool calls and unblock their stubs."""
+        for key, task in list(self._pending.items()):
+            if key[0] != session.session_id:
+                continue
             task.cancel()
             self._send_reply(
                 session,
-                {"id": call_id, "ok": False, "error": {"type": "ToolError", "message": f"tool call aborted: {reason}"}},
+                {"id": key[1], "ok": False, "error": {"type": "ToolError", "message": f"tool call aborted: {reason}"}},
             )
-            self._pending.pop(call_id, None)
+            self._pending.pop(key, None)

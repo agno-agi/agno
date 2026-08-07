@@ -16,12 +16,14 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import re
 import time
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from agno.fs import FileSystem
 from agno.tools.code_mode.kernel import KernelSession, parse_marker_line
 from agno.utils.log import log_debug, log_warning
+from agno.utils.string import hash_string_sha256
 
 SNAPSHOT_MARKER = "__AGNO_CM_SNAPSHOT__"
 RESTORE_MARKER = "__AGNO_CM_RESTORE__"
@@ -42,8 +44,12 @@ _SNAPSHOT_CODE_TEMPLATE = (
     "    _cm_base = _cm_b.globals().get('_agno_cm_baseline', {{}})\n"
     "    _cm_entries = []\n"
     "    _cm_skipped = []\n"
+    "    _cm_total = 0\n"
     "    for _cm_k in _cm_b.list(_cm_b.globals()):\n"
     "        if _cm_k.startswith('_') or _cm_k in _cm_skip:\n"
+    "            continue\n"
+    "        if not _cm_k.isidentifier():\n"
+    "            _cm_skipped.append({{'name': _cm_k, 'reason': 'name is not a valid identifier'}})\n"
     "            continue\n"
     "        _cm_v = _cm_b.globals()[_cm_k]\n"
     "        if _cm_k in _cm_base and _cm_base[_cm_k] is _cm_v:\n"
@@ -56,6 +62,10 @@ _SNAPSHOT_CODE_TEMPLATE = (
     "        if _cm_b.len(_cm_payload) > {max_variable_bytes}:\n"
     "            _cm_skipped.append({{'name': _cm_k, 'reason': 'pickle is ' + _cm_b.str(_cm_b.len(_cm_payload)) + ' bytes, over the {max_variable_bytes}-byte cap'}})\n"
     "            continue\n"
+    "        if _cm_total + _cm_b.len(_cm_payload) > {max_snapshot_bytes}:\n"
+    "            _cm_skipped.append({{'name': _cm_k, 'reason': 'over the {max_snapshot_bytes}-byte snapshot budget'}})\n"
+    "            continue\n"
+    "        _cm_total += _cm_b.len(_cm_payload)\n"
     "        _cm_entries.append({{'name': _cm_k, 'data': _cm_b64.b64encode(_cm_payload).decode('ascii'), 'bytes': _cm_b.len(_cm_payload), 'type': _cm_b.type(_cm_v).__name__}})\n"
     "    _cm_b.print('\\n{marker}' + _cm_json.dumps({{'entries': _cm_entries, 'skipped': _cm_skipped}}))\n"
 )
@@ -151,14 +161,28 @@ class SnapshotManager:
     # Paths
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _session_segment(session_id: str) -> str:
+        """One safe path segment per session id.
+
+        A session id containing '/', '..', control characters, or hundreds of
+        characters must neither nest inside another session's tree nor make
+        every fs call fail. Sanitized ids get a hash suffix so distinct raw
+        ids can never collide after cleaning.
+        """
+        cleaned = re.sub(r"[^\w.\-]", "_", session_id)[:80].strip(".") or "_"
+        if cleaned != session_id:
+            cleaned = f"{cleaned}-{hash_string_sha256(session_id)[:8]}"
+        return cleaned
+
     def _manifest_path(self, session_id: str) -> str:
-        return f"kernel/{session_id}/manifest.json"
+        return f"kernel/{self._session_segment(session_id)}/manifest.json"
 
     def _vars_dir(self, session_id: str) -> str:
-        return f"kernel/{session_id}/vars"
+        return f"kernel/{self._session_segment(session_id)}/vars"
 
     def _var_path(self, session_id: str, name: str) -> str:
-        return f"kernel/{session_id}/vars/{name}.b64"
+        return f"kernel/{self._session_segment(session_id)}/vars/{name}.b64"
 
     # ------------------------------------------------------------------
     # Scheduling
@@ -182,7 +206,11 @@ class SnapshotManager:
         except Exception as e:
             log_warning(f"CodeMode snapshot for session {session.session_id} failed: {e}")
         finally:
-            self._timers.pop(session.session_id, None)
+            # Pop only our own registration: schedule() may already have
+            # replaced it with a newer timer, and popping that one would
+            # orphan a live flush from clear()'s cancellation.
+            if self._timers.get(session.session_id) is asyncio.current_task():
+                self._timers.pop(session.session_id, None)
 
     # ------------------------------------------------------------------
     # Snapshot
@@ -194,9 +222,16 @@ class SnapshotManager:
             return
         skip_b64 = base64.b64encode(json.dumps(self.skip_names).encode("utf-8")).decode("ascii")
         code = _SNAPSHOT_CODE_TEMPLATE.format(
-            marker=SNAPSHOT_MARKER, skip_b64=skip_b64, max_variable_bytes=self.max_variable_bytes
+            marker=SNAPSHOT_MARKER,
+            skip_b64=skip_b64,
+            max_variable_bytes=self.max_variable_bytes,
+            max_snapshot_bytes=self.max_snapshot_bytes,
         )
-        result = await session._run_silent(code, timeout=120.0, max_chars=self.max_snapshot_bytes * 2 + 1_000_000)
+        # The kernel-side budget bounds the emission at max_snapshot_bytes of
+        # pickle bytes, so the marker line stays well under this cap and can
+        # never be truncated mid-JSON.
+        max_chars = int(self.max_snapshot_bytes * 1.5) + 1_000_000
+        result = await session._run_silent(code, timeout=120.0, max_chars=max_chars)
         payload = parse_marker_line(result.stdout, SNAPSHOT_MARKER)
         if payload is None:
             log_warning(
@@ -204,7 +239,11 @@ class SnapshotManager:
                 f"{result.traceback or result.stderr or 'no output'}"
             )
             return
-        data = json.loads(payload)
+        try:
+            data = json.loads(payload)
+        except ValueError as e:
+            log_warning(f"CodeMode snapshot for session {session.session_id} produced unparsable data: {e}")
+            return
         if "error" in data:
             log_warning(f"CodeMode snapshot for session {session.session_id} failed: {data['error']}")
             return
@@ -221,13 +260,17 @@ class SnapshotManager:
             except Exception as e:
                 skipped.append({"name": name, "reason": f"store refused the write: {e}"})
 
-        # Drop var files for names that no longer exist, so a deleted variable
-        # cannot resurrect on the next restore.
+        # Drop var files for names that no longer exist in the kernel, so a
+        # deleted variable cannot resurrect on the next restore. Names that
+        # still exist but were skipped this round (unpicklable, over a cap,
+        # write refused) keep their previous file: it is not restored (the
+        # manifest governs restore) but deleting it would destroy the last
+        # good copy for nothing.
         try:
-            current = {w["name"] for w in written}
+            keep = {w["name"] for w in written} | {str(s.get("name")) for s in skipped}
             for meta in await self.fs.alist(self._vars_dir(session_id)):
                 file_name = meta.path.rsplit("/", 1)[-1]
-                if file_name.endswith(".b64") and file_name[: -len(".b64")] not in current:
+                if file_name.endswith(".b64") and file_name[: -len(".b64")] not in keep:
                     await self.fs.adelete(meta.path)
         except Exception as e:
             log_debug(f"CodeMode snapshot cleanup for session {session_id}: {e}")
@@ -292,6 +335,13 @@ class SnapshotManager:
             code = _RESTORE_CODE_TEMPLATE.format(marker=RESTORE_MARKER, payloads_b64=payloads_b64)
             try:
                 result = await session._run_silent(code, timeout=120.0)
+                if result.status == "aborted":
+                    # The kernel may still be restoring; claiming zero restored
+                    # variables here would be a lie the model acts on.
+                    log_warning(
+                        f"CodeMode restore for session {session_id} timed out; emitting no restore notice"
+                    )
+                    return None
                 marker_payload = parse_marker_line(result.stdout, RESTORE_MARKER)
                 if marker_payload is None:
                     log_warning(
@@ -318,10 +368,16 @@ class SnapshotManager:
     # ------------------------------------------------------------------
 
     async def clear(self, session_id: str) -> None:
-        """Delete the session's snapshot. Used by the restart tool."""
+        """Delete the session's snapshot. Used by the restart tool.
+
+        Callers run this under the session lock (restart's ``before_start``)
+        so a debounced flush cannot interleave with the deletes.
+        """
         timer = self._timers.pop(session_id, None)
         if timer is not None:
             timer.cancel()
+            # Give the cancelled task a tick to unwind before deleting.
+            await asyncio.sleep(0)
         try:
             await self.fs.adelete(self._manifest_path(session_id))
             for meta in await self.fs.alist(self._vars_dir(session_id)):
