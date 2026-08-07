@@ -177,14 +177,14 @@ async def aget_session(
 
 
 def _scrub_tool_results_keeping_unresolved(run: Union[TeamRunOutput, "RunOutput"]) -> None:
-    """Drop stored tool calls and their results, keeping any call still awaiting one.
+    """Drop every stored tool-result message, keeping any call still awaiting one.
 
     ``scrub_tool_results_from_run_output`` drops every assistant message that
     made a call it removed. On a paused run that takes the message carrying the
     *pending* call with it whenever one assistant turn mixes a finished call
     with the gated one, leaving the resumed model nothing to answer. Here a
-    resolved call is stripped out of the message it was made in instead, so the
-    pending call survives and no removed call is left dangling."""
+    resolved call is stripped out of the message it was made in instead, and
+    the pending call survives."""
     from copy import copy
 
     if not run.messages:

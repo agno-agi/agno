@@ -440,20 +440,37 @@ def _collect_all_approval_tools(run_response: Any) -> List[Any]:
     return result
 
 
+_AMBIGUOUS_OWNER = "__ambiguous_owner__"
+
+
 def _member_run_id_for_tool(run_response: Any, tool: Any) -> Optional[str]:
-    """The member run_id that owns this tool execution, if it came in via a requirement."""
+    """The member run_id that owns this tool execution, if it came in via a requirement.
+
+    An identity match is authoritative. A value match (tool_call_id + tool_name)
+    that fits requirements of MORE THAN ONE member is ambiguous and returns
+    _AMBIGUOUS_OWNER, so the tool resolves no record and the continue blocks:
+    provider-local tool_call_ids can collide across members, and a wrong owner
+    would let one member's approval execute another member's tool."""
+    value_matches: List[str] = []
     for req in getattr(run_response, "requirements", None) or []:
         te = getattr(req, "tool_execution", None)
         if te is None:
             continue
-        if te is tool or (
+        if te is tool:
+            return getattr(req, "member_run_id", None)
+        if (
             getattr(te, "tool_call_id", None) is not None
             and getattr(te, "tool_call_id", None) == getattr(tool, "tool_call_id", None)
             and getattr(te, "tool_name", None) == getattr(tool, "tool_name", None)
         ):
             mid = getattr(req, "member_run_id", None)
             if mid:
-                return mid
+                value_matches.append(mid)
+    distinct = set(value_matches)
+    if len(distinct) > 1:
+        return _AMBIGUOUS_OWNER
+    if value_matches:
+        return value_matches[0]
     return None
 
 
@@ -464,9 +481,8 @@ def _group_tools_by_approval(db: Any, run_id: str, run_response: Any, tools: Lis
     speak for another member's tool. Resolution order per tool:
       1. the approval_id stamped on the tool execution at pause time,
       2. the owning member_run_id,
-      3. the run-level lookup (team run_id first, then any member run_id) -- the
-         pre-existing behaviour, kept so single-member and team-level runs whose
-         tools carry no approval_id still resolve.
+      3. the run-level lookup (team run_id first, then any member run_id),
+         which serves tools carrying no approval_id and no owning member run.
     """
     cache: Dict[str, Optional[Dict[str, Any]]] = {}
     fallback_used = False
@@ -485,11 +501,23 @@ def _group_tools_by_approval(db: Any, run_id: str, run_response: Any, tools: Lis
         mid: Optional[str] = None
         if record is None:
             mid = _member_run_id_for_tool(run_response, tool)
+            if mid == _AMBIGUOUS_OWNER:
+                # No record can be paired safely; the continue blocks.
+                pairs.append((tool, None))
+                continue
             if mid:
                 key = f"run:{mid}"
                 if key not in cache:
                     cache[key] = _get_approval_for_run(db, mid)
                 record = cache[key]
+        if record is None and aid and not mid:
+            # A tool whose stamped record is gone and that owns no member run
+            # resolves within its own run only: a record re-issued under this
+            # run id counts, a sibling member's record never does.
+            key = f"run:{run_id}"
+            if key not in cache:
+                cache[key] = _get_approval_for_run(db, run_id)
+            record = cache[key]
         if record is None and not aid and not mid:
             # The run-level lookup serves only tools with no scoped identity.
             # A tool whose own record is gone stays unresolved: pairing it with
@@ -527,11 +555,23 @@ async def _agroup_tools_by_approval(db: Any, run_id: str, run_response: Any, too
         mid: Optional[str] = None
         if record is None:
             mid = _member_run_id_for_tool(run_response, tool)
+            if mid == _AMBIGUOUS_OWNER:
+                # No record can be paired safely; the continue blocks.
+                pairs.append((tool, None))
+                continue
             if mid:
                 key = f"run:{mid}"
                 if key not in cache:
                     cache[key] = await _aget_approval_for_run(db, mid)
                 record = cache[key]
+        if record is None and aid and not mid:
+            # A tool whose stamped record is gone and that owns no member run
+            # resolves within its own run only: a record re-issued under this
+            # run id counts, a sibling member's record never does.
+            key = f"run:{run_id}"
+            if key not in cache:
+                cache[key] = await _aget_approval_for_run(db, run_id)
+            record = cache[key]
         if record is None and not aid and not mid:
             # The run-level lookup serves only tools with no scoped identity.
             # A tool whose own record is gone stays unresolved: pairing it with
@@ -638,7 +678,6 @@ async def acheck_and_apply_approval_resolution(db: Any, run_id: str, run_respons
     if not any(getattr(t, "approval_type", None) == "required" for t in all_approval_tools):
         return
 
-    # Search by team run_id first, then fall back to member run_ids
     pairs = await _agroup_tools_by_approval(db, run_id, run_response, all_approval_tools)
     if any(record is None for _, record in pairs):
         raise RuntimeError(

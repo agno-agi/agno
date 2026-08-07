@@ -7063,14 +7063,13 @@ def continue_run_dispatch(
 
             try:
                 check_and_apply_approval_resolution(team.db, run_id_resolved, run_response)
-            except RuntimeError:
+            except RuntimeError as e:
                 run_response.requirements = old_requirements
                 run_response.tools = old_tools
                 _restore_requirement_decisions(decisions)
-                raise ValueError(
-                    "To continue a run from a given run_id, the requirements parameter must be provided "
-                    "(or resolve an admin approval first)."
-                )
+                # The payload was supplied; the approval gate is what refused.
+                # Surface its reason instead of asking for a payload again.
+                raise ValueError(str(e))
     elif run_response.tools:
         from agno.run.approval import check_and_apply_approval_resolution
 
@@ -8241,10 +8240,8 @@ async def _acontinue_run_background_stream(
                             await _aread_session(team, session_id=session_id, user_id=user_id),
                         )
                         if fresh_session is None:
-                            # The read failed. Restoring into the step-1 session
-                            # trades a rare clobber of a concurrent write for a
-                            # guaranteed restore; a run left RUNNING can never
-                            # be resumed.
+                            # The read failed. The restore lands in the step-1
+                            # session: a run left RUNNING can never be resumed.
                             run_response.status = cast(RunStatus, restore_status)
                             team_session.upsert_run(run_response=run_response)
                             await asave_session(team, session=team_session)
@@ -8695,14 +8692,13 @@ async def _acontinue_run(
                                 await acheck_and_apply_approval_resolution(
                                     team.db, run_response.run_id or run_id or "", run_response
                                 )
-                            except RuntimeError:
+                            except RuntimeError as e:
                                 run_response.requirements = old_requirements
                                 run_response.tools = old_tools
                                 _restore_requirement_decisions(decisions)
-                                raise ValueError(
-                                    "To continue a run from a given run_id, the requirements parameter must be "
-                                    "provided (or resolve an admin approval first)."
-                                )
+                                # The payload was supplied; the approval gate is
+                                # what refused. Surface its reason.
+                                raise ValueError(str(e))
                 elif run_response.tools:
                     from agno.run.approval import acheck_and_apply_approval_resolution
 
@@ -9165,14 +9161,13 @@ async def _acontinue_run_stream(
                                 await acheck_and_apply_approval_resolution(
                                     team.db, run_response.run_id or run_id or "", run_response
                                 )
-                            except RuntimeError:
+                            except RuntimeError as e:
                                 run_response.requirements = old_requirements
                                 run_response.tools = old_tools
                                 _restore_requirement_decisions(decisions)
-                                raise ValueError(
-                                    "To continue a run from a given run_id, the requirements parameter must be "
-                                    "provided (or resolve an admin approval first)."
-                                )
+                                # The payload was supplied; the approval gate is
+                                # what refused. Surface its reason.
+                                raise ValueError(str(e))
                 elif run_response.tools:
                     from agno.run.approval import acheck_and_apply_approval_resolution
 

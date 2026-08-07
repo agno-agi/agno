@@ -5676,6 +5676,131 @@ def test_a_deleted_sibling_approval_blocks_the_continue(tmp_path):
     assert _FIRED == [], f"a tool executed with its own approval record deleted: {_FIRED}"
 
 
+_SHIPPED: List[str] = []
+
+
+@tool(requires_confirmation=True)
+@approval(type="required")
+def ship(target: str) -> str:
+    _SHIPPED.append(f"ship:{target}")
+    return f"shipped {target}"
+
+
+def _same_tool_two_member_team(db: SqliteDb, resuming: bool) -> Team:
+    """Two members calling the SAME gated tool with colliding provider-local
+    tool_call_ids: neither name nor id can tell their requirements apart."""
+
+    def member(name: str, mid: str, target: str) -> Agent:
+        return Agent(
+            name=name,
+            id=mid,
+            model=_ScriptedModel(
+                f"m-{mid}",
+                [("content", "Done.")]
+                if resuming
+                else [("tool", "ship", {"target": target}, "call_1"), ("content", "Done.")],
+            ),
+            tools=[ship],
+            db=db,
+            telemetry=False,
+        )
+
+    return Team(
+        name="Ship Team",
+        id="ship-team",
+        model=_ScriptedModel(
+            "m-lead",
+            [("content", "All done.")]
+            if resuming
+            else [
+                (
+                    "tools",
+                    [
+                        ("delegate_task_to_member", {"member_id": "alpha", "task": "ship A"}, "tc-d1"),
+                        ("delegate_task_to_member", {"member_id": "beta", "task": "ship B"}, "tc-d2"),
+                    ],
+                ),
+                ("content", "All done."),
+            ],
+        ),
+        members=[member("Alpha", "alpha", "A"), member("Beta", "beta", "B")],
+        db=db,
+        telemetry=False,
+    )
+
+
+def test_an_ambiguous_tool_owner_blocks_instead_of_borrowing_a_sibling_record(tmp_path):
+    """Two members calling the same tool with colliding tool_call_ids: a member
+    whose own record is gone must block, not resolve through the requirement
+    that happens to match first."""
+    _SHIPPED.clear()
+    db_file = str(tmp_path / "ambiguous_owner.db")
+    session_id = "s-ambiguous-owner"
+
+    db = SqliteDb(db_file=db_file)
+    run1 = _same_tool_two_member_team(db, resuming=False).run("Ship both", session_id=session_id)
+    assert run1.is_paused
+    records, _ = db.get_approvals(approval_type="required", limit=50)
+    assert len(records) == 2
+
+    approved_record, deleted_record = records
+    db.update_approval(approved_record["id"], status="approved", resolution_data=None)
+    assert db.delete_approval(deleted_record["id"])
+
+    team2 = _same_tool_two_member_team(SqliteDb(db_file=db_file), resuming=True)
+    run2 = team2.continue_run(run_id=run1.run_id, session_id=session_id)
+    assert run2.status == RunStatus.paused, f"an ambiguous owner match let the run reach {run2.status}"
+    assert _SHIPPED == [], f"a tool with no record of its own executed on a sibling's approval: {_SHIPPED}"
+
+
+def test_an_ambiguous_value_match_resolves_no_owner():
+    """Unit contract of _member_run_id_for_tool: identity wins outright; a
+    value match fitting requirements of more than one member is ambiguous."""
+    from agno.run.approval import _AMBIGUOUS_OWNER, _member_run_id_for_tool
+
+    te_a = ToolExecution(tool_call_id="call_1", tool_name="ship", approval_type="required")
+    te_b = ToolExecution(tool_call_id="call_1", tool_name="ship", approval_type="required")
+    req_a = RunRequirement(tool_execution=te_a)
+    req_a.member_run_id = "run-alpha"
+    req_b = RunRequirement(tool_execution=te_b)
+    req_b.member_run_id = "run-beta"
+    holder = MagicMock(requirements=[req_a, req_b])
+
+    assert _member_run_id_for_tool(holder, te_b) == "run-beta"
+    reloaded_copy = ToolExecution(tool_call_id="call_1", tool_name="ship", approval_type="required")
+    assert _member_run_id_for_tool(holder, reloaded_copy) == _AMBIGUOUS_OWNER
+
+
+def test_a_reissued_team_approval_record_still_resolves(tmp_path):
+    """A team-level tool whose stamped record was deleted and re-created under
+    the same run resolves against the re-issued record; the stale id must not
+    block the run forever."""
+    _DEPLOYS.clear()
+    db_file = str(tmp_path / "reissued_record.db")
+    session_id = "s-reissued-record"
+
+    db = SqliteDb(db_file=db_file)
+    run1 = _team_level_approval_team(db, resuming=False).run("Deploy prod", session_id=session_id)
+    assert run1.is_paused
+    records, _ = db.get_approvals(approval_type="required", limit=50)
+    assert len(records) == 1
+    original = records[0]
+
+    assert db.delete_approval(original["id"])
+    reissued = dict(original)
+    reissued["id"] = "reissued-record-id"
+    reissued["status"] = "pending"
+    db.create_approval(reissued)
+    db.update_approval("reissued-record-id", status="approved", resolution_data=None)
+
+    team2 = _team_level_approval_team(SqliteDb(db_file=db_file), resuming=True)
+    run2 = team2.continue_run(run_id=run1.run_id, session_id=session_id)
+    assert run2.status == RunStatus.completed, (
+        f"the re-issued approved record was not found; the run is stuck at {run2.status}"
+    )
+    assert _DEPLOYS == ["prod"], _DEPLOYS
+
+
 _MIXED: List[str] = []
 
 
