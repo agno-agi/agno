@@ -697,6 +697,14 @@ class PostgresDb(BaseDb):
             )
             return self.job_table
 
+        if table_type == "tool_results":
+            self.tool_results_table = self._get_or_create_table(
+                table_name=self.tool_results_table_name,
+                table_type="tool_results",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.tool_results_table
+
         if table_type == "approvals":
             self.approvals_table = self._get_or_create_table(
                 table_name=self.approvals_table_name,
@@ -1226,7 +1234,10 @@ class PostgresDb(BaseDb):
                     sess.execute(runs_table.delete().where(runs_table.c.session_id == session_id))
 
                 log_debug(f"Successfully deleted session with session_id: {session_id} in table {table.name}")
-                return True
+
+            # Cascade offloaded tool results after the session delete commits.
+            self._cascade_tool_results([session_id])
+            return True
 
         except Exception as e:
             log_error(f"Error deleting session: {str(e)}")
@@ -1264,9 +1275,95 @@ class PostgresDb(BaseDb):
 
             log_debug(f"Successfully deleted {result.rowcount} sessions")
 
+            # Cascade offloaded tool results after the session delete commits.
+            self._cascade_tool_results(session_ids)
+
         except Exception as e:
             log_error(f"Error deleting sessions: {str(e)}")
             raise e
+
+    def _cascade_tool_results(self, session_ids: List[str]) -> None:
+        """Cascade result offloading on session delete: read the index rows,
+        delete their AgentFS payload rows, then the index rows (feature 02).
+
+        Best-effort in its own transaction so a cascade failure can never
+        poison or roll back the session delete itself. Payload rows live in
+        the AgentFS table at its defaults (schema "fs", table "agno_fs");
+        each session's payloads occupy their own namespace.
+        """
+        try:
+            table = self._get_table(table_type="tool_results")
+            if table is None:
+                return
+            from sqlalchemy import text as sa_text
+
+            with self.Session() as sess, sess.begin():
+                namespaces = [
+                    row[0]
+                    for row in sess.execute(
+                        select(table.c.namespace).distinct().where(table.c.session_id.in_(session_ids))
+                    ).fetchall()
+                ]
+                if not namespaces:
+                    return
+                if sess.execute(sa_text("SELECT to_regclass('fs.agno_fs')")).scalar() is not None:
+                    for namespace in namespaces:
+                        sess.execute(sa_text('DELETE FROM "fs".agno_fs WHERE namespace = :ns'), {"ns": namespace})
+                sess.execute(table.delete().where(table.c.session_id.in_(session_ids)))
+        except Exception as e:
+            log_warning(f"Tool-result cascade on session delete failed: {e}")
+
+    # -- Tool Results (result offloading index; DECISIONS.md D10) --
+
+    def upsert_tool_result(self, row: Dict[str, Any]) -> None:
+        table = self._get_table(table_type="tool_results", create_table_if_not_found=True)
+        if table is None:
+            raise ValueError(f"Could not create table: {self.tool_results_table_name}")
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        stmt = pg_insert(table).values(**row)
+        update_columns = {key: stmt.excluded[key] for key in row.keys() if key != "result_id"}
+        stmt = stmt.on_conflict_do_update(index_elements=["result_id"], set_=update_columns)
+        with self.Session() as sess, sess.begin():
+            sess.execute(stmt)
+
+    def get_tool_result(self, result_id: str) -> Optional[Dict[str, Any]]:
+        table = self._get_table(table_type="tool_results")
+        if table is None:
+            return None
+        with self.Session() as sess:
+            row = sess.execute(select(table).where(table.c.result_id == result_id)).fetchone()
+            return dict(row._mapping) if row is not None else None
+
+    def get_tool_results_for_session(self, session_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        table = self._get_table(table_type="tool_results")
+        if table is None:
+            return []
+        stmt = (
+            select(table).where(table.c.session_id == session_id).order_by(table.c.created_at.desc(), table.c.result_id)
+        )
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        with self.Session() as sess:
+            return [dict(row._mapping) for row in sess.execute(stmt).fetchall()]
+
+    def delete_tool_results(self, result_ids: List[str]) -> int:
+        if not result_ids:
+            return 0
+        table = self._get_table(table_type="tool_results")
+        if table is None:
+            return 0
+        with self.Session() as sess, sess.begin():
+            result = sess.execute(table.delete().where(table.c.result_id.in_(result_ids)))
+        return result.rowcount or 0
+
+    def get_expired_tool_results(self, now: int) -> List[Dict[str, Any]]:
+        table = self._get_table(table_type="tool_results")
+        if table is None:
+            return []
+        stmt = select(table).where(table.c.expires_at.is_not(None)).where(table.c.expires_at <= now)
+        with self.Session() as sess:
+            return [dict(row._mapping) for row in sess.execute(stmt).fetchall()]
 
     def get_session(
         self,

@@ -1,0 +1,410 @@
+"""Unit tests for result offloading: thresholds, envelopes, caps, access."""
+
+import json
+import os
+import tempfile
+import time
+
+import pytest
+
+from agno.db.sqlite import SqliteDb
+from agno.fs import FileSystem
+from agno.fs.errors import QuotaExceededError
+from agno.offload import ResultStore, result_id_for
+from agno.offload.store import (
+    NEVER_OFFLOADED_TOOLS,
+    render_refused_envelope,
+    render_stored_envelope,
+)
+
+
+@pytest.fixture
+def store(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "offload.db"))
+    fs = FileSystem(backend=db, namespace="tool-results")
+    return ResultStore(fs, db=db, threshold=100)
+
+
+def _offload(store, output, *, session_id="S1", run_id="r1", tool_call_id="tc1", tool_name="fetch_page", **kwargs):
+    return store.offload(
+        session_id=session_id,
+        run_id=run_id,
+        tool_call_id=tool_call_id,
+        tool_name=tool_name,
+        tool_args={},
+        output=output,
+        **kwargs,
+    )
+
+
+# ------------------------------------------------------------------
+# Threshold
+# ------------------------------------------------------------------
+
+
+def test_exactly_threshold_stays_inline(store):
+    assert store.should_offload("fetch_page", "x" * 100) is False
+
+
+def test_threshold_plus_one_offloads(store):
+    assert store.should_offload("fetch_page", "x" * 101) is True
+
+
+def test_default_threshold_is_4000():
+    db = SqliteDb(db_file=os.path.join(tempfile.mkdtemp(), "d.db"))
+    default_store = ResultStore(FileSystem(backend=db, namespace="tool-results"), db=db)
+    assert default_store.threshold == 4000
+    assert default_store.should_offload("t", "x" * 4000) is False
+    assert default_store.should_offload("t", "x" * 4001) is True
+
+
+def test_non_string_output_is_measured_as_text(store):
+    assert store.should_offload("t", list(range(200))) is True
+    assert store.should_offload("t", 42) is False
+
+
+# ------------------------------------------------------------------
+# The never-offloaded set
+# ------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("tool_name", NEVER_OFFLOADED_TOOLS)
+def test_read_back_tools_own_output_is_never_offloaded(store, tool_name):
+    assert store.should_offload(tool_name, "x" * 100_000) is False
+
+
+def test_sub_threshold_result_is_never_offloaded(store):
+    assert store.should_offload("fetch_page", "short") is False
+
+
+# ------------------------------------------------------------------
+# Envelope shapes
+# ------------------------------------------------------------------
+
+
+def test_stored_envelope_shape(store):
+    payload = "\n".join(f"line {i}" for i in range(1, 8413))
+    ref = _offload(store, payload)
+    envelope = render_stored_envelope(ref, "line 1\nline 2")
+    assert envelope.startswith(f'<result id="{ref.result_id}" tool="fetch_page" lines="8412" size=')
+    assert "line 1\nline 2\n</result>" in envelope
+    assert f'read_result("{ref.result_id}")' in envelope
+    assert f'search_result("{ref.result_id}", pattern)' in envelope
+
+
+def test_refused_envelope_carries_head_and_tail(store):
+    payload = "\n".join(f"line {i}" for i in range(1, 101))
+    envelope = render_refused_envelope(
+        tool_name="fetch_page",
+        output=payload,
+        reason="session storage is full (204800000 of 200000000 bytes)",
+        preview_lines=20,
+        preview_chars=1200,
+    )
+    assert 'stored="false"' in envelope
+    assert 'reason="session storage is full (204800000 of 200000000 bytes)"' in envelope
+    assert "line 1\n" in envelope
+    assert "[... 75 lines omitted ...]" in envelope
+    assert "line 100" in envelope
+    assert envelope.endswith("Full result was NOT stored. Re-run the tool with a narrower query if you need the rest.")
+
+
+def test_refused_envelope_omits_marker_when_everything_fits(store):
+    payload = "\n".join(f"line {i}" for i in range(1, 6))
+    envelope = render_refused_envelope(
+        tool_name="t", output=payload, reason="boom", preview_lines=20, preview_chars=1200
+    )
+    assert "lines omitted" not in envelope
+    assert "line 5" in envelope
+
+
+def test_preview_honours_lines_then_chars(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "p.db"))
+    fs = FileSystem(backend=db, namespace="tool-results")
+    line_bound = ResultStore(fs, db=db, threshold=10, preview_lines=3, preview_chars=10_000)
+    ref = line_bound.offload(
+        session_id="S", run_id="r", tool_call_id="t1", tool_name="x", tool_args={}, output="a\nb\nc\nd\ne"
+    )
+    assert line_bound.get_row(ref.result_id)["preview"] == "a\nb\nc"
+
+    char_bound = ResultStore(fs, db=db, threshold=10, preview_lines=100, preview_chars=3)
+    ref2 = char_bound.offload(
+        session_id="S", run_id="r", tool_call_id="t2", tool_name="x", tool_args={}, output="a\nb\nc\nd\ne"
+    )
+    assert char_bound.get_row(ref2.result_id)["preview"] == "a\nb"
+
+
+def test_multibyte_content_reports_bytes_not_characters(store):
+    payload = "é" * 1000
+    ref = _offload(store, payload)
+    assert ref.size_bytes == 2000
+    assert len(payload) == 1000
+
+
+def test_line_count_matches_the_payload(store):
+    payload = "a\nb\nc"
+    ref = _offload(store, payload)
+    assert ref.line_count == 3
+
+
+def test_json_output_gets_the_json_content_type(store):
+    ref = _offload(store, json.dumps({"k": ["v"] * 100}))
+    assert ref.content_type == "json"
+    assert ref.path.endswith(".json")
+
+
+def test_text_output_gets_the_text_content_type(store):
+    ref = _offload(store, "plain " * 100)
+    assert ref.content_type == "text"
+    assert ref.path.endswith(".txt")
+
+
+# ------------------------------------------------------------------
+# Ids and paths
+# ------------------------------------------------------------------
+
+
+def test_result_id_is_deterministic_and_short():
+    first = result_id_for("run-1", "call-1")
+    assert first == result_id_for("run-1", "call-1")
+    assert first != result_id_for("run-1", "call-2")
+    assert first.startswith("res_")
+    assert len(first) == 14
+
+
+def test_team_member_results_land_under_shared(store):
+    ref = _offload(store, "x" * 500, shared=True)
+    assert ref.path.startswith("shared/")
+    ref2 = _offload(store, "x" * 500, tool_call_id="tc2")
+    assert ref2.path.startswith("results/")
+
+
+# ------------------------------------------------------------------
+# Read caps
+# ------------------------------------------------------------------
+
+
+def test_read_clips_at_400_lines_and_reports_next_start_line(store):
+    payload = "\n".join(f"line {i}" for i in range(1, 1001))
+    ref = _offload(store, payload)
+    page = store.read(ref.result_id)
+    assert page.start_line == 1
+    assert page.end_line == 400
+    assert page.truncated is True
+    assert page.next_start_line == 401
+    assert page.line_count == 1000
+    assert page.text.splitlines()[-1] == "line 400"
+
+
+def test_read_clips_at_16000_chars(store):
+    payload = "\n".join("x" * 200 for _ in range(300))
+    ref = _offload(store, payload)
+    page = store.read(ref.result_id)
+    assert len(page.text) <= 16_000
+    assert page.truncated is True
+    assert page.next_start_line is not None
+
+
+def test_read_of_the_final_page_reports_no_next_line(store):
+    payload = "\n".join(f"line {i}" for i in range(1, 11))
+    ref = _offload(store, payload)
+    page = store.read(ref.result_id, start_line=5)
+    assert page.end_line == 10
+    assert page.next_start_line is None
+    assert page.truncated is False
+
+
+def test_read_range_is_inclusive(store):
+    payload = "\n".join(f"line {i}" for i in range(1, 11))
+    ref = _offload(store, payload)
+    page = store.read(ref.result_id, start_line=2, end_line=4)
+    assert page.text == "line 2\nline 3\nline 4"
+
+
+def test_round_trip_returns_the_exact_original_bytes(store):
+    payload = "unicode é ü 😀\nsecond line\n\ttabbed\n" * 200
+    ref = _offload(store, payload)
+    page = store.read(ref.result_id, 1, ref.line_count)
+    # The page cap bounds one read; the payload file itself is byte-exact.
+    stored = store._read_payload(store.get_row(ref.result_id))
+    assert stored == payload
+    assert page.text.startswith("unicode é ü 😀")
+
+
+# ------------------------------------------------------------------
+# Search caps
+# ------------------------------------------------------------------
+
+
+def test_search_stops_at_20_matches(store):
+    payload = "\n".join("needle here" for _ in range(100))
+    ref = _offload(store, payload)
+    assert len(store.search(ref.result_id, "needle")) == 20
+
+
+def test_search_clips_each_line_at_500_chars(store):
+    payload = "needle " + "x" * 2000
+    ref = _offload(store, payload)
+    match = store.search(ref.result_id, "needle")[0]
+    assert len(match.line) == 500
+    assert match.line_number == 1
+
+
+def test_search_with_context_lines(store):
+    payload = "a\nb\nneedle\nd\ne"
+    ref = _offload(store, payload)
+    match = store.search(ref.result_id, "needle", context_lines=1)[0]
+    assert match.line == "b\nneedle\nd"
+
+
+def test_search_reports_1_indexed_line_numbers(store):
+    payload = "a\nb\nneedle"
+    ref = _offload(store, payload)
+    assert store.search(ref.result_id, "needle")[0].line_number == 3
+
+
+# ------------------------------------------------------------------
+# Failure is loud, never silent
+# ------------------------------------------------------------------
+
+
+def test_quota_refusal_produces_the_head_tail_envelope_and_does_not_raise(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "quota.db"))
+    fs = FileSystem(backend=db, namespace="tool-results")
+    store = ResultStore(fs, db=db, threshold=10)
+    payload = "\n".join(f"line {i}" for i in range(1, 501))
+
+    # Force the write to be refused the way a full namespace does.
+    def refuse(*args, **kwargs):
+        raise QuotaExceededError("full", scope="namespace", current=204_800_000, limit=200_000_000)
+
+    store._session_fs = lambda session_id: type("FS", (), {"namespace": "ns", "write": staticmethod(refuse)})()
+    envelope = store.offload_for_model(
+        session_id="S1", run_id="r1", tool_call_id="tc1", tool_name="fetch_page", tool_args={}, output=payload
+    )
+    assert 'stored="false"' in envelope
+    assert "session storage is full (204800000 of 200000000 bytes)" in envelope
+    assert "lines omitted" in envelope
+    assert "line 500" in envelope
+
+
+def test_backend_error_produces_a_refused_envelope_and_does_not_raise(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "err.db"))
+    fs = FileSystem(backend=db, namespace="tool-results")
+    store = ResultStore(fs, db=db, threshold=10)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("backend down")
+
+    store.offload = boom
+    envelope = store.offload_for_model(
+        session_id="S1", run_id="r1", tool_call_id="tc1", tool_name="t", tool_args={}, output="x" * 500
+    )
+    assert 'stored="false"' in envelope
+    assert "backend down" in envelope
+
+
+def test_index_write_failure_does_not_leave_an_orphan_payload(store, monkeypatch):
+    def boom(*args, **kwargs):
+        raise RuntimeError("index down")
+
+    monkeypatch.setattr(store, "_db_call", boom)
+    with pytest.raises(RuntimeError):
+        _offload(store, "x" * 500)
+    session_fs = store._session_fs("S1")
+    assert session_fs.list("") == []
+
+
+# ------------------------------------------------------------------
+# Listing, cleanup, sweep
+# ------------------------------------------------------------------
+
+
+def test_live_ids_are_newest_first_and_capped(store):
+    for i in range(25):
+        store.offload(
+            session_id="S1",
+            run_id="r1",
+            tool_call_id=f"tc{i}",
+            tool_name=f"tool{i}",
+            tool_args={},
+            output="x" * 500,
+        )
+        time.sleep(0.001)
+    refs = store.live_ids("S1")
+    assert len(refs) == 20
+    created = [ref.created_at for ref in refs]
+    assert created == sorted(created, reverse=True)
+
+
+def test_live_ids_scope_to_one_session(store):
+    _offload(store, "x" * 500, session_id="S1")
+    _offload(store, "x" * 500, session_id="S2", tool_call_id="tc2")
+    assert len(store.live_ids("S1")) == 1
+    assert len(store.live_ids("S2")) == 1
+
+
+def test_live_ids_limit_is_respected(store):
+    for i in range(5):
+        _offload(store, "x" * 500, tool_call_id=f"tc{i}")
+    assert len(store.live_ids("S1", limit=2)) == 2
+
+
+def test_delete_for_sessions_removes_rows_and_payloads(store):
+    ref = _offload(store, "x" * 500)
+    session_fs = store._session_fs("S1")
+    assert session_fs.read(ref.path) is not None
+    assert store.delete_for_sessions(["S1"]) == 1
+    assert store.get_row(ref.result_id) is None
+    assert session_fs.read(ref.path) is None
+
+
+def test_sweep_deletes_only_expired_rows(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "ttl.db"))
+    fs = FileSystem(backend=db, namespace="tool-results")
+    expiring = ResultStore(fs, db=db, threshold=10, ttl_seconds=60)
+    forever = ResultStore(fs, db=db, threshold=10, ttl_seconds=None)
+    ref_expiring = expiring.offload(
+        session_id="S", run_id="r", tool_call_id="t1", tool_name="x", tool_args={}, output="a" * 100
+    )
+    ref_forever = forever.offload(
+        session_id="S", run_id="r", tool_call_id="t2", tool_name="x", tool_args={}, output="b" * 100
+    )
+    assert expiring.sweep_expired(now=int(time.time())) == 0
+    assert expiring.sweep_expired(now=int(time.time()) + 120) == 1
+    assert expiring.get_row(ref_expiring.result_id) is None
+    assert forever.get_row(ref_forever.result_id) is not None
+
+
+def test_maybe_sweep_runs_at_most_once_per_session(tmp_path, monkeypatch):
+    db = SqliteDb(db_file=str(tmp_path / "once.db"))
+    store = ResultStore(FileSystem(backend=db, namespace="tool-results"), db=db, ttl_seconds=60)
+    calls = []
+    monkeypatch.setattr(store, "sweep_expired", lambda now=None: calls.append(1) or 0)
+    store.maybe_sweep("S1")
+    store.maybe_sweep("S1")
+    assert len(calls) == 1
+
+
+def test_maybe_sweep_is_a_noop_without_ttl(tmp_path, monkeypatch):
+    db = SqliteDb(db_file=str(tmp_path / "nottl.db"))
+    store = ResultStore(FileSystem(backend=db, namespace="tool-results"), db=db)
+    calls = []
+    monkeypatch.setattr(store, "sweep_expired", lambda now=None: calls.append(1) or 0)
+    store.maybe_sweep("S1")
+    assert calls == []
+
+
+# ------------------------------------------------------------------
+# Errors
+# ------------------------------------------------------------------
+
+
+def test_read_of_unknown_id_raises_key_error(store):
+    with pytest.raises(KeyError):
+        store.read("res_deadbeef00")
+
+
+def test_search_of_unknown_id_raises_key_error(store):
+    with pytest.raises(KeyError):
+        store.search("res_deadbeef00", "x")

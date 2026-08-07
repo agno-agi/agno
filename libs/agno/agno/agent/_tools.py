@@ -171,6 +171,11 @@ def get_tools(
     if agent.enable_agentic_memory:
         agent_tools.append(_default_tools.get_update_user_memory_function(agent, user_id=user_id, async_mode=False))
 
+    # Read-back tools for offloaded results
+    if agent.offload_tool_results and agent._result_store is not None:
+        agent_tools.append(_default_tools.get_read_result_function(agent, run_context=run_context, async_mode=False))
+        agent_tools.append(_default_tools.get_search_result_function(agent, run_context=run_context, async_mode=False))
+
     # Add learning machine tools
     if agent._learning is not None:
         learning_tools = agent._learning.get_tools(
@@ -303,6 +308,11 @@ async def aget_tools(
 
     if agent.enable_agentic_memory:
         agent_tools.append(_default_tools.get_update_user_memory_function(agent, user_id=user_id, async_mode=True))
+
+    # Read-back tools for offloaded results
+    if agent.offload_tool_results and agent._result_store is not None:
+        agent_tools.append(_default_tools.get_read_result_function(agent, run_context=run_context, async_mode=True))
+        agent_tools.append(_default_tools.get_search_result_function(agent, run_context=run_context, async_mode=True))
 
     # Add learning machine tools (async)
     if agent._learning is not None:

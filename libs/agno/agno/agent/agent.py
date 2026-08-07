@@ -363,6 +363,13 @@ class Agent:
     # Compression manager for compressing tool call results
     compression_manager: Optional[CompressionManager] = None
 
+    # --- Tool Result Offloading ---
+    # If True, store tool results over 4000 characters as files and put a short
+    # envelope with a result id in the message. An int sets the threshold.
+    offload_tool_results: Union[bool, int] = False
+    # Optional lifetime for stored results; None keeps them until session delete
+    result_ttl_seconds: Optional[int] = None
+
     # --- Debug ---
     # Enable debug logs
     debug_mode: bool = False
@@ -412,6 +419,8 @@ class Agent:
         session_summary_manager: Optional[SessionSummaryManager] = None,
         compress_tool_results: bool = False,
         compression_manager: Optional[CompressionManager] = None,
+        offload_tool_results: Union[bool, int] = False,
+        result_ttl_seconds: Optional[int] = None,
         add_history_to_context: bool = False,
         num_history_runs: Optional[int] = None,
         num_history_messages: Optional[int] = None,
@@ -545,6 +554,11 @@ class Agent:
         # Context compression settings
         self.compress_tool_results = compress_tool_results
         self.compression_manager = compression_manager
+
+        # Tool result offloading settings
+        self.offload_tool_results = offload_tool_results
+        self.result_ttl_seconds = result_ttl_seconds
+        self._result_store: Optional[Any] = None
 
         self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs

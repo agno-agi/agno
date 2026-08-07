@@ -113,6 +113,7 @@ arxiv = ["arxiv"]
 brave = ["brave-search"]
 browserbase = ["browserbase", "playwright"]
 cartesia = ["cartesia"]
+code-mode = ["ipykernel>=7.3.0", "jupyter_client>=8.9.1", "dill>=0.4.1"]
 confluence = ["atlassian-python-api"]
 crawl4ai = ["crawl4ai>=0.6.3"]
 daytona = ["daytona"]
@@ -263,6 +264,7 @@ tools = [
   # "agno[brave]",  # Excluded: brave-search 0.2.0 ships invalid metadata (bad httpx specifier) that uv cannot parse; test_setup.sh installs it with --no-deps
   "agno[browserbase]",
   "agno[cartesia]",
+  "agno[code-mode]",
   "agno[confluence]",
   # "agno[crawl4ai]",  # Excluded: depends on litellm, which was compromised on PyPI (March 24, 2026)
   "agno[daytona]",
@@ -514,6 +516,7 @@ module = [
   "crawl4ai.*",
   "daytona.*",
   "daytona_api_client.*",
+  "dill.*",
   "superserve.*",
   "discord.*",
   "docker.*",
@@ -524,6 +527,8 @@ module = [
   "ddgs.*",
   "email_validator.*",
   "e2b_code_interpreter.*",
+  "ipykernel.*",
+  "jupyter_client.*",
   "eth_account.*",
   "exa_py.*",
   "seltz.*",
