@@ -405,6 +405,47 @@ async def test_aget_last_run_output_with_fresh_agent_instance(async_shared_db):
     assert agent2.id == agent1.id
 
 
+def test_get_last_run_output_supports_agent_subclasses(shared_db):
+    """A user-defined Agent subclass with the same id must find its persisted
+    runs. The retrieval loop previously compared ``__class__.__name__`` to
+    ``"Agent"``, which silently returned None for subclasses.
+    """
+
+    class CustomAgent(Agent):
+        pass
+
+    session_id = str(uuid.uuid4())
+
+    writer = CustomAgent(id="custom-agent", model=OpenAIChat(id="gpt-4o-mini"), db=shared_db)
+    response = writer.run("Hello", session_id=session_id)
+
+    # Fresh subclass instance sharing the id — mirrors real usage.
+    reader = CustomAgent(id="custom-agent", model=OpenAIChat(id="gpt-4o-mini"), db=shared_db)
+    last_output = reader.get_last_run_output(session_id=session_id)
+
+    assert last_output is not None
+    assert last_output.run_id == response.run_id
+
+
+@pytest.mark.asyncio
+async def test_aget_last_run_output_supports_agent_subclasses(async_shared_db):
+    """Async variant of the subclass regression."""
+
+    class CustomAgent(Agent):
+        pass
+
+    session_id = str(uuid.uuid4())
+
+    writer = CustomAgent(id="custom-agent-async", model=OpenAIChat(id="gpt-4o-mini"), db=async_shared_db)
+    response = await writer.arun("Hello", session_id=session_id)
+
+    reader = CustomAgent(id="custom-agent-async", model=OpenAIChat(id="gpt-4o-mini"), db=async_shared_db)
+    last_output = await reader.aget_last_run_output(session_id=session_id)
+
+    assert last_output is not None
+    assert last_output.run_id == response.run_id
+
+
 # Tests for delete_session() and adelete_session()
 def test_delete_session(test_agent):
     """Test delete_session removes a session."""

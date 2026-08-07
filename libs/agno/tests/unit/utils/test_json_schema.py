@@ -262,6 +262,24 @@ def test_get_json_schema_with_dataclass():
     assert user_schema["properties"]["tags"]["type"] == "array"
 
 
+def test_get_json_schema_dataclass_optional_field_without_type():
+    """A dataclass field whose Optional members lack a "type" key (e.g. a mixed-type
+    Literal yields {"enum": [...]}) must not crash schema generation with KeyError."""
+
+    @dataclass
+    class MixedLiteralDataclass:
+        mode: Optional[Literal[1, "a"]] = None
+
+    # Direct call previously raised KeyError: 'type'
+    arg_schema = get_json_schema_for_arg(MixedLiteralDataclass)
+    assert arg_schema["type"] == "object"
+    assert "mode" in arg_schema["properties"]
+
+    # And the parameter must survive instead of being silently dropped
+    schema = get_json_schema({"cfg": MixedLiteralDataclass})
+    assert "cfg" in schema["properties"]
+
+
 def test_get_json_schema_strict():
     type_hints = {"name": str, "age": int}
     schema = get_json_schema(type_hints, strict=True)

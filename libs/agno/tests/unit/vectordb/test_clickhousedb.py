@@ -5,6 +5,7 @@ import pytest
 
 from agno.knowledge.document import Document
 from agno.vectordb.clickhouse import Clickhouse
+from agno.vectordb.search import SearchType
 
 # Configuration for tests
 TEST_TABLE = f"test_clickhouse_{uuid.uuid4().hex[:8]}"
@@ -285,6 +286,11 @@ def test_optimize(mock_clickhouse):
     mock_clickhouse.optimize()
 
 
+def test_get_supported_search_types(mock_clickhouse):
+    """Test supported search types for Clickhouse."""
+    assert mock_clickhouse.get_supported_search_types() == [SearchType.vector]
+
+
 # Asynchronous Tests
 @pytest.mark.asyncio
 async def test_ensure_async_client(mock_clickhouse):
@@ -521,10 +527,16 @@ def test_delete_by_metadata(mock_clickhouse):
     result = mock_clickhouse.delete_by_metadata({"type": "test"})
     assert result is True
 
-    # Verify the delete command was executed with proper WHERE clause
+    # Verify the delete command was executed with a parameterised WHERE clause.
+    # Keys and values are bound as named parameters, never interpolated (see #7866).
     mock_clickhouse.client.command.assert_called_with(
-        "DELETE FROM {database_name:Identifier}.{table_name:Identifier} WHERE JSONExtractString(toString(filters), 'type') = 'test'",
-        parameters={"table_name": mock_clickhouse.table_name, "database_name": mock_clickhouse.database_name},
+        "DELETE FROM {database_name:Identifier}.{table_name:Identifier} WHERE JSONExtractString(toString(filters), {meta_key_0:String}) = {meta_val_0:String}",
+        parameters={
+            "table_name": mock_clickhouse.table_name,
+            "database_name": mock_clickhouse.database_name,
+            "meta_key_0": "type",
+            "meta_val_0": "test",
+        },
     )
 
     # Test deletion with complex metadata
@@ -534,8 +546,17 @@ def test_delete_by_metadata(mock_clickhouse):
 
     # Verify the delete command was executed with multiple conditions
     mock_clickhouse.client.command.assert_called_with(
-        "DELETE FROM {database_name:Identifier}.{table_name:Identifier} WHERE JSONExtractString(toString(filters), 'cuisine') = 'Thai' AND JSONExtractBool(toString(filters), 'spicy') = true",
-        parameters={"table_name": mock_clickhouse.table_name, "database_name": mock_clickhouse.database_name},
+        "DELETE FROM {database_name:Identifier}.{table_name:Identifier} WHERE "
+        "JSONExtractString(toString(filters), {meta_key_0:String}) = {meta_val_0:String} AND "
+        "JSONExtractBool(toString(filters), {meta_key_1:String}) = {meta_val_1:Bool}",
+        parameters={
+            "table_name": mock_clickhouse.table_name,
+            "database_name": mock_clickhouse.database_name,
+            "meta_key_0": "cuisine",
+            "meta_val_0": "Thai",
+            "meta_key_1": "spicy",
+            "meta_val_1": True,
+        },
     )
 
     # Test deletion with empty metadata

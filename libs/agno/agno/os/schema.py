@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, Generic, List, Optional, TypeVar, Union
+from typing import Any, Dict, Generic, List, Literal, Optional, TypeVar, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -14,12 +14,14 @@ from agno.os.config import (
     ChatConfig,
     EvalsConfig,
     KnowledgeConfig,
+    LearningConfig,
     Manifest,
     MemoryConfig,
     MetricsConfig,
     SessionConfig,
     TracesConfig,
 )
+from agno.os.scopes import split_scope
 from agno.os.utils import extract_input_media, get_run_input, get_session_name, to_utc_datetime
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.team.factory import TeamFactory
@@ -78,6 +80,43 @@ class InternalServerErrorResponse(BaseModel):
 
     detail: str = Field(..., description="Error detail message")
     error_code: Optional[str] = Field(None, description="Error code for categorization")
+
+
+class ScopeItem(BaseModel):
+    """Write shape for one scope grant — the canonical RBAC payload for every scope-bearing API.
+
+    Endpoints that take scopes accept these objects only (a bare string is a validation
+    error). ``effect`` is constrained here so every consumer rejects typos at the model
+    layer; whether ``deny`` is *semantically* legal stays per-endpoint (roles support
+    deny rules, service-account tokens are pure grants and reject it).
+    """
+
+    scope: str = Field(..., description="Scope string, e.g. 'agents:*:run'")
+    effect: Literal["allow", "deny"] = Field("allow", description="'allow' or 'deny'")
+
+
+class ScopeSchema(BaseModel):
+    """Read shape for one scope — the parsed RBAC payload shared by every scope-bearing API.
+
+    Mirrors the cloud RBAC scope shape ({raw, namespace, sub_namespace, permission, value})
+    so a frontend renders scopes from any AgentOS API with one integration.
+    """
+
+    id: Optional[str] = Field(
+        None,
+        description="Scope id (always null here; kept for shape parity with the cloud RBAC API, "
+        "which addresses scopes individually)",
+    )
+    raw: str = Field(..., description="Original scope string, e.g. 'agents:*:run'")
+    namespace: str = Field(..., description="Resource namespace, e.g. 'agents'")
+    sub_namespace: Optional[str] = Field(None, description="Specific resource id or wildcard '*'")
+    permission: str = Field(..., description="Action, e.g. 'read' / 'run' / 'write'")
+    value: str = Field("allow", description="'allow' or 'deny'")
+
+    @classmethod
+    def from_raw(cls, raw: str, value: str = "allow") -> "ScopeSchema":
+        namespace, sub_namespace, permission = split_scope(raw)
+        return cls(raw=raw, namespace=namespace, sub_namespace=sub_namespace, permission=permission, value=value)
 
 
 class HealthResponse(BaseModel):
@@ -224,13 +263,42 @@ class WorkflowSummaryResponse(BaseModel):
         )
 
 
+class McpOAuthInfo(BaseModel):
+    """OAuth discovery details for an MCP endpoint protected by ``AgentOS(mcp_auth=...)``."""
+
+    authorization_servers: Optional[List[str]] = Field(
+        None, description="Issuer URL(s) of the authorization server(s) protecting the MCP endpoint"
+    )
+    resource: Optional[str] = Field(None, description="RFC 9728 resource URL advertised for the MCP endpoint")
+
+
+class McpInfo(BaseModel):
+    """MCP server availability for the /info endpoint."""
+
+    enabled: bool = Field(False, description="Whether the MCP server is enabled on this OS instance")
+    path: Optional[str] = Field(None, description="Path where the MCP server is mounted, null when disabled")
+    oauth: Optional[McpOAuthInfo] = Field(
+        None, description="OAuth discovery details when the MCP endpoint is OAuth-protected, null otherwise"
+    )
+
+
 class InfoResponse(BaseModel):
     """Response schema for the /info endpoint returning lightweight OS metadata."""
 
+    os_id: str = Field(..., description="Unique identifier for the OS instance")
+    name: Optional[str] = Field(None, description="Name of the OS instance")
     agno_version: str = Field(..., description="Version of the agno framework")
     agent_count: int = Field(0, description="Number of agents registered in the OS")
     team_count: int = Field(0, description="Number of teams registered in the OS")
     workflow_count: int = Field(0, description="Number of workflows registered in the OS")
+    mcp: McpInfo = Field(default_factory=McpInfo, description="MCP server availability for this OS instance")
+    auth_mode: Literal["none", "security_key", "jwt"] = Field(
+        "none",
+        description=(
+            "Authentication mode enforced on the REST/WS plane of this OS instance. MCP OAuth, "
+            "when enabled, is described separately under `mcp.oauth`."
+        ),
+    )
 
 
 class ConfigResponse(BaseModel):
@@ -251,6 +319,7 @@ class ConfigResponse(BaseModel):
     session: Optional[SessionConfig] = Field(None, description="Session configuration")
     metrics: Optional[MetricsConfig] = Field(None, description="Metrics configuration")
     memory: Optional[MemoryConfig] = Field(None, description="Memory configuration")
+    learning: Optional[LearningConfig] = Field(None, description="Learning configuration")
     knowledge: Optional[KnowledgeConfig] = Field(None, description="Knowledge configuration")
     evals: Optional[EvalsConfig] = Field(None, description="Evaluations configuration")
     traces: Optional[TracesConfig] = Field(None, description="Traces configuration")
@@ -499,6 +568,24 @@ class RunSchema(BaseModel):
     response_audio: Optional[dict] = Field(None, description="Audio response if generated")
     input_media: Optional[Dict[str, Any]] = Field(None, description="Input media attachments")
     followups: Optional[List[str]] = Field(None, description="Followup suggestions generated after the run")
+    # set when the run was created via /continue (fork /
+    # regenerate / time-travel) or via /sessions/{id}/branch. Client consumes
+    # these to render parent → child relationships in the run timeline.
+    forked_from_run_id: Optional[str] = Field(
+        None, description="If this run was forked from another run, the source run's ID"
+    )
+    forked_from_message_index: Optional[int] = Field(
+        None, description="If this run was forked, the message index at which the source was truncated"
+    )
+    forked_from_session_id: Optional[str] = Field(
+        None, description="If this run was created via session branch, the source session's ID"
+    )
+    regenerated_from: Optional[str] = Field(
+        None, description="If this run was produced via regenerate=true, the source run's ID"
+    )
+    last_checkpoint_at_message_index: Optional[int] = Field(
+        None, description="Message index of the most recent mid-run checkpoint (checkpoint='tool-batch' runs)"
+    )
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "RunSchema":
@@ -532,6 +619,11 @@ class RunSchema(BaseModel):
             input_media=extract_input_media(run_dict),
             followups=run_dict.get("followups", None),
             created_at=to_utc_datetime(run_dict.get("created_at")),
+            forked_from_run_id=run_dict.get("forked_from_run_id"),
+            forked_from_message_index=run_dict.get("forked_from_message_index"),
+            forked_from_session_id=run_dict.get("forked_from_session_id"),
+            regenerated_from=run_dict.get("regenerated_from"),
+            last_checkpoint_at_message_index=run_dict.get("last_checkpoint_at_message_index"),
         )
 
 
@@ -563,6 +655,24 @@ class TeamRunSchema(BaseModel):
     files: Optional[List[dict]] = Field(None, description="Files included in the run")
     response_audio: Optional[dict] = Field(None, description="Audio response if generated")
     followups: Optional[List[str]] = Field(None, description="Followup suggestions generated after the run")
+    # set when the team run was created via /continue (fork /
+    # regenerate / time-travel) or via /sessions/{id}/branch. Client consumes
+    # these to render parent → child relationships in the run timeline.
+    forked_from_run_id: Optional[str] = Field(
+        None, description="If this team run was forked from another run, the source run's ID"
+    )
+    forked_from_message_index: Optional[int] = Field(
+        None, description="If this team run was forked, the message index at which the source was truncated"
+    )
+    forked_from_session_id: Optional[str] = Field(
+        None, description="If this team run was created via session branch, the source session's ID"
+    )
+    regenerated_from: Optional[str] = Field(
+        None, description="If this team run was produced via regenerate=true, the source run's ID"
+    )
+    last_checkpoint_at_message_index: Optional[int] = Field(
+        None, description="Message index of the most recent mid-run checkpoint (checkpoint='tool-batch' runs)"
+    )
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "TeamRunSchema":
@@ -594,6 +704,11 @@ class TeamRunSchema(BaseModel):
             response_audio=run_dict.get("response_audio", None),
             input_media=extract_input_media(run_dict),
             followups=run_dict.get("followups", None),
+            forked_from_run_id=run_dict.get("forked_from_run_id"),
+            forked_from_message_index=run_dict.get("forked_from_message_index"),
+            forked_from_session_id=run_dict.get("forked_from_session_id"),
+            regenerated_from=run_dict.get("regenerated_from"),
+            last_checkpoint_at_message_index=run_dict.get("last_checkpoint_at_message_index"),
         )
 
 

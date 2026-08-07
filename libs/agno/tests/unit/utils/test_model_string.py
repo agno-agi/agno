@@ -1,5 +1,10 @@
 import pytest
 
+pytest.importorskip("openai")
+pytest.importorskip("anthropic")
+pytest.importorskip("google.genai")
+pytest.importorskip("groq")
+
 from agno.agent import Agent
 from agno.culture.manager import CultureManager
 from agno.knowledge.chunking.agentic import AgenticChunking
@@ -11,6 +16,7 @@ from agno.models.groq import Groq
 from agno.models.minimax import MiniMax
 from agno.models.n1n import N1N
 from agno.models.openai import OpenAIChat, OpenAIResponses
+from agno.models.tokenlab import TokenLab
 from agno.models.utils import get_model
 from agno.team import Team
 
@@ -75,6 +81,13 @@ def test_get_model_parses_n1n_string():
     model = get_model("n1n:gpt-4o")
     assert isinstance(model, N1N)
     assert model.id == "gpt-4o"
+
+
+def test_get_model_parses_tokenlab_string():
+    """Test get_model() parses TokenLab model string."""
+    model = get_model("tokenlab:gpt-5.4-mini")
+    assert isinstance(model, TokenLab)
+    assert model.id == "gpt-5.4-mini"
 
 
 def test_get_model_strips_whitespace():

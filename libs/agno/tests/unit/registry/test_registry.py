@@ -8,14 +8,16 @@ Tests cover:
 - get_schema() for retrieving schemas by name
 """
 
-from typing import Optional
+import os
+from functools import cached_property
+from typing import List, Optional
 from unittest.mock import MagicMock
 
 import pytest
 from pydantic import BaseModel
 
 from agno.registry.registry import Registry
-from agno.tools.function import Function
+from agno.tools.function import RUNTIME_ONLY_FIELDS, SERIALIZED_FIELDS, Function
 from agno.tools.toolkit import Toolkit
 
 # =============================================================================
@@ -112,6 +114,9 @@ def function_tool():
 def mock_toolkit():
     """Create a mock Toolkit with functions."""
     toolkit = MagicMock(spec=Toolkit)
+    # Toolkit.name is an instance attribute, so spec=Toolkit doesn't provide it
+    # (and the MagicMock constructor reserves the "name" kwarg).
+    toolkit.name = "mock_toolkit"
 
     func1 = MagicMock(spec=Function)
     func1.name = "toolkit_func_1"
@@ -125,6 +130,7 @@ def mock_toolkit():
         "toolkit_func_1": func1,
         "toolkit_func_2": func2,
     }
+    toolkit.get_functions.return_value = toolkit.functions
     return toolkit
 
 
@@ -260,8 +266,11 @@ class TestEntrypointLookup:
         reg = Registry(tools=[function_tool])
         lookup = reg._entrypoint_lookup
 
+        # Function tools are stored as the source Function itself, so
+        # rehydration can also recover flags like skip_entrypoint_processing.
         assert "sample_function" in lookup
-        assert lookup["sample_function"] == function_tool.entrypoint
+        assert lookup["sample_function"] is function_tool
+        assert lookup["sample_function"].entrypoint == function_tool.entrypoint
 
     def test_entrypoint_lookup_with_callable(self):
         """Test entrypoint lookup with raw callable."""
@@ -308,6 +317,52 @@ class TestEntrypointLookup:
 
         # Should return the same cached object
         assert lookup1 is lookup2
+
+    def test_entrypoint_lookup_indexes_toolkit_qualified_keys(self):
+        """Toolkit functions are also indexed under a (toolkit, function) tuple
+        key so serialized dicts carrying their owning toolkit's name can resolve
+        to the right toolkit when two toolkits share member names."""
+
+        def shared_read(path: str) -> str:
+            return f"shared:{path}"
+
+        def agent_read(path: str) -> str:
+            return f"agent:{path}"
+
+        shared = Toolkit(name="filesystem")
+        shared.functions["read_file"] = Function(name="read_file", entrypoint=shared_read)
+        agent_files = Toolkit(name="agent_files")
+        agent_files.functions["read_file"] = Function(name="read_file", entrypoint=agent_read)
+        reg = Registry(tools=[shared, agent_files])
+
+        lookup = reg._entrypoint_lookup
+
+        assert lookup[("filesystem", "read_file")].entrypoint is shared_read
+        assert lookup[("agent_files", "read_file")].entrypoint is agent_read
+        # The flat slot still exists (last registration wins) for legacy configs
+        assert lookup["read_file"].entrypoint is agent_read
+
+    def test_qualified_keys_cannot_collide_with_dotted_function_names(self):
+        """Function names are not validated, so a name like "browser.navigate"
+        can reach the registry (e.g. verbatim from an MCP server). The tuple
+        qualified keys must not displace such a flat name, in either
+        declaration order."""
+
+        def dotted_ep(path: str) -> str:
+            return f"dotted:{path}"
+
+        def toolkit_ep(path: str) -> str:
+            return f"toolkit:{path}"
+
+        dotted = Function(name="browser.navigate", entrypoint=dotted_ep)
+        browser = Toolkit(name="browser")
+        browser.functions["navigate"] = Function(name="navigate", entrypoint=toolkit_ep)
+
+        for tools in ([dotted, browser], [browser, dotted]):
+            reg = Registry(tools=tools)
+            rehydrated = reg.rehydrate_function({"name": "browser.navigate", "parameters": {}})
+            assert rehydrated.entrypoint is dotted_ep
+            assert reg._entrypoint_lookup[("browser", "navigate")].entrypoint is toolkit_ep
 
 
 # =============================================================================
@@ -391,6 +446,724 @@ class TestRehydrateFunction:
         for func in funcs:
             rehydrated = reg.rehydrate_function(func.to_dict())
             assert rehydrated.entrypoint is not None
+
+    def test_rehydrate_function_after_toolkit_gains_functions(self):
+        """A stale cached lookup is rebuilt when a name misses.
+
+        MCP toolkits only register their functions once connected, which may
+        happen after the lookup was first built (e.g. it was primed during
+        startup, before the connect lifespan ran).
+        """
+        toolkit = Toolkit(name="mcp_stub")
+        reg = Registry(tools=[toolkit])
+
+        # Prime the cache while the toolkit is still "unconnected"
+        assert reg._entrypoint_lookup == {}
+
+        # Simulate connect(): the toolkit registers a function with a fixed schema
+        async def search_docs(query: str) -> str:
+            return query
+
+        func = Function(
+            name="search_docs",
+            parameters={"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+            entrypoint=search_docs,
+            skip_entrypoint_processing=True,
+        )
+        toolkit.functions[func.name] = func
+
+        rehydrated = reg.rehydrate_function(func.to_dict())
+
+        assert rehydrated.entrypoint is search_docs
+
+    def test_rehydrate_function_preserves_skip_entrypoint_processing(self):
+        """Fixed-schema entrypoints (e.g. MCP call proxies) must not be
+        re-introspected at run time, so the source flag is carried over."""
+
+        async def call_proxy(**kwargs) -> str:
+            return "ok"
+
+        func = Function(
+            name="mcp_func",
+            parameters={"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+            entrypoint=call_proxy,
+            skip_entrypoint_processing=True,
+        )
+        toolkit = Toolkit(name="mcp_stub")
+        toolkit.functions[func.name] = func
+        reg = Registry(tools=[toolkit])
+
+        rehydrated = reg.rehydrate_function(func.to_dict())
+
+        assert rehydrated.entrypoint is call_proxy
+        assert rehydrated.skip_entrypoint_processing is True
+
+
+class TestToolkitQualifiedRehydration:
+    """Tests for toolkit-qualified entrypoint resolution.
+
+    A DB-persisted function dict carries no toolkit attribution beyond the
+    optional "toolkit" key, so when two registry toolkits share member names
+    the flat name lookup alone would silently bind the wrong toolkit's
+    entrypoint (e.g. two FileSystem toolkits both exposing read_file).
+    """
+
+    @staticmethod
+    def _shared_read(path: str) -> str:
+        return f"shared:{path}"
+
+    @staticmethod
+    def _agent_read(path: str) -> str:
+        return f"agent:{path}"
+
+    def _registry_with_shared_names(self):
+        shared = Toolkit(name="filesystem")
+        shared.functions["read_file"] = Function(name="read_file", entrypoint=self._shared_read)
+        agent_files = Toolkit(name="agent_files")
+        agent_files.functions["read_file"] = Function(name="read_file", entrypoint=self._agent_read)
+        return Registry(tools=[shared, agent_files]), shared, agent_files
+
+    def test_qualified_dict_binds_to_its_own_toolkit(self):
+        """A dict qualified with its toolkit's name binds to that toolkit's
+        entrypoint even when another toolkit's member shares the name."""
+        reg, shared, agent_files = self._registry_with_shared_names()
+
+        func_dict = agent_files.functions["read_file"].to_dict()
+        func_dict["toolkit"] = "agent_files"
+        rehydrated = reg.rehydrate_function(func_dict)
+        assert rehydrated.entrypoint is self._agent_read
+
+        # And the first toolkit's dict binds to the first toolkit -- even
+        # though the flat slot holds the last-registered entrypoint.
+        func_dict = shared.functions["read_file"].to_dict()
+        func_dict["toolkit"] = "filesystem"
+        rehydrated = reg.rehydrate_function(func_dict)
+        assert rehydrated.entrypoint is self._shared_read
+
+    def test_unqualified_dict_resolves_via_flat_name(self):
+        """A legacy dict without the "toolkit" key resolves via the flat name
+        exactly as before qualification existed (last registration wins)."""
+        reg, shared, _ = self._registry_with_shared_names()
+
+        func_dict = shared.functions["read_file"].to_dict()
+        assert "toolkit" not in func_dict
+
+        rehydrated = reg.rehydrate_function(func_dict)
+
+        assert rehydrated.entrypoint is self._agent_read
+
+    def test_qualified_dict_with_missing_toolkit_falls_back_to_flat(self, monkeypatch):
+        """A dict whose toolkit has left the registry falls back to the flat
+        name so the function still gets an entrypoint, and warns that the
+        recorded attribution could not be honored."""
+        import agno.registry.registry as registry_module
+
+        warnings = []
+        monkeypatch.setattr(registry_module, "log_warning", lambda msg, *a, **k: warnings.append(msg))
+
+        reg, _, agent_files = self._registry_with_shared_names()
+
+        func_dict = agent_files.functions["read_file"].to_dict()
+        func_dict["toolkit"] = "gone_files"
+
+        rehydrated = reg.rehydrate_function(func_dict)
+
+        assert rehydrated.entrypoint is self._agent_read
+        assert rehydrated.source_toolkit is None
+        assert any("gone_files" in w for w in warnings)
+
+    def test_qualified_lookup_rebuilds_stale_cache(self):
+        """A qualified miss rebuilds the cached lookup before falling back to
+        the flat name: the flat slot may hold a same-named function from a
+        different toolkit while the right toolkit (e.g. an MCP toolkit that
+        connects late) simply hasn't populated the cache yet."""
+        shared = Toolkit(name="filesystem")
+        shared.functions["read_file"] = Function(name="read_file", entrypoint=self._shared_read)
+        agent_files = Toolkit(name="agent_files")
+        reg = Registry(tools=[shared, agent_files])
+
+        # Prime the cache while agent_files is still "unconnected"
+        assert ("agent_files", "read_file") not in reg._entrypoint_lookup
+
+        agent_files.functions["read_file"] = Function(name="read_file", entrypoint=self._agent_read)
+        func_dict = agent_files.functions["read_file"].to_dict()
+        func_dict["toolkit"] = "agent_files"
+
+        rehydrated = reg.rehydrate_function(func_dict)
+
+        assert rehydrated.entrypoint is self._agent_read
+
+    def test_rehydrated_function_carries_owning_toolkit(self):
+        """The dict's toolkit attribution lands on the Function object so a
+        load -> save round trip can re-stamp the "toolkit" key."""
+        reg, _, agent_files = self._registry_with_shared_names()
+
+        func_dict = agent_files.functions["read_file"].to_dict()
+        func_dict["toolkit"] = "agent_files"
+        rehydrated = reg.rehydrate_function(func_dict)
+        assert rehydrated.owning_toolkit == "agent_files"
+
+        unqualified = reg.rehydrate_function({"name": "read_file", "parameters": {}})
+        assert unqualified.owning_toolkit is None
+        # owning_toolkit never leaks into the model-facing schema
+        assert "owning_toolkit" not in rehydrated.to_dict()
+
+    def test_qualified_rehydration_restores_live_function_instruction_settings(self):
+        """Instruction settings come from the live registry Function, not the
+        serialized component config."""
+
+        source = Function(
+            name="search_docs",
+            entrypoint=search_function,
+            instructions="Creation-time function guidance.",
+        )
+        toolkit = Toolkit(name="agno_docs")
+        toolkit.functions[source.name] = source
+        reg = Registry(tools=[toolkit])
+
+        func_dict = source.to_dict()
+        func_dict["toolkit"] = toolkit.name
+        assert "instructions" not in func_dict
+        assert "add_instructions" not in func_dict
+
+        source.instructions = "Use the live registry search conventions."
+        source.add_instructions = False
+        rehydrated = reg.rehydrate_function(func_dict)
+
+        assert rehydrated.instructions == source.instructions
+        assert rehydrated.add_instructions is False
+        assert rehydrated.source_toolkit is toolkit
+
+    def test_unqualified_dict_still_gets_its_live_toolkit(self):
+        """A config saved before tool names carried a toolkit resolves through
+        the flat name, and still reaches the Toolkit that owns the bound
+        function, so toolkit-level guidance is restored too."""
+
+        source = Function(
+            name="search_docs",
+            entrypoint=search_function,
+            instructions="Creation-time function guidance.",
+        )
+        toolkit = Toolkit(name="agno_docs", instructions="Toolkit guidance.", add_instructions=True)
+        toolkit.functions[source.name] = source
+        reg = Registry(tools=[toolkit])
+
+        func_dict = source.to_dict()
+        assert "toolkit" not in func_dict
+
+        source.instructions = "Use the live registry search conventions."
+        rehydrated = reg.rehydrate_function(func_dict)
+
+        assert rehydrated.entrypoint is search_function
+        assert rehydrated.instructions == source.instructions
+        assert rehydrated.source_toolkit is toolkit
+        # The attribution is not invented. Stamping the toolkit's current name
+        # would tie the config to it -- see the rename test below.
+        assert rehydrated.owning_toolkit is None
+
+    def test_unqualified_dict_survives_a_toolkit_rename(self):
+        """Identity resolution is what makes an unqualified config rename-proof.
+        Recording the toolkit's name on load would take that away: the next load
+        would go through the qualified key, miss, and lose the guidance."""
+        toolkit = Toolkit(name="old_name", instructions="Toolkit guidance.", add_instructions=True)
+        toolkit.functions["search_docs"] = Function(name="search_docs", entrypoint=search_function)
+        legacy_dict = toolkit.functions["search_docs"].to_dict()
+
+        renamed = Toolkit(name="new_name", instructions="Toolkit guidance.", add_instructions=True)
+        renamed.functions["search_docs"] = Function(name="search_docs", entrypoint=search_function)
+        reg = Registry(tools=[renamed])
+
+        rehydrated = reg.rehydrate_function(legacy_dict)
+
+        assert rehydrated.source_toolkit is renamed
+        assert rehydrated.owning_toolkit is None
+
+    def test_ambiguous_flat_name_still_resolves_to_the_bound_toolkit(self):
+        """Two toolkits expose the name, so the flat slot's winner is arbitrary,
+        but the Toolkit carried forward is the one that owns the bound
+        function -- not merely one that shares its name."""
+        reg, _, agent_files = self._registry_with_shared_names()
+
+        rehydrated = reg.rehydrate_function({"name": "read_file", "parameters": {}})
+
+        assert rehydrated.entrypoint is self._agent_read
+        assert rehydrated.source_toolkit is agent_files
+        assert rehydrated.owning_toolkit is None
+
+    def test_rebuilt_toolkit_functions_are_not_served_from_the_stale_cache(self):
+        """A toolkit that replaces its Function objects -- what MCPTools does on
+        every connect -- leaves cache entries that still hit. Rehydration must
+        detect that and rebuild rather than serve the old entrypoint."""
+
+        toolkit = Toolkit(name="agno_docs", instructions="Toolkit guidance.", add_instructions=True)
+        toolkit.functions["search_docs"] = Function(
+            name="search_docs", entrypoint=search_function, instructions="Stale guidance."
+        )
+        reg = Registry(tools=[toolkit])
+
+        func_dict = toolkit.functions["search_docs"].to_dict()
+        func_dict["toolkit"] = toolkit.name
+        reg.rehydrate_function(func_dict)  # warms the cached lookup
+
+        def rebuilt_entrypoint() -> str:
+            return "rebuilt"
+
+        toolkit.functions["search_docs"] = Function(
+            name="search_docs", entrypoint=rebuilt_entrypoint, instructions="Fresh guidance."
+        )
+
+        rehydrated = reg.rehydrate_function(func_dict)
+
+        assert rehydrated.entrypoint is rebuilt_entrypoint
+        assert rehydrated.instructions == "Fresh guidance."
+        assert rehydrated.source_toolkit is toolkit
+
+    def test_members_without_entrypoints_do_not_claim_slots(self):
+        """A member whose entrypoint is None cannot be executed, so it must
+        not claim a slot: a later toolkit holding an unbound namesake would
+        otherwise shadow the executable one."""
+        bound = Toolkit(name="bound_kit")
+        bound.functions["search_docs"] = Function(name="search_docs", entrypoint=search_function)
+        unbound = Toolkit(name="unbound_kit")
+        unbound.functions["search_docs"] = Function(name="search_docs")
+        reg = Registry(tools=[bound, unbound])
+
+        rehydrated = reg.rehydrate_function({"name": "search_docs", "parameters": {}})
+
+        assert rehydrated.entrypoint is search_function
+        assert rehydrated.source_toolkit is bound
+
+    def test_deleted_function_is_not_served_from_the_stale_cache(self):
+        """A member deleted after the cache was built leaves an entry that
+        still hits. Serving it would execute a function the registry no longer
+        offers; the cache must agree with what a fresh build would say:
+        nothing."""
+        toolkit = Toolkit(name="agno_docs")
+        toolkit.functions["search_docs"] = Function(name="search_docs", entrypoint=search_function)
+        reg = Registry(tools=[toolkit])
+
+        func_dict = toolkit.functions["search_docs"].to_dict()
+        func_dict["toolkit"] = toolkit.name
+        warm = reg.rehydrate_function(dict(func_dict))
+        assert warm.entrypoint is search_function  # warms the cached lookup
+
+        del toolkit.functions["search_docs"]
+        rehydrated = reg.rehydrate_function(dict(func_dict))
+
+        assert rehydrated.entrypoint is None
+        assert rehydrated.source_toolkit is None
+
+    def test_direct_registration_does_not_strip_toolkit_provenance(self):
+        """A toolkit member also registered directly owns its flat slot as the
+        direct registration, but the toolkit still holds the object, and its
+        guidance still belongs to a component that loaded the member.
+        Freshness follows the slot; provenance follows the object."""
+        toolkit = Toolkit(name="agno_docs", instructions="Toolkit guidance.", add_instructions=True)
+        member = Function(name="search_docs", entrypoint=search_function)
+        toolkit.functions["search_docs"] = member
+        # AgentOS component collection appends a loaded component's Functions
+        # directly, after the toolkit that owns them.
+        reg = Registry(tools=[toolkit, member])
+
+        rehydrated = reg.rehydrate_function({"name": "search_docs", "parameters": {}})
+
+        assert rehydrated.entrypoint is search_function
+        assert rehydrated.source_toolkit is toolkit
+
+    def test_direct_registration_does_not_mask_the_toolkits_flat_slot(self):
+        """The same object can be registered directly and owned by a later
+        toolkit. The toolkit's registration wins the flat slot, so when the
+        toolkit rebuilds the member, the cached flat entry is stale even though
+        the direct registration still exists."""
+        member = Function(name="search_docs", entrypoint=search_function)
+        toolkit = Toolkit(name="agno_docs", instructions="Toolkit guidance.", add_instructions=True)
+        toolkit.functions["search_docs"] = member
+        reg = Registry(tools=[member, toolkit])
+
+        flat_dict = {"name": "search_docs", "parameters": {}}
+        warm = reg.rehydrate_function(dict(flat_dict))
+        assert warm.entrypoint is search_function  # warms the cached lookup
+
+        def rebuilt_entrypoint() -> str:
+            return "rebuilt"
+
+        toolkit.functions["search_docs"] = Function(name="search_docs", entrypoint=rebuilt_entrypoint)
+        rehydrated = reg.rehydrate_function(dict(flat_dict))
+
+        assert rehydrated.entrypoint is rebuilt_entrypoint
+        assert rehydrated.source_toolkit is toolkit
+
+    def test_direct_registration_does_not_mask_a_rebuilt_toolkit(self):
+        """A Function can be both a toolkit member and a registry tool in its
+        own right. A qualified config named the toolkit, so the toolkit alone
+        decides whether the cached entry is still fresh -- the standalone
+        registration must not vouch for it."""
+        toolkit = Toolkit(name="agno_docs", instructions="Toolkit guidance.", add_instructions=True)
+        member = Function(name="search_docs", entrypoint=search_function)
+        toolkit.functions["search_docs"] = member
+        # The same object, registered both ways.
+        reg = Registry(tools=[toolkit, member])
+
+        func_dict = member.to_dict()
+        func_dict["toolkit"] = toolkit.name
+        reg.rehydrate_function(dict(func_dict))  # warms the cached lookup
+
+        def rebuilt_entrypoint() -> str:
+            return "rebuilt"
+
+        toolkit.functions["search_docs"] = Function(name="search_docs", entrypoint=rebuilt_entrypoint)
+
+        rehydrated = reg.rehydrate_function(dict(func_dict))
+
+        assert rehydrated.entrypoint is rebuilt_entrypoint
+        assert rehydrated.source_toolkit is toolkit
+
+    def test_same_named_toolkits_warn_once_per_collision(self, monkeypatch):
+        """Two same-named toolkits sharing a member name collide on both the
+        flat and the qualified slot, but only the flat registration warns --
+        the same single warning main emitted before qualified keys existed."""
+        import agno.registry.registry as registry_module
+
+        warnings = []
+        monkeypatch.setattr(registry_module, "log_warning", lambda msg, *a, **k: warnings.append(msg))
+
+        kit_a = Toolkit(name="filesystem")
+        kit_a.functions["read_file"] = Function(name="read_file", entrypoint=self._shared_read)
+        kit_b = Toolkit(name="filesystem")
+        kit_b.functions["read_file"] = Function(name="read_file", entrypoint=self._agent_read)
+
+        _ = Registry(tools=[kit_a, kit_b])._entrypoint_lookup
+
+        assert len(warnings) == 1
+        assert "read_file" in warnings[0]
+
+
+class TestRuntimeOnlyFieldRestoration:
+    """Behavior the storage layer never writes comes back from the live Function."""
+
+    def test_every_unserialized_field_is_restored(self):
+        """The invariant, so a new Function field cannot be silently dropped on
+        reload: every field to_dict() omits is either restored from the live
+        source or handled explicitly."""
+        explicit = {"entrypoint", "owning_toolkit", "source_toolkit"}
+
+        unaccounted = set(Function.model_fields) - set(SERIALIZED_FIELDS) - explicit - set(RUNTIME_ONLY_FIELDS)
+
+        assert unaccounted == set(), (
+            f"Function fields {sorted(unaccounted)} are neither serialized by to_dict() nor "
+            "restored by RUNTIME_ONLY_FIELDS, so they are lost on reload."
+        )
+
+        # And the other direction: a field removed from the model but left in
+        # a list would make rehydration setattr/getattr a missing attribute,
+        # crashing every component load.
+        stale = (set(SERIALIZED_FIELDS) | set(RUNTIME_ONLY_FIELDS)) - set(Function.model_fields)
+        assert stale == set(), f"{sorted(stale)} are listed but no longer Function fields."
+
+    def test_user_input_settings_survive_a_round_trip(self):
+        """Without these, process_entrypoint stops excluding the user-supplied
+        field, so the model is handed a `required` entry the schema never
+        defines and nothing is left to collect it."""
+
+        def send_email(to: str, subject: str, body: str) -> str:
+            """Send an email."""
+            return "sent"
+
+        live = Function.from_callable(send_email)
+        live.requires_user_input = True
+        live.user_input_fields = ["body"]
+        live.process_entrypoint()
+        assert sorted(live.parameters["required"]) == ["subject", "to"]
+
+        reg = Registry(tools=[live])
+        rehydrated = reg.rehydrate_function(live.to_dict())
+        rehydrated.process_entrypoint()
+
+        assert rehydrated.requires_user_input is True
+        assert rehydrated.user_input_fields == ["body"]
+        assert set(rehydrated.parameters["required"]) <= set(rehydrated.parameters["properties"])
+
+    def test_control_flow_and_cache_settings_survive_a_round_trip(self):
+        def note(text: str) -> str:
+            """Note."""
+            return text
+
+        live = Function.from_callable(note)
+        live.show_result = True
+        live.stop_after_tool_call = True
+        live.external_execution_silent = True
+        live.cache_results = True
+        live.cache_dir = "/tmp/agno-cache"
+        live.cache_ttl = 60
+
+        rehydrated = Registry(tools=[live]).rehydrate_function(live.to_dict())
+
+        assert rehydrated.show_result is True
+        assert rehydrated.stop_after_tool_call is True
+        assert rehydrated.external_execution_silent is True
+        assert rehydrated.cache_results is True
+        assert rehydrated.cache_dir == "/tmp/agno-cache"
+        assert rehydrated.cache_ttl == 60
+
+    def test_hooks_are_restored_by_reference(self):
+        """Hooks are callables the storage layer cannot write at all."""
+
+        def note(text: str) -> str:
+            """Note."""
+            return text
+
+        def a_hook(function_call):
+            return None
+
+        live = Function.from_callable(note)
+        live.pre_hook = a_hook
+        live.post_hook = a_hook
+        live.tool_hooks = [a_hook]
+
+        rehydrated = Registry(tools=[live]).rehydrate_function(live.to_dict())
+
+        assert rehydrated.pre_hook is a_hook
+        assert rehydrated.post_hook is a_hook
+        assert rehydrated.tool_hooks == [a_hook]
+
+    def test_mutable_restored_fields_are_not_shared(self):
+        """The model layer writes the user's answer into UserInputField objects
+        in place. Restoring them by reference would put one run's input into
+        every other component holding the tool, and into the registry."""
+
+        def send(to: str, body: str) -> str:
+            """Send."""
+            return "ok"
+
+        live = Function.from_callable(send)
+        live.requires_user_input = True
+        live.user_input_fields = ["body"]
+        live.process_entrypoint()
+        # A toolkit-decorated tool keeps its parsed schema, because processing
+        # is skipped -- the case where the sharing survives to run time.
+        live.skip_entrypoint_processing = True
+        assert live.user_input_schema
+
+        reg = Registry(tools=[live])
+        first = reg.rehydrate_function(live.to_dict())
+        second = reg.rehydrate_function(live.to_dict())
+
+        assert first.user_input_schema is not second.user_input_schema
+        assert first.user_input_schema is not live.user_input_schema
+        assert first.user_input_fields is not live.user_input_fields
+
+        first.user_input_schema[0].value = "answer for the first component"
+        assert second.user_input_schema[0].value is None
+        assert live.user_input_schema[0].value is None
+
+    def test_serialized_fields_keep_the_saved_value(self):
+        """The saved config owns what to_dict() carries: a later registry edit
+        to those must not silently rewrite an existing component."""
+
+        def note(text: str) -> str:
+            """Note."""
+            return text
+
+        live = Function.from_callable(note)
+        live.requires_confirmation = True
+        func_dict = live.to_dict()
+
+        live.requires_confirmation = False
+        rehydrated = Registry(tools=[live]).rehydrate_function(func_dict)
+
+        assert rehydrated.requires_confirmation is True
+
+
+class TestRehydrateFunctionsBatch:
+    """rehydrate_functions shares one cache-rebuild budget across a load."""
+
+    @staticmethod
+    def _read(path: str) -> str:
+        return f"read:{path}"
+
+    def _counting_registry(self):
+        """Registry that records every build of the cached entrypoint lookup.
+
+        Counts the cached_property's own evaluations rather than iterations of
+        ``reg.tools``: rehydration walks ``tools`` for other reasons too, so an
+        iteration count would not isolate rebuilds.
+        """
+        builds: List[int] = []
+
+        class CountingRegistry(Registry):
+            @cached_property
+            def _entrypoint_lookup(self):
+                builds.append(1)
+                return Registry._entrypoint_lookup.func(self)
+
+        kit = Toolkit(name="agent_files")
+        kit.functions["read_file"] = Function(name="read_file", entrypoint=self._read)
+        return CountingRegistry(tools=[kit]), builds
+
+    def test_batch_shares_single_rebuild(self):
+        """N dicts naming a function registered after the cache was primed
+        trigger at most one lookup rebuild for the whole batch, not one per
+        dict."""
+        reg, builds = self._counting_registry()
+        kit = reg.tools[0]
+        _ = reg._entrypoint_lookup  # prime while write_file is unregistered
+
+        def _write(path: str) -> str:
+            return f"write:{path}"
+
+        kit.functions["write_file"] = Function(name="write_file", entrypoint=_write)
+        dicts = [{"name": "write_file", "parameters": {}, "toolkit": "agent_files"} for _ in range(5)]
+        rehydrated = reg.rehydrate_functions(dicts)
+
+        assert all(f.entrypoint is _write for f in rehydrated)
+        assert sum(builds) == 2  # the priming build plus one shared rebuild
+
+    def test_unresolvable_batch_spends_no_rebuild(self):
+        """A rebuild is skipped when it could not help: a key with no owner in
+        the current registrations misses before and after a rebuild, so dicts
+        naming a missing toolkit resolve through the flat fallback without
+        spending the batch's budget."""
+        reg, builds = self._counting_registry()
+        _ = reg._entrypoint_lookup  # prime the cache
+
+        dicts = [{"name": "read_file", "parameters": {}, "toolkit": "renamed_kit"} for _ in range(5)]
+        rehydrated = reg.rehydrate_functions(dicts)
+
+        assert all(f.entrypoint is self._read for f in rehydrated)
+        assert sum(builds) == 1  # the priming build only
+
+    def test_directly_registered_function_does_not_look_stale(self):
+        """A Function registered as a registry tool in its own right owns the
+        flat slot legitimately. A toolkit member sharing its name must not read
+        as a rebuilt-toolkit cache entry and force a rebuild on every batch."""
+        reg, builds = self._counting_registry()
+        bare = Function(name="read_file", entrypoint=self._read)
+        reg.tools.append(bare)
+        _ = reg._entrypoint_lookup  # prime the cache
+
+        rehydrated = reg.rehydrate_functions([{"name": "read_file", "parameters": {}} for _ in range(3)])
+
+        assert all(f.entrypoint is self._read for f in rehydrated)
+        assert sum(builds) == 1  # the priming build only
+
+    def test_batch_resolves_mixed_dicts(self):
+        """Qualified, legacy-unqualified, and unknown dicts resolve in one batch."""
+        reg, _ = self._counting_registry()
+
+        rehydrated = reg.rehydrate_functions(
+            [
+                {"name": "read_file", "parameters": {}, "toolkit": "agent_files"},
+                {"name": "read_file", "parameters": {}},
+                {"name": "missing_tool", "parameters": {}},
+            ]
+        )
+
+        assert rehydrated[0].entrypoint is self._read
+        assert rehydrated[1].entrypoint is self._read
+        assert rehydrated[2].entrypoint is None
+
+    def test_provider_tool_dicts_pass_through_unchanged(self):
+        """Provider-run tools persist as plain dicts. Parsing one as a
+        Function config raised a ValidationError that took the whole component
+        load down. Only a dict that Function.to_dict() could have written is
+        rehydrated -- name and parameters present, no provider marker --
+        and every other dict passes through in place."""
+        reg, _ = self._counting_registry()
+        openai_builtin = {"type": "web_search"}
+        anthropic_builtin = {"type": "web_search_20250305", "name": "web_search", "max_uses": 3}
+        anthropic_custom = {"name": "get_weather", "description": "Weather", "input_schema": {"type": "object"}}
+        marked_but_parametered = {"name": "get_time", "parameters": {}, "input_schema": {"type": "object"}}
+        # The OpenAI Responses custom-function shape carries name AND
+        # parameters, so the type marker alone keeps it out of rehydration.
+        openai_responses_fn = {"type": "function", "name": "get_news", "parameters": {"type": "object"}}
+
+        rehydrated = reg.rehydrate_functions(
+            [
+                openai_builtin,
+                {"name": "read_file", "parameters": {}, "toolkit": "agent_files"},
+                anthropic_builtin,
+                anthropic_custom,
+                marked_but_parametered,
+                openai_responses_fn,
+            ]
+        )
+
+        assert rehydrated[0] is openai_builtin
+        assert isinstance(rehydrated[1], Function) and rehydrated[1].entrypoint is self._read
+        assert rehydrated[2] is anthropic_builtin
+        assert rehydrated[3] is anthropic_custom
+        assert rehydrated[4] is marked_but_parametered
+        assert rehydrated[5] is openai_responses_fn
+
+    def test_unparseable_function_looking_dict_passes_through(self, monkeypatch):
+        """A dict that looks like a serialized Function but fails validation
+        must not abort the component load: it is warned about and handed to
+        the model provider unchanged."""
+        import agno.registry.registry as registry_module
+
+        warnings = []
+        monkeypatch.setattr(registry_module, "log_warning", warnings.append)
+        reg, _ = self._counting_registry()
+        broken = {"name": 123, "parameters": {}}
+
+        rehydrated = reg.rehydrate_functions([broken, {"name": "read_file", "parameters": {}}])
+
+        assert rehydrated[0] is broken
+        assert isinstance(rehydrated[1], Function) and rehydrated[1].entrypoint is self._read
+        assert any("does not validate" in w for w in warnings)
+
+        # A dict without ``parameters`` cannot be a to_dict() product, so it
+        # is not a near-miss worth a warning: it passes through silently.
+        warnings.clear()
+        plain = {"name": "solo_dict"}
+        assert reg.rehydrate_functions([plain]) == [plain]
+        assert warnings == []
+
+    def test_batch_rebuild_still_finds_late_functions(self):
+        """The shared budget still covers the late-connecting toolkit case:
+        a function registered after the cache was primed is found via the
+        batch's one rebuild."""
+        reg, _ = self._counting_registry()
+        kit = reg.tools[0]
+        _ = reg._entrypoint_lookup  # prime while write_file is unregistered
+
+        def _write(path: str) -> str:
+            return f"write:{path}"
+
+        kit.functions["write_file"] = Function(name="write_file", entrypoint=_write)
+        rehydrated = reg.rehydrate_functions(
+            [
+                {"name": "write_file", "parameters": {}, "toolkit": "agent_files"},
+                {"name": "read_file", "parameters": {}, "toolkit": "agent_files"},
+            ]
+        )
+
+        assert rehydrated[0].entrypoint is _write
+        assert rehydrated[1].entrypoint is self._read
+
+    def test_rebuild_budget_resets_per_batch(self):
+        """Each rehydrate_functions call gets a fresh rebuild budget: a batch
+        that spent its rebuild must not starve the next batch's ability to
+        pick up functions registered in between (e.g. successive component
+        loads while an MCP toolkit connects)."""
+        reg, _ = self._counting_registry()
+        kit = reg.tools[0]
+        _ = reg._entrypoint_lookup  # prime the cache
+
+        def _write(path: str) -> str:
+            return f"write:{path}"
+
+        kit.functions["write_file"] = Function(name="write_file", entrypoint=_write)
+        first = reg.rehydrate_functions([{"name": "write_file", "parameters": {}, "toolkit": "agent_files"}])
+        assert first[0].entrypoint is _write  # spent this batch's rebuild
+
+        def _more(path: str) -> str:
+            return f"more:{path}"
+
+        kit.functions["more_file"] = Function(name="more_file", entrypoint=_more)
+        second = reg.rehydrate_functions([{"name": "more_file", "parameters": {}, "toolkit": "agent_files"}])
+
+        assert second[0].entrypoint is _more
 
 
 # =============================================================================
@@ -481,6 +1254,56 @@ class TestRegistryIntegration:
         # Tools should be rehydrated
         if agent.tools:
             assert len(agent.tools) == 1
+
+    def test_registry_preserves_model_connection_params(self):
+        """Reconstructing an agent reuses the registered model instance, keeping connection params.
+
+        Regression: a serialized model dict only round-trips id/name/provider, so rebuilding from it
+        drops azure_endpoint/base_url and credentials. The registry holds the live instance, so
+        from_dict should prefer it. See Model.to_dict / Registry.get_model.
+        """
+        from agno.agent.agent import Agent
+        from agno.models.azure import AzureOpenAI
+
+        model = AzureOpenAI(
+            id="gpt-4.1-mini",
+            api_version="2024-12-01-preview",
+            azure_endpoint="https://example.cognitiveservices.azure.com",
+        )
+        registry = Registry(models=[model])
+
+        # The stored config only carries the serialized model dict (id/name/provider).
+        config = {
+            "id": "test-agent",
+            "name": "Test Agent",
+            "model": model.to_dict(),
+        }
+        assert "azure_endpoint" not in config["model"]  # confirm the gap the fix bridges
+
+        agent = Agent.from_dict(config, registry=registry)
+
+        # The live, fully-configured instance is reused -- not a bare rebuild.
+        assert agent.model is model
+        assert agent.model.azure_endpoint == "https://example.cognitiveservices.azure.com"
+        assert agent.model.api_version == "2024-12-01-preview"
+
+    def test_from_dict_without_registry_rebuilds_bare_model(self):
+        """Without a registry, the model is still rebuilt from its dict (unchanged fallback)."""
+        from agno.agent.agent import Agent
+        from agno.models.azure import AzureOpenAI
+
+        config = {
+            "id": "test-agent",
+            "name": "Test Agent",
+            "model": {"id": "gpt-4.1-mini", "name": "AzureOpenAI", "provider": "Azure"},
+        }
+
+        agent = Agent.from_dict(config)
+
+        assert isinstance(agent.model, AzureOpenAI)
+        assert agent.model.id == "gpt-4.1-mini"
+        # No registered instance to source connection params from.
+        assert agent.model.azure_endpoint is None
 
     def test_registry_schema_with_agent(self):
         """Test registry schema lookup with agent config."""
@@ -641,6 +1464,61 @@ class TestGetDb:
 
         not_found2 = reg.get_db("TEST-DB")
         assert not_found2 is None
+
+
+# =============================================================================
+# get_model() Tests
+# =============================================================================
+
+
+class TestGetModel:
+    """Tests for Registry.get_model() method."""
+
+    def _model(self, id, provider, name):
+        m = MagicMock()
+        m.id = id
+        m.provider = provider
+        m.name = name
+        return m
+
+    def test_get_model_found_by_id(self):
+        """A single registered model is returned by id alone."""
+        model = self._model("gpt-4.1-mini", "Azure", "AzureOpenAI")
+        reg = Registry(models=[model])
+
+        assert reg.get_model("gpt-4.1-mini") is model
+
+    def test_get_model_not_found(self):
+        """An unknown id returns None so the caller can fall back to dict reconstruction."""
+        reg = Registry(models=[self._model("gpt-4.1-mini", "Azure", "AzureOpenAI")])
+
+        assert reg.get_model("does-not-exist") is None
+
+    def test_get_model_empty_registry(self, basic_registry):
+        """An empty registry returns None."""
+        assert basic_registry.get_model("gpt-4.1-mini") is None
+
+    def test_get_model_disambiguates_by_provider_and_name(self):
+        """Models sharing an id are disambiguated by provider/name (e.g. OpenAIChat vs Responses)."""
+        chat = self._model("gpt-5.5", "OpenAI", "OpenAIChat")
+        responses = self._model("gpt-5.5", "OpenAI", "OpenAIResponses")
+        reg = Registry(models=[chat, responses])
+
+        assert reg.get_model("gpt-5.5", provider="OpenAI", name="OpenAIChat") is chat
+        assert reg.get_model("gpt-5.5", provider="OpenAI", name="OpenAIResponses") is responses
+
+    def test_get_model_no_match_on_provider_returns_none(self):
+        """When provider is given and no registered model matches, None is returned."""
+        model = self._model("gpt-4.1-mini", "Azure", "AzureOpenAI")
+        reg = Registry(models=[model])
+
+        assert reg.get_model("gpt-4.1-mini", provider="OpenAI") is None
+
+    def test_get_model_empty_id(self):
+        """A falsy id returns None."""
+        reg = Registry(models=[self._model("gpt-4.1-mini", "Azure", "AzureOpenAI")])
+
+        assert reg.get_model("") is None
 
 
 # =============================================================================
@@ -969,3 +1847,399 @@ class TestGetSessionSummaryManager:
     def test_get_session_summary_manager_ids_empty(self, basic_registry):
         """Test session summary manager ids from empty registry."""
         assert basic_registry.get_session_summary_manager_ids() == set()
+
+
+# =============================================================================
+# add_* methods (dedup + cache invalidation)
+# =============================================================================
+
+
+def _model(model_id, provider="openai"):
+    """Build a lightweight model-like object for add_model tests."""
+    m = MagicMock()
+    m.id = model_id
+    m.provider = provider
+    # Make isinstance(m, Model) pass
+    from agno.models.base import Model
+
+    m.__class__ = type("MockModel", (Model,), {})
+    return m
+
+
+class TestAddModel:
+    """Tests for Registry.add_model()."""
+
+    def test_adds_model(self):
+        reg = Registry()
+        reg.add_model(_model("gpt-5.4"))
+        assert [(m.provider, m.id) for m in reg.models] == [("openai", "gpt-5.4")]
+
+    def test_dedupes_same_provider_and_id(self):
+        reg = Registry()
+        reg.add_model(_model("gpt-5.4"))
+        reg.add_model(_model("gpt-5.4"))  # distinct object, same provider+id
+        assert len(reg.models) == 1
+
+    def test_keeps_same_id_different_provider(self):
+        reg = Registry()
+        reg.add_model(_model("m", provider="openai"))
+        reg.add_model(_model("m", provider="azure"))
+        assert len(reg.models) == 2
+
+    def test_keeps_distinct_classes_sharing_provider_and_id(self):
+        """Different classes that report the same provider string and id are not collapsed.
+
+        OpenAIChat and OpenAIResponses both report provider "OpenAI" but are genuinely different
+        integrations (Chat Completions vs Responses API); the three Azure model classes likewise
+        all report provider "Azure".
+        """
+        pytest.importorskip("openai")  # openai is an optional extra, not a base dependency
+        os.environ.setdefault("OPENAI_API_KEY", "test-key-for-testing")
+        from agno.models.openai.chat import OpenAIChat
+        from agno.models.openai.responses import OpenAIResponses
+
+        reg = Registry()
+        reg.add_model(OpenAIChat(id="gpt-5.4"))
+        reg.add_model(OpenAIResponses(id="gpt-5.4"))
+        assert len(reg.models) == 2
+        assert {type(m).__name__ for m in reg.models} == {"OpenAIChat", "OpenAIResponses"}
+        # Both report the same display provider, confirming the class is what disambiguates.
+        assert {m.provider for m in reg.models} == {"OpenAI"}
+
+    def test_dedupes_same_class_provider_and_id(self):
+        pytest.importorskip("openai")  # openai is an optional extra, not a base dependency
+        os.environ.setdefault("OPENAI_API_KEY", "test-key-for-testing")
+        from agno.models.openai.responses import OpenAIResponses
+
+        reg = Registry()
+        reg.add_model(OpenAIResponses(id="gpt-5.4"))
+        reg.add_model(OpenAIResponses(id="gpt-5.4"))  # genuine duplicate
+        assert len(reg.models) == 1
+
+    def test_dropping_matching_model_is_silent(self, monkeypatch):
+        # A re-instantiated model (catalog id reused) is benign and expected, so
+        # the skip must not log at all -- duplicate-skip chatter on startup reads
+        # like a problem to users when nothing is wrong.
+        import agno.registry.registry as registry_module
+
+        logs = []
+        monkeypatch.setattr(registry_module, "log_warning", lambda msg, *a, **k: logs.append(msg))
+        monkeypatch.setattr(registry_module, "log_debug", lambda msg, *a, **k: logs.append(msg), raising=False)
+
+        m1 = _model("gpt-5.4")
+        m2 = _model("gpt-5.4")  # same provider+id, distinct instance
+        reg = Registry()
+        reg.add_model(m1)
+        reg.add_model(m2)
+        assert len(reg.models) == 1 and reg.models[0] is m1
+        assert logs == []
+
+    def test_no_log_when_same_model_instance_repeats(self, monkeypatch):
+        import agno.registry.registry as registry_module
+
+        logs = []
+        monkeypatch.setattr(registry_module, "log_warning", lambda msg, *a, **k: logs.append(msg))
+        monkeypatch.setattr(registry_module, "log_debug", lambda msg, *a, **k: logs.append(msg), raising=False)
+
+        m = _model("gpt-5.4")
+        reg = Registry()
+        reg.add_model(m)
+        reg.add_model(m)
+        assert len(reg.models) == 1 and logs == []
+
+    def test_ignores_non_model(self):
+        reg = Registry()
+        reg.add_model("openai:gpt-5.4")
+        reg.add_model(None)
+        assert reg.models == []
+
+
+class TestAddTool:
+    """Tests for Registry.add_tool()."""
+
+    def test_adds_tool(self):
+        reg = Registry()
+
+        def my_tool():
+            pass
+
+        reg.add_tool(my_tool)
+        assert reg.tools == [my_tool]
+
+    def test_dedupes_same_object(self):
+        reg = Registry()
+        tk = Toolkit(name="tk", tools=[])
+        reg.add_tool(tk)
+        reg.add_tool(tk)
+        assert reg.tools.count(tk) == 1
+
+    def test_dedupes_toolkit_with_matching_structural_key(self):
+        # Two distinct instances of the same toolkit (same type, name, function
+        # set) collapse to one; the first (user-declared) instance wins.
+        reg = Registry()
+        tk1 = Toolkit(name="same", tools=[])
+        tk2 = Toolkit(name="same", tools=[])
+        reg.add_tool(tk1)
+        reg.add_tool(tk2)
+        assert reg.tools == [tk1]
+
+    def test_dropping_matching_toolkit_is_silent(self, monkeypatch):
+        # Re-instantiating a default toolkit in two places is common and benign,
+        # so the skip must not log at all.
+        import agno.registry.registry as registry_module
+
+        logs = []
+        monkeypatch.setattr(registry_module, "log_warning", lambda msg, *a, **k: logs.append(msg))
+        monkeypatch.setattr(registry_module, "log_debug", lambda msg, *a, **k: logs.append(msg), raising=False)
+
+        reg = Registry()
+        reg.add_tool(Toolkit(name="same", tools=[]))
+        reg.add_tool(Toolkit(name="same", tools=[]))
+        assert len(reg.tools) == 1
+        assert logs == []
+
+    def test_keeps_toolkits_with_different_function_sets(self):
+        # Same type and name but different functions are genuinely different
+        # tools (e.g. configured via include_tools/exclude_tools) and are kept.
+        def alpha():
+            pass
+
+        def beta():
+            pass
+
+        reg = Registry()
+        tk1 = Toolkit(name="same", tools=[alpha])
+        tk2 = Toolkit(name="same", tools=[beta])
+        reg.add_tool(tk1)
+        reg.add_tool(tk2)
+        assert tk1 in reg.tools and tk2 in reg.tools
+
+    def test_keeps_mcp_toolkits_for_distinct_servers(self):
+        # Two unconnected MCP toolkits have identical (empty) function sets, so
+        # they are only distinguishable by name. The derived default name keeps
+        # them from collapsing into one entry.
+        pytest.importorskip("mcp")
+        from agno.tools.mcp import MCPTools
+
+        reg = Registry()
+        docs = MCPTools(url="https://docs.example.com/mcp")
+        search = MCPTools(url="https://search.example.com/mcp")
+        reg.add_tool(docs)
+        reg.add_tool(search)
+        assert docs in reg.tools and search in reg.tools
+
+    def test_dedupes_mcp_toolkits_for_same_server(self):
+        # Same server re-instantiated in two places is still a duplicate.
+        pytest.importorskip("mcp")
+        from agno.tools.mcp import MCPTools
+
+        reg = Registry()
+        first = MCPTools(url="https://docs.example.com/mcp")
+        second = MCPTools(url="https://docs.example.com/mcp")
+        reg.add_tool(first)
+        reg.add_tool(second)
+        assert reg.tools == [first]
+
+    def test_keeps_distinct_toolkit_subclasses_sharing_a_name(self):
+        class ToolkitA(Toolkit):
+            pass
+
+        class ToolkitB(Toolkit):
+            pass
+
+        reg = Registry()
+        tk1 = ToolkitA(name="same", tools=[])
+        tk2 = ToolkitB(name="same", tools=[])
+        reg.add_tool(tk1)
+        reg.add_tool(tk2)
+        assert tk1 in reg.tools and tk2 in reg.tools
+
+    def test_dedupes_bound_method_by_equality(self):
+        # A bound method builds a fresh object on each access, so identity dedup
+        # misses it; equality dedup (same __self__/__func__) catches it.
+        class Helper:
+            def lookup(self):
+                pass
+
+        helper = Helper()
+        reg = Registry()
+        reg.add_tool(helper.lookup)
+        reg.add_tool(helper.lookup)
+        assert len(reg.tools) == 1
+
+    def test_keeps_distinct_lambdas_sharing_a_name(self):
+        # Lambdas have no value equality, so == falls back to identity and both
+        # are kept despite sharing the name "<lambda>".
+        reg = Registry()
+        a = lambda: 1  # noqa: E731
+        b = lambda: 2  # noqa: E731
+        reg.add_tool(a)
+        reg.add_tool(b)
+        assert a in reg.tools and b in reg.tools
+
+    def test_invalidates_entrypoint_lookup_cache(self):
+        reg = Registry()
+
+        def tool_a():
+            pass
+
+        reg.add_tool(tool_a)
+        # Prime the cached property
+        assert "tool_a" in reg._entrypoint_lookup
+
+        def tool_b():
+            pass
+
+        reg.add_tool(tool_b)
+        # Cache must have been invalidated and rebuilt with tool_b
+        assert "tool_b" in reg._entrypoint_lookup
+
+
+class TestAddDbAndVectorDb:
+    """Tests for Registry.add_db() and add_vector_db()."""
+
+    def test_add_db_dedupes_by_id(self):
+        from agno.db.base import BaseDb
+
+        db1 = MagicMock(spec=BaseDb)
+        db1.id = "db-1"
+        db2 = MagicMock(spec=BaseDb)
+        db2.id = "db-1"  # same id, distinct instance
+        reg = Registry()
+        reg.add_db(db1)
+        reg.add_db(db2)
+        assert len(reg.dbs) == 1
+
+    def test_add_db_warns_when_dropping_matching_id(self, monkeypatch):
+        import agno.registry.registry as registry_module
+        from agno.db.base import BaseDb
+
+        warnings = []
+        monkeypatch.setattr(registry_module, "log_warning", lambda msg, *a, **k: warnings.append(msg))
+
+        db1 = MagicMock(spec=BaseDb)
+        db1.id = "db-1"
+        db2 = MagicMock(spec=BaseDb)
+        db2.id = "db-1"  # same id, distinct instance
+        reg = Registry()
+        reg.add_db(db1)
+        reg.add_db(db2)
+        assert len(reg.dbs) == 1 and reg.dbs[0] is db1
+        assert warnings and "db-1" in warnings[0]
+
+    def test_add_db_no_warning_when_same_instance_repeats(self, monkeypatch):
+        import agno.registry.registry as registry_module
+        from agno.db.base import BaseDb
+
+        warnings = []
+        monkeypatch.setattr(registry_module, "log_warning", lambda msg, *a, **k: warnings.append(msg))
+
+        db = MagicMock(spec=BaseDb)
+        db.id = "db-1"
+        reg = Registry()
+        reg.add_db(db)
+        reg.add_db(db)
+        assert len(reg.dbs) == 1 and warnings == []
+
+    def test_add_vector_db_warns_when_dropping_matching_key(self, monkeypatch):
+        import agno.registry.registry as registry_module
+        from agno.vectordb.base import VectorDb
+
+        warnings = []
+        monkeypatch.setattr(registry_module, "log_warning", lambda msg, *a, **k: warnings.append(msg))
+
+        v1 = MagicMock(spec=VectorDb)
+        v1.id = None
+        v1.name = "vec"
+        v2 = MagicMock(spec=VectorDb)
+        v2.id = None
+        v2.name = "vec"  # same name, distinct instance
+        reg = Registry()
+        reg.add_vector_db(v1)
+        reg.add_vector_db(v2)
+        assert len(reg.vector_dbs) == 1 and reg.vector_dbs[0] is v1
+        assert warnings and "vec" in warnings[0]
+
+    def test_add_db_ignores_non_db(self):
+        reg = Registry()
+        reg.add_db(object())
+        reg.add_db(None)
+        assert reg.dbs == []
+
+    def test_add_vector_db_dedupes_by_name(self):
+        from agno.vectordb.base import VectorDb
+
+        v1 = MagicMock(spec=VectorDb)
+        v1.id = None
+        v1.name = "vec"
+        v2 = MagicMock(spec=VectorDb)
+        v2.id = None
+        v2.name = "vec"
+        reg = Registry()
+        reg.add_vector_db(v1)
+        reg.add_vector_db(v2)
+        assert len(reg.vector_dbs) == 1
+
+
+class TestEntrypointLookupCollisionWarning:
+    """The entrypoint lookup warns when distinct tools collide on a name."""
+
+    def test_warns_on_distinct_tools_sharing_a_name(self, monkeypatch):
+        import agno.registry.registry as registry_module
+
+        warnings = []
+        monkeypatch.setattr(registry_module, "log_warning", lambda msg, *a, **k: warnings.append(msg))
+
+        def entrypoint_a():
+            pass
+
+        def entrypoint_b():
+            pass
+
+        reg = Registry(
+            tools=[
+                Function(name="search", entrypoint=entrypoint_a),
+                Function(name="search", entrypoint=entrypoint_b),
+            ]
+        )
+        # Build the lookup
+        _ = reg._entrypoint_lookup
+
+        assert warnings, "expected a warning for the ambiguous tool name"
+        assert "search" in warnings[0]
+
+    def test_no_warning_when_same_entrypoint_repeats(self, monkeypatch):
+        import agno.registry.registry as registry_module
+
+        warnings = []
+        monkeypatch.setattr(registry_module, "log_warning", lambda msg, *a, **k: warnings.append(msg))
+
+        def entrypoint_a():
+            pass
+
+        reg = Registry(
+            tools=[
+                Function(name="search", entrypoint=entrypoint_a),
+                Function(name="search", entrypoint=entrypoint_a),  # same entrypoint object
+            ]
+        )
+        _ = reg._entrypoint_lookup
+
+        assert warnings == []
+
+    def test_no_warning_for_unique_names(self, monkeypatch):
+        import agno.registry.registry as registry_module
+
+        warnings = []
+        monkeypatch.setattr(registry_module, "log_warning", lambda msg, *a, **k: warnings.append(msg))
+
+        def tool_a():
+            pass
+
+        def tool_b():
+            pass
+
+        reg = Registry(tools=[tool_a, tool_b])
+        _ = reg._entrypoint_lookup
+
+        assert warnings == []
