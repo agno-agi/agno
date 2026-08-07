@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, 
 from uuid import uuid4
 
 if TYPE_CHECKING:
+    from agno.run.status_persist import RunPersistOutcome
     from agno.tracing.schemas import Span, Trace
 
 from agno.db import mcp_oauth_store
@@ -60,6 +61,7 @@ from agno.utils.string import generate_id, sanitize_postgres_string, sanitize_po
 
 try:
     from sqlalchemy import (
+        BigInteger,
         ForeignKey,
         ForeignKeyConstraint,
         Index,
@@ -74,6 +76,7 @@ try:
         select,
         update,
     )
+    from sqlalchemy import cast as sa_cast
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.dialects.postgresql import TIMESTAMP
     from sqlalchemy.engine import Engine, create_engine
@@ -83,6 +86,23 @@ try:
     from sqlalchemy.sql.expression import text
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
+
+
+def _db_epoch() -> Any:
+    """Postgres transaction time as an integer epoch, for LEASE math.
+
+    Lease decisions must be anchored to ONE clock. With app-side time a
+    replica whose clock runs fast sees healthy leases as expired and sweeps
+    live runs - and now that the sweep steals the lock, the victim's own
+    completion is fenced out and its run is reported failed despite having
+    finished. NOW() is transaction-start time, identical for every replica
+    talking to the same database, so claim/heartbeat/sweep all agree.
+
+    Not applied to enqueue's available_at (computed by the accepting replica
+    before any transaction exists) or to queue_stats' age arithmetic; both
+    only shift scheduling/reporting by the skew, never ownership.
+    """
+    return sa_cast(func.floor(func.extract("epoch", func.now())), BigInteger)
 
 
 class PostgresDb(BaseDb):
@@ -107,6 +127,7 @@ class PostgresDb(BaseDb):
         learnings_table: Optional[str] = None,
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
+        job_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
         service_accounts_table: Optional[str] = None,
@@ -146,6 +167,7 @@ class PostgresDb(BaseDb):
             learnings_table (Optional[str]): Name of the table to store learnings.
             schedules_table (Optional[str]): Name of the table to store cron schedules.
             schedule_runs_table (Optional[str]): Name of the table to store schedule run history.
+            job_table (Optional[str]): Name of the table to store durable background run jobs.
             mcp_oauth_clients_table (Optional[str]): Name of the table to store MCP OAuth client registrations.
             mcp_oauth_transactions_table (Optional[str]): Name of the table to store MCP OAuth transactions.
             mcp_oauth_codes_table (Optional[str]): Name of the table to store MCP OAuth authorization codes.
@@ -197,6 +219,7 @@ class PostgresDb(BaseDb):
             learnings_table=learnings_table,
             schedules_table=schedules_table,
             schedule_runs_table=schedule_runs_table,
+            job_table=job_table,
             approvals_table=approvals_table,
             auth_tokens_table=auth_tokens_table,
             service_accounts_table=service_accounts_table,
@@ -666,6 +689,14 @@ class PostgresDb(BaseDb):
             )
             return self.schedule_runs_table
 
+        if table_type == "jobs":
+            self.job_table = self._get_or_create_table(
+                table_name=self.job_table_name,
+                table_type="jobs",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.job_table
+
         if table_type == "approvals":
             self.approvals_table = self._get_or_create_table(
                 table_name=self.approvals_table_name,
@@ -957,6 +988,15 @@ class PostgresDb(BaseDb):
                 # A NULL index has no position and breaks ORDER BY run_index. ON CONFLICT
                 # preserves the existing index, so this only sets it on a genuine insert.
                 if row.get("run_index") is None:
+                    # Serialize same-session backfills: under READ COMMITTED two
+                    # concurrent max-reads can both see the same MAX and land
+                    # duplicate indexes. The advisory lock is transaction-scoped
+                    # (released at COMMIT/ROLLBACK) and keyed on session_id, so
+                    # only same-session backfilling inserts queue behind it.
+                    sess.execute(
+                        text("SELECT pg_advisory_xact_lock(hashtext('agno_run_index'), hashtext(:sid))"),
+                        {"sid": session_id},
+                    )
                     current_max = sess.execute(
                         select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
                     ).scalar()
@@ -5925,6 +5965,705 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_debug(f"Error getting schedule runs: {e}")
             return [], 0
+
+    # -- Job queue methods --
+    #
+    # Durable background job queue: one row per accepted run. Claim/lease with
+    # SKIP LOCKED (modeled on claim_due_schedule), stale-lock reclaim gated on
+    # the attempt budget, and terminal writes fenced on (locked_by, attempt) so
+    # a zombie executor that finishes after reclaim has its write discarded.
+
+    def update_run_in_session(
+        self,
+        session_id: str,
+        run_id: str,
+        fields: Dict[str, Any],
+        expected_attempt: Optional[int] = None,
+        user_id: Optional[str] = None,
+        content_if_absent: Optional[str] = None,
+    ) -> "RunPersistOutcome":
+        """Sync twin of AsyncPostgresDb.update_run_in_session - ported to the
+        denormalized runs table (v3.0); see that docstring."""
+        from agno.db.utils import canonical_run_status
+        from agno.run.status_persist import RunPersistOutcome
+
+        if fields.get("status") is not None:
+            # Same normalization as the async twin: the indexed column and
+            # run_data store the canonical uppercase RunStatus.value
+            fields = {**fields, "status": canonical_run_status(fields["status"])}
+        try:
+            runs_table = self._get_table(table_type="runs")
+            if runs_table is None:
+                return RunPersistOutcome.MISSING
+            with self.Session() as sess, sess.begin():
+                row = sess.execute(
+                    select(runs_table.c.run_data, runs_table.c.status)
+                    .where(runs_table.c.run_id == run_id)
+                    .where(runs_table.c.session_id == session_id)
+                    .where((runs_table.c.user_id == user_id) | (runs_table.c.user_id.is_(None)))
+                    .with_for_update()
+                ).fetchone()
+                if row is None or row[0] is None:
+                    return RunPersistOutcome.MISSING
+                run = dict(row[0])
+                stored_attempt = run.get("queue_attempt")
+                if expected_attempt is not None and stored_attempt is not None and stored_attempt > expected_attempt:
+                    return RunPersistOutcome.STALE_ATTEMPT  # zombie writer fenced out
+                stored_status = str(run.get("status") or row[1] or "").lower()
+                incoming_status = str(fields.get("status") or "").lower()
+                if stored_status in ("completed", "cancelled") and incoming_status and incoming_status != stored_status:
+                    return RunPersistOutcome.TERMINAL_REFUSED  # terminal row wins
+                run.update(fields)
+                if content_if_absent is not None and not run.get("content"):
+                    run["content"] = content_if_absent
+                if expected_attempt is not None:
+                    run["queue_attempt"] = expected_attempt
+                values: Dict[str, Any] = {
+                    "run_data": sanitize_postgres_strings(run),
+                    "updated_at": int(time.time()),
+                }
+                if fields.get("status") is not None:
+                    values["status"] = fields["status"]
+                sess.execute(update(runs_table).where(runs_table.c.run_id == run_id).values(**values))
+                return RunPersistOutcome.UPDATED
+        except Exception as e:
+            log_warning(f"Error updating run in runs table: {e}")
+            raise
+
+    def append_run_to_session_if_absent(
+        self,
+        session_id: str,
+        run_dict: Dict[str, Any],
+        user_id: Optional[str] = None,
+    ) -> Optional[bool]:
+        """Sync twin of AsyncPostgresDb.append_run_to_session_if_absent -
+        ported to the denormalized runs table (v3.0); see that docstring."""
+        from sqlalchemy.exc import IntegrityError
+
+        from agno.db.utils import build_single_run_row
+
+        try:
+            runs_table = self._get_table(table_type="runs", create_table_if_not_found=True)
+            if runs_table is None:
+                return None
+            row = build_single_run_row(run=run_dict, session_id=session_id, user_id=user_id, run_index=None)
+            row["run_data"] = sanitize_postgres_strings(row["run_data"])
+            try:
+                with self.Session() as sess, sess.begin():
+                    if row.get("run_index") is None:
+                        # Same-session backfill serialization - see upsert_run
+                        sess.execute(
+                            text("SELECT pg_advisory_xact_lock(hashtext('agno_run_index'), hashtext(:sid))"),
+                            {"sid": session_id},
+                        )
+                        current_max = sess.execute(
+                            select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
+                        ).scalar()
+                        row["run_index"] = (current_max + 1) if current_max is not None else 0
+                    stmt = (
+                        postgresql.insert(runs_table)
+                        .values(**row)
+                        .on_conflict_do_nothing(index_elements=["run_id"])
+                        .returning(runs_table.c.run_id)
+                    )
+                    inserted = sess.execute(stmt).fetchone()
+                    return inserted is not None
+            except IntegrityError:
+                # FK violation: no session row yet - caller creates it and retries
+                return None
+        except Exception as e:
+            log_warning(f"Error appending run to runs table (caller falls back): {e}")
+            return None
+
+    def insert_session_if_absent(self, session: Session) -> Optional[bool]:
+        """Insert the session row only when no row with this session_id exists
+        (INSERT ... ON CONFLICT DO NOTHING).
+
+        The missing half of the atomic queued-run prepare: when the session
+        does not exist yet, append_run_to_session_if_absent has no row to
+        lock, and the legacy create-and-save fallback re-opened the unlocked
+        read-check-save window (a worker completing the run inside it was
+        clobbered back to PENDING). Creating the row this way instead makes
+        the append primitive always applicable - no whole-session save
+        remains on the prepare path.
+
+        Returns True (inserted), False (a row already existed - the
+        concurrent writer's row is authoritative), None (error - the caller
+        falls back to the legacy path).
+        """
+        try:
+            table = self._get_table(table_type="sessions", create_table_if_not_found=True)
+            if table is None:
+                return None
+            session_dict = session.to_dict()
+            for data_field in ("agent_data", "team_data", "workflow_data", "session_data", "summary", "metadata"):
+                if session_dict.get(data_field):
+                    session_dict[data_field] = sanitize_postgres_strings(session_dict[data_field])
+            values: Dict[str, Any] = dict(
+                session_id=session_dict.get("session_id"),
+                user_id=session_dict.get("user_id"),
+                session_data=session_dict.get("session_data"),
+                summary=session_dict.get("summary"),
+                metadata=session_dict.get("metadata"),
+                created_at=session_dict.get("created_at"),
+                updated_at=session_dict.get("created_at"),
+            )
+            if isinstance(session, AgentSession):
+                values.update(
+                    session_type=SessionType.AGENT.value,
+                    agent_id=session_dict.get("agent_id"),
+                    agent_data=session_dict.get("agent_data"),
+                )
+            elif isinstance(session, TeamSession):
+                values.update(
+                    session_type=SessionType.TEAM.value,
+                    team_id=session_dict.get("team_id"),
+                    team_data=session_dict.get("team_data"),
+                )
+            elif isinstance(session, WorkflowSession):
+                values.update(
+                    session_type=SessionType.WORKFLOW.value,
+                    workflow_id=session_dict.get("workflow_id"),
+                    workflow_data=session_dict.get("workflow_data"),
+                )
+            else:
+                return None
+            with self.Session() as sess, sess.begin():
+                # RETURNING yields a row only when the insert landed; rowcount
+                # is unreliable here (psycopg3 reports -1 for this statement)
+                stmt = (
+                    postgresql.insert(table)
+                    .values(**values)
+                    .on_conflict_do_nothing(index_elements=["session_id"])
+                    .returning(table.c.session_id)
+                )
+                result = sess.execute(stmt)
+                return result.fetchone() is not None
+        except Exception as e:
+            log_warning(f"Error inserting session if absent (caller falls back): {e}")
+            return None
+
+    def enqueue_job(self, job: Dict[str, Any], max_depth: int = 0) -> Dict[str, Any]:
+        """Insert an accepted run job.
+
+        Returns {"accepted": bool, "reason": None | "queue_full" | "duplicate",
+        "job": row}. On an idempotency-key conflict the existing row is
+        returned with reason "duplicate" (client resubmit dedup). The depth
+        gate is best-effort (count + insert, not serialized) per the queue's
+        portability contract.
+        """
+        from sqlalchemy.exc import IntegrityError
+
+        table = self._get_table(table_type="jobs", create_table_if_not_found=True)
+        if table is None:
+            raise RuntimeError("Failed to get or create job queue table")
+        # Empty-string keys are "no key": the falsy pre-check would skip dedup
+        # while the partial-unique index still covered '', turning the second
+        # empty-header submit into an IntegrityError -> 500
+        if not job.get("idempotency_key"):
+            job = {**job, "idempotency_key": None}
+        try:
+            with self.Session() as sess, sess.begin():
+                # Idempotency FIRST: resubmitting an already-accepted job
+                # must return the existing run even when the queue is full
+                if job.get("idempotency_key"):
+                    row = sess.execute(
+                        select(table).where(
+                            table.c.idempotency_key == job["idempotency_key"],
+                            table.c.user_id.is_not_distinct_from(job.get("user_id")),
+                        )
+                    ).fetchone()
+                    if row is not None:
+                        return {"accepted": False, "reason": "duplicate", "job": dict(row._mapping)}
+                if max_depth and max_depth > 0:
+                    count_stmt = select(func.count()).select_from(table).where(table.c.status == "queued")
+                    queued = sess.execute(count_stmt).scalar() or 0
+                    if queued >= max_depth:
+                        return {"accepted": False, "reason": "queue_full", "job": None}
+                sess.execute(table.insert().values(**job))
+            return {"accepted": True, "reason": None, "job": job}
+        except IntegrityError:
+            # Without an idempotency key this is a primary-key collision - a
+            # programming error, never a client dedup. Swallowing it as
+            # "duplicate" would 202 a run that was never enqueued.
+            if not job.get("idempotency_key"):
+                raise
+            # Race on the partial-unique idempotency index: return the winner
+            with self.Session() as sess:
+                row = sess.execute(
+                    select(table).where(
+                        table.c.idempotency_key == job["idempotency_key"],
+                        table.c.user_id.is_not_distinct_from(job.get("user_id")),
+                    )
+                ).fetchone()
+                if row is not None:
+                    return {"accepted": False, "reason": "duplicate", "job": dict(row._mapping)}
+            raise
+
+    def claim_job(
+        self, worker_id: str, lock_grace_seconds: int = 60, deployment_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Atomically claim the oldest executable job for this worker.
+
+        Executable: queued, or running with a stale lock while the attempt
+        budget is not exhausted (crash reclaim). Claiming increments attempt,
+        which doubles as the fencing generation. Deployment affinity filters
+        BOTH branches (a reclaim executes too): NULL rides anywhere, stamped
+        jobs only on matching workers; deployment_id=None degenerates to
+        claiming only unstamped jobs.
+        """
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return None
+            now = _db_epoch()
+            stale = now - lock_grace_seconds
+            with self.Session() as sess, sess.begin():
+                subq = (
+                    select(table.c.id)
+                    .where(
+                        table.c.available_at <= now,
+                        or_(table.c.deployment_id.is_(None), table.c.deployment_id == deployment_id),
+                        or_(
+                            table.c.status == "queued",
+                            and_(
+                                table.c.status == "running",
+                                table.c.locked_at <= stale,
+                                table.c.attempt < table.c.max_attempts,
+                            ),
+                        ),
+                    )
+                    .order_by(table.c.created_at.asc())
+                    .limit(1)
+                    .with_for_update(skip_locked=True)
+                    .scalar_subquery()
+                )
+                stmt = (
+                    update(table)
+                    .where(table.c.id == subq)
+                    .values(
+                        status="running",
+                        locked_by=worker_id,
+                        locked_at=now,
+                        attempt=table.c.attempt + 1,
+                        updated_at=now,
+                    )
+                    .returning(*table.c)
+                )
+                row = sess.execute(stmt).fetchone()
+                return dict(row._mapping) if row is not None else None
+        except Exception as e:
+            log_error(f"Job queue store: claim failed for worker {worker_id} (deployment={deployment_id}): {e}")
+            return None
+
+    def heartbeat_jobs(self, worker_id: str, job_ids: List[str]) -> int:
+        """Refresh locked_at for this worker's in-flight jobs (keeps the lock
+        grace small without long runs being reclaimed while alive)."""
+        if not job_ids:
+            return 0
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return 0
+            now = _db_epoch()
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(
+                    update(table)
+                    .where(
+                        table.c.id.in_(job_ids),
+                        table.c.locked_by == worker_id,
+                        table.c.status == "running",
+                    )
+                    .values(locked_at=now)
+                )
+                return result.rowcount or 0
+        except Exception as e:
+            log_error(
+                f"Job queue store: heartbeat failed for worker {worker_id} ({len(job_ids)} jobs, e.g. {job_ids[0]}): {e}"
+            )
+            return 0
+
+    def complete_job(self, job_id: str, worker_id: str, attempt: int, status: str, error: Optional[str] = None) -> bool:
+        """Fenced terminal transition: only the claim holder of this attempt
+        may complete the job. A zombie's late write is silently discarded."""
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return False
+            now = _db_epoch()
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(
+                    update(table)
+                    .where(
+                        table.c.id == job_id,
+                        table.c.locked_by == worker_id,
+                        table.c.attempt == attempt,
+                        table.c.status == "running",
+                    )
+                    .values(
+                        status=status,
+                        error=error,
+                        locked_by=None,
+                        locked_at=None,
+                        completed_at=now,
+                        updated_at=now,
+                    )
+                )
+                return (result.rowcount or 0) > 0
+        except Exception as e:
+            log_error(
+                f"Job queue store: settle failed for job {job_id} (worker={worker_id}, attempt={attempt}, status={status!r}): {e}"
+            )
+            return False
+
+    def retry_or_fail_job(
+        self, job_id: str, worker_id: str, attempt: int, error: str, retry_delay_seconds: int = 30
+    ) -> Optional[str]:
+        """Fenced failure handling: requeue with backoff while the attempt
+        budget lasts, else fail terminally. Returns the resulting status
+        ("queued" | "failed") or None if the fence rejected the write."""
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return None
+            now = _db_epoch()
+            with self.Session() as sess, sess.begin():
+                fence = (
+                    select(table)
+                    .where(
+                        table.c.id == job_id,
+                        table.c.locked_by == worker_id,
+                        table.c.attempt == attempt,
+                        table.c.status == "running",
+                    )
+                    .with_for_update()
+                )
+                row = sess.execute(fence).fetchone()
+                if row is None:
+                    return None
+                job = dict(row._mapping)
+                if job["attempt"] < job["max_attempts"]:
+                    new_status = "queued"
+                    values: Dict[str, Any] = {
+                        "status": new_status,
+                        "error": error,
+                        "locked_by": None,
+                        "locked_at": None,
+                        "available_at": now + retry_delay_seconds,
+                        "updated_at": now,
+                    }
+                else:
+                    new_status = "failed"
+                    values = {
+                        "status": new_status,
+                        "error": error,
+                        "locked_by": None,
+                        "locked_at": None,
+                        "completed_at": now,
+                        "updated_at": now,
+                    }
+                sess.execute(update(table).where(table.c.id == job_id).values(**values))
+                return new_status
+        except Exception as e:
+            log_error(
+                f"Job queue store: retry-or-fail failed for job {job_id} (worker={worker_id}, attempt={attempt}): {e}"
+            )
+            return None
+
+    def settle_paused_job(self, job_id: str, status: str, error: Optional[str] = None) -> bool:
+        """Terminalize a PAUSED ticket whose continue ran INLINE, outside the
+        queue (see InMemoryQueueStore.settle_paused_job). Single conditional
+        UPDATE on status='paused'; a queued/claimed continuation owns the
+        ticket and is never clobbered."""
+        if status not in ("completed", "cancelled", "failed"):
+            return False
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return False
+            now = _db_epoch()
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(
+                    update(table)
+                    .where(table.c.id == job_id, table.c.status == "paused")
+                    .values(
+                        status=status,
+                        error=error,
+                        locked_by=None,
+                        locked_at=None,
+                        completed_at=now,
+                        updated_at=now,
+                    )
+                )
+                return (result.rowcount or 0) > 0
+        except Exception as e:
+            log_error(f"Job queue store: paused-settle failed for job {job_id} (status={status!r}): {e}")
+            return False
+
+    def cancel_job(self, job_id: str) -> bool:
+        """Tombstone cancellation: only jobs still waiting can be cancelled
+        here (contract: 'this job will not execute'). Claimed jobs fall
+        through to the running-run cancellation path. Paused tickets count as
+        waiting - nothing is executing them, and without this a cancelled
+        paused run stayed a paused ticket forever, resurrectable by a later
+        continue."""
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return False
+            now = _db_epoch()
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(
+                    update(table)
+                    .where(table.c.id == job_id, table.c.status.in_(["queued", "paused"]))
+                    .values(status="cancelled", completed_at=now, updated_at=now)
+                )
+                return (result.rowcount or 0) > 0
+        except Exception as e:
+            log_error(f"Job queue store: cancel failed for job {job_id}: {e}")
+            return False
+
+    def sweep_exhausted_jobs(self, lock_grace_seconds: int = 60, limit: int = 20) -> List[Dict[str, Any]]:
+        """Return stale running jobs whose attempt budget is exhausted.
+
+        These are NOT claimable (attempt >= max_attempts): the worker persists
+        a terminal error on the run row first, then calls
+        fail_swept_job — ordering + idempotence instead of cross-store
+        atomicity."""
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return []
+            stale = _db_epoch() - lock_grace_seconds
+            with self.Session() as sess:
+                result = sess.execute(
+                    select(table)
+                    .where(
+                        table.c.status == "running",
+                        table.c.locked_at <= stale,
+                        table.c.attempt >= table.c.max_attempts,
+                    )
+                    .order_by(table.c.locked_at.asc())
+                    .limit(limit)
+                )
+                return [dict(row._mapping) for row in result.fetchall()]
+        except Exception as e:
+            log_warning(f"Job queue store: sweep scan failed (lock_grace={lock_grace_seconds}s): {e}")
+            return []
+
+    def acquire_sweep(self, job_id: str, worker_id: str, lock_grace_seconds: int = 60) -> bool:
+        """Take ownership of a stale, budget-exhausted running job BEFORE any
+        run-row write (conditional UPDATE = the CAS). A live heartbeat
+        between the sweep's select and this acquisition wins here, with the
+        run row still untouched. Refreshing locked_at doubles as the retry
+        backoff for a failing terminalization."""
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return False
+            now = _db_epoch()
+            stale = now - lock_grace_seconds
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(
+                    update(table)
+                    .where(
+                        table.c.id == job_id,
+                        table.c.status == "running",
+                        table.c.locked_at <= stale,
+                        table.c.attempt >= table.c.max_attempts,
+                    )
+                    .values(locked_by=worker_id, locked_at=now, updated_at=now)
+                )
+                return (result.rowcount or 0) > 0
+        except Exception as e:
+            log_error(f"Job queue store: sweep-lock acquisition failed for job {job_id} (worker={worker_id}): {e}")
+            return False
+
+    def fail_swept_job(self, job_id: str, worker_id: str, error: str = "worker lost") -> bool:
+        """Ownership-keyed terminal write: only the sweeper holding the lock
+        (via acquire_sweep) may fail the job. Replaces the old staleness
+        recheck - after acquire_sweep refreshed locked_at, staleness can no
+        longer serve as the fence."""
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return False
+            now = _db_epoch()
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(
+                    update(table)
+                    .where(
+                        table.c.id == job_id,
+                        table.c.status == "running",
+                        table.c.locked_by == worker_id,
+                    )
+                    .values(
+                        status="failed",
+                        error=error,
+                        locked_by=None,
+                        locked_at=None,
+                        completed_at=now,
+                        updated_at=now,
+                    )
+                )
+                return (result.rowcount or 0) > 0
+        except Exception as e:
+            log_error(f"Job queue store: swept-job terminalization failed for job {job_id} (worker={worker_id}): {e}")
+            return False
+
+    def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                row = sess.execute(select(table).where(table.c.id == job_id)).fetchone()
+                return dict(row._mapping) if row is not None else None
+        except Exception as e:
+            log_warning(f"Job queue store: get_job failed for job {job_id}: {e}")
+            return None
+
+    def count_queued_jobs(self) -> int:
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return 0
+            with self.Session() as sess:
+                result = sess.execute(select(func.count()).select_from(table).where(table.c.status == "queued"))
+                return result.scalar() or 0
+        except Exception as e:
+            log_warning(f"Job queue store: queued-count failed: {e}")
+            return 0
+
+    def list_jobs(self, status: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return []
+            stmt = select(table)
+            if status is not None:
+                stmt = stmt.where(table.c.status == status)
+            stmt = stmt.order_by(table.c.created_at.desc()).limit(limit)
+            with self.Session() as sess:
+                result = sess.execute(stmt)
+                return [dict(row._mapping) for row in result.fetchall()]
+        except Exception as e:
+            log_warning(f"Job queue store: list_jobs failed (status={status!r}): {e}")
+            return []
+
+    def requeue_job(self, job_id: str) -> bool:
+        """Operator requeue for a terminally failed/cancelled job: grants
+        exactly one more execution by raising max_attempts to attempt + 1."""
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return False
+            now = _db_epoch()
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(
+                    update(table)
+                    .where(table.c.id == job_id, table.c.status.in_(["failed", "cancelled"]))
+                    .values(
+                        status="queued",
+                        max_attempts=table.c.attempt + 1,
+                        available_at=now,
+                        locked_by=None,
+                        locked_at=None,
+                        completed_at=None,
+                        updated_at=now,
+                    )
+                )
+                return (result.rowcount or 0) > 0
+        except Exception as e:
+            log_error(f"Job queue store: requeue failed for job {job_id}: {e}")
+            return False
+
+    def continue_job(self, job_id: str, continue_payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Continuation CAS: flip the EXISTING paused ticket back to queued,
+        mirroring requeue_job's transition (row-locked read + conditional
+        update in one transaction). No new rows, ever - id == run_id is
+        load-bearing. Submit-time payload fields are kept; payload["continue"]
+        is REPLACED WHOLESALE with this continue's inputs (never accumulated
+        across pause cycles). Budget grant: max_attempts = attempt + 1 -
+        exactly one more execution, regardless of the configured retry budget.
+
+        Returns {"outcome": "queued" | "attach" | "conflict", "job": row}:
+        queued = CAS won; attach = ticket already queued/running (double-click
+        idempotency - the caller attaches, this click's inputs are discarded);
+        conflict = terminal ticket or no ticket (job is the row or None).
+
+        Exceptions propagate (like enqueue_job, unlike the ops-surface
+        requeue_job): this CAS is the durable acceptance of the continue, and
+        a DB failure must surface as a 500, never masquerade as "conflict".
+        """
+        table = self._get_table(table_type="jobs")
+        if table is None:
+            raise RuntimeError("Job queue table not found")
+        now = _db_epoch()
+        with self.Session() as sess, sess.begin():
+            row = sess.execute(select(table).where(table.c.id == job_id).with_for_update()).fetchone()
+            if row is None:
+                return {"outcome": "conflict", "job": None}
+            job = dict(row._mapping)
+            if job["status"] in ("completed", "failed", "cancelled"):
+                return {"outcome": "conflict", "job": job}
+            if job["status"] in ("queued", "running"):
+                return {"outcome": "attach", "job": job}
+            payload = dict(job.get("payload") or {})
+            payload["continue"] = dict(continue_payload)
+            values: Dict[str, Any] = {
+                "status": "queued",
+                "payload": payload,
+                "max_attempts": job["attempt"] + 1,
+                "available_at": now,
+                "locked_by": None,
+                "locked_at": None,
+                "completed_at": None,
+                "updated_at": now,
+            }
+            sess.execute(update(table).where(table.c.id == job_id).values(**values))
+            job.update(values)
+            return {"outcome": "queued", "job": job}
+
+    def queue_stats(self) -> Dict[str, Any]:
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return {"counts": {}, "oldest_queued_age_seconds": None}
+            now = int(time.time())
+            with self.Session() as sess:
+                counts_result = sess.execute(select(table.c.status, func.count()).group_by(table.c.status))
+                counts = {row[0]: row[1] for row in counts_result.fetchall()}
+                oldest_result = sess.execute(select(func.min(table.c.created_at)).where(table.c.status == "queued"))
+                oldest_created = oldest_result.scalar()
+                oldest_age = (now - oldest_created) if oldest_created is not None else None
+                return {"counts": counts, "oldest_queued_age_seconds": oldest_age}
+        except Exception as e:
+            log_warning(f"Job queue store: stats failed: {e}")
+            return {"counts": {}, "oldest_queued_age_seconds": None}
+
+    def cleanup_jobs(self, older_than_seconds: int = 86400) -> int:
+        """Delete terminal jobs whose completed_at is older than the retention
+        window. Returns the number of rows removed. Paused tickets are
+        deliberately EXEMPT: they must outlive arbitrary human latency to stay
+        continuable; cancelling the run is the remedy for abandoned ones."""
+        try:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                return 0
+            cutoff = int(time.time()) - older_than_seconds
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(
+                    table.delete().where(
+                        table.c.status.in_(["completed", "failed", "cancelled"]),
+                        table.c.completed_at.is_not(None),
+                        table.c.completed_at <= cutoff,
+                    )
+                )
+                return result.rowcount or 0
+        except Exception as e:
+            log_warning(f"Job queue store: retention cleanup failed: {e}")
+            return 0
 
     # -- Approval methods --
 

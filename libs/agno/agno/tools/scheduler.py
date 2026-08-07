@@ -19,6 +19,7 @@ Example:
 """
 
 import json
+import time
 from typing import Any, Callable, Dict, List, Optional
 
 from agno.scheduler.manager import ScheduleManager
@@ -66,6 +67,7 @@ class SchedulerTools(Toolkit):
             self.delete_schedule,
             self.enable_schedule,
             self.disable_schedule,
+            self.trigger_schedule,
             self.get_schedule_runs,
         ]
 
@@ -76,6 +78,7 @@ class SchedulerTools(Toolkit):
             (self.adelete_schedule, "delete_schedule"),
             (self.aenable_schedule, "enable_schedule"),
             (self.adisable_schedule, "disable_schedule"),
+            (self.atrigger_schedule, "trigger_schedule"),
             (self.aget_schedule_runs, "get_schedule_runs"),
         ]
 
@@ -303,6 +306,39 @@ class SchedulerTools(Toolkit):
             )
         except Exception as e:
             logger.exception("Failed to disable schedule")
+            return json.dumps({"error": str(e)})
+
+    def trigger_schedule(self, schedule_id: str) -> str:
+        """Queue an enabled schedule to run now.
+
+        Sets the schedule's next run time to now; the scheduler poller claims and
+        executes it within one poll interval. The regular cron cadence resumes
+        after the run.
+
+        Args:
+            schedule_id (str): The ID of the schedule to trigger.
+
+        Returns:
+            str: JSON string confirming the trigger.
+        """
+        try:
+            schedule = self.manager.get(schedule_id)
+            if schedule is None:
+                return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+            if not schedule.enabled:
+                return json.dumps(
+                    {"error": f"Schedule is disabled: {schedule_id}. Call enable_schedule first, then trigger it."}
+                )
+            self.manager.update(schedule_id, next_run_at=int(time.time()))
+            return json.dumps(
+                {
+                    "status": "triggered",
+                    "id": schedule_id,
+                    "note": "The scheduler poller will execute it within one poll interval.",
+                }
+            )
+        except Exception as e:
+            logger.exception("Failed to trigger schedule")
             return json.dumps({"error": str(e)})
 
     def get_schedule_runs(self, schedule_id: str, limit: int = 10) -> str:
@@ -535,6 +571,39 @@ class SchedulerTools(Toolkit):
             )
         except Exception as e:
             logger.exception("Failed to disable schedule")
+            return json.dumps({"error": str(e)})
+
+    async def atrigger_schedule(self, schedule_id: str) -> str:
+        """Queue an enabled schedule to run now.
+
+        Sets the schedule's next run time to now; the scheduler poller claims and
+        executes it within one poll interval. The regular cron cadence resumes
+        after the run.
+
+        Args:
+            schedule_id (str): The ID of the schedule to trigger.
+
+        Returns:
+            str: JSON string confirming the trigger.
+        """
+        try:
+            schedule = await self.manager.aget(schedule_id)
+            if schedule is None:
+                return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+            if not schedule.enabled:
+                return json.dumps(
+                    {"error": f"Schedule is disabled: {schedule_id}. Call enable_schedule first, then trigger it."}
+                )
+            await self.manager.aupdate(schedule_id, next_run_at=int(time.time()))
+            return json.dumps(
+                {
+                    "status": "triggered",
+                    "id": schedule_id,
+                    "note": "The scheduler poller will execute it within one poll interval.",
+                }
+            )
+        except Exception as e:
+            logger.exception("Failed to trigger schedule")
             return json.dumps({"error": str(e)})
 
     async def aget_schedule_runs(self, schedule_id: str, limit: int = 10) -> str:

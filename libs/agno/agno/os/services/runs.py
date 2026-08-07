@@ -61,6 +61,19 @@ async def continue_paused_run(
         raise RemoteContinuationUnsupported(
             "Continuing paused runs on remote components is not supported over this interface."
         )
+    # Inline-door admission gate: a paused/queued/running durable ticket OWNS
+    # this run's continuation, and that holds for EVERY public interface -
+    # this service backs the MCP continue_run tool, which must not execute a
+    # ticketed run inline while an HTTP durable continue CASes the ticket
+    # (the cross-door double-execution race). 409/503 HTTPException raises.
+    from agno.os.job_queue import araise_if_ticket_owns_continue, get_active_queue_worker
+
+    component_type = (
+        "workflow" if isinstance(component, Workflow) else ("team" if isinstance(component, Team) else "agent")
+    )
+    await araise_if_ticket_owns_continue(
+        get_active_queue_worker(), run_id, component_type=component_type, component_id=getattr(component, "id", None)
+    )
     if isinstance(component, Workflow):
         return await component.acontinue_run(
             run_id=run_id,

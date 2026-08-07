@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Literal, Optional, Union, cast
 from uuid import uuid4
@@ -21,6 +22,7 @@ from agno.agent.factory import AgentFactory
 from agno.agent.protocol import AgentProtocol
 from agno.agent.remote import RemoteAgent
 from agno.db.base import BaseDb
+from agno.db.schemas.jobs import QueuedJob
 from agno.exceptions import InputCheckError, OutputCheckError, RunNotContinuableError, RunNotFoundError
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
@@ -32,7 +34,17 @@ from agno.os.auth import (
     require_resource_access,
 )
 from agno.os.checkpoints import build_run_checkpoint_snapshot, list_run_checkpoints
-from agno.os.managers import event_buffer, sse_subscriber_manager
+from agno.os.event_streams import get_event_stream
+from agno.os.job_queue import (
+    acontinue_via_queue,
+    aprepare_accepted_or_abort,
+    araise_if_ticket_owns_continue,
+    asettle_paused_ticket,
+    aticket_poll_fallback,
+    normalize_idempotency_key,
+    payload_is_queueable,
+    validate_seam_input,
+)
 from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
     assert_session_matches_component,
@@ -51,6 +63,8 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
+    acomplete_continue_stream,
+    amark_continue_stream_running,
     classify_upload_file,
     find_factory_by_id,
     format_sse_event,
@@ -60,13 +74,14 @@ from agno.os.utils import (
     process_document,
     process_image,
     process_video,
+    queued_run_tail_streamer,
+    replayed_payload_to_sse,
     resolve_agent,
 )
 from agno.registry import Registry
 from agno.run.agent import RunErrorEvent, RunOutput
 from agno.run.base import RunStatus
 from agno.utils.log import log_debug, log_error, log_warning
-from agno.utils.serialize import json_serializer
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
@@ -221,6 +236,7 @@ async def agent_continue_response_streamer(
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
     auth_token: Optional[str] = None,
+    queue_worker: Optional[Any] = None,
     **kwargs: Any,
 ) -> AsyncGenerator:
     """Default SSE generator for continue_run. Agent runs inline — client disconnect cancels agent."""
@@ -250,8 +266,32 @@ async def agent_continue_response_streamer(
             background_tasks=background_tasks,
             **kwargs,
         )
-        async for run_response_chunk in continue_response:
-            yield format_sse_event(run_response_chunk)  # type: ignore
+
+        # Post-approval events must reach the event stream too (workflow
+        # continue-streamer parity): this response is otherwise their only
+        # copy - after an inline continue of a formerly-queued/streamed run,
+        # /resume would replay just the pre-pause prefix and the stream
+        # status would stay PAUSED forever. Skipped for remote agents (the
+        # remote OS owns that run's stream) and for fork/regenerate (they
+        # mint a NEW run_id; publishing under the original would corrupt it).
+        _sync_stream = not isinstance(agent, RemoteAgent) and not fork and not regenerate
+        if _sync_stream:
+            await amark_continue_stream_running(run_id, component=agent, session_id=session_id, user_id=user_id)
+        try:
+            async for run_response_chunk in continue_response:
+                if _sync_stream and not isinstance(run_response_chunk, RunOutput):
+                    with contextlib.suppress(Exception):
+                        await get_event_stream().add_event(run_id, run_response_chunk)
+                yield format_sse_event(run_response_chunk)  # type: ignore
+        finally:
+            if _sync_stream:
+                _final = await acomplete_continue_stream(agent, run_id, session_id)
+                # Inline continue of a DURABLE paused run: terminalize the
+                # queue ticket too (paused tickets are retention-exempt and
+                # would otherwise say paused forever). CAS no-op for runs
+                # that never rode the queue or whose continuation is owned
+                # by a worker.
+                await asettle_paused_ticket(queue_worker, run_id, _final)
     except (InputCheckError, OutputCheckError) as e:
         error_response = RunErrorEvent(
             content=str(e),
@@ -364,7 +404,16 @@ async def _resume_stream_generator(
     2. Run completed (in buffer): replay all events since last_event_index
     3. Not in buffer: fall back to database replay
     """
-    buffer_status = event_buffer.get_run_status(run_id)
+    event_stream = get_event_stream()
+    try:
+        buffer_status = await event_stream.get_run_status(run_id)
+    except Exception as e:
+        # Network-backed streams can fail here; headers are already sent, so
+        # the only honest signal is an SSE error frame (never a silent close,
+        # and never a quiet fall-through to the DB path)
+        log_error(f"Resume: event stream status probe failed for run {run_id}: {e}")
+        yield f'event: error\ndata: {{"event": "error", "error": "event stream unavailable: {str(e)[:200]}"}}\n\n'
+        return
 
     if buffer_status is None:
         # PATH 3: Not in buffer -- fall back to database
@@ -376,28 +425,18 @@ async def _resume_stream_generator(
                 yield f"event: error\ndata: {json.dumps(error)}\n\n"
                 return
             if run_output and run_output.events:
-                meta: dict = {
-                    "event": "replay",
-                    "run_id": run_id,
-                    "status": run_output.status.value if run_output.status else "unknown",
-                    "total_events": len(run_output.events),
-                    "message": "Run completed. Replaying all events from database.",
-                }
-                yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
+                from agno.os.utils import stored_event_replay_frames
 
-                for idx, event in enumerate(run_output.events):
-                    event_dict = event.to_dict()
-                    event_dict["event_index"] = idx
-                    if "run_id" not in event_dict:
-                        event_dict["run_id"] = run_id
-                    event_type = event_dict.get("event", "message")
-                    yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+                for frame in stored_event_replay_frames(run_output, run_id, last_event_index):
+                    yield frame
                 return
             elif run_output:
                 meta = {
                     "event": "replay",
                     "run_id": run_id,
-                    "status": run_output.status.value if run_output.status else "unknown",
+                    "status": run_output.status.value
+                    if hasattr(run_output.status, "value")
+                    else (run_output.status or "unknown"),
                     "total_events": 0,
                     "message": "Run completed but no events stored.",
                 }
@@ -410,9 +449,9 @@ async def _resume_stream_generator(
         return
 
     if buffer_status in (RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused):
-        # PATH 2: Run finished -- replay missed events from buffer
-        total_buffered = event_buffer.get_event_count(run_id)
-        missed_events = event_buffer.get_events(run_id, last_event_index=last_event_index)
+        # PATH 2: Run finished -- replay missed events from the event stream
+        total_buffered = await event_stream.get_event_count(run_id)
+        missed_events = await event_stream.replay(run_id, last_event_index=last_event_index)
         log_debug(
             f"Resume PATH 2: run_id={run_id}, status={buffer_status.value}, "
             f"last_event_index={last_event_index}, total_buffered={total_buffered}, "
@@ -430,108 +469,87 @@ async def _resume_stream_generator(
         }
         yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
 
-        for ev_index, buffered_event in missed_events:
-            event_dict = buffered_event.to_dict()
-            event_dict["event_index"] = ev_index
-            if "run_id" not in event_dict:
-                event_dict["run_id"] = run_id
-            event_type = event_dict.get("event", "message")
-            yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+        for ev_index, payload in missed_events:
+            yield replayed_payload_to_sse(payload, ev_index, run_id)
         return
 
-    # PATH 1: Run still active -- subscribe FIRST (to avoid race condition), then replay missed events
-    queue = sse_subscriber_manager.subscribe(run_id)
+    # PATH 1: Run still active (RUNNING, or PENDING while queued for a
+    # concurrency slot) -- replay missed events, then tail live events. The
+    # event stream's tail() owns the replay/subscribe race, dedup by
+    # event_index, and terminal detection (including a producer that died
+    # without writing a sentinel).
+    missed_events = await event_stream.replay(run_id, last_event_index=last_event_index)
+    current_count = await event_stream.get_event_count(run_id)
 
-    try:
-        missed_events = event_buffer.get_events(run_id, last_event_index)
-        current_count = event_buffer.get_event_count(run_id)
+    last_replayed_index = last_event_index if last_event_index is not None else -1
 
-        # Track the highest replayed event_index for dedup against queue events
-        last_replayed_index = last_event_index if last_event_index is not None else -1
-
-        if missed_events:
-            meta = {
-                "event": "catch_up",
-                "run_id": run_id,
-                "status": "running",
-                "missed_events": len(missed_events),
-                "current_event_count": current_count,
-                "message": f"Catching up on {len(missed_events)} missed events.",
-            }
-            yield f"event: catch_up\ndata: {json.dumps(meta)}\n\n"
-
-            for ev_index, buffered_event in missed_events:
-                event_dict = buffered_event.to_dict()
-                event_dict["event_index"] = ev_index
-                if "run_id" not in event_dict:
-                    event_dict["run_id"] = run_id
-                event_type = event_dict.get("event", "message")
-                yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
-                last_replayed_index = ev_index
-
-        # Re-check buffer status after subscribing: the run may have completed
-        # between our initial status check and now. If so, replay remaining events
-        # from buffer instead of waiting on the queue (the sentinel was already pushed
-        # before our subscription existed).
-        updated_status = event_buffer.get_run_status(run_id)
-        if updated_status is not None and updated_status != RunStatus.running:
-            # Run completed while we were catching up -- replay remaining from buffer
-            remaining = event_buffer.get_events(run_id, last_event_index=last_replayed_index)
-            if remaining:
-                for ev_index, buffered_event in remaining:
-                    event_dict = buffered_event.to_dict()
-                    event_dict["event_index"] = ev_index
-                    if "run_id" not in event_dict:
-                        event_dict["run_id"] = run_id
-                    event_type = event_dict.get("event", "message")
-                    yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
-            return
-
-        # Confirm subscription for live events
-        subscribed = {
-            "event": "subscribed",
+    if missed_events:
+        meta = {
+            "event": "catch_up",
             "run_id": run_id,
             "status": "running",
+            "missed_events": len(missed_events),
             "current_event_count": current_count,
-            "message": "Subscribed to agent run. Receiving live events.",
+            "message": f"Catching up on {len(missed_events)} missed events.",
         }
-        yield f"event: subscribed\ndata: {json.dumps(subscribed)}\n\n"
+        yield f"event: catch_up\ndata: {json.dumps(meta)}\n\n"
 
-        log_debug(f"SSE client subscribed to agent run {run_id} (last_event_index: {last_event_index})")
+        for ev_index, payload in missed_events:
+            yield replayed_payload_to_sse(payload, ev_index, run_id)
+            last_replayed_index = max(last_replayed_index, ev_index)
 
-        # Read from queue, dedup events already replayed by event_index
+    # Confirm subscription for live events
+    subscribed = {
+        "event": "subscribed",
+        "run_id": run_id,
+        "status": "running",
+        "current_event_count": current_count,
+        "message": "Subscribed to agent run. Receiving live events.",
+    }
+    yield f"event: subscribed\ndata: {json.dumps(subscribed)}\n\n"
+
+    log_debug(f"SSE client subscribed to agent run {run_id} (last_event_index: {last_event_index})")
+
+    # Pump the tail through a queue so we can heartbeat on idle without
+    # cancelling the tail generator (cancelling its __anext__ would kill it).
+    tail_queue: asyncio.Queue = asyncio.Queue()
+
+    async def _pump_tail() -> None:
+        try:
+            async for tail_item in event_stream.tail(run_id, last_event_index=last_replayed_index):
+                await tail_queue.put(tail_item)
+        except Exception as e:
+            # A tail that DIES must not look like a tail that FINISHED: emit an
+            # error frame so the client can distinguish and reconnect
+            log_error(f"Resume tail failed for run {run_id}: {e}")
+            with contextlib.suppress(Exception):
+                await tail_queue.put(
+                    (-1, f'event: error\ndata: {{"event": "error", "error": "stream tail failed: {str(e)[:200]}"}}\n\n')
+                )
+        finally:
+            await tail_queue.put(None)
+
+    pump_task = asyncio.create_task(_pump_tail())
+    try:
         while True:
             try:
-                item = await asyncio.wait_for(queue.get(), timeout=30.0)
+                item = await asyncio.wait_for(tail_queue.get(), timeout=30.0)
             except asyncio.TimeoutError:
-                # Check if run ended without sending sentinel
-                status = event_buffer.get_run_status(run_id)
-                if status is None or status != RunStatus.running:
-                    # Run ended - replay any remaining events from buffer
-                    remaining = event_buffer.get_events(run_id, last_event_index=last_replayed_index)
-                    for ev_index, buffered_event in remaining:
-                        event_dict = buffered_event.to_dict()
-                        event_dict["event_index"] = ev_index
-                        if "run_id" not in event_dict:
-                            event_dict["run_id"] = run_id
-                        event_type = event_dict.get("event", "message")
-                        yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
-                    break
-                # Still running - send heartbeat to keep connection alive
+                # Tail is idle (queued or silent run) - keep the connection alive
                 yield ": heartbeat\n\n"
                 continue
             if item is None:
-                # Sentinel: run completed
+                # Tail finished: run reached a terminal state
                 break
-            ev_idx, sse_data = item
-            # Dedup: skip events already replayed during catch-up
-            if ev_idx >= 0 and ev_idx <= last_replayed_index:
-                continue
-            if ev_idx >= 0:
-                last_replayed_index = ev_idx
+            _ev_index, sse_data = item
             yield sse_data
     finally:
-        sse_subscriber_manager.unsubscribe(run_id, queue)
+        pump_task.cancel()
+        # Suppress everything, not just CancelledError: an exception re-raised
+        # here reaches the ASGI layer on a response whose headers are already
+        # sent (the pump has already surfaced it as an error frame)
+        with contextlib.suppress(BaseException):
+            await pump_task
 
 
 def get_agent_router(
@@ -734,6 +752,100 @@ def get_agent_router(
                 raise HTTPException(status_code=400, detail="Background execution is not supported for remote agents")
 
             if stream:
+                # Durable queued streaming: the queue row is the acceptance,
+                # execution happens on whichever worker claims it, and this
+                # response tails the event stream. Durability attaches to the
+                # RUN (complete output guaranteed via the run row); the live
+                # stream is the best-effort view.
+                queue_worker = getattr(request.app.state, "queue_worker", None)
+                queued_stream_payload = {"input": message, "kwargs": kwargs, "stream": True}
+                stream_queueable = (
+                    queue_worker is not None
+                    and getattr(agent, "db", None) is not None
+                    and payload_is_queueable(queued_stream_payload)
+                    and not isinstance(agent, RemoteAgent)
+                    and version is None
+                    and not (base64_images or base64_audios or base64_videos or input_files)
+                    and any(
+                        getattr(candidate, "id", None) == agent_id and not isinstance(candidate, AgentFactory)
+                        for candidate in (os.agents or [])
+                    )
+                )
+                if stream_queueable:
+                    # 202/stream-accept must honor input_schema like the inline path
+                    validate_seam_input(agent, message)
+                    assert queue_worker is not None  # narrowed by stream_queueable
+                    from agno.os.event_streams import get_event_stream as _ges
+                    from agno.run.base import RunStatus as _RS
+
+                    queued_run_id = str(uuid4())
+                    queued_session_id = session_id or str(uuid4())
+                    job = QueuedJob(
+                        id=queued_run_id,
+                        component_type="agent",
+                        component_id=getattr(agent, "id", None) or agent_id,
+                        session_id=queued_session_id,
+                        user_id=user_id,
+                        payload=queued_stream_payload,
+                        max_attempts=queue_worker.config.max_attempts,
+                        deployment_id=queue_worker.config.deployment_id,
+                        idempotency_key=normalize_idempotency_key(request.headers.get("idempotency-key")),
+                    ).to_dict()
+                    enqueue_result = await queue_worker.store.enqueue_job(
+                        job, max_depth=queue_worker.config.max_queue_depth
+                    )
+                    if enqueue_result["reason"] == "queue_full":
+                        raise HTTPException(status_code=429, detail="Job queue is full")
+                    if enqueue_result["reason"] == "duplicate":
+                        existing = enqueue_result["job"]
+                        if existing is None:
+                            raise HTTPException(
+                                status_code=409,
+                                detail="Idempotency-Key was already used but the original run could not be retrieved",
+                            )
+                        if not (existing.get("payload") or {}).get("stream"):
+                            # The key was used by a NON-stream submission: its
+                            # run never registers in the event stream, so a
+                            # tail would close instantly and silently. Refuse
+                            # honestly instead.
+                            raise HTTPException(
+                                status_code=409,
+                                detail="Idempotency-Key was used by a non-streaming submission; "
+                                f"poll run {existing['id']} instead of attaching a stream",
+                            )
+                        # Attach to the ORIGINAL run's stream. A terminal
+                        # original (or one whose stream keys already expired)
+                        # gets the full resume path - buffer or DB replay -
+                        # instead of a blind tail that would close silently
+                        # with zero events.
+                        if existing.get("status") in ("queued", "running"):
+                            return StreamingResponse(
+                                queued_run_tail_streamer(existing["id"]), media_type="text/event-stream"
+                            )
+                        return StreamingResponse(
+                            _resume_stream_generator(
+                                cast(Union[Agent, RemoteAgent], agent),
+                                existing["id"],
+                                None,
+                                existing.get("session_id"),
+                                user_id,
+                            ),
+                            media_type="text/event-stream",
+                        )
+                    with contextlib.suppress(Exception):
+                        # Fail-open: the queue row is already committed - a Redis blip
+                        # must not 500 an accepted submission (tails degrade gracefully)
+                        await _ges().register_run(queued_run_id, _RS.pending)
+                    await aprepare_accepted_or_abort(
+                        queue_worker, agent, "agent", queued_run_id, queued_session_id, user_id, message
+                    )
+                    return StreamingResponse(queued_run_tail_streamer(queued_run_id), media_type="text/event-stream")
+                if queue_worker is not None:
+                    log_warning(
+                        "Streaming background run bypasses the durable queue (remote/factory/"
+                        "version-pinned/media submissions are not queueable): bounded and "
+                        "observable, but NOT durable."
+                    )
                 # background=True, stream=True: resumable SSE streaming
                 # Agent runs in a detached asyncio.Task that survives client disconnections.
                 # Events are buffered for reconnection via /resume endpoint.
@@ -758,6 +870,99 @@ def get_agent_router(
             if not getattr(agent, "db", None):
                 raise HTTPException(
                     status_code=400, detail="Background execution requires a database to be configured on the agent"
+                )
+
+            # Durable queue path: acceptance is a committed row; whichever
+            # replica's worker claims the job executes it, surviving crashes
+            # and deploys. Client contract identical: 202 + poll.
+            queue_worker = getattr(request.app.state, "queue_worker", None)
+            # Queueable only if the agent is a plain registry instance: the
+            # worker resolves from the registry, so factory-backed or
+            # off-registry (db-resolved / version-pinned) components would be
+            # accepted here and then fail or run differently in the worker.
+            agent_is_queueable = any(
+                getattr(candidate, "id", None) == agent_id and not isinstance(candidate, AgentFactory)
+                for candidate in (os.agents or [])
+            )
+            queued_payload = {"input": message, "kwargs": kwargs}
+            if (
+                queue_worker is not None
+                and not isinstance(agent, RemoteAgent)
+                and agent_is_queueable
+                and version is None  # version-pinned resolution differs from the worker's registry instance
+                and payload_is_queueable(queued_payload)
+                # Media cannot ride the queue payload yet: fall back to the
+                # bounded in-process path (parity with the stream seam) rather
+                # than 400ing a submission that worked before durable mode
+                and not (base64_images or base64_audios or base64_videos or input_files)
+            ):
+                # 202 must honor input_schema exactly like the inline path 422s
+                validate_seam_input(agent, message)
+                queued_run_id = str(uuid4())
+                queued_session_id = session_id or str(uuid4())
+                job = QueuedJob(
+                    id=queued_run_id,
+                    component_type="agent",
+                    component_id=getattr(agent, "id", None) or agent_id,
+                    session_id=queued_session_id,
+                    user_id=user_id,
+                    payload=queued_payload,
+                    max_attempts=queue_worker.config.max_attempts,
+                    deployment_id=queue_worker.config.deployment_id,
+                    idempotency_key=normalize_idempotency_key(request.headers.get("idempotency-key")),
+                ).to_dict()
+
+                # Enqueue FIRST: the committed queue row is the acceptance.
+                # Rejected or duplicate submissions must leave no phantom
+                # PENDING run behind in the session.
+                enqueue_result = await queue_worker.store.enqueue_job(
+                    job, max_depth=queue_worker.config.max_queue_depth
+                )
+                if enqueue_result["reason"] == "queue_full":
+                    raise HTTPException(status_code=429, detail="Job queue is full")
+                if enqueue_result["reason"] == "duplicate" and enqueue_result["job"] is not None:
+                    existing = enqueue_result["job"]
+                    return JSONResponse(
+                        status_code=202,
+                        content={
+                            "run_id": existing["id"],
+                            "session_id": existing["session_id"],
+                            "status": "PENDING"
+                            if existing["status"] in ("queued", "running")
+                            else existing["status"].upper(),
+                        },
+                    )
+                if enqueue_result["reason"] == "duplicate":
+                    # Duplicate but the original row could not be retrieved:
+                    # NEVER fall through to a 202 for a run that was not
+                    # enqueued - that acceptance would be a lie
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Idempotency-Key was already used but the original run could not be retrieved",
+                    )
+                # Accepted: persist the PENDING run row so pollers find it.
+                # Idempotent - a worker that already claimed the job wins.
+                await aprepare_accepted_or_abort(
+                    queue_worker, agent, "agent", queued_run_id, queued_session_id, user_id, message
+                )
+                return JSONResponse(
+                    status_code=202,
+                    content={"run_id": queued_run_id, "session_id": queued_session_id, "status": "PENDING"},
+                )
+            elif queue_worker is not None and (
+                not payload_is_queueable(queued_payload)
+                or base64_images
+                or base64_audios
+                or base64_videos
+                or input_files
+            ):
+                # Media-only bypasses were silent: the payload is JSON-clean
+                # but uploads cannot ride the queue yet, and the run silently
+                # lost durability. Same warning either way.
+                log_warning(
+                    "Background run bypasses the durable queue: the submission carries media "
+                    "uploads or values plain JSON cannot store (e.g. output_schema classes). "
+                    "Executing on the accepting replica instead - bounded and observable, but NOT durable."
                 )
 
             run_response = cast(
@@ -876,6 +1081,11 @@ def get_agent_router(
                     component_id=agent_id,
                 )
 
+            # Tombstone a still-queued durable ticket first: intent alone
+            # does not stop a job no task is executing yet
+            queue_worker = getattr(request.app.state, "queue_worker", None)
+            if queue_worker is not None:
+                await queue_worker.acancel_queued(run_id)
             await acancel_run(run_id)
             return JSONResponse(content={}, status_code=200)
 
@@ -906,6 +1116,11 @@ def get_agent_router(
                 component_id=agent_id,
             )
 
+        # Tombstone a still-queued durable ticket first: intent alone does not
+        # stop a job no task is executing yet
+        queue_worker = getattr(request.app.state, "queue_worker", None)
+        if queue_worker is not None:
+            await queue_worker.acancel_queued(run_id)
         # cancel_run always stores cancellation intent (even for not-yet-registered runs
         # in cancel-before-start scenarios), so we always return success.
         await agent.acancel_run(run_id=run_id)  # type: ignore[union-attr]
@@ -1142,6 +1357,101 @@ def get_agent_router(
                 detail="Invalid continue_from. Use 'end', 'last_user', or a numeric message index.",
             )
 
+        if background:
+            # Durable continue: CAS the run's EXISTING paused ticket back to
+            # queued (same row, same run_id) so the continuation leg survives
+            # crashes and executes on whichever worker claims it. Scope: plain
+            # paused-HITL continues only - fork/regenerate mint a NEW run_id
+            # inside acontinue_run (unknowable at 202 time) and runs that
+            # never rode the queue have no ticket to transition; both keep
+            # the detached path below.
+            queue_worker = getattr(request.app.state, "queue_worker", None)
+            continue_payload = {
+                "updated_tools": tools_data,
+                "input": input,
+                "continue_from": continue_from_value,
+                "kwargs": kwargs,
+            }
+            agent_is_queueable = any(
+                getattr(candidate, "id", None) == agent_id and not isinstance(candidate, AgentFactory)
+                for candidate in (os.agents or [])
+            )
+            if (
+                queue_worker is not None
+                and not isinstance(agent, RemoteAgent)
+                and agent_is_queueable
+                and not fork
+                and not regenerate
+                and payload_is_queueable(continue_payload)
+            ):
+                run_row = await agent.aget_run_output(run_id, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
+                if run_row is not None and getattr(run_row, "status", None) == RunStatus.paused:
+                    continue_outcome = await acontinue_via_queue(
+                        queue_worker,
+                        run_id,
+                        continue_payload,
+                        stream_requested=stream,
+                        component_type="agent",
+                        component_id=getattr(agent, "id", None) or agent_id,
+                    )
+                    if continue_outcome is not None:
+                        outcome, ticket = continue_outcome["outcome"], continue_outcome.get("job")
+                        if outcome == "stream_mismatch":
+                            # Pre-CAS refusal: nothing was accepted behind
+                            # this 409 (submit-seam duplicate parity)
+                            raise HTTPException(
+                                status_code=409,
+                                detail="Run was submitted non-streaming; "
+                                f"poll run {run_id} instead of attaching a stream",
+                            )
+                        if outcome == "settling":
+                            raise HTTPException(
+                                status_code=409,
+                                detail="Run is settling between execution legs; retry in a moment",
+                                headers={"Retry-After": "1"},
+                            )
+                        if outcome == "conflict":
+                            ticket_status = (ticket or {}).get("status", "unknown")
+                            raise HTTPException(
+                                status_code=409,
+                                detail=f"Run is not continuable (ticket status: {ticket_status})",
+                            )
+                        # queued (accepted) or attach (double-click): same
+                        # response shape as the submit seam
+                        if stream:
+                            # Tail from the PRE-ACCEPT index (captured by the
+                            # helper before the CAS): the continue response
+                            # carries post-approval events only, exactly like
+                            # the detached continue streamer; earlier history
+                            # belongs to /resume
+                            return StreamingResponse(
+                                queued_run_tail_streamer(run_id, from_index=continue_outcome.get("tail_from")),
+                                media_type="text/event-stream",
+                            )
+                        return JSONResponse(
+                            status_code=202,
+                            content={"run_id": run_id, "session_id": session_id, "status": "PENDING"},
+                        )
+                    log_warning(
+                        "Background continue bypasses the durable queue (no paused ticket for "
+                        "this run): executing on the accepting replica instead - bounded and "
+                        "observable, but NOT durable."
+                    )
+
+        if not fork and not regenerate:
+            # Inline-door admission gate: a paused/queued/running durable
+            # ticket OWNS this run's continuation - every non-queue door
+            # (inline sync, inline SSE, detached-resumable fallback) must
+            # refuse, or the cross-door double-execution race reopens.
+            # fork/regenerate are exempt: they mint a NEW run and never
+            # touch the ticket. 409/503 raise from the helper.
+            await araise_if_ticket_owns_continue(
+                getattr(request.app.state, "queue_worker", None),
+                run_id,
+                component_type="agent",
+                component_id=getattr(agent, "id", None) or agent_id,
+            )
+
         if stream and background:
             # background=True, stream=True: resumable SSE streaming
             # Continue-run runs in a detached asyncio.Task that survives client disconnections.
@@ -1185,11 +1495,31 @@ def get_agent_router(
                     user_id=user_id,
                     background_tasks=background_tasks,
                     auth_token=auth_token,
+                    queue_worker=getattr(request.app.state, "queue_worker", None),
                     **kwargs,
                 ),
                 media_type="text/event-stream",
             )
         else:
+            if background:
+                # background=true + stream=false reached the NON-durable path
+                # (no paused ticket - or fork/regenerate/remote/factory).
+                # Pre-queue clients rely on this exact fallthrough (the
+                # background form param predates the durable queue, and its
+                # non-stream branch always ran inline), so it stays for
+                # back-compat: the continuation executes INLINE-BLOCKING on
+                # this replica and the response returns when the leg
+                # finishes. That is not real background semantics - it does
+                # not survive client disconnect - hence the warning; a
+                # durable queue (QueueConfig(durable=True)) is the real
+                # background door. Workflows differ deliberately: their
+                # continue endpoint never had the param, so the durable door
+                # is its only contract there and refuses instead.
+                log_warning(
+                    f"background=true continue for run {run_id} has no durable ticket: executing "
+                    "INLINE-BLOCKING on this replica (legacy behavior; does not survive client "
+                    "disconnect). Enable QueueConfig(durable=True) for durable background continuation."
+                )
             # Build extra kwargs for remote agent auth
             extra_kwargs: dict = {}
             if auth_token and isinstance(agent, RemoteAgent):
@@ -1216,6 +1546,28 @@ def get_agent_router(
                         **kwargs,
                     ),
                 )
+                # Status-only stream sync (deliberate scope): a non-stream
+                # continue has no events to publish, but a formerly-queued/
+                # streamed run's stream view must stop saying PAUSED once the
+                # continue settles - only_if_tracked leaves never-streamed
+                # runs alone. Skipped for remote agents and fork/regenerate
+                # (they mint a NEW run_id).
+                if not isinstance(agent, RemoteAgent) and not fork and not regenerate:
+                    await acomplete_continue_stream(
+                        agent,
+                        run_id,
+                        session_id,
+                        only_if_tracked=True,
+                        final_status=getattr(run_response_obj, "status", None),
+                    )
+                    # Inline continue of a DURABLE paused run: terminalize
+                    # the queue ticket too (paused is retention-exempt; the
+                    # CAS no-ops for never-queued or worker-owned runs)
+                    await asettle_paused_ticket(
+                        getattr(request.app.state, "queue_worker", None),
+                        run_id,
+                        getattr(run_response_obj, "status", None),
+                    )
                 return run_response_obj.to_dict()
 
             except RunNotFoundError as e:
@@ -1504,11 +1856,25 @@ def get_agent_router(
         if hasattr(agent, "aget_session"):
             session = await agent.aget_session(session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
             if session is None:
+                # The acceptance is the committed ticket; the run row (and on
+                # a fresh session, the session row) lands a beat later. A 404
+                # inside that beat reports an accepted run as nonexistent -
+                # answer from the ticket instead, tenant-checked, fail-closed.
+                ticket_view = await aticket_poll_fallback(
+                    getattr(request.app.state, "queue_worker", None), run_id, session_id, "agent", agent_id, user_id
+                )
+                if ticket_view is not None:
+                    return ticket_view
                 raise HTTPException(status_code=404, detail="Run not found")
             assert_session_matches_component(session, "agents", agent_id, not_found_detail="Run not found")
 
         run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
         if run_output is None:
+            ticket_view = await aticket_poll_fallback(
+                getattr(request.app.state, "queue_worker", None), run_id, session_id, "agent", agent_id, user_id
+            )
+            if ticket_view is not None:
+                return ticket_view
             raise HTTPException(status_code=404, detail="Run not found")
 
         # Per-resource RBAC: the run must explicitly belong to the path agent.

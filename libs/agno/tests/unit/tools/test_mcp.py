@@ -1431,6 +1431,97 @@ async def test_mcp_tool_with_run_context_argument_does_not_collide():
 
 
 # =============================================================================
+# tool_name pinning tests (security)
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_model_supplied_tool_name_cannot_override_executed_tool():
+    """A model-supplied tool_name argument must not change which tool the MCP
+    server executes: the entrypoint is pinned to the tool it was built for."""
+    tool = _make_mcp_tool_mock("list_issues")
+    session = _make_session_returning("issues listed")
+
+    entrypoint = get_entrypoint_for_tool(tool, session)
+    await entrypoint(tool_name="delete_repo", repo="agno")
+
+    session.call_tool.assert_awaited_once()
+    called_name, called_kwargs = session.call_tool.await_args.args
+    assert called_name == "list_issues"
+
+
+@pytest.mark.asyncio
+async def test_model_supplied_tool_name_is_forwarded_as_plain_argument():
+    """tool_name has no special meaning to the entrypoint: it is forwarded to
+    the server as an ordinary argument of the declared tool, so MCP tools that
+    legitimately declare a tool_name parameter keep working."""
+    tool = _make_mcp_tool_mock("call_helper")
+    session = _make_session_returning("done")
+
+    entrypoint = get_entrypoint_for_tool(tool, session)
+    await entrypoint(tool_name="format_disk")
+
+    called_name, called_kwargs = session.call_tool.await_args.args
+    assert called_name == "call_helper"
+    assert called_kwargs == {"tool_name": "format_disk"}
+
+
+@pytest.mark.asyncio
+async def test_function_call_arguments_cannot_override_executed_tool():
+    """FunctionCall.aexecute merges model arguments into the entrypoint call;
+    a smuggled tool_name must not change the executed tool on that path."""
+    tool = _make_mcp_tool_mock("list_issues")
+    session = _make_session_returning("issues listed")
+
+    fn = Function(
+        name="list_issues",
+        entrypoint=get_entrypoint_for_tool(tool, session),
+        skip_entrypoint_processing=True,
+    )
+    fc = FunctionCall(function=fn, arguments={"tool_name": "delete_repo", "repo": "agno"})
+
+    result = await fc.aexecute()
+
+    assert result.status == "success", f"Expected success, got error: {result.error}"
+    session.call_tool.assert_awaited_once()
+    called_name, called_kwargs = session.call_tool.await_args.args
+    assert called_name == "list_issues"
+    assert called_kwargs == {"tool_name": "delete_repo", "repo": "agno"}
+
+
+@pytest.mark.asyncio
+async def test_hitl_confirmation_gates_the_tool_that_executes():
+    """requires_confirmation resolves from the Function's declared name, so the
+    tool that executes must be that same name: calling an ungated tool with a
+    smuggled tool_name must not reach the confirmation-gated tool."""
+    session = _make_session_returning("ok")
+
+    gated_fn = Function(
+        name="delete_repo",
+        entrypoint=get_entrypoint_for_tool(_make_mcp_tool_mock("delete_repo"), session),
+        skip_entrypoint_processing=True,
+        requires_confirmation=True,
+    )
+    ungated_fn = Function(
+        name="list_issues",
+        entrypoint=get_entrypoint_for_tool(_make_mcp_tool_mock("list_issues"), session),
+        skip_entrypoint_processing=True,
+        requires_confirmation=False,
+    )
+
+    # The model calls the unconfirmed tool but smuggles tool_name="delete_repo"
+    fc = FunctionCall(function=ungated_fn, arguments={"tool_name": "delete_repo"})
+    result = await fc.aexecute()
+
+    assert result.status == "success", f"Expected success, got error: {result.error}"
+    # Only the declared, unconfirmed tool reached the server; the gated tool
+    # can only execute through its own Function, which pauses for confirmation.
+    executed_names = [call.args[0] for call in session.call_tool.await_args_list]
+    assert executed_names == ["list_issues"]
+    assert gated_fn.requires_confirmation is True
+
+
+# =============================================================================
 # CancelledError propagation tests
 # =============================================================================
 

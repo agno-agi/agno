@@ -740,6 +740,11 @@ class WorkflowRunOutput:
     created_at: int = field(default_factory=lambda: int(time()))
 
     status: RunStatus = RunStatus.pending
+    # Queue-attempt generation stamp: set by the queue worker when attempt N
+    # claims this run. Terminal writes carry their attempt and are fenced
+    # against a NEWER stored value, so a presumed-dead attempt's late write
+    # cannot clobber its successor. None outside durable-queue execution.
+    queue_attempt: Optional[int] = None
 
     # Unified HITL requirements to continue a paused workflow
     # Handles all HITL types: confirmation, user input, and route selection
