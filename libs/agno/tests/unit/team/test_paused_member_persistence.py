@@ -9,7 +9,7 @@ session reload.
 """
 
 import json
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -18,6 +18,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.exceptions import RunNotContinuableError
 from agno.models.base import Model
+from agno.models.message import Message
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -3205,9 +3206,8 @@ def test_user_feedback_selections_reach_the_stored_tool_execution():
 
 
 def test_user_feedback_answer_for_an_unknown_question_is_ignored():
-    from agno.tools.function import UserFeedbackQuestion
-
     from agno.team._run import _merge_requirement_decision
+    from agno.tools.function import UserFeedbackQuestion
 
     stored = _feedback_requirement()
     wire = RunRequirement.from_dict(stored.to_dict())
@@ -3284,3 +3284,646 @@ def test_restoring_decisions_undoes_the_whole_merge():
 
     assert [r.to_dict() for r in stored] == before, "the snapshot must cover every field the merge writes"
     assert not any(r.is_resolved() for r in stored)
+
+
+# ---------------------------------------------------------------------------
+# Round 10: conflicting identities, prefilled input, merge rollback, retry
+# member phase, storage owning path
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Round 10.1: continue-payload binding when a payload requirement's identity
+# conflicts with the stored requirements.
+#
+# Defect: in _backfill_approval_to_requirements, a payload entry whose
+# requirement id matches stored requirement A but whose tool_call_id belongs
+# to a DIFFERENT stored requirement B silently drops the id match
+# ("cross-check failed") and falls through to the tool_call_id fallback,
+# binding the entry to B. The client's confirmation then executes B's tool
+# even though the entry named A. A conflicting identity must refuse the
+# continue instead; the tool_call_id fallback exists only for entries whose id
+# matches no stored requirement at all (RunRequirement auto-generates ids, so
+# unknown ids are a normal wire condition).
+# ---------------------------------------------------------------------------
+
+
+def _stored_confirmation_requirements() -> List[RunRequirement]:
+    req_a = RunRequirement(
+        tool_execution=_make_tool_execution(tool_name="send_email", tool_call_id="tc-a", requires_confirmation=True),
+        id="req-a",
+    )
+    req_b = RunRequirement(
+        tool_execution=_make_tool_execution(
+            tool_name="delete_records", tool_call_id="tc-b", requires_confirmation=True
+        ),
+        id="req-b",
+    )
+    return [req_a, req_b]
+
+
+def _run_with(stored: List[RunRequirement]) -> TeamRunOutput:
+    return TeamRunOutput(
+        run_id="run-1",
+        session_id="session-1",
+        requirements=stored,
+        tools=[r.tool_execution for r in stored],
+    )
+
+
+def test_conflicting_requirement_identity_refuses_the_continue():
+    """Pins the fix for the cross-check fallthrough: a payload entry carrying
+    stored requirement A's id but stored requirement B's tool_call_id must
+    raise RunNotContinuableError and leave the run paused and unchanged. At
+    the defective head the id match is silently discarded and the tool_call_id
+    fallback binds the entry to B, so B's tool executes with a confirmation
+    the client gave under A's identity."""
+    from agno.team._run import _apply_requirements_payload
+
+    stored = _stored_confirmation_requirements()
+    run_response = _run_with(stored)
+
+    conflicting = RunRequirement(
+        tool_execution=_make_tool_execution(
+            tool_name="delete_records", tool_call_id="tc-b", requires_confirmation=True
+        ),
+        id="req-a",  # stored A's identity over stored B's tool call
+    )
+    conflicting.confirm()
+
+    with pytest.raises(RunNotContinuableError):
+        _apply_requirements_payload(run_response, [conflicting])
+
+    # The refusal left the run paused and untouched: B never received the
+    # confirmation that was addressed to A, and the stored requirements are
+    # still the ones routing sees.
+    assert stored[1].confirmation is None
+    assert stored[1].tool_execution.confirmed is None
+    assert run_response.requirements == stored
+
+
+def test_unknown_requirement_id_still_binds_by_unique_tool_call_id():
+    """Pins behavior that must SURVIVE the conflicting-identity fix: an entry
+    whose id matches no stored requirement (RunRequirement auto-generates a
+    fresh id for every wire object, so unknown ids are normal) binds via the
+    tool_call_id fallback when exactly one stored requirement carries that
+    tool_call_id. This test passes at the defective head too; it guards the
+    fix against over-tightening the fallback."""
+    from agno.team._run import _apply_requirements_payload
+
+    stored = _stored_confirmation_requirements()
+    run_response = _run_with(stored)
+
+    wire = RunRequirement(  # auto-generated id, unknown to the stored run
+        tool_execution=_make_tool_execution(
+            tool_name="delete_records", tool_call_id="tc-b", requires_confirmation=True
+        ),
+    )
+    assert wire.id not in {r.id for r in stored}
+    wire.confirm()
+
+    _apply_requirements_payload(run_response, [wire])
+
+    # The fallback bound the entry to the STORED requirement object and merged
+    # only the decision onto it.
+    assert run_response.requirements is not None
+    assert run_response.requirements[0] is stored[1]
+    assert stored[1].confirmation is True
+    assert stored[1].tool_execution.confirmed is True
+
+
+# ---------------------------------------------------------------------------
+# Round 10.2: prefilled user-input pauses that could never resume.
+#
+# A requires_user_input tool can pause with EVERY canonical field already
+# populated by model-supplied arguments — the pause exists so the user can
+# review and accept them. _merge_requirement_decision computed
+# input_was_open/feedback_was_open from the stored schema before merging, so a
+# fully prefilled schema left both False, and the wire answered flag was
+# copied only when the stored requirement carried NO input schema and NO
+# feedback schema at all. The client's explicit answered=True was therefore
+# dropped, stored answered stayed None, and continuation left the run paused
+# forever.
+#
+# The correct behavior pinned here: when the stored canonical schema is
+# complete (no field open), an explicit wire answered flag is accepted — while
+# schemas are still never rebound and a wire answered=True with an OPEN stored
+# field is still ignored.
+# ---------------------------------------------------------------------------
+
+
+def _prefilled_input_requirement() -> RunRequirement:
+    """A user-input pause whose every field the model prefilled at pause time."""
+    from agno.tools.function import UserInputField
+
+    tool_execution = ToolExecution(
+        tool_name="transfer",
+        tool_args={"account_id": "victim", "note": "monthly rent"},
+        tool_call_id="tc-prefilled",
+        requires_user_input=True,
+        user_input_schema=[
+            UserInputField(name="account_id", field_type=str, value="victim"),
+            UserInputField(name="note", field_type=str, value="monthly rent"),
+        ],
+    )
+    return RunRequirement(tool_execution=tool_execution)
+
+
+def test_wire_answered_flag_resolves_a_fully_prefilled_input_schema():
+    """A fully prefilled schema has no open field for the merge to fill, so the
+    client's explicit answered=True is the only signal that the user accepted
+    the values. The merge dropped it (the wire flag was honored only when the
+    stored requirement had no schema at all), leaving answered=None and the
+    run paused forever."""
+    from agno.team._run import _merge_requirement_decision
+
+    stored = _prefilled_input_requirement()
+    stored_schema = stored.tool_execution.user_input_schema
+    assert stored.tool_execution.answered is None
+
+    wire = RunRequirement.from_dict(stored.to_dict())
+    # The user reviews the prefilled values and accepts them unchanged: every
+    # field already has a value, so the client marks the requirement answered.
+    wire.provide_user_input({})
+    assert wire.tool_execution.answered is True
+
+    _merge_requirement_decision(stored, wire)
+
+    assert stored.tool_execution.answered is True, "an accepted prefilled pause must read as answered"
+    assert stored.is_resolved()
+    # The schema is never rebound and the model-fixed values stand.
+    assert stored.tool_execution.user_input_schema is stored_schema
+    assert [(f.name, f.value) for f in stored_schema] == [("account_id", "victim"), ("note", "monthly rent")]
+
+
+def test_prefilled_input_pause_resolves_through_apply_requirements_payload():
+    """The end-to-end consequence of the dropped flag: a continuation payload
+    (raw dicts, as the wire delivers them) must leave the stored requirement
+    resolved rather than permanently paused."""
+    from agno.team._run import _apply_requirements_payload
+
+    stored = _prefilled_input_requirement()
+    run_response = TeamRunOutput(
+        run_id="run-prefilled",
+        session_id="session-prefilled",
+        requirements=[stored],
+        tools=[stored.tool_execution],
+    )
+
+    wire = RunRequirement.from_dict(stored.to_dict())
+    wire.provide_user_input({})
+    assert wire.tool_execution.answered is True
+    payload = [wire.to_dict()]
+
+    _apply_requirements_payload(run_response, payload)
+
+    assert run_response.requirements is not None
+    assert run_response.requirements[0] is stored, "binding must keep the stored requirement as the routed object"
+    assert stored.tool_execution.answered is True, "the accepted prefilled pause must resolve on continue"
+    assert stored.is_resolved()
+
+
+def test_wire_answered_flag_still_ignored_while_a_field_is_open():
+    """The safeguard the fix must not weaken: answered=True from the wire with
+    a stored field still open would run the gated tool with that field empty,
+    so it must continue to be ignored."""
+    from agno.team._run import _merge_requirement_decision
+    from agno.tools.function import UserInputField
+
+    stored = RunRequirement(
+        tool_execution=ToolExecution(
+            tool_name="transfer",
+            tool_args={"account_id": "victim"},
+            tool_call_id="tc-open",
+            requires_user_input=True,
+            user_input_schema=[
+                UserInputField(name="account_id", field_type=str, value="victim"),
+                UserInputField(name="note", field_type=str),
+            ],
+        )
+    )
+
+    wire = RunRequirement.from_dict(stored.to_dict())
+    wire.tool_execution.answered = True
+
+    _merge_requirement_decision(stored, wire)
+
+    assert stored.tool_execution.answered is None, "an open field must keep the requirement unanswered"
+    assert not stored.is_resolved()
+
+
+# ---------------------------------------------------------------------------
+# Round 10.3: a merge exception inside _apply_requirements_payload must not
+# bank earlier payload entries' decisions.
+#
+# _apply_requirements_payload snapshots the stored requirements' decision
+# state (_snapshot_requirement_decisions) before binding the payload, but its
+# except clause restores only the run object's requirements and tools list
+# references. _merge_requirement_decision can raise on malformed wire data
+# AFTER an earlier payload entry already merged - e.g. a user_feedback answer
+# whose selected_options is not iterable raises TypeError in the option
+# membership check. Without _restore_requirement_decisions in that except, the
+# earlier entry's banked confirmation and the partially written feedback state
+# survive the refusal, so a bare retry of the rejected request would execute
+# tools the caller was told stayed untouched.
+# ---------------------------------------------------------------------------
+
+
+def _stored_confirm_and_feedback_requirements() -> List[RunRequirement]:
+    from agno.tools.function import UserFeedbackOption, UserFeedbackQuestion
+
+    confirm_req = _make_requirement(
+        tool_name="send_email", tool_call_id="tc-confirm", requires_confirmation=True, approval_type="required"
+    )
+    feedback_req = _make_requirement(
+        tool_name="notify",
+        tool_call_id="tc-feedback",
+        user_feedback_schema=[
+            UserFeedbackQuestion(
+                question="Which channel?",
+                options=[UserFeedbackOption(label="email"), UserFeedbackOption(label="sms")],
+            )
+        ],
+    )
+    feedback_req.user_feedback_schema = feedback_req.tool_execution.user_feedback_schema
+    return [confirm_req, feedback_req]
+
+
+def _apply_two_entry_payload_that_raises_mid_merge(stored: List[RunRequirement]) -> TeamRunOutput:
+    """Run the production payload apply with a valid first entry and a second
+    entry whose feedback answer raises inside the merge, and return the run.
+
+    The second entry's selected_options is an int: UserFeedbackQuestion's
+    deserialization keeps it as-is, so the TypeError fires only inside
+    _fill_user_feedback_answers ("option.label in question.selected_options"),
+    after the first entry's confirmation already merged onto its stored
+    requirement.
+    """
+    from agno.team._run import _apply_requirements_payload
+
+    run_response = TeamRunOutput(
+        run_id="run-1",
+        session_id="session-1",
+        requirements=stored,
+        tools=[r.tool_execution for r in stored],
+    )
+    payload = [
+        {"id": stored[0].id, "tool_execution": {"tool_call_id": "tc-confirm"}, "confirmation": True},
+        {
+            "id": stored[1].id,
+            "tool_execution": {
+                "tool_call_id": "tc-feedback",
+                "user_feedback_schema": [{"question": "Which channel?", "selected_options": 5}],
+            },
+        },
+    ]
+
+    with pytest.raises(Exception):
+        _apply_requirements_payload(run_response, payload)
+    return run_response
+
+
+def test_merge_exception_does_not_bank_an_earlier_entrys_confirmation():
+    """Pins: the except in _apply_requirements_payload restores only list
+    references, so the confirmation merged from the first payload entry
+    survives when a later entry's merge raises.
+    """
+    stored = _stored_confirm_and_feedback_requirements()
+
+    _apply_two_entry_payload_that_raises_mid_merge(stored)
+
+    assert stored[0].confirmation is None, (
+        "a refused continue must not bank the first entry's confirmation on the stored requirement"
+    )
+    assert stored[0].tool_execution.confirmed is None, (
+        "a refused continue must not leave the stored tool execution confirmed"
+    )
+    assert not any(r.is_resolved() for r in stored)
+
+
+def test_merge_exception_does_not_leave_partial_feedback_state():
+    """Pins: _fill_user_feedback_answers writes selected_options before the
+    option loop raises on the malformed value, and the except never restores
+    decision fields - the corrupted answer survives the refusal.
+    """
+    stored = _stored_confirm_and_feedback_requirements()
+
+    _apply_two_entry_payload_that_raises_mid_merge(stored)
+
+    question = stored[1].tool_execution.user_feedback_schema[0]
+    assert question.selected_options is None, (
+        "a refused continue must not leave the malformed answer on the stored feedback question"
+    )
+    assert [option.selected for option in question.options] == [False, False]
+
+
+# ---------------------------------------------------------------------------
+# Round 10.4: async continue retries must not falsely complete member-only
+# continuations.
+#
+# Defect: in _acontinue_run and _acontinue_run_stream the whole continue
+# dispatch sits inside the retry loop. On attempt 1 the requirements payload
+# binds (requirements_applied=True), member routing succeeds and consumes the
+# member requirements, and then the leader model call raises a transient
+# (non-ValueError) exception. On attempt 2 member_results is re-initialized to
+# [], the requirements_applied guard skips re-binding, no requirements are
+# left, and every branch is skipped — the run falls through to
+# RunStatus.completed with content=None. The leader is never retried and the
+# member results are lost. The sync _continue_run does not have this defect
+# because its retry loop wraps only the model call.
+#
+# Correct behavior pinned here: after a transient leader-model failure that
+# follows successful member routing, the retry re-runs the leader with the
+# preserved member results and the run completes WITH the leader's content.
+# ---------------------------------------------------------------------------
+
+
+class _FlakyScriptedModel(Model):
+    """Emits scripted turns offline: ('tool', name, args, id), ('content', text),
+    or ('raise', message) which raises RuntimeError — a transient provider
+    failure that the team retry loop is meant to absorb (it is deliberately
+    not a ValueError, InputCheckError or RunCancelledException)."""
+
+    def __init__(self, model_id: str, script: List[tuple]):
+        super().__init__(id=model_id, name=model_id, provider="test")
+        self._script = list(script)
+        self._i = 0
+
+    def _next(self) -> ModelResponse:
+        from agno.metrics import MessageMetrics
+
+        turn = self._script[min(self._i, len(self._script) - 1)]
+        self._i += 1
+        if turn[0] == "raise":
+            raise RuntimeError(turn[1])
+        if turn[0] == "tool":
+            _, name, args, tcid = turn
+            r = ModelResponse(role="assistant")
+            r.tool_calls = [{"id": tcid, "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}]
+        else:
+            r = ModelResponse(content=turn[1], role="assistant")
+            r.event = ModelResponseEvent.assistant_response.value
+        r.response_usage = MessageMetrics(input_tokens=10, output_tokens=5, total_tokens=15)
+        return r
+
+    def invoke(self, *a, **k):
+        return self._next()
+
+    async def ainvoke(self, *a, **k):
+        return self._next()
+
+    def invoke_stream(self, *a, **k) -> Iterator[ModelResponse]:
+        yield self._next()
+
+    async def ainvoke_stream(self, *a, **k) -> AsyncIterator[ModelResponse]:
+        yield self._next()
+
+    def parse_provider_response(self, response: Any, **k) -> ModelResponse:
+        return response if isinstance(response, ModelResponse) else ModelResponse()
+
+    def parse_provider_response_delta(self, response: Any) -> ModelResponse:
+        return response if isinstance(response, ModelResponse) else ModelResponse()
+
+    def _parse_provider_response(self, response: Any, **k) -> ModelResponse:
+        return response if isinstance(response, ModelResponse) else ModelResponse()
+
+    def _parse_provider_response_delta(self, response: Any) -> ModelResponse:
+        return response if isinstance(response, ModelResponse) else ModelResponse()
+
+
+def _flaky_emailer_agent(db: SqliteDb, resuming: bool) -> Agent:
+    script = (
+        [("content", "Email sent.")]
+        if resuming
+        else [("tool", "send_email", {"to": "a@example.com"}, "tc-send"), ("content", "Email sent.")]
+    )
+    return Agent(
+        name="Emailer",
+        id="emailer",
+        model=_FlakyScriptedModel("m-emailer", script),
+        tools=[send_email],
+        db=db,
+        telemetry=False,
+    )
+
+
+def _build_pausing_team(db: SqliteDb) -> Team:
+    """Phase 1: leader delegates, the member's gated tool pauses the run."""
+    return Team(
+        name="Comms Team",
+        id="comms-team",
+        model=_FlakyScriptedModel(
+            "m-leader",
+            [
+                ("tool", "delegate_task_to_member", {"member_id": "emailer", "task": "send it"}, "tc-deleg"),
+                ("content", "All done."),
+            ],
+        ),
+        members=[_flaky_emailer_agent(db, resuming=False)],
+        db=db,
+        telemetry=False,
+    )
+
+
+def _build_flaky_resuming_team(db: SqliteDb) -> Team:
+    """Phase 2: the leader's FIRST call after member routing raises a
+    transient RuntimeError; the retry's call returns the final content."""
+    return Team(
+        name="Comms Team",
+        id="comms-team",
+        model=_FlakyScriptedModel(
+            "m-leader-flaky",
+            [("raise", "transient provider failure"), ("content", "final answer")],
+        ),
+        members=[_flaky_emailer_agent(db, resuming=True)],
+        db=db,
+        telemetry=False,
+        retries=1,
+        delay_between_retries=0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_continue_retry_reruns_leader_with_member_results_after_transient_failure(tmp_path):
+    """Pins the defect where _acontinue_run's retry attempt resets
+    member_results and skips re-binding after member routing consumed the
+    requirements, falling through to a false COMPLETED with content=None
+    instead of re-running the leader with the preserved member results."""
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "retry_member_phase.db")
+    session_id = "s-retry-member-phase"
+
+    team1 = _build_pausing_team(SqliteDb(db_file=db_file))
+    run1 = await team1.arun("Email a@example.com", session_id=session_id)
+    assert run1.is_paused
+    assert _EXECUTED == []
+
+    team2 = _build_flaky_resuming_team(SqliteDb(db_file=db_file))
+    run2 = await team2.acontinue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+    )
+
+    # The confirmed member tool executed during routing on the first attempt.
+    assert _EXECUTED == ["a@example.com"]
+    # The retry must re-run the leader over the preserved member results and
+    # complete with the leader's content — not an empty COMPLETED.
+    assert run2.status == RunStatus.completed
+    assert run2.content == "final answer", (
+        "transient leader failure after member routing must retry the leader, "
+        f"not complete with content={run2.content!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_async_streaming_continue_retry_reruns_leader_with_member_results_after_transient_failure(tmp_path):
+    """Pins the same defect in _acontinue_run_stream: the retry attempt after
+    a transient leader-model failure skips every branch and yields a falsely
+    COMPLETED run with content=None instead of re-running the leader."""
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "retry_member_phase_stream.db")
+    session_id = "s-retry-member-phase-stream"
+
+    team1 = _build_pausing_team(SqliteDb(db_file=db_file))
+    run1 = await team1.arun("Email a@example.com", session_id=session_id)
+    assert run1.is_paused
+    assert _EXECUTED == []
+
+    team2 = _build_flaky_resuming_team(SqliteDb(db_file=db_file))
+    final = None
+    async for event in team2.acontinue_run(
+        run_id=run1.run_id,
+        session_id=session_id,
+        requirements=_wire_requirements(run1.requirements),
+        stream=True,
+        yield_run_output=True,
+    ):
+        if isinstance(event, TeamRunOutput):
+            final = event
+
+    assert final is not None
+    assert _EXECUTED == ["a@example.com"]
+    assert final.status == RunStatus.completed
+    assert final.content == "final answer", (
+        "transient leader failure after member routing must retry the leader, "
+        f"not complete with content={final.content!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Round 10.5: the storage view of a spared paused member run must resolve
+# storage flags through the paused response's OWNING PATH in the team tree,
+# not through a global first-match id search from the root team.
+#
+# Defect: duplicate leaf member ids across sibling subteams are supported, but
+# _storage_view_of_spared_run resolves flags via _find_member_by_id(team,
+# member_id) from the ROOT team, and _scrub_member_responses_keeping_paused
+# recurses into nested spared runs passing the ROOT team unchanged. A paused
+# run owned by the right subteam's leaf therefore picks up the LEFT subteam's
+# same-id leaf and applies the wrong store_tool_messages setting.
+# ---------------------------------------------------------------------------
+
+
+def _build_root_with_duplicate_leaf_ids(
+    left_store_tool_messages: bool, right_store_tool_messages: bool
+) -> Tuple[Team, Team]:
+    """Root -> [left subteam, right subteam]; each subteam holds a leaf agent
+    with the SAME name, so both leaves derive the same url-safe member id."""
+    from agno.utils.team import get_member_id
+
+    left_worker = Agent(name="Worker", store_tool_messages=left_store_tool_messages, telemetry=False)
+    right_worker = Agent(name="Worker", store_tool_messages=right_store_tool_messages, telemetry=False)
+    left_team = Team(name="Left Team", members=[left_worker], telemetry=False)
+    right_team = Team(name="Right Team", members=[right_worker], telemetry=False)
+    root = Team(name="Root Team", members=[left_team, right_team], telemetry=False)
+
+    assert get_member_id(left_worker) == get_member_id(right_worker), (
+        "the setup requires duplicate leaf member ids across sibling subteams"
+    )
+    return root, right_team
+
+
+def _paused_root_run_owned_by_right_leaf(root: Team, right_team: Team) -> TeamRunOutput:
+    """Root run whose only member response is a paused right-subteam run that
+    holds the paused leaf run: one completed tool call with its tool result
+    message, plus an unresolved pending call on the same assistant turn."""
+    from agno.utils.team import get_member_id
+
+    leaf_run = RunOutput(
+        run_id="member-run-right-worker",
+        agent_id=get_member_id(right_team.members[0]),
+        status=RunStatus.paused,
+        messages=[
+            Message(
+                role="assistant",
+                tool_calls=[
+                    {"id": "tc-done", "type": "function", "function": {"name": "send_email", "arguments": "{}"}},
+                    {"id": "tc-pending", "type": "function", "function": {"name": "send_sms", "arguments": "{}"}},
+                ],
+            ),
+            Message(role="tool", tool_call_id="tc-done", content="Email sent"),
+        ],
+    )
+    right_team_run = TeamRunOutput(
+        run_id="team-run-right",
+        team_id=get_member_id(right_team),
+        status=RunStatus.paused,
+        member_responses=[leaf_run],
+    )
+    return TeamRunOutput(
+        run_id="team-run-root",
+        team_id=get_member_id(root),
+        status=RunStatus.paused,
+        member_responses=[right_team_run],
+    )
+
+
+def _stored_leaf(view: TeamRunOutput) -> RunOutput:
+    stored_right = view.member_responses[0]
+    assert getattr(stored_right, "member_responses", None), "the paused leaf run must be spared for the resume"
+    return stored_right.member_responses[0]
+
+
+def test_spared_leaf_storage_flags_resolve_through_owning_subteam():
+    """Pins the defect where _storage_view_of_spared_run resolves a duplicate
+    leaf id from the ROOT team: the left sibling's store_tool_messages=True
+    wins over the owning right worker's False, so completed tool messages are
+    persisted against the actual member's setting."""
+    from agno.team._session import _scrub_member_responses_keeping_paused
+
+    root, right_team = _build_root_with_duplicate_leaf_ids(
+        left_store_tool_messages=True, right_store_tool_messages=False
+    )
+    root_run = _paused_root_run_owned_by_right_leaf(root, right_team)
+
+    view = _scrub_member_responses_keeping_paused(root, root_run)
+
+    leaf = _stored_leaf(view)
+    roles = [m.role for m in leaf.messages or []]
+    assert "tool" not in roles, (
+        "the owning right worker's store_tool_messages=False must scrub completed tool "
+        "messages, even though a left sibling shares the leaf member id"
+    )
+    kept_calls = [call["id"] for m in leaf.messages or [] if m.role == "assistant" for call in m.tool_calls or []]
+    assert kept_calls == ["tc-pending"], "the unresolved call must survive the scrub for the resume"
+
+
+def test_spared_leaf_keeps_tool_messages_when_owning_member_stores_them():
+    """Pins the same wrong-duplicate resolution from the other side: the left
+    sibling's store_tool_messages=False must not scrub a paused run owned by
+    the right worker whose own setting is True."""
+    from agno.team._session import _scrub_member_responses_keeping_paused
+
+    root, right_team = _build_root_with_duplicate_leaf_ids(
+        left_store_tool_messages=False, right_store_tool_messages=True
+    )
+    root_run = _paused_root_run_owned_by_right_leaf(root, right_team)
+
+    view = _scrub_member_responses_keeping_paused(root, root_run)
+
+    leaf = _stored_leaf(view)
+    roles = [m.role for m in leaf.messages or []]
+    assert "tool" in roles, (
+        "the owning right worker's store_tool_messages=True must keep its completed tool "
+        "messages, even though a left sibling with the same member id has it disabled"
+    )
+    kept_calls = [call["id"] for m in leaf.messages or [] if m.role == "assistant" for call in m.tool_calls or []]
+    assert kept_calls == ["tc-done", "tc-pending"], "both tool calls must survive when the owning member stores them"
