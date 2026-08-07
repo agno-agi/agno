@@ -1363,7 +1363,11 @@ class Function(BaseModel):
         from tempfile import gettempdir
 
         base_cache_dir = self.cache_dir or Path(gettempdir()) / "agno_cache"
-        func_cache_dir = Path(base_cache_dir) / "functions" / self.name
+        # The version names the directory, not just the payload. A stored value
+        # means different things to different versions of this code, and a
+        # reader that predates a change would otherwise find an entry it cannot
+        # read correctly and would have no way to tell.
+        func_cache_dir = Path(base_cache_dir) / "functions" / f"v{CACHE_FORMAT}" / self.name
         _make_private_dir(func_cache_dir)
         return str(func_cache_dir / f"{cache_key}.json")
 
@@ -1506,13 +1510,14 @@ class Function(BaseModel):
             # Serialize before writing anything: a result that cannot be
             # encoded must leave no half-written file for the next call to read.
             payload = json.dumps(cache_data)
-            if self.tool_hooks and not self._survives_the_cache(json.loads(payload), result):
-                # On a hit this value is handed back to the hooks in the
-                # entrypoint's place, so a hook that reads it would see
-                # something the tool never returned: a tuple comes back a list,
-                # and a model richer than its declared return type comes back
-                # without the difference. Tools with no hooks are unaffected,
-                # since a stored value only ever reaches the model from there.
+            checks_round_trip = bool(self.tool_hooks) or self._declared_return_type() is not None
+            if checks_round_trip and not self._survives_the_cache(json.loads(payload), result):
+                # A hit hands this value back in the tool's place, so what
+                # comes back has to be what the tool returned: a tuple comes
+                # back a list, and a union picks its first matching member
+                # rather than the one the tool chose. A tool that says nothing
+                # about what it returns, and has no hooks to read it, keeps the
+                # older behaviour of handing the model whatever was stored.
                 log_debug(f"Skipping cache for {self.name}: the result does not survive being stored")
                 return
             # Write a new file and move it into place. The cache path is

@@ -1,5 +1,5 @@
 import sys
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import pytest
 from pydantic import BaseModel, ValidationError
@@ -386,7 +386,9 @@ def test_function_cache_file_path(tmp_path):
 
     cache_key = "test_key"
     cache_file = func._get_cache_file_path(cache_key)
-    assert cache_file == os.path.join(str(tmp_path), "functions", "test_func", "test_key.json")
+    assert cache_file == os.path.join(
+        str(tmp_path), "functions", f"v{function_module.CACHE_FORMAT}", "test_func", "test_key.json"
+    )
 
 
 def test_function_cache_operations(tmp_path):
@@ -3635,7 +3637,7 @@ def test_a_link_planted_at_the_cache_path_is_not_read(tmp_path):
 def test_a_cache_directory_others_can_write_is_refused(tmp_path):
     """A directory somebody else can write to can choose what a hit reads, and
     losing the cache is not a reason to lose the tool call."""
-    hostile = tmp_path / "cache" / "functions" / "hostile"
+    hostile = tmp_path / "cache" / "functions" / f"v{function_module.CACHE_FORMAT}" / "hostile"
     hostile.mkdir(parents=True)
     hostile.chmod(0o777)
 
@@ -3814,3 +3816,39 @@ def test_a_generic_alias_return_keeps_what_it_was_given(tmp_path):
     assert isinstance(first.result, Weather)
     assert isinstance(second.result, Weather)
     assert second.result.city == "Lisbon"
+
+
+def test_entries_live_under_a_versioned_directory(tmp_path):
+    """A stored value means different things to different versions of this
+    code. A reader from another version must not find these entries at all,
+    because nothing in an entry would tell it that it cannot read one."""
+
+    def compute() -> str:
+        return "value"
+
+    func = Function(name="versioned", entrypoint=compute, cache_results=True, cache_dir=str(tmp_path))
+    FunctionCall(function=func, arguments={}).execute()
+
+    written = list(tmp_path.rglob("*.json"))
+    assert len(written) == 1
+    assert written[0].parent.parent.name == f"v{function_module.CACHE_FORMAT}"
+
+
+def test_a_union_return_keeps_the_member_the_tool_chose(tmp_path):
+    """Rebuilding a union takes its first matching member, which need not be
+    the one the tool returned. A tool that says it may return either must not
+    hand back the other on a hit."""
+    executions = []
+
+    def report() -> Union[dict, ToolResult]:
+        executions.append(1)
+        return ToolResult(content="done", metadata={"k": "v"})
+
+    func = Function(name="union_report", entrypoint=report, cache_results=True, cache_dir=str(tmp_path))
+
+    first = FunctionCall(function=func, arguments={}).execute()
+    second = FunctionCall(function=func, arguments={}).execute()
+
+    assert isinstance(first.result, ToolResult)
+    assert isinstance(second.result, ToolResult)
+    assert executions == [1, 1]
