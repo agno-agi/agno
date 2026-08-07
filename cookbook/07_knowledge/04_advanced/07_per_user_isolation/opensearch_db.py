@@ -1,20 +1,22 @@
 """
-Per-User Isolation: ClickHouse
+Per-User Isolation: OpenSearch
 ==============================
 Each user gets a private view of one shared knowledge base. Documents
 uploaded with a user_id are visible only to that user; documents uploaded
 without one are shared with everyone.
 
-ClickHouse stores the owner in a non-nullable String column; shared chunks
-store the empty string sentinel and scoped reads match caller OR ''.
+OpenSearch stores the owner in a top-level user_id keyword field. Shared
+chunks leave the field off, and a scoped read matches "term user_id" OR
+"must_not exists user_id" - which is also why documents written before this
+field existed keep showing up as shared content.
 
 - Search as Alice: her chunks plus shared content, never Bob's
 - Search as Bob: his chunks plus shared content, never Alice's
 - Search with user_id=None: admin view, sees everything
 
 Requirements:
-- ./cookbook/scripts/run_clickhouse.sh
-- uv pip install clickhouse-connect
+- ./cookbook/scripts/run_opensearch.sh
+- uv pip install opensearch-py
 - OPENAI_API_KEY
 """
 
@@ -23,7 +25,7 @@ from typing import List
 
 from agno.knowledge.document import Document
 from agno.knowledge.knowledge import Knowledge
-from agno.vectordb.clickhouse import Clickhouse
+from agno.vectordb.opensearch import OpenSearch
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -33,11 +35,8 @@ ALICE_SALARY = "Alice's salary is $180,000. Reviewed annually in March."
 BOB_SALARY = "Bob's salary is $215,000. Reviewed annually in June."
 HOLIDAYS = "The company is closed on January 1, July 4, and December 25."
 
-CLICKHOUSE_HOST = "localhost"
-CLICKHOUSE_PORT = 8123
-CLICKHOUSE_USERNAME = "ai"
-CLICKHOUSE_PASSWORD = "ai"
-TABLE_NAME = "per_user_isolation_demo"
+OPENSEARCH_URL = "http://localhost:9200"
+INDEX_NAME = "per_user_isolation_demo"
 
 
 def show(label: str, results: List[Document]) -> None:
@@ -52,29 +51,24 @@ def show(label: str, results: List[Document]) -> None:
 # Create Knowledge Base
 # ---------------------------------------------------------------------------
 
-vector_db = Clickhouse(
-    table_name=TABLE_NAME,
-    host=CLICKHOUSE_HOST,
-    port=CLICKHOUSE_PORT,
-    username=CLICKHOUSE_USERNAME,
-    password=CLICKHOUSE_PASSWORD,
-)
+vector_db = OpenSearch(index_name=INDEX_NAME, url=OPENSEARCH_URL)
 
-# Start clean: a legacy table without the user_id column would make every row
-# look like shared content.
+# Start clean: an index left over from another example would make its documents
+# look like shared content here.
 if vector_db.exists():
     vector_db.drop()
 vector_db.create()
 
 knowledge = Knowledge(
     name="per_user_demo",
-    description="Per-user RAG isolation demo (ClickHouse)",
+    description="Per-user RAG isolation demo (OpenSearch)",
     vector_db=vector_db,
 )
 
 # ---------------------------------------------------------------------------
 # Run Demo
 # ---------------------------------------------------------------------------
+
 
 if __name__ == "__main__":
 
@@ -136,7 +130,8 @@ if __name__ == "__main__":
         print("Admin sees the whole corpus.")
 
         print("\nDone.")
-        if vector_db.async_client is not None:
-            await vector_db.async_client.close()
+
+        # Release the underlying aiohttp session
+        await vector_db.async_close()
 
     asyncio.run(main())

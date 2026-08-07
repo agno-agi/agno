@@ -41,35 +41,48 @@ class SurrealDb(VectorDb):
 
     ID_EXISTS_QUERY: Final[str] = """
         SELECT * FROM {collection}
-        WHERE id = $id
+        WHERE id = type::record($table, $record_id)
         LIMIT 1
     """
 
     CONTENT_HASH_EXISTS_QUERY: Final[str] = """
         SELECT * FROM {collection}
         WHERE meta_data.content_hash = $content_hash
+        AND user_id = $user_id
         LIMIT 1
     """
 
     DELETE_BY_ID_QUERY: Final[str] = """
         DELETE FROM {collection}
-        WHERE id = $id
+        WHERE id = type::record($table, $record_id)
+        OR string::starts_with(record::id(id), $owned_prefix)
+        RETURN VALUE id
     """
 
     DELETE_BY_NAME_QUERY: Final[str] = """
         DELETE FROM {collection}
         WHERE meta_data.name = $name
+        RETURN VALUE id
     """
 
     DELETE_BY_METADATA_QUERY: Final[str] = """
         DELETE FROM {collection}
         WHERE {conditions}
+        RETURN VALUE id
     """
 
     DELETE_BY_CONTENT_ID_QUERY: Final[str] = """
         DELETE FROM {collection}
         WHERE content_id = $content_id
         {scope_condition}
+        RETURN VALUE id
+    """
+
+    DELETE_BY_CONTENT_HASH_QUERY: Final[str] = """
+        DELETE FROM {collection}
+        WHERE meta_data.content_hash = $content_hash
+        AND user_id = $user_id
+        RETURN VALUE id
     """
 
     UPSERT_QUERY: Final[str] = """
@@ -220,22 +233,42 @@ class SurrealDb(VectorDb):
         return "AND (user_id = $scope_user_id OR user_id = NONE)"
 
     @staticmethod
-    def _fold_record_id(doc_id: str, user_id: Optional[str]) -> str:
+    def _owner_scope_condition(user_id: Optional[str]) -> str:
+        """Build the owner-only scope predicate for a delete WHERE clause.
+
+        Unlike the search scope this never merges the shared bucket in - a
+        scoped delete clears the caller's own rows alone. Bound as
+        $scope_user_id, the same name the search scope uses.
+        """
+        if user_id is None:
+            return ""
+        return "AND user_id = $scope_user_id"
+
+    @staticmethod
+    def _escape_record_id_part(value: str) -> str:
+        """Percent-escape one half of a folded record id.
+
+        ':' is the fold delimiter and '%' is the escape character, so both have
+        to be encoded before either half can be joined or matched by prefix.
+        """
+        return value.replace("%", "%25").replace(":", "%3A")
+
+    @classmethod
+    def _fold_record_id(cls, doc_id: str, user_id: Optional[str]) -> str:
         """Fold the owner into the record id so two owners' identical content
-        don't collide onto one record. user_id=None keeps the bare doc id.
+        don't collide onto one record.
 
         ':' is both the fold delimiter and a legal char in doc_id/user_id, so
         each side is percent-escaped before joining — otherwise ("a:x", "y") and
-        ("a", "x:y") would both fold to "a:x:y" and clobber each other. Stable,
+        ("a", "x:y") would both fold to "a:x:y" and clobber each other. The
+        unfolded id is escaped by the same rule: a shared document whose own id
+        carries a ':' (a URL, say) would otherwise land on the id an owned fold
+        produces, and whichever wrote last would take the other's record. Stable,
         so re-upserting the same pair updates the same record in place.
         """
         if user_id is None:
-            return doc_id
-
-        def _esc(value: str) -> str:
-            return value.replace("%", "%25").replace(":", "%3A")
-
-        return f"{_esc(doc_id)}:{_esc(user_id)}"
+            return cls._escape_record_id_part(doc_id)
+        return f"{cls._escape_record_id_part(doc_id)}:{cls._escape_record_id_part(user_id)}"
 
     # Synchronous methods
     def create(self) -> None:
@@ -276,22 +309,36 @@ class SurrealDb(VectorDb):
 
         """
         log_debug(f"Checking if document exists by ID: {id}")
-        result = self.client.query(self.ID_EXISTS_QUERY.format(collection=self.collection), {"id": id})
+        # Bind the record id via type::record, the same way the upsert writes it -
+        # a string never compares equal to a record link, so a plain $id matched nothing.
+        result = self.client.query(
+            self.ID_EXISTS_QUERY.format(collection=self.collection),
+            {"table": self.collection, "record_id": id},
+        )
         return bool(self._extract_result(result))
 
-    def content_hash_exists(self, content_hash: str) -> bool:
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Check if a document exists by its content hash.
 
         Args:
             content_hash: The content hash of the document to check.
+            user_id: The owner to check, so another owner's identical upload is
+                not judged a duplicate. This is the guard half of the upsert
+                dedup pair, so None (default) addresses the shared (NONE) bucket
+                alone rather than every owner - the same bucket a None-scoped
+                delete clears.
 
         Returns:
             True if the document exists, False otherwise.
 
         """
         log_debug(f"Checking if document exists by content hash: {content_hash}")
+        # Bind the owner exactly as the write path stores it: None lands as NONE,
+        # so the shared bucket is addressed and no owned row can answer for it.
+        params: Dict[str, Any] = {"content_hash": content_hash, "user_id": user_id}
         result = self.client.query(
-            self.CONTENT_HASH_EXISTS_QUERY.format(collection=self.collection), {"content_hash": content_hash}
+            self.CONTENT_HASH_EXISTS_QUERY.format(collection=self.collection),
+            params,
         )
         return bool(self._extract_result(result))
 
@@ -316,6 +363,10 @@ class SurrealDb(VectorDb):
             doc.embed(embedder=self.embedder)
             meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
             meta_data["content_hash"] = content_hash
+            if doc.name is not None:
+                # name_exists and delete_by_name both match meta_data.name, so the
+                # write has to put it there or they can never resolve a document.
+                meta_data.setdefault("name", doc.name)
             data: Dict[str, Any] = {
                 "content": doc.content,
                 "embedding": doc.embedding,
@@ -344,10 +395,20 @@ class SurrealDb(VectorDb):
                 (default) writes to the shared bucket, visible to everyone.
 
         """
+        # UPSERT replaces by record id, so a document that SHRINKS between versions
+        # leaves its dropped chunks behind, and a chunk with no id is created afresh
+        # every time. Clear the caller's own chunks for this hash first.
+        if self.content_hash_exists(content_hash, user_id=user_id):
+            self._delete_by_content_hash(content_hash, user_id=user_id)
+
         for doc in documents:
             doc.embed(embedder=self.embedder)
             meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
             meta_data["content_hash"] = content_hash
+            if doc.name is not None:
+                # name_exists and delete_by_name both match meta_data.name, so the
+                # write has to put it there or they can never resolve a document.
+                meta_data.setdefault("name", doc.name)
             data: Dict[str, Any] = {
                 "content": doc.content,
                 "embedding": doc.embedding,
@@ -360,7 +421,8 @@ class SurrealDb(VectorDb):
             if doc.id:
                 # Bind the record id via type::record so a reader-assigned UUID
                 # (hyphenated, digit-leading) is accepted, and fold the owner into
-                # the id so two owners' identical content don't collide; None keeps the base id.
+                # the id so two owners' identical content don't collide; the unfolded
+                # id is escaped by the same rule.
                 data["table"] = self.collection
                 data["record_id"] = self._fold_record_id(doc.id, user_id)
                 self.client.query(self.UPSERT_QUERY, data)  # type: ignore[arg-type]
@@ -450,11 +512,17 @@ class SurrealDb(VectorDb):
         """Delete all documents from the vector store.
 
         Returns:
-            True if the collection was deleted, False otherwise.
+            True if the delete completed, False if it errored. Unlike the scoped
+            deletes this does not ask for the removed rows back - the whole
+            collection would have to be materialised to count them.
 
         """
-        self.client.query(self.DELETE_ALL_QUERY.format(collection=self.collection))
-        return True
+        try:
+            self.client.query(self.DELETE_ALL_QUERY.format(collection=self.collection))
+            return True
+        except Exception as e:
+            log_error(f"Error deleting all documents: {str(e)}")
+            return False
 
     def delete_by_id(self, id: str) -> bool:
         """Delete a document by its ID.
@@ -463,12 +531,27 @@ class SurrealDb(VectorDb):
             id: The ID of the document to delete.
 
         Returns:
-            True if the document was deleted, False otherwise.
+            True if rows were deleted, False if none matched or the query errored.
+            A bare DELETE answers with an empty list either way, so the query asks
+            for ``RETURN VALUE id`` - the ids alone, never the embeddings.
 
         """
         log_debug(f"Deleting document by ID: {id}")
-        result = self.client.query(self.DELETE_BY_ID_QUERY.format(collection=self.collection), {"id": id})
-        return bool(result)
+        try:
+            # Bind the record id via type::record, the same way the upsert writes it -
+            # a string never compares equal to a record link, so a plain $id matched nothing.
+            # The write folds the owner in (``_fold_record_id``), so match the shared
+            # record for this id plus every owned fold of it; this method takes no
+            # user_id, so it clears the document for all owners by design.
+            escaped = self._escape_record_id_part(id)
+            result = self.client.query(
+                self.DELETE_BY_ID_QUERY.format(collection=self.collection),
+                {"table": self.collection, "record_id": escaped, "owned_prefix": f"{escaped}:"},
+            )
+            return bool(self._extract_result(result))
+        except Exception as e:
+            log_error(f"Error deleting document by ID '{id}': {str(e)}")
+            return False
 
     def delete_by_name(self, name: str) -> bool:
         """Delete documents by their name.
@@ -477,12 +560,16 @@ class SurrealDb(VectorDb):
             name: The name of the documents to delete.
 
         Returns:
-            True if documents were deleted, False otherwise.
+            True if rows were deleted, False if none matched or the query errored.
 
         """
         log_debug(f"Deleting documents by name: {name}")
-        result = self.client.query(self.DELETE_BY_NAME_QUERY.format(collection=self.collection), {"name": name})
-        return bool(result)
+        try:
+            result = self.client.query(self.DELETE_BY_NAME_QUERY.format(collection=self.collection), {"name": name})
+            return bool(self._extract_result(result))
+        except Exception as e:
+            log_error(f"Error deleting documents by name '{name}': {str(e)}")
+            return False
 
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
         """Delete documents by their metadata.
@@ -491,15 +578,31 @@ class SurrealDb(VectorDb):
             metadata: The metadata to match for deletion.
 
         Returns:
-            True if documents were deleted, False otherwise.
+            True if rows were deleted, False if none matched or the query errored.
 
         """
         log_debug(f"Deleting documents by metadata: {metadata}")
-        conditions = [f"meta_data.{key} = ${key}" for key in metadata.keys()]
-        conditions_str = " AND ".join(conditions)
-        query = self.DELETE_BY_METADATA_QUERY.format(collection=self.collection, conditions=conditions_str)
-        result = self.client.query(query, metadata)
-        return bool(result)
+        if not metadata:
+            log_warning("No metadata provided for deletion; refusing to match every row.")
+            return False
+        try:
+            # Bind both halves. Interpolating the key builds the path out of caller
+            # data: a key carrying a '.' splits into an unbound variable and a field
+            # walk, and NONE = NONE is true for every row - one ordinary dotted key
+            # deletes the whole collection.
+            conditions = [f"meta_data[$key_{i}] = $value_{i}" for i in range(len(metadata))]
+            params: Dict[str, Any] = {}
+            for i, (key, value) in enumerate(metadata.items()):
+                params[f"key_{i}"] = key
+                params[f"value_{i}"] = value
+            query = self.DELETE_BY_METADATA_QUERY.format(
+                collection=self.collection, conditions=" AND ".join(conditions)
+            )
+            result = self.client.query(query, params)
+            return bool(self._extract_result(result))
+        except Exception as e:
+            log_error(f"Error deleting documents by metadata {metadata}: {str(e)}")
+            return False
 
     def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
         """Delete documents by their content ID.
@@ -510,23 +613,58 @@ class SurrealDb(VectorDb):
                 (default) deletes across all owners.
 
         Returns:
-            True if documents were deleted, False otherwise.
+            True if rows were deleted, False if none matched or the query errored.
 
         """
         log_debug(f"Deleting documents by content ID: {content_id}")
-        scope_condition = "AND user_id = $user_id" if user_id is not None else ""
-        params: Dict[str, Any] = {"content_id": content_id}
-        if user_id is not None:
-            params["user_id"] = user_id
+        try:
+            scope_condition = self._owner_scope_condition(user_id)
+            params: Dict[str, Any] = {"content_id": content_id}
+            if user_id is not None:
+                params["scope_user_id"] = user_id
+            result = self.client.query(
+                self.DELETE_BY_CONTENT_ID_QUERY.format(collection=self.collection, scope_condition=scope_condition),
+                params,
+            )
+            return bool(self._extract_result(result))
+        except Exception as e:
+            log_error(f"Error deleting documents by content ID '{content_id}': {str(e)}")
+            return False
+
+    def _delete_by_content_hash(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        """Delete documents by their content hash, scoped to one owner.
+
+        Args:
+            content_hash: The content hash of the documents to delete.
+            user_id: The owner whose chunks to clear. This is the delete half of
+                the upsert dedup pair, so None (default) clears the shared (NONE)
+                bucket alone - the same bucket content_hash_exists checks - and a
+                shared re-upsert never wipes a scoped owner's identical content.
+
+        Returns:
+            True if rows were deleted, False if none matched. Errors are left to
+            propagate: the only caller is ``upsert``, whose own callers mark the
+            content FAILED, and swallowing here would let the write proceed over
+            chunks that were never cleared.
+
+        """
+        log_debug(f"Deleting documents by content hash: {content_hash}")
+        params: Dict[str, Any] = {"content_hash": content_hash, "user_id": user_id}
         result = self.client.query(
-            self.DELETE_BY_CONTENT_ID_QUERY.format(collection=self.collection, scope_condition=scope_condition),
+            self.DELETE_BY_CONTENT_HASH_QUERY.format(collection=self.collection),
             params,
         )
-        return bool(result)
+        return bool(self._extract_result(result))
 
     @staticmethod
     def _extract_result(query_result: Any) -> Union[List[Any], Dict[str, Any]]:
         """Extract the actual result from SurrealDB query response.
+
+        The connection classes imported at module scope only exist in surrealdb
+        >= 1.0, which hands back the rows themselves: a list for a SELECT, a dict
+        for INFO FOR DB. The legacy {"status", "time", "result"} envelope can no
+        longer reach here, and unwrapping it turned every returned row into {},
+        which is why the existence checks answered False for rows that existed.
 
         Args:
             query_result: The query result from SurrealDB.
@@ -536,12 +674,8 @@ class SurrealDb(VectorDb):
 
         """
         log_debug(f"Query result: {query_result}")
-        if isinstance(query_result, dict):
+        if isinstance(query_result, (dict, list)):
             return query_result
-        if isinstance(query_result, list):
-            if len(query_result) > 0:
-                return query_result[0].get("result", {})
-            return []
         return []
 
     async def async_create(self) -> None:
@@ -570,6 +704,55 @@ class SurrealDb(VectorDb):
         )
         return bool(self._extract_result(response))
 
+    async def async_content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        """Check if a document exists by its content hash asynchronously.
+
+        Args:
+            content_hash: The content hash of the document to check.
+            user_id: The owner to check, so another owner's identical upload is
+                not judged a duplicate. This is the guard half of the upsert
+                dedup pair, so None (default) addresses the shared (NONE) bucket
+                alone rather than every owner - the same bucket a None-scoped
+                delete clears.
+
+        Returns:
+            True if the document exists, False otherwise.
+
+        """
+        log_debug(f"Checking if document exists by content hash: {content_hash}")
+        # Bind the owner exactly as the write path stores it: None lands as NONE,
+        # so the shared bucket is addressed and no owned row can answer for it.
+        params: Dict[str, Any] = {"content_hash": content_hash, "user_id": user_id}
+        response = await self.async_client.query(
+            self.CONTENT_HASH_EXISTS_QUERY.format(collection=self.collection),
+            params,
+        )
+        return bool(self._extract_result(response))
+
+    async def _async_delete_by_content_hash(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        """Delete documents by their content hash asynchronously, scoped to one owner.
+
+        Args:
+            content_hash: The content hash of the documents to delete.
+            user_id: The owner whose chunks to clear. This is the delete half of
+                the upsert dedup pair, so None (default) clears the shared (NONE)
+                bucket alone - the same bucket async_content_hash_exists checks -
+                and a shared re-upsert never wipes a scoped owner's identical
+                content.
+
+        Returns:
+            True if rows were deleted, False if none matched. See
+            ``_delete_by_content_hash`` for why errors propagate here.
+
+        """
+        log_debug(f"Deleting documents by content hash: {content_hash}")
+        params: Dict[str, Any] = {"content_hash": content_hash, "user_id": user_id}
+        result = await self.async_client.query(
+            self.DELETE_BY_CONTENT_HASH_QUERY.format(collection=self.collection),
+            params,
+        )
+        return bool(self._extract_result(result))
+
     async def async_insert(
         self,
         content_hash: str,
@@ -591,6 +774,10 @@ class SurrealDb(VectorDb):
             doc.embed(embedder=self.embedder)
             meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
             meta_data["content_hash"] = content_hash
+            if doc.name is not None:
+                # name_exists and delete_by_name both match meta_data.name, so the
+                # write has to put it there or they can never resolve a document.
+                meta_data.setdefault("name", doc.name)
             data: Dict[str, Any] = {
                 "content": doc.content,
                 "embedding": doc.embedding,
@@ -620,10 +807,19 @@ class SurrealDb(VectorDb):
                 (default) writes to the shared bucket, visible to everyone.
 
         """
+        # See the matching comment in ``upsert``. The guard and its delete run on
+        # the async client so an async-only connection still dedupes.
+        if await self.async_content_hash_exists(content_hash, user_id=user_id):
+            await self._async_delete_by_content_hash(content_hash, user_id=user_id)
+
         for doc in documents:
             doc.embed(embedder=self.embedder)
             meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
             meta_data["content_hash"] = content_hash
+            if doc.name is not None:
+                # name_exists and delete_by_name both match meta_data.name, so the
+                # write has to put it there or they can never resolve a document.
+                meta_data.setdefault("name", doc.name)
             data: Dict[str, Any] = {
                 "content": doc.content,
                 "embedding": doc.embedding,
@@ -637,7 +833,8 @@ class SurrealDb(VectorDb):
             if doc.id:
                 # Bind the record id via type::record so a reader-assigned UUID
                 # (hyphenated, digit-leading) is accepted, and fold the owner into
-                # the id so two owners' identical content don't collide; None keeps the base id.
+                # the id so two owners' identical content don't collide; the unfolded
+                # id is escaped by the same rule.
                 data["table"] = self.collection
                 data["record_id"] = self._fold_record_id(doc.id, user_id)
                 await self.async_client.query(self.UPSERT_QUERY, data)  # type: ignore[arg-type]

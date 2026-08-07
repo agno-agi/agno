@@ -1,11 +1,7 @@
 """Pinecone per-user RAG isolation contract.
 
-Pinecone stores the owner in the vector's ``metadata`` under a ``user_id``
-key. Scoped reads apply an own-OR-shared metadata filter so admin-uploaded
-shared content (no ``user_id``) stays discoverable; unscoped (admin) reads
-apply no scope. We mock the Pinecone client/index and assert on the filter
-sent to ``index.query`` / ``index.delete`` — same approach as the base
-``test_pineconedb.py`` suite.
+Owner lives in the vector's ``metadata.user_id``; an absent key is the shared bucket.
+Pinecone is cloud-only, so the index is mocked and the filter sent to it is the contract.
 """
 
 import uuid
@@ -51,9 +47,9 @@ def _doc(content="hello world", **kwargs):
     return Document(content=content, meta_data={"topic": "t"}, name="d", **kwargs)
 
 
-class TestWritePersistsOwner:
-    """On write the owner is stamped into ``metadata.user_id``; ``None``
-    collapses to the SHARED bucket (no ``user_id`` key)."""
+class TestWriteStampsOwner:
+    """On write the owner is stamped into ``metadata.user_id``; ``None`` collapses to the SHARED bucket (no
+    ``user_id`` key)."""
 
     def test_explicit_user_id_stamped_into_metadata(self, pinecone_db):
         pinecone_db.content_hash_exists = MagicMock(return_value=False)
@@ -81,10 +77,9 @@ class TestWritePersistsOwner:
         assert vectors[0]["metadata"][USER_ID_KEY] == "alice"
 
 
-class TestSearchIsolationContract:
-    """The load-bearing contract: a scoped search filters to the caller's own
-    chunks OR the shared bucket, and never another user's. With a mocked index
-    the filter sent to ``index.query`` IS the contract."""
+class TestSearchScope:
+    """The load-bearing contract: a scoped search filters to the caller's own chunks OR the shared bucket, and never
+    another user's."""
 
     def test_scoped_search_builds_own_or_shared_filter(self, pinecone_db):
         pinecone_db.search(query="q", user_id="alice")
@@ -118,16 +113,16 @@ class TestSearchIsolationContract:
         pinecone_db.search(query="q", filters={"topic": {"$eq": "t"}}, user_id=None)
         assert pinecone_db.index.query.call_args.kwargs["filter"] == {"topic": {"$eq": "t"}}
 
+    @pytest.mark.asyncio
     async def test_async_search_scopes_too(self, pinecone_db):
         await pinecone_db.async_search(query="q", user_id="alice")
         sent_filter = pinecone_db.index.query.call_args.kwargs["filter"]
         assert sent_filter == {"$or": [{USER_ID_KEY: "alice"}, {USER_ID_KEY: {"$exists": False}}]}
 
 
-class TestDeleteByContentIdIsolation:
-    """``delete_by_content_id(content_id, user_id=...)`` must scope the delete
-    to the caller's chunks — otherwise Bob could guess Alice's content_id and
-    wipe her chunks. Admin (``None``) deletes across all owners."""
+class TestDeleteScope:
+    """``delete_by_content_id(content_id, user_id=...)`` must scope the delete to the caller's chunks — otherwise
+    Bob could guess Alice's content_id and wipe her chunks."""
 
     def test_scoped_delete_matches_owner_only(self, pinecone_db):
         pinecone_db.delete_by_content_id("cid-1", user_id="alice")
@@ -145,10 +140,8 @@ class TestDeleteByContentIdIsolation:
         assert sent_filter == {"content_id": {"$eq": "cid-1"}}
 
 
-class TestContentHashScoping:
-    """The per-user dedup path keys on ``content_hash`` scoped by owner. A
-    scoped check/delete touches only that owner's chunks; ``None`` touches
-    only the SHARED bucket (owner absent) — never every owner's chunks."""
+class TestDedupScope:
+    """The per-user dedup path keys on ``content_hash`` scoped by owner."""
 
     def test_content_hash_exists_scoped_to_owner(self, pinecone_db):
         pinecone_db.content_hash_exists("h1", user_id="alice")
@@ -169,18 +162,15 @@ class TestContentHashScoping:
         assert sent_filter == {"content_hash": {"$eq": "h1"}, USER_ID_KEY: {"$eq": "alice"}}
 
     def test_delete_by_content_hash_none_deletes_shared_bucket_only(self, pinecone_db):
-        """``None`` must NOT wipe every owner's chunks — only the owner-absent
-        shared bucket."""
+        """``None`` must NOT wipe every owner's chunks — only the owner-absent shared bucket."""
         pinecone_db._delete_by_content_hash("h1", user_id=None)
 
         sent_filter = pinecone_db.index.query.call_args.kwargs["filter"]
         assert sent_filter == {"content_hash": {"$eq": "h1"}, USER_ID_KEY: {"$exists": False}}
 
 
-class TestStealPrevention:
-    """Two owners uploading identical content must both survive. The owner is
-    folded into the vector id so ids don't collide, and the upsert dedup
-    check/delete is scoped to the writing owner so one can't evict another."""
+class TestOwnerFoldedId:
+    """Two owners uploading identical content must both survive."""
 
     def test_owner_folded_id_is_distinct_per_owner(self, pinecone_db):
         pinecone_db.content_hash_exists = MagicMock(return_value=False)
@@ -195,24 +185,23 @@ class TestStealPrevention:
         assert alice_id != bob_id
 
     def test_shared_upload_keeps_document_id_verbatim(self, pinecone_db):
-        """A shared (``user_id=None``) upload is not folded — it round-trips
-        on the plain document id."""
+        """A shared (``user_id=None``) upload is not folded — it round-trips on the plain document id."""
         pinecone_db.content_hash_exists = MagicMock(return_value=False)
 
         pinecone_db.upsert(content_hash="h1", documents=[_doc(content="same", id="doc-1")], user_id=None)
         assert pinecone_db.index.upsert.call_args.kwargs["vectors"][0]["id"] == "doc-1"
 
     def test_upsert_dedup_check_is_scoped_to_writing_owner(self, pinecone_db):
-        """Bob upserting content Alice already owns must dedup-check only Bob's
-        bucket — so Alice's identical chunk is never considered for deletion."""
+        """Bob upserting content Alice already owns must dedup-check only Bob's bucket — so Alice's identical chunk
+        is never considered for deletion."""
         pinecone_db.content_hash_exists = MagicMock(return_value=False)
 
         pinecone_db.upsert(content_hash="h1", documents=[_doc()], user_id="bob")
         pinecone_db.content_hash_exists.assert_called_once_with("h1", user_id="bob")
 
     def test_upsert_dedup_delete_is_scoped_to_writing_owner(self, pinecone_db):
-        """When the writer's own chunk exists, the pre-delete is scoped to that
-        owner, leaving other owners' identical content intact."""
+        """When the writer's own chunk exists, the pre-delete is scoped to that owner, leaving other owners'
+        identical content intact."""
         pinecone_db.content_hash_exists = MagicMock(return_value=True)
 
         pinecone_db.upsert(content_hash="h1", documents=[_doc()], user_id="bob")

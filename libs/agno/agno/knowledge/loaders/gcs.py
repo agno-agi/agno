@@ -149,7 +149,7 @@ class GCSLoader(BaseLoader):
 
             await self._ainsert_contents_db(content_entry)
 
-            if self._should_skip(content_entry.content_hash, skip_if_exists):
+            if self._should_skip(content_entry.content_hash, skip_if_exists, user_id=content_entry.user_id):
                 content_entry.status = ContentStatus.COMPLETED
                 await self._aupdate_content(content_entry)
                 continue
@@ -233,7 +233,7 @@ class GCSLoader(BaseLoader):
 
             self._insert_contents_db(content_entry)
 
-            if self._should_skip(content_entry.content_hash, skip_if_exists):
+            if self._should_skip(content_entry.content_hash, skip_if_exists, user_id=content_entry.user_id):
                 content_entry.status = ContentStatus.COMPLETED
                 self._update_content(content_entry)
                 continue

@@ -1,12 +1,7 @@
 """Milvus per-user RAG isolation contract.
 
-Milvus stores ``user_id`` as a top-level scalar field. Scoped searches AND the
-owner-scope filter is ``user_id == <caller> or user_id is null`` so a caller
-sees their own chunks plus the shared (NULL-owned) bucket, never another owner's.
-Unscoped (admin, ``user_id=None``) searches apply no scope and see everything.
-
-We run against milvus-lite (a fresh ``.db`` file per test) so this is a true
-end-to-end test with no mocking of the database itself.
+Owner lives in a top-level ``user_id`` scalar field; the ``__shared__`` sentinel is the
+shared bucket. Runs end-to-end against milvus-lite with a fresh ``.db`` file per test.
 """
 
 import logging
@@ -16,18 +11,21 @@ import pytest
 
 from agno.knowledge.document import Document
 
+from .conftest import DeterministicEmbedder
+
+# This handles some CI errors when running Milvus in GitHub Actions.
 try:
     import pymilvus  # noqa: F401
 
     MILVUS_AVAILABLE = True
-except ImportError:
+except (ImportError, TypeError):
     MILVUS_AVAILABLE = False
 
 try:
     import milvus_lite  # noqa: F401
 
     MILVUS_LITE_AVAILABLE = True
-except ImportError:
+except (ImportError, TypeError):
     MILVUS_LITE_AVAILABLE = False
 
 pytestmark = pytest.mark.skipif(
@@ -37,6 +35,7 @@ pytestmark = pytest.mark.skipif(
 
 if MILVUS_AVAILABLE and MILVUS_LITE_AVAILABLE:
     from agno.vectordb.milvus import Milvus
+    from agno.vectordb.milvus.milvus import SHARED_USER_ID_VALUE
 
 # milvus-lite's embedded server does not implement the AllocTimestamp RPC and
 # logs a NotImplementedError at ERROR on every connection; pymilvus handles the
@@ -46,37 +45,10 @@ logging.getLogger("grpc._server").setLevel(logging.CRITICAL)
 TEST_COLLECTION = "isolation_test"
 
 
-class _DeterministicEmbedder:
-    """A tiny embedder that needs no network or API key."""
-
-    dimensions = 8
-    enable_batch = False
-
-    def get_embedding(self, text):
-        vector = [0.0] * self.dimensions
-        vector[abs(hash(text)) % self.dimensions] = 1.0
-        return vector
-
-    def get_embedding_and_usage(self, text):
-        return self.get_embedding(text), {"total_tokens": 1}
-
-    async def async_get_embedding(self, text):
-        return self.get_embedding(text)
-
-    async def async_get_embedding_and_usage(self, text):
-        return self.get_embedding(text), {"total_tokens": 1}
-
-    def embed(self, document, *args, **kwargs):
-        document.embedding = self.get_embedding(document.content)
-
-    async def async_embed(self, document, *args, **kwargs):
-        document.embedding = self.get_embedding(document.content)
-
-
 @pytest.fixture
 def milvus_db(tmp_path):
     """A fresh vector-mode Milvus backed by a per-test milvus-lite ``.db`` file."""
-    db = Milvus(collection=TEST_COLLECTION, uri=str(tmp_path / "milvus_iso.db"), embedder=_DeterministicEmbedder())
+    db = Milvus(collection=TEST_COLLECTION, uri=str(tmp_path / "milvus_iso.db"), embedder=DeterministicEmbedder())
     db.create()
     yield db
     try:
@@ -105,8 +77,8 @@ def _shared_docs() -> List[Document]:
 
 
 def _rows(db, fields=None):
-    """Raw rows via explicit output fields (milvus-lite drops fields under the
-    adapter's ``output_fields=["*"]``, so we name them)."""
+    """Raw rows via explicit output fields (milvus-lite drops fields under the adapter's ``output_fields=["*"]``, so
+    we name them)."""
     return db.client.query(
         collection_name=TEST_COLLECTION,
         filter="",
@@ -124,19 +96,15 @@ def _count(db) -> int:
 
 
 def _search_names(db, query: str, user_id: Optional[str]) -> set:
-    """Run the adapter search, then map result ids back to names via a raw query
-    (milvus-lite drops ``name`` under the adapter's ``output_fields=["*"]``)."""
+    """Run the adapter search, then map result ids back to names via a raw query (milvus-lite drops ``name`` under
+    the adapter's ``output_fields=["*"]``)."""
     results = db.search(query, limit=20, user_id=user_id)
     idmap = {r["id"]: r.get("name") for r in _rows(db)}
     return {idmap.get(d.id) for d in results}
 
 
-class TestUserIdFieldStorage:
-    """Pin the contract: ``user_id`` is a top-level field, not nested in
-    meta_data. The owner-scope filter relies on this."""
-
-    def test_user_id_key_constant_is_user_id(self):
-        assert Milvus.USER_ID_KEY == "user_id"
+class TestWriteStampsOwner:
+    """Pin the contract: ``user_id`` is a top-level field, not nested in meta_data."""
 
     def test_explicit_user_id_persisted_top_level(self, milvus_db):
         milvus_db.insert(content_hash="h1", documents=_alice_docs(), user_id="alice")
@@ -146,77 +114,75 @@ class TestUserIdFieldStorage:
         # And NOT smuggled into the caller-controlled meta_data blob.
         assert "user_id" not in milvus_db._decode_json_field(rows[0].get("meta_data"), default={})
 
-    def test_none_user_id_persisted_as_null(self, milvus_db):
+    def test_none_user_id_persisted_as_shared_sentinel(self, milvus_db):
         milvus_db.insert(content_hash="h1", documents=_shared_docs(), user_id=None)
         rows = _rows(milvus_db, fields=["id", "user_id"])
         assert len(rows) == 1
-        assert rows[0].get("user_id") is None
+        assert rows[0].get("user_id") == SHARED_USER_ID_VALUE
 
-    def test_user_id_omitted_defaults_to_null(self, milvus_db):
-        """Backwards-compatible: callers that never pass ``user_id`` get NULL
-        (shared) — they're effectively opting out of isolation."""
+    def test_user_id_omitted_defaults_to_shared_sentinel(self, milvus_db):
+        """Backwards-compatible: callers that never pass ``user_id`` get the shared sentinel — they're effectively
+        opting out of isolation."""
         milvus_db.insert(content_hash="h1", documents=_shared_docs())
         rows = _rows(milvus_db, fields=["id", "user_id"])
-        assert rows[0].get("user_id") is None
+        assert rows[0].get("user_id") == SHARED_USER_ID_VALUE
 
 
 class TestScopeExpressionBuilder:
-    """The scope-expression builder is small enough to unit-test directly,
-    without spinning the DB at all."""
+    """The scope-expression builder is small enough to unit-test directly, without spinning the DB at all."""
 
     def test_none_user_id_applies_no_scope(self, milvus_db):
         # user_id=None is the admin view: the metadata filter passes through unchanged.
-        assert milvus_db._scoped_expr(None, None) is None
-        assert milvus_db._scoped_expr({"tag": "x"}, None) == 'meta_data["tag"] == "x"'
+        assert milvus_db._scoped_filter_expr(None, None) is None
+        assert milvus_db._scoped_filter_expr({"tag": "x"}, None) == 'meta_data["tag"] == "x"'
 
-    def test_alice_scope_is_own_or_null(self, milvus_db):
-        assert milvus_db._scoped_expr(None, "alice") == '(user_id == "alice" or user_id is null)'
+    def test_alice_scope_is_own_or_shared(self, milvus_db):
+        assert milvus_db._scoped_filter_expr(None, "alice") == '(user_id == "alice" or user_id == "__shared__")'
 
-    def test_scoped_expr_ands_metadata_and_scope(self, milvus_db):
-        expr = milvus_db._scoped_expr({"tag": "x"}, "alice")
-        assert expr == '(meta_data["tag"] == "x") and (user_id == "alice" or user_id is null)'
+    def test_scoped_filter_expr_ands_metadata_and_scope(self, milvus_db):
+        expr = milvus_db._scoped_filter_expr({"tag": "x"}, "alice")
+        assert expr == '(meta_data["tag"] == "x") and (user_id == "alice" or user_id == "__shared__")'
 
     def test_empty_string_is_a_scoped_tenant_not_unscoped(self, milvus_db):
         # "" is a real owner, not an admin bypass — it scopes to its own bucket plus shared.
-        assert milvus_db._scoped_expr(None, "") == '(user_id == "" or user_id is null)'
+        assert milvus_db._scoped_filter_expr(None, "") == '(user_id == "" or user_id == "__shared__")'
 
-    def test_scope_expr_escapes_quotes_to_block_injection(self, milvus_db):
+    def test_scoped_filter_expr_escapes_quotes_to_block_injection(self, milvus_db):
         # A quote in user_id cannot break out of the literal and widen the scope.
-        expr = milvus_db._scoped_expr(None, 'zzz" or user_id == "bob')
-        assert expr == '(user_id == "zzz\\" or user_id == \\"bob" or user_id is null)'
+        expr = milvus_db._scoped_filter_expr(None, 'zzz" or user_id == "bob')
+        assert expr == '(user_id == "zzz\\" or user_id == \\"bob" or user_id == "__shared__")'
 
 
-class TestVectorSearchIsolation:
-    """The load-bearing test: alice's search returns her chunks plus shared
-    chunks, never bob's."""
+class TestSearchScope:
+    """The load-bearing test: alice's search returns her chunks plus shared chunks, never bob's."""
 
     @pytest.fixture
-    def populated_db(self, milvus_db):
+    def search_corpus(self, milvus_db):
         milvus_db.insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
         milvus_db.insert(content_hash="hb", documents=_bob_docs(), user_id="bob")
         milvus_db.insert(content_hash="hs", documents=_shared_docs(), user_id=None)
         return milvus_db
 
-    def test_alice_sees_her_own_and_shared(self, populated_db):
-        names = _search_names(populated_db, "salary", "alice")
+    def test_alice_sees_her_own_and_shared(self, search_corpus):
+        names = _search_names(search_corpus, "salary", "alice")
         assert "alice-salary" in names
         assert "company-holidays" in names
 
-    def test_alice_never_sees_bob(self, populated_db):
-        """The isolation contract. If this fails the feature is broken — alice
-        would be retrieving bob's confidential chunks."""
-        names = _search_names(populated_db, "salary", "alice")
+    def test_alice_never_sees_bob(self, search_corpus):
+        """The isolation contract."""
+        names = _search_names(search_corpus, "salary", "alice")
         assert "bob-salary" not in names
 
-    def test_bob_never_sees_alice(self, populated_db):
-        names = _search_names(populated_db, "salary", "bob")
+    def test_bob_never_sees_alice(self, search_corpus):
+        names = _search_names(search_corpus, "salary", "bob")
         assert "alice-salary" not in names
         assert "bob-salary" in names
 
-    def test_admin_sees_everything(self, populated_db):
-        names = _search_names(populated_db, "salary", None)
+    def test_admin_sees_everything(self, search_corpus):
+        names = _search_names(search_corpus, "salary", None)
         assert {"alice-salary", "bob-salary", "company-holidays"} <= names
 
+    @pytest.mark.asyncio
     async def test_async_alice_never_sees_bob(self, milvus_db):
         await milvus_db.async_insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
         await milvus_db.async_insert(content_hash="hb", documents=_bob_docs(), user_id="bob")
@@ -229,11 +195,9 @@ class TestVectorSearchIsolation:
         assert "bob-salary" not in names
 
 
-class TestSameContentDistinctOwners:
-    """Steal-prevention: the owner is folded into the deterministic doc id, so two
-    users uploading byte-identical content (same content_hash) land on distinct
-    primary keys. Neither insert overwrites the other and the shared bucket stays
-    independent — Milvus has no content-hash dedup delete, upsert is by primary key."""
+class TestDedupScope:
+    """Steal-prevention: the owner is folded into the deterministic doc id, so two users uploading byte-identical
+    content (same content_hash) land on distinct primary keys."""
 
     def test_two_owners_identical_content_both_survive(self, milvus_db):
         milvus_db.insert(content_hash="h", documents=[_doc("a", "same secret", "c1")], user_id="alice")
@@ -244,12 +208,13 @@ class TestSameContentDistinctOwners:
         assert _owners(milvus_db) == ["alice", "bob"]
 
     def test_shared_reingest_does_not_wipe_owned(self, milvus_db):
-        """A shared (NULL-owned) re-ingest of content a user already owns must not
-        clobber the owned row — the two rows are keyed independently."""
+        """A shared re-ingest of content a user already owns must not clobber the owned row — the two rows are keyed
+        independently."""
         milvus_db.insert(content_hash="h", documents=[_doc("a", "same secret", "c1")], user_id="alice")
         milvus_db.insert(content_hash="h", documents=[_doc("s", "same secret", "c1")], user_id=None)
-        assert _owners(milvus_db) == ["None", "alice"]
+        assert _owners(milvus_db) == [SHARED_USER_ID_VALUE, "alice"]
 
+    @pytest.mark.asyncio
     async def test_async_two_owners_identical_content_both_survive(self, milvus_db):
         await milvus_db.async_insert(content_hash="h", documents=[_doc("a", "same secret", "c1")], user_id="alice")
         await milvus_db.async_insert(content_hash="h", documents=[_doc("b", "same secret", "c1")], user_id="bob")
@@ -257,8 +222,8 @@ class TestSameContentDistinctOwners:
 
 
 class TestUpdateMetadataOwnership:
-    """``update_metadata`` writes into the caller-controlled meta_data blob; it must
-    never reassign the top-level owner, even if a ``user_id`` key is smuggled in."""
+    """``update_metadata`` writes into the caller-controlled meta_data blob; it must never reassign the top-level
+    owner, even if a ``user_id`` key is smuggled in."""
 
     def test_update_metadata_cannot_reassign_owner(self, milvus_db):
         milvus_db.insert(content_hash="h", documents=[_doc("a", "Alice secret", "c1")], user_id="alice")
@@ -270,37 +235,34 @@ class TestUpdateMetadataOwnership:
         assert meta.get("tag") == "x"  # legitimate keys still applied
 
 
-class TestDeleteByContentIdIsolation:
-    """``delete_by_content_id(content_id, user_id=...)`` must scope the delete to
-    the caller's chunks — otherwise Bob could guess Alice's content_id and wipe
-    her chunks, or a scoped caller could wipe the org's shared chunks."""
+class TestDeleteScope:
+    """A scoped delete removes the caller's chunks alone - never another owner's, never the shared bucket."""
 
     @pytest.fixture
-    def populated_db(self, milvus_db):
+    def content_id_corpus(self, milvus_db):
         milvus_db.insert(content_hash="ha", documents=[_doc("alice-doc", "Alice secret", "doc-1")], user_id="alice")
         milvus_db.insert(content_hash="hb", documents=[_doc("bob-doc", "Bob secret", "doc-1")], user_id="bob")
         milvus_db.insert(content_hash="hs", documents=[_doc("shared-doc", "Shared", "doc-1")], user_id=None)
         return milvus_db
 
-    def test_scoped_delete_only_removes_callers_chunks(self, populated_db):
-        """Bob deletes 'doc-1' under his own scope — alice's AND the shared chunk
-        must remain."""
-        assert populated_db.delete_by_content_id("doc-1", user_id="bob") is True
-        assert _owners(populated_db) == ["None", "alice"]
+    def test_scoped_delete_only_removes_callers_chunks(self, content_id_corpus):
+        """Bob deletes 'doc-1' under his own scope — alice's AND the shared chunk must remain."""
+        assert content_id_corpus.delete_by_content_id("doc-1", user_id="bob") is True
+        assert _owners(content_id_corpus) == [SHARED_USER_ID_VALUE, "alice"]
 
-    def test_scoped_delete_does_not_touch_shared(self, populated_db):
-        """A scoped caller must never delete the shared (NULL-owned) bucket."""
-        populated_db.delete_by_content_id("doc-1", user_id="alice")
-        owners = _owners(populated_db)
-        assert "None" in owners  # shared survived
+    def test_scoped_delete_does_not_touch_shared(self, content_id_corpus):
+        """A scoped caller must never delete the shared bucket."""
+        content_id_corpus.delete_by_content_id("doc-1", user_id="alice")
+        owners = _owners(content_id_corpus)
+        assert SHARED_USER_ID_VALUE in owners  # shared survived
         assert "alice" not in owners
 
-    def test_unscoped_delete_wipes_everyone(self, populated_db):
+    def test_unscoped_delete_wipes_everyone(self, content_id_corpus):
         """Legacy behaviour: ``user_id=None`` deletes across all owners."""
-        assert populated_db.delete_by_content_id("doc-1", user_id=None) is True
-        assert _count(populated_db) == 0
+        assert content_id_corpus.delete_by_content_id("doc-1", user_id=None) is True
+        assert _count(content_id_corpus) == 0
 
-    def test_scoped_delete_is_no_op_when_nothing_owned(self, populated_db):
+    def test_scoped_delete_is_no_op_when_nothing_owned(self, content_id_corpus):
         """Carol owns nothing; her scoped delete of doc-1 removes no rows."""
-        populated_db.delete_by_content_id("doc-1", user_id="carol")
-        assert _count(populated_db) == 3
+        content_id_corpus.delete_by_content_id("doc-1", user_id="carol")
+        assert _count(content_id_corpus) == 3

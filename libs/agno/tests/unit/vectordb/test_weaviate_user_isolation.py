@@ -1,15 +1,7 @@
 """Weaviate per-user RAG isolation contract.
 
-Weaviate stores ``user_id`` as a first-class TEXT property (FIELD tokenization
-so the scope filter matches the owner exactly). Scoped searches filter on
-``user_id == caller OR user_id IS NULL`` so admin-uploaded shared content stays
-discoverable; ``user_id=None`` at search time applies no scope (admin view).
-
-The client/collection are mocked so no server is needed. The isolation logic
-lives in the values the adapter writes and the ``Filter`` it builds, so we
-assert on the inserted object properties (the stamped ``user_id`` and the
-owner-folded uuid) and on the ``Filter`` handed to ``query.near_vector`` /
-``data.delete_many``, flattened to ``(target, operator, value)`` leaves.
+Owner lives in a top-level ``user_id`` property; NULL is the shared bucket. The weaviate
+clients are mocked, so the filter handed to the collection query is the contract.
 """
 
 import uuid
@@ -21,6 +13,8 @@ import pytest
 from agno.knowledge.document import Document
 from agno.vectordb.search import SearchType
 from agno.vectordb.weaviate import Weaviate
+
+from .conftest import DeterministicEmbedder
 
 TEST_COLLECTION = "IsolationTest"
 USER_ID_KEY = Weaviate.USER_ID_KEY
@@ -47,19 +41,6 @@ def _empty_response():
     resp = MagicMock()
     resp.objects = []
     return resp
-
-
-@pytest.fixture
-def mock_embedder():
-    """A tiny embedder that needs no network or API key."""
-    mock = MagicMock()
-    mock.dimensions = 8
-    mock.enable_batch = False
-    vec = [0.1] * 8
-    mock.get_embedding.return_value = vec
-    mock.get_embedding_and_usage.return_value = (vec, {"total_tokens": 1})
-    mock.async_get_embedding_and_usage = AsyncMock(return_value=(vec, {"total_tokens": 1}))
-    return mock
 
 
 @pytest.fixture
@@ -102,12 +83,12 @@ def mock_async_weaviate_client():
 
 
 @pytest.fixture
-def weaviate_db(mock_weaviate_client, mock_async_weaviate_client, mock_embedder):
+def weaviate_db(mock_weaviate_client, mock_async_weaviate_client):
     """Create a Weaviate instance with mocked sync and async clients."""
     return Weaviate(
         collection=TEST_COLLECTION,
         local=True,
-        embedder=mock_embedder,
+        embedder=DeterministicEmbedder(),
         client=mock_weaviate_client,
         search_type=SearchType.vector,
     )
@@ -130,8 +111,8 @@ def _collection(client):
 
 
 class TestWriteStampsOwner:
-    """Inserts stamp the owner on the top-level ``user_id`` property; None (and
-    omitted) land in the shared bucket (property is None)."""
+    """Inserts stamp the owner on the top-level ``user_id`` property; None (and omitted) land in the shared bucket
+    (property is None)."""
 
     def test_explicit_user_id_persisted(self, weaviate_db, mock_weaviate_client):
         weaviate_db.insert(content_hash="h1", documents=_alice_docs(), user_id="alice")
@@ -150,9 +131,8 @@ class TestWriteStampsOwner:
 
 
 class TestOwnerFoldedId:
-    """Two owners uploading byte-identical content get DISTINCT uuids (the owner
-    is folded into the id), so one insert never clobbers the other. The shared
-    (user_id=None) write keeps the base (owner-free) uuid."""
+    """Two owners uploading byte-identical content get DISTINCT uuids (the owner is folded into the id), so one
+    insert never clobbers the other."""
 
     def _insert_uuid(self, weaviate_db, mock_weaviate_client, user_id):
         _collection(mock_weaviate_client).data.insert.reset_mock()
@@ -183,8 +163,8 @@ class TestOwnerFoldedId:
 
 
 class TestSearchScope:
-    """A scoped search filters own-OR-shared (user_id == caller OR IS NULL); an
-    admin search (user_id=None) applies no filter."""
+    """A scoped search filters own-OR-shared (user_id == caller OR IS NULL); an admin search (user_id=None) applies
+    no filter."""
 
     def test_scoped_vector_search_is_own_or_shared(self, weaviate_db, mock_weaviate_client):
         weaviate_db.search("salary", limit=10, user_id="alice")
@@ -225,9 +205,9 @@ class TestSearchScope:
         ]
 
 
-class TestScopedDedup:
-    """The upsert dedup delete is scoped to the writing owner, so re-ingesting
-    shared content never wipes an owner's identical-content row (and vice versa)."""
+class TestUpsertDedupScope:
+    """The upsert dedup delete is scoped to the writing owner, so re-ingesting shared content never wipes an owner's
+    identical-content row (and vice versa)."""
 
     def test_owner_upsert_dedup_deletes_only_owner(self, weaviate_db, mock_weaviate_client):
         weaviate_db.content_hash_exists = MagicMock(return_value=True)
@@ -255,7 +235,7 @@ class TestScopedDedup:
         weaviate_db.content_hash_exists.assert_called_once_with("h", user_id="bob")
 
 
-class TestDeleteByContentIdScope:
+class TestDeleteScope:
     """delete_by_content_id restricts to the owner; only None spans all owners."""
 
     def test_scoped_delete_matches_owner_only(self, weaviate_db, mock_weaviate_client):
@@ -276,9 +256,9 @@ class TestDeleteByContentIdScope:
         assert _leaves(where) == [("content_id", "Equal", "doc-1")]
 
 
-class TestDeleteByContentHashScope:
-    """_delete_by_content_hash scoped to an owner clears only that owner; None
-    clears ONLY the shared (null) bucket, never other owners' identical rows."""
+class TestDedupScope:
+    """_delete_by_content_hash scoped to an owner clears only that owner; None clears ONLY the shared (null) bucket,
+    never other owners' identical rows."""
 
     def test_scoped_delete_matches_owner_only(self, weaviate_db, mock_weaviate_client):
         weaviate_db._delete_by_content_hash("h", user_id="alice")
@@ -300,8 +280,8 @@ class TestDeleteByContentHashScope:
 
 
 class TestEmptyUserIdRejected:
-    """Empty / whitespace-only user_id folds to the null bucket under FIELD
-    tokenization, leaking the row to every caller. Writes and reads must reject it."""
+    """Empty / whitespace-only user_id folds to the null bucket under FIELD tokenization, leaking the row to every
+    caller."""
 
     @pytest.mark.parametrize("bad_id", ["", " ", "   ", "\t", "\n"])
     def test_insert_rejects(self, weaviate_db, bad_id):
@@ -313,11 +293,13 @@ class TestEmptyUserIdRejected:
         with pytest.raises(ValueError):
             weaviate_db.search("salary", limit=10, user_id=bad_id)
 
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("bad_id", ["", " ", "\t"])
     async def test_async_insert_rejects(self, weaviate_db, bad_id):
         with pytest.raises(ValueError):
             await weaviate_db.async_insert(content_hash="h1", documents=_alice_docs(), user_id=bad_id)
 
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("bad_id", ["", " ", "\t"])
     async def test_async_search_rejects(self, weaviate_db, bad_id):
         with pytest.raises(ValueError):
@@ -327,16 +309,19 @@ class TestEmptyUserIdRejected:
 class TestAsyncIsolation:
     """The async path must stamp the owner and scope reads identically."""
 
+    @pytest.mark.asyncio
     async def test_async_insert_stamps_owner(self, weaviate_db, mock_async_weaviate_client):
         await weaviate_db.async_insert(content_hash="h1", documents=_alice_docs(), user_id="alice")
         props = _collection(mock_async_weaviate_client).data.insert.call_args.kwargs["properties"]
         assert props[USER_ID_KEY] == "alice"
 
+    @pytest.mark.asyncio
     async def test_async_insert_none_is_shared(self, weaviate_db, mock_async_weaviate_client):
         await weaviate_db.async_insert(content_hash="h1", documents=_shared_docs(), user_id=None)
         props = _collection(mock_async_weaviate_client).data.insert.call_args.kwargs["properties"]
         assert props[USER_ID_KEY] is None
 
+    @pytest.mark.asyncio
     async def test_async_search_scoped(self, weaviate_db, mock_async_weaviate_client):
         await weaviate_db.async_search("salary", limit=10, user_id="alice")
         sent = _collection(mock_async_weaviate_client).query.near_vector.call_args.kwargs["filters"]
@@ -346,6 +331,7 @@ class TestAsyncIsolation:
             (USER_ID_KEY, "IsNull", True),
         ]
 
+    @pytest.mark.asyncio
     async def test_async_admin_search_has_no_scope(self, weaviate_db, mock_async_weaviate_client):
         await weaviate_db.async_search("salary", limit=10, user_id=None)
         assert _collection(mock_async_weaviate_client).query.near_vector.call_args.kwargs["filters"] is None

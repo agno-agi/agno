@@ -1,5 +1,6 @@
 import asyncio
 import time
+from hashlib import md5
 from importlib import metadata
 from typing import Any, Dict, List, Optional, Union
 
@@ -13,11 +14,6 @@ from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
 
-try:
-    from hashlib import md5
-
-except ImportError:
-    raise ImportError("`hashlib` not installed. Please install using `pip install hashlib`")
 try:
     from pymongo import AsyncMongoClient, MongoClient, errors
     from pymongo.collection import Collection
@@ -149,18 +145,6 @@ class MongoDb(VectorDb):
             # append_metadata was added in PyMongo 4.14.0, but is a valid database name on earlier versions
             if callable(self._client.append_metadata):
                 self._client.append_metadata(DRIVER_METADATA)
-
-    def _user_scope_filter(self, user_id: Optional[str]) -> Optional[Dict[str, Any]]:
-        """Build the tenant scope predicate for a search/delete.
-
-        ``user_id=None`` returns ``None`` (no scope — admin view sees all).
-        ``user_id="alice"`` matches either the caller's own chunks OR the shared
-        bucket (``user_id`` is null). Direct null equality is used because the
-        $vectorSearch pre-filter accepts ``$eq``/``$or`` but not ``$exists``.
-        """
-        if user_id is None:
-            return None
-        return {"$or": [{USER_ID_FIELD: user_id}, {USER_ID_FIELD: None}]}
 
     def _get_client(self) -> MongoClient:
         """Create or retrieve the MongoDB client."""
@@ -536,22 +520,37 @@ class MongoDb(VectorDb):
             logger.exception("Error checking document ID existence")
             return False
 
+    def _user_scope_filter(self, user_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        """Build the tenant scope predicate for a search/delete.
+
+        ``user_id=None`` returns ``None`` (no scope — admin view sees all).
+        ``user_id="alice"`` matches either the caller's own chunks OR the shared
+        bucket (``user_id`` is null). Direct null equality is used because the
+        $vectorSearch pre-filter accepts ``$eq``/``$or`` but not ``$exists``.
+        """
+        if user_id is None:
+            return None
+        return {"$or": [{USER_ID_FIELD: user_id}, {USER_ID_FIELD: None}]}
+
     def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Check if documents with the given content hash exist in the collection.
 
         Args:
             content_hash (str): The content hash to check.
-            user_id (Optional[str]): Restrict the check to the owner's chunks so a
-                different owner's identical upload is not judged a duplicate.
+            user_id (Optional[str]): The owner to check, so a different owner's
+                identical upload is not judged a duplicate. This is the guard half
+                of the upsert dedup pair, so ``None`` addresses the shared bucket
+                alone (``user_id`` is null) rather than every owner - the same
+                bucket a ``None``-scoped delete clears.
 
         Returns:
             bool: True if documents with the content hash exist, False otherwise.
         """
         try:
             collection = self._get_collection()
-            query: Dict[str, Any] = {"content_hash": content_hash}
-            if user_id is not None:
-                query[USER_ID_FIELD] = user_id
+            # Direct null equality, the same primitive ``_user_scope_filter`` uses:
+            # ``None`` matches the shared bucket and no owned row.
+            query: Dict[str, Any] = {"content_hash": content_hash, USER_ID_FIELD: user_id}
             result = collection.find_one(query)
             exists = result is not None
             log_debug(f"Document with content_hash '{content_hash}' {'exists' if exists else 'does not exist'}")
@@ -570,6 +569,9 @@ class MongoDb(VectorDb):
         """Insert documents into the MongoDB collection.
 
         Args:
+            content_hash (str): The content hash shared by these documents.
+            documents (List[Document]): The documents to insert.
+            filters (Optional[Dict[str, Any]]): Metadata merged into every document.
             user_id (Optional[str]): Owner of these chunks for per-user isolation.
         """
         log_debug(f"Inserting {len(documents)} documents")
@@ -607,10 +609,20 @@ class MongoDb(VectorDb):
         """Upsert documents into the MongoDB collection.
 
         Args:
+            content_hash (str): The content hash shared by these documents.
+            documents (List[Document]): The documents to upsert.
+            filters (Optional[Dict[str, Any]]): Metadata merged into every document.
             user_id (Optional[str]): Owner of these chunks for per-user isolation.
         """
         log_info(f"Upserting {len(documents)} documents")
         collection = self._get_collection()
+
+        # The ``_id`` is content-derived, so a re-upsert of edited content writes new
+        # rows instead of replacing the old ones. Clear the caller's prior chunks for
+        # this content_hash first, or a document that shrinks leaves stale chunks
+        # behind and they keep answering searches.
+        if self.content_hash_exists(content_hash, user_id=user_id):
+            self._delete_by_content_hash(content_hash, user_id=user_id)
 
         for document in documents:
             try:
@@ -642,6 +654,10 @@ class MongoDb(VectorDb):
         """Search for documents using vector similarity.
 
         Args:
+            query (str): The query to search for.
+            limit (int): The maximum number of documents to return.
+            filters (Optional[Union[Dict[str, Any], List[FilterExpr]]]): Metadata filters to apply.
+            min_score (float): Drop results scoring below this value; 0.0 keeps them all.
             user_id (Optional[str]): Restrict results to the caller's chunks plus
                 the shared bucket. ``None`` searches all chunks (admin view).
         """
@@ -813,6 +829,9 @@ class MongoDb(VectorDb):
         Reference: https://www.mongodb.com/docs/atlas/atlas-vector-search/tutorials/reciprocal-rank-fusion
 
         Args:
+            query (str): The query to search for.
+            limit (int): The maximum number of documents to return.
+            filters (Optional[Dict[str, Any]]): Metadata filters to apply.
             user_id (Optional[str]): Restrict results to the caller's chunks plus
                 the shared bucket. ``None`` searches all chunks (admin view).
         """
@@ -1122,6 +1141,9 @@ class MongoDb(VectorDb):
         """Insert documents asynchronously.
 
         Args:
+            content_hash (str): The content hash shared by these documents.
+            documents (List[Document]): The documents to insert.
+            filters (Optional[Dict[str, Any]]): Metadata merged into every document.
             user_id (Optional[str]): Owner of these chunks for per-user isolation.
         """
         log_debug(f"Inserting {len(documents)} documents asynchronously")
@@ -1195,10 +1217,17 @@ class MongoDb(VectorDb):
         """Upsert documents asynchronously.
 
         Args:
+            content_hash (str): The content hash shared by these documents.
+            documents (List[Document]): The documents to upsert.
+            filters (Optional[Dict[str, Any]]): Metadata merged into every document.
             user_id (Optional[str]): Owner of these chunks for per-user isolation.
         """
         log_info(f"Upserting {len(documents)} documents asynchronously")
         collection = await self._get_async_collection()
+
+        # See the matching comment in ``upsert``.
+        if self.content_hash_exists(content_hash, user_id=user_id):
+            self._delete_by_content_hash(content_hash, user_id=user_id)
 
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
             # Use batch embedding when enabled and supported
@@ -1256,11 +1285,16 @@ class MongoDb(VectorDb):
         query: str,
         limit: int = 5,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        min_score: float = 0.0,
         user_id: Optional[str] = None,
     ) -> List[Document]:
         """Search for documents asynchronously.
 
         Args:
+            query (str): The query to search for.
+            limit (int): The maximum number of documents to return.
+            filters (Optional[Union[Dict[str, Any], List[FilterExpr]]]): Metadata filters to apply.
+            min_score (float): Drop results scoring below this value; 0.0 keeps them all.
             user_id (Optional[str]): Restrict results to the caller's chunks plus
                 the shared bucket. ``None`` searches all chunks (admin view).
         """
@@ -1290,6 +1324,10 @@ class MongoDb(VectorDb):
                 {"$set": {"score": {"$meta": "vectorSearchScore"}}},
             ]
 
+            match_filters: Dict[str, Any] = {}
+            if min_score > 0:
+                match_filters["score"] = {"$gte": min_score}
+
             # Handle filters if provided
             if filters:
                 # MongoDB uses dot notation for nested fields, so we need to prepend meta_data. if needed
@@ -1301,7 +1339,10 @@ class MongoDb(VectorDb):
                     else:
                         mongo_filters[key] = value
 
-                pipeline.append({"$match": mongo_filters})
+                match_filters.update(mongo_filters)
+
+            if match_filters:
+                pipeline.append({"$match": match_filters})
 
             pipeline.append({"$project": {"embedding": 0}})
 
@@ -1448,18 +1489,18 @@ class MongoDb(VectorDb):
             logger.exception(f"Error deleting documents with metadata '{metadata}'")
             return False
 
-    def _delete_by_content_hash(self, content_hash: str) -> bool:
-        """Delete documents by content hash.
+    def _delete_by_content_hash(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        """Delete documents by content hash, scoped to ``user_id`` when set.
 
         Args:
             content_hash (str): The content hash to delete.
-
-        Returns:
-            bool: True if documents were deleted successfully, False otherwise.
+            user_id (Optional[str]): Owner to scope the delete to; ``None`` scopes to
+                the shared bucket (``user_id`` is null) so a shared re-upsert never
+                wipes a scoped owner's identical-content chunks.
         """
         try:
             collection = self._get_collection()
-            result = collection.delete_many({"content_hash": content_hash})
+            result = collection.delete_many({"content_hash": content_hash, USER_ID_FIELD: user_id})
             log_info(f"Deleted {result.deleted_count} documents with content_hash '{content_hash}'")
             return True
         except Exception:
@@ -1470,8 +1511,9 @@ class MongoDb(VectorDb):
         """Delete documents by content ID.
 
         Args:
+            content_id (str): The content ID of the documents to delete.
             user_id (Optional[str]): Restrict the delete to the owner's chunks.
-                ``None`` deletes across all owners (legacy behaviour).
+                ``None`` is the admin view and deletes across every owner.
         """
         try:
             collection = self._get_collection()

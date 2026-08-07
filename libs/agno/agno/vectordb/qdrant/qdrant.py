@@ -22,26 +22,24 @@ DEFAULT_DENSE_VECTOR_NAME = "dense"
 DEFAULT_SPARSE_VECTOR_NAME = "sparse"
 DEFAULT_SPARSE_MODEL = "Qdrant/bm25"
 
-# Per-user RAG isolation (K2):
-# Qdrant's vendor-recommended multi-tenancy uses a single collection with a
-# tenant key in the payload, indexed with ``is_tenant=True`` so the engine
-# stores tenant data contiguously and can prune by tenant before traversing
-# the HNSW graph. We name the tenant field ``user_id``.
-#
-# Semantics:
-# * Inserts with ``user_id`` stamp the column in the payload.
-# * Inserts with ``user_id=None`` leave the column NULL — the SHARED bucket.
-# * Searches with ``user_id=X`` use a Filter with ``should`` matching either
-#   the caller's id OR is_empty(user_id). The shared bucket is always merged
-#   into per-user reads — admin uploads stay discoverable.
-# * Searches with ``user_id=None`` apply no scope (admin view, sees all).
-USER_ID_PAYLOAD_KEY = "user_id"
-
 
 class Qdrant(VectorDb):
     """Vector DB implementation powered by Qdrant - https://qdrant.tech/"""
 
-    USER_ID_KEY = USER_ID_PAYLOAD_KEY
+    # Per-user RAG isolation:
+    # Qdrant's vendor-recommended multi-tenancy uses a single collection with a
+    # tenant key in the payload, indexed with ``is_tenant=True`` so the engine
+    # stores tenant data contiguously and can prune by tenant before traversing
+    # the HNSW graph. We name the tenant field ``user_id``.
+    #
+    # Semantics:
+    # * Inserts with ``user_id`` stamp the column in the payload.
+    # * Inserts with ``user_id=None`` leave the column NULL — the SHARED bucket.
+    # * Searches with ``user_id=X`` use a Filter with ``should`` matching either
+    #   the caller's id OR is_empty(user_id). The shared bucket is always merged
+    #   into per-user reads — admin uploads stay discoverable.
+    # * Searches with ``user_id=None`` apply no scope (admin view, sees all).
+    USER_ID_KEY: str = "user_id"
 
     def __init__(
         self,
@@ -359,6 +357,20 @@ class Qdrant(VectorDb):
             return len(scroll_result[0]) > 0
         return False
 
+    def _scoped_doc_id(self, base_id: str, content_hash: str, user_id: Optional[str]) -> str:
+        """Fold the owner into the deterministic point id so two users inserting the
+        same content get distinct ids. None keeps the stable base id.
+
+        ``base_id`` is caller-controlled and variable length, so it is collapsed with
+        ``content_hash`` into a fixed-length digest before the owner is folded in -
+        otherwise the '_' boundary moves and ('doc_1', 'alice') and ('doc', '1_alice')
+        collapse to the same point id, letting one owner overwrite the other's chunk.
+        """
+        doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+        if user_id is None:
+            return doc_id
+        return md5(f"{doc_id}_{user_id}".encode()).hexdigest()
+
     def insert(
         self,
         content_hash: str,
@@ -383,7 +395,7 @@ class Qdrant(VectorDb):
             cleaned_content = document.content.replace("\x00", "\ufffd")
             # Include content_hash in ID to ensure uniqueness across different content hashes
             base_id = document.id or md5(cleaned_content.encode()).hexdigest()
-            doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+            doc_id = self._scoped_doc_id(base_id, content_hash, user_id)
 
             # TODO(v2.0.0): Remove conditional vector naming logic
             if self.use_named_vectors:
@@ -507,7 +519,7 @@ class Qdrant(VectorDb):
             cleaned_content = document.content.replace("\x00", "\ufffd")
             # Include content_hash in ID to ensure uniqueness across different content hashes
             base_id = document.id or md5(cleaned_content.encode()).hexdigest()
-            doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+            doc_id = self._scoped_doc_id(base_id, content_hash, user_id)
 
             if self.search_type == SearchType.vector:
                 # For vector search, maintain backward compatibility with unnamed vectors
@@ -574,8 +586,8 @@ class Qdrant(VectorDb):
             user_id (Optional[str]): Owner of these chunks for per-user isolation.
         """
         log_debug("Redirecting the request to insert")
-        if self.content_hash_exists(content_hash):
-            self._delete_by_content_hash(content_hash)
+        if self.content_hash_exists(content_hash, user_id=user_id):
+            self._delete_by_content_hash(content_hash, user_id=user_id)
         self.insert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
 
     async def async_upsert(
@@ -587,6 +599,12 @@ class Qdrant(VectorDb):
     ) -> None:
         """Upsert documents asynchronously."""
         log_debug("Redirecting the async request to async_insert")
+        # Same dedup pair as the sync path. Without it a re-upsert whose content
+        # split into fewer chunks leaves the surplus points behind, still
+        # answering searches, because their ids no longer collide with anything
+        # the new batch writes.
+        if self.content_hash_exists(content_hash, user_id=user_id):
+            self._delete_by_content_hash(content_hash, user_id=user_id)
         await self.async_insert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
 
     def search(
@@ -834,7 +852,9 @@ class Qdrant(VectorDb):
         Using ``should`` (logical OR) is the documented Qdrant way to express
         "this OR that". ``IsEmptyCondition`` matches both NULL and absent.
         """
-        if not user_id:
+        # Only ``None`` means "no scope". An empty string is an owner like any
+        # other — treating it as unscoped would widen the read to every owner.
+        if user_id is None:
             return None
         return models.Filter(
             should=[
@@ -1036,8 +1056,8 @@ class Qdrant(VectorDb):
           removed. Bob's chunks (and shared chunks) under the same content_id
           remain untouched. This is what stops Bob from guessing Alice's
           content_id to wipe her data.
-        * ``user_id=None`` (legacy default): deletes ALL chunks with this
-          content_id regardless of owner. Mirrors LanceDB's unscoped semantic.
+        * ``user_id=None``: the admin view, deleting this content_id across
+          every owner. Mirrors LanceDB's unscoped semantic.
         """
         try:
             log_info(f"Attempting to delete all points with content_id: {content_id} (user_id={user_id})")
@@ -1045,7 +1065,9 @@ class Qdrant(VectorDb):
             must_conditions: List[Any] = [
                 models.FieldCondition(key="content_id", match=models.MatchValue(value=content_id))
             ]
-            if user_id:
+            # ``None`` deletes across all owners; an empty string is an owner,
+            # so it still scopes — otherwise it would wipe every owner's rows.
+            if user_id is not None:
                 must_conditions.append(
                     models.FieldCondition(key=self.USER_ID_KEY, match=models.MatchValue(value=user_id))
                 )
@@ -1098,20 +1120,38 @@ class Qdrant(VectorDb):
             log_info(f"Error checking if point {id} exists: {e}")
             return False
 
-    def content_hash_exists(self, content_hash: str) -> bool:
+    def _content_hash_filter(self, content_hash: str, user_id: Optional[str] = None) -> Any:
+        """Filter for one owner's points with this content hash.
+
+        Shared by the guard and the delete halves of the upsert dedup pair, so the
+        two cannot drift onto different buckets. Exact-owner scope, the same
+        predicate ``delete_by_content_id`` uses; None addresses the shared bucket
+        alone rather than every owner, because this is a dedup pair and not an
+        admin-wide lookup.
+        """
+        must_conditions: List[Any] = [
+            models.FieldCondition(key="content_hash", match=models.MatchValue(value=content_hash))
+        ]
+        if user_id is not None:
+            must_conditions.append(models.FieldCondition(key=self.USER_ID_KEY, match=models.MatchValue(value=user_id)))
+        else:
+            must_conditions.append(models.IsEmptyCondition(is_empty=models.PayloadField(key=self.USER_ID_KEY)))
+        return models.Filter(must=must_conditions)
+
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Check if any points with the given content hash exist in the collection.
 
         Args:
             content_hash (str): The content hash to check.
+            user_id (Optional[str]): Scope the check to the owner's own points, so a
+                different owner's identical upload is not judged a duplicate. None
+                scopes to the shared bucket (``is_empty(user_id)``).
 
         Returns:
             bool: True if points with the content hash exist, False otherwise.
         """
         try:
-            # Create a filter to find points with the specified content_hash
-            filter_condition = models.Filter(
-                must=[models.FieldCondition(key="content_hash", match=models.MatchValue(value=content_hash))]
-            )
+            filter_condition = self._content_hash_filter(content_hash, user_id)
 
             # Count how many points match the filter
             count_result = self.client.count(collection_name=self.collection, count_filter=filter_condition, exact=True)
@@ -1120,11 +1160,14 @@ class Qdrant(VectorDb):
             log_info(f"Error checking if content_hash {content_hash} exists: {e}")
             return False
 
-    def _delete_by_content_hash(self, content_hash: str) -> bool:
+    def _delete_by_content_hash(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Delete all points that have the specified content_hash in their payload.
 
         Args:
             content_hash (str): The content hash to delete.
+            user_id (Optional[str]): Owner to scope the delete to. None scopes to the
+                shared bucket (``is_empty(user_id)``), so a re-ingest of content one
+                owner already holds never wipes another owner's identical points.
 
         Returns:
             bool: True if points were deleted successfully, False otherwise.
@@ -1132,10 +1175,7 @@ class Qdrant(VectorDb):
         try:
             log_info(f"Attempting to delete all points with content_hash: {content_hash}")
 
-            # Create a filter to find all points with the specified content_hash
-            filter_condition = models.Filter(
-                must=[models.FieldCondition(key="content_hash", match=models.MatchValue(value=content_hash))]
-            )
+            filter_condition = self._content_hash_filter(content_hash, user_id)
 
             # First, count how many points will be deleted
             count_result = self.client.count(collection_name=self.collection, count_filter=filter_condition, exact=True)
