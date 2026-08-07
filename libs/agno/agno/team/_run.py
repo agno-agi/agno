@@ -5367,11 +5367,13 @@ def _merge_requirement_decision(stored: Any, wire: Any) -> None:
     model fixed at pause time. Answers therefore land by stored field name, and
     only in fields the model left open.
 
-    ``answered`` is inferred from the stored schema exactly as
-    ``RunRequirement.from_dict`` infers it — only when this merge fills the last
-    open field — and never copied off the wire, which would otherwise run the
-    gated tool with its fields still empty. A requirement carrying no schema at
-    all has no other way to be answered, so there the wire flag stands.
+    ``answered`` is inferred from the stored schema — when this merge fills
+    the last open field — and never copied off the wire while a field is
+    still open, which would otherwise run the gated tool with its fields
+    still empty. Once nothing is open (the schema was answered here, was
+    fully prefilled by the model at pause time, or never existed) the wire's
+    explicit flag stands: a prefilled pause has no open field to fill, so
+    the flag is its only accept gesture.
     """
     stored_te = getattr(stored, "tool_execution", None)
     wire_te = getattr(wire, "tool_execution", None)
@@ -5403,17 +5405,19 @@ def _merge_requirement_decision(stored: Any, wire: Any) -> None:
         _fill_user_feedback_answers(stored_feedback_schema, wire_te.user_feedback_schema)
         _fill_user_feedback_answers(stored_feedback_schema, getattr(wire, "user_feedback_schema", None))
         if stored_te.answered is None:
-            if input_was_open and all(field.value is not None for field in stored_input_schema or []):
+            input_open_now = any(field.value is None for field in stored_input_schema or [])
+            feedback_open_now = any(question.selected_options is None for question in stored_feedback_schema or [])
+            if input_was_open and not input_open_now:
                 stored_te.answered = True
-            elif feedback_was_open and all(
-                question.selected_options is not None for question in stored_feedback_schema or []
-            ):
+            elif feedback_was_open and not feedback_open_now:
                 stored_te.answered = True
-            elif (
-                getattr(wire_te, "answered", None) is not None
-                and not stored_input_schema
-                and not stored_feedback_schema
-            ):
+            elif getattr(wire_te, "answered", None) is not None and not input_open_now and not feedback_open_now:
+                # A schema the model prefilled completely was never open, so
+                # the fill-based inference above can never fire for it. The
+                # client's explicit flag is the accept gesture for such a
+                # pause; without honoring it the run could never resume. A
+                # still-open field keeps the flag ignored — answering is the
+                # schema's job, not the flag's.
                 stored_te.answered = wire_te.answered
         if getattr(stored_te, "external_execution_required", None) and getattr(wire_te, "result", None) is not None:
             stored_te.result = wire_te.result
