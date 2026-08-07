@@ -1,0 +1,347 @@
+"""Kernel-backed CodeMode tests: a real ipykernel on sys.executable.
+
+Every test runs against a live kernel subprocess and is marked integration.
+"""
+
+import asyncio
+import time
+
+import pytest
+
+from agno.run import RunContext
+from agno.tools.code_mode import CodeMode, KernelBusyError, KernelDiedError
+from agno.tools.code_mode.kernel import RESET_NOTICE
+
+pytestmark = pytest.mark.integration
+
+_SESSION_COUNTER = iter(range(1_000_000))
+
+
+def _ctx(session_id: str) -> RunContext:
+    return RunContext(run_id="run-1", session_id=session_id)
+
+
+def _sid(prefix: str) -> str:
+    return f"{prefix}-{next(_SESSION_COUNTER)}"
+
+
+@pytest.fixture
+def make_code_mode():
+    instances = []
+
+    def factory(**kwargs):
+        cm = CodeMode(**kwargs)
+        instances.append(cm)
+        return cm
+
+    yield factory
+    for cm in instances:
+        try:
+            cm.shutdown()
+        except Exception:
+            pass
+
+
+# ------------------------------------------------------------------
+# State persistence and the model-facing surface
+# ------------------------------------------------------------------
+
+
+def test_state_persists_across_execute_calls(make_code_mode):
+    cm = make_code_mode()
+    sid = _sid("persist")
+    first = cm.execute(_ctx(sid), "x = 41")
+    assert "Error" not in first.content
+    second = cm.execute(_ctx(sid), "x + 1")
+    assert "42" in second.content
+
+
+async def test_state_persists_across_aexecute_calls(make_code_mode):
+    cm = make_code_mode()
+    sid = _sid("apersist")
+    await cm.aexecute(_ctx(sid), "y = [1, 2, 3]")
+    result = await cm.aexecute(_ctx(sid), "sum(y)")
+    assert "6" in result.content
+
+
+def test_two_sessions_are_isolated(make_code_mode):
+    cm = make_code_mode()
+    sid_a, sid_b = _sid("iso-a"), _sid("iso-b")
+    cm.execute(_ctx(sid_a), "secret = 'session-a'")
+    result = cm.execute(_ctx(sid_b), "secret")
+    assert "NameError" in result.content
+
+
+def test_execution_count_increments(make_code_mode):
+    cm = make_code_mode()
+    sid = _sid("count")
+    first = cm.run(sid, "1")
+    second = cm.run(sid, "2")
+    assert first.execution_count == 1
+    assert second.execution_count == 2
+
+
+def test_traceback_returns_error_and_kernel_survives(make_code_mode):
+    cm = make_code_mode()
+    sid = _sid("boom")
+    cm.run(sid, "kept = 'still here'")
+    result = cm.run(sid, "1 / 0")
+    assert result.status == "error"
+    assert result.traceback is not None and "ZeroDivisionError" in result.traceback
+    after = cm.run(sid, "kept")
+    assert after.status == "ok"
+    assert after.result == "'still here'"
+
+
+def test_input_fails_rather_than_hangs(make_code_mode):
+    cm = make_code_mode()
+    result = cm.run(_sid("stdin"), "input('are you there?')")
+    assert result.status == "error"
+    assert result.traceback is not None and "StdinNotImplementedError" in result.traceback
+
+
+# ------------------------------------------------------------------
+# Shell magics
+# ------------------------------------------------------------------
+
+
+def test_bash_works_and_its_cd_does_not_leak_while_percent_cd_does(make_code_mode):
+    cm = make_code_mode()
+    sid = _sid("shell")
+    before = cm.run(sid, "import os; os.getcwd()")
+    assert before.status == "ok"
+    bash = cm.run(sid, "%%bash\ncd /\npwd")
+    assert bash.status == "ok"
+    assert bash.stdout.strip() == "/"
+    after = cm.run(sid, "import os; os.getcwd()")
+    assert after.result == before.result
+    moved = cm.run(sid, "%cd /")
+    assert moved.status == "ok"
+    now = cm.run(sid, "import os; os.getcwd()")
+    assert now.result == "'/'"
+
+
+def test_allow_shell_false_rejects_bash_cells(make_code_mode):
+    cm = make_code_mode(allow_shell=False)
+    result = cm.execute(_ctx(_sid("noshell")), "%%bash\necho hi")
+    assert result.content.startswith("Error:")
+    assert "allow_shell=False" in result.content
+
+
+def test_allow_shell_false_strips_the_magic_in_kernel(make_code_mode):
+    cm = make_code_mode(allow_shell=False)
+    # Reaching the magic through run_cell_magic bypasses the host-side cell
+    # check; the magic itself must be gone from the kernel. IPython reports a
+    # missing cell magic as UsageError.
+    code = (
+        "try:\n"
+        "    get_ipython().run_cell_magic('bash', '', 'echo hi')\n"
+        "except Exception as e:\n"
+        "    print('CAUGHT', type(e).__name__)\n"
+    )
+    result = cm.run(_sid("stripped"), code)
+    assert result.status == "ok"
+    assert "CAUGHT UsageError" in result.stdout
+
+
+# ------------------------------------------------------------------
+# Serialization of concurrent cells
+# ------------------------------------------------------------------
+
+
+async def test_concurrent_aexecute_calls_serialize(make_code_mode):
+    cm = make_code_mode()
+    sid = _sid("serial")
+    await cm.aexecute(_ctx(sid), "order = []")
+    slow = "import time; order.append('slow-start'); time.sleep(0.8); order.append('slow-end')"
+    fast = "order.append('fast')"
+    await asyncio.gather(cm.aexecute(_ctx(sid), slow), cm.aexecute(_ctx(sid), fast))
+    final = await cm.aexecute(_ctx(sid), "order")
+    # Cells serialize: the slow cell's two entries are adjacent, never split
+    # by the fast cell.
+    assert (
+        "['slow-start', 'slow-end', 'fast']" in final.content or "['fast', 'slow-start', 'slow-end']" in final.content
+    )
+
+
+# ------------------------------------------------------------------
+# Output caps
+# ------------------------------------------------------------------
+
+
+def test_output_caps_apply_per_stream_with_markers(make_code_mode):
+    cm = make_code_mode(max_output_chars=1_000)
+    sid = _sid("caps")
+    result = cm.run(sid, "import sys\nprint('o' * 50_000)\nprint('e' * 50_000, file=sys.stderr)")
+    assert "stdout" in result.truncated
+    assert "stderr" in result.truncated
+    assert "[... output truncated at 1000 chars ...]" in result.stdout
+    assert "[... output truncated at 1000 chars ...]" in result.stderr
+    assert len(result.stdout) < 1_200
+    assert len(result.stderr) < 1_200
+
+
+def test_result_stream_has_its_own_budget(make_code_mode):
+    cm = make_code_mode(max_output_chars=500)
+    result = cm.run(_sid("result-cap"), "'r' * 50_000")
+    assert "result" in result.truncated
+    assert result.result is not None and "[... output truncated at 500 chars ...]" in result.result
+
+
+def test_display_data_png_is_promoted_to_images(make_code_mode):
+    cm = make_code_mode()
+    code = (
+        "import base64\n"
+        "from IPython.display import Image, display\n"
+        "png = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==')\n"
+        "display(Image(data=png))\n"
+    )
+    result = cm.run(_sid("png"), code)
+    assert result.status == "ok"
+    assert len(result.images) == 1
+    assert result.images[0].content is not None and result.images[0].content.startswith(b"\x89PNG")
+    assert result.images[0].mime_type == "image/png"
+
+
+# ------------------------------------------------------------------
+# Interrupts, timeouts, busy kernels, death
+# ------------------------------------------------------------------
+
+
+def test_timeout_interrupts_cell_and_preserves_namespace(make_code_mode):
+    cm = make_code_mode(timeout=2)
+    sid = _sid("interrupt")
+    cm.run(sid, "marker = 'alive'")
+    started = time.monotonic()
+    result = cm.run(sid, "while True: pass")
+    elapsed = time.monotonic() - started
+    assert result.status == "error"
+    assert result.traceback is not None and "KeyboardInterrupt" in result.traceback
+    assert elapsed < 15
+    after = cm.run(sid, "marker")
+    assert after.result == "'alive'"
+
+
+_UNINTERRUPTIBLE = "import signal, time\nsignal.signal(signal.SIGINT, signal.SIG_IGN)\ntime.sleep(120)\n"
+
+
+def test_busy_kernel_wait_policy_raises_kernel_busy(make_code_mode):
+    cm = make_code_mode(timeout=1, busy_wait=1.0, on_busy_kernel="wait")
+    sid = _sid("busy-wait")
+    aborted = cm.run(sid, _UNINTERRUPTIBLE)
+    assert aborted.status == "aborted"
+    with pytest.raises(KernelBusyError):
+        cm.run(sid, "1 + 1")
+
+
+def test_busy_kernel_restart_policy_returns_reset_notice(make_code_mode):
+    cm = make_code_mode(timeout=1, busy_wait=1.0, on_busy_kernel="restart")
+    sid = _sid("busy-restart")
+    aborted = cm.run(sid, _UNINTERRUPTIBLE)
+    assert aborted.status == "aborted"
+    result = cm.execute(_ctx(sid), "'fresh'")
+    assert "<code_mode_reset>" in result.content
+    assert "fresh" in result.content
+
+
+def test_kernel_death_mid_cell_rejects_with_named_error(make_code_mode):
+    cm = make_code_mode()
+    sid = _sid("death")
+    with pytest.raises(KernelDiedError):
+        cm.run(sid, "import os; os._exit(7)")
+    revived = cm.execute(_ctx(sid), "'back'")
+    assert "<code_mode_reset>" in revived.content
+    assert "back" in revived.content
+
+
+def test_restart_tool_discards_state_and_returns_notice(make_code_mode):
+    cm = make_code_mode()
+    sid = _sid("restart")
+    cm.execute(_ctx(sid), "gone = True")
+    notice = cm.restart(_ctx(sid))
+    assert notice == RESET_NOTICE
+    result = cm.execute(_ctx(sid), "gone")
+    assert "NameError" in result.content
+
+
+async def test_arestart_matches_restart(make_code_mode):
+    cm = make_code_mode()
+    sid = _sid("arestart")
+    await cm.aexecute(_ctx(sid), "gone = 1")
+    notice = await cm.arestart(_ctx(sid))
+    assert notice == RESET_NOTICE
+
+
+def test_idle_ttl_evicts_and_next_execute_resets(make_code_mode):
+    cm = make_code_mode(idle_ttl=1)
+    sid = _sid("evict")
+    cm.execute(_ctx(sid), "ephemeral = 1")
+    session = cm._sessions[sid]
+    deadline = time.monotonic() + 10
+    while session.running and time.monotonic() < deadline:
+        time.sleep(0.2)
+    assert not session.running, "kernel should have been evicted after idle_ttl"
+    revived = cm.execute(_ctx(sid), "'revived'")
+    assert "<code_mode_reset>" in revived.content
+    assert "revived" in revived.content
+
+
+# ------------------------------------------------------------------
+# Developer-facing surface
+# ------------------------------------------------------------------
+
+
+def test_variables_and_value_round_trip(make_code_mode):
+    cm = make_code_mode()
+    sid = _sid("devsurface")
+    cm.run(sid, "count = 7\nnames = ['a', 'b']\n_hidden = 'skip me'")
+    variables = cm.variables(sid)
+    assert variables == {"count": "int", "names": "list"}
+    assert cm.value(sid, "count") == 7
+    assert cm.value(sid, "names") == ["a", "b"]
+
+
+def test_value_of_missing_variable_raises(make_code_mode):
+    cm = make_code_mode()
+    sid = _sid("missing")
+    cm.run(sid, "present = 1")
+    with pytest.raises(KeyError):
+        cm.value(sid, "absent")
+
+
+def test_value_rejects_non_identifier(make_code_mode):
+    cm = make_code_mode()
+    sid = _sid("badname")
+    cm.run(sid, "present = 1")
+    with pytest.raises(ValueError):
+        cm.value(sid, "present; import os")
+
+
+async def test_async_dev_surface(make_code_mode):
+    cm = make_code_mode()
+    sid = _sid("adev")
+    result = await cm.arun(sid, "z = 3.5\nz")
+    assert result.status == "ok"
+    assert result.result == "3.5"
+    assert await cm.avariables(sid) == {"z": "float"}
+    assert await cm.avalue(sid, "z") == 3.5
+    await cm.ashutdown(sid)
+    assert cm._sessions.get(sid) is None
+
+
+def test_shutdown_kills_kernel_and_forgets_session(make_code_mode):
+    cm = make_code_mode()
+    sid = _sid("shutdown")
+    cm.run(sid, "1")
+    assert cm._sessions[sid].running
+    cm.shutdown(sid)
+    assert cm._sessions.get(sid) is None
+
+
+def test_shutdown_all_sessions(make_code_mode):
+    cm = make_code_mode()
+    cm.run(_sid("all-a"), "1")
+    cm.run(_sid("all-b"), "1")
+    assert len(cm._sessions) == 2
+    cm.shutdown()
+    assert cm._sessions == {}
