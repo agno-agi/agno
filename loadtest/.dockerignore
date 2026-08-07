@@ -1,0 +1,12 @@
+# Keep the build context small — the app image only needs agno source, not caches.
+**/.mypy_cache
+**/.pytest_cache
+**/__pycache__
+**/*.pyc
+**/.venv
+**/.venvs
+**/node_modules
+**/.git
+libs/agno/dist
+libs/agno/build
+libs/agno/**/*.egg-info
