@@ -844,14 +844,32 @@ class TestDispatchIsolation:
 
 
 class TestDiscovery:
-    def test_list_agents_shows_db_components_only(self, registry, db):
+    def test_list_agents_reports_what_dispatch_admits(self, registry, db):
+        # The instructions tell the caller to list first and run by id, so a
+        # component that runs and cannot be found leaves it no way in. An
+        # explicit agents_list is an allowlist FOR dispatch, so it is listed --
+        # code first, which is the order dispatch resolves in.
         studio = StudioTools(registry=registry, db=db)
         studio.create_agent(name="Radar", instructions="i", model_id="gpt-5.4", description="scans the week")
 
         runner = StudioRunnerTools(registry=registry, db=db, agents_list=[_StubAgent()])
         out = _loads(runner.list_agents())
-        assert out["count"] == 1 and out["total"] == 1
-        assert out["agents"] == [{"id": "radar", "name": "Radar", "description": "scans the week"}]
+        assert out["agents"][-1] == {"id": "radar", "name": "Radar", "description": "scans the week"}
+        assert any(entry["id"] == _StubAgent().id for entry in out["agents"])
+        assert out["count"] == len(out["agents"])
+
+    def test_a_registry_agent_stays_unlisted_until_it_is_admitted(self, registry, db):
+        # The privacy half of the rule is unchanged: a registry is passed so
+        # persisted components can rehydrate, which is not consent to run --
+        # or to advertise -- every agent the application happens to define.
+        from agno.agent import Agent
+
+        registry.agents = [Agent(id="internal", name="Internal", model=OpenAIResponses(id="gpt-5.4"))]
+        unadmitted = _loads(StudioRunnerTools(registry=registry, db=db).list_agents())
+        assert all(entry["id"] != "internal" for entry in unadmitted["agents"])
+
+        admitted = _loads(StudioRunnerTools(registry=registry, db=db, include_all_components=True).list_agents())
+        assert any(entry["id"] == "internal" for entry in admitted["agents"])
 
     def test_list_agents_reports_total_beyond_cap(self, registry, db):
         studio = StudioTools(registry=registry, db=db)
@@ -2000,6 +2018,55 @@ class TestDispatchCheckInvariants:
         dispatched = StudioRunnerTools(registry=intact, db=db)._agent_for_run("tooled")
         assert dispatched is not None
         assert dispatched.tools[0].entrypoint() == "ALPHA"
+
+    def test_a_resolved_db_that_routes_elsewhere_is_refused(self, db, registry, tmp_path, caplog):
+        """A stored db is rebuilt from its own config, resolved from the
+        registry by id, or replaced by the catalog db -- and only the first
+        applies the table overrides the component declared. A registry instance
+        is used as it was registered, so a component asking for isolated tables
+        can be dispatched onto shared ones. Checked against the db the
+        component actually holds, for every component type."""
+        from agno.db.json import JsonDb
+
+        registered = JsonDb(id="tenant-json", db_path=str(tmp_path / "tenant"), session_table="shared_sessions")
+        registry.dbs = [db, registered]
+        model_config = {"name": "OpenAIResponses", "id": "gpt-5.4", "provider": "OpenAI"}
+        routing = {"id": "tenant-json", "session_table": "isolated_sessions"}
+        for component_id, component_type, extra in (
+            ("a1", "agent", {}),
+            ("t1", "team", {"members": [{"type": "agent", "agent_id": "a1"}]}),
+            ("w1", "workflow", {"steps": [{"name": "s", "agent_id": "a1"}]}),
+        ):
+            config = {"id": component_id, "name": component_id, "model": model_config, "db": dict(routing)}
+            config.update(extra)
+            db.upsert_component(component_id=component_id, component_type=component_type, name=component_id)
+            db.upsert_config(component_id=component_id, config=config, stage="published")
+
+        runner = StudioRunnerTools(registry=registry, db=db)
+        assert "routes differently" in _loads(runner.run_agent("a1", "hi"))["error"]
+        assert "routes differently" in _loads(runner.run_team("t1", "hi"))["error"]
+        assert "routes differently" in _loads(runner.run_workflow("w1", "hi"))["error"]
+
+        # Registered as declared, so nothing is redirected and it runs.
+        registry.dbs = [db, JsonDb(id="tenant-json", db_path=str(tmp_path / "ok"), session_table="isolated_sessions")]
+        assert StudioRunnerTools(registry=registry, db=db)._agent_for_run("a1") is not None
+
+    def test_a_nested_members_lost_model_is_announced_where_it_happened(self, db, registry, caplog):
+        """A member declares its own models, so the loss belongs to the member
+        rather than only to the component the caller named."""
+        model_config = {"name": "OpenAIResponses", "id": "gpt-5.4", "provider": "OpenAI"}
+        for component_id, component_type, extra in (
+            ("member", "agent", {"reasoning_model": {"id": "o3-deep", "provider": "OpenAI"}}),
+            ("crew", "team", {"members": [{"type": "agent", "agent_id": "member"}]}),
+        ):
+            config = {"id": component_id, "name": component_id, "model": model_config}
+            config.update(extra)
+            db.upsert_component(component_id=component_id, component_type=component_type, name=component_id)
+            db.upsert_config(component_id=component_id, config=config, stage="published")
+
+        with caplog.at_level("WARNING"):
+            assert StudioRunnerTools(registry=registry, db=db)._team_for_run("crew") is not None
+        assert any("reasoning_model" in record.message and "member" in record.message for record in caplog.records)
 
     def test_a_lost_auxiliary_model_is_announced_rather_than_refused(self, db, caplog):
         """A reasoning, parser or output model is serialized and never read

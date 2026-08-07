@@ -276,7 +276,7 @@ class StudioRunnerTools(Toolkit):
             run_names = "/".join(f"run_{label[:-1]}" for label in enabled)
             instruction_lines = [
                 "Run components built in the Studio: discover what exists, then run by id.",
-                f"{list_names}: id, name, and description of what exists in the platform database, newest first.",
+                f"{list_names}: id, name, and description of every component this toolkit can run, newest first.",
                 f"{run_names}: send one message; the result carries run_id, session_id, status, and content. "
                 "Use the exact id from a list tool; a display name or its slug also resolves. An ambiguous "
                 "display name returns an error listing the matching ids -- retry with the exact id.",
@@ -310,9 +310,9 @@ class StudioRunnerTools(Toolkit):
         The registry half is opt-in for dispatch (``include_all_components``).
         A registry is passed so persisted components can rehydrate their tools
         and members, which is not the same as consenting to run every agent the
-        application happens to define -- and ``list_*`` report the database
-        only, so those agents are reachable without being discoverable. An
-        explicit ``agents_list`` is itself the allowlist and always runs.
+        application happens to define. An explicit ``agents_list`` is itself the
+        allowlist and always runs. ``list_*`` report exactly this admitted set
+        alongside the database, so what can be run can be found.
         Lookups that are not dispatch (get, edit, members, steps) see the full
         set either way."""
         if self.agents_list is not None:
@@ -1177,6 +1177,11 @@ class StudioRunnerTools(Toolkit):
                 self._require_reference_type_matches(ref_type, ref_id, component_type, component_id)
                 continue
             self._require_faithful_rebuild(target, ref_config, ref_type, ref_id)
+            # A member or step executor declares its own models, so the loss is
+            # reported where it happened rather than only for the component the
+            # caller named.
+            self._warn_if_auxiliary_models_lost(ref_config, ref_type, ref_id)
+            self._require_matching_db(ref_config, target, ref_type, ref_id)
             self._check_references(target, ref_config, ref_type, ref_id, seen, configs, depth + 1)
 
     @staticmethod
@@ -1308,48 +1313,48 @@ class StudioRunnerTools(Toolkit):
             getattr(model, "id", None) or type(model).__name__,
         )
 
-    def _require_matching_db(self, config: Dict[str, Any], component_type: str, component_id: str) -> None:
-        """Refuse a component whose declared db is not the one it would get.
+    def _require_matching_db(
+        self, config: Dict[str, Any], component: Any, component_type: str, component_id: str
+    ) -> None:
+        """Refuse a component whose declared routing is not the routing it got.
 
-        db_from_dict rebuilds postgres, sqlite and clickhouse configs that
-        carry their connection field; anything else resolves through the
-        registry. When neither supplies it the component falls back to the
-        catalog db -- and if that is a different store, its sessions and memory
-        durably land somewhere other than configured, which the caller cannot
-        see from the answer it gets back.
+        A stored db is reconstructed from its own config (postgres, sqlite and
+        clickhouse carry a connection field), resolved from the registry by id,
+        or -- when neither supplies it -- replaced by the catalog db. Only the
+        first of those applies the table overrides the component declared: a
+        registry instance is used as it was registered, and the catalog db is
+        somebody else's store entirely. Either way the component's sessions and
+        memory durably land somewhere other than configured, and nothing in the
+        answer the caller gets back says so.
 
-        The comparison is what makes this narrow enough to be safe. When the
-        declared db names the catalog db, with the same table overrides, the
-        fallback is not a redirection and the component runs: that keeps the
-        adapters whose connection field cannot serialize (mysql, mongo, redis,
-        json, dynamo) working, which is why a blanket refusal was reverted
-        before. Only a genuine mismatch is refused."""
+        The comparison is against the db the component ACTUALLY holds, not
+        against the catalog, because a resolved db is exactly as able to be the
+        wrong one. Comparing what it got is also what keeps this narrow enough
+        to keep: when the routing matches, the component runs, which is what
+        leaves the adapters whose connection cannot serialize (mysql, mongo,
+        redis, json, dynamo) dispatchable. A blanket refusal was reverted
+        before for taking those out."""
         db_config = config.get("db")
         if not isinstance(db_config, dict):
             return
-        declared = db_config.get("id") or db_config.get("type") or "unknown"
-        catalog = self.db.to_dict() if self.db is not None else {}
+        actual_db = getattr(component, "db", None)
+        actual = actual_db.to_dict() if actual_db is not None else {}
         differing = sorted(
             key
             for key, value in db_config.items()
             # An absent key in the stored config is not an override, and the
             # connection field is never serialized, so neither is a difference.
-            if value is not None and key not in ("type", "connection") and catalog.get(key) != value
+            # A key the actual db does not report cannot be compared at all.
+            if value is not None and key != "connection" and key in actual and actual[key] != value
         )
         if not differing:
-            logger.warning(
-                "StudioRunnerTools: %s '%s' declares db '%s', which could not be reconstructed; it resolves "
-                "to the catalog db, which matches what it declared.",
-                component_type,
-                component_id,
-                declared,
-            )
             return
+        declared = db_config.get("id") or db_config.get("type") or "unknown"
         raise ComponentNotDispatchableError(
-            f"{component_type.capitalize()} '{component_id}' declares db '{declared}', which could not be "
-            f"reconstructed, and the catalog db it would fall back to differs ({', '.join(differing)}); running it "
-            "would write its sessions and memory somewhere other than configured. Register that db, or run it "
-            "against the db it declares."
+            f"{component_type.capitalize()} '{component_id}' declares db '{declared}', and the db it resolved to "
+            f"routes differently ({', '.join(differing)}); running it would write its sessions and memory "
+            "somewhere other than configured. Register that db as it was declared, or run it against the db it "
+            "declares."
         )
 
     @staticmethod
@@ -1528,7 +1533,6 @@ class StudioRunnerTools(Toolkit):
         self._require_registry_for("agent", agent_id, config)
         from agno.agent.agent import Agent
 
-        fell_back_to_catalog = False
         try:
             agent = Agent.from_dict(config, registry=self.registry)
             agent.id = agent_id
@@ -1536,22 +1540,21 @@ class StudioRunnerTools(Toolkit):
             # by from_dict, possibly with table overrides) must keep winning.
             if getattr(agent, "db", None) is None:
                 # Announced on every load, including reads. Whether the
-                # fallback is a REDIRECTION is a dispatch question, and cannot
-                # be raised from inside this try: the handler below would
-                # report the refusal as a rebuild failure.
+                # routing actually differs is a dispatch question, asked by
+                # _require_matching_db after this block: it cannot be raised
+                # from inside this try, where the handler below would report
+                # the refusal as a rebuild failure.
                 logger.warning(
                     "StudioRunnerTools: agent '%s' declares a db that could not be reconstructed; "
                     "it falls back to the catalog db.",
                     agent_id,
                 )
-                fell_back_to_catalog = True
                 agent.db = self.db
         except Exception:
             logger.warning("StudioRunnerTools: Agent.from_dict failed for %s", agent_id, exc_info=True)
             return None
         if for_dispatch:
-            if fell_back_to_catalog:
-                self._require_matching_db(config, "agent", agent_id)
+            self._require_matching_db(config, agent, "agent", agent_id)
             self._warn_if_auxiliary_models_lost(config, "agent", agent_id)
             self._require_inspectable_depth(agent, "agent", agent_id)
             self._require_faithful_rebuild(agent, config, "agent", agent_id)
@@ -1572,29 +1575,27 @@ class StudioRunnerTools(Toolkit):
         self._require_registry_for("team", team_id, config)
         from agno.team.team import Team
 
-        fell_back_to_catalog = False
         try:
             team = Team.from_dict(config, db=self.db, registry=self.registry)
             team.id = team_id
             # The catalog db is a fallback only; a config-declared db wins.
             if getattr(team, "db", None) is None:
                 # Announced on every load, including reads. Whether the
-                # fallback is a REDIRECTION is a dispatch question, and cannot
-                # be raised from inside this try: the handler below would
-                # report the refusal as a rebuild failure.
+                # routing actually differs is a dispatch question, asked by
+                # _require_matching_db after this block: it cannot be raised
+                # from inside this try, where the handler below would report
+                # the refusal as a rebuild failure.
                 logger.warning(
                     "StudioRunnerTools: team '%s' declares a db that could not be reconstructed; "
                     "it falls back to the catalog db.",
                     team_id,
                 )
-                fell_back_to_catalog = True
                 team.db = self.db
         except Exception:
             logger.warning("StudioRunnerTools: Team.from_dict failed for %s", team_id, exc_info=True)
             return None
         if for_dispatch:
-            if fell_back_to_catalog:
-                self._require_matching_db(config, "team", team_id)
+            self._require_matching_db(config, team, "team", team_id)
             self._warn_if_auxiliary_models_lost(config, "team", team_id)
             self._require_inspectable_depth(team, "team", team_id)
             self._require_faithful_rebuild(team, config, "team", team_id)
@@ -1617,29 +1618,27 @@ class StudioRunnerTools(Toolkit):
         self._require_registry_for("workflow", workflow_id, config)
         from agno.workflow.workflow import Workflow
 
-        fell_back_to_catalog = False
         try:
             wf = Workflow.from_dict(config, db=self.db, registry=self.registry)
             wf.id = workflow_id
             # The catalog db is a fallback only; a config-declared db wins.
             if getattr(wf, "db", None) is None:
                 # Announced on every load, including reads. Whether the
-                # fallback is a REDIRECTION is a dispatch question, and cannot
-                # be raised from inside this try: the handler below would
-                # report the refusal as a rebuild failure.
+                # routing actually differs is a dispatch question, asked by
+                # _require_matching_db after this block: it cannot be raised
+                # from inside this try, where the handler below would report
+                # the refusal as a rebuild failure.
                 logger.warning(
                     "StudioRunnerTools: workflow '%s' declares a db that could not be reconstructed; "
                     "it falls back to the catalog db.",
                     workflow_id,
                 )
-                fell_back_to_catalog = True
                 wf.db = self.db
         except Exception:
             logger.warning("StudioRunnerTools: Workflow.from_dict failed for %s", workflow_id, exc_info=True)
             return None
         if for_dispatch:
-            if fell_back_to_catalog:
-                self._require_matching_db(config, "workflow", workflow_id)
+            self._require_matching_db(config, wf, "workflow", workflow_id)
             self._warn_if_auxiliary_models_lost(config, "workflow", workflow_id)
             self._require_inspectable_depth(wf, "workflow", workflow_id)
             self._require_reconstructable_steps(config, workflow_id)
@@ -1705,7 +1704,8 @@ class StudioRunnerTools(Toolkit):
     # ------------------------------------------------------------------
 
     def list_agents(self) -> str:
-        """List agents built in the Studio (stored in the platform database), newest first.
+        """List agents this runner can run: those stored in the platform database, newest first,
+        preceded by any code-defined agents it admits.
 
         Returns:
             str: JSON object with 'agents' (each {id, name, description}), 'count'
@@ -1715,7 +1715,8 @@ class StudioRunnerTools(Toolkit):
         return self._list_payload("agent", "agents")
 
     def list_teams(self) -> str:
-        """List teams built in the Studio (stored in the platform database), newest first.
+        """List teams this runner can run: those stored in the platform database, newest first,
+        preceded by any code-defined teams it admits.
 
         Returns:
             str: JSON object with 'teams' (each {id, name, description}), 'count'
@@ -1725,7 +1726,8 @@ class StudioRunnerTools(Toolkit):
         return self._list_payload("team", "teams")
 
     def list_workflows(self) -> str:
-        """List workflows built in the Studio (stored in the platform database), newest first.
+        """List workflows this runner can run: those stored in the platform database, newest first,
+        preceded by any code-defined workflows it admits.
 
         Returns:
             str: JSON object with 'workflows' (each {id, name, description}), 'count'
@@ -1739,10 +1741,46 @@ class StudioRunnerTools(Toolkit):
             return json.dumps({"error": "StudioRunnerTools has no db configured; cannot list components."})
         try:
             items, total = self._list_db_component_rows(component_type)
-            return json.dumps({key: items, "count": len(items), "total": total})
+            # What dispatch admits is what discovery reports. The instructions
+            # tell the caller to list first and run by id, so a component that
+            # runs and cannot be found leaves it no way to reach it. Code
+            # components come first, which is the order dispatch resolves in.
+            admitted = self._admitted_code_components(component_type)
+            seen_ids = {entry["id"] for entry in admitted}
+            items = admitted + [entry for entry in items if entry.get("id") not in seen_ids]
+            return json.dumps({key: items, "count": len(items), "total": total + len(admitted)})
         except Exception as e:
             logger.exception("Failed to list %s", key)
             return json.dumps({"error": str(e) or type(e).__name__})
+
+    def _admitted_code_components(self, component_type: str) -> List[Dict[str, Any]]:
+        """The code-defined components this runner will dispatch, as list rows.
+
+        Only what dispatch admits: an explicit list is its own allowlist, and
+        the registry half is included only under ``include_all_components``.
+        A component with no id cannot be run by id, so it is not offered."""
+        # Annotated because the three return different component types, which
+        # mypy otherwise joins to a bare object.
+        iterators: Dict[str, Callable[..., List[Any]]] = {
+            "agent": self._iter_agents,
+            "team": self._iter_teams,
+            "workflow": self._iter_workflows,
+        }
+        rows: List[Dict[str, Any]] = []
+        seen_ids: set = set()
+        for component in iterators[component_type](for_dispatch=True):
+            component_id = getattr(component, "id", None)
+            if not isinstance(component_id, str) or component_id in seen_ids:
+                continue
+            seen_ids.add(component_id)
+            rows.append(
+                {
+                    "id": component_id,
+                    "name": getattr(component, "name", None),
+                    "description": getattr(component, "description", None),
+                }
+            )
+        return rows
 
     # ------------------------------------------------------------------
     # Execution
