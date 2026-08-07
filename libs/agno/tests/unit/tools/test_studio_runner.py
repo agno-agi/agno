@@ -1865,6 +1865,104 @@ class TestDispatchCheckInvariants:
             assert runner._team_for_run("lazy") is not None
         assert any("callable members factory" in record.message for record in caplog.records)
 
+    def test_a_member_is_judged_by_the_rule_a_step_executor_is(self):
+        # _member_divergence answered only type/id/name while the executor path
+        # asked _copy_lost_identity, so a member could come back stripped of its
+        # model and instructions and still read as the member that was asked for.
+        from agno.agent import Agent
+        from agno.team import Team
+
+        def team_with(member):
+            return Team(id="t", name="T", model=OpenAIResponses(id="gpt-5.4"), members=[member])
+
+        original = team_with(Agent(id="m", name="M", model=OpenAIResponses(id="gpt-5.4"), instructions="RULES"))
+        degraded = team_with(Agent(id="m", name="M", model=None, instructions=None))
+        assert StudioRunnerTools._member_divergence(original, degraded) is not None
+
+        faithful = team_with(Agent(id="m", name="M", model=OpenAIResponses(id="gpt-5.4"), instructions="RULES"))
+        assert StudioRunnerTools._member_divergence(original, faithful) is None
+
+    def test_a_wide_graph_is_checked_as_far_as_a_narrow_one(self, db, registry):
+        # The reference walk bounded itself by how many components it had seen,
+        # which is a breadth counter: a team with more members than the cap
+        # stopped checking the rest of them, and the loss below the last member
+        # was never reached.
+        def store(component_id, component_type, config):
+            db.upsert_component(component_id=component_id, component_type=component_type, name=component_id)
+            db.upsert_config(component_id=component_id, config=config, stage="published")
+
+        model_config = {"id": "gpt-5.4", "provider": "OpenAI"}
+        for index in range(40):
+            store(f"a{index}", "agent", {"id": f"a{index}", "name": f"a{index}", "model": model_config})
+        store("hidden", "agent", {"id": "hidden", "name": "hidden", "model": model_config, "output_schema": "Report"})
+        store(
+            "sub",
+            "team",
+            {"id": "sub", "name": "sub", "model": model_config, "members": [{"type": "agent", "agent_id": "hidden"}]},
+        )
+        wide = [{"type": "agent", "agent_id": f"a{index}"} for index in range(40)]
+        store(
+            "wide",
+            "team",
+            {
+                "id": "wide",
+                "name": "wide",
+                "model": model_config,
+                "members": wide + [{"type": "team", "team_id": "sub"}],
+            },
+        )
+        store(
+            "narrow",
+            "team",
+            {
+                "id": "narrow",
+                "name": "narrow",
+                "model": model_config,
+                "members": [{"type": "agent", "agent_id": "a0"}, {"type": "team", "team_id": "sub"}],
+            },
+        )
+
+        runner = StudioRunnerTools(registry=registry, db=db)
+        # The same nested loss, once behind 40 siblings and once behind one.
+        assert "Report" in _loads(runner.run_team("narrow", "hi"))["error"]
+        assert "Report" in _loads(runner.run_team("wide", "hi"))["error"]
+
+    def test_a_registered_id_only_excuses_the_type_that_registered_it(self, db, registry):
+        # A reference resolved from the registry is not judged against a stored
+        # config it was never built from. Keyed by bare id, an agent named 'dup'
+        # excused a stored TEAM called 'dup' from being checked at all.
+        from agno.agent import Agent
+
+        registry.agents = [Agent(id="dup", name="RegisteredAgent", model=OpenAIResponses(id="gpt-5.4"))]
+        model_config = {"id": "gpt-5.4", "provider": "OpenAI"}
+        for component_id, component_type, config in (
+            ("inner", "agent", {"id": "inner", "name": "inner", "model": model_config, "output_schema": "Report"}),
+            (
+                "dup",
+                "team",
+                {
+                    "id": "dup",
+                    "name": "DupTeam",
+                    "model": model_config,
+                    "members": [{"type": "agent", "agent_id": "inner"}],
+                },
+            ),
+            (
+                "outer",
+                "team",
+                {
+                    "id": "outer",
+                    "name": "outer",
+                    "model": model_config,
+                    "members": [{"type": "team", "team_id": "dup"}],
+                },
+            ),
+        ):
+            db.upsert_component(component_id=component_id, component_type=component_type, name=component_id)
+            db.upsert_config(component_id=component_id, config=config, stage="published")
+
+        assert "Report" in _loads(StudioRunnerTools(registry=registry, db=db).run_team("outer", "hi"))["error"]
+
     def test_no_reference_walk_reads_the_callers_own_data(self):
         # A step carries free-form user JSON beside its own fields. A walk over
         # every value reads a key named agent_id there as a graph reference.

@@ -71,7 +71,12 @@ def _unwrap_annotation(hint: Any) -> Any:
     reuse."""
     seen: List[Any] = []
     while True:
-        unwrapped = getattr(hint, "__value__", hint)
+        # A PEP 695 alias carries __value__; typing.NewType carries
+        # __supertype__ and is just as transparent to pydantic, which builds
+        # the supertype from a model-supplied dict either way.
+        unwrapped = getattr(hint, "__value__", None)
+        if unwrapped is None:
+            unwrapped = getattr(hint, "__supertype__", hint)
         if unwrapped is hint or any(unwrapped is s for s in seen):
             return hint
         seen.append(hint)
@@ -155,7 +160,37 @@ def _is_framework_typed(hint: Any) -> bool:
     hint = _unwrap_annotation(hint)
     if isinstance(hint, type):
         return issubclass(hint, _identity_injected_types())
-    return _union_names_type(hint, (RunContext,)) or _union_is_only(hint, _identity_injected_types())
+    if _union_names_type(hint, (RunContext,)) or _union_is_only(hint, _identity_injected_types()):
+        return True
+    # A container of identity (ctxs: list[RunContext], dict[str, Agent]) is the
+    # same hazard one level down: the framework cannot fill it, and leaving it
+    # model-facing lets pydantic build the identity object out of what the
+    # model sent. Media containers stay fillable -- media is injected by
+    # reserved name alone, so hiding one would leave it unfillable by anything.
+    return _container_holds_identity(hint)
+
+
+def _container_holds_identity(hint: Any, depth: int = 0) -> bool:
+    """True when a container's arguments reach an identity type.
+
+    Unions are not containers and are deliberately skipped: the rules above
+    already decided them, and ``owner: Union[str, Agent]`` is model-fillable by
+    design -- the model can only ever send JSON, so such a parameter receives a
+    string, never a live Agent. Treating a union as a container here would hide
+    it and leave it unfillable."""
+    from typing import get_args
+
+    if depth > 4:  # Deep enough for list[dict[str, RunContext]]; stop there.
+        return False
+    if _is_union(hint):
+        return False
+    for argument in get_args(hint):
+        argument = _unwrap_annotation(argument)
+        if isinstance(argument, type) and issubclass(argument, _identity_injected_types()):
+            return True
+        if _container_holds_identity(argument, depth + 1):
+            return True
+    return False
 
 
 def _is_bare_media_typed(hint: Any) -> bool:
