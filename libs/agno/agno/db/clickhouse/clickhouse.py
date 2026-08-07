@@ -786,6 +786,8 @@ class ClickhouseDb(BaseDb):
         self,
         component_id: str,
         component_type: Optional[ComponentType] = None,
+        *,
+        include_deleted: bool = False,
     ) -> Optional[Dict[str, Any]]:
         return None
 

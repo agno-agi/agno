@@ -15,6 +15,8 @@ class TestSchedule:
         assert s.method == "POST"
         assert s.timezone == "UTC"
         assert s.enabled is True
+        assert s.pending_trigger_count == 0
+        assert s.manual_trigger_claimed is False
         assert s.created_at is not None
 
     def test_to_dict(self):
@@ -26,6 +28,7 @@ class TestSchedule:
         assert d["endpoint"] == "/test"
         assert d["method"] == "POST"
         assert d["enabled"] is True
+        assert d["manual_trigger_claimed"] is False
         assert "created_at" in d
 
     def test_from_dict(self):

@@ -1,7 +1,8 @@
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from datetime import date, datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Set, Tuple, TypedDict, Union
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -27,11 +28,133 @@ class ComponentType(str, Enum):
     WORKFLOW = "workflow"
 
 
+DELETED_CONFIG_STAGE = "_deleted"
+
+
+@dataclass(frozen=True)
+class ComponentVersionGuard:
+    """Compare-and-set state for a component mutation."""
+
+    latest_version: Optional[int]
+    current_version: Optional[int]
+
+
+class ComponentProjection(TypedDict, total=False):
+    """Denormalized component fields synchronized with a config mutation."""
+
+    name: str
+    description: Optional[str]
+    metadata: Optional[Dict[str, Any]]
+
+
+class ComponentAlreadyExistsError(ValueError):
+    """Raised when an atomic component create finds an occupied id."""
+
+    def __init__(self, component_id: str):
+        super().__init__(f"Component {component_id} already exists")
+        self.component_id = component_id
+
+
+class ComponentVersionConflictError(ValueError):
+    """Raised when component state no longer matches a compare-and-set guard."""
+
+    def __init__(
+        self,
+        component_id: str,
+        *,
+        expected: ComponentVersionGuard,
+        actual: ComponentVersionGuard,
+    ):
+        super().__init__(
+            f"Component {component_id} version conflict: expected "
+            f"latest={expected.latest_version}, current={expected.current_version}; "
+            f"found latest={actual.latest_version}, current={actual.current_version}"
+        )
+        self.component_id = component_id
+        self.expected = expected
+        self.actual = actual
+
+
+class ComponentDependencyError(ValueError):
+    """Raised when a component or config is still referenced."""
+
+    def __init__(self, component_id: str, dependents: List[Dict[str, Any]], version: Optional[int] = None):
+        target = f"{component_id} v{version}" if version is not None else component_id
+        super().__init__(f"Cannot delete {target}: it is referenced by {len(dependents)} component link(s)")
+        self.component_id = component_id
+        self.version = version
+        self.dependents = dependents
+
+
+class ComponentDependencyUnavailableError(ValueError):
+    """Raised when restoring a published component would expose a broken dependency graph."""
+
+    def __init__(self, component_id: str, dependencies: List[Dict[str, Any]]):
+        super().__init__(
+            f"Cannot restore {component_id}: {len(dependencies)} pinned dependency version(s) are unavailable"
+        )
+        self.component_id = component_id
+        self.dependencies = dependencies
+
+
+class ComponentCycleError(ValueError):
+    """Raised when a component-link mutation would create a dependency cycle."""
+
+    def __init__(self, component_id: str, cycle_path: List[str]):
+        rendered_path = " -> ".join(cycle_path)
+        super().__init__(f"Component dependency cycle detected: {rendered_path}")
+        self.component_id = component_id
+        self.cycle_path = cycle_path
+
+
+class ComponentDraftRequiredError(ValueError):
+    """Raised when an operation only valid for drafts targets a published config."""
+
+    def __init__(self, component_id: str, version: int):
+        super().__init__(f"Cannot delete published config {component_id} v{version}; only draft configs can be deleted")
+        self.component_id = component_id
+        self.version = version
+
+
+class ComponentLastConfigError(ValueError):
+    """Raised when deleting a config would leave an active component unusable."""
+
+    def __init__(self, component_id: str, version: int):
+        super().__init__(f"Cannot delete the last config for {component_id}; archive the component instead")
+        self.component_id = component_id
+        self.version = version
+
+
 class BaseDb(ABC):
     """Base abstract class for all our Database implementations."""
 
     # We assume the database to be up to date with the 2.0.0 release
     default_schema_version = "2.0.0"
+    # Component persistence is an optional database capability. Catalog
+    # consumers must fail at construction time when a backend does not opt in,
+    # rather than surfacing a late NotImplementedError during a mutation.
+    supports_component_persistence = False
+    # Version 1 is the pre-2.9 component adapter contract. Direct component
+    # saves retain a deliberate v1 path; the guarded 2.9 control plane requires
+    # an adapter that explicitly advertises version 2.
+    component_catalog_api_version = 1
+    # Version 1 is the legacy scheduler adapter contract. Scheduler surfaces
+    # that rely on scoped names and durable manual triggers require an adapter
+    # that explicitly advertises version 2.
+    scheduler_api_version = 1
+
+    @staticmethod
+    def _projection_from_config(config: Dict[str, Any]) -> ComponentProjection:
+        """Extract denormalized component fields from one stored config payload."""
+        projection: ComponentProjection = {}
+        name = config.get("name")
+        if isinstance(name, str):
+            projection["name"] = name
+        if "description" in config and (config["description"] is None or isinstance(config["description"], str)):
+            projection["description"] = config["description"]
+        if "metadata" in config and (config["metadata"] is None or isinstance(config["metadata"], dict)):
+            projection["metadata"] = config["metadata"]
+        return projection
 
     def __init__(
         self,
@@ -665,17 +788,47 @@ class BaseDb(ABC):
         self,
         component_id: str,
         component_type: Optional[ComponentType] = None,
+        *,
+        include_deleted: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Get a component by ID.
 
         Args:
             component_id: The component ID.
             component_type: Optional filter by type (agent|team|workflow).
+            include_deleted: Include a soft-deleted component in the lookup.
 
         Returns:
             Component dictionary or None if not found.
         """
         raise NotImplementedError
+
+    def get_components(
+        self,
+        component_ids: Set[str],
+        component_type: Optional[ComponentType] = None,
+        *,
+        include_deleted: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Get a bounded set of components by ID.
+
+        The compatibility implementation uses scalar reads. Catalog adapters
+        should override this with one bulk query.
+        """
+        rows: List[Dict[str, Any]] = []
+        for component_id in sorted(component_ids):
+            row = (
+                self.get_component(
+                    component_id,
+                    component_type=component_type,
+                    include_deleted=True,
+                )
+                if include_deleted
+                else self.get_component(component_id, component_type)
+            )
+            if row is not None:
+                rows.append(row)
+        return rows
 
     def upsert_component(
         self,
@@ -693,14 +846,17 @@ class BaseDb(ABC):
             component_type: Type (agent|team|workflow). Required for create, optional for update.
             name: Display name.
             description: Optional description.
-            current_version: Optional current version.
+            current_version: Reserved for compatibility. Direct current-pointer
+                mutation is rejected; use set_current_version with a guard and
+                synchronized projection.
             metadata: Optional metadata dict.
 
         Returns:
             Created/updated component dictionary.
 
         Raises:
-            ValueError: If creating and component_type is not provided.
+            ValueError: If creating and component_type is not provided, or if
+                current_version is supplied.
         """
         raise NotImplementedError
 
@@ -708,15 +864,48 @@ class BaseDb(ABC):
         self,
         component_id: str,
         hard_delete: bool = False,
+        *,
+        guard: Optional[ComponentVersionGuard] = None,
+        require_no_dependents: bool = True,
+        projection: Optional[ComponentProjection] = None,
     ) -> bool:
         """Delete a component and all its configs/links.
 
         Args:
             component_id: The component ID.
             hard_delete: If True, permanently delete. Otherwise soft-delete.
+            guard: Optional expected latest/current version state.
+            require_no_dependents: Refuse deletion while referenced (the safe
+                default). Soft deletion considers active parents; hard deletion
+                considers every parent.
+            projection: Component fields to update atomically with a soft deletion.
 
         Returns:
             True if deleted, False if not found or already deleted.
+        """
+        raise NotImplementedError
+
+    def restore_component(
+        self,
+        component_id: str,
+        *,
+        guard: Optional[ComponentVersionGuard] = None,
+        projection: Optional[ComponentProjection] = None,
+    ) -> bool:
+        """Restore a soft-deleted component without replacing its identity or history.
+
+        A component with a current published version is restored only when its
+        complete pinned dependency graph is active and published. Draft-only
+        components have no runtime graph and may be restored independently.
+
+        Args:
+            component_id: The archived component ID.
+            guard: Optional expected latest/current version state.
+            projection: Optional component fields to restore atomically with
+                the archived row.
+
+        Returns:
+            True if restored, False if the component was not archived.
         """
         raise NotImplementedError
 
@@ -791,13 +980,66 @@ class BaseDb(ABC):
 
         Args:
             component_id: The component ID.
-            version: Specific version number. If None, uses current.
+            version: Specific version number. When both version and label are
+                omitted, returns the current published config or the latest
+                draft when the component has never been published.
             label: Config label to lookup. Ignored if version is provided.
 
         Returns:
             Config dictionary or None if not found.
         """
         raise NotImplementedError
+
+    def get_current_config(self, component_id: str) -> Optional[Dict[str, Any]]:
+        """Get only the component's current published config.
+
+        The default implementation uses v1-compatible calls so third-party
+        adapters can inherit it. Version-2 adapters should override it with a
+        single consistent read.
+        """
+        component = self.get_component(component_id)
+        if component is None:
+            return None
+        current_version = component.get("current_version")
+        if not isinstance(current_version, int):
+            return None
+        return self.get_config(component_id, version=current_version)
+
+    def get_latest_config(
+        self,
+        component_id: str,
+        *,
+        include_deleted: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """Get the latest visible config, regardless of publication stage.
+
+        The default implementation retains compatibility with version-1
+        adapters. Version-2 adapters should override it with a direct query.
+        """
+        if include_deleted:
+            raise NotImplementedError("Catalog API v1 cannot read configs for archived components")
+        configs = self.list_configs(component_id, include_config=True)
+        return configs[0] if configs else None
+
+    def get_latest_configs(
+        self,
+        component_ids: Set[str],
+        *,
+        include_deleted: bool = False,
+    ) -> Dict[str, Optional[Dict[str, Any]]]:
+        """Get each requested component's latest visible config.
+
+        The compatibility implementation uses scalar reads. Catalog adapters
+        should override this with one bulk query.
+        """
+        rows: Dict[str, Optional[Dict[str, Any]]] = {}
+        for component_id in sorted(component_ids):
+            rows[component_id] = (
+                self.get_latest_config(component_id, include_deleted=True)
+                if include_deleted
+                else self.get_latest_config(component_id)
+            )
+        return rows
 
     def upsert_config(
         self,
@@ -808,22 +1050,40 @@ class BaseDb(ABC):
         stage: Optional[str] = None,
         notes: Optional[str] = None,
         links: Optional[List[Dict[str, Any]]] = None,
+        *,
+        guard: Optional[ComponentVersionGuard] = None,
+        projection: Optional[ComponentProjection] = None,
+        restore_if_deleted: bool = False,
+        expected_component_type: Optional[ComponentType] = None,
     ) -> Dict[str, Any]:
         """Create or update a config version for a component.
 
         Rules:
-            - Draft configs can be edited freely
+            - Stored config versions are immutable
+            - The latest draft may transition to published with a guard
             - Published configs are immutable
             - Publishing a config automatically sets it as current_version
 
         Args:
             component_id: The component ID.
-            config: The config data. Required for create, optional for update.
-            version: If None, creates new version. If provided, updates that version.
+            config: The config data. Required when appending a version.
+            version: If None, appends a version. If provided, publishes that draft.
             label: Optional human-readable label.
             stage: "draft" or "published". Defaults to "draft" for new configs.
             notes: Optional notes.
             links: Optional list of links. Each link must have child_version set.
+            guard: Optional expected latest/current version state. Required when
+                publishing an existing draft.
+            projection: Component fields to update atomically when publishing,
+                or while the component is draft-only. When omitted during a
+                pointer change, implementations derive it from the locked target
+                config. Once a published current version exists, a draft
+                projection is ignored.
+            restore_if_deleted: Restore an archived component in the same
+                transaction as the config mutation. Catalog API v2 adapters
+                must roll the restore back if the config mutation fails.
+            expected_component_type: Optional component identity invariant to
+                validate while holding the component write lock.
 
         Returns:
             Created/updated config dictionary.
@@ -838,21 +1098,30 @@ class BaseDb(ABC):
         self,
         component_id: str,
         version: int,
+        *,
+        guard: Optional[ComponentVersionGuard] = None,
+        projection: Optional[ComponentProjection] = None,
     ) -> bool:
-        """Delete a specific config version.
+        """Logically delete a specific config version.
 
         Only draft configs can be deleted. Published configs are immutable.
-        Cannot delete the current version.
+        Cannot delete the current version or the component's last visible
+        config. Implementations retain a hidden tombstone so version numbers
+        are never reused.
 
         Args:
             component_id: The component ID.
             version: The version to delete.
+            guard: Optional expected latest/current version state.
+            projection: Component fields to update atomically with deletion.
 
         Returns:
             True if deleted, False if not found.
 
         Raises:
-            ValueError: If attempting to delete a published or current config.
+            ComponentDraftRequiredError: If the config is published.
+            ComponentLastConfigError: If deleting the component's last visible config.
+            ValueError: If attempting to delete the current config.
         """
         raise NotImplementedError
 
@@ -877,6 +1146,9 @@ class BaseDb(ABC):
         self,
         component_id: str,
         version: int,
+        *,
+        guard: Optional[ComponentVersionGuard] = None,
+        projection: Optional[ComponentProjection] = None,
     ) -> bool:
         """Set a specific published version as current.
 
@@ -887,6 +1159,9 @@ class BaseDb(ABC):
         Args:
             component_id: The component ID.
             version: The version to set as current (must be published).
+            guard: Optional expected latest/current version state.
+            projection: Component fields to update atomically with the current pointer.
+                When omitted, implementations derive them from the target config.
 
         Returns:
             True if successful, False if component or version not found.
@@ -919,12 +1194,15 @@ class BaseDb(ABC):
         self,
         component_id: str,
         version: Optional[int] = None,
+        *,
+        active_parents_only: bool = False,
     ) -> List[Dict[str, Any]]:
         """Find all components that reference this component.
 
         Args:
             component_id: The component ID to find dependents of.
             version: Optional specific version. If None, finds links to any version.
+            active_parents_only: Exclude links owned by soft-deleted parents.
 
         Returns:
             List of link dictionaries showing what depends on this component.
@@ -1226,8 +1504,15 @@ class BaseDb(ABC):
         """Get a schedule by ID."""
         raise NotImplementedError
 
-    def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
-        """Get a schedule by name."""
+    def get_schedule_by_name(
+        self,
+        name: str,
+        *,
+        managed_by: Optional[str] = None,
+        owner_actor_id: Optional[str] = None,
+        exclude_managed_by: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Get a schedule by name, optionally within one ownership namespace."""
         raise NotImplementedError
 
     def get_schedules(
@@ -1235,6 +1520,7 @@ class BaseDb(ABC):
         enabled: Optional[bool] = None,
         limit: int = 100,
         page: int = 1,
+        exclude_managed_by: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List schedules with optional filtering.
 
@@ -1255,12 +1541,43 @@ class BaseDb(ABC):
         """Delete a schedule and its associated runs."""
         raise NotImplementedError
 
+    def trigger_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+        """Durably enqueue a manual trigger for a schedule."""
+        raise NotImplementedError
+
+    def disable_schedules_for_target(
+        self,
+        target_type: str,
+        target_id: str,
+        *,
+        managed_by: str,
+    ) -> int:
+        """Atomically disable enabled schedules in one managed target namespace."""
+        raise NotImplementedError
+
     def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
         """Atomically claim a due schedule for execution."""
         raise NotImplementedError
 
-    def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
-        """Release a claimed schedule and optionally update next_run_at."""
+    def renew_schedule_claim(
+        self,
+        schedule_id: str,
+        *,
+        worker_id: str,
+        locked_at: int,
+    ) -> Optional[int]:
+        """Renew a fenced schedule claim and return its new lock timestamp."""
+        raise NotImplementedError
+
+    def release_schedule(
+        self,
+        schedule_id: str,
+        next_run_at: Optional[int] = None,
+        *,
+        worker_id: Optional[str] = None,
+        locked_at: Optional[int] = None,
+    ) -> bool:
+        """Release a claimed schedule, optionally fenced by its worker/timestamp lock pair."""
         raise NotImplementedError
 
     # --- Schedule Runs (Optional) ---
@@ -1488,6 +1805,10 @@ class BaseDb(ABC):
 
 class AsyncBaseDb(ABC):
     """Base abstract class for all our async database implementations."""
+
+    supports_component_persistence = False
+    component_catalog_api_version = 1
+    scheduler_api_version = 1
 
     def __init__(
         self,
@@ -2298,8 +2619,15 @@ class AsyncBaseDb(ABC):
         """Get a schedule by ID."""
         raise NotImplementedError
 
-    async def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
-        """Get a schedule by name."""
+    async def get_schedule_by_name(
+        self,
+        name: str,
+        *,
+        managed_by: Optional[str] = None,
+        owner_actor_id: Optional[str] = None,
+        exclude_managed_by: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Get a schedule by name, optionally within one ownership namespace."""
         raise NotImplementedError
 
     async def get_schedules(
@@ -2307,6 +2635,7 @@ class AsyncBaseDb(ABC):
         enabled: Optional[bool] = None,
         limit: int = 100,
         page: int = 1,
+        exclude_managed_by: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List schedules with optional filtering.
 
@@ -2327,12 +2656,43 @@ class AsyncBaseDb(ABC):
         """Delete a schedule and its associated runs."""
         raise NotImplementedError
 
+    async def trigger_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+        """Durably enqueue a manual trigger for a schedule."""
+        raise NotImplementedError
+
+    async def disable_schedules_for_target(
+        self,
+        target_type: str,
+        target_id: str,
+        *,
+        managed_by: str,
+    ) -> int:
+        """Atomically disable enabled schedules in one managed target namespace."""
+        raise NotImplementedError
+
     async def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
         """Atomically claim a due schedule for execution."""
         raise NotImplementedError
 
-    async def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
-        """Release a claimed schedule and optionally update next_run_at."""
+    async def renew_schedule_claim(
+        self,
+        schedule_id: str,
+        *,
+        worker_id: str,
+        locked_at: int,
+    ) -> Optional[int]:
+        """Renew a fenced schedule claim and return its new lock timestamp."""
+        raise NotImplementedError
+
+    async def release_schedule(
+        self,
+        schedule_id: str,
+        next_run_at: Optional[int] = None,
+        *,
+        worker_id: Optional[str] = None,
+        locked_at: Optional[int] = None,
+    ) -> bool:
+        """Release a claimed schedule, optionally fenced by its worker/timestamp lock pair."""
         raise NotImplementedError
 
     # --- Schedule Runs (Optional) ---

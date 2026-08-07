@@ -5,17 +5,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union, cast
 from uuid import uuid4
 
-from sqlalchemy import or_
-
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
-from agno.db.base import AsyncBaseDb, ComponentType, SessionType
+from agno.db.base import AsyncBaseDb, ComponentProjection, ComponentType, ComponentVersionGuard, SessionType
 from agno.db.migrations.manager import MigrationManager
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.schemas.scheduler import ScheduleNameConflictError
 from agno.db.schemas.service_accounts import (
     resolve_service_account_sort_column,
     validate_service_account_update,
@@ -44,15 +43,26 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import Column, ForeignKey, MetaData, String, Table, func, select, text
+    from sqlalchemy import Column, ForeignKey, MetaData, String, Table, and_, case, func, or_, select, text
     from sqlalchemy.dialects import sqlite
+    from sqlalchemy.exc import IntegrityError
     from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
     from sqlalchemy.schema import Index, UniqueConstraint
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
 
+def _is_schedule_name_conflict(error: IntegrityError, table_name: str) -> bool:
+    """Match only the generic or actor-scoped schedule-name indexes."""
+    return str(error.orig) in {
+        f"UNIQUE constraint failed: {table_name}.name",
+        f"UNIQUE constraint failed: {table_name}.owner_actor_id, {table_name}.name",
+    }
+
+
 class AsyncSqliteDb(AsyncBaseDb):
+    scheduler_api_version = 2
+
     def __init__(
         self,
         db_file: Optional[str] = None,
@@ -3718,6 +3728,8 @@ class AsyncSqliteDb(AsyncBaseDb):
         self,
         component_id: str,
         component_type: Optional[ComponentType] = None,
+        *,
+        include_deleted: bool = False,
     ) -> Optional[Dict[str, Any]]:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
@@ -3727,6 +3739,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         component_type: Optional[ComponentType] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
+        current_version: Optional[int] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         raise NotImplementedError("Component methods not yet supported for async databases")
@@ -3735,6 +3748,10 @@ class AsyncSqliteDb(AsyncBaseDb):
         self,
         component_id: str,
         hard_delete: bool = False,
+        *,
+        guard: Optional[ComponentVersionGuard] = None,
+        require_no_dependents: bool = True,
+        projection: Optional[ComponentProjection] = None,
     ) -> bool:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
@@ -3781,6 +3798,9 @@ class AsyncSqliteDb(AsyncBaseDb):
         stage: Optional[str] = None,
         notes: Optional[str] = None,
         links: Optional[List[Dict[str, Any]]] = None,
+        *,
+        guard: Optional[ComponentVersionGuard] = None,
+        projection: Optional[ComponentProjection] = None,
     ) -> Dict[str, Any]:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
@@ -3788,6 +3808,9 @@ class AsyncSqliteDb(AsyncBaseDb):
         self,
         component_id: str,
         version: int,
+        *,
+        guard: Optional[ComponentVersionGuard] = None,
+        projection: Optional[ComponentProjection] = None,
     ) -> bool:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
@@ -3802,6 +3825,9 @@ class AsyncSqliteDb(AsyncBaseDb):
         self,
         component_id: str,
         version: int,
+        *,
+        guard: Optional[ComponentVersionGuard] = None,
+        projection: Optional[ComponentProjection] = None,
     ) -> bool:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
@@ -3817,6 +3843,8 @@ class AsyncSqliteDb(AsyncBaseDb):
         self,
         component_id: str,
         version: Optional[int] = None,
+        *,
+        active_parents_only: bool = False,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
@@ -3838,28 +3866,43 @@ class AsyncSqliteDb(AsyncBaseDb):
                 result = await sess.execute(select(table).where(table.c.id == schedule_id))
                 row = result.fetchone()
                 return dict(row._mapping) if row else None
-        except Exception as e:
-            log_debug(f"Error getting schedule: {e}")
-            return None
+        except Exception:
+            log_debug("Error getting schedule")
+            raise
 
-    async def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+    async def get_schedule_by_name(
+        self,
+        name: str,
+        *,
+        managed_by: Optional[str] = None,
+        owner_actor_id: Optional[str] = None,
+        exclude_managed_by: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         try:
             table = await self._get_table(table_type="schedules")
             if table is None:
                 return None
             async with self.async_session_factory() as sess:
-                result = await sess.execute(select(table).where(table.c.name == name))
+                query = select(table).where(table.c.name == name)
+                if managed_by is not None:
+                    query = query.where(table.c.managed_by == managed_by)
+                if owner_actor_id is not None:
+                    query = query.where(table.c.owner_actor_id == owner_actor_id)
+                if exclude_managed_by is not None:
+                    query = query.where(or_(table.c.managed_by.is_(None), table.c.managed_by != exclude_managed_by))
+                result = await sess.execute(query)
                 row = result.fetchone()
                 return dict(row._mapping) if row else None
-        except Exception as e:
-            log_debug(f"Error getting schedule by name: {e}")
-            return None
+        except Exception:
+            log_debug("Error getting schedule by name")
+            raise
 
     async def get_schedules(
         self,
         enabled: Optional[bool] = None,
         limit: int = 100,
         page: int = 1,
+        exclude_managed_by: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = await self._get_table(table_type="schedules")
@@ -3870,6 +3913,10 @@ class AsyncSqliteDb(AsyncBaseDb):
                 base_query = select(table)
                 if enabled is not None:
                     base_query = base_query.where(table.c.enabled == enabled)
+                if exclude_managed_by is not None:
+                    base_query = base_query.where(
+                        or_(table.c.managed_by.is_(None), table.c.managed_by != exclude_managed_by)
+                    )
 
                 # Get total count
                 count_stmt = select(func.count()).select_from(base_query.alias())
@@ -3883,12 +3930,14 @@ class AsyncSqliteDb(AsyncBaseDb):
                 stmt = base_query.order_by(table.c.created_at.desc()).limit(limit).offset(offset)
                 result = await sess.execute(stmt)
                 return [dict(row._mapping) for row in result.fetchall()], total_count
-        except Exception as e:
-            log_debug(f"Error listing schedules: {e}")
-            return [], 0
+        except Exception:
+            log_debug("Error listing schedules")
+            raise
 
     async def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
         try:
+            schedule_data.setdefault("pending_trigger_count", 0)
+            schedule_data.setdefault("manual_trigger_claimed", False)
             table = await self._get_table(table_type="schedules", create_table_if_not_found=True)
             if table is None:
                 raise RuntimeError("Failed to get or create schedules table")
@@ -3896,8 +3945,13 @@ class AsyncSqliteDb(AsyncBaseDb):
                 async with sess.begin():
                     await sess.execute(table.insert().values(**schedule_data))
             return schedule_data
-        except Exception as e:
-            log_error(f"Error creating schedule: {str(e)}")
+        except IntegrityError as error:
+            if _is_schedule_name_conflict(error, self.schedules_table_name):
+                raise ScheduleNameConflictError(schedule_data["name"]) from None
+            log_error("Error creating schedule")
+            raise
+        except Exception:
+            log_error("Error creating schedule")
             raise
 
     async def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
@@ -3910,9 +3964,59 @@ class AsyncSqliteDb(AsyncBaseDb):
                 async with sess.begin():
                     await sess.execute(table.update().where(table.c.id == schedule_id).values(**kwargs))
             return await self.get_schedule(schedule_id)
-        except Exception as e:
-            log_debug(f"Error updating schedule: {e}")
+        except IntegrityError as error:
+            name = kwargs.get("name")
+            if isinstance(name, str) and _is_schedule_name_conflict(error, self.schedules_table_name):
+                raise ScheduleNameConflictError(name) from None
+            log_debug("Error updating schedule")
+            raise
+        except Exception:
+            log_debug("Error updating schedule")
+            raise
+
+    async def trigger_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+        """Durably enqueue one manual execution for a schedule."""
+        table = await self._get_table(table_type="schedules")
+        if table is None:
             return None
+        async with self.async_session_factory() as sess:
+            async with sess.begin():
+                result = await sess.execute(
+                    table.update()
+                    .where(table.c.id == schedule_id)
+                    .values(
+                        pending_trigger_count=func.coalesce(table.c.pending_trigger_count, 0) + 1,
+                        updated_at=int(time.time()),
+                    )
+                )
+                if result.rowcount == 0:  # type: ignore[attr-defined]
+                    return None
+        return await self.get_schedule(schedule_id)
+
+    async def disable_schedules_for_target(
+        self,
+        target_type: str,
+        target_id: str,
+        *,
+        managed_by: str,
+    ) -> int:
+        """Atomically disable enabled schedules for one managed target."""
+        table = await self._get_table(table_type="schedules")
+        if table is None:
+            return 0
+        async with self.async_session_factory() as sess:
+            async with sess.begin():
+                result = await sess.execute(
+                    table.update()
+                    .where(
+                        table.c.managed_by == managed_by,
+                        table.c.target_type == target_type,
+                        table.c.target_id == target_id,
+                        table.c.enabled == True,  # noqa: E712
+                    )
+                    .values(enabled=False, updated_at=int(time.time()))
+                )
+                return int(result.rowcount or 0)  # type: ignore[attr-defined]
 
     async def delete_schedule(self, schedule_id: str) -> bool:
         try:
@@ -3926,8 +4030,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                         await sess.execute(runs_table.delete().where(runs_table.c.schedule_id == schedule_id))
                     result = await sess.execute(table.delete().where(table.c.id == schedule_id))
                     return result.rowcount > 0  # type: ignore[attr-defined]
-        except Exception as e:
-            log_debug(f"Error deleting schedule: {e}")
+        except Exception:
+            log_debug("Error deleting schedule")
             return False
 
     async def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
@@ -3943,13 +4047,30 @@ class AsyncSqliteDb(AsyncBaseDb):
                         select(table)
                         .where(
                             table.c.enabled == True,  # noqa: E712
-                            table.c.next_run_at <= now,
+                            or_(
+                                table.c.manual_trigger_claimed == True,  # noqa: E712
+                                table.c.pending_trigger_count > 0,
+                                table.c.next_run_at <= now,
+                            ),
                             or_(
                                 table.c.locked_by.is_(None),
                                 table.c.locked_at <= stale_lock_threshold,
                             ),
                         )
-                        .order_by(table.c.next_run_at.asc())
+                        .order_by(
+                            case(
+                                (table.c.manual_trigger_claimed == True, 0),  # noqa: E712
+                                (
+                                    and_(
+                                        table.c.pending_trigger_count > 0,
+                                        or_(table.c.next_run_at.is_(None), table.c.next_run_at > now),
+                                    ),
+                                    1,
+                                ),
+                                else_=2,
+                            ),
+                            table.c.next_run_at.asc(),
+                        )
                         .limit(1)
                     )
                     result = await sess.execute(stmt)
@@ -3961,36 +4082,105 @@ class AsyncSqliteDb(AsyncBaseDb):
                         table.update()
                         .where(
                             table.c.id == schedule["id"],
+                            table.c.enabled == True,  # noqa: E712
+                            or_(
+                                table.c.manual_trigger_claimed == True,  # noqa: E712
+                                table.c.pending_trigger_count > 0,
+                                table.c.next_run_at <= now,
+                            ),
                             or_(
                                 table.c.locked_by.is_(None),
                                 table.c.locked_at <= stale_lock_threshold,
                             ),
                         )
-                        .values(locked_by=worker_id, locked_at=now)
+                        .values(
+                            locked_by=worker_id,
+                            locked_at=now,
+                            pending_trigger_count=case(
+                                (
+                                    and_(
+                                        table.c.manual_trigger_claimed == False,  # noqa: E712
+                                        table.c.pending_trigger_count > 0,
+                                        or_(table.c.next_run_at.is_(None), table.c.next_run_at > now),
+                                    ),
+                                    table.c.pending_trigger_count - 1,
+                                ),
+                                else_=table.c.pending_trigger_count,
+                            ),
+                            manual_trigger_claimed=case(
+                                (table.c.manual_trigger_claimed == True, True),  # noqa: E712
+                                (table.c.next_run_at <= now, False),
+                                else_=True,
+                            ),
+                        )
                     )
                     if claim_result.rowcount == 0:  # type: ignore[attr-defined]
                         return None
-                    schedule["locked_by"] = worker_id
-                    schedule["locked_at"] = now
-                    return schedule
-        except Exception as e:
-            log_debug(f"Error claiming schedule: {e}")
-            return None
+                    claimed_result = await sess.execute(select(table).where(table.c.id == schedule["id"]))
+                    claimed = claimed_result.fetchone()
+                    return dict(claimed._mapping) if claimed else None
+        except Exception:
+            log_debug("Error claiming schedule")
+            raise
 
-    async def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
+    async def renew_schedule_claim(
+        self,
+        schedule_id: str,
+        *,
+        worker_id: str,
+        locked_at: int,
+    ) -> Optional[int]:
+        """Renew a claim only while its worker/timestamp fence still matches."""
+        table = await self._get_table(table_type="schedules")
+        if table is None:
+            return None
+        renewed_at = max(int(time.time()), locked_at + 1)
+        async with self.async_session_factory() as sess:
+            async with sess.begin():
+                result = await sess.execute(
+                    table.update()
+                    .where(
+                        table.c.id == schedule_id,
+                        table.c.locked_by == worker_id,
+                        table.c.locked_at == locked_at,
+                    )
+                    .values(locked_at=renewed_at)
+                )
+                return renewed_at if result.rowcount > 0 else None  # type: ignore[attr-defined]
+
+    async def release_schedule(
+        self,
+        schedule_id: str,
+        next_run_at: Optional[int] = None,
+        *,
+        worker_id: Optional[str] = None,
+        locked_at: Optional[int] = None,
+    ) -> bool:
         try:
+            if (worker_id is None) != (locked_at is None):
+                return False
             table = await self._get_table(table_type="schedules")
             if table is None:
                 return False
-            updates: Dict[str, Any] = {"locked_by": None, "locked_at": None, "updated_at": int(time.time())}
+            updates: Dict[str, Any] = {
+                "locked_by": None,
+                "locked_at": None,
+                "manual_trigger_claimed": False,
+                "updated_at": int(time.time()),
+            }
             if next_run_at is not None:
                 updates["next_run_at"] = next_run_at
             async with self.async_session_factory() as sess:
                 async with sess.begin():
-                    result = await sess.execute(table.update().where(table.c.id == schedule_id).values(**updates))
+                    stmt = table.update().where(table.c.id == schedule_id)
+                    if worker_id is None:
+                        stmt = stmt.where(table.c.manual_trigger_claimed == False)  # noqa: E712
+                    else:
+                        stmt = stmt.where(table.c.locked_by == worker_id, table.c.locked_at == locked_at)
+                    result = await sess.execute(stmt.values(**updates))
                     return result.rowcount > 0  # type: ignore[attr-defined]
-        except Exception as e:
-            log_debug(f"Error releasing schedule: {e}")
+        except Exception:
+            log_debug("Error releasing schedule")
             return False
 
     async def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -4002,8 +4192,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                 async with sess.begin():
                     await sess.execute(table.insert().values(**run_data))
             return run_data
-        except Exception as e:
-            log_error(f"Error creating schedule run: {str(e)}")
+        except Exception:
+            log_error("Error creating schedule run")
             raise
 
     async def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
@@ -4015,8 +4205,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                 async with sess.begin():
                     await sess.execute(table.update().where(table.c.id == schedule_run_id).values(**kwargs))
             return await self.get_schedule_run(schedule_run_id)
-        except Exception as e:
-            log_debug(f"Error updating schedule run: {e}")
+        except Exception:
+            log_debug("Error updating schedule run")
             return None
 
     async def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
@@ -4028,9 +4218,9 @@ class AsyncSqliteDb(AsyncBaseDb):
                 result = await sess.execute(select(table).where(table.c.id == run_id))
                 row = result.fetchone()
                 return dict(row._mapping) if row else None
-        except Exception as e:
-            log_debug(f"Error getting schedule run: {e}")
-            return None
+        except Exception:
+            log_debug("Error getting schedule run")
+            raise
 
     async def get_schedule_runs(
         self,
@@ -4061,9 +4251,9 @@ class AsyncSqliteDb(AsyncBaseDb):
                 )
                 result = await sess.execute(stmt)
                 return [dict(row._mapping) for row in result.fetchall()], total_count
-        except Exception as e:
-            log_debug(f"Error getting schedule runs: {e}")
-            return [], 0
+        except Exception:
+            log_debug("Error getting schedule runs")
+            raise
 
     # -- Approval methods --
 

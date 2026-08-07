@@ -386,10 +386,15 @@ def test_parse_json_with_python_code_in_value():
 
 
 def test_generate_id_from_name_with_name():
-    """Test that named IDs are deterministic kebab-case"""
+    """Named IDs preserve the historical persisted-identity transformation."""
     assert generate_id_from_name("My Agent") == "my-agent"
     assert generate_id_from_name("hello_world") == "hello-world"
     assert generate_id_from_name("UPPER") == "upper"
+    assert generate_id_from_name("Analyst v2.5") == "analyst-v2.5"
+    assert generate_id_from_name("R&D Jörg") == "r&d-jörg"
+    assert generate_id_from_name("Research/Review") == "research/review"
+    assert generate_id_from_name("  Repeated  Spaces  ") == "--repeated--spaces--"
+    assert generate_id_from_name("日本語") == "日本語"
 
 
 def test_generate_id_from_name_without_name():
