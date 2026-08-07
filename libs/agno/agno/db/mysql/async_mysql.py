@@ -2393,8 +2393,8 @@ class AsyncMySQLDb(AsyncBaseDb):
         Args:
             id (str): The ID of the knowledge row to delete.
             user_id (Optional[str]): Owner-scoping filter. When set, only
-                deletes if the row is owned by ``user_id`` OR is unowned
-                (NULL).
+                deletes if the row is owned by ``user_id``. Unowned rows are
+                shared content and are not the caller's to delete.
         """
         table = await self._get_table(table_type="knowledge")
 
@@ -2402,7 +2402,7 @@ class AsyncMySQLDb(AsyncBaseDb):
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = table.delete().where(table.c.id == id)
                 if user_id is not None:
-                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
+                    stmt = stmt.where(table.c.user_id == user_id)
                 await sess.execute(stmt)
 
         except Exception as e:
@@ -3466,4 +3466,3 @@ class AsyncMySQLDb(AsyncBaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for AsyncMySQLDb")
-

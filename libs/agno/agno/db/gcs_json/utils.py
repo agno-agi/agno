@@ -3,7 +3,6 @@
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
-from uuid import uuid4
 
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.utils import get_sort_value
@@ -111,7 +110,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[d
                     key = f"{model_id}:{model_provider}"
                     bucket["model_counts"][key] = bucket["model_counts"].get(key, 0) + 1
 
-            session_metrics = session.get("session_data", {}).get("session_metrics", {}) or {}
+            session_metrics = (session.get("session_data") or {}).get("session_metrics", {}) or {}
             for field in bucket["token_metrics"]:
                 bucket["token_metrics"][field] += session_metrics.get(field, 0)
 

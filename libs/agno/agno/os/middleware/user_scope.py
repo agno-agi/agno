@@ -40,6 +40,7 @@ become no-ops in that case, preserving the legacy unscoped behaviour.
 """
 
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Tuple, Union
+from urllib.parse import unquote
 
 from fastapi import HTTPException, Query, Request
 
@@ -65,6 +66,7 @@ SESSION_ID_REQUIRED = "session_id is required for this action"
 WORKFLOW_ID_REQUIRED_RECONNECT = "workflow_id is required to reconnect to a workflow run"
 SESSION_ID_REQUIRED_RECONNECT = "session_id is required to reconnect to a workflow run"
 INSUFFICIENT_PERMISSIONS_WS_RECONNECT = "Insufficient permissions to reconnect to this workflow"
+MISSING_USER_IDENTITY = "Authenticated request is missing a user identity"
 
 
 def _has_admin_scope(scopes: List[str], admin_scope: Optional[str] = None) -> bool:
@@ -82,12 +84,16 @@ def get_scoped_user_id(request: Request) -> Optional[str]:
     Returns None (meaning "no filtering") when:
     - User isolation is not enabled (the opt-in
       ``AuthorizationConfig(user_isolation=True)`` flag is off).
-    - No user_id in the JWT.
     - The user has admin scope (admins see all data).
     - The caller is the framework's own scheduler executor (authenticated
-      with the internal service token). The sentinel ``__scheduler__``
-      identifies the *caller*, not the *owner* of any work; routes route
-      around it using the form-field ``user_id`` set by the executor.
+      with the internal service token) firing an *unowned* schedule. The
+      sentinel ``__scheduler__`` identifies the *caller*, not the *owner* of
+      any work, so an owned schedule scopes to the owner the executor
+      forwards in ``SCHEDULE_OWNER_HEADER``.
+
+    Raises 403 when isolation is on and the caller reached an agno auth
+    middleware but carries no identity — falling through to "no filtering"
+    there would hand an identity-less token every user's data.
 
     Returns the user_id string only when a regular (non-admin) user is
     authenticated AND user isolation is enabled.
@@ -131,20 +137,48 @@ def get_scoped_user_id(request: Request) -> Optional[str]:
         return None
 
     if not user_id:
-        return None
+        # Getting this far means an agno auth middleware ran -- nothing else
+        # puts ``user_isolation_enabled`` on request.state -- and it produced no
+        # identity. Fail closed instead of falling through to unscoped ("see
+        # everything"), which would make a malformed token on the
+        # ``validate=False`` path more permissive than a valid one with no sub.
+        raise HTTPException(status_code=403, detail=MISSING_USER_IDENTITY)
 
     # Scheduler executor caller: the sentinel never means "scope to user
-    # __scheduler__" — that user does not exist. Return None so the route
-    # falls through to its form-field ``user_id`` override (the schedule
-    # owner). Without this short-circuit, every scheduler-fired run, session,
-    # trace, and metric is attributed to ``__scheduler__`` instead of the
-    # owner, which is what users reported as the sessions/metrics gap.
+    # __scheduler__" — that user does not exist. Scope to the schedule owner
+    # the executor forwarded, so a scheduled call reaches only that owner's
+    # data; a schedule can name any endpoint, and the internal service token
+    # carries broad scopes, so falling through unscoped would let one user's
+    # schedule act on another's. An unowned (system) schedule forwards no
+    # owner and stays unscoped. Without this, every scheduler-fired run,
+    # session, trace, and metric is attributed to ``__scheduler__`` instead of
+    # the owner, which is what users reported as the sessions/metrics gap.
     from agno.os.auth import INTERNAL_SCHEDULER_USER_ID
 
     if user_id == INTERNAL_SCHEDULER_USER_ID:
-        return None
+        return _schedule_owner_from_header(request)
 
     return user_id
+
+
+def _schedule_owner_from_header(request: Request) -> Optional[str]:
+    """Read the owner the executor forwarded for the schedule it is firing.
+
+    The executor percent-encodes the value, so decode before use. A header that
+    survives the hop but carries no usable identity is refused rather than
+    treated as "unowned", which would widen the call to every user's data.
+    """
+    from agno.db.schemas.scheduler import SCHEDULE_OWNER_HEADER
+    from agno.os.auth import INTERNAL_SCHEDULER_USER_ID
+
+    raw = request.headers.get(SCHEDULE_OWNER_HEADER)
+    if raw is None:
+        return None
+
+    owner = unquote(raw)
+    if not owner.strip() or owner == INTERNAL_SCHEDULER_USER_ID:
+        raise HTTPException(status_code=403, detail="Schedule owner is not a usable identity")
+    return owner
 
 
 def get_scoped_user_id_for_ws(

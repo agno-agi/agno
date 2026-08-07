@@ -2384,8 +2384,8 @@ class AsyncSqliteDb(AsyncBaseDb):
         Args:
             id (str): The ID of the knowledge row to delete.
             user_id (Optional[str]): Owner-scoping filter. When set, only
-                deletes if the row is owned by ``user_id`` OR is unowned
-                (NULL).
+                deletes if the row is owned by ``user_id``. Unowned rows are
+                shared content and are not the caller's to delete.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -2398,7 +2398,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = table.delete().where(table.c.id == id)
                 if user_id is not None:
-                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
+                    stmt = stmt.where(table.c.user_id == user_id)
                 await sess.execute(stmt)
 
         except Exception as e:
@@ -2530,6 +2530,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                         "access_count": knowledge_row.access_count,
                         "status": knowledge_row.status,
                         "status_message": knowledge_row.status_message,
+                        "user_id": knowledge_row.user_id,
                         "created_at": knowledge_row.created_at,
                         "updated_at": knowledge_row.updated_at,
                         "external_id": knowledge_row.external_id,
@@ -4653,13 +4654,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 offset = (page - 1) * limit
 
                 # Get paginated results
-                stmt = (
-                    select(table)
-                    .where(base_filter)
-                    .order_by(table.c.created_at.desc())
-                    .limit(limit)
-                    .offset(offset)
-                )
+                stmt = select(table).where(base_filter).order_by(table.c.created_at.desc()).limit(limit).offset(offset)
                 result = await sess.execute(stmt)
                 return [dict(row._mapping) for row in result.fetchall()], total_count
         except Exception as e:
@@ -4925,13 +4920,18 @@ class AsyncSqliteDb(AsyncBaseDb):
             log_error(f"Error creating service account: {str(e)}")
             raise
 
-    async def get_service_account(self, service_account_id: str) -> Optional[Dict[str, Any]]:
+    async def get_service_account(
+        self, service_account_id: str, user_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
         try:
             table = await self._get_table(table_type="service_accounts")
             if table is None:
                 return None
             async with self.async_session_factory() as sess:
-                result = await sess.execute(select(table).where(table.c.id == service_account_id))
+                stmt = select(table).where(table.c.id == service_account_id)
+                if user_id is not None:
+                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
+                result = await sess.execute(stmt)
                 row = result.fetchone()
                 return dict(row._mapping) if row else None
         except Exception as e:
@@ -4987,6 +4987,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         page: int = 1,
         sort_by: str = "created_at",
         sort_order: str = "desc",
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = await self._get_table(table_type="service_accounts")
@@ -4997,6 +4998,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                 base_query = select(table)
                 if not include_revoked:
                     base_query = base_query.where(table.c.revoked_at.is_(None))
+                if user_id is not None:
+                    base_query = base_query.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
 
                 # Get total count
                 count_stmt = select(func.count()).select_from(base_query.alias())

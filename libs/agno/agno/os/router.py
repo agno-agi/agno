@@ -495,13 +495,16 @@ def get_websocket_router(
                     # client cannot attribute a run to another user by spoofing
                     # the field.
                     auth_user_id = websocket_user_context.get("user_id")
-                    is_admin = False
-                    if auth_user_id:
-                        is_admin = ws_admin_scope in websocket_user_context.get("scopes", [])
-                        if is_admin:
+                    is_admin = ws_admin_scope in websocket_user_context.get("scopes", [])
+                    if is_admin:
+                        if auth_user_id:
                             message.setdefault("user_id", auth_user_id)
-                        else:
-                            message["user_id"] = auth_user_id
+                    elif auth_user_id or ws_user_isolation_enabled:
+                        # Under isolation the client's own value never stands in for
+                        # an identity, so overwrite it even when the token carries no
+                        # subject: ``get_scoped_user_id_for_ws`` then scopes on
+                        # nothing rather than on a value the caller chose itself.
+                        message["user_id"] = auth_user_id
 
                     ws_auth = WebSocketAuthContext(
                         jwt_enabled=scope_enforcement_active(),
@@ -517,13 +520,16 @@ def get_websocket_router(
                     # so reconnecting cannot read another user's run events by
                     # swapping user_id.
                     auth_user_id = websocket_user_context.get("user_id")
-                    is_admin = False
-                    if auth_user_id:
-                        is_admin = ws_admin_scope in websocket_user_context.get("scopes", [])
-                        if is_admin:
+                    is_admin = ws_admin_scope in websocket_user_context.get("scopes", [])
+                    if is_admin:
+                        if auth_user_id:
                             message.setdefault("user_id", auth_user_id)
-                        else:
-                            message["user_id"] = auth_user_id
+                    elif auth_user_id or ws_user_isolation_enabled:
+                        # Under isolation the client's own value never stands in for
+                        # an identity, so overwrite it even when the token carries no
+                        # subject: ``get_scoped_user_id_for_ws`` then scopes on
+                        # nothing rather than on a value the caller chose itself.
+                        message["user_id"] = auth_user_id
 
                     # Enforce workflow-level RBAC at reconnect just like
                     # start-workflow does. RBAC fires whenever JWT auth is on
@@ -596,13 +602,16 @@ def get_websocket_router(
                     # callers so the client cannot continue another user's paused
                     # run by spoofing the field.
                     auth_user_id = websocket_user_context.get("user_id")
-                    is_admin = False
-                    if auth_user_id:
-                        is_admin = ws_admin_scope in websocket_user_context.get("scopes", [])
-                        if is_admin:
+                    is_admin = ws_admin_scope in websocket_user_context.get("scopes", [])
+                    if is_admin:
+                        if auth_user_id:
                             message.setdefault("user_id", auth_user_id)
-                        else:
-                            message["user_id"] = auth_user_id
+                    elif auth_user_id or ws_user_isolation_enabled:
+                        # Under isolation the client's own value never stands in for
+                        # an identity, so overwrite it even when the token carries no
+                        # subject: ``get_scoped_user_id_for_ws`` then scopes on
+                        # nothing rather than on a value the caller chose itself.
+                        message["user_id"] = auth_user_id
 
                     ws_auth = WebSocketAuthContext(
                         jwt_enabled=scope_enforcement_active(),

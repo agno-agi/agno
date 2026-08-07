@@ -136,8 +136,8 @@ METRICS_TABLE_SCHEMA = {
     # (RBAC off / pre-isolation deployments / system runs) so the unique
     # constraint behaves predictably across SQL backends — SQLite/Postgres
     # treat multiple NULLs as distinct, which would break uniqueness.
-    # ``from_dict`` round-trips ``""`` back to the API as ``None`` so this
-    # is transparent to callers.
+    # The adapter maps ``""`` back to ``None`` on the way out, and the metrics
+    # response schema carries no owner at all, so this is invisible to callers.
     "user_id": {"type": String, "nullable": False, "default": "", "index": True},
     "created_at": {"type": BigInteger, "nullable": False},
     "updated_at": {"type": BigInteger, "nullable": True},

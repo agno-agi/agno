@@ -2075,9 +2075,7 @@ class MongoDb(BaseDb):
             raise e
 
     # -- Knowledge methods --
-
-    # -- Knowledge methods --
-    # The owner-scope predicate is consistently "rows I own, plus rows nobody
+    # The owner-scope predicate for reads is "rows I own, plus rows nobody
     # owns (admin / org-wide shared content)". Mongo expresses this as
     # ``{"$or": [{"user_id": uid}, {"user_id": None}, {"user_id": {"$exists": False}}]}``
     # — the third clause covers documents written before the column existed
@@ -2096,9 +2094,8 @@ class MongoDb(BaseDb):
         Args:
             id (str): The ID of the knowledge row to delete.
             user_id (Optional[str]): Owner-scoping filter. When set, only
-                deletes if the row is owned by ``user_id`` OR is unowned
-                (NULL). Routes that want to forbid non-admins from deleting
-                shared rows must enforce that separately at the route layer.
+                deletes if the row is owned by ``user_id``. Unowned rows are
+                shared content and are not the caller's to delete.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -2109,9 +2106,8 @@ class MongoDb(BaseDb):
                 return
 
             query: Dict[str, Any] = {"id": id}
-            scope = self._knowledge_user_scope_filter(user_id)
-            if scope is not None:
-                query = {"$and": [query, scope]}
+            if user_id is not None:
+                query["user_id"] = user_id
             collection.delete_one(query)
 
             log_debug(f"Deleted knowledge content with id '{id}'")
@@ -3161,7 +3157,7 @@ class MongoDb(BaseDb):
             log_error(f"Error getting spans: {str(e)}")
             return []
 
-    # -- Scheduler methods --
+    # -- Schedule methods --
     # User-facing reads/updates/deletes carry an optional ``user_id`` filter so the
     # routes can scope by owner. The executor pair (``claim_due_schedule`` /
     # ``release_schedule``) intentionally has no user_id — the poller must be

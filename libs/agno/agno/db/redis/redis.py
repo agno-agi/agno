@@ -36,6 +36,7 @@ from agno.db.utils import (
     deserialize_sessions,
     filter_context_runs,
     merge_runs_table_with_legacy_blob,
+    metric_record_day,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -1422,13 +1423,16 @@ class RedisDb(BaseDb):
                 completed_metrics = [m for m in all_metrics if m.get("completed", False)]
                 if completed_metrics:
                     latest_completed = max(completed_metrics, key=lambda x: x.get("date", ""))
-                    return datetime.fromisoformat(latest_completed["date"]).date() + timedelta(days=1)
+                    latest_day = metric_record_day(latest_completed)
+                    if latest_day is not None:
+                        return latest_day + timedelta(days=1)
                 else:
                     # Find the earliest incomplete metric
                     incomplete_metrics = [m for m in all_metrics if not m.get("completed", False)]
                     if incomplete_metrics:
-                        earliest_incomplete = min(incomplete_metrics, key=lambda x: x.get("date", ""))
-                        return datetime.fromisoformat(earliest_incomplete["date"]).date()
+                        earliest_day = metric_record_day(min(incomplete_metrics, key=lambda x: x.get("date", "")))
+                        if earliest_day is not None:
+                            return earliest_day
 
             # No metrics records, find first session
             sessions_raw, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
@@ -1493,9 +1497,7 @@ class RedisDb(BaseDb):
                     # Preserve created_at across re-runs.
                     existing_record = self._get_record("metrics", metrics_record["id"])
                     if existing_record:
-                        metrics_record["created_at"] = existing_record.get(
-                            "created_at", metrics_record["created_at"]
-                        )
+                        metrics_record["created_at"] = existing_record.get("created_at", metrics_record["created_at"])
 
                     success = self._store_record("metrics", metrics_record["id"], metrics_record)
                     if success:
@@ -1537,7 +1539,9 @@ class RedisDb(BaseDb):
             if starting_date is not None or ending_date is not None:
                 filtered_metrics = []
                 for metric in all_metrics:
-                    metric_date = datetime.fromisoformat(metric.get("date", "")).date()
+                    metric_date = metric_record_day(metric)
+                    if metric_date is None:
+                        continue
                     if starting_date is not None and metric_date < starting_date:
                         continue
                     if ending_date is not None and metric_date > ending_date:
@@ -1568,8 +1572,6 @@ class RedisDb(BaseDb):
             raise e
 
     # -- Knowledge methods --
-
-    # -- Knowledge methods --
     # Redis stores records as serialized dicts; we filter in Python. A row
     # is visible if its ``user_id`` matches the caller OR is unset. When the
     # caller passes ``user_id=None`` we skip the check entirely.
@@ -1587,7 +1589,8 @@ class RedisDb(BaseDb):
         Args:
             id (str): The ID of the knowledge row to delete.
             user_id (Optional[str]): Owner-scoping filter. When set, only
-                deletes if the row is owned by ``user_id`` OR is unowned.
+                deletes if the row is owned by ``user_id``. Unowned rows are
+                shared content and are not the caller's to delete.
 
         Raises:
             Exception: If any error occurs while deleting the knowledge content.
@@ -1595,7 +1598,7 @@ class RedisDb(BaseDb):
         try:
             if user_id is not None:
                 existing = self._get_record("knowledge", id)
-                if existing is not None and not self._knowledge_doc_is_visible(existing, user_id):
+                if existing is None or existing.get("user_id") != user_id:
                     log_debug(f"Skipping delete of knowledge content {id}: not owned by {user_id}")
                     return
             self._delete_record("knowledge", id)

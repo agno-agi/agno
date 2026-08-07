@@ -8,6 +8,7 @@ from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from starlette.concurrency import run_in_threadpool
 
+from agno.db.schemas.scheduler import INTERNAL_SCHEDULER_USER_ID
 from agno.os.scopes import (
     get_accessible_resource_ids,
     get_default_scope_mappings,
@@ -30,14 +31,6 @@ def _default_scope_mappings() -> Dict[str, List[str]]:
 
 # Scopes granted to the internal service token (used by the scheduler executor).
 # Shared constant so auth.py and jwt.py stay in sync.
-# Sentinel ``user_id`` stamped on ``request.state.user_id`` when the caller
-# authenticates with the internal service token (used by the scheduler
-# executor for loopback HTTP calls to its own AgentOS server). Routes that
-# need to distinguish "the framework is calling itself" from "a real user is
-# calling" compare against this constant and, when matched, source the actual
-# work owner from a form-field ``user_id`` passed by the caller.
-INTERNAL_SCHEDULER_USER_ID: str = "__scheduler__"
-
 INTERNAL_SERVICE_SCOPES: List[str] = [
     "agents:read",
     "agents:run",

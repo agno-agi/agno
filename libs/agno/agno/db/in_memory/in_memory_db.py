@@ -1018,8 +1018,6 @@ class InMemoryDb(BaseDb):
             raise e
 
     # -- Knowledge methods --
-
-    # -- Knowledge methods --
     # In-memory storage filters in Python: a row is visible if its
     # ``user_id`` matches the caller OR is unset (None / missing).
 
@@ -1036,7 +1034,8 @@ class InMemoryDb(BaseDb):
         Args:
             id (str): The ID of the knowledge row to delete.
             user_id (Optional[str]): Owner-scoping filter. When set, only
-                deletes if the row is owned by ``user_id`` OR is unowned.
+                deletes if the row is owned by ``user_id``. Unowned rows are
+                shared content and are not the caller's to delete.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -1045,7 +1044,7 @@ class InMemoryDb(BaseDb):
             self._knowledge = [
                 item
                 for item in self._knowledge
-                if not (item.get("id") == id and self._knowledge_item_is_visible(item, user_id))
+                if not (item.get("id") == id and (user_id is None or item.get("user_id") == user_id))
             ]
 
         except Exception as e:
@@ -1110,9 +1109,7 @@ class InMemoryDb(BaseDb):
 
             # Owner scoping: drop rows the caller isn't allowed to see.
             if user_id is not None:
-                knowledge_items = [
-                    item for item in knowledge_items if self._knowledge_item_is_visible(item, user_id)
-                ]
+                knowledge_items = [item for item in knowledge_items if self._knowledge_item_is_visible(item, user_id)]
 
             total_count = len(knowledge_items)
 
@@ -1641,4 +1638,3 @@ class InMemoryDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for InMemoryDb")
-
