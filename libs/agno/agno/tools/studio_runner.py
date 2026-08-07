@@ -39,10 +39,17 @@ Semantics:
       continuity across sessionless calls.
     * Code-defined components are dispatched on a fresh deep copy per run, so
       per-run mutation of a shared instance never bleeds across callers.
-      DB-loaded components are reconstructed per call already. What a callable
-      members/tools/steps factory returns is the exception: it is built per run
-      by the framework, cached while cache_callables is on, and therefore
-      outside this copy -- dispatch warns when it meets one.
+      DB-loaded components are reconstructed per call already. Two things sit
+      outside that copy, both by the framework's own rules:
+        - what a callable members/tools/steps factory returns, since it is
+          built per run and cached while cache_callables is on. Dispatch warns
+          when it meets one.
+        - a tool or member that declines to be copied (no deep_copy, or a
+          __deepcopy__ returning self). The copier keeps the original, the
+          same way _shared_member treats a member that cannot be copied as
+          shared by design, so a toolkit holding per-call state of its own is
+          shared between callers. Give such a class a real deep_copy if its
+          state must not cross runs.
     * A PAUSED result carries the unresolved requirements plus the
       run_id/session_id a continue call must address (the same shape the
       AgentOS MCP plane returns) -- human-in-the-loop pauses are relayed.
