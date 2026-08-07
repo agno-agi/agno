@@ -2,7 +2,7 @@
 
 The runner is the dispatch half of the Studio: list the agents, teams, and
 workflows that exist in the platform database, and run one by id. It carries no
-create/edit/delete surface, so it is safe to mount on any component that should
+create/edit/archive surface, so it is safe to mount on any component that should
 hand work to built components -- a team lead, a router -- without granting the
 Studio's mutation tools.
 
@@ -58,11 +58,11 @@ Semantics:
       stream=True still hands back its final run output, never an unconsumed
       event iterator.
     * run_* resolve in a fixed order: code-defined exact id, DB exact id,
-      code-defined display name, DB display name, then the identifier's slug
-      as an id (covers renamed components, whose ids keep the original
-      name's slug). Exact ids always win over display names. A display name
-      matching several components of the type returns an error listing the
-      matching ids.
+      code-defined display name, then DB display name. Exact ids always win
+      over display names; fuzzy or slug aliases are not inferred.
+      A display name matching several components of the type returns an error
+      listing the matching ids. An explicit component id is never inferred
+      from a normalized version of a different display name.
     * Persisted components rebuild from their stored config. Registry-backed
       references (tools, knowledge, function steps, schemas, code-defined
       members) require the registry: without it the runner refuses to run a
@@ -71,11 +71,22 @@ Semantics:
       is checked against its own config before dispatch, so an unresolved tool
       or a dropped schema stops the run rather than quietly changing what it
       does. Reads and edits load it either way, so it stays repairable.
-      Member references resolve at their current
-      published version. Model connection settings, credentials and a
-      declared db are not fully persisted, so a rebuild can fall back to
-      provider defaults and to the catalog db; the runner logs a warning for
-      the dispatched agent's or team's own model and for a dropped db.
+      Stored member references resolve at the exact published versions pinned
+      by the parent config; legacy unpinned references use the current version.
+      Typed Studio components always require the registry for dispatch, even
+      when they have no tools: their top-level and nested models must be the
+      exact live instances in ``registry.models``. Model connection settings
+      and credentials are not persisted, so a config rebuild is refused rather
+      than allowed to fall back to provider defaults. Legacy stored configs
+      retain the warning for a rebuilt top-level model. A declared db is also
+      not always reconstructable, so the runner warns when it falls back to the
+      catalog db.
+      The component database itself is the trusted durable boundary. Typed
+      manifests preserve live registry identity and public Studio mutations
+      keep published versions immutable; they are not checksums for detecting
+      privileged, out-of-band edits to component rows. Protect the catalog
+      with database access controls and use the Studio lifecycle APIs to edit
+      it.
     * list_* read the database only (id, name, description, newest first), and
       run_* dispatch that same set: a component you cannot list is a component
       you cannot run. Code-defined components arrive through the registry,
@@ -85,9 +96,9 @@ Semantics:
       workflows_list is itself the allowlist and always runs. 'total' reports
       the full DB count, so a capped list is visible as capped.
 
-StudioTools embeds this toolkit for its own run_* tools and delegates its
-component lookups here, so a builder's smoke-test runs and a dispatcher's
-production runs share one implementation.
+StudioTools embeds this toolkit for its own run_* tools and reuses its persisted
+component loaders, so a builder's smoke-test runs and a dispatcher's production
+runs share one implementation.
 """
 
 from __future__ import annotations
@@ -101,6 +112,7 @@ from agno.run import RunContext
 from agno.run.utils import run_status_string, serialized_paused_requirements
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import logger
+from agno.utils.string import generate_id_from_name
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
@@ -114,17 +126,31 @@ if TYPE_CHECKING:
 _NAME_LOOKUP_PAGE = 100
 
 
-# How deep the dispatch checks walk a component graph. A graph deeper than this
-# is refused rather than half-inspected, so a cap can never read as a pass.
-_GRAPH_DEPTH_CAP = 32
+# Dispatch checks bound recursion depth and total graph size independently.
+# Exceeding either bound is a refusal rather than a partial inspection, so a
+# safety cap can never read as a pass.
+_GRAPH_MAX_DEPTH = 32
+_GRAPH_MAX_NODES = 1024
+
+
+# Typed Studio configs carry this private manifest. Keep the runner's trust
+# decision local rather than importing StudioTools, which embeds this toolkit.
+_STUDIO_CONFIG_KEY = "_agno_studio"
+_STUDIO_SCHEMA_VERSION = 2
 
 
 def _slugify(name: str) -> str:
-    """Component ids are slugified names (shared with StudioTools' create path)."""
-    slug = "".join(c.lower() if c.isalnum() else "-" for c in name.strip())
-    while "--" in slug:
-        slug = slug.replace("--", "-")
-    return slug.strip("-") or "component"
+    """Normalize through the catalog-wide component ID policy."""
+    return generate_id_from_name(name)
+
+
+def _is_typed_studio_config(config: Dict[str, Any]) -> bool:
+    """Whether this config was written through the typed Studio contract.
+
+    Presence is enough: a corrupt manifest must not downgrade a typed config
+    into the legacy, warning-only model path.
+    """
+    return _STUDIO_CONFIG_KEY in config
 
 
 class StudioRunnerError(Exception):
@@ -208,25 +234,99 @@ def _references_executors(component_type: str, config: Dict[str, Any]) -> bool:
 
 
 def _references_idless_components(component_type: str, config: Dict[str, Any]) -> bool:
-    """True when a stored config carries an agent/team reference whose id is
+    """True when a stored config carries a component reference whose id is
     null. Serialization writes the referenced component's id even when it is
     None, and a code-defined component that never ran has no id, so a null id
     marks a component only the registry can supply."""
     return any(
-        ("agent_id" in ref and not ref["agent_id"]) or ("team_id" in ref and not ref["team_id"])
+        ("agent_id" in ref and not ref["agent_id"])
+        or ("team_id" in ref and not ref["team_id"])
+        or ("workflow_id" in ref and not ref["workflow_id"])
         for ref in _reference_configs(component_type, config)
     )
 
 
+def _component_reference_entries(component_type: str, config: Dict[str, Any]) -> List[Tuple[str, str, Optional[str]]]:
+    """(type, id, link key) entries in serialized reference order.
+
+    The link key matters when two workflow steps pin different versions of the
+    same component. Keying pins only by child id silently makes the last link
+    win and compares one step's runtime object with another step's config.
+    """
+    refs: List[Tuple[str, str, Optional[str]]] = []
+
+    def append_reference(ref: Dict[str, Any], link_key: Optional[str]) -> None:
+        if ref.get("team_id"):
+            refs.append(("team", str(ref["team_id"]), link_key))
+        elif ref.get("agent_id"):
+            refs.append(("agent", str(ref["agent_id"]), link_key))
+        elif ref.get("workflow_id"):
+            refs.append(("workflow", str(ref["workflow_id"]), link_key))
+
+    if component_type == "team":
+        members = config.get("members") or []
+        if isinstance(members, list):
+            for position, member in enumerate(members):
+                if isinstance(member, dict):
+                    append_reference(member, f"member_{position}")
+        return refs
+    if component_type != "workflow":
+        return refs
+
+    def walk(steps: Any, suffix: str = "") -> None:
+        if not isinstance(steps, list):
+            return
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            raw_key = step.get("step_id") or step.get("name")
+            link_key = f"{raw_key}{suffix}" if raw_key is not None else None
+            append_reference(step, link_key)
+            walk(step.get("steps"), suffix)
+            walk(step.get("else_steps"), f"{suffix}#else")
+            walk(step.get("choices"), suffix)
+
+    walk(config.get("steps"))
+    return refs
+
+
 def _component_references(component_type: str, config: Dict[str, Any]) -> List[tuple]:
     """(type, id) pairs for the components a stored config references by id."""
-    refs: List[tuple] = []
-    for ref in _reference_configs(component_type, config):
-        if ref.get("team_id"):
-            refs.append(("team", str(ref["team_id"])))
-        elif ref.get("agent_id"):
-            refs.append(("agent", str(ref["agent_id"])))
-    return refs
+    return [(ref_type, ref_id) for ref_type, ref_id, _link_key in _component_reference_entries(component_type, config)]
+
+
+def _pinned_reference_version(
+    links: List[Dict[str, Any]],
+    ref_type: str,
+    ref_id: str,
+    link_key: Optional[str],
+) -> Optional[int]:
+    """Resolve the pin for one exact serialized reference.
+
+    Step.from_dict prefers the matching link key and otherwise uses the first
+    link for the child. Mirror that fallback here so the fidelity check judges
+    the same config version that reconstruction used.
+    """
+    fallback: Optional[int] = None
+    has_fallback = False
+    for link in links:
+        if link.get("child_component_id") != ref_id:
+            continue
+        link_kind = link.get("link_kind")
+        meta = link.get("meta")
+        linked_type = meta.get("type") if isinstance(meta, dict) else None
+        if linked_type is None and isinstance(link_kind, str) and link_kind.startswith("step_"):
+            linked_type = link_kind.removeprefix("step_")
+        if linked_type is not None and linked_type != ref_type:
+            continue
+        raw_version = link.get("child_version")
+        child_version = raw_version if isinstance(raw_version, int) else None
+        if link.get("link_key") == link_key:
+            return child_version
+        if not has_fallback:
+            fallback = child_version
+            has_fallback = True
+    return fallback
 
 
 class StudioRunnerTools(Toolkit):
@@ -279,8 +379,8 @@ class StudioRunnerTools(Toolkit):
                 "Run components built in the Studio: discover what exists, then run by id.",
                 f"{list_names}: id, name, and description of every component this toolkit can run, newest first.",
                 f"{run_names}: send one message; the result carries run_id, session_id, status, and content. "
-                "Use the exact id from a list tool; a display name or its slug also resolves. An ambiguous "
-                "display name returns an error listing the matching ids -- retry with the exact id.",
+                "Use the exact id from a list tool; an exact display name also resolves. An ambiguous display "
+                "name returns an error listing the matching ids -- retry with the exact id.",
                 "A PAUSED status means the run awaits human approval: relay the requirements to the user and "
                 "include the run_id and session_id -- the run is resumed through the platform, never by "
                 "running it again.",
@@ -301,8 +401,7 @@ class StudioRunnerTools(Toolkit):
         )
 
     # ------------------------------------------------------------------
-    # Component resolution -- StudioTools delegates its lookups here so the
-    # builder and the runner resolve components one way.
+    # Runner component resolution.
     # ------------------------------------------------------------------
 
     def _iter_agents(self, for_dispatch: bool = False) -> List["Agent"]:
@@ -336,12 +435,11 @@ class StudioRunnerTools(Toolkit):
 
     def _find_agent(self, agent_id: str, for_dispatch: bool = False) -> Optional["Agent"]:
         """Lookup order: code-defined exact id, DB exact id, code-defined display
-        name, DB display name (ambiguous -> AmbiguousComponentNameError), then
-        the identifier's slug as an id. Exact ids always win over names.
+        name, then DB display name (ambiguous -> AmbiguousComponentNameError).
+        Exact ids always win over names.
 
-        Split into an exact tier and a name tier so cross-type callers
-        (StudioTools._resolve_members) can try exact ids across both types
-        before any name matching."""
+        Split into an exact tier and a name tier so cross-type member lookup
+        can try exact ids across both types before any name matching."""
         agent = self._find_agent_by_exact_id(agent_id, for_dispatch=for_dispatch)
         if agent is not None:
             return agent
@@ -363,7 +461,7 @@ class StudioRunnerTools(Toolkit):
             raise AmbiguousComponentNameError("agent", agent_id, [str(getattr(a, "id", "")) for a in named_agents])
         if named_agents:
             return named_agents[0]
-        resolved = self._resolve_db_id_by_name_or_slug("agent", agent_id)
+        resolved = self._resolve_db_id_by_name("agent", agent_id)
         return self._load_agent_from_db(resolved, for_dispatch=for_dispatch) if resolved is not None else None
 
     def _find_team(self, team_id: str, for_dispatch: bool = False) -> Optional["Team"]:
@@ -386,7 +484,7 @@ class StudioRunnerTools(Toolkit):
             raise AmbiguousComponentNameError("team", team_id, [str(getattr(t, "id", "")) for t in named_teams])
         if named_teams:
             return named_teams[0]
-        resolved = self._resolve_db_id_by_name_or_slug("team", team_id)
+        resolved = self._resolve_db_id_by_name("team", team_id)
         return self._load_team_from_db(resolved, for_dispatch=for_dispatch) if resolved is not None else None
 
     def _find_workflow(self, workflow_id: str, for_dispatch: bool = False) -> Optional["Workflow"]:
@@ -413,7 +511,7 @@ class StudioRunnerTools(Toolkit):
             )
         if named_workflows:
             return named_workflows[0]
-        resolved = self._resolve_db_id_by_name_or_slug("workflow", workflow_id)
+        resolved = self._resolve_db_id_by_name("workflow", workflow_id)
         return self._load_workflow_from_db(resolved, for_dispatch=for_dispatch) if resolved is not None else None
 
     # run_* execute code-defined components on a fresh copy, so per-run
@@ -441,11 +539,11 @@ class StudioRunnerTools(Toolkit):
             )
         try:
             fresh = copier()
-        except Exception as e:
+        except Exception:
             raise DispatchCopyError(
-                f"deep_copy failed for '{label}': {str(e) or type(e).__name__}. "
+                f"deep_copy failed for '{label}'. "
                 "Give the class a deep_copy that rebuilds it, or store the component in the database."
-            ) from e
+            ) from None
         if fresh is component:
             raise DispatchCopyError(
                 f"deep_copy of '{label}' returned the shared instance; the runner does not dispatch it. "
@@ -624,7 +722,7 @@ class StudioRunnerTools(Toolkit):
 
     @staticmethod
     def _step_list_divergence(original_steps: Any, fresh_steps: Any, depth: int = 0) -> Optional[str]:
-        if depth > _GRAPH_DEPTH_CAP:
+        if depth > _GRAPH_MAX_DEPTH:
             # _require_inspectable_depth refuses before a real graph gets here,
             # so this is only the cycle guard.
             return None
@@ -671,7 +769,7 @@ class StudioRunnerTools(Toolkit):
         whether the copy holds the same members at all. A copier that drops a
         member or rebuilds it as a different component has not produced the
         component that was asked for, and neither shows up as sharing."""
-        if depth > _GRAPH_DEPTH_CAP:
+        if depth > _GRAPH_MAX_DEPTH:
             # _require_inspectable_depth refuses before a real graph gets
             # here, so this is only the cycle guard.
             return None
@@ -829,16 +927,6 @@ class StudioRunnerTools(Toolkit):
             raise AmbiguousComponentNameError(component_type, name, matches)
         return matches[0] if matches else None
 
-    def _resolve_db_id_by_name_or_slug(self, component_type: str, identifier: str) -> Optional[str]:
-        """DB id for a non-id identifier: display name first, then its slug."""
-        resolved = self._resolve_db_id_by_name(component_type, identifier)
-        if resolved is not None:
-            return resolved
-        slug = _slugify(identifier)
-        if slug != identifier and self._db_component_exists(component_type, slug):
-            return slug
-        return None
-
     @staticmethod
     def _require_resolvable_member_ids(component_type: str, component_id: str, config: Dict[str, Any]) -> None:
         """Refuse a config that references a member or step executor by a null id.
@@ -864,6 +952,7 @@ class StudioRunnerTools(Toolkit):
         config: Dict[str, Any],
         _seen: Optional[set] = None,
         version: Optional[int] = None,
+        require_typed_registry: bool = False,
     ) -> None:
         """Refuse to rebuild a component whose config needs the absent registry.
 
@@ -876,10 +965,16 @@ class StudioRunnerTools(Toolkit):
             return
         if _seen is None:
             _seen = set()
-        key = f"{component_type}:{component_id}"
+        key = (component_type, component_id, version)
         if key in _seen:
             return
         _seen.add(key)
+        if require_typed_registry and _is_typed_studio_config(config):
+            raise ComponentNeedsRegistryError(
+                f"{component_type.capitalize()} '{component_id}' was persisted by the typed Studio contract and "
+                "cannot be dispatched from the database alone. Construct StudioRunnerTools with the registry so "
+                "its exact live model instances, connection settings, and credentials can be restored."
+            )
         needs: List[str] = []
         # Tools are deliberately NOT pre-guarded on "the config declares some".
         # Not every serialized tool needs the registry -- a provider-native tool
@@ -901,14 +996,14 @@ class StudioRunnerTools(Toolkit):
             )
         from agno.db.base import ComponentType
 
-        pins: Dict[str, Optional[int]] = {}
-        for link in self._load_links_from_db(component_id, version=version):
-            child_id = link.get("child_component_id")
-            if child_id:
-                pins[child_id] = link.get("child_version")
-        for ref_type, ref_id in _component_references(component_type, config):
+        links = self._load_links_from_db(component_id, version=version)
+        for ref_type, ref_id, link_key in _component_reference_entries(component_type, config):
+            ref_version = _pinned_reference_version(links, ref_type, ref_id, link_key)
             ref_loaded = self._load_config_row_from_db(
-                ref_id, version=pins.get(ref_id), component_type=ComponentType(ref_type)
+                ref_id,
+                version=ref_version,
+                component_type=ComponentType(ref_type),
+                current_only=ref_version is None,
             )
             if ref_loaded is None:
                 raise ComponentNeedsRegistryError(
@@ -917,7 +1012,14 @@ class StudioRunnerTools(Toolkit):
                     "construct StudioRunnerTools with the registry to run it."
                 )
             ref_config, ref_resolved_version = ref_loaded
-            self._require_registry_for(ref_type, ref_id, ref_config, _seen, version=ref_resolved_version)
+            self._require_registry_for(
+                ref_type,
+                ref_id,
+                ref_config,
+                _seen,
+                version=ref_resolved_version,
+                require_typed_registry=require_typed_registry,
+            )
 
     def _dispatch_refusal(
         self,
@@ -968,6 +1070,157 @@ class StudioRunnerTools(Toolkit):
             self._require_faithful_registry_copies(component, component_type, component_id)
             self._require_faithful_references(component, config, component_type, component_id, version=version)
 
+    def _require_unambiguous_typed_registry(
+        self,
+        component: Any,
+        config: Dict[str, Any],
+        component_type: str,
+        component_id: str,
+    ) -> None:
+        """Require every persisted typed reference to resolve exactly once.
+
+        Registry resolution historically picks one matching model, tool, or
+        function. That is unsafe for a typed Studio config: a later ambiguous
+        registry can bind different credentials, endpoints, or executable code
+        while retaining the same serialized name. Refuse before dispatch.
+        """
+        if not _is_typed_studio_config(config):
+            return
+        if self.registry is None:
+            raise ComponentNeedsRegistryError(
+                f"{component_type.capitalize()} '{component_id}' requires the registry used by typed Studio."
+            )
+        manifest = config.get(_STUDIO_CONFIG_KEY)
+        request = manifest.get("request") if isinstance(manifest, dict) else None
+        if (
+            not isinstance(manifest, dict)
+            or manifest.get("schema_version") != _STUDIO_SCHEMA_VERSION
+            or not isinstance(request, dict)
+        ):
+            raise ComponentNotDispatchableError(
+                f"{component_type.capitalize()} '{component_id}' has an invalid typed Studio manifest."
+            )
+
+        def require_one(resource: str, reference: str, matches: List[Any]) -> None:
+            if len(matches) == 1:
+                return
+            if not matches:
+                location = "registry.models" if resource == "model" else "the registry"
+                state = f"is not present in {location}"
+            else:
+                state = f"is ambiguous because the registry has {len(matches)} matches"
+            model_warning = " Serialized models do not preserve base_url or credentials." if resource == "model" else ""
+            raise ComponentNeedsRegistryError(
+                f"{component_type.capitalize()} '{component_id}' {resource} reference {reference} {state}; "
+                f"register exactly one live match before dispatch.{model_warning}"
+            )
+
+        if component_type in ("agent", "team"):
+            model_ref = request.get("model")
+            if not isinstance(model_ref, dict) or not isinstance(model_ref.get("id"), str):
+                raise ComponentNotDispatchableError(
+                    f"{component_type.capitalize()} '{component_id}' has no exact model reference in its typed manifest."
+                )
+            model_matches = [
+                model
+                for model in self.registry.models or []
+                if getattr(model, "id", None) == model_ref["id"]
+                and (model_ref.get("provider") is None or getattr(model, "provider", None) == model_ref["provider"])
+                and (model_ref.get("name") is None or getattr(model, "name", None) == model_ref["name"])
+            ]
+            model_label = {key: model_ref[key] for key in ("id", "provider", "name") if model_ref.get(key) is not None}
+            require_one("model", repr(model_label), model_matches)
+            if getattr(component, "model", None) is not model_matches[0]:
+                raise ComponentNotDispatchableError(
+                    f"{component_type.capitalize()} '{component_id}' runtime model diverges from its typed manifest."
+                )
+
+        if component_type == "agent":
+            from agno.tools.function import Function
+
+            catalog: List[Tuple[Tuple[str, str, Optional[str]], Any]] = []
+            for tool in self.registry.tools or []:
+                if isinstance(tool, Toolkit):
+                    catalog.append((("toolkit", tool.name, None), tool))
+                    catalog.extend(
+                        (("function", function_name, tool.name), function)
+                        for function_name, function in tool.get_functions().items()
+                    )
+                elif isinstance(tool, Function):
+                    catalog.append((("function", tool.name, None), tool))
+                elif callable(tool):
+                    name = getattr(tool, "__name__", None)
+                    if isinstance(name, str) and name:
+                        catalog.append((("function", name, None), tool))
+
+            tool_refs = request.get("tools", [])
+            if not isinstance(tool_refs, list):
+                raise ComponentNotDispatchableError(
+                    f"Agent '{component_id}' has an invalid tool list in its typed manifest."
+                )
+            runtime_tools = [tool for tool in (getattr(component, "tools", None) or []) if isinstance(tool, Function)]
+            for tool_ref in tool_refs:
+                if not isinstance(tool_ref, dict):
+                    raise ComponentNotDispatchableError(
+                        f"Agent '{component_id}' has an invalid tool reference in its typed manifest."
+                    )
+                key = (tool_ref.get("kind"), tool_ref.get("name"), tool_ref.get("toolkit"))
+                matches = [tool for candidate, tool in catalog if candidate == key]
+                label = {name: tool_ref[name] for name in ("kind", "name", "toolkit") if tool_ref.get(name) is not None}
+                require_one("tool", repr(label), matches)
+                matched = matches[0]
+                if tool_ref.get("kind") == "toolkit" and isinstance(matched, Toolkit):
+                    expected_sources = list(matched.get_functions().items())
+                else:
+                    expected_sources = [(str(tool_ref.get("name")), matched)]
+                for function_name, source in expected_sources:
+                    owning_toolkit = (
+                        tool_ref.get("name") if tool_ref.get("kind") == "toolkit" else tool_ref.get("toolkit")
+                    )
+                    runtime_matches = [
+                        tool
+                        for tool in runtime_tools
+                        if tool.name == function_name and tool.owning_toolkit == owning_toolkit
+                    ]
+                    expected_entrypoint = source.entrypoint if isinstance(source, Function) else source
+                    if len(runtime_matches) != 1 or runtime_matches[0].entrypoint is not expected_entrypoint:
+                        raise ComponentNeedsRegistryError(
+                            f"Agent '{component_id}' runtime binding for tool '{function_name}' diverges from "
+                            "the unique registry match."
+                        )
+
+        if component_type == "workflow":
+            steps = request.get("steps", [])
+            if not isinstance(steps, list):
+                raise ComponentNotDispatchableError(
+                    f"Workflow '{component_id}' has an invalid step list in its typed manifest."
+                )
+            runtime_steps = {
+                getattr(step, "step_id", None) or getattr(step, "name", None): step
+                for step in self._branch_items(getattr(component, "steps", None))
+            }
+            for step in steps:
+                if not isinstance(step, dict) or step.get("kind") != "function":
+                    continue
+                workflow_function_name = step.get("function_name")
+                if not isinstance(workflow_function_name, str):
+                    raise ComponentNotDispatchableError(
+                        f"Workflow '{component_id}' has an invalid function reference in its typed manifest."
+                    )
+                matches = [
+                    function
+                    for function in self.registry.functions or []
+                    if getattr(function, "__name__", None) == workflow_function_name
+                ]
+                require_one("function", repr({"name": workflow_function_name}), matches)
+                step_key = step.get("step_id") or step.get("name")
+                runtime_step = runtime_steps.get(step_key)
+                if runtime_step is None or getattr(runtime_step, "executor", None) is not matches[0]:
+                    raise ComponentNeedsRegistryError(
+                        f"Workflow '{component_id}' runtime binding for function '{workflow_function_name}' diverges from "
+                        "the unique registry match."
+                    )
+
     def _require_faithful_rebuild(
         self, component: Any, config: Dict[str, Any], component_type: str, component_id: str
     ) -> None:
@@ -985,6 +1238,9 @@ class StudioRunnerTools(Toolkit):
         Reads and edits skip this, so a component missing a tool stays loadable
         and repairable."""
         from agno.tools.function import Function
+
+        self._require_unambiguous_typed_registry(component, config, component_type, component_id)
+        self._require_registered_models_for_typed_config(component, config, component_type, component_id)
 
         missing: List[str] = []
 
@@ -1033,26 +1289,85 @@ class StudioRunnerTools(Toolkit):
                 "edits still load the component."
             )
 
-    def _require_inspectable_depth(self, component: Any, component_type: str, component_id: str) -> None:
-        """Refuse a graph deeper than the dispatch checks walk.
+    def _require_registered_models_for_typed_config(
+        self,
+        component: Any,
+        config: Dict[str, Any],
+        component_type: str,
+        component_id: str,
+    ) -> None:
+        """Require live registry model identity throughout a typed Studio graph.
 
-        Every check here is depth-capped so a cycle cannot hang it, and a cap
-        reached mid-walk returns "nothing wrong" -- a pass for a graph that was
-        never fully inspected. Refusing past the cap stops a cap reading as an
-        approval."""
+        Model serialization intentionally carries only identity fields. A model
+        rebuilt from that dict can have the right id/provider/name while losing
+        its base URL, credentials, client, and other connection settings. For a
+        typed Studio component, equality is therefore insufficient: every model
+        that can execute in the materialized root/member/step graph must be one
+        of the exact objects registered for this AgentOS process.
+
+        This guard is keyed only by the persisted Studio manifest. Explicit and
+        registry/code-defined runner targets keep their existing copy behavior.
+        """
+        if not _is_typed_studio_config(config):
+            return
+        if self.registry is None:
+            raise ComponentNeedsRegistryError(
+                f"{component_type.capitalize()} '{component_id}' was persisted by the typed Studio contract and "
+                "requires the registry for dispatch."
+            )
+
+        registered_models = list(self.registry.models or [])
+        missing: List[str] = []
+        seen_models: set[int] = set()
+
+        declared_model = config.get("model")
+        if declared_model is not None and getattr(component, "model", None) is None:
+            declared_id = declared_model.get("id") if isinstance(declared_model, dict) else declared_model
+            missing.append(f"{component_type} '{component_id}' model '{declared_id or '?'}' was dropped")
+
+        for node in [component, *self._descendants(component)]:
+            model = getattr(node, "model", None)
+            if model is None or id(model) in seen_models:
+                continue
+            seen_models.add(id(model))
+            if any(model is registered for registered in registered_models):
+                continue
+            node_id = getattr(node, "id", None) or getattr(node, "name", None) or type(node).__name__
+            model_id = getattr(model, "id", None) or type(model).__name__
+            missing.append(f"'{node_id}' uses model '{model_id}' rebuilt outside registry.models")
+
+        if missing:
+            raise ComponentNeedsRegistryError(
+                f"{component_type.capitalize()} '{component_id}' cannot be dispatched faithfully: "
+                f"{'; '.join(missing)}. Register the exact live model instance before running it; serialized "
+                "models do not preserve connection settings such as base_url or credentials."
+            )
+
+    def _require_inspectable_depth(self, component: Any, component_type: str, component_id: str) -> None:
+        """Refuse a graph deeper or larger than the dispatch checks walk.
+
+        Every downstream check is bounded so a cycle cannot hang it. This gate
+        establishes that the entire runtime graph is within those bounds before
+        any bounded helper may return "nothing wrong."""
         seen: set = set()
         frontier = [(component, 0)]
         while frontier:
             node, depth = frontier.pop()
             if node is None or id(node) in seen:
                 continue
-            seen.add(id(node))
-            if depth > _GRAPH_DEPTH_CAP:
+            if depth > _GRAPH_MAX_DEPTH:
                 raise ComponentNotDispatchableError(
                     f"{component_type.capitalize()} '{component_id}' nests deeper than "
-                    f"{_GRAPH_DEPTH_CAP} levels, past what the runner inspects before dispatch; "
+                    f"{_GRAPH_MAX_DEPTH} levels, past what the runner inspects before dispatch; "
                     "flatten it, or dispatch the nested component directly."
                 )
+            if len(seen) >= _GRAPH_MAX_NODES:
+                raise ComponentNotDispatchableError(
+                    f"{component_type.capitalize()} '{component_id}' contains more than "
+                    f"{_GRAPH_MAX_NODES} inspectable graph nodes, past what the runner checks before dispatch; "
+                    "split it into smaller components before dispatch."
+                )
+            seen.add(id(node))
             frontier.extend((child, depth + 1) for child in self._child_nodes(node))
 
     def _require_faithful_registry_copies(self, component: Any, component_type: str, component_id: str) -> None:
@@ -1113,7 +1428,7 @@ class StudioRunnerTools(Toolkit):
         """Every member and step executor below a component, once each."""
         seen = set() if seen is None else seen
         found: List[Any] = []
-        if node is None or depth > _GRAPH_DEPTH_CAP:
+        if node is None or depth > _GRAPH_MAX_DEPTH:
             return found
         for child in StudioRunnerTools._child_nodes(node):
             if id(child) in seen:
@@ -1185,7 +1500,7 @@ class StudioRunnerTools(Toolkit):
         component_type: str,
         component_id: str,
         seen: set,
-        configs: Dict[tuple, Optional[Dict[str, Any]]],
+        configs: Dict[tuple, Tuple[Optional[Dict[str, Any]], Optional[int]]],
         depth: int = 0,
         version: Optional[int] = None,
     ) -> None:
@@ -1201,31 +1516,38 @@ class StudioRunnerTools(Toolkit):
         child's own links read."""
         from agno.db.base import ComponentType
 
-        key = (component_type, component_id)
-        # `seen` is the cycle guard and nothing else: counting it bounded how
-        # WIDE a graph could be rather than how deep, so a team with more
-        # members than the cap stopped checking the rest of them.
-        if key in seen or depth > _GRAPH_DEPTH_CAP:
+        key = (component_type, component_id, version)
+        if key in seen:
             return
+        if depth > _GRAPH_MAX_DEPTH:
+            raise ComponentNotDispatchableError(
+                f"{component_type.capitalize()} '{component_id}' nests deeper than "
+                f"{_GRAPH_MAX_DEPTH} stored-reference levels, past what the runner inspects before dispatch."
+            )
+        if len(seen) >= _GRAPH_MAX_NODES:
+            raise ComponentNotDispatchableError(
+                f"{component_type.capitalize()} '{component_id}' reaches more than "
+                f"{_GRAPH_MAX_NODES} stored-reference nodes, past what the runner inspects before dispatch."
+            )
         seen.add(key)
-        pins: Dict[str, Optional[int]] = {}
-        for link in self._load_links_from_db(component_id, version=version):
-            child_id = link.get("child_component_id")
-            if child_id:
-                pins[child_id] = link.get("child_version")
-        rebuilt = self._components_by_id(component)
+        links = self._load_links_from_db(component_id, version=version)
+        rebuilt = self._components_by_reference(component_type, component)
+        used_occurrences: Dict[tuple, int] = {}
         registered = {
             (self._component_kind(instance), instance_id)
-            for instance, instance_id in (
-                (instance, getattr(instance, "id", None)) for instance in self._registry_instances()
-            )
-            if isinstance(instance_id, str)
+            for instance in self._registry_instances()
+            if isinstance((instance_id := getattr(instance, "id", None)), str)
         }
-        for ref_type, ref_id in _component_references(component_type, config):
-            target = rebuilt.get((ref_type, ref_id))
-            if target is None:
+        for ref_type, ref_id, link_key in _component_reference_entries(component_type, config):
+            ref_key = (ref_type, ref_id)
+            occurrence = used_occurrences.get(ref_key, 0)
+            targets = rebuilt.get(ref_key, [])
+            if occurrence >= len(targets):
                 continue
-            if (ref_type, ref_id) in registered:
+            target = targets[occurrence]
+            used_occurrences[ref_key] = occurrence + 1
+            ref_version = _pinned_reference_version(links, ref_type, ref_id, link_key)
+            if ref_key in registered and ref_version is None:
                 # from_dict resolves a member or step executor from the registry
                 # before the database, so this object was never built from the
                 # stored config and does not have to match it: a live toolkit is
@@ -1240,12 +1562,16 @@ class StudioRunnerTools(Toolkit):
                 continue
             # A db read that fails is not evidence of fidelity, so it must not
             # pass as one: let it reach the caller's handler.
-            ref_version = pins.get(ref_id)
             cache_key = (ref_type, ref_id, ref_version)
             if cache_key in configs:
                 ref_config, ref_resolved_version = configs[cache_key]
             else:
-                ref_loaded = self._load_config_row_from_db(ref_id, version=ref_version, component_type=stored_type)
+                ref_loaded = self._load_config_row_from_db(
+                    ref_id,
+                    version=ref_version,
+                    component_type=stored_type,
+                    current_only=ref_version is None,
+                )
                 ref_config, ref_resolved_version = ref_loaded if ref_loaded is not None else (None, None)
                 configs[cache_key] = (ref_config, ref_resolved_version)
             if ref_config is None:
@@ -1281,6 +1607,51 @@ class StudioRunnerTools(Toolkit):
         return found
 
     @staticmethod
+    def _components_by_reference(component_type: str, node: Any) -> Dict[tuple, List[Any]]:
+        """Direct serialized references grouped by typed id and occurrence.
+
+        A workflow may reference two different versions of the same component.
+        Keep every occurrence so each serialized reference can be compared with
+        the runtime object reconstructed for that occurrence. Do not descend
+        into an executor's own graph here: recursion validates that graph against
+        the executor's config, and mixing its descendants into the parent's
+        occurrence list pairs unrelated references.
+        """
+        found: Dict[tuple, List[Any]] = {}
+
+        def add(component: Any) -> None:
+            if not StudioRunnerTools._is_executor(component):
+                return
+            component_id = getattr(component, "id", None)
+            if not isinstance(component_id, str):
+                return
+            found.setdefault((StudioRunnerTools._component_kind(component), component_id), []).append(component)
+
+        if component_type == "team":
+            members = getattr(node, "members", None)
+            for member in members if isinstance(members, list) else []:
+                add(member)
+            return found
+        if component_type != "workflow":
+            return found
+
+        def walk(steps: Any) -> None:
+            for step in StudioRunnerTools._branch_items(steps):
+                if StudioRunnerTools._is_executor(step):
+                    add(step)
+                    continue
+                for attribute in ("agent", "team", "workflow"):
+                    executor = getattr(step, attribute, None)
+                    if executor is not None:
+                        add(executor)
+                        break
+                for attribute in ("steps", "else_steps", "choices"):
+                    walk(getattr(step, attribute, None))
+
+        walk(getattr(node, "steps", None))
+        return found
+
+    @staticmethod
     def _unresolved_below(node: Any, depth: int = 0, seen: Optional[set] = None) -> Optional[str]:
         """The first nested member or step executor holding a tool with no
         entrypoint, or None when the graph below is intact.
@@ -1292,7 +1663,7 @@ class StudioRunnerTools(Toolkit):
         tools. Depth- and cycle-capped, over objects already in memory."""
         from agno.tools.function import Function
 
-        if node is None or depth > _GRAPH_DEPTH_CAP:
+        if node is None or depth > _GRAPH_MAX_DEPTH:
             return None
         seen = set() if seen is None else seen
         if id(node) in seen:
@@ -1512,7 +1883,7 @@ class StudioRunnerTools(Toolkit):
         _shared_member applies: a member with no deep_copy is shared by design,
         because a remote proxy holds no per-run state to isolate. The node the
         search starts from is judged without that exemption."""
-        if node is None or depth > _GRAPH_DEPTH_CAP:
+        if node is None or depth > _GRAPH_MAX_DEPTH:
             return None
         is_shared = any(node is instance for instance in shared)
         if is_shared and (depth == 0 or callable(getattr(node, "deep_copy", None))):
@@ -1599,14 +1970,26 @@ class StudioRunnerTools(Toolkit):
     ) -> Optional["Agent"]:
         """Load an agent from DB via config + from_dict.
 
-        Registry-backed references resolve at their current published version."""
+        Registry-backed resources resolve through the live Registry; dispatch
+        refuses the component when a required resource cannot be restored."""
         from agno.db.base import ComponentType
 
-        loaded = self._load_config_row_from_db(agent_id, version=version, component_type=ComponentType.AGENT)
+        loaded = self._load_config_row_from_db(
+            agent_id,
+            version=version,
+            component_type=ComponentType.AGENT,
+            current_only=for_dispatch and version is None,
+        )
         if loaded is None:
             return None
         config, resolved_version = loaded
-        self._require_registry_for("agent", agent_id, config, version=resolved_version)
+        self._require_registry_for(
+            "agent",
+            agent_id,
+            config,
+            version=resolved_version,
+            require_typed_registry=for_dispatch,
+        )
         from agno.agent.agent import Agent
 
         try:
@@ -1636,7 +2019,7 @@ class StudioRunnerTools(Toolkit):
                 version=resolved_version,
             ) from rehydration_error
         except Exception:
-            logger.warning("StudioRunnerTools: Agent.from_dict failed for %s", agent_id, exc_info=True)
+            logger.warning("StudioRunnerTools: Agent.from_dict failed for %s", agent_id)
             return None
         if for_dispatch:
             self._require_dispatchable(agent, config, "agent", agent_id, version=resolved_version)
@@ -1647,7 +2030,12 @@ class StudioRunnerTools(Toolkit):
     ) -> Optional["Team"]:
         from agno.db.base import ComponentType
 
-        loaded = self._load_config_row_from_db(team_id, version=version, component_type=ComponentType.TEAM)
+        loaded = self._load_config_row_from_db(
+            team_id,
+            version=version,
+            component_type=ComponentType.TEAM,
+            current_only=for_dispatch and version is None,
+        )
         if loaded is None:
             return None
         config, resolved_version = loaded
@@ -1655,7 +2043,13 @@ class StudioRunnerTools(Toolkit):
             # Dispatch only: a null reference cannot be resolved, but the component
             # still has to load so the bad reference can be seen and repaired.
             self._require_resolvable_member_ids("team", team_id, config)
-        self._require_registry_for("team", team_id, config, version=resolved_version)
+        self._require_registry_for(
+            "team",
+            team_id,
+            config,
+            version=resolved_version,
+            require_typed_registry=for_dispatch,
+        )
         from agno.team.team import Team
 
         links = self._load_links_from_db(team_id, version=resolved_version)
@@ -1685,7 +2079,7 @@ class StudioRunnerTools(Toolkit):
                 version=resolved_version,
             ) from rehydration_error
         except Exception:
-            logger.warning("StudioRunnerTools: Team.from_dict failed for %s", team_id, exc_info=True)
+            logger.warning("StudioRunnerTools: Team.from_dict failed for %s", team_id)
             return None
         if for_dispatch:
             self._require_dispatchable(team, config, "team", team_id, version=resolved_version)
@@ -1696,7 +2090,12 @@ class StudioRunnerTools(Toolkit):
     ) -> Optional["Workflow"]:
         from agno.db.base import ComponentType
 
-        loaded = self._load_config_row_from_db(workflow_id, version=version, component_type=ComponentType.WORKFLOW)
+        loaded = self._load_config_row_from_db(
+            workflow_id,
+            version=version,
+            component_type=ComponentType.WORKFLOW,
+            current_only=for_dispatch and version is None,
+        )
         if loaded is None:
             return None
         config, resolved_version = loaded
@@ -1704,7 +2103,13 @@ class StudioRunnerTools(Toolkit):
             # Dispatch only: a null reference cannot be resolved, but the component
             # still has to load so the bad reference can be seen and repaired.
             self._require_resolvable_member_ids("workflow", workflow_id, config)
-        self._require_registry_for("workflow", workflow_id, config, version=resolved_version)
+        self._require_registry_for(
+            "workflow",
+            workflow_id,
+            config,
+            version=resolved_version,
+            require_typed_registry=for_dispatch,
+        )
         from agno.workflow.workflow import Workflow
 
         links = self._load_links_from_db(workflow_id, version=resolved_version)
@@ -1734,7 +2139,7 @@ class StudioRunnerTools(Toolkit):
                 version=resolved_version,
             ) from rehydration_error
         except Exception:
-            logger.warning("StudioRunnerTools: Workflow.from_dict failed for %s", workflow_id, exc_info=True)
+            logger.warning("StudioRunnerTools: Workflow.from_dict failed for %s", workflow_id)
             return None
         if for_dispatch:
             self._require_dispatchable(wf, config, "workflow", workflow_id, version=resolved_version)
@@ -1755,6 +2160,8 @@ class StudioRunnerTools(Toolkit):
         component_id: str,
         version: Optional[int] = None,
         component_type: Optional["ComponentType"] = None,
+        *,
+        current_only: bool = False,
     ) -> Optional[Tuple[Dict[str, Any], Optional[int]]]:
         """Load a component's config and its resolved version in one read.
 
@@ -1774,7 +2181,10 @@ class StudioRunnerTools(Toolkit):
                 and self.db.get_component(component_id, component_type=component_type) is None
             ):
                 return None
-            row = self.db.get_config(component_id=component_id, version=version)
+            if version is None and current_only:
+                row = self.db.get_current_config(component_id)
+            else:
+                row = self.db.get_config(component_id=component_id, version=version)
         except NotImplementedError:
             # Not every db adapter implements component storage; treat the
             # component as absent so code-defined resolution still works.
@@ -1798,7 +2208,7 @@ class StudioRunnerTools(Toolkit):
             return []
         try:
             if version is None:
-                row = self.db.get_config(component_id=component_id)
+                row = self.db.get_current_config(component_id)
                 version = row.get("version") if isinstance(row, dict) else None
             if not version:
                 return []
@@ -1865,6 +2275,18 @@ class StudioRunnerTools(Toolkit):
         """
         return self._list_payload("workflow", "workflows")
 
+    @staticmethod
+    def _unexpected_failure(action: str) -> str:
+        """Return a stable failure without exposing backend exception text.
+
+        Database drivers and component runtimes may include DSNs, credentials,
+        private payloads, or provider responses in exception messages. Keep the
+        operation-level signal in logs and reserve detailed, caller-facing
+        messages for deliberate ``StudioRunnerError`` refusals.
+        """
+        logger.error("StudioRunnerTools could not %s", action)
+        return json.dumps({"error": f"StudioRunnerTools could not {action}."})
+
     def _list_payload(self, component_type: str, key: str) -> str:
         if self.db is None:
             return json.dumps({"error": "StudioRunnerTools has no db configured; cannot list components."})
@@ -1878,9 +2300,8 @@ class StudioRunnerTools(Toolkit):
             seen_ids = {entry["id"] for entry in admitted}
             items = admitted + [entry for entry in items if entry.get("id") not in seen_ids]
             return json.dumps({key: items, "count": len(items), "total": total + len(admitted)})
-        except Exception as e:
-            logger.exception("Failed to list %s", key)
-            return json.dumps({"error": str(e) or type(e).__name__})
+        except Exception:
+            return self._unexpected_failure(f"list {key}")
 
     def _admitted_code_components(self, component_type: str) -> List[Dict[str, Any]]:
         """The code-defined components this runner will dispatch, as list rows.
@@ -1924,7 +2345,7 @@ class StudioRunnerTools(Toolkit):
         plus the run_id and session_id a continue call must address.
 
         Args:
-            agent_id (str): Id of the agent to run (a display name or its slug also resolves).
+            agent_id (str): Exact agent id, or an exact display name.
             message (str): The message to send.
 
         Returns:
@@ -1936,23 +2357,26 @@ class StudioRunnerTools(Toolkit):
         except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
-        except Exception as e:
-            logger.exception("Failed to resolve agent")
-            return json.dumps({"error": f"Failed to resolve agent '{agent_id}': {str(e) or type(e).__name__}"})
+        except Exception:
+            return self._unexpected_failure("resolve agent")
         if agent is None:
             return json.dumps({"error": f"Agent not found: {agent_id}"})
         component_id = getattr(agent, "id", None) or agent_id
         try:
+            user_id = self._caller_user_id(_agno_run_context, agent)
+            session_id = self._sub_session_id(_agno_run_context, "agent", component_id)
+        except StudioRunnerError as e:
+            return json.dumps({"error": str(e)})
+        try:
             response = agent.run(
                 message,
                 stream=False,
-                user_id=self._caller_user_id(_agno_run_context, agent),
-                session_id=self._sub_session_id(_agno_run_context, "agent", component_id),
+                user_id=user_id,
+                session_id=session_id,
             )
             return self._run_payload("agent_id", component_id, response)
-        except Exception as e:
-            logger.exception("Failed to run agent")
-            return json.dumps({"error": str(e) or type(e).__name__})
+        except Exception:
+            return self._unexpected_failure("run agent")
 
     def run_team(self, team_id: str, message: str, _agno_run_context: Optional[RunContext] = None) -> str:
         """Run a team and return its result.
@@ -1963,7 +2387,7 @@ class StudioRunnerTools(Toolkit):
         plus the run_id and session_id a continue call must address.
 
         Args:
-            team_id (str): Id of the team to run (a display name or its slug also resolves).
+            team_id (str): Exact team id, or an exact display name.
             message (str): The message to send.
 
         Returns:
@@ -1975,23 +2399,26 @@ class StudioRunnerTools(Toolkit):
         except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
-        except Exception as e:
-            logger.exception("Failed to resolve team")
-            return json.dumps({"error": f"Failed to resolve team '{team_id}': {str(e) or type(e).__name__}"})
+        except Exception:
+            return self._unexpected_failure("resolve team")
         if team is None:
             return json.dumps({"error": f"Team not found: {team_id}"})
         component_id = getattr(team, "id", None) or team_id
         try:
+            user_id = self._caller_user_id(_agno_run_context, team)
+            session_id = self._sub_session_id(_agno_run_context, "team", component_id)
+        except StudioRunnerError as e:
+            return json.dumps({"error": str(e)})
+        try:
             response = team.run(
                 message,
                 stream=False,
-                user_id=self._caller_user_id(_agno_run_context, team),
-                session_id=self._sub_session_id(_agno_run_context, "team", component_id),
+                user_id=user_id,
+                session_id=session_id,
             )
             return self._run_payload("team_id", component_id, response)
-        except Exception as e:
-            logger.exception("Failed to run team")
-            return json.dumps({"error": str(e) or type(e).__name__})
+        except Exception:
+            return self._unexpected_failure("run team")
 
     def run_workflow(self, workflow_id: str, message: str, _agno_run_context: Optional[RunContext] = None) -> str:
         """Run a workflow and return its final result.
@@ -2002,7 +2429,7 @@ class StudioRunnerTools(Toolkit):
         requirements plus the run_id and session_id a continue call must address.
 
         Args:
-            workflow_id (str): Id of the workflow to run (a display name or its slug also resolves).
+            workflow_id (str): Exact workflow id, or an exact display name.
             message (str): Input to pass to the first step.
 
         Returns:
@@ -2014,29 +2441,32 @@ class StudioRunnerTools(Toolkit):
         except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
-        except Exception as e:
-            logger.exception("Failed to resolve workflow")
-            return json.dumps({"error": f"Failed to resolve workflow '{workflow_id}': {str(e) or type(e).__name__}"})
+        except Exception:
+            return self._unexpected_failure("resolve workflow")
         if wf is None:
             return json.dumps({"error": f"Workflow not found: {workflow_id}"})
         component_id = getattr(wf, "id", None) or workflow_id
         try:
+            user_id = self._caller_user_id(_agno_run_context, wf)
+            session_id = self._sub_session_id(_agno_run_context, "workflow", component_id)
+        except StudioRunnerError as e:
+            return json.dumps({"error": str(e)})
+        try:
             response = wf.run(
                 input=message,
                 stream=False,
-                user_id=self._caller_user_id(_agno_run_context, wf),
-                session_id=self._sub_session_id(_agno_run_context, "workflow", component_id),
+                user_id=user_id,
+                session_id=session_id,
             )
             return self._run_payload("workflow_id", component_id, response)
-        except Exception as e:
-            logger.exception("Failed to run workflow")
-            return json.dumps({"error": str(e) or type(e).__name__})
+        except Exception:
+            return self._unexpected_failure("run workflow")
 
     async def arun_agent(self, agent_id: str, message: str, _agno_run_context: Optional[RunContext] = None) -> str:
         """Async variant of run_agent.
 
         Args:
-            agent_id (str): Id of the agent to run (a display name or its slug also resolves).
+            agent_id (str): Exact agent id, or an exact display name.
             message (str): The message to send.
         """
         # Resolution hits the DB synchronously; keep it off the event loop.
@@ -2045,29 +2475,32 @@ class StudioRunnerTools(Toolkit):
         except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
-        except Exception as e:
-            logger.exception("Failed to resolve agent")
-            return json.dumps({"error": f"Failed to resolve agent '{agent_id}': {str(e) or type(e).__name__}"})
+        except Exception:
+            return self._unexpected_failure("resolve agent")
         if agent is None:
             return json.dumps({"error": f"Agent not found: {agent_id}"})
         component_id = getattr(agent, "id", None) or agent_id
         try:
+            user_id = self._caller_user_id(_agno_run_context, agent)
+            session_id = self._sub_session_id(_agno_run_context, "agent", component_id)
+        except StudioRunnerError as e:
+            return json.dumps({"error": str(e)})
+        try:
             response = await agent.arun(
                 message,
                 stream=False,
-                user_id=self._caller_user_id(_agno_run_context, agent),
-                session_id=self._sub_session_id(_agno_run_context, "agent", component_id),
+                user_id=user_id,
+                session_id=session_id,
             )
             return self._run_payload("agent_id", component_id, response)
-        except Exception as e:
-            logger.exception("Failed to run agent")
-            return json.dumps({"error": str(e) or type(e).__name__})
+        except Exception:
+            return self._unexpected_failure("run agent")
 
     async def arun_team(self, team_id: str, message: str, _agno_run_context: Optional[RunContext] = None) -> str:
         """Async variant of run_team.
 
         Args:
-            team_id (str): Id of the team to run (a display name or its slug also resolves).
+            team_id (str): Exact team id, or an exact display name.
             message (str): The message to send.
         """
         try:
@@ -2075,23 +2508,26 @@ class StudioRunnerTools(Toolkit):
         except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
-        except Exception as e:
-            logger.exception("Failed to resolve team")
-            return json.dumps({"error": f"Failed to resolve team '{team_id}': {str(e) or type(e).__name__}"})
+        except Exception:
+            return self._unexpected_failure("resolve team")
         if team is None:
             return json.dumps({"error": f"Team not found: {team_id}"})
         component_id = getattr(team, "id", None) or team_id
         try:
+            user_id = self._caller_user_id(_agno_run_context, team)
+            session_id = self._sub_session_id(_agno_run_context, "team", component_id)
+        except StudioRunnerError as e:
+            return json.dumps({"error": str(e)})
+        try:
             response = await team.arun(
                 message,
                 stream=False,
-                user_id=self._caller_user_id(_agno_run_context, team),
-                session_id=self._sub_session_id(_agno_run_context, "team", component_id),
+                user_id=user_id,
+                session_id=session_id,
             )
             return self._run_payload("team_id", component_id, response)
-        except Exception as e:
-            logger.exception("Failed to run team")
-            return json.dumps({"error": str(e) or type(e).__name__})
+        except Exception:
+            return self._unexpected_failure("run team")
 
     async def arun_workflow(
         self, workflow_id: str, message: str, _agno_run_context: Optional[RunContext] = None
@@ -2099,7 +2535,7 @@ class StudioRunnerTools(Toolkit):
         """Async variant of run_workflow.
 
         Args:
-            workflow_id (str): Id of the workflow to run (a display name or its slug also resolves).
+            workflow_id (str): Exact workflow id, or an exact display name.
             message (str): Input to pass to the first step.
         """
         try:
@@ -2107,23 +2543,26 @@ class StudioRunnerTools(Toolkit):
         except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
-        except Exception as e:
-            logger.exception("Failed to resolve workflow")
-            return json.dumps({"error": f"Failed to resolve workflow '{workflow_id}': {str(e) or type(e).__name__}"})
+        except Exception:
+            return self._unexpected_failure("resolve workflow")
         if wf is None:
             return json.dumps({"error": f"Workflow not found: {workflow_id}"})
         component_id = getattr(wf, "id", None) or workflow_id
         try:
+            user_id = self._caller_user_id(_agno_run_context, wf)
+            session_id = self._sub_session_id(_agno_run_context, "workflow", component_id)
+        except StudioRunnerError as e:
+            return json.dumps({"error": str(e)})
+        try:
             response = await wf.arun(
                 input=message,
                 stream=False,
-                user_id=self._caller_user_id(_agno_run_context, wf),
-                session_id=self._sub_session_id(_agno_run_context, "workflow", component_id),
+                user_id=user_id,
+                session_id=session_id,
             )
             return self._run_payload("workflow_id", component_id, response)
-        except Exception as e:
-            logger.exception("Failed to run workflow")
-            return json.dumps({"error": str(e) or type(e).__name__})
+        except Exception:
+            return self._unexpected_failure("run workflow")
 
     async def alist_agents(self) -> str:
         """Async variant of list_agents."""
@@ -2193,7 +2632,7 @@ class StudioRunnerTools(Toolkit):
             try:
                 content = run_output.get_content_as_string()
             except Exception:
-                logger.warning("StudioRunnerTools: get_content_as_string failed; returning raw content", exc_info=True)
+                logger.warning("StudioRunnerTools: get_content_as_string failed; returning raw content")
         payload: Dict[str, Any] = {
             id_key: component_id,
             "run_id": getattr(run_output, "run_id", None),
