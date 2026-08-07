@@ -1,5 +1,5 @@
 import json
-from typing import Any, Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import urlopen
 
@@ -15,27 +15,36 @@ except ImportError:
 
 
 class YouTubeTools(Toolkit):
+    """Toolkit for fetching YouTube video metadata, transcripts, and timestamps.
+
+    Args:
+        get_transcript: Enable get_transcript tool. Defaults to False.
+        get_metadata: Enable get_metadata tool. Defaults to True.
+        get_timestamps: Enable get_timestamps tool. Defaults to False.
+        all: Enable all tools. Defaults to False.
+        languages: Preferred languages for transcripts.
+        timeout: Request timeout in seconds. Defaults to 30.
+    """
+
     def __init__(
         self,
-        enable_get_video_captions: bool = True,
-        enable_get_video_data: bool = True,
-        enable_get_video_timestamps: bool = True,
+        get_transcript: bool = False,
+        get_metadata: bool = True,
+        get_timestamps: bool = False,
         all: bool = False,
         languages: Optional[List[str]] = None,
-        proxies: Optional[Dict[str, Any]] = None,
         timeout: int = 30,
         **kwargs,
     ):
         self.languages: Optional[List[str]] = languages
-        self.proxies: Optional[Dict[str, Any]] = proxies
 
-        tools: List[Any] = []
-        if all or enable_get_video_captions:
-            tools.append(self.get_youtube_video_captions)
-        if all or enable_get_video_data:
-            tools.append(self.get_youtube_video_data)
-        if all or enable_get_video_timestamps:
-            tools.append(self.get_video_timestamps)
+        tools: List[Callable] = []
+        if all or get_transcript:
+            tools.append(self.get_transcript)
+        if all or get_metadata:
+            tools.append(self.get_metadata)
+        if all or get_timestamps:
+            tools.append(self.get_timestamps)
 
         super().__init__(name="youtube_tools", tools=tools, timeout=timeout, **kwargs)
 
@@ -63,25 +72,24 @@ class YouTubeTools(Toolkit):
                 return parsed_url.path.split("/")[2]
         return None
 
-    def get_youtube_video_data(self, url: str) -> str:
-        """Function to get video data from a YouTube URL.
-        Data returned includes {title, author_name, author_url, type, height, width, version, provider_name, provider_url, thumbnail_url}
+    def get_metadata(self, url: str) -> str:
+        """Get video metadata from a YouTube URL.
 
         Args:
             url: The URL of the YouTube video.
 
         Returns:
-            str: JSON data of the YouTube video.
+            JSON with title, author, thumbnail, dimensions.
         """
         if not url:
-            return "No URL provided"
+            return json.dumps({"error": "No URL provided"})
 
         log_debug(f"Getting video data for youtube video: {url}")
 
         try:
             video_id = self.get_youtube_video_id(url)
         except Exception:
-            return "Error getting video ID from URL, please provide a valid YouTube url"
+            return json.dumps({"error": "Error getting video ID from URL, please provide a valid YouTube url"})
 
         try:
             params = {"format": "json", "url": f"https://www.youtube.com/watch?v={video_id}"}
@@ -106,80 +114,75 @@ class YouTubeTools(Toolkit):
                 }
                 return json.dumps(clean_data, indent=4)
         except Exception as e:
-            return f"Error getting video data: {e}"
+            return json.dumps({"error": f"Error getting video data: {e}"})
 
-    def get_youtube_video_captions(self, url: str) -> str:
-        """Use this function to get captions from a YouTube video.
+    def get_transcript(self, url: str) -> str:
+        """Get transcript from a YouTube video.
 
         Args:
             url: The URL of the YouTube video.
 
         Returns:
-            str: The captions of the YouTube video.
+            JSON with full transcript text.
         """
         if not url:
-            return "No URL provided"
+            return json.dumps({"error": "No URL provided"})
 
         log_debug(f"Getting captions for youtube video: {url}")
 
         try:
             video_id = self.get_youtube_video_id(url)
         except Exception:
-            return "Error getting video ID from URL, please provide a valid YouTube url"
+            return json.dumps({"error": "Error getting video ID from URL, please provide a valid YouTube url"})
 
         try:
             captions = None
             kwargs: Dict = {}
             if self.languages:
                 kwargs["languages"] = self.languages or ["en"]
-            if self.proxies:
-                kwargs["proxies"] = self.proxies
             if video_id is not None:
                 captions = YouTubeTranscriptApi().fetch(video_id, **kwargs)
             else:
-                return "No video ID found"
+                return json.dumps({"error": "No video ID found"})
             if captions:
-                return " ".join(line.text for line in captions)
-            return "No captions found for video"
+                return json.dumps({"captions": " ".join(line.text for line in captions)})
+            return json.dumps({"error": "No captions found for video"})
         except Exception as e:
-            # log_info(f"Error getting captions for video {video_id}: {e}")
-            return f"Error getting captions for video: {e}"
+            return json.dumps({"error": f"Error getting captions for video: {e}"})
 
-    def get_video_timestamps(self, url: str) -> str:
-        """Generate timestamps for a YouTube video based on captions.
+    def get_timestamps(self, url: str) -> str:
+        """Get transcript with timestamps from a YouTube video.
 
         Args:
             url: The URL of the YouTube video.
 
         Returns:
-            str: Timestamps and summaries for the video.
+            JSON with timestamped transcript segments.
         """
         if not url:
-            return "No URL provided"
+            return json.dumps({"error": "No URL provided"})
 
         log_debug(f"Getting timestamps for youtube video: {url}")
 
         try:
             video_id = self.get_youtube_video_id(url)
         except Exception:
-            return "Error getting video ID from URL, please provide a valid YouTube url"
+            return json.dumps({"error": "Error getting video ID from URL, please provide a valid YouTube url"})
 
         if video_id is None:
-            return "No video ID found"
+            return json.dumps({"error": "No video ID found"})
 
         try:
             kwargs: Dict = {}
             if self.languages:
                 kwargs["languages"] = self.languages or ["en"]
-            if self.proxies:
-                kwargs["proxies"] = self.proxies
 
             captions = YouTubeTranscriptApi().fetch(video_id, **kwargs)
             timestamps = []
             for line in captions:
                 start = int(line.start)
                 minutes, seconds = divmod(start, 60)
-                timestamps.append(f"{minutes}:{seconds:02d} - {line.text}")
-            return "\n".join(timestamps)
+                timestamps.append({"time": f"{minutes}:{seconds:02d}", "text": line.text})
+            return json.dumps({"timestamps": timestamps})
         except Exception as e:
-            return f"Error generating timestamps: {e}"
+            return json.dumps({"error": f"Error generating timestamps: {e}"})

@@ -115,8 +115,8 @@ def run_example() -> None:
 
         workflow_tools = WorkflowTools(
             workflow=content_creation_workflow,
-            enable_think=True,
-            enable_analyze=True,
+            think=True,
+            analyze=True,
             add_few_shot=True,
             few_shot_examples=FEW_SHOT_EXAMPLES,
         )

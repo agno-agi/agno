@@ -1,10 +1,10 @@
 import json
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from os import getenv
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_error, log_info, logger
+from agno.utils.log import log_error, log_info, logger
 
 try:
     from exa_py import Exa
@@ -19,11 +19,11 @@ class ExaTools(Toolkit):
     functionalities to perform categorized searches and retrieve structured results.
 
     Args:
-        enable_search (bool): Enable search functionality. Default is True.
-        enable_get_contents (bool): Enable get contents functionality. Default is True.
-        enable_find_similar (bool): Enable find similar functionality. Default is True.
-        enable_answer (bool): Enable answer generation. Default is True.
-        enable_research (bool): Enable research tool functionality. Default is False.
+        search (bool): Enable search functionality. Default is True.
+        get_contents (bool): Enable get contents functionality. Default is True.
+        find_similar (bool): Enable find similar functionality. Default is True.
+        answer (bool): Enable answer generation. Default is True.
+        research (bool): Enable research tool functionality. Default is False.
         all (bool): Enable all tools. Overrides individual flags when True. Default is False.
         text (bool): Retrieve text content from results. Default is True.
         text_length_limit (int): Max length of text content per result. Default is 1000.
@@ -44,11 +44,11 @@ class ExaTools(Toolkit):
 
     def __init__(
         self,
-        enable_search: bool = True,
-        enable_get_contents: bool = True,
-        enable_find_similar: bool = True,
-        enable_answer: bool = True,
-        enable_research: bool = False,
+        search: bool = True,
+        get_contents: bool = True,
+        find_similar: bool = True,
+        answer: bool = True,
+        research: bool = False,
         all: bool = False,
         text: bool = True,
         text_length_limit: int = 1000,
@@ -67,7 +67,6 @@ class ExaTools(Toolkit):
         show_results: bool = False,
         model: Optional[str] = None,
         timeout: int = 30,
-        research_model: Literal["exa-research", "exa-research-pro"] = "exa-research",
         **kwargs,
     ):
         self.api_key = api_key or getenv("EXA_API_KEY")
@@ -93,18 +92,17 @@ class ExaTools(Toolkit):
         self.include_domains: Optional[List[str]] = include_domains
         self.exclude_domains: Optional[List[str]] = exclude_domains
         self.model: Optional[str] = model
-        self.research_model: Literal["exa-research", "exa-research-pro"] = research_model
 
-        tools: List[Any] = []
-        if all or enable_search:
+        tools: List[Callable] = []
+        if all or search:
             tools.append(self.search_exa)
-        if all or enable_get_contents:
+        if all or get_contents:
             tools.append(self.get_contents)
-        if all or enable_find_similar:
+        if all or find_similar:
             tools.append(self.find_similar)
-        if all or enable_answer:
+        if all or answer:
             tools.append(self.exa_answer)
-        if all or enable_research:
+        if all or research:
             tools.append(self.research)
 
         super().__init__(name="exa", tools=tools, **kwargs)
@@ -139,17 +137,16 @@ class ExaTools(Toolkit):
         return json.dumps(exa_results_parsed, indent=4, ensure_ascii=False)
 
     def search_exa(self, query: str, num_results: int = 5, category: Optional[str] = None) -> str:
-        """Use this function to search the web using Exa for a query.
+        """Search the web using Exa.
 
         Args:
-            query (str): The query to search for.
-            num_results (int): Number of results to return. Defaults to 5.
-            category (Optional[str]): The category to filter search results.
-                Options are "company", "research paper", "news", "pdf", "github",
-                "tweet", "personal site", "linkedin profile", "financial report".
+            query: The query to search for.
+            num_results: Number of results to return. Defaults to 5.
+            category: Category filter (company, research paper, news, pdf, github,
+                tweet, personal site, linkedin profile, financial report).
 
         Returns:
-            str: The search results in JSON format.
+            JSON search results.
         """
         try:
             if self.show_results:
@@ -180,20 +177,19 @@ class ExaTools(Toolkit):
             return parsed_results
         except TimeoutError as e:
             log_error(f"Search timed out after {self.timeout} seconds: {str(e)}")
-            return f"Error: {str(e)}"
+            return json.dumps({"error": str(e)})
         except Exception as e:
             logger.exception("Failed to search exa")
-            return f"Error: {e}"
+            return json.dumps({"error": str(e)})
 
     def get_contents(self, urls: list[str]) -> str:
-        """
-        Retrieve detailed content from specific URLs using the Exa API.
+        """Retrieve detailed content from specific URLs using Exa.
 
         Args:
-            urls (list(str)): A list of URLs from which to fetch content.
+            urls: List of URLs to fetch content from.
 
         Returns:
-            str: The search results in JSON format.
+            JSON with content results.
         """
 
         query_kwargs: Dict[str, Any] = {
@@ -215,21 +211,20 @@ class ExaTools(Toolkit):
             return parsed_results
         except TimeoutError as e:
             log_error(f"Get contents timed out after {self.timeout} seconds: {str(e)}")
-            return f"Error: {str(e)}"
+            return json.dumps({"error": str(e)})
         except Exception as e:
             logger.exception("Failed to get contents from Exa")
-            return f"Error: {e}"
+            return json.dumps({"error": str(e)})
 
     def find_similar(self, url: str, num_results: int = 5) -> str:
-        """
-        Find similar links to a given URL using the Exa API.
+        """Find similar links to a given URL using Exa.
 
         Args:
-            url (str): The URL for which to find similar links.
-            num_results (int, optional): The number of similar links to return. Defaults to 5.
+            url: The URL to find similar links for.
+            num_results: Number of similar links to return. Defaults to 5.
 
         Returns:
-            str: The search results in JSON format.
+            JSON with similar results.
         """
 
         query_kwargs: Dict[str, Any] = {
@@ -258,20 +253,20 @@ class ExaTools(Toolkit):
             return parsed_results
         except TimeoutError as e:
             log_error(f"Find similar timed out after {self.timeout} seconds: {str(e)}")
-            return f"Error: {str(e)}"
+            return json.dumps({"error": str(e)})
         except Exception as e:
             logger.exception("Failed to get similar links from Exa")
-            return f"Error: {e}"
+            return json.dumps({"error": str(e)})
 
     def exa_answer(self, query: str, text: bool = False) -> str:
-        """
-        Get an LLM answer to a question informed by Exa search results.
+        """Get an LLM answer to a question informed by Exa search results.
 
         Args:
-            query (str): The question or query to answer.
-            text (bool): Include full text from citation. Default is False.
+            query: The question or query to answer.
+            text: Include full text from citation. Defaults to False.
+
         Returns:
-            str: The answer results in JSON format with both generated answer and sources.
+            JSON with answer and source citations.
         """
 
         if self.model and self.model not in ["exa", "exa-pro"]:
@@ -309,67 +304,52 @@ class ExaTools(Toolkit):
 
         except TimeoutError as e:
             log_error(f"Answer generation timed out after {self.timeout} seconds: {str(e)}")
-            return f"Error: {str(e)}"
+            return json.dumps({"error": str(e)})
         except Exception as e:
             logger.exception("Failed to get answer from Exa")
-            return f"Error: {e}"
+            return json.dumps({"error": str(e)})
 
-    def research(
-        self,
-        instructions: str,
-        output_schema: Optional[Dict[str, Any]] = None,
-    ) -> str:
-        """
-        Perform deep research on a topic.
+    def research(self, instructions: str, num_results: int = 10) -> str:
+        """Perform deep research on a topic using Exa's deep-reasoning search.
 
         Args:
-            instructions (str): Research instructions.
-            output_schema (Optional[Dict[str, Any]]): JSON schema for structured output. If not provided, the API will auto-infer an appropriate schema.
+            instructions: Research instructions or query.
+            num_results: Number of results to return. Defaults to 10.
+
         Returns:
-            str: JSON formatted research results including data and citations.
+            JSON research results with comprehensive analysis.
         """
         try:
-            log_debug(f"Creating research task with instructions: {instructions}")
-            log_debug(f"Output schema: {output_schema}")
+            if self.show_results:
+                log_info(f"Performing deep research for: {instructions}")
 
-            task_kwargs: Dict[str, Any] = {
-                "instructions": instructions,
-                "model": self.research_model,
+            search_kwargs: Dict[str, Any] = {
+                "text": True,
+                "summary": True,
+                "num_results": self.num_results or num_results,
+                "type": "deep-reasoning",
+                "start_crawl_date": self.start_crawl_date,
+                "end_crawl_date": self.end_crawl_date,
+                "start_published_date": self.start_published_date,
+                "end_published_date": self.end_published_date,
+                "include_domains": self.include_domains,
+                "exclude_domains": self.exclude_domains,
             }
+            search_kwargs = {k: v for k, v in search_kwargs.items() if v is not None}
 
-            if output_schema is not None:
-                task_kwargs["output_schema"] = output_schema
-            else:
-                task_kwargs["output_infer_schema"] = True
+            exa_results = self._execute_with_timeout(self.exa.search_and_contents, instructions, **search_kwargs)
 
-            task_result = self._execute_with_timeout(self.exa.research.create_task, **task_kwargs)  # type: ignore
-            task_id = task_result.id
-
+            parsed_results = self._parse_results(exa_results)
             if self.show_results:
-                log_info(f"Research task created with ID: {task_id}")
+                log_info(parsed_results)
 
-            # Step 2: Poll until complete (using default polling settings)
-            task = self.exa.research.poll_task(task_id)  # type: ignore
-
-            # Step 3: Format and return results
-            result: Dict[str, Any] = {"data": task.data, "citations": {}}
-
-            # Process citations by field
-            for field, sources in task.citations.items():
-                result["citations"][field] = [
-                    {"url": source.url, "title": source.title, "id": source.id} for source in sources
-                ]
-
-            if self.show_results:
-                log_info("Research completed successfully")
-
-            return json.dumps(result, indent=4)
+            return parsed_results
 
         except TimeoutError:
-            error_msg = "Research task timed out"
+            error_msg = f"Research timed out after {self.timeout} seconds"
             log_error(error_msg)
-            return json.dumps({"error": error_msg}, indent=4)
+            return json.dumps({"error": error_msg})
         except Exception as e:
             error_msg = f"Research failed: {str(e)}"
             log_error(error_msg)
-            return json.dumps({"error": error_msg}, indent=4)
+            return json.dumps({"error": error_msg})

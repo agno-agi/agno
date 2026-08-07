@@ -2,63 +2,84 @@ import json
 from base64 import b64encode
 from datetime import datetime, timedelta
 from os import getenv
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import requests
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_error, log_info, logger
+from agno.utils.log import log_debug, log_error, log_exception, log_info, log_warning
 
 
 class ZoomTools(Toolkit):
+    """Toolkit for scheduling and managing Zoom meetings.
+
+    Args:
+        account_id: Zoom account ID. Falls back to ZOOM_ACCOUNT_ID env var.
+        client_id: OAuth client ID. Falls back to ZOOM_CLIENT_ID env var.
+        client_secret: OAuth client secret. Falls back to ZOOM_CLIENT_SECRET env var.
+        schedule_meeting: Enable schedule_meeting tool. Defaults to False (creates meeting).
+        get_upcoming_meetings: Enable get_upcoming_meetings tool. Defaults to True.
+        list_meetings: Enable list_meetings tool. Defaults to True.
+        get_meeting_recordings: Enable get_meeting_recordings tool. Defaults to False (token heavy).
+        delete_meeting: Enable delete_meeting tool. Defaults to False (destructive).
+        get_meeting: Enable get_meeting tool. Defaults to True.
+        all: Enable all tools. Defaults to False.
+        timeout: Request timeout in seconds. Defaults to 30.
+    """
+
     def __init__(
         self,
         account_id: Optional[str] = None,
         client_id: Optional[str] = None,
         client_secret: Optional[str] = None,
+        schedule_meeting: bool = False,
+        get_upcoming_meetings: bool = True,
+        list_meetings: bool = True,
+        get_meeting_recordings: bool = False,
+        delete_meeting: bool = False,
+        get_meeting: bool = True,
+        all: bool = False,
         timeout: int = 30,
         **kwargs,
     ):
-        """
-        Initialize the ZoomTool.
-
-        Args:
-            account_id (str): The Zoom account ID for authentication. If not provided, will use ZOOM_ACCOUNT_ID env var.
-            client_id (str): The client ID for authentication. If not provided, will use ZOOM_CLIENT_ID env var.
-            client_secret (str): The client secret for authentication. If not provided, will use ZOOM_CLIENT_SECRET env var.
-            timeout (int): Per-request HTTP timeout in seconds. Default is 30.
-            name (str): The name of the tool. Defaults to "zoom_tool".
-        """
-        # Get credentials from env vars if not provided
         self.account_id = account_id or getenv("ZOOM_ACCOUNT_ID")
         self.client_id = client_id or getenv("ZOOM_CLIENT_ID")
         self.client_secret = client_secret or getenv("ZOOM_CLIENT_SECRET")
-        self.__access_token = None  # Made private
-        self.__token_expiry = None  # Track token expiration
+        self.__access_token = None
+        self.__token_expiry = None
 
         if not self.account_id or not self.client_id or not self.client_secret:
             log_error(
                 "ZOOM_ACCOUNT_ID, ZOOM_CLIENT_ID, and ZOOM_CLIENT_SECRET must be set either through parameters or environment variables."
             )
 
-        tools: List[Any] = [
-            self.get_access_token,
-            self.schedule_meeting,
-            self.get_upcoming_meetings,
-            self.list_meetings,
-            self.get_meeting_recordings,
-            self.delete_meeting,
-            self.get_meeting,
-        ]
+        tools: List[Callable] = []
+        if all or schedule_meeting:
+            tools.append(self.schedule_meeting)
+        if all or get_upcoming_meetings:
+            tools.append(self.get_upcoming_meetings)
+        if all or list_meetings:
+            tools.append(self.list_meetings)
+        if all or get_meeting_recordings:
+            tools.append(self.get_meeting_recordings)
+        if all or delete_meeting:
+            tools.append(self.delete_meeting)
+        if all or get_meeting:
+            tools.append(self.get_meeting)
 
-        super().__init__(name="zoom_tool", tools=tools, timeout=timeout, **kwargs)
+        super().__init__(
+            name="zoom_tools",
+            tools=tools,
+            instructions="Use this tool to schedule and manage Zoom meetings. You can schedule meetings by providing a topic, start time, and duration.",
+            timeout=timeout,
+            **kwargs,
+        )
 
     def get_access_token(self) -> str:
-        """
-        Get a valid access token, refreshing if necessary using Zoom's Server-to-Server OAuth.
+        """Get a valid access token, refreshing if necessary.
 
         Returns:
-            str: The current access token or empty string if token generation fails.
+            The current access token or empty string if token generation fails.
         """
         # Check if we have a valid token
         if self.__access_token and self.__token_expiry and datetime.now() < self.__token_expiry:
@@ -91,24 +112,22 @@ class ZoomTools(Toolkit):
             return self.__access_token  # type: ignore
 
         except requests.RequestException:
-            logger.exception("Failed to generate Zoom access token")
+            log_exception("Failed to generate Zoom access token")
             self.__access_token = None
             self.__token_expiry = None
             return ""
 
     def schedule_meeting(self, topic: str, start_time: str, duration: int, timezone: str = "UTC") -> str:
-        """
-        Schedule a new Zoom meeting.
+        """Schedule a new Zoom meeting.
 
         Args:
-            topic (str): The topic or title of the meeting.
-            start_time (str): The start time of the meeting in ISO 8601 format.
-            duration (int): The duration of the meeting in minutes.
-            timezone (str): The timezone for the meeting (e.g., "America/New_York", "Asia/Tokyo").
+            topic: The topic or title of the meeting.
+            start_time: The start time in ISO 8601 format.
+            duration: The duration in minutes.
+            timezone: The timezone (e.g., "America/New_York"). Defaults to "UTC".
 
         Returns:
-            A JSON-formatted string containing the response from Zoom API with the scheduled meeting details,
-            or an error message if the scheduling fails.
+            JSON with scheduled meeting details or error.
         """
         log_debug(f"Attempting to schedule meeting: {topic} in timezone: {timezone}")
         token = self.get_access_token()
@@ -151,19 +170,17 @@ class ZoomTools(Toolkit):
             log_info(f"Meeting scheduled successfully. ID: {meeting_info['id']}")
             return json.dumps(result, indent=2)
         except requests.RequestException as e:
-            logger.exception("Error scheduling meeting")
+            log_exception("Error scheduling meeting")
             return json.dumps({"error": str(e)})
 
     def get_upcoming_meetings(self, user_id: str = "me") -> str:
-        """
-        Get a list of upcoming meetings for a specified user.
+        """Get upcoming meetings for a user.
 
         Args:
-            user_id (str): The user ID or 'me' for the authenticated user. Defaults to 'me'.
+            user_id: The user ID or 'me' for authenticated user. Defaults to 'me'.
 
         Returns:
-            A JSON-formatted string containing the upcoming meetings information,
-            or an error message if the request fails.
+            JSON with upcoming meetings or error.
         """
         log_debug(f"Fetching upcoming meetings for user: {user_id}")
         token = self.get_access_token()
@@ -184,25 +201,18 @@ class ZoomTools(Toolkit):
             log_info(f"Retrieved {len(result['meetings'])} upcoming meetings")
             return json.dumps(result, indent=2)
         except requests.RequestException as e:
-            logger.exception("Error fetching upcoming meetings")
+            log_exception("Error fetching upcoming meetings")
             return json.dumps({"error": str(e)})
 
     def list_meetings(self, user_id: str = "me", type: str = "scheduled") -> str:
-        """
-        List all meetings for a specified user.
+        """List meetings for a user.
 
         Args:
-            user_id (str): The user ID or 'me' for the authenticated user. Defaults to 'me'.
-            type (str): The type of meetings to return. Options are:
-                       "scheduled" - All valid scheduled meetings
-                       "live" - All live meetings
-                       "upcoming" - All upcoming meetings
-                       "previous" - All previous meetings
-                       Defaults to "scheduled".
+            user_id: The user ID or 'me' for authenticated user. Defaults to 'me'.
+            type: Meeting type - "scheduled", "live", "upcoming", or "previous".
 
         Returns:
-            A JSON-formatted string containing the meetings information,
-            or an error message if the request fails.
+            JSON with meetings list or error.
         """
         log_debug(f"Fetching meetings for user: {user_id}")
         token = self.get_access_token()
@@ -230,23 +240,21 @@ class ZoomTools(Toolkit):
             log_info(f"Retrieved {len(result['meetings'])} meetings")
             return json.dumps(result, indent=2)
         except requests.RequestException as e:
-            logger.exception("Error fetching meetings")
+            log_exception("Error fetching meetings")
             return json.dumps({"error": str(e)})
 
     def get_meeting_recordings(
         self, meeting_id: str, include_download_token: bool = False, token_ttl: Optional[int] = None
     ) -> str:
-        """
-        Get all recordings for a specific meeting.
+        """Get recordings for a meeting.
 
         Args:
-            meeting_id (str): The meeting ID or UUID to get recordings for.
-            include_download_token (bool): Whether to include download access token in response.
-            token_ttl (int, optional): Time to live for download token in seconds (max 604800).
+            meeting_id: The meeting ID or UUID.
+            include_download_token: Include download access token. Defaults to False.
+            token_ttl: Download token TTL in seconds (max 604800).
 
         Returns:
-            A JSON-formatted string containing the meeting recordings information,
-            or an error message if the request fails.
+            JSON with recordings info or error.
         """
         log_debug(f"Fetching recordings for meeting: {meeting_id}")
         token = self.get_access_token()
@@ -265,7 +273,7 @@ class ZoomTools(Toolkit):
                 if 0 <= token_ttl <= 604800:
                     params["ttl"] = str(token_ttl)  # Convert to string if necessary
                 else:
-                    logger.warning("Invalid TTL value. Must be between 0 and 604800 seconds.")
+                    log_warning("Invalid TTL value. Must be between 0 and 604800 seconds.")
 
         try:
             response = requests.get(url, headers=headers, params=params, timeout=self.timeout)
@@ -288,21 +296,18 @@ class ZoomTools(Toolkit):
             log_info(f"Retrieved {result['recording_count']} recording files")
             return json.dumps(result, indent=2)
         except requests.RequestException as e:
-            logger.exception("Error fetching meeting recordings")
+            log_exception("Error fetching meeting recordings")
             return json.dumps({"error": str(e)})
 
     def delete_meeting(self, meeting_id: str, schedule_for_reminder: bool = True) -> str:
-        """
-        Delete a scheduled Zoom meeting.
+        """Delete a scheduled Zoom meeting.
 
         Args:
-            meeting_id (str): The ID of the meeting to delete
-            schedule_for_reminder (bool): Send cancellation email to registrants.
-                                          Defaults to True.
+            meeting_id: The ID of the meeting to delete.
+            schedule_for_reminder: Send cancellation email to registrants. Defaults to True.
 
         Returns:
-            A JSON-formatted string containing the response status,
-            or an error message if the deletion fails.
+            JSON with deletion status or error.
         """
         log_debug(f"Attempting to delete meeting: {meeting_id}")
         token = self.get_access_token()
@@ -327,19 +332,17 @@ class ZoomTools(Toolkit):
 
             return json.dumps(result, indent=2)
         except requests.RequestException as e:
-            logger.exception("Error deleting meeting")
+            log_exception("Error deleting meeting")
             return json.dumps({"error": str(e)})
 
     def get_meeting(self, meeting_id: str) -> str:
-        """
-        Get the details of a specific Zoom meeting.
+        """Get details of a specific Zoom meeting.
 
         Args:
-            meeting_id (str): The ID of the meeting to retrieve
+            meeting_id: The ID of the meeting to retrieve.
 
         Returns:
-            A JSON-formatted string containing the meeting details,
-            or an error message if the request fails.
+            JSON with meeting details or error.
         """
         log_debug(f"Fetching details for meeting: {meeting_id}")
         token = self.get_access_token()
@@ -371,14 +374,5 @@ class ZoomTools(Toolkit):
             log_info(f"Retrieved details for meeting ID: {meeting_id}")
             return json.dumps(result, indent=2)
         except requests.RequestException as e:
-            logger.exception("Error fetching meeting details")
+            log_exception("Error fetching meeting details")
             return json.dumps({"error": str(e)})
-
-    def instructions(self) -> str:
-        """
-        Provide instructions for using the ZoomTool.
-
-        Returns:
-            A string containing instructions on how to use the ZoomTool.
-        """
-        return "Use this tool to schedule and manage Zoom meetings. You can schedule meetings by providing a topic, start time, and duration."

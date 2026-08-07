@@ -3,11 +3,11 @@ from unittest.mock import MagicMock, patch
 from uuid import UUID
 
 import pytest
+from agno.tools.models.nebius import NebiusTools
 
 from agno.agent import Agent
 from agno.media import Image
 from agno.tools.function import ToolResult
-from agno.tools.models.nebius import NebiusTools
 
 
 # Fixture for mock agent

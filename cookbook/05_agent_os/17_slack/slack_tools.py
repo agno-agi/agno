@@ -29,17 +29,17 @@ db = SqliteDb(
 
 workspace_tools = SlackTools(
     output_directory="tmp/slack_downloads",
-    enable_send_message=False,
-    enable_send_message_thread=False,
-    enable_list_channels=True,
-    enable_get_channel_history=True,
-    enable_upload_file=True,
-    enable_download_file=True,
-    enable_search_workspace=True,
-    enable_get_thread=True,
-    enable_list_users=False,
-    enable_get_user_info=False,
-    enable_get_channel_info=True,
+    send_message=False,
+    send_message_thread=False,
+    list_channels=True,
+    get_channel_history=True,
+    upload_file=True,
+    download_file=True,
+    search_workspace=True,
+    get_thread=True,
+    list_users=False,
+    get_user_info=False,
+    get_channel_info=True,
 )
 
 workspace_analyst = Agent(
@@ -50,8 +50,8 @@ workspace_analyst = Agent(
     tools=[workspace_tools],
     instructions=[
         "Use Slack as the source of truth for workspace questions.",
-        "Use search_workspace for topic searches; its action token comes from the Slack event.",
-        "Use get_channel_history for a known channel and get_thread to expand important replies.",
+        "Use slack_search_workspace for topic searches; its action token comes from the Slack event.",
+        "Use slack_get_channel_history for a known channel and slack_get_thread to expand important replies.",
         "Download shared files when analysis needs their contents.",
         "Upload a result file only when the user explicitly asks for one.",
         "Summarize decisions, owners, action items, and unresolved questions.",

@@ -32,9 +32,9 @@ agno_docs.insert(url="https://docs.agno.com/llms-full.txt")
 
 knowledge_tools = KnowledgeTools(
     knowledge=agno_docs,
-    enable_think=True,
-    enable_search=True,
-    enable_analyze=True,
+    think=True,
+    search=True,
+    analyze=True,
     add_few_shot=True,
 )
 

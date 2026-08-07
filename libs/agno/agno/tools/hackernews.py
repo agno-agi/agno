@@ -1,5 +1,5 @@
 import json
-from typing import Any, List
+from typing import Callable, List
 
 import httpx
 
@@ -12,36 +12,34 @@ class HackerNewsTools(Toolkit):
     HackerNews is a tool for getting top stories from Hacker News.
 
     Args:
-        enable_get_top_stories (bool): Enable getting top stories from Hacker News. Default is True.
-        enable_get_user_details (bool): Enable getting user details from Hacker News. Default is True.
-        all (bool): Enable all tools. Overrides individual flags when True. Default is False.
+        get_top_stories (bool): Enable getting top stories from Hacker News. Default is True.
+        get_user_details (bool): Enable getting user details from Hacker News. Default is True.
         timeout (int): Per-request HTTP timeout in seconds. Defaults to 30.
     """
 
     def __init__(
         self,
-        enable_get_top_stories: bool = True,
-        enable_get_user_details: bool = True,
-        all: bool = False,
+        get_top_stories: bool = True,
+        get_user_details: bool = True,
         timeout: int = 30,
         **kwargs,
     ):
-        tools: List[Any] = []
-        if all or enable_get_top_stories:
+        tools: List[Callable] = []
+        if get_top_stories:
             tools.append(self.get_top_hackernews_stories)
-        if all or enable_get_user_details:
+        if get_user_details:
             tools.append(self.get_user_details)
 
         super().__init__(name="hackers_news", tools=tools, timeout=timeout, **kwargs)
 
     def get_top_hackernews_stories(self, num_stories: int = 10) -> str:
-        """Use this function to get top stories from Hacker News.
+        """Get top stories from Hacker News.
 
         Args:
-            num_stories (int): Number of stories to return. Defaults to 10.
+            num_stories: Number of stories to return. Defaults to 10.
 
         Returns:
-            str: JSON string of top stories.
+            JSON with top stories.
         """
 
         try:
@@ -67,16 +65,16 @@ class HackerNewsTools(Toolkit):
             return json.dumps(stories)
         except Exception as e:
             logger.exception(e)
-            return f"Error fetching stories: {e}"
+            return json.dumps({"error": f"Error fetching stories: {e}"})
 
     def get_user_details(self, username: str) -> str:
-        """Use this function to get the details of a Hacker News user using their username.
+        """Get details of a Hacker News user.
 
         Args:
-            username (str): Username of the user to get details for.
+            username: Username of the user to get details for.
 
         Returns:
-            str: JSON string of the user details.
+            JSON with user details including karma and submissions count.
         """
 
         try:
@@ -96,4 +94,4 @@ class HackerNewsTools(Toolkit):
             return json.dumps(user_details)
         except Exception as e:
             logger.exception(e)
-            return f"Error getting user details: {e}"
+            return json.dumps({"error": f"Error getting user details: {e}"})

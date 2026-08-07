@@ -1,4 +1,5 @@
-from typing import Optional
+import json
+from typing import Callable, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug
@@ -15,32 +16,35 @@ class AWSSESTool(Toolkit):
         sender_email: Optional[str] = None,
         sender_name: Optional[str] = None,
         region_name: str = "us-east-1",
-        enable_send_email: bool = True,
+        send_email: bool = True,
         all: bool = False,
         **kwargs,
     ):
-        tools = []
-        if all or enable_send_email:
-            tools.append(self.send_email)
-        super().__init__(name="aws_ses_tool", tools=tools, **kwargs)
         self.client = boto3.client("ses", region_name=region_name)
         self.sender_email = sender_email
         self.sender_name = sender_name
 
-    def send_email(self, subject: str, body: str, receiver_email: str) -> str:
-        """
-        Use this tool to send an email using AWS SES.
+        tools: List[Callable] = []
+        if all or send_email:
+            tools.append(self.aws_ses_send_email)
 
-        Args: subject: The subject of the email
-                body: The body of the email
-                receiver_email: The email address of the receiver
+        super().__init__(name="aws_ses_tools", tools=tools, **kwargs)
+
+    def aws_ses_send_email(self, subject: str, body: str, receiver_email: str) -> str:
+        """Send an email using AWS SES.
+
+        Args:
+            subject: The subject of the email.
+            body: The body of the email.
+            receiver_email: The email address of the receiver.
+
+        Returns:
+            JSON with message_id on success, or error details.
         """
-        if not self.client:
-            raise Exception("AWS SES client not initialized. Please check the configuration.")
         if not subject:
-            return "Email subject cannot be empty."
+            return json.dumps({"error": "Email subject cannot be empty"})
         if not body:
-            return "Email body cannot be empty."
+            return json.dumps({"error": "Email body cannot be empty"})
         try:
             response = self.client.send_email(
                 Source=f"{self.sender_name} <{self.sender_email}>",
@@ -61,6 +65,6 @@ class AWSSESTool(Toolkit):
                 },
             )
             log_debug(f"Email sent with message ID: {response['MessageId']}")
-            return "Email sent successfully!"
+            return json.dumps({"success": True, "message_id": response["MessageId"]})
         except Exception as e:
-            raise Exception(f"Failed to send email: {e}")
+            return json.dumps({"error": f"Failed to send email: {e}"})

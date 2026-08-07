@@ -1,5 +1,6 @@
+import json
 from os import getenv
-from typing import Any, List, Literal, Optional, Union
+from typing import Callable, List, Literal, Optional, Union
 from uuid import uuid4
 
 from agno.agent import Agent
@@ -18,41 +19,42 @@ except (ModuleNotFoundError, ImportError):
 OpenAIVoice = Literal["alloy", "echo", "fable", "onyx", "nova", "shimmer"]
 OpenAITTSModel = Literal["tts-1", "tts-1-hd"]
 OpenAITTSFormat = Literal["mp3", "opus", "aac", "flac", "wav", "pcm"]
+OpenAIImageSize = Literal["auto", "256x256", "512x512", "1024x1024", "1536x1024", "1024x1536", "1792x1024", "1024x1792"]
 
 
 class OpenAITools(Toolkit):
     """Tools for interacting with OpenAI API.
 
     Args:
-        api_key (str, optional): OpenAI API key. Retrieved from OPENAI_API_KEY env variable if not provided.
-        enable_transcription (bool): Enable audio transcription functionality. Default is True.
-        enable_image_generation (bool): Enable image generation functionality. Default is True.
-        enable_speech_generation (bool): Enable speech generation functionality. Default is True.
-        all (bool): Enable all tools. Overrides individual flags when True. Default is False.
-        transcription_model (str): Model to use for transcription. Default is "whisper-1".
-        text_to_speech_voice (OpenAIVoice): Voice to use for TTS. Default is "alloy".
-        text_to_speech_model (OpenAITTSModel): Model to use for TTS. Default is "tts-1".
-        text_to_speech_format (OpenAITTSFormat): Audio format for TTS. Default is "mp3".
-        image_model (str, optional): Model to use for image generation. Default is "dall-e-3".
-        image_quality (str, optional): Quality setting for image generation.
-        image_size (str, optional): Size setting for image generation.
-        image_style (str, optional): Style setting for image generation.
+        api_key: OpenAI API key. Retrieved from OPENAI_API_KEY env variable if not provided.
+        transcribe_audio: Whether to register the transcribe_audio tool.
+        generate_image: Whether to register the generate_image tool.
+        generate_speech: Whether to register the generate_speech tool.
+        all: Whether to register all tools.
+        transcription_model: Model to use for transcription.
+        text_to_speech_voice: Voice to use for TTS.
+        text_to_speech_model: Model to use for TTS.
+        text_to_speech_format: Audio format for TTS.
+        image_model: Model to use for image generation.
+        image_quality: Quality setting for image generation.
+        image_size: Size setting for image generation.
+        image_style: Style setting for image generation.
     """
 
     def __init__(
         self,
         api_key: Optional[str] = None,
-        enable_transcription: bool = True,
-        enable_image_generation: bool = True,
-        enable_speech_generation: bool = True,
+        transcribe_audio: bool = True,
+        generate_image: bool = True,
+        generate_speech: bool = True,
         all: bool = False,
         transcription_model: str = "whisper-1",
         text_to_speech_voice: OpenAIVoice = "alloy",
         text_to_speech_model: OpenAITTSModel = "tts-1",
         text_to_speech_format: OpenAITTSFormat = "mp3",
-        image_model: Optional[str] = "dall-e-3",
+        image_model: Optional[str] = "gpt-image-2",
         image_quality: Optional[str] = None,
-        image_size: Optional[Literal["256x256", "512x512", "1024x1024", "1792x1024", "1024x1792"]] = None,
+        image_size: Optional[OpenAIImageSize] = None,
         image_style: Optional[Literal["vivid", "natural"]] = None,
         **kwargs,
     ):
@@ -70,20 +72,24 @@ class OpenAITools(Toolkit):
         self.image_style = image_style
         self.image_size = image_size
 
-        tools: List[Any] = []
-        if all or enable_transcription:
-            tools.append(self.transcribe_audio)
-        if all or enable_image_generation:
-            tools.append(self.generate_image)
-        if all or enable_speech_generation:
-            tools.append(self.generate_speech)
+        tools: List[Callable] = []
+        if all or transcribe_audio:
+            tools.append(self.openai_transcribe_audio)
+        if all or generate_image:
+            tools.append(self.openai_generate_image)
+        if all or generate_speech:
+            tools.append(self.openai_generate_speech)
 
         super().__init__(name="openai_tools", tools=tools, **kwargs)
 
-    def transcribe_audio(self, audio_path: str) -> str:
-        """Transcribe audio file using OpenAI's Whisper API
+    def openai_transcribe_audio(self, audio_path: str) -> str:
+        """Transcribe audio file using OpenAI's Whisper API.
+
         Args:
-            audio_path: Path to the audio file
+            audio_path: Path to the audio file.
+
+        Returns:
+            JSON with transcript text or error message.
         """
         log_debug(f"Transcribing audio from {audio_path}")
         try:
@@ -93,20 +99,24 @@ class OpenAITools(Toolkit):
                     file=audio_file,
                     response_format="text",
                 )
-        except Exception as e:  # type: ignore[return]
+        except Exception as e:
             log_error(f"Failed to transcribe audio: {str(e)}")
-            return f"Failed to transcribe audio: {str(e)}"
+            return json.dumps({"error": f"Failed to transcribe audio: {str(e)}"})
 
         log_debug(f"Transcript: {transcript}")
-        return transcript  # type: ignore[return-value]
+        return json.dumps({"transcript": transcript})
 
-    def generate_image(
+    def openai_generate_image(
         self,
         prompt: str,
     ) -> ToolResult:
         """Generate images based on a text prompt.
+
         Args:
-            prompt (str): The text prompt to generate the image from.
+            prompt: The text prompt to generate the image from.
+
+        Returns:
+            ToolResult containing the generated image.
         """
         try:
             import base64
@@ -165,14 +175,18 @@ class OpenAITools(Toolkit):
             log_error(f"Failed to generate image using {self.image_model}: {str(e)}")
             return ToolResult(content=f"Failed to generate image: {e}")
 
-    def generate_speech(
+    def openai_generate_speech(
         self,
         agent: Union[Agent, Team],
         text_input: str,
-    ) -> ToolResult:  # Changed return type
+    ) -> ToolResult:
         """Generate speech from text using OpenAI's Text-to-Speech API.
+
         Args:
-            text_input (str): The text to synthesize into speech.
+            text_input: The text to synthesize into speech.
+
+        Returns:
+            ToolResult containing the generated audio.
         """
         try:
             response = OpenAIClient(api_key=self.api_key).audio.speech.create(

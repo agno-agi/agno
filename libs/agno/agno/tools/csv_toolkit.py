@@ -1,7 +1,7 @@
 import csv
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
@@ -14,10 +14,10 @@ class CsvTools(Toolkit):
         row_limit: Optional[int] = None,
         duckdb_connection: Optional[Any] = None,
         duckdb_kwargs: Optional[Dict[str, Any]] = None,
-        enable_read_csv_file: bool = True,
-        enable_list_csv_files: bool = True,
-        enable_get_columns: bool = True,
-        enable_query_csv_file: bool = True,
+        read_csv_file: bool = True,
+        list_csv_files: bool = True,
+        get_columns: bool = True,
+        query_csv_file: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -34,14 +34,14 @@ class CsvTools(Toolkit):
         self.duckdb_connection: Optional[Any] = duckdb_connection
         self.duckdb_kwargs: Optional[Dict[str, Any]] = duckdb_kwargs
 
-        tools: List[Any] = []
-        if all or enable_read_csv_file:
+        tools: List[Callable] = []
+        if all or read_csv_file:
             tools.append(self.read_csv_file)
-        if all or enable_list_csv_files:
+        if all or list_csv_files:
             tools.append(self.list_csv_files)
-        if all or enable_get_columns:
+        if all or get_columns:
             tools.append(self.get_columns)
-        if all or enable_query_csv_file:
+        if all or query_csv_file:
             try:
                 import duckdb  # noqa: F401
 
@@ -52,26 +52,28 @@ class CsvTools(Toolkit):
         super().__init__(name="csv_tools", tools=tools, **kwargs)
 
     def list_csv_files(self) -> str:
-        """Returns a list of available csv files
+        """Returns a list of available csv files.
 
         Returns:
-            str: List of available csv files
+            JSON with list of csv file names.
         """
         return json.dumps([_csv.stem for _csv in self.csvs])
 
     def read_csv_file(self, csv_name: str, row_limit: Optional[int] = None) -> str:
-        """Use this function to read the contents of a csv file `name` without the extension.
+        """Read the contents of a csv file.
 
         Args:
-            csv_name (str): The name of the csv file to read without the extension.
-            row_limit (Optional[int]): The number of rows to return. None returns all rows. Defaults to None.
+            csv_name: The name of the csv file to read without the extension.
+            row_limit: The number of rows to return. None returns all rows.
 
         Returns:
-            str: The contents of the csv file if successful, otherwise returns an error message.
+            JSON with csv contents or error message.
         """
         try:
             if csv_name not in [_csv.stem for _csv in self.csvs]:
-                return f"File: {csv_name} not found, please use one of {self.list_csv_files()}"
+                return json.dumps(
+                    {"error": f"File '{csv_name}' not found", "available": [_csv.stem for _csv in self.csvs]}
+                )
 
             log_info(f"Reading file: {csv_name}")
             file_path = [_csv for _csv in self.csvs if _csv.stem == csv_name][0]
@@ -88,20 +90,22 @@ class CsvTools(Toolkit):
             return json.dumps(csv_data)
         except Exception as e:
             logger.exception("Error reading csv")
-            return f"Error reading csv: {e}"
+            return json.dumps({"error": f"Error reading csv: {e}"})
 
     def get_columns(self, csv_name: str) -> str:
-        """Use this function to get the columns of the csv file `csv_name` without the extension.
+        """Get the columns of a csv file.
 
         Args:
-            csv_name (str): The name of the csv file to get the columns from without the extension.
+            csv_name: The name of the csv file without the extension.
 
         Returns:
-            str: The columns of the csv file if successful, otherwise returns an error message.
+            JSON with list of column names or error message.
         """
         try:
             if csv_name not in [_csv.stem for _csv in self.csvs]:
-                return f"File: {csv_name} not found, please use one of {self.list_csv_files()}"
+                return json.dumps(
+                    {"error": f"File '{csv_name}' not found", "available": [_csv.stem for _csv in self.csvs]}
+                )
 
             log_info(f"Reading columns from file: {csv_name}")
             file_path = [_csv for _csv in self.csvs if _csv.stem == csv_name][0]
@@ -114,28 +118,28 @@ class CsvTools(Toolkit):
             return json.dumps(columns)
         except Exception as e:
             logger.exception("Error getting columns")
-            return f"Error getting columns: {e}"
+            return json.dumps({"error": f"Error getting columns: {e}"})
 
     def query_csv_file(self, csv_name: str, sql_query: str) -> str:
-        """Use this function to run a SQL query on csv file `csv_name` without the extension.
-        The Table name is the name of the csv file without the extension.
-        The SQL Query should be a valid DuckDB SQL query.
-        Always wrap column names with double quotes if they contain spaces or special characters
-        Remember to escape the quotes in th e JSON string (use \")
-        Use single quotes for string values
+        """Run a SQL query on a csv file using DuckDB.
+
+        The table name is the csv file name without extension. Use double quotes for
+        column names with spaces/special chars. Use single quotes for string values.
 
         Args:
-            csv_name (str): The name of the csv file to query
-            sql_query (str): The SQL Query to run on the csv file.
+            csv_name: The name of the csv file to query.
+            sql_query: The DuckDB SQL query to run.
 
         Returns:
-            str: The query results if successful, otherwise returns an error message.
+            JSON with query results or error message.
         """
         try:
             import duckdb
 
             if csv_name not in [_csv.stem for _csv in self.csvs]:
-                return f"File: {csv_name} not found, please use one of {self.list_csv_files()}"
+                return json.dumps(
+                    {"error": f"File '{csv_name}' not found", "available": [_csv.stem for _csv in self.csvs]}
+                )
 
             # Load the csv file into duckdb
             log_info(f"Loading csv file: {csv_name}")
@@ -147,7 +151,7 @@ class CsvTools(Toolkit):
                 con = duckdb.connect(**(self.duckdb_kwargs or {}))
             if con is None:
                 log_error("Error connecting to DuckDB")
-                return "Error connecting to DuckDB, please check the connection."
+                return json.dumps({"error": "Error connecting to DuckDB"})
 
             # Create a table from the csv file
             # Quote the table name so stems with hyphens or special characters are valid identifiers
@@ -166,24 +170,17 @@ class CsvTools(Toolkit):
             # -*- Run the SQL Query
             log_info(f"Running query: {formatted_sql}")
             query_result = con.sql(formatted_sql)
-            result_output = "No output"
-            if query_result is not None:
-                try:
-                    results_as_python_objects = query_result.fetchall()
-                    result_rows = []
-                    for row in results_as_python_objects:
-                        if len(row) == 1:
-                            result_rows.append(str(row[0]))
-                        else:
-                            result_rows.append(",".join(str(x) for x in row))
+            if query_result is None:
+                return json.dumps({"result": None})
 
-                    result_data = "\n".join(result_rows)
-                    result_output = ",".join(query_result.columns) + "\n" + result_data
-                except AttributeError:
-                    result_output = str(query_result)
-
-            log_debug(f"Query result: {result_output}")
-            return result_output
+            try:
+                columns = query_result.columns
+                rows = query_result.fetchall()
+                result_data = [dict(zip(columns, row)) for row in rows]
+                log_debug(f"Query result: {len(result_data)} rows")
+                return json.dumps({"columns": columns, "rows": result_data})
+            except AttributeError:
+                return json.dumps({"result": str(query_result)})
         except Exception as e:
             logger.exception("Error querying csv")
-            return f"Error querying csv: {e}"
+            return json.dumps({"error": f"Error querying csv: {e}"})

@@ -2,7 +2,7 @@
 
 import json
 from os import getenv
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import requests
 
@@ -14,11 +14,11 @@ class DiscordTools(Toolkit):
     def __init__(
         self,
         bot_token: Optional[str] = None,
-        enable_send_message: bool = True,
-        enable_get_channel_messages: bool = True,
-        enable_get_channel_info: bool = True,
-        enable_list_channels: bool = True,
-        enable_delete_message: bool = True,
+        send_message: bool = True,
+        get_channel_messages: bool = True,
+        get_channel_info: bool = True,
+        list_channels: bool = True,
+        delete_message: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -33,17 +33,17 @@ class DiscordTools(Toolkit):
             "Content-Type": "application/json",
         }
 
-        tools: List[Any] = []
-        if enable_send_message or all:
-            tools.append(self.send_message)
-        if enable_get_channel_messages or all:
-            tools.append(self.get_channel_messages)
-        if enable_get_channel_info or all:
-            tools.append(self.get_channel_info)
-        if enable_list_channels or all:
-            tools.append(self.list_channels)
-        if enable_delete_message or all:
-            tools.append(self.delete_message)
+        tools: List[Callable] = []
+        if all or send_message:
+            tools.append(self.discord_send_message)
+        if all or get_channel_messages:
+            tools.append(self.discord_get_channel_messages)
+        if all or get_channel_info:
+            tools.append(self.discord_get_channel_info)
+        if all or list_channels:
+            tools.append(self.discord_list_channels)
+        if all or delete_message:
+            tools.append(self.discord_delete_message)
 
         super().__init__(name="discord", tools=tools, **kwargs)
 
@@ -54,94 +54,89 @@ class DiscordTools(Toolkit):
         response.raise_for_status()
         return response.json() if response.text else {}
 
-    def send_message(self, channel_id: str, message: str) -> str:
-        """
-        Send a message to a Discord channel.
+    def discord_send_message(self, channel_id: str, message: str) -> str:
+        """Send a message to a Discord channel.
 
         Args:
-            channel_id (str): The ID of the channel to send the message to.
-            message (str): The text of the message to send.
+            channel_id: The ID of the channel to send the message to.
+            message: The text of the message to send.
 
         Returns:
-            str: A success message or error message.
+            JSON with success status and message_id, or error.
         """
         try:
             data = {"content": message}
-            self._make_request("POST", f"/channels/{channel_id}/messages", data)
-            return f"Message sent successfully to channel {channel_id}"
+            result = self._make_request("POST", f"/channels/{channel_id}/messages", data)
+            return json.dumps({"success": True, "channel_id": channel_id, "message_id": result.get("id")})
         except Exception as e:
             logger.exception("Error sending message")
-            return f"Error sending message: {str(e)}"
+            return json.dumps({"error": f"Error sending message: {str(e)}"})
 
-    def get_channel_info(self, channel_id: str) -> str:
-        """
-        Get information about a Discord channel.
+    def discord_get_channel_info(self, channel_id: str) -> str:
+        """Get information about a Discord channel.
 
         Args:
-            channel_id (str): The ID of the channel to get information about.
+            channel_id: The ID of the channel to get information about.
 
         Returns:
-            str: A JSON string containing the channel information.
+            JSON with channel information or error.
         """
         try:
             response = self._make_request("GET", f"/channels/{channel_id}")
-            return json.dumps(response, indent=2)
+            return json.dumps(response)
         except Exception as e:
             logger.exception("Error getting channel info")
-            return f"Error getting channel info: {str(e)}"
+            return json.dumps({"error": f"Error getting channel info: {str(e)}"})
 
-    def list_channels(self, guild_id: str) -> str:
-        """
-        List all channels in a Discord server.
+    def discord_list_channels(self, guild_id: str) -> str:
+        """List all channels in a Discord server.
 
         Args:
-            guild_id (str): The ID of the server to list channels from.
+            guild_id: The ID of the server (guild) to list channels from.
 
         Returns:
-            str: A JSON string containing the list of channels.
+            JSON with channels array and count, or error.
         """
         try:
             response = self._make_request("GET", f"/guilds/{guild_id}/channels")
-            return json.dumps(response, indent=2)
+            return json.dumps({"channels": response, "count": len(response)})
         except Exception as e:
             logger.exception("Error listing channels")
-            return f"Error listing channels: {str(e)}"
+            return json.dumps({"error": f"Error listing channels: {str(e)}"})
 
-    def get_channel_messages(self, channel_id: str, limit: int = 100) -> str:
-        """
-        Get the message history of a Discord channel.
+    def discord_get_channel_messages(self, channel_id: str, limit: int = 100) -> str:
+        """Get the message history of a Discord channel.
 
         Args:
-            channel_id (str): The ID of the channel to fetch messages from.
-            limit (int): The maximum number of messages to fetch. Defaults to 100.
+            channel_id: The ID of the channel to fetch messages from.
+            limit: Maximum number of messages to fetch (default 100, max 100).
 
         Returns:
-            str: A JSON string containing the channel's message history.
+            JSON with messages array and count, or error.
         """
         try:
             response = self._make_request("GET", f"/channels/{channel_id}/messages?limit={limit}")
-            return json.dumps(response, indent=2)
+            return json.dumps({"messages": response, "count": len(response)})
         except Exception as e:
             logger.exception("Error getting messages")
-            return f"Error getting messages: {str(e)}"
+            return json.dumps({"error": f"Error getting messages: {str(e)}"})
 
-    def delete_message(self, channel_id: str, message_id: str) -> str:
-        """
-        Delete a message from a Discord channel.
+    def discord_delete_message(self, channel_id: str, message_id: str) -> str:
+        """Delete a message from a Discord channel.
 
         Args:
-            channel_id (str): The ID of the channel containing the message.
-            message_id (str): The ID of the message to delete.
+            channel_id: The ID of the channel containing the message.
+            message_id: The ID of the message to delete.
 
         Returns:
-            str: A success message or error message.
+            JSON with success status or error.
         """
         try:
             self._make_request("DELETE", f"/channels/{channel_id}/messages/{message_id}")
-            return f"Message {message_id} deleted successfully from channel {channel_id}"
+            return json.dumps({"success": True, "deleted_message_id": message_id, "channel_id": channel_id})
         except Exception as e:
             logger.exception("Error deleting message")
-            return f"Error deleting message: {str(e)}"
+            return json.dumps({"error": f"Error deleting message: {str(e)}"})
 
     @staticmethod
     def get_tool_name() -> str:

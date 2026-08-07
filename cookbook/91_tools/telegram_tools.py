@@ -30,9 +30,9 @@ agent_all = Agent(
 agent_messaging = Agent(
     tools=[
         TelegramTools(
-            enable_send_message=True,
-            enable_edit_message=True,
-            enable_delete_message=True,
+            send_message=True,
+            edit_message=True,
+            delete_message=True,
         )
     ],
     markdown=True,
@@ -42,8 +42,8 @@ agent_messaging = Agent(
 agent_downloads = Agent(
     tools=[
         TelegramTools(
-            enable_send_message=True,
-            enable_get_file=True,
+            send_message=True,
+            get_file=True,
             save_downloads=True,
             output_directory="/tmp/telegram_downloads",
         )
@@ -55,9 +55,9 @@ agent_downloads = Agent(
 agent_reactions = Agent(
     tools=[
         TelegramTools(
-            enable_send_message=True,
-            enable_react_with_emoji=True,
-            enable_pin_message=True,
+            send_message=True,
+            react_with_emoji=True,
+            pin_message=True,
         )
     ],
     markdown=True,

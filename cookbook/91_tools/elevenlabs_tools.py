@@ -28,7 +28,7 @@ audio_agent = Agent(
         dedent(
             """
             You have access to the ElevenLabs toolkit:
-            - Use the `text_to_speech` tool to convert text or speech content into natural voice audio.
+            - Use the `elevenlabs_text_to_speech` tool to convert text or speech content into natural voice audio.
             - Use the `generate_sound_effect` tool to create sound effects from text descriptions.
             Keep the audio prompt as defined by the user.
             """

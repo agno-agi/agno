@@ -67,13 +67,13 @@ def test_init_with_custom_params():
 def test_tool_registration():
     """Test that the search tool is registered correctly."""
     tools = PerplexitySearch(api_key="test_key")
-    assert "search" in [func.name for func in tools.functions.values()]
+    assert "perplexity_search" in [func.name for func in tools.functions.values()]
 
 
 def test_async_tool_registration():
     """Test that the async search tool is registered correctly."""
     tools = PerplexitySearch(api_key="test_key")
-    assert "search" in [func.name for func in tools.async_functions.values()]
+    assert "perplexity_search" in [func.name for func in tools.async_functions.values()]
 
 
 # ============================================================================
@@ -107,7 +107,7 @@ def test_search_success():
     tools = PerplexitySearch(api_key="test_key")
 
     with patch("agno.tools.perplexity.httpx.post", return_value=mock_response) as mock_post:
-        result = tools.search("AI agents")
+        result = tools.perplexity_search("AI agents")
         result_data = json.loads(result)
 
         assert len(result_data) == 2
@@ -134,7 +134,7 @@ def test_search_with_custom_max_results():
     tools = PerplexitySearch(api_key="test_key")
 
     with patch("agno.tools.perplexity.httpx.post", return_value=mock_response) as mock_post:
-        tools.search("test query", max_results=10)
+        tools.perplexity_search("test query", max_results=10)
 
         call_kwargs = mock_post.call_args
         assert call_kwargs[1]["json"]["max_results"] == 10
@@ -155,7 +155,7 @@ def test_search_with_filters():
     )
 
     with patch("agno.tools.perplexity.httpx.post", return_value=mock_response) as mock_post:
-        tools.search("test query")
+        tools.perplexity_search("test query")
 
         call_kwargs = mock_post.call_args
         body = call_kwargs[1]["json"]
@@ -164,7 +164,7 @@ def test_search_with_filters():
         assert body["search_language_filter"] == ["en"]
 
 
-def test_search_missing_optional_fields():
+def test_perplexity_search_missing_optional_fields():
     """Test search handles results with missing optional fields."""
     mock_response = Mock()
     mock_response.status_code = 200
@@ -178,7 +178,7 @@ def test_search_missing_optional_fields():
     tools = PerplexitySearch(api_key="test_key")
 
     with patch("agno.tools.perplexity.httpx.post", return_value=mock_response):
-        result = tools.search("test query")
+        result = tools.perplexity_search("test query")
         result_data = json.loads(result)
 
         assert len(result_data) == 1
@@ -188,7 +188,7 @@ def test_search_missing_optional_fields():
         assert "date" not in result_data[0]
 
 
-def test_search_empty_results():
+def test_perplexity_search_empty_results():
     """Test search with empty results."""
     mock_response = Mock()
     mock_response.status_code = 200
@@ -198,23 +198,23 @@ def test_search_empty_results():
     tools = PerplexitySearch(api_key="test_key")
 
     with patch("agno.tools.perplexity.httpx.post", return_value=mock_response):
-        result = tools.search("test query")
+        result = tools.perplexity_search("test query")
         result_data = json.loads(result)
         assert result_data == []
 
 
-def test_search_api_error():
+def test_perplexity_search_api_error():
     """Test search handles API errors gracefully."""
     tools = PerplexitySearch(api_key="test_key")
 
     with patch("agno.tools.perplexity.httpx.post", side_effect=Exception("API connection failed")):
-        result = tools.search("test query")
+        result = tools.perplexity_search("test query")
         result_data = json.loads(result)
         assert "error" in result_data
         assert "API connection failed" in result_data["error"]
 
 
-def test_search_request_url():
+def test_perplexity_search_request_url():
     """Test that search requests are sent to the correct URL."""
     mock_response = Mock()
     mock_response.status_code = 200
@@ -224,7 +224,7 @@ def test_search_request_url():
     tools = PerplexitySearch(api_key="test_key")
 
     with patch("agno.tools.perplexity.httpx.post", return_value=mock_response) as mock_post:
-        tools.search("test query")
+        tools.perplexity_search("test query")
 
         call_args = mock_post.call_args
         assert call_args[0][0] == "https://api.perplexity.ai/search"
@@ -236,7 +236,7 @@ def test_search_request_url():
 
 
 @pytest.mark.asyncio
-async def test_asearch_success():
+async def test_aperplexity_search_success():
     """Test a successful async search returns parsed results."""
     mock_response = Mock()
     mock_response.status_code = 200
@@ -268,7 +268,7 @@ async def test_asearch_success():
         mock_async_client.return_value.__aenter__ = AsyncMock(return_value=mock_client)
         mock_async_client.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        result = await tools.asearch("AI agents")
+        result = await tools.aperplexity_search("AI agents")
         result_data = json.loads(result)
 
         assert len(result_data) == 2
@@ -283,7 +283,7 @@ async def test_asearch_success():
 
 
 @pytest.mark.asyncio
-async def test_asearch_with_filters():
+async def test_aperplexity_search_with_filters():
     """Test async search includes configured filters in the request body."""
     mock_response = Mock()
     mock_response.status_code = 200
@@ -304,7 +304,7 @@ async def test_asearch_with_filters():
         mock_async_client.return_value.__aenter__ = AsyncMock(return_value=mock_client)
         mock_async_client.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        await tools.asearch("test query")
+        await tools.aperplexity_search("test query")
 
         call_kwargs = mock_client.post.call_args
         body = call_kwargs[1]["json"]
@@ -314,7 +314,7 @@ async def test_asearch_with_filters():
 
 
 @pytest.mark.asyncio
-async def test_asearch_api_error():
+async def test_aperplexity_search_api_error():
     """Test async search handles API errors gracefully."""
     mock_client = AsyncMock()
     mock_client.post.side_effect = Exception("API connection failed")
@@ -325,14 +325,14 @@ async def test_asearch_api_error():
         mock_async_client.return_value.__aenter__ = AsyncMock(return_value=mock_client)
         mock_async_client.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        result = await tools.asearch("test query")
+        result = await tools.aperplexity_search("test query")
         result_data = json.loads(result)
         assert "error" in result_data
         assert "API connection failed" in result_data["error"]
 
 
 @pytest.mark.asyncio
-async def test_asearch_empty_results():
+async def test_aperplexity_search_empty_results():
     """Test async search with empty results."""
     mock_response = Mock()
     mock_response.status_code = 200
@@ -348,6 +348,6 @@ async def test_asearch_empty_results():
         mock_async_client.return_value.__aenter__ = AsyncMock(return_value=mock_client)
         mock_async_client.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        result = await tools.asearch("test query")
+        result = await tools.aperplexity_search("test query")
         result_data = json.loads(result)
         assert result_data == []

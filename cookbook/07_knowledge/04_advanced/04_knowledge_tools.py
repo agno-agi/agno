@@ -38,9 +38,9 @@ knowledge = Knowledge(
 
 knowledge_tools = KnowledgeTools(
     knowledge=knowledge,
-    enable_think=True,
-    enable_search=True,
-    enable_analyze=True,
+    think=True,
+    search=True,
+    analyze=True,
     add_few_shot=True,
 )
 

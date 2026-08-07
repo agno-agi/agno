@@ -1,6 +1,6 @@
 from os import getenv
 from pathlib import Path
-from typing import Any, Iterable, Iterator, List, Optional, Tuple, Union
+from typing import Callable, Iterable, Iterator, List, Optional, Tuple, Union
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -23,28 +23,39 @@ class ReplicateTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         model: str = "minimax/video-01",
-        enable_generate_media: bool = True,
+        generate_media: bool = True,
         all: bool = False,
         **kwargs,
     ):
+        """Initialize Replicate toolkit for AI model inference.
+
+        Generates images or videos using Replicate's hosted models.
+
+        Args:
+            api_key: Replicate API key. Falls back to REPLICATE_API_KEY env var.
+            model: Model identifier (default: minimax/video-01).
+            generate_media: Enable the generate_media tool.
+            all: Enable all tools.
+        """
         self.api_key = api_key or getenv("REPLICATE_API_KEY")
         if not self.api_key:
             log_error("REPLICATE_API_KEY not set. Please set the REPLICATE_API_KEY environment variable.")
         self.model = model
 
-        tools: List[Any] = []
-        if all or enable_generate_media:
-            tools.append(self.generate_media)
+        tools: List[Callable] = []
+        if all or generate_media:
+            tools.append(self.replicate_generate_media)
 
         super().__init__(name="replicate_toolkit", tools=tools, **kwargs)
 
-    def generate_media(self, agent: Union[Agent, Team], prompt: str) -> ToolResult:
-        """
-        Use this function to generate an image or a video using a replicate model.
+    def replicate_generate_media(self, agent: Union[Agent, Team], prompt: str) -> ToolResult:
+        """Generate an image or video using a Replicate model.
+
         Args:
-            prompt (str): A text description of the content.
+            prompt: A text description of the content to generate.
+
         Returns:
-            ToolResult: A ToolResult containing the generated media or error message.
+            ToolResult containing the generated media or error message.
         """
         if not self.api_key:
             log_error("API key is not set. Please provide a valid API key.")
@@ -88,8 +99,16 @@ class ReplicateTools(Toolkit):
             return ToolResult(content=f"Error: {e}")
 
     def _parse_output(self, output: FileOutput) -> Tuple[str, Union[Image, Video]]:
-        """
-        Parse the outputs from the replicate model.
+        """Parse a FileOutput and return a message and media artifact.
+
+        Args:
+            output: FileOutput from replicate.run() containing media URL.
+
+        Returns:
+            Tuple of (status message, Image or Video artifact).
+
+        Raises:
+            ValueError: If the file extension is not a supported image or video type.
         """
         # Parse the URL to extract the file extension
         parsed_url = urlparse(output.url)

@@ -19,8 +19,8 @@ def run_example() -> None:
         model=Llama(id="Llama-4-Maverick-17B-128E-Instruct-FP8"),
         tools=[
             ReasoningTools(
-                enable_think=True,
-                enable_analyze=True,
+                think=True,
+                analyze=True,
                 add_instructions=True,
             ),
             YFinanceTools(),

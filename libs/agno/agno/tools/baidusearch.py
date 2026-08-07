@@ -1,5 +1,5 @@
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug
@@ -35,7 +35,7 @@ class BaiduSearchTools(Toolkit):
         proxy: Optional[str] = None,
         timeout: Optional[int] = 10,
         debug: Optional[bool] = False,
-        enable_baidu_search: bool = True,
+        baidu_search: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -46,22 +46,22 @@ class BaiduSearchTools(Toolkit):
         self.timeout = timeout
         self.debug = debug
 
-        tools = []
-        if all or enable_baidu_search:
+        tools: List[Callable] = []
+        if all or baidu_search:
             tools.append(self.baidu_search)
 
-        super().__init__(name="baidusearch", tools=tools, **kwargs)
+        super().__init__(name="baidu_search_tools", tools=tools, **kwargs)
 
     def baidu_search(self, query: str, max_results: int = 5, language: str = "zh") -> str:
-        """Execute Baidu search and return results
+        """Execute Baidu search and return results.
 
         Args:
-            query (str): Search keyword
-            max_results (int, optional): Maximum number of results to return, default 5
-            language (str, optional): Search language, default Chinese
+            query: Search keyword.
+            max_results: Maximum number of results to return. Defaults to 5.
+            language: Search language code. Defaults to "zh" (Chinese).
 
         Returns:
-            str: A JSON formatted string containing the search results.
+            JSON with list of search results containing title, url, abstract, rank.
         """
         max_results = self.fixed_max_results or max_results
         language = self.fixed_language or language
@@ -74,16 +74,19 @@ class BaiduSearchTools(Toolkit):
 
         log_debug(f"Searching Baidu [{language}] for: {query}")
 
-        results = search(keyword=query, num_results=max_results)
+        try:
+            results = search(keyword=query, num_results=max_results)
 
-        res: List[Dict[str, str]] = []
-        for idx, item in enumerate(results, 1):
-            res.append(
-                {
-                    "title": item.get("title", ""),
-                    "url": item.get("url", ""),
-                    "abstract": item.get("abstract", ""),
-                    "rank": str(idx),
-                }
-            )
-        return json.dumps(res, indent=2)
+            res: List[Dict[str, str]] = []
+            for idx, item in enumerate(results, 1):
+                res.append(
+                    {
+                        "title": item.get("title", ""),
+                        "url": item.get("url", ""),
+                        "abstract": item.get("abstract", ""),
+                        "rank": str(idx),
+                    }
+                )
+            return json.dumps(res)
+        except Exception as e:
+            return json.dumps({"error": f"Baidu search failed: {e}"})

@@ -3,7 +3,7 @@ File Tools - File System Operations and Management
 
 This example demonstrates how to use FileTools for file operations
 including reading, writing, searching files, and searching file contents.
-Shows enable_ flag patterns for selective function access.
+Shows boolean flag patterns for selective function access.
 """
 
 from pathlib import Path
@@ -78,9 +78,9 @@ agent_readonly = Agent(
     tools=[
         FileTools(
             Path("tmp/file"),
-            enable_read_file=True,
-            enable_search_files=True,
-            enable_list_files=True,
+            read_file=True,
+            search_files=True,
+            list_files=True,
         )
     ],
     description="You are a file reader focused on accessing and searching existing files.",
@@ -111,10 +111,10 @@ agent_writer = Agent(
     tools=[
         FileTools(
             Path("tmp/file"),
-            enable_save_file=True,
-            enable_read_file=False,  # Disable file reading
-            enable_read_file_chunk=False,  # Disable reading in chunks as well
-            enable_search_files=False,  # Disable file searching
+            save_file=True,
+            read_file=False,  # Disable file reading
+            read_file_chunk=False,  # Disable reading in chunks as well
+            search_files=False,  # Disable file searching
         )
     ],
     description="You are a content creator focused on writing and organizing new files.",
@@ -127,17 +127,17 @@ agent_writer = Agent(
     markdown=True,
 )
 
-# Example 5: Content search agent using enable_search_content
+# Example 5: Content search agent using search_content
 # search_content lets the agent grep through file contents (case-insensitive)
 # for a query string, returning matching files with snippets.
 agent_content_search = Agent(
     tools=[
         FileTools(
             Path("tmp/file"),
-            enable_read_file=True,
-            enable_search_content=True,
-            enable_list_files=True,
-            enable_save_file=False,
+            read_file=True,
+            search_content=True,
+            list_files=True,
+            save_file=False,
         )
     ],
     description="You are a content search specialist that finds information within files.",
@@ -157,9 +157,9 @@ agent_default_exclusions = Agent(
     tools=[
         FileTools(
             base_dir=EXCLUSION_SANDBOX,
-            enable_list_files=True,
-            enable_search_files=True,
-            enable_search_content=True,
+            list_files=True,
+            search_files=True,
+            search_content=True,
         )
     ],
     description="You help users explore a project, skipping build and dependency noise.",
@@ -181,9 +181,9 @@ agent_can_read_venv = Agent(
         FileTools(
             base_dir=EXCLUSION_SANDBOX,
             exclude_patterns=exclude_without_venv,
-            enable_list_files=True,
-            enable_search_files=True,
-            enable_search_content=True,
+            list_files=True,
+            search_files=True,
+            search_content=True,
         )
     ],
     description="You inspect installed Python packages to answer version and source questions.",
@@ -202,8 +202,8 @@ agent_sees_everything = Agent(
         FileTools(
             base_dir=EXCLUSION_SANDBOX,
             exclude_patterns=[],
-            enable_list_files=True,
-            enable_search_files=True,
+            list_files=True,
+            search_files=True,
         )
     ],
     description="You audit the full project tree, including hidden and ignored directories.",
@@ -221,7 +221,7 @@ agent_directory_scoped = Agent(
     tools=[
         FileTools(
             base_dir=SUBDIR_SANDBOX,
-            enable_list_files=True,
+            list_files=True,
         )
     ],
     description="You explore project subdirectories on request.",

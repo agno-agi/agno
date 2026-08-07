@@ -52,17 +52,17 @@ coordinator = Agent(
     tools=[
         SlackTools(
             token=coordinator_token,
-            enable_send_message=True,
-            enable_send_message_thread=True,
-            enable_list_channels=False,
-            enable_get_channel_history=False,
-            enable_upload_file=False,
-            enable_download_file=False,
+            send_message=True,
+            send_message_thread=True,
+            list_channels=False,
+            get_channel_history=False,
+            upload_file=False,
+            download_file=False,
         )
     ],
     instructions=[
         "Answer normal project questions directly.",
-        "For research-heavy work, use send_message_thread in the current Slack thread.",
+        "For research-heavy work, use slack_send_message_thread in the current Slack thread.",
         f"Address the Researcher with the real Slack mention <@{researcher_user_id}>.",
         "Include a self-contained research request after the mention.",
     ],

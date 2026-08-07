@@ -3,7 +3,7 @@ import shlex
 from os import getenv
 from pathlib import Path
 from textwrap import dedent
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from uuid import uuid4
 
 from agno.agent import Agent
@@ -54,7 +54,7 @@ class SuperserveTools(Toolkit):
 
     A focused set of code-execution and file tools is enabled by default. The
     sandbox lifecycle tools (pause/resume) and secret-binding tools are opt-in via
-    their `enable_*` flags, or turn everything on with `all=True`. Every tool has
+    their respective flags, or turn everything on with `all=True`. Every tool has
     both a sync and an async variant, so the toolkit works with `agent.run()` and
     `agent.arun()`.
     """
@@ -73,22 +73,22 @@ class SuperserveTools(Toolkit):
         env_vars: Optional[Dict[str, str]] = None,
         secrets: Optional[Dict[str, str]] = None,
         persistent: bool = True,
-        enable_run_python_code: bool = True,
-        enable_run_command: bool = True,
-        enable_create_file: bool = True,
-        enable_read_file: bool = True,
-        enable_list_files: bool = True,
-        enable_delete_file: bool = True,
-        enable_download_directory: bool = True,
-        enable_get_sandbox_info: bool = True,
-        enable_list_sandboxes: bool = True,
-        enable_shutdown_sandbox: bool = True,
-        enable_shutdown_sandbox_by_id: bool = True,
-        enable_get_preview_url: bool = True,
-        enable_pause_sandbox: bool = False,
-        enable_resume_sandbox: bool = False,
-        enable_attach_secret: bool = False,
-        enable_detach_secret: bool = False,
+        run_python_code: bool = False,
+        run_command: bool = False,
+        create_file: bool = False,
+        read_file: bool = True,
+        list_files: bool = False,
+        delete_file: bool = False,
+        download_directory: bool = False,
+        get_sandbox_info: bool = True,
+        list_sandboxes: bool = False,
+        shutdown_sandbox: bool = False,
+        shutdown_sandbox_by_id: bool = False,
+        get_preview_url: bool = False,
+        pause_sandbox: bool = False,
+        resume_sandbox: bool = False,
+        attach_secret: bool = False,
+        detach_secret: bool = False,
         all: bool = False,
         instructions: Optional[str] = None,
         add_instructions: bool = False,
@@ -113,23 +113,23 @@ class SuperserveTools(Toolkit):
                 proxy token; the real credential never enters the sandbox.
             persistent: Persist the sandbox id in the agent's session state so the same
                 sandbox is reused across runs (default: True).
-            enable_run_python_code: Register the run_python_code tool (default: True).
-            enable_run_command: Register the run_command tool (default: True).
-            enable_create_file: Register the create_file tool (default: True).
-            enable_read_file: Register the read_file tool (default: True).
-            enable_list_files: Register the list_files tool (default: True).
-            enable_delete_file: Register the delete_file tool (default: True).
-            enable_download_directory: Register the download_directory tool (default: True).
-            enable_get_sandbox_info: Register the get_sandbox_info tool (default: True).
-            enable_list_sandboxes: Register the list_sandboxes tool (default: True).
-            enable_shutdown_sandbox: Register the shutdown_sandbox tool (default: True).
-            enable_shutdown_sandbox_by_id: Register the shutdown_sandbox_by_id tool (default: True).
-            enable_get_preview_url: Register the get_preview_url tool (default: True).
-            enable_pause_sandbox: Register the pause_sandbox tool (default: False).
-            enable_resume_sandbox: Register the resume_sandbox tool (default: False).
-            enable_attach_secret: Register the attach_secret tool (default: False).
-            enable_detach_secret: Register the detach_secret tool (default: False).
-            all: Register every tool, overriding the individual enable_* flags (default: False).
+            run_python_code: Register the run_python_code tool. Defaults to False.
+            run_command: Register the run_command tool. Defaults to False.
+            create_file: Register the create_file tool. Defaults to False.
+            read_file: Register the read_file tool. Defaults to True.
+            list_files: Register the list_files tool. Defaults to False.
+            delete_file: Register the delete_file tool. Defaults to False.
+            download_directory: Register the download_directory tool. Defaults to False.
+            get_sandbox_info: Register the get_sandbox_info tool. Defaults to True.
+            list_sandboxes: Register the list_sandboxes tool. Defaults to False.
+            shutdown_sandbox: Register the shutdown_sandbox tool. Defaults to False.
+            shutdown_sandbox_by_id: Register the shutdown_sandbox_by_id tool. Defaults to False.
+            get_preview_url: Register the get_preview_url tool. Defaults to False.
+            pause_sandbox: Register the pause_sandbox tool. Defaults to False.
+            resume_sandbox: Register the resume_sandbox tool. Defaults to False.
+            attach_secret: Register the attach_secret tool. Defaults to False.
+            detach_secret: Register the detach_secret tool. Defaults to False.
+            all: Register every tool, overriding the individual flags. Defaults to False.
             instructions: Override the default toolkit instructions.
             add_instructions: Whether to add the instructions to the agent's system message.
         """
@@ -156,54 +156,54 @@ class SuperserveTools(Toolkit):
 
         self.instructions = instructions or DEFAULT_INSTRUCTIONS
 
-        tools: List[Any] = []
-        async_tools: List[Any] = []
-        if all or enable_run_python_code:
+        tools: List[Callable] = []
+        async_tools: List[Tuple[Callable, str]] = []
+        if all or run_python_code:
             tools.append(self.run_python_code)
             async_tools.append((self.arun_python_code, "run_python_code"))
-        if all or enable_run_command:
+        if all or run_command:
             tools.append(self.run_command)
             async_tools.append((self.arun_command, "run_command"))
-        if all or enable_create_file:
+        if all or create_file:
             tools.append(self.create_file)
             async_tools.append((self.acreate_file, "create_file"))
-        if all or enable_read_file:
+        if all or read_file:
             tools.append(self.read_file)
             async_tools.append((self.aread_file, "read_file"))
-        if all or enable_list_files:
+        if all or list_files:
             tools.append(self.list_files)
             async_tools.append((self.alist_files, "list_files"))
-        if all or enable_delete_file:
+        if all or delete_file:
             tools.append(self.delete_file)
             async_tools.append((self.adelete_file, "delete_file"))
-        if all or enable_download_directory:
+        if all or download_directory:
             tools.append(self.download_directory)
             async_tools.append((self.adownload_directory, "download_directory"))
-        if all or enable_get_sandbox_info:
+        if all or get_sandbox_info:
             tools.append(self.get_sandbox_info)
             async_tools.append((self.aget_sandbox_info, "get_sandbox_info"))
-        if all or enable_list_sandboxes:
+        if all or list_sandboxes:
             tools.append(self.list_sandboxes)
             async_tools.append((self.alist_sandboxes, "list_sandboxes"))
-        if all or enable_shutdown_sandbox:
+        if all or shutdown_sandbox:
             tools.append(self.shutdown_sandbox)
             async_tools.append((self.ashutdown_sandbox, "shutdown_sandbox"))
-        if all or enable_shutdown_sandbox_by_id:
+        if all or shutdown_sandbox_by_id:
             tools.append(self.shutdown_sandbox_by_id)
             async_tools.append((self.ashutdown_sandbox_by_id, "shutdown_sandbox_by_id"))
-        if all or enable_get_preview_url:
+        if all or get_preview_url:
             tools.append(self.get_preview_url)
             async_tools.append((self.aget_preview_url, "get_preview_url"))
-        if all or enable_pause_sandbox:
+        if all or pause_sandbox:
             tools.append(self.pause_sandbox)
             async_tools.append((self.apause_sandbox, "pause_sandbox"))
-        if all or enable_resume_sandbox:
+        if all or resume_sandbox:
             tools.append(self.resume_sandbox)
             async_tools.append((self.aresume_sandbox, "resume_sandbox"))
-        if all or enable_attach_secret:
+        if all or attach_secret:
             tools.append(self.attach_secret)
             async_tools.append((self.aattach_secret, "attach_secret"))
-        if all or enable_detach_secret:
+        if all or detach_secret:
             tools.append(self.detach_secret)
             async_tools.append((self.adetach_secret, "detach_secret"))
 
@@ -310,13 +310,7 @@ class SuperserveTools(Toolkit):
 
     @staticmethod
     def _format_result(stdout: str, stderr: str, exit_code: int) -> str:
-        parts: List[str] = []
-        if stdout:
-            parts.append(f"STDOUT:\n{stdout}")
-        if stderr:
-            parts.append(f"STDERR:\n{stderr}")
-        parts.append(f"Exit code: {exit_code}")
-        return "\n".join(parts)
+        return json.dumps({"stdout": stdout, "stderr": stderr, "exit_code": exit_code})
 
     # ------------------------------------------------------------------
     # Core tools (sync)
@@ -368,7 +362,7 @@ class SuperserveTools(Toolkit):
         try:
             sandbox = self._get_sandbox(agent)
             sandbox.files.write(file_path, content)
-            return f"File written: {file_path}"
+            return json.dumps({"status": "success", "path": file_path})
         except Exception as e:
             return self._error("Error creating file", e)
 
@@ -401,7 +395,7 @@ class SuperserveTools(Toolkit):
             result = sandbox.commands.run(f"ls -la {shlex.quote(directory)}", timeout_seconds=self.command_timeout)
             if result.exit_code != 0:
                 return self._error(f"Error listing {directory}", result.stderr or "non-zero exit code")
-            return f"Contents of {directory}:\n{result.stdout}"
+            return json.dumps({"status": "success", "directory": directory, "contents": result.stdout})
         except Exception as e:
             return self._error("Error listing files", e)
 
@@ -419,7 +413,7 @@ class SuperserveTools(Toolkit):
             result = sandbox.commands.run(f"rm -rf {shlex.quote(file_path)}", timeout_seconds=self.command_timeout)
             if result.exit_code != 0:
                 return self._error(f"Error deleting {file_path}", result.stderr or "non-zero exit code")
-            return f"Deleted: {file_path}"
+            return json.dumps({"status": "success", "deleted": file_path})
         except Exception as e:
             return self._error("Error deleting file", e)
 
@@ -440,7 +434,7 @@ class SuperserveTools(Toolkit):
             destination = safe_join_relative_path(self.output_directory, local_path)
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(data)
-            return f"Downloaded {sandbox_path} to {destination}"
+            return json.dumps({"status": "success", "sandbox_path": sandbox_path, "local_path": str(destination)})
         except Exception as e:
             return self._error("Error downloading directory", e)
 
@@ -479,14 +473,14 @@ class SuperserveTools(Toolkit):
         """
         try:
             if self._sandbox is None and not self._resolve_sandbox_id(agent):
-                return "No active sandbox to shut down."
+                return json.dumps({"status": "info", "message": "No active sandbox to shut down."})
             sandbox = self._get_sandbox(agent)
             sandbox_id = sandbox.id
             sandbox.kill()
             self._sandbox = None
             self._async_sandbox = None
             self._clear_sandbox_id(agent)
-            return f"Sandbox {sandbox_id} shut down."
+            return json.dumps({"status": "success", "sandbox_id": sandbox_id})
         except Exception as e:
             return self._error("Error shutting down sandbox", e)
 
@@ -506,7 +500,7 @@ class SuperserveTools(Toolkit):
                 self._sandbox = None
                 self._async_sandbox = None
                 self._clear_sandbox_id(agent)
-            return f"Sandbox {sandbox_id} shut down."
+            return json.dumps({"status": "success", "sandbox_id": sandbox_id})
         except Exception as e:
             return self._error("Error shutting down sandbox", e)
 
@@ -521,7 +515,7 @@ class SuperserveTools(Toolkit):
         """
         try:
             sandbox = self._get_sandbox(agent)
-            return sandbox.get_preview_url(port)
+            return json.dumps({"status": "success", "url": sandbox.get_preview_url(port)})
         except Exception as e:
             return self._error("Error getting preview URL", e)
 
@@ -537,7 +531,7 @@ class SuperserveTools(Toolkit):
         try:
             sandbox = self._get_sandbox(agent)
             sandbox.pause()
-            return f"Sandbox {sandbox.id} paused."
+            return json.dumps({"status": "success", "sandbox_id": sandbox.id, "state": "paused"})
         except Exception as e:
             return self._error("Error pausing sandbox", e)
 
@@ -550,7 +544,7 @@ class SuperserveTools(Toolkit):
         try:
             sandbox = self._get_sandbox(agent)
             sandbox.resume()
-            return f"Sandbox {sandbox.id} resumed."
+            return json.dumps({"status": "success", "sandbox_id": sandbox.id, "state": "running"})
         except Exception as e:
             return self._error("Error resuming sandbox", e)
 
@@ -573,7 +567,7 @@ class SuperserveTools(Toolkit):
         try:
             sandbox = self._get_sandbox(agent)
             sandbox.attach_secret(env_key, secret_name)
-            return f"Secret '{secret_name}' attached as {env_key}."
+            return json.dumps({"status": "success", "secret": secret_name, "env_key": env_key})
         except Exception as e:
             return self._error("Error attaching secret", e)
 
@@ -589,7 +583,7 @@ class SuperserveTools(Toolkit):
         try:
             sandbox = self._get_sandbox(agent)
             sandbox.detach_secret(env_key)
-            return f"Secret binding {env_key} removed."
+            return json.dumps({"status": "success", "env_key": env_key, "detached": True})
         except Exception as e:
             return self._error("Error detaching secret", e)
 
@@ -621,7 +615,7 @@ class SuperserveTools(Toolkit):
         try:
             sandbox = await self._aget_sandbox(agent)
             await sandbox.files.write(file_path, content)
-            return f"File written: {file_path}"
+            return json.dumps({"status": "success", "path": file_path})
         except Exception as e:
             return self._error("Error creating file", e)
 
@@ -642,7 +636,7 @@ class SuperserveTools(Toolkit):
             )
             if result.exit_code != 0:
                 return self._error(f"Error listing {directory}", result.stderr or "non-zero exit code")
-            return f"Contents of {directory}:\n{result.stdout}"
+            return json.dumps({"status": "success", "directory": directory, "contents": result.stdout})
         except Exception as e:
             return self._error("Error listing files", e)
 
@@ -655,7 +649,7 @@ class SuperserveTools(Toolkit):
             )
             if result.exit_code != 0:
                 return self._error(f"Error deleting {file_path}", result.stderr or "non-zero exit code")
-            return f"Deleted: {file_path}"
+            return json.dumps({"status": "success", "deleted": file_path})
         except Exception as e:
             return self._error("Error deleting file", e)
 
@@ -667,7 +661,7 @@ class SuperserveTools(Toolkit):
             destination = safe_join_relative_path(self.output_directory, local_path)
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(data)
-            return f"Downloaded {sandbox_path} to {destination}"
+            return json.dumps({"status": "success", "sandbox_path": sandbox_path, "local_path": str(destination)})
         except Exception as e:
             return self._error("Error downloading directory", e)
 
@@ -694,14 +688,14 @@ class SuperserveTools(Toolkit):
         """Async variant of shutdown_sandbox."""
         try:
             if self._async_sandbox is None and not self._resolve_sandbox_id(agent):
-                return "No active sandbox to shut down."
+                return json.dumps({"status": "info", "message": "No active sandbox to shut down."})
             sandbox = await self._aget_sandbox(agent)
             sandbox_id = sandbox.id
             await sandbox.kill()
             self._sandbox = None
             self._async_sandbox = None
             self._clear_sandbox_id(agent)
-            return f"Sandbox {sandbox_id} shut down."
+            return json.dumps({"status": "success", "sandbox_id": sandbox_id})
         except Exception as e:
             return self._error("Error shutting down sandbox", e)
 
@@ -713,7 +707,7 @@ class SuperserveTools(Toolkit):
                 self._sandbox = None
                 self._async_sandbox = None
                 self._clear_sandbox_id(agent)
-            return f"Sandbox {sandbox_id} shut down."
+            return json.dumps({"status": "success", "sandbox_id": sandbox_id})
         except Exception as e:
             return self._error("Error shutting down sandbox", e)
 
@@ -721,7 +715,7 @@ class SuperserveTools(Toolkit):
         """Async variant of get_preview_url."""
         try:
             sandbox = await self._aget_sandbox(agent)
-            return sandbox.get_preview_url(port)
+            return json.dumps({"status": "success", "url": sandbox.get_preview_url(port)})
         except Exception as e:
             return self._error("Error getting preview URL", e)
 
@@ -733,7 +727,7 @@ class SuperserveTools(Toolkit):
         try:
             sandbox = await self._aget_sandbox(agent)
             await sandbox.pause()
-            return f"Sandbox {sandbox.id} paused."
+            return json.dumps({"status": "success", "sandbox_id": sandbox.id, "state": "paused"})
         except Exception as e:
             return self._error("Error pausing sandbox", e)
 
@@ -742,7 +736,7 @@ class SuperserveTools(Toolkit):
         try:
             sandbox = await self._aget_sandbox(agent)
             await sandbox.resume()
-            return f"Sandbox {sandbox.id} resumed."
+            return json.dumps({"status": "success", "sandbox_id": sandbox.id, "state": "running"})
         except Exception as e:
             return self._error("Error resuming sandbox", e)
 
@@ -754,7 +748,7 @@ class SuperserveTools(Toolkit):
         try:
             sandbox = await self._aget_sandbox(agent)
             await sandbox.attach_secret(env_key, secret_name)
-            return f"Secret '{secret_name}' attached as {env_key}."
+            return json.dumps({"status": "success", "secret": secret_name, "env_key": env_key})
         except Exception as e:
             return self._error("Error attaching secret", e)
 
@@ -763,6 +757,6 @@ class SuperserveTools(Toolkit):
         try:
             sandbox = await self._aget_sandbox(agent)
             await sandbox.detach_secret(env_key)
-            return f"Secret binding {env_key} removed."
+            return json.dumps({"status": "success", "env_key": env_key, "detached": True})
         except Exception as e:
             return self._error("Error detaching secret", e)
