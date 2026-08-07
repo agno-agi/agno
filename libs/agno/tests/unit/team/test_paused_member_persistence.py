@@ -4108,7 +4108,6 @@ async def test_a_run_finishing_during_an_async_save_is_not_discarded(monkeypatch
     assert "run-b" in ids, f"the concurrently added run was dropped by the restore; runs={ids}"
 
 
-
 # ---------------------------------------------------------------------------
 # Round 11: a refusal must arrive before any member has executed
 # ---------------------------------------------------------------------------
@@ -4185,9 +4184,7 @@ def test_a_subteam_that_cannot_route_refuses_before_a_sibling_executes(tmp_path)
     db_file = str(tmp_path / "preflight_sync.db")
     session_id = "s-preflight-sync"
 
-    run1 = _build_dup_leaf_org(SqliteDb(db_file=db_file), resuming=False).run(
-        "Email both sides", session_id=session_id
-    )
+    run1 = _build_dup_leaf_org(SqliteDb(db_file=db_file), resuming=False).run("Email both sides", session_id=session_id)
     assert run1.is_paused
     assert len(run1.requirements or []) == 2
 

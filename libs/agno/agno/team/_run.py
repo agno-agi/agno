@@ -7135,7 +7135,6 @@ def continue_run_dispatch(
                 team, run_response=run_response, session=team_session, run_context=run_context
             )
 
-
     # Route member requirements to member agents
     member_results: List[str] = []
     if has_member:
@@ -8134,9 +8133,7 @@ async def _acontinue_run_background_stream(
                 log_warning(f"Failed to push SSE data to queue for continue-run {_run_id}")
 
             try:
-                await sse_subscriber_manager.publish(
-                    _run_id, event_index if event_index is not None else -1, sse_data
-                )
+                await sse_subscriber_manager.publish(_run_id, event_index if event_index is not None else -1, sse_data)
             except Exception:
                 log_warning(f"Failed to publish SSE data to subscribers for continue-run {_run_id}")
 
@@ -8632,7 +8629,6 @@ async def _acontinue_run(
                         team, run_response=run_response, session=team_session, run_context=run_context
                     )
 
-
                 # Route member requirements
                 member_results: List[str] = list(routed_member_results)
                 if has_member:
@@ -9095,7 +9091,6 @@ async def _acontinue_run_stream(
                     if yield_run_output:
                         yield run_response
                     return
-
 
                 # Route member requirements. The routing generator appends into
                 # this list in place, so seeding it with the banked results
