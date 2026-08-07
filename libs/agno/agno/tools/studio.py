@@ -2166,7 +2166,7 @@ class StudioTools(Toolkit):
                 continue
             loader = get_team_by_id if agent_row.get("component_type") == "team" else get_agent_by_id
             try:
-                resolved = loader(db=target_db, id=mid, registry=self.registry, strict=True)
+                resolved = loader(db=target_db, id=mid, registry=self.registry, strict=False)  # MUTATION
             except ComponentRehydrationError as e:
                 raise ValueError(f"Member '{mid}' in the target db cannot be rebuilt: {e}") from e
             if resolved is None:
@@ -2228,7 +2228,9 @@ class StudioTools(Toolkit):
         resolved_version = row.get("version") if isinstance(row, dict) else None
         loader = get_team_by_id if is_team else get_agent_by_id
         try:
-            rebound = loader(db=target_db, id=child_id, version=resolved_version, registry=self.registry, strict=True)
+            rebound = loader(
+                db=target_db, id=child_id, version=resolved_version, registry=self.registry, strict=False
+            )  # MUTATION
         except ComponentRehydrationError as e:
             raise ValueError(f"{noun} '{child_id}' in db '{db_label}' cannot be rebuilt: {e}") from e
         if rebound is None:

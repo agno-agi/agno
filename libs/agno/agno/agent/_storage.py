@@ -431,12 +431,14 @@ def get_agent_data(agent: Agent) -> Dict[str, Any]:
 
 
 def _unresolvable_tool_name(entry: Any) -> Optional[str]:
-    """The display name of a tools entry that cannot execute without a registry.
+    """The display name of a tools entry that cannot execute without intervention.
 
     A rebuilt Function with no entrypoint (and no client-side execution) lost
-    its implementation. A plain dict carrying only a name - no ``type``, no
-    ``input_schema``, no ``parameters`` - is not a provider-native tool shape
-    either; it is a reference only a registry could satisfy.
+    its implementation and needs the registry - or a connected MCP toolkit -
+    to supply one. A dict that is nothing but a name (and provenance) is a
+    bare reference no registry can satisfy (rehydration needs a ``parameters``
+    key), so it needs the component re-saved from code. Any other dict is the
+    provider's to accept or reject and rides through untouched.
     """
     if isinstance(entry, Function):
         if entry.entrypoint is None and not entry.external_execution:
@@ -862,8 +864,9 @@ def from_dict(
             if unresolved_tools and strict:
                 raise ComponentRehydrationError(
                     f"{component_label} references tools not resolvable from the registry: "
-                    f"{unresolved_tools}. Add the tools to the registry (and connect MCP toolkits "
-                    "before loading), or pass strict=False to load the component without them."
+                    f"{unresolved_tools}. Add missing tools to the registry (and connect MCP "
+                    "toolkits before loading); a bare name-only reference cannot be resolved from "
+                    "a registry and needs the component re-saved from code. Or pass strict=False."
                 )
             config["tools"] = rehydrated_tools
         elif strict:
@@ -881,8 +884,13 @@ def from_dict(
                 )
             config["tools"] = rehydrated_tools
         else:
-            log_warning("No registry provided, tools will not be rehydrated.")
-            del config["tools"]
+            rehydrated_tools = Registry().rehydrate_functions(config["tools"])
+            unresolved_tools = [
+                name for entry in rehydrated_tools if (name := _unresolvable_tool_name(entry)) is not None
+            ]
+            if unresolved_tools:
+                log_warning(f"No registry provided; these tools cannot execute: {unresolved_tools}")
+            config["tools"] = rehydrated_tools
 
     # --- Handle DB reconstruction ---
     if "db" in config and isinstance(config["db"], dict):

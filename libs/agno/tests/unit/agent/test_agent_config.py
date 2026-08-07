@@ -477,17 +477,25 @@ class TestAgentFromDict:
         with pytest.raises(ComponentRehydrationError, match="search"):
             Agent.from_dict(config, registry=Registry(), strict=True)
 
-    def test_from_dict_without_registry_removes_tools_when_lenient(self):
-        """Test strict=False preserves the old drop-and-warn behavior."""
+    def test_from_dict_without_registry_keeps_registry_free_tools_when_lenient(self):
+        """A lenient load without a registry keeps everything that carries
+        itself: provider dicts unchanged, serialized Functions rebuilt without
+        entrypoints, bare references as-is with a warning. Deleting them made
+        the default load LOSSIER than strict."""
+        from agno.tools.function import Function
+
+        provider_tool = {"type": "web_search_preview"}
+        function_tool = {"name": "search", "description": "S", "parameters": {"type": "object", "properties": {}}}
         config = {
             "id": "no-registry-agent",
-            "tools": [{"name": "search"}],
+            "tools": [provider_tool, function_tool],
         }
 
         agent = Agent.from_dict(config, strict=False)
 
-        # Tools should be None/empty since no registry was provided
-        assert agent.tools is None or agent.tools == []
+        assert agent.tools is not None and len(agent.tools) == 2
+        assert agent.tools[0] == provider_tool
+        assert isinstance(agent.tools[1], Function) and agent.tools[1].entrypoint is None
 
     def test_from_dict_roundtrip(self, agent_with_settings):
         """Test that to_dict -> from_dict preserves agent configuration."""

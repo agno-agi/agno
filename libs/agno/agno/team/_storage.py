@@ -567,6 +567,9 @@ def to_dict(team: "Team") -> Dict[str, Any]:
                         if isinstance(tool.name, str) and tool.name:
                             func_dict["toolkit"] = tool.name
                         serialized_tools.append(func_dict)
+                elif isinstance(tool, dict):
+                    # Provider-native tool dicts serialize as themselves.
+                    serialized_tools.append(tool)
                 elif callable(tool):
                     func = Function.from_callable(tool)
                     serialized_tools.append(func.to_dict())
@@ -1022,8 +1025,9 @@ def from_dict(
             if unresolved_tools and strict:
                 raise ComponentRehydrationError(
                     f"{component_label} references tools not resolvable from the registry: "
-                    f"{unresolved_tools}. Add the tools to the registry (and connect MCP toolkits "
-                    "before loading), or pass strict=False to load the component without them."
+                    f"{unresolved_tools}. Add missing tools to the registry (and connect MCP "
+                    "toolkits before loading); a bare name-only reference cannot be resolved from "
+                    "a registry and needs the component re-saved from code. Or pass strict=False."
                 )
             config["tools"] = rehydrated_tools
         elif strict:
@@ -1043,8 +1047,15 @@ def from_dict(
                 )
             config["tools"] = rehydrated_tools
         else:
-            log_warning("No registry provided, tools will not be rehydrated.")
-            del config["tools"]
+            from agno.agent._storage import _unresolvable_tool_name
+
+            rehydrated_tools = Registry().rehydrate_functions(config["tools"])
+            unresolved_tools = [
+                name for entry in rehydrated_tools if (name := _unresolvable_tool_name(entry)) is not None
+            ]
+            if unresolved_tools:
+                log_warning(f"No registry provided; these tools cannot execute: {unresolved_tools}")
+            config["tools"] = rehydrated_tools
 
     # --- Handle DB reconstruction ---
     if "db" in config and isinstance(config["db"], dict):

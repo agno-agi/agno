@@ -491,17 +491,25 @@ class TestTeamFromDict:
         with pytest.raises(ComponentRehydrationError, match="need a registry"):
             Team.from_dict(config, strict=True)
 
-    def test_from_dict_without_registry_removes_tools_when_lenient(self):
-        """Test strict=False preserves the old drop-and-warn behavior."""
+    def test_from_dict_without_registry_keeps_registry_free_tools_when_lenient(self):
+        """A lenient load without a registry keeps everything that carries
+        itself: provider dicts unchanged, serialized Functions rebuilt without
+        entrypoints, bare references as-is with a warning. Deleting them made
+        the default load LOSSIER than strict."""
+        from agno.tools.function import Function
+
+        provider_tool = {"type": "web_search_preview"}
+        function_tool = {"name": "search", "description": "S", "parameters": {"type": "object", "properties": {}}}
         config = {
             "id": "no-registry-team",
-            "tools": [{"name": "search"}],
+            "tools": [provider_tool, function_tool],
         }
 
         team = Team.from_dict(config, strict=False)
 
-        # Tools should be None/empty since no registry was provided
-        assert team.tools is None or team.tools == []
+        assert team.tools is not None and len(team.tools) == 2
+        assert team.tools[0] == provider_tool
+        assert isinstance(team.tools[1], Function) and team.tools[1].entrypoint is None
 
     def test_from_dict_with_members_loads_from_db(self, mock_db):
         """Test from_dict loads member agents from database."""
@@ -1430,3 +1438,26 @@ def test_strict_refuses_a_copy_that_lost_serialized_state():
 
     with pytest.raises(ComponentRehydrationError, match="lost state"):
         Team.from_dict(config, registry=registry, strict=True)
+
+
+def test_team_provider_envelope_tools_survive_save_and_strict_reload(tmp_path):
+    """Team's serializer must keep provider-native dict tools, so an envelope
+    that rides through a load is not destroyed by the next save."""
+    from agno.db.sqlite import SqliteDb
+    from agno.models.openai import OpenAIResponses
+
+    db = SqliteDb(db_file=str(tmp_path / "team_envelope.db"))
+    envelope = {"type": "web_search_preview"}
+    team = Team(id="env-team", name="T", model=OpenAIResponses(id="gpt-5.5"), members=[], tools=[envelope])
+    team.save(db=db)
+
+    stored = db.get_config(component_id="env-team")["config"]
+    assert stored.get("tools") == [envelope]
+
+    loaded = get_team_by_id(db=db, id="env-team", registry=Registry(dbs=[db]), strict=True)
+    assert loaded is not None
+    assert loaded.tools == [envelope]
+
+    # And a load-save cycle keeps it too.
+    loaded.save(db=db)
+    assert db.get_config(component_id="env-team")["config"].get("tools") == [envelope]
