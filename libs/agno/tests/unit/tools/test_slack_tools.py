@@ -49,7 +49,7 @@ def test_init_all_flag_enables_all():
     with patch.dict("os.environ", {"SLACK_TOKEN": "test", "SLACK_USER_TOKEN": "xoxp-user"}):
         with patch("agno.tools.slack.WebClient"):
             tools = SlackTools(all=True)
-            assert len(tools.functions) == 12
+            assert len(tools.functions) == 14
 
 
 def test_init_creates_user_client_when_user_token_provided():
