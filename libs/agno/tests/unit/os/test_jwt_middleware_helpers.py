@@ -782,6 +782,160 @@ async def test_dispatch_allows_normal_subject():
     assert request.state.user_id == "alice"
 
 
+@pytest.mark.asyncio
+async def test_internal_scheduler_token_delegates_only_the_server_owned_actor_header():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agno.db.schemas.scheduler import STUDIO_SCHEDULE_ACTOR_HEADER, encode_studio_schedule_actor_id
+
+    middleware = JWTMiddleware(app=None, security_key="root-key", excluded_route_paths=[])
+    request = MagicMock()
+    request.url = SimpleNamespace(path="/agents/researcher/runs")
+    request.method = "POST"
+    request.headers = {
+        "Authorization": "Bearer internal-token",
+        STUDIO_SCHEDULE_ACTOR_HEADER: encode_studio_schedule_actor_id("studio-actor-josé"),
+        "origin": None,
+    }
+    request.cookies = {}
+    request.app = MagicMock()
+    request.app.state = SimpleNamespace(internal_service_token="internal-token")
+    request.state = _FakeState()
+    call_next = AsyncMock(return_value=MagicMock(status_code=200))
+
+    await middleware.dispatch(request, call_next)
+
+    call_next.assert_awaited_once()
+    assert request.state.user_id == "studio-actor-josé"
+
+
+@pytest.mark.asyncio
+async def test_open_rest_dependency_preserves_internal_scheduler_actor(monkeypatch):
+    from types import SimpleNamespace
+
+    from fastapi.security import HTTPAuthorizationCredentials
+
+    from agno.db.schemas.scheduler import STUDIO_SCHEDULE_ACTOR_HEADER, encode_studio_schedule_actor_id
+    from agno.os.auth import get_authentication_dependency
+    from agno.os.settings import AgnoAPISettings
+
+    monkeypatch.delenv("JWT_VERIFICATION_KEY", raising=False)
+    monkeypatch.delenv("JWT_JWKS_FILE", raising=False)
+    request = SimpleNamespace(
+        headers={STUDIO_SCHEDULE_ACTOR_HEADER: encode_studio_schedule_actor_id("jörg@example.com")},
+        app=SimpleNamespace(state=SimpleNamespace(internal_service_token="internal-token")),
+        state=SimpleNamespace(),
+    )
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="internal-token")
+    dependency = get_authentication_dependency(AgnoAPISettings(os_security_key=None))
+
+    assert await dependency(request, credentials) is True
+    assert request.state.authenticated is True
+    assert request.state.user_id == "jörg@example.com"
+
+
+@pytest.mark.asyncio
+async def test_open_rest_dependency_does_not_trust_actor_header_without_internal_token(monkeypatch):
+    from types import SimpleNamespace
+
+    from fastapi.security import HTTPAuthorizationCredentials
+
+    from agno.db.schemas.scheduler import STUDIO_SCHEDULE_ACTOR_HEADER, encode_studio_schedule_actor_id
+    from agno.os.auth import get_authentication_dependency
+    from agno.os.settings import AgnoAPISettings
+
+    monkeypatch.delenv("JWT_VERIFICATION_KEY", raising=False)
+    monkeypatch.delenv("JWT_JWKS_FILE", raising=False)
+    request = SimpleNamespace(
+        headers={STUDIO_SCHEDULE_ACTOR_HEADER: encode_studio_schedule_actor_id("spoofed-actor")},
+        app=SimpleNamespace(state=SimpleNamespace(internal_service_token="internal-token")),
+        state=SimpleNamespace(),
+    )
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="attacker-token")
+    dependency = get_authentication_dependency(AgnoAPISettings(os_security_key=None))
+
+    assert await dependency(request, credentials) is True
+    assert not hasattr(request.state, "user_id")
+
+
+def test_scheduler_actor_header_codec_round_trips_unicode_canonically():
+    from agno.db.schemas.scheduler import decode_studio_schedule_actor_id, encode_studio_schedule_actor_id
+
+    actor_id = "团队/équipe/🛰️"
+    encoded = encode_studio_schedule_actor_id(actor_id)
+
+    assert encoded.isascii()
+    assert decode_studio_schedule_actor_id(encoded) == actor_id
+
+
+@pytest.mark.parametrize(
+    "actor_id",
+    [" actor", "actor\nspoof", "actor\u202espoof", "actor\ud800"],
+)
+def test_scheduler_actor_header_codec_rejects_ambiguous_principals(actor_id):
+    from agno.db.schemas.scheduler import encode_studio_schedule_actor_id
+
+    with pytest.raises(ValueError, match="Invalid delegated scheduler actor"):
+        encode_studio_schedule_actor_id(actor_id)
+
+
+@pytest.mark.asyncio
+async def test_scheduler_actor_header_is_ignored_for_every_other_credential():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agno.db.schemas.scheduler import STUDIO_SCHEDULE_ACTOR_HEADER
+
+    middleware = JWTMiddleware(app=None, security_key="root-key", excluded_route_paths=[])
+    request = MagicMock()
+    request.url = SimpleNamespace(path="/agents/researcher/runs")
+    request.method = "POST"
+    request.headers = {
+        "Authorization": "Bearer root-key",
+        STUDIO_SCHEDULE_ACTOR_HEADER: "spoofed-actor",
+        "origin": None,
+    }
+    request.cookies = {}
+    request.app = MagicMock()
+    request.app.state = SimpleNamespace(internal_service_token="internal-token")
+    request.state = _FakeState()
+    call_next = AsyncMock(return_value=MagicMock(status_code=200))
+
+    await middleware.dispatch(request, call_next)
+
+    call_next.assert_awaited_once()
+    assert not hasattr(request.state, "user_id")
+
+
+@pytest.mark.asyncio
+async def test_internal_scheduler_rejects_malformed_delegated_actor():
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, MagicMock
+
+    from agno.db.schemas.scheduler import STUDIO_SCHEDULE_ACTOR_HEADER
+
+    middleware = JWTMiddleware(app=None, security_key="root-key", excluded_route_paths=[])
+    request = MagicMock()
+    request.url = SimpleNamespace(path="/agents/researcher/runs")
+    request.method = "POST"
+    request.headers = {
+        "Authorization": "Bearer internal-token",
+        STUDIO_SCHEDULE_ACTOR_HEADER: " actor-with-whitespace ",
+        "origin": None,
+    }
+    request.cookies = {}
+    request.app = MagicMock()
+    request.app.state = SimpleNamespace(internal_service_token="internal-token")
+    request.state = _FakeState()
+    call_next = AsyncMock(return_value=MagicMock(status_code=200))
+
+    response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 401
+    call_next.assert_not_awaited()
+
+
 # -- C4: the mount short-circuit trusts only this middleware's private marker -----------
 
 

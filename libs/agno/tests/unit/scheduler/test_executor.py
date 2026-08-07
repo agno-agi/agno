@@ -2,10 +2,20 @@
 
 import asyncio
 import json
+import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.pool import StaticPool
 
+from agno.db.schemas.scheduler import (
+    STUDIO_SCHEDULE_ACTOR_HEADER,
+    STUDIO_SCHEDULE_MANAGED_BY,
+    Schedule,
+    encode_studio_schedule_actor_id,
+)
+from agno.db.sqlite import SqliteDb
 from agno.scheduler.executor import ScheduleExecutor, _to_form_value
 
 
@@ -29,6 +39,9 @@ class TestToFormValue:
 
     def test_int(self):
         assert _to_form_value(42) == "42"
+
+    def test_none_is_not_python_literal(self):
+        assert _to_form_value(None) == ""
 
 
 class TestExecutorInit:
@@ -160,6 +173,100 @@ class TestExecutorBackgroundRun:
         assert "Missing run_id" in result["error"]
 
 
+class TestStudioScheduleIdentity:
+    @pytest.fixture
+    def executor(self):
+        return ScheduleExecutor(base_url="http://localhost:8000", internal_service_token="tok", poll_interval=0)
+
+    @staticmethod
+    def schedule(**overrides):
+        values = {
+            "id": "studio-schedule",
+            "name": "Daily research",
+            "cron_expr": "0 9 * * *",
+            "endpoint": "/agents/researcher/runs",
+            "method": "POST",
+            "payload": {"message": "private schedule prompt"},
+            "managed_by": STUDIO_SCHEDULE_MANAGED_BY,
+            "owner_actor_id": "actor-josé",
+            "target_type": "agent",
+            "target_id": "researcher",
+        }
+        values.update(overrides)
+        return Schedule(**values)
+
+    @pytest.mark.asyncio
+    async def test_studio_schedule_delegates_server_owned_actor_without_payload_provenance(self, executor):
+        client = AsyncMock()
+        with patch.object(executor, "_get_client", AsyncMock(return_value=client)):
+            with patch.object(
+                executor,
+                "_background_run",
+                AsyncMock(return_value={"status": "success"}),
+            ) as background_run:
+                await executor._call_endpoint(self.schedule())
+
+        _, _, headers, form_payload, _, _, _ = background_run.await_args.args
+        assert headers["Authorization"] == "Bearer tok"
+        assert headers[STUDIO_SCHEDULE_ACTOR_HEADER] == encode_studio_schedule_actor_id("actor-josé")
+        assert form_payload == {
+            "message": "private schedule prompt",
+            "stream": "false",
+            "background": "true",
+        }
+
+    @pytest.mark.asyncio
+    async def test_unset_optional_form_fields_are_omitted(self, executor):
+        client = AsyncMock()
+        schedule = self.schedule(payload={"message": "research", "user_id": None, "session_id": None})
+        with patch.object(executor, "_get_client", AsyncMock(return_value=client)):
+            with patch.object(
+                executor,
+                "_background_run",
+                AsyncMock(return_value={"status": "success"}),
+            ) as background_run:
+                await executor._call_endpoint(schedule)
+
+        form_payload = background_run.await_args.args[3]
+        assert form_payload == {"message": "research", "stream": "false", "background": "true"}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            {"owner_actor_id": "  "},
+            {"owner_actor_id": "actor\nspoof"},
+            {"owner_actor_id": "actor\u202espoof"},
+            {"target_id": "different-agent"},
+            {"target_type": "team"},
+            {"method": "GET"},
+        ],
+    )
+    async def test_malformed_studio_provenance_fails_before_http(self, executor, overrides):
+        get_client = AsyncMock()
+        with patch.object(executor, "_get_client", get_client):
+            with pytest.raises(RuntimeError, match="provenance is invalid"):
+                await executor._call_endpoint(self.schedule(**overrides))
+        get_client.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_studio_execution_exception_is_redacted_from_runs_and_logs(self, executor, caplog):
+        secret = "postgresql://admin:private-password@internal.example/agno"
+        db = MagicMock()
+        db.create_schedule_run = MagicMock()
+        db.update_schedule_run = MagicMock()
+        db.release_schedule = MagicMock()
+        db.update_schedule = MagicMock()
+
+        with patch.object(executor, "_call_endpoint", AsyncMock(side_effect=RuntimeError(secret))):
+            result = await executor.execute(self.schedule(), db)
+
+        assert result["status"] == "failed"
+        assert result["error"] == "Studio schedule execution failed"
+        assert secret not in caplog.text
+        assert secret not in str(db.update_schedule_run.call_args_list)
+
+
 class TestExecutorPollRun:
     """Test _poll_run status polling."""
 
@@ -259,6 +366,27 @@ class TestExecutorPollRun:
         assert result["status"] == "success"
         assert call_count == 3
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("first_response", ["exception", "not_found", "invalid_json"])
+    async def test_every_transient_poll_path_is_throttled(self, executor, first_response):
+        completed = MagicMock(status_code=200)
+        completed.json.return_value = {"status": "COMPLETED"}
+        invalid = MagicMock(status_code=200)
+        invalid.json.side_effect = json.JSONDecodeError("bad", "", 0)
+        responses = {
+            "exception": RuntimeError("temporary"),
+            "not_found": MagicMock(status_code=404),
+            "invalid_json": invalid,
+        }
+        client = AsyncMock()
+        client.request = AsyncMock(side_effect=[responses[first_response], completed])
+
+        with patch.object(executor, "_sleep_before_next_poll", AsyncMock()) as sleep:
+            result = await executor._poll_run(client, {}, "agents", "a1", "run-1", "sess-1", 60)
+
+        assert result["status"] == "success"
+        sleep.assert_awaited_once()
+
 
 class TestExecutorExecute:
     """Test the full execute() flow with mocked DB and endpoint."""
@@ -326,3 +454,215 @@ class TestExecutorExecute:
         mock_db.update_schedule_run.assert_called()
         cancel_call = mock_db.update_schedule_run.call_args
         assert cancel_call[1]["status"] == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_sync_db_calls_are_offloaded_from_event_loop(self, executor, simple_schedule):
+        loop_thread = threading.get_ident()
+        db_threads = []
+
+        class SyncDb:
+            def create_schedule_run(self, run):
+                db_threads.append(threading.get_ident())
+
+            def update_schedule_run(self, schedule_run_id, **updates):
+                db_threads.append(threading.get_ident())
+
+            def release_schedule(self, schedule_id, **kwargs):
+                db_threads.append(threading.get_ident())
+                return True
+
+        with patch.object(
+            executor,
+            "_call_endpoint",
+            AsyncMock(return_value={"status": "success", "status_code": 200}),
+        ):
+            result = await executor.execute(simple_schedule, SyncDb())
+
+        assert result["status"] == "success"
+        assert db_threads
+        assert all(thread_id != loop_thread for thread_id in db_threads)
+
+    @pytest.mark.asyncio
+    async def test_sync_db_method_returning_awaitable_is_awaited(self, executor):
+        class SyncWrapperDb:
+            def operation(self):
+                async def result():
+                    return "complete"
+
+                return result()
+
+        assert await executor._call_db(SyncWrapperDb(), "operation") == "complete"
+
+    @pytest.mark.asyncio
+    async def test_in_memory_sqlite_survives_sync_db_thread_offload(self, executor):
+        db = SqliteDb(db_url="sqlite:///:memory:")
+        schedule = {
+            "id": "in-memory-schedule",
+            "name": "in-memory-schedule",
+            "cron_expr": "* * * * *",
+            "timezone": "UTC",
+            "endpoint": "/config",
+            "method": "GET",
+            "payload": None,
+            "timeout_seconds": 60,
+            "max_retries": 0,
+            "retry_delay_seconds": 0,
+            "enabled": True,
+            "next_run_at": 4_102_444_800,
+            "created_at": 1,
+        }
+        try:
+            db.create_schedule(schedule)
+            stored_schedule = db.get_schedule(schedule["id"])
+            assert stored_schedule is not None
+
+            with patch.object(
+                executor,
+                "_call_endpoint",
+                AsyncMock(return_value={"status": "success", "status_code": 200}),
+            ):
+                result = await executor.execute(stored_schedule, db)
+
+            runs, total = db.get_schedule_runs(schedule["id"])
+            assert result["status"] == "success"
+            assert total == 1
+            assert runs[0]["status"] == "success"
+            assert isinstance(db.db_engine.pool, StaticPool)
+        finally:
+            db.close()
+
+    def test_caller_owned_sqlite_engine_is_used_without_reconfiguration(self):
+        engine = create_engine("sqlite:///:memory:")
+        db = SqliteDb(db_engine=engine)
+        try:
+            assert db.db_engine is engine
+            assert not isinstance(db.db_engine.pool, StaticPool)
+        finally:
+            db.close()
+
+    @pytest.mark.asyncio
+    async def test_native_async_db_calls_remain_on_event_loop(self, executor, simple_schedule):
+        loop_thread = threading.get_ident()
+        db_threads = []
+
+        class AsyncDb:
+            async def create_schedule_run(self, run):
+                db_threads.append(threading.get_ident())
+
+            async def update_schedule_run(self, schedule_run_id, **updates):
+                db_threads.append(threading.get_ident())
+
+            async def release_schedule(self, schedule_id, **kwargs):
+                db_threads.append(threading.get_ident())
+                return True
+
+        with patch.object(
+            executor,
+            "_call_endpoint",
+            AsyncMock(return_value={"status": "success", "status_code": 200}),
+        ):
+            result = await executor.execute(simple_schedule, AsyncDb())
+
+        assert result["status"] == "success"
+        assert db_threads == [loop_thread, loop_thread, loop_thread]
+
+    @pytest.mark.asyncio
+    async def test_claim_heartbeat_updates_release_fence(self, simple_schedule):
+        executor = ScheduleExecutor(
+            base_url="http://localhost:8000",
+            internal_service_token="tok",
+            lock_grace_seconds=1,
+        )
+        executor._heartbeat_interval = 0.01
+
+        class Db:
+            scheduler_api_version = 2
+
+            def __init__(self):
+                self.renewals = []
+                self.renew_attempts = 0
+                self.release = None
+
+            def create_schedule_run(self, run):
+                return run
+
+            def update_schedule_run(self, schedule_run_id, **updates):
+                return updates
+
+            def renew_schedule_claim(self, schedule_id, *, worker_id, locked_at):
+                self.renew_attempts += 1
+                if self.renew_attempts == 1:
+                    raise RuntimeError("transient renewal failure")
+                renewed_at = locked_at + 1
+                self.renewals.append((worker_id, locked_at, renewed_at))
+                return renewed_at
+
+            def release_schedule(self, schedule_id, **kwargs):
+                self.release = kwargs
+                return True
+
+        db = Db()
+        claimed = {
+            **simple_schedule,
+            "locked_by": "worker-1",
+            "locked_at": 100,
+        }
+
+        async def long_endpoint(schedule):
+            await asyncio.sleep(0.035)
+            return {"status": "success", "status_code": 200}
+
+        with patch.object(executor, "_call_endpoint", side_effect=long_endpoint):
+            await executor.execute(claimed, db)
+
+        assert len(db.renewals) >= 2
+        assert db.renew_attempts > len(db.renewals)
+        assert db.release["worker_id"] == "worker-1"
+        assert db.release["locked_at"] == db.renewals[-1][2]
+
+    @pytest.mark.asyncio
+    async def test_claim_heartbeat_stops_after_lost_ownership(self, simple_schedule):
+        executor = ScheduleExecutor(
+            base_url="http://localhost:8000",
+            internal_service_token="tok",
+            lock_grace_seconds=1,
+        )
+        executor._heartbeat_interval = 0.01
+
+        class Db:
+            scheduler_api_version = 2
+
+            def __init__(self):
+                self.renew_attempts = 0
+                self.release = None
+
+            def create_schedule_run(self, run):
+                return run
+
+            def update_schedule_run(self, schedule_run_id, **updates):
+                return updates
+
+            def renew_schedule_claim(self, schedule_id, *, worker_id, locked_at):
+                self.renew_attempts += 1
+                return None
+
+            def release_schedule(self, schedule_id, **kwargs):
+                self.release = kwargs
+                return False
+
+        db = Db()
+        claimed = {
+            **simple_schedule,
+            "locked_by": "worker-1",
+            "locked_at": 100,
+        }
+
+        async def long_endpoint(schedule):
+            await asyncio.sleep(0.04)
+            return {"status": "success", "status_code": 200}
+
+        with patch.object(executor, "_call_endpoint", side_effect=long_endpoint):
+            await executor.execute(claimed, db)
+
+        assert db.renew_attempts == 1
+        assert db.release["locked_at"] == 100
