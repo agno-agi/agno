@@ -3803,7 +3803,10 @@ def test_a_generic_alias_return_keeps_what_it_was_given(tmp_path):
     namespace: Dict[str, Any] = {}
     exec("type Maybe[T] = T | None", namespace)
 
+    executions = []
+
     def forecast():
+        executions.append(1)
         return Weather(city="Lisbon")
 
     forecast.__annotations__["return"] = namespace["Maybe"][Weather]
@@ -3816,6 +3819,9 @@ def test_a_generic_alias_return_keeps_what_it_was_given(tmp_path):
     assert isinstance(first.result, Weather)
     assert isinstance(second.result, Weather)
     assert second.result.city == "Lisbon"
+    # Losing the argument would leave the annotation unreadable, and the entry
+    # would be refused as unfaithful rather than served.
+    assert executions == [1]
 
 
 def test_entries_live_under_a_versioned_directory(tmp_path):
@@ -3852,3 +3858,80 @@ def test_a_union_return_keeps_the_member_the_tool_chose(tmp_path):
     assert isinstance(first.result, ToolResult)
     assert isinstance(second.result, ToolResult)
     assert executions == [1, 1]
+
+
+def test_a_hook_that_rewrites_an_argument_makes_the_call_uncacheable(tmp_path):
+    """A hook receives the live arguments and may replace one from state, which
+    cookbook/91_tools/tool_hooks/tool_hook_in_toolkit_with_state.py does. The
+    key names the question the caller asked, not the one the tool answered, so
+    the answer must not be stored under it."""
+    profiles = {"123": "profile-v1"}
+    executions = []
+
+    def resolve(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        arguments["customer"] = profiles[arguments["customer"]]
+        return function_call(**arguments)
+
+    def lookup(customer: str) -> str:
+        executions.append(customer)
+        return f"data for {customer}"
+
+    func = Function(name="lookup", entrypoint=lookup, cache_results=True, cache_dir=str(tmp_path), tool_hooks=[resolve])
+
+    first = FunctionCall(function=func, arguments={"customer": "123"}).execute()
+    profiles["123"] = "profile-v2"
+    second = FunctionCall(function=func, arguments={"customer": "123"}).execute()
+
+    assert first.result == "data for profile-v1"
+    assert second.result == "data for profile-v2"
+    assert executions == ["profile-v1", "profile-v2"]
+    assert list(tmp_path.rglob("*.json")) == []
+
+
+def test_a_result_holding_one_object_twice_is_not_cached(tmp_path):
+    """Two fields backed by one list come back as two lists, so a hook editing
+    one would see a different value on the hit than the miss gave it."""
+
+    def edit(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        result = function_call(**arguments)
+        result["a"].append("hook")
+        return {"a": result["a"], "b": result["b"]}
+
+    def shared(x: int) -> dict:
+        both: List[str] = []
+        return {"a": both, "b": both}
+
+    func = Function(name="shared", entrypoint=shared, cache_results=True, cache_dir=str(tmp_path), tool_hooks=[edit])
+
+    first = FunctionCall(function=func, arguments={"x": 1}).execute()
+    second = FunctionCall(function=func, arguments={"x": 1}).execute()
+
+    assert first.result == {"a": ["hook"], "b": ["hook"]}
+    assert second.result == first.result
+    assert list(tmp_path.rglob("*.json")) == []
+
+
+def test_a_result_that_answers_a_copy_with_itself_is_not_cached(tmp_path):
+    """The snapshot has to be the cache's own. A value that hands back itself
+    would keep whatever the hooks then did to it."""
+
+    class Sticky(BaseModel):
+        items: List[str] = []
+
+        def __deepcopy__(self, memo):
+            return self
+
+    def append(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        result = function_call(**arguments)
+        result.items.append("hook")
+        return f"items={result.items}"
+
+    def sticky(x: int) -> Sticky:
+        return Sticky(items=["raw"])
+
+    func = Function(name="sticky", entrypoint=sticky, cache_results=True, cache_dir=str(tmp_path), tool_hooks=[append])
+
+    outputs = [FunctionCall(function=func, arguments={"x": 1}).execute().result for _ in range(3)]
+
+    assert outputs == ["items=['raw', 'hook']"] * 3
+    assert list(tmp_path.rglob("*.json")) == []

@@ -171,6 +171,28 @@ def _carries_media(value: Any, depth: int = 0) -> bool:
     return any(_carries_media(part, depth + 1) for part in parts)
 
 
+def _shares_a_reference(value: Any, seen: Optional[List[int]] = None, depth: int = 0) -> bool:
+    """Whether one object sits in more than one place inside this value.
+
+    JSON keeps no record of that sharing, so a value written with it comes back
+    with as many separate objects as it had places."""
+    if depth > 32:
+        return False
+    if isinstance(value, BaseModel):
+        parts: Any = list(value.__dict__.values())
+    elif isinstance(value, dict):
+        parts = list(value.values())
+    elif isinstance(value, (list, tuple, set)):
+        parts = list(value)
+    else:
+        return False
+    seen = [] if seen is None else seen
+    if id(value) in seen:
+        return True
+    seen.append(id(value))
+    return any(_shares_a_reference(part, seen, depth + 1) for part in parts)
+
+
 def _faithful(original: Any, rebuilt: Any, depth: int = 0) -> bool:
     """Whether a value read back from the cache is the value that was stored.
 
@@ -205,9 +227,22 @@ def _record_entrypoint_result(raw_results: List[Any], slot: int, result: Any) ->
     from copy import deepcopy
 
     try:
-        raw_results[slot] = deepcopy(result)
+        snapshot = deepcopy(result)
     except Exception as e:
         log_debug(f"Result could not be copied for the cache, so this call is not cacheable: {e}")
+        return
+    if snapshot is result and isinstance(result, (dict, list, set, BaseModel)):
+        # A value may answer deepcopy with itself. The hooks run next and may
+        # edit it, and those edits would reach what the cache keeps.
+        log_debug(f"Result did not detach from a copy, so this call is not cacheable: {type(result).__name__}")
+        return
+    if _shares_a_reference(result):
+        # Two fields backed by one object come back as two on the far side of a
+        # JSON round trip, and a hook that edits one would then see a different
+        # value from the one the miss gave it.
+        log_debug("Result holds the same object in more than one place, so this call is not cacheable")
+        return
+    raw_results[slot] = snapshot
 
 
 def _unwrap_annotation(hint: Any) -> Any:
@@ -1950,7 +1985,9 @@ class FunctionCall(BaseModel):
         chain = reduce(create_hook_wrapper, hooks, execute_entrypoint)
         return chain
 
-    def _save_entrypoint_result(self, cache_file: str, raw_results: List[Any]) -> None:
+    def _save_entrypoint_result(
+        self, cache_key: str, cache_file: str, entrypoint_args: Dict[str, Any], raw_results: List[Any]
+    ) -> None:
         """Store what the entrypoint returned, so a hit replays the hooks over
         the same value the miss handed them.
 
@@ -1959,10 +1996,14 @@ class FunctionCall(BaseModel):
         itself produced none, and replaying over either would not reproduce the
         miss. Those calls stay uncached.
 
-        The caller passes the file the lookup used. The tool and its hooks can
-        reach the run context and the arguments the key is built from, so a key
-        worked out after they have run may name a different file, and the entry
-        would land under whichever identity the call left behind.
+        The caller passes the key and file the lookup used. The tool and its
+        hooks can reach the run context and the arguments the key is built
+        from, and a hook that rewrites an argument in place changes what the
+        tool was actually asked. Storing under the key the lookup used would
+        then answer a later call from a different question, and storing under a
+        key worked out afterwards would file the result under whatever the call
+        left behind. Neither is safe, so a call that moved its own key is not
+        cached at all.
         """
         from inspect import isasyncgen, isgenerator
 
@@ -1980,6 +2021,13 @@ class FunctionCall(BaseModel):
             result_to_cache = self.result
 
         if isgenerator(result_to_cache) or isasyncgen(result_to_cache):
+            return
+
+        if self.function._get_cache_key(entrypoint_args, self.arguments) != cache_key:
+            log_debug(
+                f"Skipping cache for {self.function.name}: the call changed what it was asked, "
+                "so the result does not answer the question the key names"
+            )
             return
 
         self.function._save_to_cache(cache_file, result_to_cache)
@@ -2060,7 +2108,7 @@ class FunctionCall(BaseModel):
                 # Only cache non-generator results, and never re-save a result
                 # that was just served from cache
                 if cacheable and not from_cache:
-                    self._save_entrypoint_result(cache_file, raw_results)
+                    self._save_entrypoint_result(cache_key, cache_file, entrypoint_args, raw_results)
 
                 updated_session_state = None
                 run_context = entrypoint_args.get("run_context") or entrypoint_args.get("_agno_run_context")
@@ -2314,7 +2362,7 @@ class FunctionCall(BaseModel):
             # Only cache if not a generator, and never re-save a result that
             # was just served from cache
             if cacheable and not from_cache:
-                self._save_entrypoint_result(cache_file, raw_results)
+                self._save_entrypoint_result(cache_key, cache_file, entrypoint_args, raw_results)
 
             # For generators, don't capture updated_session_state -
             # session_state is passed by reference, so mutations made during
