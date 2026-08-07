@@ -673,9 +673,15 @@ def to_dict(team: "Team") -> Dict[str, Any]:
     # --- Reasoning settings ---
     if team.reasoning:
         config["reasoning"] = team.reasoning
-    # TODO: implement reasoning model serialization
-    # if team.reasoning_model is not None:
-    #     config["reasoning_model"] = team.reasoning_model.to_dict() if isinstance(team.reasoning_model, Model) else str(team.reasoning_model)
+    if team.reasoning_model is not None:
+        # Mirrors the agent side. from_dict does not read this back yet
+        # (#9452), so it is not round-tripped -- but without it the field is
+        # lost at SAVE time, which leaves nothing for a loader to notice or a
+        # future reconstruction to restore.
+        if isinstance(team.reasoning_model, Model):
+            config["reasoning_model"] = team.reasoning_model.to_dict()
+        else:
+            config["reasoning_model"] = str(team.reasoning_model)
     if team.reasoning_min_steps != 1:  # default is 1
         config["reasoning_min_steps"] = team.reasoning_min_steps
     if team.reasoning_max_steps != 10:  # default is 10
