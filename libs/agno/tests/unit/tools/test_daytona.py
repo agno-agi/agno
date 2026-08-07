@@ -1,5 +1,6 @@
 """Test DaytonaTools functionality."""
 
+import shlex
 import sys
 from unittest.mock import MagicMock, patch
 
@@ -165,6 +166,25 @@ class TestDaytonaTools:
             assert "Changed directory to:" in result
             assert "/home/test" in result
 
+    def test_run_shell_command_cd_quotes_path(self, mock_daytona, mock_agent):
+        """Test cd path checks quote shell metacharacters."""
+        mock_client, mock_sandbox, mock_process, _ = mock_daytona
+
+        with patch.dict("os.environ", {"DAYTONA_API_KEY": "test-key"}):
+            tools = DaytonaTools()
+
+            mock_test = MagicMock()
+            mock_test.result = "not found"
+            mock_process.exec.return_value = mock_test
+
+            path = "/home/daytona/vuln; id;"
+            result = tools.run_shell_command(mock_agent, f"cd {path}")
+
+            assert f"Directory {path} not found" in result
+            mock_process.exec.assert_called_once_with(
+                f"test -d {shlex.quote(path)} && echo 'exists' || echo 'not found'", cwd="/"
+            )
+
     def test_create_file(self, mock_daytona, mock_agent):
         """Test create_file method."""
         mock_client, mock_sandbox, mock_process, _ = mock_daytona
@@ -180,6 +200,27 @@ class TestDaytonaTools:
             # Test file creation
             result = tools.create_file(mock_agent, "test.txt", "Hello, World!")
             assert "File created/updated: /home/daytona/test.txt" in result
+
+    def test_create_file_quotes_path(self, mock_daytona, mock_agent):
+        """Test create_file quotes derived shell paths."""
+        mock_client, mock_sandbox, mock_process, _ = mock_daytona
+
+        with patch.dict("os.environ", {"DAYTONA_API_KEY": "test-key"}):
+            tools = DaytonaTools()
+
+            mock_execution = MagicMock()
+            mock_execution.exit_code = 0
+            mock_process.exec.return_value = mock_execution
+
+            file_path = "dir; id;/name's.txt"
+            path = "/home/daytona/dir; id;/name's.txt"
+            parent_dir = "/home/daytona/dir; id;"
+
+            result = tools.create_file(mock_agent, file_path, "Hello, World!")
+
+            assert f"File created/updated: {path}" in result
+            assert mock_process.exec.call_args_list[0].args[0] == f"mkdir -p {shlex.quote(parent_dir)}"
+            assert mock_process.exec.call_args_list[1].args[0].startswith(f"cat > {shlex.quote(path)} << 'EOF'")
 
     def test_read_file(self, mock_daytona, mock_agent):
         """Test read_file method."""
@@ -198,6 +239,24 @@ class TestDaytonaTools:
             result = tools.read_file(mock_agent, "test.txt")
             assert result == "File contents"
 
+    def test_read_file_quotes_path(self, mock_daytona, mock_agent):
+        """Test read_file quotes derived shell paths."""
+        mock_client, mock_sandbox, mock_process, _ = mock_daytona
+
+        with patch.dict("os.environ", {"DAYTONA_API_KEY": "test-key"}):
+            tools = DaytonaTools()
+
+            mock_execution = MagicMock()
+            mock_execution.exit_code = 0
+            mock_execution.result = "File contents"
+            mock_process.exec.return_value = mock_execution
+
+            path = "/home/daytona/name'; id;.txt"
+            result = tools.read_file(mock_agent, "name'; id;.txt")
+
+            assert result == "File contents"
+            mock_process.exec.assert_called_once_with(f"cat {shlex.quote(path)}")
+
     def test_list_files(self, mock_daytona, mock_agent):
         """Test list_files method."""
         mock_client, mock_sandbox, mock_process, _ = mock_daytona
@@ -215,6 +274,24 @@ class TestDaytonaTools:
             result = tools.list_files(mock_agent, ".")
             assert "file1.txt" in result
             assert "file2.py" in result
+
+    def test_list_files_quotes_path(self, mock_daytona, mock_agent):
+        """Test list_files quotes derived shell paths."""
+        mock_client, mock_sandbox, mock_process, _ = mock_daytona
+
+        with patch.dict("os.environ", {"DAYTONA_API_KEY": "test-key"}):
+            tools = DaytonaTools()
+
+            mock_execution = MagicMock()
+            mock_execution.exit_code = 0
+            mock_execution.result = "file1.txt"
+            mock_process.exec.return_value = mock_execution
+
+            path = "/home/daytona/dir'; id;"
+            result = tools.list_files(mock_agent, "dir'; id;")
+
+            assert "file1.txt" in result
+            mock_process.exec.assert_called_once_with(f"ls -la {shlex.quote(path)}")
 
     def test_delete_file(self, mock_daytona, mock_agent):
         """Test delete_file method."""
@@ -238,6 +315,33 @@ class TestDaytonaTools:
             result = tools.delete_file(mock_agent, "test.txt")
             assert result == "Deleted: /home/daytona/test.txt"
 
+    def test_delete_file_quotes_path(self, mock_daytona, mock_agent):
+        """Test delete_file quotes derived shell paths."""
+        mock_client, mock_sandbox, mock_process, _ = mock_daytona
+
+        with patch.dict("os.environ", {"DAYTONA_API_KEY": "test-key"}):
+            tools = DaytonaTools()
+
+            mock_check = MagicMock()
+            mock_check.result = "file"
+            mock_delete = MagicMock()
+            mock_delete.exit_code = 0
+
+            mock_process.exec.side_effect = [
+                mock_check,
+                mock_delete,
+            ]
+
+            path = "/home/daytona/name'; id;.txt"
+            result = tools.delete_file(mock_agent, "name'; id;.txt")
+
+            assert result == f"Deleted: {path}"
+            assert (
+                mock_process.exec.call_args_list[0].args[0]
+                == f"test -d {shlex.quote(path)} && echo 'directory' || echo 'file'"
+            )
+            assert mock_process.exec.call_args_list[1].args[0] == f"rm -f {shlex.quote(path)}"
+
     def test_change_directory(self, mock_daytona, mock_agent):
         """Test change_directory method."""
         mock_client, mock_sandbox, mock_process, _ = mock_daytona
@@ -258,6 +362,28 @@ class TestDaytonaTools:
 
             # Check that working directory was updated
             assert mock_agent.session_state["working_directory"] == "/home/test"
+
+    def test_change_directory_keeps_resolved_directory(self, mock_daytona, mock_agent):
+        """Test change_directory does not overwrite the verified sandbox path."""
+        mock_client, mock_sandbox, mock_process, _ = mock_daytona
+
+        with patch.dict("os.environ", {"DAYTONA_API_KEY": "test-key"}):
+            tools = DaytonaTools()
+
+            mock_pwd = MagicMock()
+            mock_pwd.result = "/home/daytona\n"
+            mock_test = MagicMock()
+            mock_test.result = "exists"
+
+            mock_process.exec.side_effect = [
+                mock_pwd,
+                mock_test,
+            ]
+
+            result = tools.change_directory(mock_agent, "subdir")
+
+            assert "Changed directory to: /home/daytona/subdir" in result
+            assert mock_agent.session_state["working_directory"] == "/home/daytona/subdir"
 
     def test_ssl_configuration(self):
         """Test SSL configuration."""

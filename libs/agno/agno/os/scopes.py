@@ -10,17 +10,29 @@ Scope Format:
 The AgentOS ID is verified via the JWT `aud` (audience) claim.
 
 Examples:
-- `system:read` - Read system config
+- `config:read` - Read OS configuration
 - `agents:read` - List all agents
 - `agents:web-agent:read` - Read specific agent
 - `agents:web-agent:run` - Run specific agent
 - `agents:*:run` - Run any agent (wildcard)
 - `agent_os:admin` - Full access to everything
+
+Backwards compatibility:
+- Legacy ``system:*`` scopes are accepted as aliases for ``config:*`` so tokens
+  issued before the rename continue to work. Prefer ``config:*`` in new tokens.
 """
 
+import fnmatch
+import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
+
+# Legacy resource name aliases — keep tokens issued before a rename working.
+# Keys are the legacy resource names, values are the current names.
+LEGACY_RESOURCE_ALIASES: Dict[str, str] = {
+    "system": "config",
+}
 
 
 class AgentOSScope(str, Enum):
@@ -33,7 +45,9 @@ class AgentOSScope(str, Enum):
     Scope format:
 
     Global Resource Scopes:
-    - system:read - System configuration and model information
+    - config:read - OS configuration and model information (legacy alias: system:read)
+    - config:write - Administrative writes such as database migrations (legacy alias: system:write)
+    - registry:read - Read the code-defined registry (tools, models, databases, etc.)
     - agents:read - List all agents
     - teams:read - List all teams
     - workflows:read - List all workflows
@@ -43,6 +57,9 @@ class AgentOSScope(str, Enum):
     - memories:read - View memories
     - memories:write - Create and update memories
     - memories:delete - Delete memories
+    - learnings:read - View learnings
+    - learnings:write - Create and update learnings
+    - learnings:delete - Delete learnings
     - knowledge:read - View and search knowledge
     - knowledge:write - Add and update knowledge
     - knowledge:delete - Delete knowledge
@@ -52,6 +69,9 @@ class AgentOSScope(str, Enum):
     - evals:write - Create and update evaluation runs
     - evals:delete - Delete evaluation runs
     - traces:read - View traces and trace statistics
+    - service_accounts:read - List service accounts
+    - service_accounts:write - Mint service account tokens
+    - service_accounts:delete - Revoke service account tokens
 
     Per-Resource Scopes (with resource ID):
     - agents:<agent-id>:read - Read specific agent
@@ -124,10 +144,11 @@ def parse_scope(scope: str, admin_scope: Optional[str] = None) -> ParsedScope:
 
     # Global resource scope: resource:action (2 parts)
     if len(parts) == 2:
+        resource = LEGACY_RESOURCE_ALIASES.get(parts[0], parts[0])
         return ParsedScope(
             raw=scope,
             scope_type="global",
-            resource=parts[0],
+            resource=resource,
             action=parts[1],
         )
 
@@ -135,11 +156,12 @@ def parse_scope(scope: str, admin_scope: Optional[str] = None) -> ParsedScope:
     if len(parts) == 3:
         resource_id = parts[1]
         is_wildcard_resource = resource_id == "*"
+        resource = LEGACY_RESOURCE_ALIASES.get(parts[0], parts[0])
 
         return ParsedScope(
             raw=scope,
             scope_type="per_resource",
-            resource=parts[0],
+            resource=resource,
             resource_id=resource_id,
             action=parts[2],
             is_wildcard_resource=is_wildcard_resource,
@@ -147,6 +169,29 @@ def parse_scope(scope: str, admin_scope: Optional[str] = None) -> ParsedScope:
 
     # Invalid format
     return ParsedScope(raw=scope, scope_type="unknown")
+
+
+def split_scope(raw: str) -> Tuple[str, Optional[str], str]:
+    """Split a scope string into its wire-format parts: (namespace, sub_namespace, permission).
+
+    This is the parse behind the ``{raw, namespace, sub_namespace, permission}`` payload
+    shape shared by every scope-bearing management API (service accounts, RBAC governance),
+    so all surfaces render a scope identically for UIs. Legacy namespaces are mapped the
+    same way :func:`parse_scope` maps them for enforcement (``system:read`` renders under
+    ``config``), so the wire shape never misrepresents the effective permission; ``raw``
+    keeps the original string.
+
+        ``agents:read``    -> ("agents", None, "read")
+        ``agents:*:run``   -> ("agents", "*", "run")
+        ``system:read``    -> ("config", None, "read")
+        ``agent_os:admin`` -> ("agent_os", None, "admin")
+    """
+    parts = raw.split(":")
+    if len(parts) == 2:
+        return LEGACY_RESOURCE_ALIASES.get(parts[0], parts[0]), None, parts[1]
+    if len(parts) >= 3:
+        return LEGACY_RESOURCE_ALIASES.get(parts[0], parts[0]), ":".join(parts[1:-1]), parts[-1]
+    return (parts[0] if parts else "unknown"), None, "unknown"
 
 
 def matches_scope(
@@ -300,6 +345,7 @@ def get_accessible_resource_ids(
     user_scopes: List[str],
     resource_type: str,
     admin_scope: Optional[str] = None,
+    action: Optional[str] = None,
 ) -> Set[str]:
     """
     Get the set of resource IDs the user has access to.
@@ -308,6 +354,8 @@ def get_accessible_resource_ids(
         user_scopes: List of scope strings the user has
         resource_type: Type of resource ("agents", "teams", "workflows")
         admin_scope: The scope string that grants admin access (default: "agent_os:admin")
+        action: If provided, only consider scopes matching this action (e.g. "run", "read").
+                If None, considers scopes with any action (backwards compatible for list filtering).
 
     Returns:
         Set of resource IDs the user can access. Returns {"*"} for wildcard access.
@@ -327,7 +375,17 @@ def get_accessible_resource_ids(
 
         >>> get_accessible_resource_ids(["admin"], "agents")
         {'*'}
+
+        >>> get_accessible_resource_ids(
+        ...     ["agents:agent-1:read"],
+        ...     "agents",
+        ...     action="run"
+        ... )
+        set()
     """
+    # Actions to match — if action is specified, only match that; otherwise match read/run (legacy)
+    allowed_actions = [action] if action else ["read", "run"]
+
     parsed_scopes = [parse_scope(scope, admin_scope=admin_scope) for scope in user_scopes]
 
     # Check for admin or global wildcard access
@@ -338,10 +396,10 @@ def get_accessible_resource_ids(
         # Check if resource type matches
         if scope.resource == resource_type:
             # Global resource scope (no resource_id) grants access to all
-            if not scope.resource_id and scope.action in ["read", "run"]:
+            if not scope.resource_id and scope.action in allowed_actions:
                 return {"*"}
             # Wildcard resource scope grants access to all
-            if scope.is_wildcard_resource and scope.action in ["read", "run"]:
+            if scope.is_wildcard_resource and scope.action in allowed_actions:
                 return {"*"}
 
     # Collect specific resource IDs
@@ -350,7 +408,7 @@ def get_accessible_resource_ids(
         # Check if resource type matches
         if scope.resource == resource_type:
             # Specific resource ID
-            if scope.resource_id and not scope.is_wildcard_resource and scope.action in ["read", "run"]:
+            if scope.resource_id and not scope.is_wildcard_resource and scope.action in allowed_actions:
                 accessible_ids.add(scope.resource_id)
 
     return accessible_ids
@@ -363,10 +421,10 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
     Returns a dictionary mapping route patterns (with HTTP methods) to required scope templates.
     Format: "METHOD /path/pattern": ["resource:action"]
     """
-    return {
-        # System endpoints
-        "GET /config": ["system:read"],
-        "GET /models": ["system:read"],
+    mappings: Dict[str, List[str]] = {
+        # Config endpoints (legacy scope: system:read)
+        "GET /config": ["config:read"],
+        "GET /models": ["config:read"],
         # Agent endpoints
         "GET /agents": ["agents:read"],
         "GET /agents/*": ["agents:read"],
@@ -412,6 +470,12 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "DELETE /memories": ["memories:delete"],
         "DELETE /memories/*": ["memories:delete"],
         "POST /optimize-memories": ["memories:write"],
+        # Learning endpoints
+        "GET /learnings": ["learnings:read"],
+        "GET /learnings/*": ["learnings:read"],
+        "POST /learnings": ["learnings:write"],
+        "PATCH /learnings/*": ["learnings:write"],
+        "DELETE /learnings/*": ["learnings:delete"],
         # Knowledge endpoints
         "GET /knowledge/content": ["knowledge:read"],
         "GET /knowledge/content/*": ["knowledge:read"],
@@ -434,6 +498,10 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "GET /traces": ["traces:read"],
         "GET /traces/*": ["traces:read"],
         "GET /trace_session_stats": ["traces:read"],
+        # Service account endpoints
+        "POST /service-accounts": ["service_accounts:write"],
+        "GET /service-accounts": ["service_accounts:read"],
+        "DELETE /service-accounts/*": ["service_accounts:delete"],
         # Schedule endpoints
         "GET /schedules": ["schedules:read"],
         "GET /schedules/*": ["schedules:read"],
@@ -452,7 +520,165 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "GET /approvals/*/status": ["approvals:read"],
         "POST /approvals/*/resolve": ["approvals:write"],
         "DELETE /approvals/*": ["approvals:delete"],
+        # Trace search
+        "POST /traces/search": ["traces:read"],
+        # Database migration endpoints (admin-only operations, legacy scope: system:write)
+        "POST /databases/all/migrate": ["config:write"],
+        "POST /databases/*/migrate": ["config:write"],
+        # Additional knowledge endpoints
+        "POST /knowledge/remote-content": ["knowledge:write"],
+        "GET /knowledge/*/sources": ["knowledge:read"],
+        "GET /knowledge/*/sources/*/files": ["knowledge:read"],
+        # Registry (read-only)
+        "GET /registry": ["registry:read"],
+        # Component endpoints (Studio)
+        "GET /components": ["components:read"],
+        "GET /components/*": ["components:read"],
+        "POST /components": ["components:write"],
+        "PATCH /components/*": ["components:write"],
+        "DELETE /components/*": ["components:delete"],
+        "GET /components/*/configs": ["components:read"],
+        "GET /components/*/configs/*": ["components:read"],
+        "GET /components/*/configs/current": ["components:read"],
+        "POST /components/*/configs": ["components:write"],
+        "PATCH /components/*/configs/*": ["components:write"],
+        "DELETE /components/*/configs/*": ["components:delete"],
+        "POST /components/*/configs/*/set-current": ["components:write"],
     }
+    return mappings
+
+
+def get_required_scopes_for_route(scope_mappings: Dict[str, List[str]], method: str, path: str) -> List[str]:
+    """
+    Look up the required scopes for a method and path in a scope-mappings dict.
+
+    Args:
+        scope_mappings: Mapping of "METHOD /path/pattern" to required scope lists
+        method: HTTP method (GET, POST, etc.)
+        path: Request path
+
+    Returns:
+        List of required scopes. Empty list [] means no scopes required (allow access).
+        Routes not present in scope_mappings also return [], allowing access.
+    """
+    route_key = f"{method} {path}"
+
+    # First, try exact match
+    if route_key in scope_mappings:
+        return scope_mappings[route_key]
+
+    # Then try pattern matching
+    for pattern, scopes in scope_mappings.items():
+        pattern_method, pattern_path = pattern.split(" ", 1)
+
+        if pattern_method != method:
+            continue
+
+        # Convert pattern to fnmatch pattern (replace {param} with *)
+        # This handles both /agents/* and /agents/{agent_id} style patterns
+        normalized_pattern = pattern_path
+        if "{" in normalized_pattern:
+            normalized_pattern = re.sub(r"\{[^}]+\}", "*", normalized_pattern)
+
+        if fnmatch.fnmatch(path, normalized_pattern):
+            return scopes
+
+    return []
+
+
+def get_resource_context_from_path(path: str) -> Tuple[Optional[str], Optional[str]]:
+    """Extract (resource_type, resource_id) from a path like /agents/my-agent/runs."""
+    # Anchor to the first path segment to avoid misclassifying paths like
+    # /knowledge/agents/sources as "agents" resources. Only /agents, /teams,
+    # /workflows (and /a2a/{family}) own the resource type.
+    type_match = re.match(r"^/(?:a2a/)?(agents|teams|workflows)(?:/|$)", path)
+    if not type_match:
+        return None, None
+
+    resource_type = type_match.group(1)
+
+    id_match = re.match(rf"^/(?:a2a/)?{resource_type}/([^/]+)", path)
+    if id_match:
+        return resource_type, id_match.group(1)
+
+    return resource_type, None
+
+
+@dataclass
+class RouteScopeCheck:
+    """Result of checking a caller's scopes against a route's requirements."""
+
+    allowed: bool
+    required_scopes: List[str]
+    # Set only for listing endpoints where the caller lacks the global scope but may
+    # hold per-resource scopes: the endpoint should filter results to these IDs
+    # (possibly an empty set) instead of rejecting with 403.
+    accessible_resource_ids: Optional[Set[str]] = None
+
+
+def check_route_scopes(
+    user_scopes: List[str],
+    scope_mappings: Dict[str, List[str]],
+    method: str,
+    path: str,
+    admin_scope: Optional[str] = None,
+) -> RouteScopeCheck:
+    """
+    Check a caller's scopes against the scopes required for a route.
+
+    This is the single RBAC decision used for every credential type (JWTs, the internal
+    service token, and service account tokens). Listing endpoints get special handling:
+    a caller without the global scope is still allowed through, with
+    accessible_resource_ids populated so the endpoint returns a filtered (possibly
+    empty) list instead of a 403.
+    """
+    required_scopes = get_required_scopes_for_route(scope_mappings, method, path)
+    if not required_scopes:
+        return RouteScopeCheck(allowed=True, required_scopes=required_scopes)
+
+    resource_type, resource_id = get_resource_context_from_path(path)
+
+    allowed = has_required_scopes(
+        user_scopes,
+        required_scopes,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        admin_scope=admin_scope,
+    )
+
+    accessible_resource_ids: Optional[Set[str]] = None
+    first_required = required_scopes[0]
+    required_family = first_required.split(":", 1)[0] if ":" in first_required else None
+    if (
+        not allowed
+        and method == "GET"
+        and not resource_id
+        and resource_type
+        # Only a genuine listing of THIS resource family gets the filtered-access
+        # treatment. Requiring the required-scope family to equal resource_type stops a
+        # route that requires a foreign scope (e.g. knowledge:read) from being waved
+        # through just because its path was classified as agents/teams/workflows.
+        and required_family == resource_type
+    ):
+        # GET listing endpoints always allow access but expose the accessible IDs for
+        # filtering, so callers with only per-resource scopes get a filtered list
+        # (including an empty one) instead of a 403. Restricted to GET so a non-GET
+        # id-less route (e.g. POST /agents) is never silently allowed through. Pass
+        # the action from the required scope (e.g. "read" for "agents:read") so the
+        # cached IDs only include resources the caller is authorised for under it.
+        required_action: Optional[str] = None
+        if ":" in first_required:
+            required_action = first_required.rsplit(":", 1)[1]
+        accessible_resource_ids = get_accessible_resource_ids(
+            user_scopes, resource_type, admin_scope=admin_scope, action=required_action
+        )
+        allowed = True
+
+    return RouteScopeCheck(
+        allowed=allowed,
+        required_scopes=required_scopes,
+        accessible_resource_ids=accessible_resource_ids,
+    )
 
 
 def get_scope_value(scope: AgentOSScope) -> str:

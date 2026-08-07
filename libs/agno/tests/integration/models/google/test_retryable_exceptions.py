@@ -15,7 +15,7 @@ from agno.run.base import RunStatus
 @pytest.fixture
 def model():
     """Fixture to create a Gemini model."""
-    return Gemini(id="gemini-2.0-flash-001")
+    return Gemini(id="gemini-flash-latest")
 
 
 def create_mock_response(finish_reason: str = "STOP", content: str = "Test response"):

@@ -1,6 +1,6 @@
 import time
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
 from uuid import uuid4
 
 if TYPE_CHECKING:
@@ -25,7 +25,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.utils import json_serializer
+from agno.db.utils import deserialize_session, deserialize_sessions, json_serializer
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
@@ -491,7 +491,7 @@ class MySQLDb(BaseDb):
     def get_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
@@ -500,7 +500,7 @@ class MySQLDb(BaseDb):
 
         Args:
             session_id (str): ID of the session to read.
-            session_type (SessionType): Type of session to get.
+            session_type (Optional[SessionType]): Type of session to get. Defaults to None.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
 
@@ -531,14 +531,7 @@ class MySQLDb(BaseDb):
             if not deserialize:
                 return session
 
-            if session_type == SessionType.AGENT:
-                return AgentSession.from_dict(session)
-            elif session_type == SessionType.TEAM:
-                return TeamSession.from_dict(session)
-            elif session_type == SessionType.WORKFLOW:
-                return WorkflowSession.from_dict(session)
-            else:
-                raise ValueError(f"Invalid session type: {session_type}")
+            return deserialize_session(session_type, session)
 
         except Exception as e:
             log_error(f"Exception reading from session table: {str(e)}")
@@ -600,6 +593,12 @@ class MySQLDb(BaseDb):
                         stmt = stmt.where(table.c.team_id == component_id)
                     elif session_type == SessionType.WORKFLOW:
                         stmt = stmt.where(table.c.workflow_id == component_id)
+                    elif session_type is None:
+                        stmt = stmt.where(
+                            (table.c.agent_id == component_id)
+                            | (table.c.team_id == component_id)
+                            | (table.c.workflow_id == component_id)
+                        )
                 if start_timestamp is not None:
                     stmt = stmt.where(table.c.created_at >= start_timestamp)
                 if end_timestamp is not None:
@@ -616,7 +615,7 @@ class MySQLDb(BaseDb):
                     stmt = stmt.where(table.c.session_type == session_type_value)
 
                 count_stmt = select(func.count()).select_from(stmt.alias())
-                total_count = sess.execute(count_stmt).scalar()
+                total_count = sess.execute(count_stmt).scalar() or 0
 
                 # Sorting
                 stmt = apply_sorting(stmt, table, sort_by, sort_order)
@@ -635,14 +634,7 @@ class MySQLDb(BaseDb):
                 if not deserialize:
                     return session_dicts, total_count
 
-                if session_type == SessionType.AGENT:
-                    return [AgentSession.from_dict(record) for record in session_dicts]  # type: ignore
-                elif session_type == SessionType.TEAM:
-                    return [TeamSession.from_dict(record) for record in session_dicts]  # type: ignore
-                elif session_type == SessionType.WORKFLOW:
-                    return [WorkflowSession.from_dict(record) for record in session_dicts]  # type: ignore
-                else:
-                    raise ValueError(f"Invalid session type: {session_type}")
+                return deserialize_sessions(session_type, session_dicts)
 
         except Exception as e:
             log_error(f"Exception getting sessions: {str(e)}")
@@ -651,7 +643,7 @@ class MySQLDb(BaseDb):
     def rename_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType],
         session_name: str,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
@@ -684,15 +676,18 @@ class MySQLDb(BaseDb):
                 stmt = (
                     update(table)
                     .where(table.c.session_id == session_id)
-                    .where(table.c.session_type == session_type.value)
                     .values(session_data=func.json_set(table.c.session_data, "$.session_name", session_name))
                 )
+                if session_type is not None:
+                    stmt = stmt.where(table.c.session_type == session_type.value)
                 if user_id is not None:
                     stmt = stmt.where(table.c.user_id == user_id)
                 sess.execute(stmt)
 
                 # Fetch the updated row
                 select_stmt = select(table).where(table.c.session_id == session_id)
+                if session_type is not None:
+                    select_stmt = select_stmt.where(table.c.session_type == session_type.value)
                 if user_id is not None:
                     select_stmt = select_stmt.where(table.c.user_id == user_id)
                 result = sess.execute(select_stmt)
@@ -704,15 +699,7 @@ class MySQLDb(BaseDb):
             if not deserialize:
                 return session
 
-            # Return the appropriate session type
-            if session_type == SessionType.AGENT:
-                return AgentSession.from_dict(session)
-            elif session_type == SessionType.TEAM:
-                return TeamSession.from_dict(session)
-            elif session_type == SessionType.WORKFLOW:
-                return WorkflowSession.from_dict(session)
-            else:
-                raise ValueError(f"Invalid session type: {session_type}")
+            return deserialize_session(session_type, session)
 
         except Exception as e:
             log_error(f"Exception renaming session: {str(e)}")
@@ -1186,6 +1173,8 @@ class MySQLDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 # MySQL approach: extract JSON array elements differently
                 stmt = select(table.c.topics)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = sess.execute(stmt).fetchall()
 
                 topics_set = set()
@@ -2606,13 +2595,17 @@ class MySQLDb(BaseDb):
                         (new_level > existing_level, insert_stmt.inserted.name),
                         else_=table.c.name,
                     ),
-                    # Preserve existing non-null context values using COALESCE
-                    run_id=func.coalesce(insert_stmt.inserted.run_id, table.c.run_id),
-                    session_id=func.coalesce(insert_stmt.inserted.session_id, table.c.session_id),
-                    user_id=func.coalesce(insert_stmt.inserted.user_id, table.c.user_id),
-                    agent_id=func.coalesce(insert_stmt.inserted.agent_id, table.c.agent_id),
-                    team_id=func.coalesce(insert_stmt.inserted.team_id, table.c.team_id),
-                    workflow_id=func.coalesce(insert_stmt.inserted.workflow_id, table.c.workflow_id),
+                    # Preserve existing non-null context values: COALESCE returns
+                    # the first non-null arg, so put the existing column first.
+                    # Otherwise a later upsert from a child span (e.g. a post-hook
+                    # agent's run with a different session_id) would overwrite
+                    # the trace's already-correct context.
+                    run_id=func.coalesce(table.c.run_id, insert_stmt.inserted.run_id),
+                    session_id=func.coalesce(table.c.session_id, insert_stmt.inserted.session_id),
+                    user_id=func.coalesce(table.c.user_id, insert_stmt.inserted.user_id),
+                    agent_id=func.coalesce(table.c.agent_id, insert_stmt.inserted.agent_id),
+                    team_id=func.coalesce(table.c.team_id, insert_stmt.inserted.team_id),
+                    workflow_id=func.coalesce(table.c.workflow_id, insert_stmt.inserted.workflow_id),
                 )
                 sess.execute(upsert_stmt)
 
@@ -2772,6 +2765,7 @@ class MySQLDb(BaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        group_by: Literal["session", "agent", "team", "workflow", "endpoint"] = "session",
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 
@@ -2784,12 +2778,19 @@ class MySQLDb(BaseDb):
             end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
+            group_by: Only the default "session" grouping is supported by this backend.
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
                 Each dict contains: session_id, user_id, agent_id, team_id, total_traces,
                 workflow_id, first_trace_at, last_trace_at.
         """
+        if group_by != "session":
+            raise NotImplementedError(
+                f"get_trace_stats with group_by={group_by!r} is not supported by {self.__class__.__name__}. "
+                "Only the default 'session' grouping is available."
+            )
+
         try:
             table = self._get_table(table_type="traces")
             if table is None:

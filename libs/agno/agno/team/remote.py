@@ -21,6 +21,9 @@ class RemoteTeam(BaseRemote):
     # Private cache for team config with TTL: (config, timestamp)
     _cached_team_config: Optional[Tuple["TeamResponse", float]] = None
 
+    knowledge_filters: Optional[Dict[str, Any]] = None
+    enable_agentic_knowledge_filters: Optional[bool] = False
+
     def __init__(
         self,
         base_url: str,
@@ -287,6 +290,7 @@ class RemoteTeam(BaseRemote):
                 images=images,
                 videos=videos,
                 files=files,
+                metadata=metadata,
                 headers=headers,
             )
 
@@ -351,6 +355,7 @@ class RemoteTeam(BaseRemote):
         videos: Optional[Sequence[Video]],
         files: Optional[Sequence[File]],
         headers: Optional[Dict[str, str]],
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> Union[TeamRunOutput, AsyncIterator[TeamRunOutputEvent]]:
         """Execute via A2A protocol.
 
@@ -364,6 +369,7 @@ class RemoteTeam(BaseRemote):
             videos: Videos to include
             files: Files to include
             headers: HTTP headers to include in the request (optional)
+            metadata: Additional metadata to include in the message envelope (optional)
         Returns:
             TeamRunOutput for non-streaming, AsyncIterator[TeamRunOutputEvent] for streaming
         """
@@ -381,6 +387,7 @@ class RemoteTeam(BaseRemote):
                 images=list(images) if images else None,
                 videos=list(videos) if videos else None,
                 files=list(files) if files else None,
+                metadata=metadata,
                 headers=headers,
             )
             return map_stream_events_to_team_run_events(event_stream, team_id=self.team_id)
@@ -394,6 +401,7 @@ class RemoteTeam(BaseRemote):
                 images=images,
                 videos=videos,
                 files=files,
+                metadata=metadata,
                 headers=headers,
             )
 
@@ -407,6 +415,7 @@ class RemoteTeam(BaseRemote):
         videos: Optional[Sequence[Video]],
         files: Optional[Sequence[File]],
         headers: Optional[Dict[str, str]],
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> TeamRunOutput:
         """Send a non-streaming A2A message and convert response to TeamRunOutput."""
         if not self.a2a_client:
@@ -421,6 +430,7 @@ class RemoteTeam(BaseRemote):
             audio=list(audio) if audio else None,
             videos=list(videos) if videos else None,
             files=list(files) if files else None,
+            metadata=metadata,
             headers=headers,
         )
         return map_task_result_to_team_run_output(task_result, team_id=self.team_id, user_id=user_id)
@@ -445,3 +455,81 @@ class RemoteTeam(BaseRemote):
             return True
         except Exception:
             return False
+
+    @overload
+    async def acontinue_run(
+        self,
+        run_id: str,
+        requirements: List[Any],
+        stream: Literal[False] = False,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        auth_token: Optional[str] = None,
+        **kwargs: Any,
+    ) -> TeamRunOutput: ...
+
+    @overload
+    def acontinue_run(
+        self,
+        run_id: str,
+        requirements: List[Any],
+        stream: Literal[True] = True,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        auth_token: Optional[str] = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[TeamRunOutputEvent]: ...
+
+    def acontinue_run(  # type: ignore
+        self,
+        run_id: str,
+        requirements: List[Any],
+        stream: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        auth_token: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Union[
+        TeamRunOutput,
+        AsyncIterator[TeamRunOutputEvent],
+    ]:
+        """Continue a paused team run with requirements (e.g., tool approval results).
+
+        Args:
+            run_id: The run_id to continue.
+            requirements: List of RunRequirement objects with tool execution results.
+            stream: Whether to stream the response.
+            user_id: Optional user ID.
+            session_id: Optional session ID.
+            auth_token: Optional JWT token for authentication.
+            **kwargs: Additional parameters.
+
+        Returns:
+            TeamRunOutput for non-streaming, AsyncIterator[TeamRunOutputEvent] for streaming.
+        """
+        headers = self._get_auth_headers(auth_token)
+
+        if self.agentos_client:
+            if stream:
+                # Handle streaming response
+                return self.agentos_client.continue_team_run_stream(  # type: ignore
+                    team_id=self.team_id,
+                    run_id=run_id,
+                    user_id=user_id,
+                    session_id=session_id,
+                    requirements=requirements,
+                    headers=headers,
+                    **kwargs,
+                )
+            else:
+                return self.agentos_client.continue_team_run(  # type: ignore
+                    team_id=self.team_id,
+                    run_id=run_id,
+                    user_id=user_id,
+                    session_id=session_id,
+                    requirements=requirements,
+                    headers=headers,
+                    **kwargs,
+                )
+        else:
+            raise ValueError("No client available for continue_run. A2A protocol does not support continue_run.")

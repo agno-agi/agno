@@ -294,7 +294,7 @@ class SurrealDb(VectorDb):
             if filters:
                 data["meta_data"].update(filters)
             thing = f"{self.collection}:{doc.id}" if doc.id else self.collection
-            self.client.query(self.UPSERT_QUERY.format(thing=thing), data)
+            self.client.query(self.UPSERT_QUERY.format(thing=thing), data)  # type: ignore[arg-type]
 
     def search(
         self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
@@ -328,10 +328,10 @@ class SurrealDb(VectorDb):
             distance=self.distance,
         )
         log_debug(f"Search query: {search_query}")
-        response = self.client.query(
-            search_query,
-            {"query_embedding": query_embedding, **filters} if filters else {"query_embedding": query_embedding},
+        search_params: Any = (
+            {"query_embedding": query_embedding, **filters} if filters else {"query_embedding": query_embedding}
         )
+        response: Any = self.client.query(search_query, search_params)
         log_debug(f"Search response: {response}")
 
         documents = []
@@ -438,7 +438,7 @@ class SurrealDb(VectorDb):
         return bool(result)
 
     @staticmethod
-    def _extract_result(query_result: Union[List[Dict[str, Any]], Dict[str, Any]]) -> Union[List[Any], Dict[str, Any]]:
+    def _extract_result(query_result: Any) -> Union[List[Any], Dict[str, Any]]:
         """Extract the actual result from SurrealDB query response.
 
         Args:
@@ -524,7 +524,7 @@ class SurrealDb(VectorDb):
                 data["meta_data"].update(filters)
             log_debug(f"Upserting document asynchronously: {doc.name} ({doc.meta_data})")
             thing = f"{self.collection}:{doc.id}" if doc.id else self.collection
-            await self.async_client.query(self.UPSERT_QUERY.format(thing=thing), data)
+            await self.async_client.query(self.UPSERT_QUERY.format(thing=thing), data)  # type: ignore[arg-type]
 
     async def async_search(
         self,
@@ -560,10 +560,10 @@ class SurrealDb(VectorDb):
             filter_condition=filter_condition,
             distance=self.distance,
         )
-        response = await self.async_client.query(
-            search_query,
-            {"query_embedding": query_embedding, **filters} if filters else {"query_embedding": query_embedding},
+        search_params: Any = (
+            {"query_embedding": query_embedding, **filters} if filters else {"query_embedding": query_embedding}
         )
+        response: Any = await self.async_client.query(search_query, search_params)
         log_debug(f"Search response: {response}")
         documents = []
         for item in response:
@@ -618,7 +618,7 @@ class SurrealDb(VectorDb):
         try:
             # Query for documents with the given content_id
             query = f"SELECT * FROM {self.collection} WHERE content_id = $content_id"
-            result = self.client.query(query, {"content_id": content_id})
+            result: Any = self.client.query(query, {"content_id": content_id})
 
             if not result or not result[0].get("result"):
                 log_debug(f"No documents found with content_id: {content_id}")

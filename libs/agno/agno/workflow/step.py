@@ -12,15 +12,36 @@ from typing_extensions import TypeGuard
 
 from agno.agent import Agent
 from agno.db.base import BaseDb
+from agno.exceptions import RunCancelledException
 from agno.media import Audio, Image, Video
 from agno.models.message import Message
 from agno.models.metrics import RunMetrics
 from agno.registry import Registry
 from agno.run import RunContext
-from agno.run.agent import RunContentEvent, RunOutput
+from agno.run.agent import (
+    RunCancelledEvent as AgentRunCancelledEvent,
+)
+from agno.run.agent import (
+    RunCompletedEvent as AgentRunCompletedEvent,
+)
+from agno.run.agent import (
+    RunContentEvent,
+    RunOutput,
+)
 from agno.run.base import BaseRunOutputEvent, RunStatus
-from agno.run.team import RunContentEvent as TeamRunContentEvent
-from agno.run.team import TeamRunOutput
+from agno.run.cancel import aregister_member_run, register_member_run
+from agno.run.team import (
+    RunCancelledEvent as TeamRunCancelledEvent,
+)
+from agno.run.team import (
+    RunCompletedEvent as TeamRunCompletedEvent,
+)
+from agno.run.team import (
+    RunContentEvent as TeamRunContentEvent,
+)
+from agno.run.team import (
+    TeamRunOutput,
+)
 from agno.run.workflow import (
     StepCompletedEvent,
     StepStartedEvent,
@@ -35,6 +56,7 @@ from agno.utils.log import log_debug, log_warning, logger, use_agent_logger, use
 from agno.utils.merge_dict import merge_dictionaries
 from agno.workflow.types import (
     ErrorRequirement,
+    ExecutorType,
     HumanReview,
     OnError,
     OnReject,
@@ -44,10 +66,19 @@ from agno.workflow.types import (
     StepRequirement,
     StepType,
     UserInputField,
+    warn_session_state_param_deprecated,
 )
 
 if TYPE_CHECKING:
     from agno.workflow.workflow import Workflow
+
+# Terminal events always reach the wire even when stream_executor_events is False
+_EXECUTOR_TERMINAL_EVENT_TYPES = (
+    AgentRunCancelledEvent,
+    AgentRunCompletedEvent,
+    TeamRunCancelledEvent,
+    TeamRunCompletedEvent,
+)
 
 # Maximum nesting depth for nested workflow execution to prevent circular references or stack overflow.
 _MAX_NESTED_WORKFLOW_DEPTH = 10
@@ -675,6 +706,7 @@ class Step:
             kwargs["run_context"] = run_context
         if session_state is not None and self._function_has_session_state_param():
             kwargs["session_state"] = session_state
+            warn_session_state_param_deprecated(func, "custom function steps")
 
         return func(step_input, **kwargs)
 
@@ -692,6 +724,7 @@ class Step:
             kwargs["run_context"] = run_context
         if session_state is not None and self._function_has_session_state_param():
             kwargs["session_state"] = session_state
+            warn_session_state_param_deprecated(func, "custom function steps")
 
         if _is_async_generator_function(func):
             return func(step_input, **kwargs)
@@ -872,6 +905,9 @@ class Step:
                             feedback = step_input.additional_data["rejection_feedback"]
                             final_message = f"{final_message}\n\nFeedback from reviewer:\n{feedback}"
 
+                        executor_run_id = str(uuid4())
+                        if workflow_run_response is not None and workflow_run_response.run_id:
+                            register_member_run(workflow_run_response.run_id, executor_run_id)
                         response = self.active_executor.run(  # type: ignore
                             input=final_message,  # type: ignore
                             images=images,
@@ -882,6 +918,7 @@ class Step:
                             user_id=user_id,
                             session_state=session_state_copy,  # Send a copy to the executor
                             run_context=run_context,
+                            run_id=executor_run_id,
                             add_dependencies_to_context=add_dependencies_to_context,
                             add_session_state_to_context=add_session_state_to_context,
                             **kwargs,
@@ -895,14 +932,12 @@ class Step:
                             self._store_executor_response(workflow_run_response, response)  # type: ignore
 
                         # Check if agent/team response is paused (e.g., due to tool HITL)
-                        # This is NOT supported at workflow level - warn the user
+                        # Propagate the pause to the workflow level
                         if hasattr(response, "is_paused") and response.is_paused:
-                            logger.warning(
-                                f"Step '{self.name}': Agent/Team response is paused (likely due to tool HITL). "
-                                "Agent tool-level HITL is NOT propagated to the workflow. "
-                                "The workflow will continue but the paused tool may not have executed. "
-                                "Consider using workflow-level HITL (Step.requires_confirmation) instead."
-                            )
+                            use_workflow_logger()
+                            step_output = self._process_step_output(response)
+                            step_output.is_paused = True
+                            return step_output
 
                         # Switch back to workflow logger after execution
                         use_workflow_logger()
@@ -929,6 +964,9 @@ class Step:
 
                 return step_output
 
+            except RunCancelledException:
+                # Don't retry a cancelled run
+                raise
             except Exception as e:
                 self.retry_count = attempt + 1
                 log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
@@ -1096,7 +1134,7 @@ class Step:
                                         else:
                                             content = str(event.content)
                                     # Only yield executor events if stream_executor_events is True
-                                    if stream_executor_events:
+                                    if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
                                         enriched_event = self._enrich_event_with_context(
                                             event, workflow_run_response, step_index
                                         )
@@ -1202,6 +1240,9 @@ class Step:
                             feedback = step_input.additional_data["rejection_feedback"]
                             final_message = f"{final_message}\n\nFeedback from reviewer:\n{feedback}"
 
+                        executor_run_id = str(uuid4())
+                        if workflow_run_response is not None and workflow_run_response.run_id:
+                            register_member_run(workflow_run_response.run_id, executor_run_id)
                         response_stream = self.active_executor.run(  # type: ignore[call-overload, misc]
                             input=final_message,
                             images=images,
@@ -1215,6 +1256,7 @@ class Step:
                             stream_events=stream_events,
                             yield_run_output=True,
                             run_context=run_context,
+                            run_id=executor_run_id,
                             add_dependencies_to_context=add_dependencies_to_context,
                             add_session_state_to_context=add_session_state_to_context,
                             **kwargs,
@@ -1226,7 +1268,7 @@ class Step:
                                 active_executor_run_response = event
                                 continue
                             # Only yield executor events if stream_executor_events is True
-                            if stream_executor_events:
+                            if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
                                 enriched_event = self._enrich_event_with_context(
                                     event, workflow_run_response, step_index
                                 )
@@ -1240,18 +1282,18 @@ class Step:
                             self._store_executor_response(workflow_run_response, active_executor_run_response)  # type: ignore
 
                         # Check if agent/team response is paused (e.g., due to tool HITL)
-                        # This is NOT supported at workflow level - warn the user
+                        # Propagate the pause to the workflow level
                         if (
                             active_executor_run_response is not None
                             and hasattr(active_executor_run_response, "is_paused")
                             and active_executor_run_response.is_paused
                         ):
-                            logger.warning(
-                                f"Step '{self.name}': Agent/Team response is paused (likely due to tool HITL). "
-                                "Agent tool-level HITL is NOT propagated to the workflow. "
-                                "The workflow will continue but the paused tool may not have executed. "
-                                "Consider using workflow-level HITL (Step.requires_confirmation) instead."
-                            )
+                            use_workflow_logger()
+                            paused_output = self._process_step_output(active_executor_run_response)
+                            paused_output.is_paused = True
+                            # paused state is already set on paused_output.is_paused
+                            yield paused_output
+                            return
 
                         final_response = active_executor_run_response  # type: ignore
 
@@ -1271,7 +1313,7 @@ class Step:
                                 final_response = event
                             else:
                                 # Yield nested workflow events
-                                if stream_executor_events:
+                                if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
                                     enriched_event = self._enrich_event_with_context(
                                         event, workflow_run_response, step_index
                                     )
@@ -1311,6 +1353,9 @@ class Step:
                     )
 
                 return
+            except RunCancelledException:
+                # Don't retry a cancelled run
+                raise
             except Exception as e:
                 self.retry_count = attempt + 1
                 log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
@@ -1534,6 +1579,9 @@ class Step:
                             feedback = step_input.additional_data["rejection_feedback"]
                             final_message = f"{final_message}\n\nFeedback from reviewer:\n{feedback}"
 
+                        executor_run_id = str(uuid4())
+                        if workflow_run_response is not None and workflow_run_response.run_id:
+                            await aregister_member_run(workflow_run_response.run_id, executor_run_id)
                         response = await self.active_executor.arun(  # type: ignore
                             input=final_message,  # type: ignore
                             images=images,
@@ -1544,6 +1592,7 @@ class Step:
                             user_id=user_id,
                             session_state=session_state_copy,
                             run_context=run_context,
+                            run_id=executor_run_id,
                             add_dependencies_to_context=add_dependencies_to_context,
                             add_session_state_to_context=add_session_state_to_context,
                             **kwargs,
@@ -1557,14 +1606,12 @@ class Step:
                             self._store_executor_response(workflow_run_response, response)  # type: ignore
 
                         # Check if agent/team response is paused (e.g., due to tool HITL)
-                        # This is NOT supported at workflow level - warn the user
+                        # Propagate the pause to the workflow level
                         if hasattr(response, "is_paused") and response.is_paused:
-                            logger.warning(
-                                f"Step '{self.name}': Agent/Team response is paused (likely due to tool HITL). "
-                                "Agent tool-level HITL is NOT propagated to the workflow. "
-                                "The workflow will continue but the paused tool may not have executed. "
-                                "Consider using workflow-level HITL (Step.requires_confirmation) instead."
-                            )
+                            use_workflow_logger()
+                            step_output = self._process_step_output(response)
+                            step_output.is_paused = True
+                            return step_output
 
                         # Switch back to workflow logger after execution
                         use_workflow_logger()
@@ -1591,6 +1638,9 @@ class Step:
 
                 return step_output
 
+            except RunCancelledException:
+                # Don't retry a cancelled run
+                raise
             except Exception as e:
                 self.retry_count = attempt + 1
                 log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
@@ -1688,7 +1738,7 @@ class Step:
                                         content = str(event.content)
 
                                 # Only yield executor events if stream_executor_events is True
-                                if stream_executor_events:
+                                if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
                                     enriched_event = self._enrich_event_with_context(
                                         event, workflow_run_response, step_index
                                     )
@@ -1739,7 +1789,7 @@ class Step:
                                         content = str(event.content)
 
                                 # Only yield executor events if stream_executor_events is True
-                                if stream_executor_events:
+                                if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
                                     enriched_event = self._enrich_event_with_context(
                                         event, workflow_run_response, step_index
                                     )
@@ -1838,6 +1888,9 @@ class Step:
                             feedback = step_input.additional_data["rejection_feedback"]
                             final_message = f"{final_message}\n\nFeedback from reviewer:\n{feedback}"
 
+                        executor_run_id = str(uuid4())
+                        if workflow_run_response is not None and workflow_run_response.run_id:
+                            await aregister_member_run(workflow_run_response.run_id, executor_run_id)
                         response_stream = self.active_executor.arun(  # type: ignore
                             input=final_message,
                             images=images,
@@ -1851,6 +1904,7 @@ class Step:
                             stream_events=stream_events,
                             run_context=run_context,
                             yield_run_output=True,
+                            run_id=executor_run_id,
                             add_dependencies_to_context=add_dependencies_to_context,
                             add_session_state_to_context=add_session_state_to_context,
                             **kwargs,
@@ -1862,7 +1916,7 @@ class Step:
                                 active_executor_run_response = event
                                 break
                             # Only yield executor events if stream_executor_events is True
-                            if stream_executor_events:
+                            if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
                                 enriched_event = self._enrich_event_with_context(
                                     event, workflow_run_response, step_index
                                 )
@@ -1876,18 +1930,18 @@ class Step:
                             self._store_executor_response(workflow_run_response, active_executor_run_response)  # type: ignore
 
                         # Check if agent/team response is paused (e.g., due to tool HITL)
-                        # This is NOT supported at workflow level - warn the user
+                        # Propagate the pause to the workflow level
                         if (
                             active_executor_run_response is not None
                             and hasattr(active_executor_run_response, "is_paused")
                             and active_executor_run_response.is_paused
                         ):
-                            logger.warning(
-                                f"Step '{self.name}': Agent/Team response is paused (likely due to tool HITL). "
-                                "Agent tool-level HITL is NOT propagated to the workflow. "
-                                "The workflow will continue but the paused tool may not have executed. "
-                                "Consider using workflow-level HITL (Step.requires_confirmation) instead."
-                            )
+                            use_workflow_logger()
+                            paused_output = self._process_step_output(active_executor_run_response)
+                            paused_output.is_paused = True
+                            # paused state is already set on paused_output.is_paused
+                            yield paused_output
+                            return
 
                         final_response = active_executor_run_response  # type: ignore
 
@@ -1907,7 +1961,7 @@ class Step:
                                 final_response = event
                             else:
                                 # Yield nested workflow events
-                                if stream_executor_events:
+                                if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
                                     enriched_event = self._enrich_event_with_context(
                                         event, workflow_run_response, step_index
                                     )
@@ -1947,6 +2001,9 @@ class Step:
                     )
                 return
 
+            except RunCancelledException:
+                # Don't retry a cancelled run
+                raise
             except Exception as e:
                 self.retry_count = attempt + 1
                 log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
@@ -2077,9 +2134,9 @@ class Step:
                 if isinstance(raw_response, TeamRunOutput) and getattr(
                     self.active_executor, "store_member_responses", False
                 ):
-                    for mr in raw_response.member_responses or []:
-                        if isinstance(mr, RunOutput):
-                            workflow_run_response.step_executor_runs.append(mr)
+                    for member_response in raw_response.member_responses or []:
+                        if isinstance(member_response, RunOutput):
+                            workflow_run_response.step_executor_runs.append(member_response)
 
     def _get_deepest_content_from_step_output(self, step_output: "StepOutput") -> Optional[str]:
         """
@@ -2125,6 +2182,46 @@ class Step:
         # If no previous step outputs, return the original message unchanged
         return message
 
+    def _create_executor_step_requirement(
+        self,
+        step_index: int,
+        executor_response: Union[RunOutput, TeamRunOutput],
+    ) -> StepRequirement:
+        """Create a StepRequirement from a paused executor (agent/team) response.
+
+        This propagates tool-level HITL requirements from the executor up to the workflow level,
+        similar to how teams propagate member pauses via _propagate_member_pause().
+        """
+        executor_id = getattr(self.active_executor, "id", None) or getattr(self.active_executor, "agent_id", None)
+        executor_name = getattr(self.active_executor, "name", None)
+        executor_type = ExecutorType.TEAM if isinstance(self.active_executor, Team) else ExecutorType.AGENT
+
+        # Serialize requirements for transport.
+        # Only include UNRESOLVED requirements — the agent's requirements list
+        # accumulates across pauses, so without filtering we would also include
+        # already-confirmed tool calls from previous executor pauses, causing
+        # the client to see duplicated/stale tool requests.
+        serialized_reqs: List[Any] = []
+        if executor_response.requirements:
+            for req in executor_response.requirements:
+                if hasattr(req, "is_resolved") and req.is_resolved():
+                    continue
+                serialized_reqs.append(req.to_dict() if hasattr(req, "to_dict") else req)
+
+        return StepRequirement(
+            step_id=self.step_id or str(uuid4()),
+            step_name=self.name,
+            step_index=step_index,
+            step_type=StepType.STEP,
+            requires_executor_input=True,
+            executor_requirements=serialized_reqs,
+            executor_id=executor_id,
+            executor_name=executor_name,
+            executor_run_id=executor_response.run_id,
+            executor_type=executor_type,
+            executor_session_id=getattr(executor_response, "session_id", None),
+        )
+
     def _process_step_output(self, response: Union[RunOutput, TeamRunOutput, StepOutput]) -> StepOutput:
         """Create StepOutput from execution response"""
         if isinstance(response, StepOutput):
@@ -2149,6 +2246,11 @@ class Step:
         # Determine step type based on executor type
         step_type = StepType.WORKFLOW if self._executor_type == "workflow" else StepType.STEP
 
+        # Propagate cancelled / error status from the executor's RunOutput
+        response_status = getattr(response, "status", None)
+        success = response_status not in (RunStatus.cancelled, RunStatus.error)
+        error = response.content if not success else None
+
         return StepOutput(
             step_name=self.name or "unnamed_step",
             step_id=self.step_id,
@@ -2162,6 +2264,8 @@ class Step:
             audio=audio,
             files=files,
             metrics=metrics,
+            success=success,
+            error=error,
         )
 
     def _convert_function_result_to_response(self, result: Any) -> RunOutput:
@@ -2292,6 +2396,10 @@ class Step:
 
         log_debug(f"Executing nested workflow: {self.workflow.name}")
 
+        nested_run_id = str(uuid4())
+        if workflow_run_response is not None and workflow_run_response.run_id:
+            register_member_run(workflow_run_response.run_id, nested_run_id)
+
         # Execute the nested workflow with shared session
         nested_run_output: WorkflowRunOutput = self.workflow.run(
             input=message,
@@ -2304,6 +2412,7 @@ class Step:
             files=step_input.files,
             stream=False,
             background_tasks=background_tasks,
+            run_id=nested_run_id,
         )
 
         # Warn if the nested workflow paused (e.g., due to HITL on an inner step)
@@ -2407,6 +2516,10 @@ class Step:
 
         log_debug(f"Executing nested workflow (streaming): {self.workflow.name}")
 
+        nested_run_id = str(uuid4())
+        if workflow_run_response is not None and workflow_run_response.run_id:
+            register_member_run(workflow_run_response.run_id, nested_run_id)
+
         # Execute the nested workflow with streaming
         # Capture the WorkflowCompletedEvent to get the final results
         completed_event: Optional[WorkflowCompletedEvent] = None
@@ -2422,6 +2535,7 @@ class Step:
             stream=True,
             stream_events=stream_events,
             background_tasks=background_tasks,
+            run_id=nested_run_id,
         ):
             # Capture the WorkflowCompletedEvent which contains step_results
             if isinstance(event, WorkflowCompletedEvent):
@@ -2551,6 +2665,10 @@ class Step:
 
         log_debug(f"Executing nested workflow (async): {self.workflow.name}")
 
+        nested_run_id = str(uuid4())
+        if workflow_run_response is not None and workflow_run_response.run_id:
+            await aregister_member_run(workflow_run_response.run_id, nested_run_id)
+
         # Execute the nested workflow asynchronously with shared session
         nested_run_output: WorkflowRunOutput = await self.workflow.arun(
             input=message,
@@ -2563,6 +2681,7 @@ class Step:
             files=step_input.files,
             stream=False,
             background_tasks=background_tasks,
+            run_id=nested_run_id,
         )
 
         # Warn if the nested workflow paused (e.g., due to HITL on an inner step)
@@ -2667,6 +2786,10 @@ class Step:
 
         log_debug(f"Executing nested workflow (async streaming): {self.workflow.name}")
 
+        nested_run_id = str(uuid4())
+        if workflow_run_response is not None and workflow_run_response.run_id:
+            await aregister_member_run(workflow_run_response.run_id, nested_run_id)
+
         # Execute the nested workflow with async streaming
         # Capture the WorkflowCompletedEvent to get the final results
         completed_event: Optional[WorkflowCompletedEvent] = None
@@ -2682,6 +2805,7 @@ class Step:
             stream=True,
             stream_events=stream_events,
             background_tasks=background_tasks,
+            run_id=nested_run_id,
         ):
             # Capture the WorkflowCompletedEvent which contains step_results
             if isinstance(event, WorkflowCompletedEvent):

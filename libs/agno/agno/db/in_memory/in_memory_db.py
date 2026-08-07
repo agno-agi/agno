@@ -1,7 +1,7 @@
 import time
 from copy import deepcopy
 from datetime import date, datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union
 from uuid import uuid4
 
 from agno.db.base import BaseDb, SessionType
@@ -17,6 +17,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.utils import deserialize_session, deserialize_sessions
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
@@ -107,7 +108,7 @@ class InMemoryDb(BaseDb):
     def get_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession, Dict[str, Any]]]:
@@ -115,7 +116,7 @@ class InMemoryDb(BaseDb):
 
         Args:
             session_id (str): The ID of the session to read.
-            session_type (SessionType): The type of the session to read.
+            session_type (Optional[SessionType]): The type of the session to read.
             user_id (Optional[str]): The ID of the user to read the session for.
             deserialize (Optional[bool]): Whether to deserialize the session.
 
@@ -138,12 +139,7 @@ class InMemoryDb(BaseDb):
                     if not deserialize:
                         return session_data_copy
 
-                    if session_type == SessionType.AGENT:
-                        return AgentSession.from_dict(session_data_copy)
-                    elif session_type == SessionType.TEAM:
-                        return TeamSession.from_dict(session_data_copy)
-                    else:
-                        return WorkflowSession.from_dict(session_data_copy)
+                    return deserialize_session(session_type, session_data_copy)
 
             return None
 
@@ -156,7 +152,7 @@ class InMemoryDb(BaseDb):
 
     def get_sessions(
         self,
-        session_type: SessionType,
+        session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         component_id: Optional[str] = None,
         session_name: Optional[str] = None,
@@ -204,17 +200,25 @@ class InMemoryDb(BaseDb):
                         continue
                     elif session_type == SessionType.WORKFLOW and session_data.get("workflow_id") != component_id:
                         continue
-                if start_timestamp is not None and session_data.get("created_at", 0) < start_timestamp:
+                    elif session_type is None:
+                        if (
+                            session_data.get("agent_id") != component_id
+                            and session_data.get("team_id") != component_id
+                            and session_data.get("workflow_id") != component_id
+                        ):
+                            continue
+                if start_timestamp is not None and (session_data.get("created_at") or 0) < start_timestamp:
                     continue
-                if end_timestamp is not None and session_data.get("created_at", 0) > end_timestamp:
+                if end_timestamp is not None and (session_data.get("created_at") or 0) > end_timestamp:
                     continue
                 if session_name is not None:
-                    stored_name = session_data.get("session_data", {}).get("session_name", "")
+                    stored_name = (session_data.get("session_data") or {}).get("session_name", "")
                     if session_name.lower() not in stored_name.lower():
                         continue
-                session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
-                if session_data.get("session_type") != session_type_value:
-                    continue
+                if session_type is not None:
+                    session_type_value = session_type.value if isinstance(session_type, SessionType) else session_type
+                    if session_data.get("session_type") != session_type_value:
+                        continue
 
                 filtered_sessions.append(deepcopy(session_data))
 
@@ -233,14 +237,7 @@ class InMemoryDb(BaseDb):
             if not deserialize:
                 return filtered_sessions, total_count
 
-            if session_type == SessionType.AGENT:
-                return [AgentSession.from_dict(session) for session in filtered_sessions]  # type: ignore
-            elif session_type == SessionType.TEAM:
-                return [TeamSession.from_dict(session) for session in filtered_sessions]  # type: ignore
-            elif session_type == SessionType.WORKFLOW:
-                return [WorkflowSession.from_dict(session) for session in filtered_sessions]  # type: ignore
-            else:
-                raise ValueError(f"Invalid session type: {session_type}")
+            return deserialize_sessions(session_type, filtered_sessions)
 
         except Exception as e:
             log_error(f"Exception reading sessions: {str(e)}")
@@ -249,35 +246,33 @@ class InMemoryDb(BaseDb):
     def rename_session(
         self,
         session_id: str,
-        session_type: SessionType,
+        session_type: Optional[SessionType],
         session_name: str,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         try:
             for i, session in enumerate(self._sessions):
-                if session.get("session_id") == session_id and session.get("session_type") == session_type.value:
-                    if user_id is not None and session.get("user_id") != user_id:
-                        continue
-                    # Update session name in session_data
-                    if "session_data" not in session:
-                        session["session_data"] = {}
-                    session["session_data"]["session_name"] = session_name
+                if session.get("session_id") != session_id:
+                    continue
+                if session_type is not None and session.get("session_type") != session_type.value:
+                    continue
+                if user_id is not None and session.get("user_id") != user_id:
+                    continue
+                # Update session name in session_data
+                if "session_data" not in session or session["session_data"] is None:
+                    session["session_data"] = {}
+                session["session_data"]["session_name"] = session_name
 
-                    self._sessions[i] = session
+                self._sessions[i] = session
 
-                    log_debug(f"Renamed session with id '{session_id}' to '{session_name}'")
+                log_debug(f"Renamed session with id '{session_id}' to '{session_name}'")
 
-                    session_copy = deepcopy(session)
-                    if not deserialize:
-                        return session_copy
+                session_copy = deepcopy(session)
+                if not deserialize:
+                    return session_copy
 
-                    if session_type == SessionType.AGENT:
-                        return AgentSession.from_dict(session_copy)
-                    elif session_type == SessionType.TEAM:
-                        return TeamSession.from_dict(session_copy)
-                    else:
-                        return WorkflowSession.from_dict(session_copy)
+                return deserialize_session(session_type, session_copy)
 
             return None
 
@@ -432,8 +427,11 @@ class InMemoryDb(BaseDb):
             log_error(f"Error deleting memories: {str(e)}")
             raise e
 
-    def get_all_memory_topics(self) -> List[str]:
+    def get_all_memory_topics(self, user_id: Optional[str] = None) -> List[str]:
         """Get all memory topics from in-memory storage.
+
+        Args:
+            user_id (Optional[str]): The ID of the user to filter by.
 
         Returns:
             List[str]: List of unique topics.
@@ -444,6 +442,8 @@ class InMemoryDb(BaseDb):
         try:
             topics = set()
             for memory in self._memories:
+                if user_id is not None and memory.get("user_id") != user_id:
+                    continue
                 memory_topics = memory.get("topics", [])
                 if isinstance(memory_topics, list):
                     topics.update(memory_topics)
@@ -1271,6 +1271,7 @@ class InMemoryDb(BaseDb):
         end_time: Optional[datetime] = None,
         limit: Optional[int] = 20,
         page: Optional[int] = 1,
+        group_by: Literal["session", "agent", "team", "workflow", "endpoint"] = "session",
     ) -> tuple[List[Dict[str, Any]], int]:
         """Get trace statistics grouped by session.
 
@@ -1283,12 +1284,18 @@ class InMemoryDb(BaseDb):
             end_time: Filter sessions with traces created before this datetime.
             limit: Maximum number of sessions to return per page.
             page: Page number (1-indexed).
+            group_by: Only the default "session" grouping is supported by this backend.
 
         Returns:
             tuple[List[Dict], int]: Tuple of (list of session stats dicts, total count).
                 Each dict contains: session_id, user_id, agent_id, team_id, workflow_id, total_traces,
                 first_trace_at, last_trace_at.
         """
+        if group_by != "session":
+            raise NotImplementedError(
+                f"get_trace_stats with group_by={group_by!r} is not supported by {self.__class__.__name__}. "
+                "Only the default 'session' grouping is available."
+            )
         raise NotImplementedError
 
     # --- Spans ---

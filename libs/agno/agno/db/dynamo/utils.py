@@ -293,40 +293,6 @@ def deserialize_session_result(
     return None
 
 
-def deserialize_session(session: Dict[str, Any]) -> Optional[Session]:
-    """Deserialize session data from DynamoDB format to Session object."""
-    try:
-        deserialized = session.copy()
-
-        # Handle JSON fields
-        json_fields = ["session_data", "memory", "tools", "functions", "additional_data"]
-        for field in json_fields:
-            if field in deserialized and deserialized[field] is not None:
-                if isinstance(deserialized[field], str):
-                    try:
-                        deserialized[field] = json.loads(deserialized[field])
-                    except json.JSONDecodeError as e:
-                        log_error(f"Failed to deserialize {field} field: {str(e)}")
-                        deserialized[field] = None
-
-        # Handle timestamp fields
-        for field in ["created_at", "updated_at"]:
-            if field in deserialized and deserialized[field] is not None:
-                if isinstance(deserialized[field], (int, float)):
-                    deserialized[field] = datetime.fromtimestamp(deserialized[field], tz=timezone.utc)
-                elif isinstance(deserialized[field], str):
-                    try:
-                        deserialized[field] = datetime.fromisoformat(deserialized[field])
-                    except ValueError:
-                        deserialized[field] = datetime.fromtimestamp(float(deserialized[field]), tz=timezone.utc)
-
-        return Session.from_dict(deserialized)  # type: ignore
-
-    except Exception as e:
-        log_error(f"Failed to deserialize session: {str(e)}")
-        return None
-
-
 # -- Metrics utils --
 
 
@@ -479,16 +445,6 @@ def fetch_all_sessions_data_by_type(
                 filter_expression += f" AND {component_filter}"
             else:
                 filter_expression = component_filter
-
-        if session_name:
-            name_filter = "#session_name = :session_name"
-            expression_attribute_names["#session_name"] = "session_name"
-            expression_attribute_values[":session_name"] = {"S": session_name}
-
-            if filter_expression:
-                filter_expression += f" AND {name_filter}"
-            else:
-                filter_expression = name_filter
 
         # Use GSI query for session_type (more efficient than scan)
         query_kwargs = {

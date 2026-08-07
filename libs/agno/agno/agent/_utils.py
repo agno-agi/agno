@@ -64,7 +64,7 @@ def convert_documents_to_string(agent: Agent, docs: List[Union[Dict[str, Any], s
     if agent.references_format == "yaml":
         import yaml
 
-        return yaml.dump(docs)
+        return yaml.dump(docs, allow_unicode=True)
 
     return json.dumps(docs, indent=2, ensure_ascii=False)
 
@@ -83,7 +83,7 @@ def convert_dependencies_to_string(agent: Agent, context: Dict[str, Any]) -> str
         return ""
 
     try:
-        return json.dumps(context, indent=2, default=str)
+        return json.dumps(context, indent=2, default=str, ensure_ascii=False)
     except (TypeError, ValueError, OverflowError) as e:
         log_warning(f"Failed to convert context to JSON: {str(e)}")
         # Attempt a fallback conversion for non-serializable objects
@@ -98,7 +98,7 @@ def convert_dependencies_to_string(agent: Agent, context: Dict[str, Any]) -> str
                 sanitized_context[key] = str(value)
 
         try:
-            return json.dumps(sanitized_context, indent=2)
+            return json.dumps(sanitized_context, indent=2, ensure_ascii=False)
         except Exception as e:
             log_error(f"Failed to convert sanitized context to JSON: {str(e)}")
             return str(context)
@@ -107,6 +107,26 @@ def convert_dependencies_to_string(agent: Agent, context: Dict[str, Any]) -> str
 # ---------------------------------------------------------------------------
 # Deep copy
 # ---------------------------------------------------------------------------
+
+# Fields deep_copy shares by reference: they maintain connections/pools (db, models,
+# knowledge) or bind them (managers, learning), so duplicating them per copy would be
+# wrong or expensive. Consumers that need per-copy isolation (agno.environments'
+# isolated rollout attempts) derive their override set from this tuple; a field added
+# here without a mapped isolation action fails that module's drift test.
+SHARED_BY_REFERENCE_FIELDS = (
+    "db",
+    "model",
+    "reasoning_model",
+    "knowledge",
+    "memory_manager",
+    "parser_model",
+    "output_model",
+    "session_summary_manager",
+    "culture_manager",
+    "compression_manager",
+    "learning",
+    "skills",
+)
 
 
 def deep_copy(agent: Agent, *, update: Optional[Dict[str, Any]] = None) -> Agent:
@@ -165,8 +185,16 @@ def deep_copy_field(agent: Agent, field_name: str, field_value: Any) -> Any:
     if field_name == "reasoning_agent":
         return field_value.deep_copy()  # type: ignore
 
-    # For tools, share MCP tools but copy others
+    # For tools, return callable factories by reference; share MCP tools but copy others
     if field_name == "tools" and field_value is not None:
+        from agno.tools import Toolkit
+        from agno.tools.function import Function
+        from agno.utils.callables import is_callable_factory
+
+        # Callable-factory tools are shared by reference and resolved per-run
+        if is_callable_factory(field_value, excluded_types=(Toolkit, Function)):
+            return field_value
+
         try:
             copied_tools = []
             for tool in field_value:  # type: ignore
@@ -193,20 +221,7 @@ def deep_copy_field(agent: Agent, field_name: str, field_value: Any) -> Any:
             return field_value
 
     # Share heavy resources - these maintain connections/pools that shouldn't be duplicated
-    if field_name in (
-        "db",
-        "model",
-        "reasoning_model",
-        "knowledge",
-        "memory_manager",
-        "parser_model",
-        "output_model",
-        "session_summary_manager",
-        "culture_manager",
-        "compression_manager",
-        "learning",
-        "skills",
-    ):
+    if field_name in SHARED_BY_REFERENCE_FIELDS:
         return field_value
 
     # For compound types, attempt a deep copy

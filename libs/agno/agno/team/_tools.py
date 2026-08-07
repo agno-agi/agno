@@ -15,6 +15,7 @@ from typing import (
     List,
     Optional,
     Sequence,
+    Set,
     Tuple,
     Union,
 )
@@ -33,6 +34,12 @@ from agno.run.team import (
 from agno.session import TeamSession
 from agno.tools import Toolkit
 from agno.tools.function import Function
+from agno.tools.toolkit import (
+    ToolkitKey,
+    _emits_toolkit_instructions,
+    _group_source_toolkits,
+    _toolkit_key,
+)
 from agno.utils.agent import (
     collect_joint_audios,
     collect_joint_files,
@@ -62,6 +69,21 @@ async def _aresolve_callable_resources(team: "Team", run_context: "RunContext") 
     await aresolve_callable_members(team, run_context)
 
 
+async def _aget_learning_tools(
+    team: "Team",
+    user_id: Optional[str] = None,
+    session: Optional[TeamSession] = None,
+) -> List[Callable]:
+    """Async helper to fetch learning tools for Team runs."""
+    if team._learning is None:
+        return []
+    return await team._learning.aget_tools(
+        user_id=user_id,
+        session_id=session.session_id if session else None,
+        team_id=team.id,
+    )
+
+
 async def _check_and_refresh_mcp_tools(team: "Team") -> None:
     # Connect MCP tools
     from agno.team._init import _connect_mcp_tools
@@ -82,14 +104,10 @@ async def _check_and_refresh_mcp_tools(team: "Team") -> None:
                         is_alive = await tool.is_alive()  # type: ignore
                         if not is_alive:
                             await tool.connect(force=True)  # type: ignore
-                    except (RuntimeError, BaseException) as e:
-                        log_warning(f"Failed to check if MCP tool is alive: {str(e)}")
-                        continue
-
-                    try:
-                        await tool.build_tools()  # type: ignore
-                    except (RuntimeError, BaseException) as e:
-                        log_warning(f"Failed to build tools for {tool}: {str(e)}")
+                        else:
+                            await tool.build_tools()  # type: ignore
+                    except Exception as e:
+                        log_warning(f"Failed to refresh MCP tool {tool}: {str(e)}")
                         continue
 
 
@@ -114,6 +132,7 @@ def _determine_tools_for_model(
     stream: Optional[bool] = None,
     stream_events: Optional[bool] = None,
     check_mcp_tools: bool = True,
+    learning_tools: Optional[List[Callable]] = None,
 ) -> List[Union[Function, dict]]:
     # Connect tools that require connection management
     from functools import partial
@@ -148,6 +167,10 @@ def _determine_tools_for_model(
     resolved_knowledge = get_resolved_knowledge(team, run_context)
     resolved_members = get_resolved_members(team, run_context)
 
+    # Append client_tools (e.g., AG-UI frontend tools) if present
+    if run_context.client_tools:
+        resolved_tools = list(resolved_tools or []) + list(run_context.client_tools)
+
     _connect_connectable_tools(
         team,
     )
@@ -174,13 +197,17 @@ def _determine_tools_for_model(
         _tools.append(_get_update_user_memory_function(team, user_id=user_id, async_mode=async_mode))
 
     # Add learning machine tools
+    # In async mode, caller should pre-fetch with await team._learning.aget_tools() and pass learning_tools
     if team._learning is not None:
-        learning_tools = team._learning.get_tools(
-            user_id=user_id,
-            session_id=session.session_id if session else None,
-            team_id=team.id,
-        )
-        _tools.extend(learning_tools)
+        if learning_tools is not None:
+            _tools.extend(learning_tools)
+        else:
+            _learning_tools = team._learning.get_tools(
+                user_id=user_id,
+                session_id=session.session_id if session else None,
+                team_id=team.id,
+            )
+            _tools.extend(_learning_tools)
 
     if team.enable_agentic_state:
         _tools.append(Function(name="update_session_state", entrypoint=partial(_update_session_state_tool, team)))
@@ -304,17 +331,52 @@ def _determine_tools_for_model(
 
     _function_names = []
     _functions: List[Union[Function, dict]] = []
+    _toolkit_instruction_keys: Set[ToolkitKey] = set()
+    _source_toolkit_last_index, _source_toolkit_members, _toolkit_keys = _group_source_toolkits(_tools)
     team._tool_instructions = []
+
+    def toolkit_key(toolkit: Toolkit) -> ToolkitKey:
+        # The key folds the toolkit's whole function surface; memoized so one
+        # collection pass computes it once per toolkit, not once per member.
+        key = _toolkit_keys.get(id(toolkit))
+        if key is None:
+            key = _toolkit_keys[id(toolkit)] = _toolkit_key(toolkit)
+        return key
+
+    def add_toolkit_instructions(toolkit: Toolkit) -> None:
+        key = toolkit_key(toolkit)
+        if key in _toolkit_instruction_keys:
+            return
+        if toolkit.add_instructions and toolkit.instructions is not None:
+            if team._tool_instructions is None:
+                team._tool_instructions = []
+            team._tool_instructions.append(toolkit.instructions)
+            _toolkit_instruction_keys.add(key)
+
+    def emits_toolkit_instructions(source_toolkit: Toolkit, index: int) -> bool:
+        return _emits_toolkit_instructions(
+            source_toolkit,
+            index,
+            key=toolkit_key(source_toolkit),
+            last_index=_source_toolkit_last_index,
+            members=_source_toolkit_members,
+            async_mode=async_mode,
+        )
 
     # Get output_schema from run_context
     output_schema = run_context.output_schema if run_context else None
 
     # Check if we need strict mode for the model
     strict = False
-    if output_schema is not None and not team.use_json_mode and model.supports_native_structured_outputs:
+    if (
+        output_schema is not None
+        and team.parser_model is None
+        and not team.use_json_mode
+        and model.supports_native_structured_outputs
+    ):
         strict = True
 
-    for tool in _tools:
+    for tool_index, tool in enumerate(_tools):
         if isinstance(tool, Dict):
             # If a dict is passed, it is a builtin tool
             # that is run by the model provider and not the Agent
@@ -326,6 +388,10 @@ def _determine_tools_for_model(
             toolkit_functions = tool.get_async_functions() if async_mode else tool.get_functions()
             for name, _func in toolkit_functions.items():
                 if name in _function_names:
+                    log_warning(
+                        f"Duplicate tool name '{name}' from toolkit '{tool.name}' "
+                        f"already registered on team; skipping the duplicate."
+                    )
                     continue
                 _function_names.append(name)
                 _func = _func.model_copy(deep=True)
@@ -341,14 +407,24 @@ def _determine_tools_for_model(
                 _functions.append(_func)
                 log_debug(f"Added tool {_func.name} from {tool.name}")
 
+                # Add per-function instructions
+                if _func.add_instructions and _func.instructions is not None:
+                    if team._tool_instructions is None:
+                        team._tool_instructions = []
+                    team._tool_instructions.append(_func.instructions)
+
             # Add instructions from the toolkit
-            if tool.add_instructions and tool.instructions is not None:
-                if team._tool_instructions is None:
-                    team._tool_instructions = []
-                team._tool_instructions.append(tool.instructions)
+            add_toolkit_instructions(tool)
 
         elif isinstance(tool, Function):
+            source_toolkit = tool.source_toolkit if isinstance(tool.source_toolkit, Toolkit) else None
+            emit_toolkit_instructions = source_toolkit is not None and emits_toolkit_instructions(
+                source_toolkit, tool_index
+            )
             if tool.name in _function_names:
+                log_warning(f"Duplicate tool name '{tool.name}' already registered on team; skipping the duplicate.")
+                if emit_toolkit_instructions and source_toolkit is not None:
+                    add_toolkit_instructions(source_toolkit)
                 continue
             _function_names.append(tool.name)
             tool = tool.model_copy(deep=True)
@@ -369,12 +445,22 @@ def _determine_tools_for_model(
                     team._tool_instructions = []
                 team._tool_instructions.append(tool.instructions)
 
+            # DB-loaded toolkit members are bare Functions. Their live owning
+            # Toolkit is restored by Registry.rehydrate_function; add its
+            # guidance after all its member Functions, matching live Toolkit
+            # instruction order, and only once.
+            if emit_toolkit_instructions and source_toolkit is not None:
+                add_toolkit_instructions(source_toolkit)
+
         elif callable(tool):
             # We add the tools, which are callable functions
             try:
                 _func = Function.from_callable(tool, strict=strict)
                 _func = _func.model_copy(deep=True)
                 if _func.name in _function_names:
+                    log_warning(
+                        f"Duplicate tool name '{_func.name}' already registered on team; skipping the duplicate."
+                    )
                     continue
                 _function_names.append(_func.name)
 

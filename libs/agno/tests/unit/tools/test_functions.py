@@ -3,6 +3,7 @@ from typing import Any, Callable, Dict, List, Optional
 import pytest
 from pydantic import BaseModel, ValidationError
 
+import agno.tools.function as function_module
 from agno.models.message import Message
 from agno.run.base import RunContext
 from agno.tools.decorator import tool
@@ -145,6 +146,20 @@ def test_wrap_callable():
     assert test_func.entrypoint._wrapped_for_validation is True
 
 
+def test_wrap_callable_caches_pydantic_version_lookup(mocker):
+    """Pydantic package metadata should only be read once across many tool wraps."""
+    function_module._get_pydantic_version.cache_clear()
+    version_spy = mocker.spy(function_module, "version")
+
+    def test_func(value: str) -> str:
+        return value
+
+    for _ in range(100):
+        Function._wrap_callable(test_func)
+
+    assert version_spy.call_count == 1
+
+
 def test_function_from_callable_strict():
     """Test creating a Function from a callable with strict mode."""
 
@@ -206,9 +221,7 @@ def test_function_process_entrypoint_with_user_input_excludes_run_context():
         """
         return f"{param1}-{param2}"
 
-    func = Function(
-        name="test_func", entrypoint=test_func, requires_user_input=True, user_input_fields=["param1"]
-    )
+    func = Function(name="test_func", entrypoint=test_func, requires_user_input=True, user_input_fields=["param1"])
     func.process_entrypoint()
 
     assert func.user_input_schema is not None
@@ -232,9 +245,7 @@ def test_function_process_entrypoint_with_user_input_excludes_all_framework_para
         """
         return param1
 
-    func = Function(
-        name="test_func", entrypoint=test_func, requires_user_input=True, user_input_fields=[]
-    )
+    func = Function(name="test_func", entrypoint=test_func, requires_user_input=True, user_input_fields=[])
     func.process_entrypoint()
 
     assert func.user_input_schema is not None
@@ -255,9 +266,7 @@ def test_function_process_entrypoint_with_user_input_excludes_by_type():
         """
         return param1
 
-    func = Function(
-        name="test_func", entrypoint=test_func, requires_user_input=True, user_input_fields=["param1"]
-    )
+    func = Function(name="test_func", entrypoint=test_func, requires_user_input=True, user_input_fields=["param1"])
     func.process_entrypoint()
 
     assert func.user_input_schema is not None
@@ -367,15 +376,15 @@ def test_function_cache_key_dict_order_independence():
     assert cache_key1 == cache_key2 == cache_key3
 
 
-def test_function_cache_file_path():
+def test_function_cache_file_path(tmp_path):
     """Test generation of cache file paths."""
-    func = Function(name="test_func", cache_results=True, cache_dir="/tmp")
+    import os
+
+    func = Function(name="test_func", cache_results=True, cache_dir=str(tmp_path))
 
     cache_key = "test_key"
     cache_file = func._get_cache_file_path(cache_key)
-    assert cache_file.startswith("/tmp/")
-    assert "test_func" in cache_file
-    assert "test_key" in cache_file
+    assert cache_file == os.path.join(str(tmp_path), "functions", "test_func", "test_key.json")
 
 
 def test_function_cache_operations(tmp_path):
@@ -498,6 +507,22 @@ def test_function_call_execution_with_error():
     assert "Test error" in result.error
 
 
+def test_function_call_execution_no_arguments():
+    """Test sync execution of a no-parameter tool called with no arguments."""
+
+    def test_func() -> str:
+        return "no-args-result"
+
+    func = Function(name="test_func", entrypoint=test_func)
+
+    call = FunctionCall(function=func, arguments=None)
+
+    result = call.execute()
+    assert result.status == "success"
+    assert result.result == "no-args-result"
+    assert result.error is None
+
+
 def test_function_call_with_hooks():
     """Test function call execution with pre and post hooks."""
     pre_hook_called = False
@@ -588,6 +613,23 @@ async def test_function_call_async_execution_with_error():
 
 
 @pytest.mark.asyncio
+async def test_function_call_async_execution_no_arguments():
+    """Test async execution of a no-parameter tool called with no arguments."""
+
+    async def test_func() -> str:
+        return "no-args-result"
+
+    func = Function(name="test_func", entrypoint=test_func)
+
+    call = FunctionCall(function=func, arguments=None)
+
+    result = await call.aexecute()
+    assert result.status == "success"
+    assert result.result == "no-args-result"
+    assert result.error is None
+
+
+@pytest.mark.asyncio
 async def test_function_call_async_with_hooks():
     """Test async function call execution with pre and post hooks."""
     pre_hook_called = False
@@ -644,6 +686,65 @@ async def test_function_call_async_with_tool_hooks():
     assert hook_calls[0][1] == "test_func"
     assert hook_calls[1][0] == "after"
     assert hook_calls[1][2] == "processed-value1"
+
+
+@pytest.mark.asyncio
+async def test_function_call_async_with_empty_tool_hooks():
+    """Async coroutine entrypoint with tool_hooks=[] executes correctly.
+
+    Sanity check for the no-hooks branch of _build_nested_execution_chain_async.
+    Note: a regular async coroutine returned through the (pre-fix) sync
+    fallback was still awaited at the outer call site in aexecute, so this
+    case did not break on main — it is kept as a symmetry check alongside the
+    async-generator regression test below.
+    """
+
+    async def async_func(param1: str) -> str:
+        return f"async-{param1}"
+
+    func = Function(name="async_func", entrypoint=async_func, tool_hooks=[])
+    func.process_entrypoint()
+
+    call = FunctionCall(function=func, arguments={"param1": "value1"})
+
+    result = await call.aexecute()
+    assert result.status == "success"
+    assert result.result == "async-value1"
+    assert result.error is None
+
+
+@pytest.mark.asyncio
+async def test_function_call_async_generator_with_empty_tool_hooks():
+    """Async generator entrypoint with tool_hooks=[] must not crash.
+
+    Regression test for the actual failure surfaced by the fix for #7716:
+    on main, `_build_nested_execution_chain_async` returned the sync
+    `execute_entrypoint` when `tool_hooks=[]`. For an async generator, that
+    returned the generator object, which the outer ``await execution_chain(...)``
+    in ``aexecute`` then tried to await — raising::
+
+        TypeError: object async_generator can't be used in 'await' expression
+
+    With the fix (returning `execute_entrypoint_async`), the async generator
+    is preserved without being awaited, and the caller can iterate it.
+    """
+
+    async def async_gen(param1: str):
+        yield f"chunk-1-{param1}"
+        yield f"chunk-2-{param1}"
+
+    func = Function(name="async_gen", entrypoint=async_gen, tool_hooks=[])
+    func.process_entrypoint()
+
+    call = FunctionCall(function=func, arguments={"param1": "value1"})
+
+    result = await call.aexecute()
+    assert result.status == "success", f"unexpected failure: {result.error}"
+    assert result.error is None
+
+    # The result must be a live async generator the caller can iterate.
+    chunks = [chunk async for chunk in result.result]
+    assert chunks == ["chunk-1-value1", "chunk-2-value1"]
 
 
 def test_tool_decorator_basic():
@@ -1127,3 +1228,26 @@ def test_tool_hook_receives_messages_via_run_context():
     # Verify it's a copy (not the same reference), so hook mutations don't affect the run
     assert captured_messages is not run_context.messages
     assert captured_messages == run_context.messages
+
+
+def test_model_copy_deep_isolates_user_input_schema():
+    """model_copy(deep=True) is the per-run copy parse_tools hands the model,
+    and the model layer writes the user's answers into user_input_schema in
+    place. An aliased schema would carry one run's input into every later run
+    of the same component."""
+
+    def send_email(to: str, subject: str, body: str) -> str:
+        """Send an email."""
+        return "sent"
+
+    func = Function.from_callable(send_email)
+    func.requires_user_input = True
+    func.user_input_fields = ["body"]
+    func.process_entrypoint()
+    assert func.user_input_schema
+
+    copied = func.model_copy(deep=True)
+    assert copied.user_input_schema is not func.user_input_schema
+
+    copied.user_input_schema[0].value = "run-scoped answer"
+    assert func.user_input_schema[0].value is None

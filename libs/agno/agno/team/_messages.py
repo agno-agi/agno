@@ -52,6 +52,25 @@ from agno.utils.team import (
 from agno.utils.timer import Timer
 
 
+def _input_kwarg(method: Any, input_message: Any) -> Dict[str, Any]:
+    """``{"input": ...}`` only when the callee accepts it.
+
+    ``Team.get_system_message`` is a public extension point and this is the
+    bound method, so a subclass written against the pre-2.8.4 signature is what
+    actually runs. Passing the new kwarg unconditionally makes every run of
+    such a team fail.
+    """
+    import inspect
+
+    try:
+        parameters = inspect.signature(method).parameters
+    except (TypeError, ValueError):
+        return {}
+    if "input" in parameters or any(p.kind == p.VAR_KEYWORD for p in parameters.values()):
+        return {"input": input_message}
+    return {}
+
+
 def _get_tool_names(member: Any, async_mode: bool = False) -> List[str]:
     """Extract tool names from a member's tools list."""
     tool_names: List[str] = []
@@ -345,6 +364,7 @@ def get_system_message(
     files: Optional[Sequence[File]] = None,
     tools: Optional[List[Union[Function, dict]]] = None,
     add_session_state_to_context: Optional[bool] = None,
+    input: Optional[Any] = None,
 ) -> Optional[Message]:
     """Get the system message for the team.
 
@@ -470,7 +490,27 @@ def get_system_message(
     # 2.2 Identity sections: description, role, instructions
     system_message_content += _build_identity_sections(team, instructions)
 
-    # 2.3 Knowledge base instructions
+    # 2.3 Learning context: guidance + data, concatenated so the automatic door
+    # renders exactly what the manual door's instructions() + build_context() would
+    if team._learning is not None and team.add_learnings_to_context:
+        from agno.agent._messages import _learning_message_text
+
+        learning_guidance = team._learning._framework_instructions()
+        learning_context = team._learning.build_context(
+            user_id=user_id,
+            session_id=session.session_id if session else None,
+            team_id=team.id,
+            message=_learning_message_text(input),
+            run_context=run_context,
+            metadata=run_context.metadata if run_context else None,
+            dependencies=run_context.dependencies if run_context else None,
+            session_state=run_context.session_state if run_context else None,
+        )
+        learning_block = "\n".join(part for part in (learning_guidance, learning_context) if part)
+        if learning_block:
+            system_message_content += learning_block + "\n"
+
+    # 2.4 Knowledge base instructions
     if team.knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
         build_context_fn = getattr(team.knowledge, "build_context", None)
         if callable(build_context_fn):
@@ -480,7 +520,7 @@ def get_system_message(
             if knowledge_context:
                 system_message_content += knowledge_context + "\n"
 
-    # 2.4 Memories
+    # 2.5 Memories
     if team.add_memories_to_context:
         _memory_manager_not_set = False
         if not user_id:
@@ -571,6 +611,7 @@ async def aget_system_message(
     files: Optional[Sequence[File]] = None,
     tools: Optional[List[Union[Function, dict]]] = None,
     add_session_state_to_context: Optional[bool] = None,
+    input: Optional[Any] = None,
 ) -> Optional[Message]:
     """Get the system message for the team."""
 
@@ -691,7 +732,26 @@ async def aget_system_message(
     # 2.2 Identity sections: description, role, instructions
     system_message_content += _build_identity_sections(team, instructions)
 
-    # 2.3 Knowledge base instructions
+    # 2.3 Learning context (see the sync twin)
+    if team._learning is not None and team.add_learnings_to_context:
+        from agno.agent._messages import _learning_message_text
+
+        learning_guidance = team._learning._framework_instructions()
+        learning_context = await team._learning.abuild_context(
+            user_id=user_id,
+            session_id=session.session_id if session else None,
+            team_id=team.id,
+            message=_learning_message_text(input),
+            run_context=run_context,
+            metadata=run_context.metadata if run_context else None,
+            dependencies=run_context.dependencies if run_context else None,
+            session_state=run_context.session_state if run_context else None,
+        )
+        learning_block = "\n".join(part for part in (learning_guidance, learning_context) if part)
+        if learning_block:
+            system_message_content += learning_block + "\n"
+
+    # 2.4 Knowledge base instructions
     if team.knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
         build_context_fn = getattr(team.knowledge, "build_context", None)
         if callable(build_context_fn):
@@ -701,7 +761,7 @@ async def aget_system_message(
             if knowledge_context:
                 system_message_content += knowledge_context + "\n"
 
-    # 2.4 Memories
+    # 2.5 Memories
     if team.add_memories_to_context:
         _memory_manager_not_set = False
         if not user_id:
@@ -830,6 +890,7 @@ def _get_run_messages(
         files=files,
         add_session_state_to_context=add_session_state_to_context,
         tools=tools,
+        **_input_kwarg(team.get_system_message, input_message),
     )
     if system_message is not None:
         run_messages.system_message = system_message
@@ -965,6 +1026,7 @@ async def _aget_run_messages(
         files=files,
         add_session_state_to_context=add_session_state_to_context,
         tools=tools,
+        **_input_kwarg(team.aget_system_message, input_message),
     )
     if system_message is not None:
         run_messages.system_message = system_message
@@ -1507,11 +1569,11 @@ def _get_json_output_prompt(
             json_output_prompt += "\n</json_fields>"
         elif isinstance(output_schema, list):
             json_output_prompt += "\n<json_fields>"
-            json_output_prompt += f"\n{json.dumps(output_schema)}"
+            json_output_prompt += f"\n{json.dumps(output_schema, ensure_ascii=False)}"
             json_output_prompt += "\n</json_fields>"
         elif isinstance(output_schema, dict):
             json_output_prompt += "\n<json_fields>"
-            json_output_prompt += f"\n{json.dumps(output_schema)}"
+            json_output_prompt += f"\n{json.dumps(output_schema, ensure_ascii=False)}"
             json_output_prompt += "\n</json_fields>"
         elif isinstance(output_schema, type) and issubclass(output_schema, BaseModel):
             json_schema = output_schema.model_json_schema()
@@ -1545,13 +1607,11 @@ def _get_json_output_prompt(
 
                 if len(response_model_properties) > 0:
                     json_output_prompt += "\n<json_fields>"
-                    json_output_prompt += (
-                        f"\n{json.dumps([key for key in response_model_properties.keys() if key != '$defs'])}"
-                    )
+                    json_output_prompt += f"\n{json.dumps([key for key in response_model_properties.keys() if key != '$defs'], ensure_ascii=False)}"
                     json_output_prompt += "\n</json_fields>"
                     json_output_prompt += "\n\nHere are the properties for each field:"
                     json_output_prompt += "\n<json_field_properties>"
-                    json_output_prompt += f"\n{json.dumps(response_model_properties, indent=2)}"
+                    json_output_prompt += f"\n{json.dumps(response_model_properties, indent=2, ensure_ascii=False)}"
                     json_output_prompt += "\n</json_field_properties>"
         else:
             log_warning(f"Could not build json schema for {output_schema}")

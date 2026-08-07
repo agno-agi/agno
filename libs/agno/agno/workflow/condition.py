@@ -3,9 +3,11 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
 
+from agno.exceptions import RunCancelledException
 from agno.registry import Registry
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunContext
+from agno.run.cancel import araise_if_cancelled, raise_if_cancelled
 from agno.run.team import TeamRunOutputEvent
 from agno.run.workflow import (
     ConditionExecutionCompletedEvent,
@@ -17,7 +19,17 @@ from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, log_error, logger
 from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_condition_evaluator, is_cel_expression
 from agno.workflow.step import Step
-from agno.workflow.types import HumanReview, OnReject, StepInput, StepOutput, StepRequirement, StepType
+from agno.workflow.types import (
+    ErrorRequirement,
+    HumanReview,
+    OnError,
+    OnReject,
+    StepInput,
+    StepOutput,
+    StepRequirement,
+    StepType,
+    warn_session_state_param_deprecated,
+)
 
 # Constants for condition branch identifiers
 CONDITION_BRANCH_IF = "if"
@@ -73,6 +85,12 @@ class Condition:
             - "else" (default): Execute `else_steps` if provided, otherwise skip
             - "skip": Skip the entire condition (both branches)
             - "cancel": Cancel the workflow
+
+    Error Handling:
+        The `on_error` field controls what happens when a sub-step within the condition fails:
+        - "skip" (default): Log the error, add it to results, and stop executing remaining sub-steps
+        - "fail": Re-raise the exception, causing the entire workflow to fail
+        - "pause": Pause the workflow and allow user to decide (retry or skip) via HITL
     """
 
     steps: WorkflowSteps
@@ -105,6 +123,11 @@ class Condition:
     # - "skip": Skip entire condition (both branches)
     # - "cancel": Cancel the workflow
     on_reject: Union[OnReject, str] = OnReject.else_branch
+    # What to do when a sub-step encounters an error:
+    # - "skip" (default): Log error, add to results, and break execution
+    # - "fail": Re-raise the exception, causing workflow to fail
+    # - "pause": Pause workflow and allow user to decide (retry or skip) via HITL
+    on_error: Union[OnError, str] = OnError.skip
 
     # HumanReview config (alternative to flat params above)
     human_review: Optional[HumanReview] = None
@@ -117,6 +140,7 @@ class Condition:
                 requires_confirmation=self.requires_confirmation,
                 confirmation_message=self.confirmation_message,
                 on_reject=self.on_reject,
+                on_error=self.on_error,
             )
 
         from agno.workflow.types import validate_human_review_for_condition
@@ -127,6 +151,7 @@ class Condition:
         self.requires_confirmation = self.human_review.requires_confirmation
         self.confirmation_message = self.human_review.confirmation_message
         self.on_reject = self.human_review.on_reject
+        self.on_error = self.human_review.on_error
 
     def to_dict(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {
@@ -185,6 +210,29 @@ class Condition:
             on_reject=on_reject.value if isinstance(on_reject, OnReject) else str(on_reject),
             requires_user_input=False,
             step_input=step_input,
+        )
+
+    def create_error_requirement(
+        self,
+        step_index: int,
+        error: Exception,
+    ) -> ErrorRequirement:
+        """Create an ErrorRequirement for HITL pause on error.
+
+        Args:
+            step_index: Index of the condition in the workflow.
+            error: The exception that was raised.
+
+        Returns:
+            ErrorRequirement configured for error handling.
+        """
+        return ErrorRequirement(
+            step_id=str(uuid4()),
+            step_name=self.name or f"condition_{step_index + 1}",
+            step_index=step_index,
+            error_message=str(error),
+            error_type=type(error).__name__,
+            retry_count=0,
         )
 
     @classmethod
@@ -247,6 +295,7 @@ class Condition:
                 requires_confirmation=data.get("requires_confirmation", False),
                 confirmation_message=data.get("confirmation_message"),
                 on_reject=data.get("on_reject", "else"),
+                on_error=data.get("on_error", "skip"),
             )
 
         return cls(
@@ -333,7 +382,12 @@ class Condition:
             audio=current_audio + all_audio,
         )
 
-    def _evaluate_condition(self, step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> bool:
+    def _evaluate_condition(
+        self,
+        step_input: StepInput,
+        session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
+    ) -> bool:
         """Evaluate the condition and return boolean result.
 
         Supports:
@@ -356,10 +410,15 @@ class Condition:
                 return False
 
         if callable(self.evaluator):
+            # Build kwargs based on what parameters the evaluator accepts
+            kwargs: Dict[str, Any] = {}
+            if run_context is not None and self._evaluator_has_run_context_param():
+                kwargs["run_context"] = run_context
             if session_state is not None and self._evaluator_has_session_state_param():
-                result = self.evaluator(step_input, session_state=session_state)  # type: ignore[call-arg]
-            else:
-                result = self.evaluator(step_input)
+                kwargs["session_state"] = session_state
+                warn_session_state_param_deprecated(self.evaluator, "Condition evaluator functions")
+
+            result = self.evaluator(step_input, **kwargs)  # type: ignore[call-arg]
 
             if isinstance(result, bool):
                 return result
@@ -369,7 +428,12 @@ class Condition:
 
         return False
 
-    async def _aevaluate_condition(self, step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> bool:
+    async def _aevaluate_condition(
+        self,
+        step_input: StepInput,
+        session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
+    ) -> bool:
         """Async version of condition evaluation.
 
         Supports:
@@ -392,18 +456,18 @@ class Condition:
                 return False
 
         if callable(self.evaluator):
-            has_session_state = session_state is not None and self._evaluator_has_session_state_param()
+            # Build kwargs based on what parameters the evaluator accepts
+            kwargs: Dict[str, Any] = {}
+            if run_context is not None and self._evaluator_has_run_context_param():
+                kwargs["run_context"] = run_context
+            if session_state is not None and self._evaluator_has_session_state_param():
+                kwargs["session_state"] = session_state
+                warn_session_state_param_deprecated(self.evaluator, "Condition evaluator functions")
 
             if inspect.iscoroutinefunction(self.evaluator):
-                if has_session_state:
-                    result = await self.evaluator(step_input, session_state=session_state)  # type: ignore[call-arg]
-                else:
-                    result = await self.evaluator(step_input)
+                result = await self.evaluator(step_input, **kwargs)  # type: ignore[call-arg]
             else:
-                if has_session_state:
-                    result = self.evaluator(step_input, session_state=session_state)  # type: ignore[call-arg]
-                else:
-                    result = self.evaluator(step_input)
+                result = self.evaluator(step_input, **kwargs)  # type: ignore[call-arg]
 
             if isinstance(result, bool):
                 return result
@@ -421,6 +485,17 @@ class Condition:
         try:
             sig = inspect.signature(self.evaluator)
             return "session_state" in sig.parameters
+        except Exception:
+            return False
+
+    def _evaluator_has_run_context_param(self) -> bool:
+        """Check if the evaluator function has a run_context parameter"""
+        if not callable(self.evaluator):
+            return False
+
+        try:
+            sig = inspect.signature(self.evaluator)
+            return "run_context" in sig.parameters
         except Exception:
             return False
 
@@ -482,9 +557,13 @@ class Condition:
         else:
             # Evaluate the condition
             if run_context is not None and run_context.session_state is not None:
-                condition_result = self._evaluate_condition(step_input, session_state=run_context.session_state)
+                condition_result = self._evaluate_condition(
+                    step_input, session_state=run_context.session_state, run_context=run_context
+                )
             else:
-                condition_result = self._evaluate_condition(step_input, session_state=session_state)
+                condition_result = self._evaluate_condition(
+                    step_input, session_state=session_state, run_context=run_context
+                )
 
             log_debug(f"Condition {self.name} evaluated to: {condition_result}")
 
@@ -543,6 +622,18 @@ class Condition:
                             logger.info(f"Early termination requested by condition step {step_name}")
                             break
                 else:
+                    # Propagate executor HITL pause from inner step
+                    if getattr(step_output, "is_paused", False):
+                        all_results.append(step_output)
+                        return StepOutput(
+                            step_name=self.name,
+                            step_id=conditional_step_id,
+                            step_type=StepType.CONDITION,
+                            content=f"Condition {self.name} paused at inner step",
+                            steps=all_results,
+                            is_paused=True,
+                        )
+
                     all_results.append(step_output)
                     step_name = getattr(step, "name", f"step_{i}")
                     condition_step_outputs[step_name] = step_output
@@ -558,9 +649,17 @@ class Condition:
                     current_step_input, step_output, condition_step_outputs
                 )
 
+            except RunCancelledException:
+                raise
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.exception(f"Condition step {step_name} failed")
+
+                # Check the condition's on_error setting
+                if self.on_error == OnError.fail or self.on_error == OnError.pause:
+                    raise
+
+                # OnError.skip: log error and break
                 error_output = StepOutput(
                     step_name=step_name,
                     content=f"Step {step_name} failed: {str(e)}",
@@ -665,9 +764,13 @@ class Condition:
         else:
             # Evaluate the condition
             if run_context is not None and run_context.session_state is not None:
-                condition_result = self._evaluate_condition(step_input, session_state=run_context.session_state)
+                condition_result = self._evaluate_condition(
+                    step_input, session_state=run_context.session_state, run_context=run_context
+                )
             else:
-                condition_result = self._evaluate_condition(step_input, session_state=session_state)
+                condition_result = self._evaluate_condition(
+                    step_input, session_state=session_state, run_context=run_context
+                )
             log_debug(f"Condition {self.name} evaluated to: {condition_result}")
 
             if stream_events and workflow_run_response:
@@ -717,6 +820,8 @@ class Condition:
         condition_step_outputs: Dict[str, StepOutput] = {}
 
         for i, step in enumerate(steps_to_execute):
+            if workflow_run_response and workflow_run_response.run_id:
+                raise_if_cancelled(workflow_run_response.run_id)
             try:
                 step_outputs_for_step: List[StepOutput] = []
 
@@ -758,6 +863,18 @@ class Condition:
                 step_name = getattr(step, "name", f"step_{i}")
                 log_debug(f"Condition step {step_name} streaming completed")
 
+                # Propagate executor HITL pause from inner step
+                if step_outputs_for_step and getattr(step_outputs_for_step[-1], "is_paused", False):
+                    yield StepOutput(
+                        step_name=self.name,
+                        step_id=conditional_step_id,
+                        step_type=StepType.CONDITION,
+                        content=f"Condition {self.name} paused at inner step",
+                        steps=all_results,
+                        is_paused=True,
+                    )
+                    return
+
                 if step_outputs_for_step:
                     if len(step_outputs_for_step) == 1:
                         condition_step_outputs[step_name] = step_outputs_for_step[0]
@@ -781,9 +898,17 @@ class Condition:
                             current_step_input, step_outputs_for_step, condition_step_outputs
                         )
 
+            except RunCancelledException:
+                raise
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.exception(f"Condition step {step_name} streaming failed")
+
+                # Check the condition's on_error setting
+                if self.on_error == OnError.fail or self.on_error == OnError.pause:
+                    raise
+
+                # OnError.skip: log error and break
                 error_output = StepOutput(
                     step_name=step_name,
                     content=f"Step {step_name} failed: {str(e)}",
@@ -875,9 +1000,13 @@ class Condition:
         else:
             # Evaluate the condition
             if run_context is not None and run_context.session_state is not None:
-                condition_result = await self._aevaluate_condition(step_input, session_state=run_context.session_state)
+                condition_result = await self._aevaluate_condition(
+                    step_input, session_state=run_context.session_state, run_context=run_context
+                )
             else:
-                condition_result = await self._aevaluate_condition(step_input, session_state=session_state)
+                condition_result = await self._aevaluate_condition(
+                    step_input, session_state=session_state, run_context=run_context
+                )
             log_debug(f"Condition {self.name} evaluated to: {condition_result}")
 
             # Determine which steps to execute
@@ -934,6 +1063,18 @@ class Condition:
                             logger.info(f"Early termination requested by condition step {step_name}")
                             break
                 else:
+                    # Propagate executor HITL pause from inner step
+                    if getattr(step_output, "is_paused", False):
+                        all_results.append(step_output)
+                        return StepOutput(
+                            step_name=self.name,
+                            step_id=conditional_step_id,
+                            step_type=StepType.CONDITION,
+                            content=f"Condition {self.name} paused at inner step",
+                            steps=all_results,
+                            is_paused=True,
+                        )
+
                     all_results.append(step_output)
                     step_name = getattr(step, "name", f"step_{i}")
                     condition_step_outputs[step_name] = step_output
@@ -949,9 +1090,17 @@ class Condition:
                     current_step_input, step_output, condition_step_outputs
                 )
 
+            except RunCancelledException:
+                raise
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.exception(f"Condition step {step_name} async failed")
+
+                # Check the condition's on_error setting
+                if self.on_error == OnError.fail or self.on_error == OnError.pause:
+                    raise
+
+                # OnError.skip: log error and break
                 error_output = StepOutput(
                     step_name=step_name,
                     content=f"Step {step_name} failed: {str(e)}",
@@ -1056,9 +1205,13 @@ class Condition:
         else:
             # Evaluate the condition
             if run_context is not None and run_context.session_state is not None:
-                condition_result = await self._aevaluate_condition(step_input, session_state=run_context.session_state)
+                condition_result = await self._aevaluate_condition(
+                    step_input, session_state=run_context.session_state, run_context=run_context
+                )
             else:
-                condition_result = await self._aevaluate_condition(step_input, session_state=session_state)
+                condition_result = await self._aevaluate_condition(
+                    step_input, session_state=session_state, run_context=run_context
+                )
             log_debug(f"Condition {self.name} evaluated to: {condition_result}")
 
             if stream_events and workflow_run_response:
@@ -1109,6 +1262,8 @@ class Condition:
         condition_step_outputs: Dict[str, StepOutput] = {}
 
         for i, step in enumerate(steps_to_execute):
+            if workflow_run_response and workflow_run_response.run_id:
+                await araise_if_cancelled(workflow_run_response.run_id)
             try:
                 step_outputs_for_step: List[StepOutput] = []
 
@@ -1150,6 +1305,18 @@ class Condition:
                 step_name = getattr(step, "name", f"step_{i}")
                 log_debug(f"Condition step {step_name} async streaming completed")
 
+                # Propagate executor HITL pause from inner step
+                if step_outputs_for_step and getattr(step_outputs_for_step[-1], "is_paused", False):
+                    yield StepOutput(
+                        step_name=self.name,
+                        step_id=conditional_step_id,
+                        step_type=StepType.CONDITION,
+                        content=f"Condition {self.name} paused at inner step",
+                        steps=all_results,
+                        is_paused=True,
+                    )
+                    return
+
                 if step_outputs_for_step:
                     if len(step_outputs_for_step) == 1:
                         condition_step_outputs[step_name] = step_outputs_for_step[0]
@@ -1173,9 +1340,17 @@ class Condition:
                             current_step_input, step_outputs_for_step, condition_step_outputs
                         )
 
+            except RunCancelledException:
+                raise
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.exception(f"Condition step {step_name} async streaming failed")
+
+                # Check the condition's on_error setting
+                if self.on_error == OnError.fail or self.on_error == OnError.pause:
+                    raise
+
+                # OnError.skip: log error and break
                 error_output = StepOutput(
                     step_name=step_name,
                     content=f"Step {step_name} failed: {str(e)}",

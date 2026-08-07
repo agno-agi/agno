@@ -1,10 +1,109 @@
 from collections import OrderedDict
 from inspect import iscoroutinefunction
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union, cast, get_type_hints
 
+from agno.exceptions import PathSecurityError
 from agno.tools.function import Function
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_warning
+from agno.utils.path_safety import safe_join_relative_path
+
+# Groups a Toolkit by what it contributes rather than by object identity.
+# Agent.deep_copy / Team.deep_copy clone a Toolkit list entry while the
+# rehydrated Functions that came from it keep pointing at the live registry
+# Toolkit, so identity splits one logical toolkit into two. A clone agrees with
+# its original on every part of this key, so the two regroup.
+#
+# The function surface is part of the key because the coverage check reads it:
+# two same-named toolkits carrying the same guidance but exposing different
+# functions would otherwise pool their members, and one toolkit's coverage would
+# be judged against the other's function set. The sync and async surfaces stay
+# separate parts of the key: coverage is measured per mode, and two toolkits
+# whose surfaces agree only as a union would pool members that mode-specific
+# coverage then judges against the wrong function set.
+ToolkitKey = Tuple[str, Any, bool, frozenset, frozenset]
+
+
+def _toolkit_key(toolkit: "Toolkit") -> ToolkitKey:
+    sync_surface = frozenset(toolkit.get_functions())
+    async_surface = frozenset(toolkit.get_async_functions())
+    instructions = toolkit.instructions
+    if instructions is not None and not isinstance(instructions, str):
+        # `instructions` is declared Optional[str] but nothing enforces it, and
+        # a list would make this key unhashable. Fall back to identity for that
+        # toolkit rather than raise: grouping degrades, the run does not fail.
+        return (toolkit.name, id(toolkit), toolkit.add_instructions, sync_surface, async_surface)
+    return (toolkit.name, instructions, toolkit.add_instructions, sync_surface, async_surface)
+
+
+def _group_source_toolkits(
+    tools: Sequence[Any],
+) -> Tuple[Dict[ToolkitKey, int], Dict[ToolkitKey, Set[str]], Dict[int, ToolkitKey]]:
+    """Index the bare Functions that a live Toolkit was flattened into.
+
+    Returns the last index each toolkit's members occupy in ``tools`` and the
+    member names present, both keyed by :func:`_toolkit_key`, plus the key
+    itself memoized per live Toolkit object. The key folds the toolkit's whole
+    function surface, so rebuilding it per member Function would make one
+    collection pass quadratic in the toolkit's size; every later key read must
+    come from the memo.
+    """
+    last_index: Dict[ToolkitKey, int] = {}
+    members: Dict[ToolkitKey, Set[str]] = {}
+    keys_by_id: Dict[int, ToolkitKey] = {}
+    for index, tool in enumerate(tools):
+        if not isinstance(tool, Function):
+            continue
+        source_toolkit = tool.source_toolkit
+        if not isinstance(source_toolkit, Toolkit):
+            continue
+        key = keys_by_id.get(id(source_toolkit))
+        if key is None:
+            key = keys_by_id[id(source_toolkit)] = _toolkit_key(source_toolkit)
+        last_index[key] = index
+        members.setdefault(key, set()).add(tool.name)
+    return last_index, members, keys_by_id
+
+
+def _emits_toolkit_instructions(
+    source_toolkit: "Toolkit",
+    index: int,
+    key: ToolkitKey,
+    last_index: Dict[ToolkitKey, int],
+    members: Dict[ToolkitKey, Set[str]],
+    async_mode: bool = False,
+) -> bool:
+    """Whether the bare Function at ``index`` should emit its toolkit's guidance.
+
+    Guidance belongs after all of the toolkit's member guidance, so only the
+    last member emits it, and only when the component holds every function the
+    toolkit exposes. Persistence records one dict per function, so a component
+    built from a whole toolkit and one built from a single member are
+    indistinguishable on reload; resolving that ambiguity as "whole toolkit"
+    would hand the model guidance naming tools it was not given.
+
+    ``key`` is ``_toolkit_key(source_toolkit)``, passed in from the caller's
+    memo rather than rebuilt here: the key folds the toolkit's whole function
+    surface, and this check runs once per member Function.
+
+    A live Toolkit for the same guidance elsewhere in the list needs no special
+    case: whichever representation reaches its emission point first wins, and
+    :func:`_toolkit_key` makes the caller's dedup collapse the two.
+    """
+    if last_index.get(key) != index:
+        return False
+    # Measured against the set this run would actually deliver: in async mode a
+    # live Toolkit contributes its async variants too, and the registry cannot
+    # rehydrate those, so an async-only member always leaves a gap here.
+    exposed = set(source_toolkit.get_async_functions() if async_mode else source_toolkit.get_functions())
+    present = members.get(key, set())
+    if not exposed <= present:
+        log_debug(
+            f"Toolkit '{source_toolkit.name}' instructions skipped: the component holds "
+            f"{len(present)} of its {len(exposed)} functions."
+        )
+        return False
+    return True
 
 
 class Toolkit:
@@ -15,7 +114,7 @@ class Toolkit:
     def __init__(
         self,
         name: str = "toolkit",
-        tools: Sequence[Union[Callable[..., Any], Function]] = [],
+        tools: Optional[Sequence[Union[Callable[..., Any], Function]]] = None,
         async_tools: Optional[Sequence[tuple[Callable[..., Any], str]]] = None,
         instructions: Optional[str] = None,
         add_instructions: bool = False,
@@ -28,6 +127,7 @@ class Toolkit:
         cache_results: bool = False,
         cache_ttl: int = 3600,
         cache_dir: Optional[str] = None,
+        timeout: Optional[int] = None,
         auto_register: bool = True,
     ):
         """Initialize a new Toolkit.
@@ -47,12 +147,18 @@ class Toolkit:
             cache_results (bool): Enable in-memory caching of function results.
             cache_ttl (int): Time-to-live for cached results in seconds.
             cache_dir (Optional[str]): Directory to store cache files. Defaults to system temp dir.
+            timeout (Optional[int]): Timeout in seconds for the primary I/O operation this toolkit
+                performs (e.g. HTTP request, SDK call, sandbox execution). Subclasses that talk to
+                external systems should accept their own ``timeout`` and forward it via
+                ``super().__init__(timeout=...)`` so agents have a uniform override path. Toolkits
+                that also expose secondary timers (job-poll intervals, per-task budgets) should keep
+                their own explicit names for those.
             auto_register (bool): Whether to automatically register all methods in the class.
             stop_after_tool_call_tools (Optional[List[str]]): List of function names that should stop the agent after execution.
             show_result_tools (Optional[List[str]]): List of function names whose results should be shown.
         """
         self.name: str = name
-        self.tools: Sequence[Union[Callable[..., Any], Function]] = tools
+        self.tools: Sequence[Union[Callable[..., Any], Function]] = tools or []
         self._async_tools: Sequence[tuple[Callable[..., Any], str]] = async_tools or []
         # Functions dict - used by agent.run() and agent.print_response()
         self.functions: Dict[str, Function] = OrderedDict()
@@ -68,7 +174,7 @@ class Toolkit:
         self.show_result_tools: list[str] = show_result_tools or []
 
         self._check_tools_filters(
-            available_tools=[self._get_tool_name(tool) for tool in tools],
+            available_tools=[self._get_tool_name(tool) for tool in self.tools],
             include_tools=include_tools,
             exclude_tools=exclude_tools,
         )
@@ -79,6 +185,16 @@ class Toolkit:
         self.cache_results: bool = cache_results
         self.cache_ttl: int = cache_ttl
         self.cache_dir: Optional[str] = cache_dir
+
+        # Only assign timeout when the caller explicitly passed one, or when the
+        # subclass hasn't already set it before calling super().__init__(). This
+        # lets subclasses either forward timeout via super() (recommended) or set
+        # self.timeout locally without either pattern clobbering the other.
+        #
+        # Widen the value to Any at assignment: subclasses own the semantic type
+        # (int, float, or httpx.Timeout) and a base Optional[int] would break them.
+        if timeout is not None or not hasattr(self, "timeout"):
+            self.timeout = cast(Any, timeout)
 
         # Automatically register all methods if auto_register is True
         if auto_register:
@@ -258,6 +374,23 @@ class Toolkit:
                     return bound
 
             bound_method = make_bound_method(original_func, self)
+            # Expose the original signature (minus self) and annotations on the wrapper.
+            # FunctionCall._build_entrypoint_args inspects the entrypoint's signature to
+            # inject run_context/agent/team/etc.; without this it sees (*args, **kwargs)
+            # and skips the injection.
+            bound_method.__signature__ = sig.replace(  # type: ignore[attr-defined]
+                parameters=[param for param_name, param in sig.parameters.items() if param_name != "self"]
+            )
+            # Resolve annotations against the original method's own module so type-based
+            # Agent/Team injection still works when the user's module uses
+            # `from __future__ import annotations` (PEP 563). The @tool wrapper's globals
+            # point at the decorator module, so unwrap to the underlying method first;
+            # otherwise the raw string annotations stay unresolvable and injection is skipped.
+            try:
+                resolved_annotations = get_type_hints(inspect.unwrap(original_func))
+            except Exception:
+                resolved_annotations = getattr(original_func, "__annotations__", {})
+            bound_method.__annotations__ = {k: v for k, v in resolved_annotations.items() if k != "self"}
         else:
             # Function doesn't expect self (e.g., static method or already bound)
             bound_method = original_func
@@ -346,34 +479,19 @@ class Toolkit:
         pass
 
     def _check_path(self, file_name: str, base_dir: Path, restrict_to_base_dir: bool = True) -> Tuple[bool, Path]:
-        """Check if the file path is within the base directory.
-
-        This method validates that a given file path resolves to a location
-        within the specified base_dir, preventing directory traversal attacks.
-
-        Args:
-            file_name: The file name or relative path to check.
-            base_dir: The base directory to validate against.
-            restrict_to_base_dir: If True, reject paths outside base_dir.
-
-        Returns:
-            Tuple of (is_safe, resolved_path). If not safe, returns base_dir as the path.
-        """
-        file_path = base_dir.joinpath(file_name).resolve()
-
+        """Resolve ``file_name`` inside ``base_dir``. Returns (is_safe, resolved_path)."""
         if not restrict_to_base_dir:
-            return True, file_path
-
-        if base_dir == file_path:
-            return True, file_path
+            try:
+                resolved = base_dir.joinpath(file_name).resolve()
+                return True, resolved
+            except (OSError, ValueError):
+                return False, base_dir
 
         try:
-            file_path.relative_to(base_dir)
-        except ValueError as e:
-            log_error(f"Path escapes base directory: {file_name}: {str(e)}")
+            resolved_path = safe_join_relative_path(base_dir, file_name)
+            return True, resolved_path
+        except (PathSecurityError, OSError):
             return False, base_dir
-
-        return True, file_path
 
     def __repr__(self):
         return f"<{self.__class__.__name__} name={self.name} functions={list(self.functions.keys())}>"

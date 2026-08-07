@@ -3,9 +3,11 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from agno.os.interfaces.slack.helpers import (
+    BotNameResolver,
     download_event_files_async,
     extract_event_context,
     member_name,
+    resolve_session_id,
     resolve_slack_user,
     send_slack_message_async,
     should_respond,
@@ -276,6 +278,67 @@ class TestResolveSlackUser:
         assert display_name is None
 
 
+# -- resolve_bot_name --
+
+
+class TestBotNameResolver:
+    @pytest.mark.asyncio
+    async def test_resolves_bot_display_name(self):
+        resolver = BotNameResolver()
+        client = AsyncMock()
+        client.users_info = AsyncMock(
+            return_value={"user": {"name": "scout_bot", "profile": {"display_name": "Scout", "real_name": "Scout Bot"}}}
+        )
+        name = await resolver.resolve(client, "UBOT123")
+        assert name == "Scout"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_real_name(self):
+        resolver = BotNameResolver()
+        client = AsyncMock()
+        client.users_info = AsyncMock(
+            return_value={"user": {"name": "scout_bot", "profile": {"display_name": "", "real_name": "Scout Bot"}}}
+        )
+        name = await resolver.resolve(client, "UBOT456")
+        assert name == "Scout Bot"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_username(self):
+        resolver = BotNameResolver()
+        client = AsyncMock()
+        client.users_info = AsyncMock(return_value={"user": {"name": "scout_bot", "profile": {}}})
+        name = await resolver.resolve(client, "UBOT789")
+        assert name == "scout_bot"
+
+    @pytest.mark.asyncio
+    async def test_caches_result(self):
+        resolver = BotNameResolver()
+        client = AsyncMock()
+        client.users_info = AsyncMock(return_value={"user": {"profile": {"display_name": "Scout"}}})
+        await resolver.resolve(client, "UCACHED")
+        await resolver.resolve(client, "UCACHED")
+        assert client.users_info.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_api_error_returns_none(self):
+        resolver = BotNameResolver()
+        client = AsyncMock()
+        client.users_info = AsyncMock(side_effect=RuntimeError("API error"))
+        name = await resolver.resolve(client, "UFAIL")
+        assert name is None
+
+    @pytest.mark.asyncio
+    async def test_api_error_not_cached(self):
+        resolver = BotNameResolver()
+        client = AsyncMock()
+        client.users_info = AsyncMock(side_effect=RuntimeError("API error"))
+        await resolver.resolve(client, "UFAIL")
+        # Fix the client for the retry
+        client.users_info = AsyncMock(return_value={"user": {"profile": {"display_name": "Scout"}}})
+        name = await resolver.resolve(client, "UFAIL")
+        assert name == "Scout"
+
+
 # -- strip_bot_mention --
 
 
@@ -307,3 +370,67 @@ class TestStripBotMention:
     def test_mention_in_middle(self):
         result = strip_bot_mention("hey <@U0APCSS3MDH> what's up", "U0APCSS3MDH")
         assert result == "hey what's up"
+
+    def test_replaces_with_bot_name(self):
+        result = strip_bot_mention("<@U0APCSS3MDH> hello world", "U0APCSS3MDH", "Scout")
+        assert result == "Scout hello world"
+
+    def test_replaces_mention_in_middle_with_bot_name(self):
+        result = strip_bot_mention("hey <@U0APCSS3MDH> what's up", "U0APCSS3MDH", "Scout")
+        assert result == "hey Scout what's up"
+
+    def test_preserves_other_mentions_when_replacing_with_name(self):
+        result = strip_bot_mention("<@U0APCSS3MDH> hey <@U999OTHER>", "U0APCSS3MDH", "Scout")
+        assert result == "Scout hey <@U999OTHER>"
+
+    def test_mention_only_with_bot_name(self):
+        result = strip_bot_mention("<@U0APCSS3MDH>", "U0APCSS3MDH", "Scout")
+        assert result == "Scout"
+
+
+# -- resolve_session_id --
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_id_returns_legacy_key_when_session_exists():
+    entity = Mock()
+    entity.aget_session = AsyncMock(return_value={"session_id": "agent-1:111.222"})
+
+    key = await resolve_session_id(entity, "agent-1", "C123", "111.222")
+    assert key == "agent-1:111.222"
+    entity.aget_session.assert_awaited_once_with(session_id="agent-1:111.222")
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_id_returns_new_key_when_no_legacy_session():
+    entity = Mock()
+    entity.aget_session = AsyncMock(return_value=None)
+
+    key = await resolve_session_id(entity, "agent-1", "C123", "111.222")
+    assert key == "agent-1:C123:111.222"
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_id_returns_new_key_when_aget_session_raises():
+    entity = Mock()
+    entity.aget_session = AsyncMock(side_effect=Exception("DB error"))
+
+    key = await resolve_session_id(entity, "agent-1", "C123", "111.222")
+    assert key == "agent-1:C123:111.222"
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_id_returns_new_key_for_remote_entities():
+    entity = Mock(spec=[])
+
+    key = await resolve_session_id(entity, "agent-1", "C123", "111.222")
+    assert key == "agent-1:C123:111.222"
+
+
+@pytest.mark.asyncio
+async def test_resolve_session_id_returns_new_key_when_no_db_access():
+    entity = Mock(spec=[])
+    entity.db = None
+
+    key = await resolve_session_id(entity, "agent-1", "C123", "111.222")
+    assert key == "agent-1:C123:111.222"

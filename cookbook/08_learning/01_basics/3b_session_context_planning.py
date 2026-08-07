@@ -26,7 +26,7 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 # Planning mode: Tracks goals, plans, and progress in addition to summary.
 # Good for task-oriented conversations where you want structured progress.
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.5"),
     db=db,
     instructions="Be very concise. Give brief, actionable answers.",
     learning=LearningMachine(

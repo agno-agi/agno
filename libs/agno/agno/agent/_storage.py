@@ -8,6 +8,7 @@ from typing import (
     Dict,
     List,
     Optional,
+    Set,
     Type,
     Union,
     cast,
@@ -27,6 +28,7 @@ from agno.registry.registry import Registry
 from agno.run.agent import RunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.tools.function import Function
+from agno.tools.toolkit import Toolkit
 from agno.utils.agent import (
     aget_last_run_output_util,
     aget_run_output_util,
@@ -42,7 +44,9 @@ from agno.utils.string import generate_id_from_name
 # ---------------------------------------------------------------------------
 
 
-def get_run_output(agent: Agent, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
+def get_run_output(
+    agent: Agent, run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
+) -> Optional[RunOutput]:
     """
     Get a RunOutput from the database.
 
@@ -50,6 +54,7 @@ def get_run_output(agent: Agent, run_id: str, session_id: Optional[str] = None) 
         agent: The Agent instance.
         run_id (str): The run_id to load from storage.
         session_id (Optional[str]): The session_id to load from storage.
+        user_id (Optional[str]): The user_id to scope the session lookup.
     Returns:
         Optional[RunOutput]: The RunOutput from the database or None if not found.
     """
@@ -57,10 +62,12 @@ def get_run_output(agent: Agent, run_id: str, session_id: Optional[str] = None) 
         raise Exception("No session_id provided")
 
     session_id_to_load = session_id or agent.session_id
-    return cast(RunOutput, get_run_output_util(agent, run_id=run_id, session_id=session_id_to_load))
+    return cast(RunOutput, get_run_output_util(agent, run_id=run_id, session_id=session_id_to_load, user_id=user_id))
 
 
-async def aget_run_output(agent: Agent, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
+async def aget_run_output(
+    agent: Agent, run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
+) -> Optional[RunOutput]:
     """
     Get a RunOutput from the database.
 
@@ -68,6 +75,7 @@ async def aget_run_output(agent: Agent, run_id: str, session_id: Optional[str] =
         agent: The Agent instance.
         run_id (str): The run_id to load from storage.
         session_id (Optional[str]): The session_id to load from storage.
+        user_id (Optional[str]): The user_id to scope the session lookup.
     Returns:
         Optional[RunOutput]: The RunOutput from the database or None if not found.
     """
@@ -75,7 +83,9 @@ async def aget_run_output(agent: Agent, run_id: str, session_id: Optional[str] =
         raise Exception("No session_id provided")
 
     session_id_to_load = session_id or agent.session_id
-    return cast(RunOutput, await aget_run_output_util(agent, run_id=run_id, session_id=session_id_to_load))
+    return cast(
+        RunOutput, await aget_run_output_util(agent, run_id=run_id, session_id=session_id_to_load, user_id=user_id)
+    )
 
 
 def get_last_run_output(agent: Agent, session_id: Optional[str] = None) -> Optional[RunOutput]:
@@ -517,9 +527,14 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["max_tool_calls_from_history"] = agent.max_tool_calls_from_history
 
     # --- Knowledge settings ---
-    # TODO: implement knowledge serialization
-    # if agent.knowledge is not None:
-    # config["knowledge"] = agent.knowledge.to_dict()
+    # Knowledge is a non-serializable object (it holds live db/vector_db connections),
+    # so we store a reference by name and resolve it from the registry on load.
+    if agent.knowledge is not None:
+        knowledge_name = getattr(agent.knowledge, "name", None)
+        if knowledge_name is not None:
+            config["knowledge"] = {"name": knowledge_name}
+        else:
+            log_warning("Agent knowledge has no name; it cannot be referenced from the registry and will not be saved.")
     if agent.knowledge_filters is not None:
         config["knowledge_filters"] = agent.knowledge_filters
     if agent.enable_agentic_knowledge_filters:
@@ -537,18 +552,45 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     # --- Tools ---
     # Serialize tools to their dictionary representations (skip callable factories)
     _tools: List[Union[Function, dict]] = []
+    # Which toolkit each flattened function came from, so rehydration can
+    # re-bind same-named functions to the right toolkit (see
+    # Registry.rehydrate_function). Mirrors the parse_tools walk: tools are
+    # processed in declaration order and the first one to claim a name wins.
+    _owning_toolkit: Dict[str, str] = {}
     if agent.model is not None and agent.tools and isinstance(agent.tools, list):
         _tools = parse_tools(
             agent,
             model=agent.model,
             tools=agent.tools,
         )
+        _claimed_names: Set[str] = set()
+        for _tool in agent.tools:
+            if isinstance(_tool, Toolkit):
+                # get_functions() is what parse_tools serializes. Names are claimed
+                # by Function.name, which is what the serialized dict carries.
+                for _func in _tool.get_functions().values():
+                    if _func.name in _claimed_names:
+                        continue
+                    _claimed_names.add(_func.name)
+                    if isinstance(_tool.name, str) and _tool.name:
+                        _owning_toolkit[_func.name] = _tool.name
+            elif isinstance(_tool, Function):
+                if _tool.name not in _claimed_names:
+                    _claimed_names.add(_tool.name)
+                    if _tool.owning_toolkit:
+                        _owning_toolkit[_tool.name] = _tool.owning_toolkit
+            elif callable(_tool) and getattr(_tool, "__name__", None) is not None:
+                _claimed_names.add(_tool.__name__)
     if _tools:
         serialized_tools = []
         for tool in _tools:
             try:
                 if isinstance(tool, Function):
-                    serialized_tools.append(tool.to_dict())
+                    tool_dict = tool.to_dict()
+                    _toolkit_name = _owning_toolkit.get(tool.name)
+                    if _toolkit_name is not None:
+                        tool_dict["toolkit"] = _toolkit_name
+                    serialized_tools.append(tool_dict)
                 else:
                     serialized_tools.append(tool)
             except Exception as e:
@@ -741,17 +783,13 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
     Returns:
         Agent: Reconstructed agent instance
     """
-    from agno.models.utils import get_model
+    from agno.models.utils import resolve_model
 
     config = data.copy()
 
     # --- Handle Model reconstruction ---
     if "model" in config:
-        model_data = config["model"]
-        if isinstance(model_data, dict) and "id" in model_data:
-            config["model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
-        elif isinstance(model_data, str):
-            config["model"] = get_model(model_data)
+        config["model"] = resolve_model(config["model"], registry)
 
     # --- Handle reasoning_model reconstruction ---
     # TODO: implement reasoning model deserialization
@@ -783,7 +821,7 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
     # --- Handle tools reconstruction ---
     if "tools" in config and config["tools"]:
         if registry:
-            config["tools"] = [registry.rehydrate_function(t) for t in config["tools"]]
+            config["tools"] = registry.rehydrate_functions(config["tools"])
         else:
             log_warning("No registry provided, tools will not be rehydrated.")
             del config["tools"]
@@ -832,10 +870,16 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
     #     config["culture_manager"] = CultureManager.from_dict(config["culture_manager"])
 
     # --- Handle Knowledge reconstruction ---
-    # TODO: implement knowledge deserialization
-    # if "knowledge" in config and isinstance(config["knowledge"], dict):
-    #     from agno.knowledge import Knowledge
-    #     config["knowledge"] = Knowledge.from_dict(config["knowledge"])
+    # Knowledge is stored as a reference by name and resolved from the registry,
+    # since it holds live db/vector_db connections that cannot be serialized.
+    if "knowledge" in config and isinstance(config["knowledge"], dict):
+        knowledge_name = config["knowledge"].get("name")
+        resolved_knowledge = registry.get_knowledge(knowledge_name) if (registry and knowledge_name) else None
+        if resolved_knowledge is not None:
+            config["knowledge"] = resolved_knowledge
+        else:
+            log_warning(f"Knowledge '{knowledge_name}' not found in registry, skipping.")
+            del config["knowledge"]
 
     # --- Handle CompressionManager reconstruction ---
     # TODO: implement compression manager deserialization
@@ -894,7 +938,7 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
         num_history_messages=config.get("num_history_messages"),
         max_tool_calls_from_history=config.get("max_tool_calls_from_history"),
         # --- Knowledge settings ---
-        # knowledge=config.get("knowledge"),  # TODO
+        knowledge=config.get("knowledge"),
         knowledge_filters=config.get("knowledge_filters"),
         enable_agentic_knowledge_filters=config.get("enable_agentic_knowledge_filters", False),
         add_knowledge_to_context=config.get("add_knowledge_to_context", False),
