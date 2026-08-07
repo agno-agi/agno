@@ -182,14 +182,37 @@ def _reaches_identity(hint: Any, depth: int = 0, seen: Optional[List[Any]] = Non
 
     Media never reaches here as identity: it is injected by reserved name
     alone, so hiding a media container would make it unfillable."""
-    from dataclasses import fields as dataclass_fields
+    hint = _unwrap_annotation(hint)
+    # RunContext anywhere at all, however deeply wrapped.
+    if _annotation_reaches(hint, (RunContext,)):
+        return True
+    if isinstance(hint, type):
+        return _annotation_reaches(hint, _identity_injected_types())
+    if _is_union(hint):
+        # A union is the model's to fill as long as one arm is something the
+        # model can legitimately send. Only when every arm is identity -- bare
+        # Agent, Optional[Agent] -- is there nothing else it could mean.
+        arms = [arm for arm in get_args(hint) if arm is not type(None)]
+        return bool(arms) and all(_reaches_identity(arm, depth + 1, seen) for arm in arms)
+    return any(_reaches_identity(argument, depth + 1, seen) for argument in get_args(hint))
+
+
+def _annotation_reaches(hint: Any, targets: tuple, depth: int = 0, seen: Optional[List[Any]] = None) -> bool:
+    """Whether any of these types can be reached anywhere inside an annotation.
+
+    A plain structural search, with none of _reaches_identity's asymmetry: it
+    walks containers, every arm of a union, a TypeVar's bound and constraints,
+    and the fields of any structural type -- dataclass, pydantic model,
+    TypedDict, NamedTuple -- resolving them with get_type_hints so an
+    annotation stored as a string under ``from __future__ import annotations``
+    is read rather than skipped.
+
+    Two things fail CLOSED, because a reference this cannot resolve is not one
+    to hand the model: a nesting depth no real signature reaches, and a class
+    whose own hints will not resolve."""
     from dataclasses import is_dataclass
-    from typing import get_args
 
     if depth > 16:
-        # No real signature nests this far. Past it the annotation cannot be
-        # read, and an annotation this walk cannot read is not one to hand the
-        # model -- fail closed, the opposite of what the first version did.
         return True
     seen = [] if seen is None else seen
     hint = _unwrap_annotation(hint)
@@ -197,31 +220,41 @@ def _reaches_identity(hint: Any, depth: int = 0, seen: Optional[List[Any]] = Non
         return False
     seen = seen + [hint]
 
-    if isinstance(hint, type):
-        if issubclass(hint, _identity_injected_types()):
+    if isinstance(hint, TypeVar):
+        # A bound or a constraint is a promise about what will be substituted.
+        bound = getattr(hint, "__bound__", None)
+        if bound is not None and _annotation_reaches(bound, targets, depth + 1, seen):
             return True
-        # A user type that carries identity in a field is the same hazard one
-        # indirection further: pydantic builds the wrapper, and the wrapper's
-        # RunContext with it.
-        annotations: List[Any] = []
-        model_fields = getattr(hint, "model_fields", None)
-        if isinstance(model_fields, dict):
-            annotations = [getattr(field, "annotation", None) for field in model_fields.values()]
-        elif is_dataclass(hint):
-            annotations = [field.type for field in dataclass_fields(hint)]
         return any(
-            annotation is not None and _reaches_identity(annotation, depth + 1, seen) for annotation in annotations
+            _annotation_reaches(constraint, targets, depth + 1, seen)
+            for constraint in getattr(hint, "__constraints__", ()) or ()
         )
 
-    if _is_union(hint):
-        if _union_names_type(hint, (RunContext,)) or _union_is_only(hint, _identity_injected_types()):
+    if isinstance(hint, type):
+        if issubclass(hint, targets):
             return True
-        # Only the container arms: a bare Agent arm beside an ordinary type is
-        # the documented model-fillable shape, and descending into it plainly
-        # would hide exactly that.
-        return any(get_args(arm) and _reaches_identity(arm, depth + 1, seen) for arm in get_args(hint))
+        if issubclass(hint, _identity_injected_types()):
+            # A framework object is not a user wrapper to search inside. Its own
+            # hints do not resolve here (Agent names BaseDb), and descending
+            # would fail closed on every annotation that merely mentions one --
+            # which would hide `owner: Union[str, Agent]`, the shape the rules
+            # above exist to keep fillable.
+            return False
+        is_structural = (
+            isinstance(getattr(hint, "model_fields", None), dict)
+            or is_dataclass(hint)
+            or hasattr(hint, "__annotations__")
+            and (getattr(hint, "__total__", None) is not None or hasattr(hint, "_fields"))
+        )
+        if not is_structural:
+            return False
+        try:
+            field_hints = get_type_hints(hint)
+        except Exception:
+            return True  # Cannot read it, so cannot clear it.
+        return any(_annotation_reaches(field_hint, targets, depth + 1, seen) for field_hint in field_hints.values())
 
-    return any(_reaches_identity(argument, depth + 1, seen) for argument in get_args(hint))
+    return any(_annotation_reaches(argument, targets, depth + 1, seen) for argument in get_args(hint))
 
 
 def _is_bare_media_typed(hint: Any) -> bool:
@@ -1022,10 +1055,12 @@ class Function(BaseModel):
             for name, hint in hints.items():
                 if name == "return" or name not in sig.parameters:
                     continue
-                hint = _unwrap_annotation(hint)
-                if (isinstance(hint, type) and issubclass(hint, framework_types)) or _union_names_type(
-                    hint, framework_types
-                ):
+                # The same structural search the schema rule uses. Reading only
+                # a bare annotation or a direct union left `Union[str,
+                # list[Agent]]` to validate_call, which then failed to resolve
+                # Agent's own forward references and took registration of the
+                # whole tool down.
+                if _annotation_reaches(hint, framework_types):
                     return func
         except Exception:
             pass
