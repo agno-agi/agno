@@ -2304,6 +2304,57 @@ def test_a_hand_written_schema_cannot_hand_the_model_an_identity_parameter():
     assert result.result == "user=real-owner"
 
 
+def test_identity_is_recognised_through_a_newtype_and_a_container():
+    """Protecting identity by annotation only works if the annotation is read
+    to the end. A NewType is transparent to pydantic, and a container of
+    identity is the same hazard one level down -- both were model-visible, and
+    both let pydantic build the caller's identity out of what the model sent."""
+    from typing import List, NewType
+
+    Ctx = NewType("Ctx", RunContext)
+
+    def via_newtype(query: str, ctx: Ctx = None) -> str:  # type: ignore[assignment]
+        return f"user={getattr(ctx, 'user_id', None)}"
+
+    def via_container(query: str, ctxs: List[RunContext] = None) -> str:  # type: ignore[assignment]
+        return f"user={getattr((ctxs or [None])[0], 'user_id', None)}"
+
+    for entrypoint, spoof in (
+        (via_newtype, {"run_id": "x", "session_id": "y", "user_id": "ATTACKER"}),
+        (via_container, [{"run_id": "x", "session_id": "y", "user_id": "ATTACKER"}]),
+    ):
+        func = Function(name=entrypoint.__name__, entrypoint=entrypoint)
+        func.process_entrypoint()
+        parameter = "ctx" if entrypoint is via_newtype else "ctxs"
+        assert parameter not in (func.parameters or {}).get("properties", {})
+
+        func._run_context = RunContext(run_id="r", session_id="s", user_id="real-owner")
+        result = FunctionCall(function=func, arguments={"query": "q", parameter: spoof}).execute()
+        assert result.status == "success"
+        assert "ATTACKER" not in str(result.result)
+
+
+def test_a_union_naming_an_identity_type_stays_the_models_to_fill():
+    """The control for the rule above. `owner: Union[str, Agent]` is declared
+    model-fillable: the model can only send JSON, so it receives a string and
+    never a live Agent. Reading the union as a container would hide it and
+    leave it fillable by nothing."""
+    from typing import Union
+
+    from agno.agent.agent import Agent
+
+    def notify(owner: Union[str, Agent], note: str) -> str:
+        return f"owner={owner}"
+
+    func = Function(name="notify", entrypoint=notify)
+    func.process_entrypoint()
+    assert "owner" in (func.parameters or {}).get("properties", {})
+
+    result = FunctionCall(function=func, arguments={"owner": "ashpreet", "note": "n"}).execute()
+    assert result.status == "success"
+    assert result.result == "owner=ashpreet"
+
+
 def test_a_hand_written_schema_still_owns_its_media_parameters():
     """The control for the rule above: media is injected by reserved name
     alone, so a schema that declares it is the only way such a parameter can be

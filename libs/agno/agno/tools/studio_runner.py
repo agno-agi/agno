@@ -675,9 +675,11 @@ class StudioRunnerTools(Toolkit):
             member_label = getattr(original_member, "id", None) or getattr(original_member, "name", None) or "?"
             if type(fresh_member) is not type(original_member):
                 return f"member '{member_label}' came back as {type(fresh_member).__name__}"
-            for attribute in ("id", "name"):
-                if getattr(original_member, attribute, None) != getattr(fresh_member, attribute, None):
-                    return f"member '{member_label}' lost its {attribute}"
+            # The same rule a step executor is held to: a member that came back
+            # answering from another model, under other instructions, or without
+            # the tools it had is a different member under the right name.
+            if StudioRunnerTools._copy_lost_identity(original_member, fresh_member):
+                return f"member '{member_label}' lost its identity"
             nested = StudioRunnerTools._member_divergence(original_member, fresh_member, depth + 1)
             if nested is not None:
                 return nested
@@ -1128,6 +1130,7 @@ class StudioRunnerTools(Toolkit):
         component_id: str,
         seen: set,
         configs: Dict[tuple, Optional[Dict[str, Any]]],
+        depth: int = 0,
         version: Optional[int] = None,
     ) -> None:
         """Check this component's references, then theirs, down to the leaves.
@@ -1143,7 +1146,10 @@ class StudioRunnerTools(Toolkit):
         from agno.db.base import ComponentType
 
         key = (component_type, component_id)
-        if key in seen or len(seen) > _GRAPH_DEPTH_CAP:
+        # `seen` is the cycle guard and nothing else: counting it bounded how
+        # WIDE a graph could be rather than how deep, so a team with more
+        # members than the cap stopped checking the rest of them.
+        if key in seen or depth > _GRAPH_DEPTH_CAP:
             return
         seen.add(key)
         pins: Dict[str, Optional[int]] = {}
@@ -1153,15 +1159,17 @@ class StudioRunnerTools(Toolkit):
                 pins[child_id] = link.get("child_version")
         rebuilt = self._components_by_id(component)
         registered = {
-            instance_id
-            for instance_id in (getattr(instance, "id", None) for instance in self._registry_instances())
+            (self._component_kind(instance), instance_id)
+            for instance, instance_id in (
+                (instance, getattr(instance, "id", None)) for instance in self._registry_instances()
+            )
             if isinstance(instance_id, str)
         }
         for ref_type, ref_id in _component_references(component_type, config):
             target = rebuilt.get((ref_type, ref_id))
             if target is None:
                 continue
-            if ref_id in registered:
+            if (ref_type, ref_id) in registered:
                 # from_dict resolves a member or step executor from the registry
                 # before the database, so this object was never built from the
                 # stored config and does not have to match it: a live toolkit is
@@ -1193,7 +1201,9 @@ class StudioRunnerTools(Toolkit):
                 self._require_reference_type_matches(ref_type, ref_id, component_type, component_id)
                 continue
             self._require_faithful_rebuild(target, ref_config, ref_type, ref_id)
-            self._check_references(target, ref_config, ref_type, ref_id, seen, configs, version=ref_resolved_version)
+            self._check_references(
+                target, ref_config, ref_type, ref_id, seen, configs, depth + 1, version=ref_resolved_version
+            )
 
     @staticmethod
     def _components_by_id(node: Any) -> Dict[tuple, Any]:
