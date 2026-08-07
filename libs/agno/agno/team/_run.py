@@ -8075,6 +8075,30 @@ async def _acontinue_run_background_stream(
         from agno.os.managers import event_buffer, sse_subscriber_manager
         from agno.os.utils import format_sse_event_with_index
 
+        producer_error: Optional[BaseException] = None
+
+        async def _dispatch_sse(event: Any) -> None:
+            """Buffer an event, hand it to the original client, and fan it out."""
+            event_index: Optional[int] = None
+            try:
+                event_index = event_buffer.add_event(_run_id, event)
+            except Exception:
+                log_warning(f"Failed to buffer event for continue-run {_run_id}")
+
+            sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=_run_id)
+
+            try:
+                await sse_queue.put(sse_data)
+            except Exception:
+                log_warning(f"Failed to push SSE data to queue for continue-run {_run_id}")
+
+            try:
+                await sse_subscriber_manager.publish(
+                    _run_id, event_index if event_index is not None else -1, sse_data
+                )
+            except Exception:
+                log_warning(f"Failed to publish SSE data to subscribers for continue-run {_run_id}")
+
         try:
             async for event in _acontinue_run_stream(
                 team,
@@ -8100,43 +8124,61 @@ async def _acontinue_run_background_stream(
                 if isinstance(event, TeamRunOutput):
                     continue
 
-                # Buffer event for reconnection support
-                event_index: Optional[int] = None
+                await _dispatch_sse(event)
+
+        except Exception as e:
+            producer_error = e
+            refused = isinstance(e, RunNotContinuableError)
+            if refused:
+                # A refusal is an answer, not a crash. The continue was rejected
+                # precisely so the run would stay paused and resumable, so its
+                # status has to survive: persisting ERROR here would strand the
+                # pause the refusal just protected.
+                #
+                # Step 1 above persisted RUNNING before the producer started, so
+                # putting the pause back is what leaves the run resumable —
+                # otherwise it stays advertised as in-flight for good and no
+                # later continue can pick it up.
+                log_info(f"Background continue-run stream {_run_id} refused the continue: {e}")
                 try:
-                    event_index = event_buffer.add_event(_run_id, event)
+                    if run_response is not None:
+                        run_response.status = RunStatus.paused
+                        team_session.upsert_run(run_response=run_response)
+                        await asave_session(team, session=team_session)
                 except Exception:
-                    log_warning(f"Failed to buffer event for continue-run {_run_id}")
-
-                # Format as SSE
-                sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=_run_id)
-
-                # Push to primary queue (original client)
-                try:
-                    await sse_queue.put(sse_data)
-                except Exception:
-                    log_warning(f"Failed to push SSE data to queue for continue-run {_run_id}")
-
-                # Publish to SSE subscribers (resumed clients)
-                try:
-                    await sse_subscriber_manager.publish(
-                        _run_id, event_index if event_index is not None else -1, sse_data
+                    log_error(
+                        f"Failed to restore paused state for background continue-run stream {_run_id}",
+                        exc_info=True,
                     )
+            else:
+                log_error(f"Background continue-run stream {_run_id} failed", exc_info=True)
+                # Persist ERROR status
+                try:
+                    if run_response is not None:
+                        run_response.status = RunStatus.error
+                        team_session.upsert_run(run_response=run_response)
+                        await asave_session(team, session=team_session)
                 except Exception:
-                    log_warning(f"Failed to publish SSE data to subscribers for continue-run {_run_id}")
+                    log_error(
+                        f"Failed to persist error state for background continue-run stream {_run_id}",
+                        exc_info=True,
+                    )
 
-        except Exception:
-            log_error(f"Background continue-run stream {_run_id} failed", exc_info=True)
-            # Persist ERROR status
+            # Tell the client. Without this the producer dies inside its detached
+            # task and the caller is left holding a 200 with an empty body — for a
+            # refusal, the single most misleading outcome available, since the
+            # request it refused looks like the one that worked.
             try:
-                if run_response is not None:
-                    run_response.status = RunStatus.error
-                    team_session.upsert_run(run_response=run_response)
-                    await asave_session(team, session=team_session)
-            except Exception:
-                log_error(
-                    f"Failed to persist error state for background continue-run stream {_run_id}",
-                    exc_info=True,
+                error_source = run_response
+                if error_source is None:
+                    error_source = TeamRunOutput(
+                        run_id=_run_id, session_id=session_id, team_id=team.id, team_name=team.name
+                    )
+                await _dispatch_sse(
+                    create_team_run_error_event(error_source, error=str(e), error_type=error_type_of(e))
                 )
+            except Exception:
+                log_warning(f"Failed to emit error event for continue-run {_run_id}")
 
         finally:
             # Signal primary queue FIRST — unblocks the original client
@@ -8145,9 +8187,16 @@ async def _acontinue_run_background_stream(
             except Exception:
                 log_warning(f"Failed to signal primary queue for continue-run {_run_id} completion")
 
-            # Mark run completed in event buffer
+            # Mark the run's terminal state in the event buffer. A producer that
+            # raised never reached one, so its status is whatever the failure
+            # left behind — not completed.
             try:
-                final_status = (run_response.status if run_response else None) or RunStatus.completed
+                if isinstance(producer_error, RunNotContinuableError):
+                    final_status = RunStatus.paused
+                elif producer_error is not None:
+                    final_status = RunStatus.error
+                else:
+                    final_status = (run_response.status if run_response else None) or RunStatus.completed
                 event_buffer.set_run_completed(_run_id, final_status)
             except Exception:
                 log_warning(f"Failed to mark continue-run {_run_id} as completed in event buffer")
