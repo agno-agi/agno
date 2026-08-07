@@ -5411,16 +5411,27 @@ def _merge_requirement_decision(stored: Any, wire: Any) -> None:
                 stored_te.answered = True
             elif feedback_was_open and not feedback_open_now:
                 stored_te.answered = True
-            elif getattr(wire_te, "answered", None) is not None and not input_open_now and not feedback_open_now:
+            elif getattr(wire_te, "answered", None) is True and not input_open_now and not feedback_open_now:
                 # A schema the model prefilled completely was never open, so
                 # the fill-based inference above can never fire for it. The
                 # client's explicit flag is the accept gesture for such a
                 # pause; without honoring it the run could never resume. A
                 # still-open field keeps the flag ignored — answering is the
                 # schema's job, not the flag's.
+                #
+                # Only True is a gesture. Writing a wire False would close the
+                # `answered is None` guard above for good, and nothing ever
+                # re-opens it: the pause would stay unresumable for the rest of
+                # the session, with no way for the client to recover.
                 stored_te.answered = wire_te.answered
-        if getattr(stored_te, "external_execution_required", None) and getattr(wire_te, "result", None) is not None:
-            stored_te.result = wire_te.result
+        if getattr(stored_te, "external_execution_required", None):
+            if getattr(wire_te, "result", None) is not None:
+                stored_te.result = wire_te.result
+            # The result and the flag that says it is a failure travel together:
+            # binding the result alone rebinds a frontend's reported error as a
+            # success, and the tool message renders it as one.
+            if getattr(wire_te, "tool_call_error", None) is not None:
+                stored_te.tool_call_error = wire_te.tool_call_error
     if (
         stored_te is not None
         and getattr(stored_te, "external_execution_required", None)
@@ -5550,7 +5561,7 @@ def _backfill_approval_to_requirements(
 
 
 _REQUIREMENT_DECISION_FIELDS = ("confirmation", "confirmation_note", "external_execution_result")
-_TOOL_EXECUTION_DECISION_FIELDS = ("confirmed", "confirmation_note", "answered", "result")
+_TOOL_EXECUTION_DECISION_FIELDS = ("confirmed", "confirmation_note", "answered", "result", "tool_call_error")
 
 
 def _requirement_decision_slots(requirements: Optional[List[Any]]) -> Iterator[Tuple[Any, str]]:
