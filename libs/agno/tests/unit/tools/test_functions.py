@@ -2275,6 +2275,189 @@ def test_chained_type_aliases_are_unwrapped_to_the_end(annotation):
     assert result.result == "RunContext:real-user"
 
 
+def test_a_hand_written_schema_cannot_hand_the_model_an_identity_parameter():
+    """A tool's schema is not always framework-built -- an MCP server supplies
+    one verbatim -- and re-declaring an identity parameter there put it back
+    under model control. Identity is owned by the annotation as much as by the
+    name, so `ctx: RunContext` is protected exactly as `run_context` is."""
+
+    def read_records(query: str, ctx: RunContext = None) -> str:  # type: ignore[assignment]
+        return f"user={getattr(ctx, 'user_id', None)}"
+
+    func = Function(
+        name="read_records",
+        entrypoint=read_records,
+        parameters={
+            "type": "object",
+            "properties": {"query": {"type": "string"}, "ctx": {"type": "object"}},
+            "required": ["query"],
+        },
+    )
+    func.process_entrypoint()
+
+    func._run_context = RunContext(run_id="r1", session_id="s1", user_id="real-owner")
+    result = FunctionCall(
+        function=func,
+        arguments={"query": "q", "ctx": {"run_id": "r9", "session_id": "s9", "user_id": "ATTACKER"}},
+    ).execute()
+    assert result.status == "success"
+    assert result.result == "user=real-owner"
+
+
+def test_identity_is_recognised_through_a_newtype_and_a_container():
+    """Protecting identity by annotation only works if the annotation is read
+    to the end. A NewType is transparent to pydantic, and a container of
+    identity is the same hazard one level down -- both were model-visible, and
+    both let pydantic build the caller's identity out of what the model sent."""
+    from typing import List, NewType
+
+    Ctx = NewType("Ctx", RunContext)
+
+    def via_newtype(query: str, ctx: Ctx = None) -> str:  # type: ignore[assignment]
+        return f"user={getattr(ctx, 'user_id', None)}"
+
+    def via_container(query: str, ctxs: List[RunContext] = None) -> str:  # type: ignore[assignment]
+        return f"user={getattr((ctxs or [None])[0], 'user_id', None)}"
+
+    for entrypoint, spoof in (
+        (via_newtype, {"run_id": "x", "session_id": "y", "user_id": "ATTACKER"}),
+        (via_container, [{"run_id": "x", "session_id": "y", "user_id": "ATTACKER"}]),
+    ):
+        func = Function(name=entrypoint.__name__, entrypoint=entrypoint)
+        func.process_entrypoint()
+        parameter = "ctx" if entrypoint is via_newtype else "ctxs"
+        assert parameter not in (func.parameters or {}).get("properties", {})
+
+        func._run_context = RunContext(run_id="r", session_id="s", user_id="real-owner")
+        result = FunctionCall(function=func, arguments={"query": "q", parameter: spoof}).execute()
+        assert result.status == "success"
+        assert "ATTACKER" not in str(result.result)
+
+
+def test_the_whole_annotation_graph_decides_identity():
+    """The rule, not the shapes it was reported in. RunContext hides the
+    parameter wherever it can be reached, because it is the one identity type
+    pydantic builds from JSON; Agent and Team hide only where the annotation
+    offers no half a model could legitimately fill. Every entry here was a way
+    to smuggle one past a narrower version of this check."""
+    from dataclasses import dataclass
+    from typing import Dict, List, Optional, Union
+
+    from pydantic import BaseModel
+
+    from agno.agent.agent import Agent
+    from agno.media import Image
+    from agno.tools.function import _is_framework_typed
+
+    @dataclass
+    class DataclassWrapper:
+        ctx: RunContext
+
+    class ModelWrapper(BaseModel):
+        model_config = {"arbitrary_types_allowed": True}
+        ctx: RunContext
+
+    hidden = [
+        List[RunContext],
+        List[Union[str, RunContext]],
+        Optional[List[RunContext]],
+        Dict[str, List[RunContext]],
+        List[List[List[List[List[List[RunContext]]]]]],
+        DataclassWrapper,
+        ModelWrapper,
+        Dict[str, Agent],
+        Optional[Agent],
+    ]
+    fillable = [
+        # Agent beside an ordinary type is the documented model-fillable shape:
+        # validate_call is skipped for it, so the tool receives a string or a
+        # plain dict, never a live Agent. That holds inside a list too.
+        Union[str, Agent],
+        Optional[Union[str, Agent]],
+        List[Union[str, Agent]],
+        List[str],
+        Dict[str, List[int]],
+        List[Image],
+        List[List[List[List[List[List[str]]]]]],
+    ]
+    assert [h for h in hidden if not _is_framework_typed(h)] == []
+    assert [h for h in fillable if _is_framework_typed(h)] == []
+
+
+def test_no_container_shape_can_smuggle_a_model_chosen_identity():
+    """The truth table above, driven through a real call: whatever the shape,
+    the tool must read the caller's identity and not the model's."""
+    from dataclasses import dataclass
+    from typing import List, Optional, Union
+
+    @dataclass
+    class Wrapper:
+        ctx: RunContext
+
+    spoof = {"run_id": "x", "session_id": "y", "user_id": "ATTACKER"}
+    namespace = {"RunContext": RunContext, "List": List, "Optional": Optional, "Union": Union, "Wrapper": Wrapper}
+    for index, (annotation, supplied) in enumerate(
+        (
+            ("List[Union[str, RunContext]]", [spoof]),
+            ("Optional[List[RunContext]]", [spoof]),
+            ("List[List[RunContext]]", [[spoof]]),
+            ("Wrapper", {"ctx": spoof}),
+        )
+    ):
+        name = f"probe_{index}"
+        exec(f"def {name}(query: str, p: {annotation} = None) -> str:\n    return str(p)", namespace)
+        func = Function(name=name, entrypoint=namespace[name])
+        func.process_entrypoint()
+        assert "p" not in (func.parameters or {}).get("properties", {}), annotation
+
+        func._run_context = RunContext(run_id="r", session_id="s", user_id="real-owner")
+        result = FunctionCall(function=func, arguments={"query": "q", "p": supplied}).execute()
+        assert result.status == "success", annotation
+        assert "ATTACKER" not in str(result.result), annotation
+
+
+def test_a_union_naming_an_identity_type_stays_the_models_to_fill():
+    """The control for the rule above. `owner: Union[str, Agent]` is declared
+    model-fillable: the model can only send JSON, so it receives a string and
+    never a live Agent. Reading the union as a container would hide it and
+    leave it fillable by nothing."""
+    from typing import Union
+
+    from agno.agent.agent import Agent
+
+    def notify(owner: Union[str, Agent], note: str) -> str:
+        return f"owner={owner}"
+
+    func = Function(name="notify", entrypoint=notify)
+    func.process_entrypoint()
+    assert "owner" in (func.parameters or {}).get("properties", {})
+
+    result = FunctionCall(function=func, arguments={"owner": "ashpreet", "note": "n"}).execute()
+    assert result.status == "success"
+    assert result.result == "owner=ashpreet"
+
+
+def test_a_hand_written_schema_still_owns_its_media_parameters():
+    """The control for the rule above: media is injected by reserved name
+    alone, so a schema that declares it is the only way such a parameter can be
+    filled at all. Protecting it would leave it unfillable by anything."""
+    from agno.media import Image
+
+    def caption(pic: Image = None, note: str = "") -> str:  # type: ignore[assignment]
+        return f"pic={type(pic).__name__}"
+
+    func = Function(
+        name="caption",
+        entrypoint=caption,
+        parameters={"type": "object", "properties": {"pic": {"type": "object"}, "note": {"type": "string"}}},
+    )
+    func.process_entrypoint()
+
+    result = FunctionCall(function=func, arguments={"pic": {"url": "http://example/x.png"}, "note": "n"}).execute()
+    assert result.status == "success"
+    assert result.result == "pic=Image"
+
+
 def test_model_copy_deep_isolates_user_input_schema():
     """model_copy(deep=True) is the per-run copy parse_tools hands the model,
     and the model layer writes the user's answers into user_input_schema in

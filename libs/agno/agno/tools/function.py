@@ -226,7 +226,12 @@ def _unwrap_annotation(hint: Any) -> Any:
             # given only while it stays subscripted. Its __value__ is the body
             # with the parameter still loose, so following it loses the Weather.
             return hint
-        unwrapped = getattr(hint, "__value__", hint)
+        # A PEP 695 alias carries __value__; typing.NewType carries
+        # __supertype__ and is just as transparent to pydantic, which builds
+        # the supertype from a model-supplied dict either way.
+        unwrapped = getattr(hint, "__value__", None)
+        if unwrapped is None:
+            unwrapped = getattr(hint, "__supertype__", hint)
         if unwrapped is hint or any(unwrapped is s for s in seen):
             return hint
         seen.append(hint)
@@ -364,10 +369,71 @@ def _is_framework_typed(hint: Any) -> bool:
       * a union naming Agent or Team beside an ordinary type
         (owner: Union[str, Agent]). The model can only ever send JSON, so such a
         parameter receives a plain dict or string, never a live Agent."""
+    return _reaches_identity(hint)
+
+
+def _reaches_identity(hint: Any, depth: int = 0, seen: Optional[List[Any]] = None) -> bool:
+    """Whether an annotation can deliver an identity object the model chose.
+
+    Walks the whole annotation -- containers, the container arms of a union,
+    and the fields of a dataclass or pydantic model -- because every one of
+    those is a place pydantic will happily build a RunContext out of a
+    model-supplied dict.
+
+    Two rules that look inconsistent and are not:
+
+      * ANY appearance of RunContext hides the parameter. It is the one
+        identity type pydantic constructs from JSON, so wherever it can be
+        reached, the model can choose the caller's identity.
+      * Agent and Team hide only when the annotation offers no half a model
+        could legitimately fill -- bare, or a union of identity alone.
+        ``owner: Union[str, Agent]`` stays the model's to fill, at the top
+        level and inside a list alike: validate_call is skipped for those
+        types, so the tool receives a plain dict or string, never a live
+        Agent, and hiding it would leave it fillable by nothing.
+
+    Media never reaches here as identity: it is injected by reserved name
+    alone, so hiding a media container would make it unfillable."""
+    from dataclasses import fields as dataclass_fields
+    from dataclasses import is_dataclass
+    from typing import get_args
+
+    if depth > 16:
+        # No real signature nests this far. Past it the annotation cannot be
+        # read, and an annotation this walk cannot read is not one to hand the
+        # model -- fail closed, the opposite of what the first version did.
+        return True
+    seen = [] if seen is None else seen
     hint = _unwrap_annotation(hint)
+    if any(hint is s for s in seen):
+        return False
+    seen = seen + [hint]
+
     if isinstance(hint, type):
-        return issubclass(hint, _identity_injected_types())
-    return _union_names_type(hint, (RunContext,)) or _union_is_only(hint, _identity_injected_types())
+        if issubclass(hint, _identity_injected_types()):
+            return True
+        # A user type that carries identity in a field is the same hazard one
+        # indirection further: pydantic builds the wrapper, and the wrapper's
+        # RunContext with it.
+        annotations: List[Any] = []
+        model_fields = getattr(hint, "model_fields", None)
+        if isinstance(model_fields, dict):
+            annotations = [getattr(field, "annotation", None) for field in model_fields.values()]
+        elif is_dataclass(hint):
+            annotations = [field.type for field in dataclass_fields(hint)]
+        return any(
+            annotation is not None and _reaches_identity(annotation, depth + 1, seen) for annotation in annotations
+        )
+
+    if _is_union(hint):
+        if _union_names_type(hint, (RunContext,)) or _union_is_only(hint, _identity_injected_types()):
+            return True
+        # Only the container arms: a bare Agent arm beside an ordinary type is
+        # the documented model-fillable shape, and descending into it plainly
+        # would hide exactly that.
+        return any(get_args(arm) and _reaches_identity(arm, depth + 1, seen) for arm in get_args(hint))
+
+    return any(_reaches_identity(argument, depth + 1, seen) for argument in get_args(hint))
 
 
 def _is_bare_media_typed(hint: Any) -> bool:
@@ -1712,6 +1778,22 @@ class FunctionCall(BaseModel):
 
         return entrypoint_args
 
+    def _identity_owned_params(self) -> Set[str]:
+        """Parameter names whose value the model may never choose.
+
+        The reserved identity names, plus every name the framework claimed by
+        ANNOTATION. Both paths that populate ``_framework_params``
+        (``Function._resolve_framework_params`` and ``from_callable``) add a
+        typed parameter only when ``_is_framework_typed`` says it is
+        identity-bearing, never for media, so anything there that is not a
+        reserved name got there by being identity-typed.
+
+        Media is deliberately not included: it is injected by reserved name
+        alone, so a schema that declares ``images`` is the only way such a
+        parameter can be filled at all."""
+        typed = set(self.function._framework_params or ()) - set(FRAMEWORK_INJECTED_PARAMS) - {"return", "self"}
+        return set(IDENTITY_INJECTED_PARAMS) | typed
+
     def _drop_injected_overrides(self, entrypoint_args: Dict[str, Any]) -> None:
         """Drop tool-call arguments that collide with framework-injected parameters.
 
@@ -1727,8 +1809,10 @@ class FunctionCall(BaseModel):
 
         A name that does appear in the tool's schema is left alone: an MCP
         server is free to expose an argument called "files", and the schema is
-        what says so. The identity names are the exception -- no schema can hand
-        the model a say over whose data a tool reads.
+        what says so. Identity is the exception -- no schema can hand the model
+        a say over whose data a tool reads -- and identity is decided by the
+        annotation as well as the name, so ``ctx: RunContext`` is as protected
+        as ``run_context`` is.
         """
         if not self.arguments:
             return
@@ -1743,11 +1827,12 @@ class FunctionCall(BaseModel):
         # A name is framework-owned if this entrypoint declares it as one, or if we injected
         # it. Being in the schema releases it back to the model, except for identity.
         reserved = set(self.function._framework_params or ()) | set(entrypoint_args)
+        identity_owned = self._identity_owned_params()
         dropped = {
             key
             for key in self.arguments
             if key in AGNO_INJECTED_PARAMS
-            or (key in reserved and (key not in schema_properties or key in IDENTITY_INJECTED_PARAMS))
+            or (key in reserved and (key not in schema_properties or key in identity_owned))
         }
         if dropped:
             # The pre-drop dict is already referenced by the ToolExecution emitted on

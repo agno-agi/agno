@@ -39,7 +39,17 @@ Semantics:
       continuity across sessionless calls.
     * Code-defined components are dispatched on a fresh deep copy per run, so
       per-run mutation of a shared instance never bleeds across callers.
-      DB-loaded components are reconstructed per call already.
+      DB-loaded components are reconstructed per call already. Two things sit
+      outside that copy, both by the framework's own rules:
+        - what a callable members/tools/steps factory returns, since it is
+          built per run and cached while cache_callables is on. Dispatch warns
+          when it meets one.
+        - a tool or member that declines to be copied (no deep_copy, or a
+          __deepcopy__ returning self). The copier keeps the original, the
+          same way _shared_member treats a member that cannot be copied as
+          shared by design, so a toolkit holding per-call state of its own is
+          shared between callers. Give such a class a real deep_copy if its
+          state must not cross runs.
     * A PAUSED result carries the unresolved requirements plus the
       run_id/session_id a continue call must address (the same shape the
       AgentOS MCP plane returns) -- human-in-the-loop pauses are relayed.
@@ -162,57 +172,59 @@ class DispatchCopyError(StudioRunnerError, RuntimeError):
     deep_copy that rebuilds it, or store the component in the database."""
 
 
-def _references_executors(value: Any) -> bool:
+def _reference_configs(component_type: str, config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The dicts in a stored config that can name another component.
+
+    A team names its members; a workflow names each step's executor, and a
+    compound step holds its branches in lists of its own. Everything else a
+    step carries is the caller's own data -- a human-review input schema, say
+    -- so a walk that descended into every value would read a field named
+    ``agent_id`` there as a reference to a component that does not exist."""
+    found: List[Dict[str, Any]] = []
+    if component_type == "team":
+        found.extend(member for member in config.get("members") or [] if isinstance(member, dict))
+        return found
+    if component_type != "workflow":
+        return found
+
+    def walk(steps: Any) -> None:
+        if not isinstance(steps, list):
+            return
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            found.append(step)
+            for branch in ("steps", "else_steps", "choices"):
+                walk(step.get(branch))
+
+    walk(config.get("steps"))
+    return found
+
+
+def _references_executors(component_type: str, config: Dict[str, Any]) -> bool:
     """True when a stored workflow config references a registry function step."""
-    if isinstance(value, dict):
-        if value.get("executor_ref"):
-            return True
-        return any(_references_executors(v) for v in value.values())
-    if isinstance(value, list):
-        return any(_references_executors(v) for v in value)
-    return False
+    return any(step.get("executor_ref") for step in _reference_configs(component_type, config))
 
 
-def _references_idless_components(value: Any) -> bool:
+def _references_idless_components(component_type: str, config: Dict[str, Any]) -> bool:
     """True when a stored config carries an agent/team reference whose id is
     null. Serialization writes the referenced component's id even when it is
     None, and a code-defined component that never ran has no id, so a null id
     marks a component only the registry can supply."""
-    if isinstance(value, dict):
-        if ("agent_id" in value and not value["agent_id"]) or ("team_id" in value and not value["team_id"]):
-            return True
-        return any(_references_idless_components(v) for v in value.values())
-    if isinstance(value, list):
-        return any(_references_idless_components(v) for v in value)
-    return False
+    return any(
+        ("agent_id" in ref and not ref["agent_id"]) or ("team_id" in ref and not ref["team_id"])
+        for ref in _reference_configs(component_type, config)
+    )
 
 
 def _component_references(component_type: str, config: Dict[str, Any]) -> List[tuple]:
     """(type, id) pairs for the components a stored config references by id."""
     refs: List[tuple] = []
-    if component_type == "team":
-        for member in config.get("members") or []:
-            if not isinstance(member, dict):
-                continue
-            if member.get("team_id"):
-                refs.append(("team", str(member["team_id"])))
-            elif member.get("agent_id"):
-                refs.append(("agent", str(member["agent_id"])))
-    if component_type == "workflow":
-
-        def walk(value: Any) -> None:
-            if isinstance(value, dict):
-                if value.get("agent_id"):
-                    refs.append(("agent", str(value["agent_id"])))
-                if value.get("team_id"):
-                    refs.append(("team", str(value["team_id"])))
-                for child in value.values():
-                    walk(child)
-            elif isinstance(value, list):
-                for child in value:
-                    walk(child)
-
-        walk(config.get("steps"))
+    for ref in _reference_configs(component_type, config):
+        if ref.get("team_id"):
+            refs.append(("team", str(ref["team_id"])))
+        elif ref.get("agent_id"):
+            refs.append(("agent", str(ref["agent_id"])))
     return refs
 
 
@@ -487,20 +499,65 @@ class StudioRunnerTools(Toolkit):
         return children
 
     @staticmethod
+    def _component_kind(node: Any) -> str:
+        """Which of the three component types this object is.
+
+        Ids are unique per type only, so every map from an id to a component
+        has to carry the type alongside it."""
+        from agno.team.team import Team
+        from agno.workflow.workflow import Workflow
+
+        if isinstance(node, Team):
+            return "team"
+        return "workflow" if isinstance(node, Workflow) else "agent"
+
+    @staticmethod
+    def _tool_names(component: Any) -> set:
+        """The tool names a component can reach, however its tools are held.
+
+        The same tools serialize as a toolkit in one place and as its expanded
+        functions in another, so comparing the objects would call a healthy
+        copy degraded. Comparing what it can call does not."""
+        names: set = set()
+        tools = getattr(component, "tools", None)
+        for tool in tools if isinstance(tools, list) else []:
+            functions = getattr(tool, "functions", None)
+            if isinstance(functions, dict) and functions:
+                names.update(str(name) for name in functions)
+                continue
+            name = tool.get("name") if isinstance(tool, dict) else getattr(tool, "name", None)
+            if isinstance(name, str):
+                names.add(name)
+        return names
+
+    @staticmethod
     def _copy_lost_identity(original: Any, fresh: Any) -> bool:
-        """Whether a copy failed to carry over what identifies the original."""
+        """Whether a copy failed to carry over what identifies the original.
+
+        Identity is the class, the id and the name -- and the behaviour the
+        caller asked for: which model answers, under which instructions, with
+        which tools in reach. A copy that swapped any of those runs as a
+        different component under the right name, which is the failure the
+        caller cannot see."""
         if type(fresh) is not type(original):
             return True
-        for attribute in ("id", "name", "model", "instructions"):
+        for attribute in ("id", "name"):
+            if getattr(original, attribute, None) != getattr(fresh, attribute, None):
+                return True
+        for attribute in ("model", "instructions"):
             was = getattr(original, attribute, None)
-            now = getattr(fresh, attribute, None)
-            # A rebuild that drops a field leaves it None; equality would also
-            # reject a model instance the copier legitimately rebuilt.
-            if was is not None and now is None:
+            if was is not None and getattr(fresh, attribute, None) is None:
                 return True
-            if attribute in ("id", "name") and was != now:
+        was_model, now_model = getattr(original, "model", None), getattr(fresh, "model", None)
+        if was_model is not None and now_model is not None:
+            # A copier legitimately rebuilds the model object, so compare which
+            # model it is rather than which instance.
+            if getattr(was_model, "id", None) != getattr(now_model, "id", None):
                 return True
-        return False
+        was_instructions = getattr(original, "instructions", None)
+        if was_instructions is not None and was_instructions != getattr(fresh, "instructions", None):
+            return True
+        return bool(StudioRunnerTools._tool_names(original) - StudioRunnerTools._tool_names(fresh))
 
     @staticmethod
     def _executor_divergence(original: Any, fresh: Any, depth: int = 0) -> Optional[str]:
@@ -606,7 +663,9 @@ class StudioRunnerTools(Toolkit):
         whether the copy holds the same members at all. A copier that drops a
         member or rebuilds it as a different component has not produced the
         component that was asked for, and neither shows up as sharing."""
-        if depth > 12:  # A cycle or pathological nesting; stop rather than recurse forever.
+        if depth > _GRAPH_DEPTH_CAP:
+            # _require_inspectable_depth refuses before a real graph gets
+            # here, so this is only the cycle guard.
             return None
         original_members = getattr(original, "members", None)
         if not isinstance(original_members, list):
@@ -622,9 +681,11 @@ class StudioRunnerTools(Toolkit):
             member_label = getattr(original_member, "id", None) or getattr(original_member, "name", None) or "?"
             if type(fresh_member) is not type(original_member):
                 return f"member '{member_label}' came back as {type(fresh_member).__name__}"
-            for attribute in ("id", "name"):
-                if getattr(original_member, attribute, None) != getattr(fresh_member, attribute, None):
-                    return f"member '{member_label}' lost its {attribute}"
+            # The same rule a step executor is held to: a member that came back
+            # answering from another model, under other instructions, or without
+            # the tools it had is a different member under the right name.
+            if StudioRunnerTools._copy_lost_identity(original_member, fresh_member):
+                return f"member '{member_label}' lost its identity"
             nested = StudioRunnerTools._member_divergence(original_member, fresh_member, depth + 1)
             if nested is not None:
                 return nested
@@ -678,6 +739,12 @@ class StudioRunnerTools(Toolkit):
         if agent is None:
             self._refuse_if_only_reachable_with_include_all("agent", agent_id)
             return None
+        # Whatever applies however the component was resolved goes ABOVE the
+        # branch. Below one of these returns it runs for half the callers, which
+        # is how the step-isolation check came to be skipped for code-defined
+        # workflows in the first place.
+        self._require_inspectable_depth(agent, "agent", agent_id)
+        self._warn_if_unverifiable_factory(agent, "agent", agent_id)
         if any(a is agent for a in self._iter_agents(for_dispatch=True)):
             return self._fresh_copy(agent)
         self._warn_if_model_rebuilt(agent, "agent", agent_id)
@@ -688,9 +755,13 @@ class StudioRunnerTools(Toolkit):
         if team is None:
             self._refuse_if_only_reachable_with_include_all("team", team_id)
             return None
+        self._require_inspectable_depth(team, "team", team_id)
+        self._warn_if_unverifiable_factory(team, "team", team_id)
         if any(t is team for t in self._iter_teams(for_dispatch=True)):
-            self._require_inspectable_depth(team, "team", team_id)
             return self._fresh_copy(team)
+        # Below the branch is for the rebuild only, and each has a counterpart
+        # the copy path runs instead: _fresh_copy answers member sharing with
+        # _shared_member, and a code-defined component holds its live model.
         self._require_isolated_members(team, team_id)
         self._warn_if_model_rebuilt(team, "team", team_id)
         return team
@@ -700,8 +771,9 @@ class StudioRunnerTools(Toolkit):
         if wf is None:
             self._refuse_if_only_reachable_with_include_all("workflow", workflow_id)
             return None
+        self._require_inspectable_depth(wf, "workflow", workflow_id)
+        self._warn_if_unverifiable_factory(wf, "workflow", workflow_id)
         if any(w is wf for w in self._iter_workflows(for_dispatch=True)):
-            self._require_inspectable_depth(wf, "workflow", workflow_id)
             return self._fresh_copy(wf)
         self._require_isolated_steps(wf, workflow_id)
         return wf
@@ -770,8 +842,7 @@ class StudioRunnerTools(Toolkit):
 
         Dispatch only: reads and edits load the component so the reference can
         be seen and repaired, the same split _require_faithful_rebuild uses."""
-        key = "members" if component_type == "team" else "steps"
-        if component_type not in ("team", "workflow") or not _references_idless_components(config.get(key)):
+        if component_type not in ("team", "workflow") or not _references_idless_components(component_type, config):
             return
         raise ComponentNeedsRegistryError(
             f"{component_type.capitalize()} '{component_id}' references a component that had no id when it was "
@@ -807,7 +878,7 @@ class StudioRunnerTools(Toolkit):
             needs.append("knowledge")
         if isinstance(config.get("input_schema"), str) or isinstance(config.get("output_schema"), str):
             needs.append("schemas")
-        if component_type == "workflow" and _references_executors(config.get("steps")):
+        if component_type == "workflow" and _references_executors(component_type, config):
             needs.append("function steps")
         if needs:
             raise ComponentNeedsRegistryError(
@@ -918,16 +989,16 @@ class StudioRunnerTools(Toolkit):
         an instance of a plainer class, passes both and then dispatches with no
         model and no instructions. The registry still holds the original, so the
         copy can be judged against it."""
-        originals: Dict[str, Any] = {}
+        originals: Dict[tuple, Any] = {}
         for instance in self._registry_instances():
             instance_id = getattr(instance, "id", None)
             if isinstance(instance_id, str):
-                originals.setdefault(instance_id, instance)
+                originals.setdefault((self._component_kind(instance), instance_id), instance)
         if not originals:
             return
         for node in self._descendants(component):
             node_id = getattr(node, "id", None)
-            original = originals.get(node_id) if isinstance(node_id, str) else None
+            original = originals.get((self._component_kind(node), node_id)) if isinstance(node_id, str) else None
             # Only a rebuild of that very component is comparable; the singleton
             # itself is _require_isolated_*'s question.
             if original is None or original is node:
@@ -1002,6 +1073,7 @@ class StudioRunnerTools(Toolkit):
         component_id: str,
         seen: set,
         configs: Dict[tuple, Optional[Dict[str, Any]]],
+        depth: int = 0,
     ) -> None:
         """Check this component's references, then theirs, down to the leaves.
 
@@ -1011,20 +1083,25 @@ class StudioRunnerTools(Toolkit):
         from agno.db.base import ComponentType
 
         key = (component_type, component_id)
-        if key in seen or len(seen) > _GRAPH_DEPTH_CAP:
+        # `seen` is the cycle guard and nothing else: counting it bounded how
+        # WIDE a graph could be rather than how deep, so a team with more
+        # members than the cap stopped checking the rest of them.
+        if key in seen or depth > _GRAPH_DEPTH_CAP:
             return
         seen.add(key)
         rebuilt = self._components_by_id(component)
         registered = {
-            instance_id
-            for instance_id in (getattr(instance, "id", None) for instance in self._registry_instances())
+            (self._component_kind(instance), instance_id)
+            for instance, instance_id in (
+                (instance, getattr(instance, "id", None)) for instance in self._registry_instances()
+            )
             if isinstance(instance_id, str)
         }
         for ref_type, ref_id in _component_references(component_type, config):
             target = rebuilt.get((ref_type, ref_id))
             if target is None:
                 continue
-            if ref_id in registered:
+            if (ref_type, ref_id) in registered:
                 # from_dict resolves a member or step executor from the registry
                 # before the database, so this object was never built from the
                 # stored config and does not have to match it: a live toolkit is
@@ -1053,7 +1130,7 @@ class StudioRunnerTools(Toolkit):
                 self._require_reference_type_matches(ref_type, ref_id, component_type, component_id)
                 continue
             self._require_faithful_rebuild(target, ref_config, ref_type, ref_id)
-            self._check_references(target, ref_config, ref_type, ref_id, seen, configs)
+            self._check_references(target, ref_config, ref_type, ref_id, seen, configs, depth + 1)
 
     @staticmethod
     def _components_by_id(node: Any) -> Dict[tuple, Any]:
@@ -1061,16 +1138,12 @@ class StudioRunnerTools(Toolkit):
 
         Ids are unique per type only, so keying on the id alone would let a
         stored team's config be checked against an agent that shares it."""
-        from agno.team.team import Team
-        from agno.workflow.workflow import Workflow
-
         found: Dict[tuple, Any] = {}
         for child in StudioRunnerTools._descendants(node):
             child_id = getattr(child, "id", None)
             if not isinstance(child_id, str):
                 continue
-            child_type = "team" if isinstance(child, Team) else "workflow" if isinstance(child, Workflow) else "agent"
-            found.setdefault((child_type, child_id), child)
+            found.setdefault((StudioRunnerTools._component_kind(child), child_id), child)
         return found
 
     @staticmethod
@@ -1108,6 +1181,39 @@ class StudioRunnerTools(Toolkit):
             if found is not None:
                 return found
         return None
+
+    def _warn_if_unverifiable_factory(self, component: Any, component_type: str, component_id: str) -> None:
+        """Log when a dispatched component builds part of itself at run time.
+
+        ``members``, ``tools`` and ``steps`` all accept a callable factory, and
+        the framework resolves it per run into the run context, reusing the
+        result while ``cache_callables`` is on. Nothing exists to inspect at
+        dispatch, so the isolation checks skip it and the per-run-copy promise
+        does not reach what the factory returns: a factory that hands back a
+        shared instance shares it across callers, here as anywhere else. The
+        runner does not refuse it -- the shape is supported and the caching is
+        deliberate -- but it says so rather than implying a guarantee it cannot
+        make."""
+        from agno.utils.callables import is_callable_factory
+        from agno.tools.function import Function
+        from agno.tools.toolkit import Toolkit
+
+        for node in [component] + self._descendants(component):
+            for attribute in ("members", "tools", "steps"):
+                value = getattr(node, attribute, None)
+                excluded = (Toolkit, Function) if attribute == "tools" else ()
+                if not is_callable_factory(value, excluded_types=excluded):
+                    continue
+                label = getattr(node, "id", None) or getattr(node, "name", None) or component_id
+                logger.warning(
+                    "StudioRunnerTools: %s '%s' builds '%s' from a callable %s factory, which the runner "
+                    "cannot inspect before dispatch; what it returns is outside the per-run copy, and is "
+                    "shared across callers while cache_callables is on.",
+                    component_type,
+                    component_id,
+                    label,
+                    attribute,
+                )
 
     def _warn_if_model_rebuilt(self, component: Any, component_type: str, component_id: str) -> None:
         """Log when a dispatched agent's or team's model is a config rebuild.
@@ -1203,7 +1309,7 @@ class StudioRunnerTools(Toolkit):
         _shared_member applies: a member with no deep_copy is shared by design,
         because a remote proxy holds no per-run state to isolate. The node the
         search starts from is judged without that exemption."""
-        if node is None or depth > 12:
+        if node is None or depth > _GRAPH_DEPTH_CAP:
             return None
         is_shared = any(node is instance for instance in shared)
         if is_shared and (depth == 0 or callable(getattr(node, "deep_copy", None))):
@@ -1733,7 +1839,16 @@ class StudioRunnerTools(Toolkit):
             return None
         from agno.utils.string import hash_string_sha256
 
-        parts = (str(run_context.session_id), component_type, component_id)
+        # The caller's user is part of the key: two people can share one
+        # caller session (a shared channel), and without this they would
+        # share the target's session and read each other's history. The
+        # sentinel holds a NUL so no real user id can collide with it.
+        parts = (
+            str(run_context.session_id),
+            str(getattr(run_context, "user_id", None) or "\0anonymous"),
+            component_type,
+            component_id,
+        )
         # Length-prefixed so no part can impersonate a boundary.
         key = "|".join(f"{len(part)}:{part}" for part in parts)
         return f"{component_type}-{hash_string_sha256(key)[:32]}"
