@@ -877,7 +877,9 @@ class StudioRunnerTools(Toolkit):
             return
         if _seen is None:
             _seen = set()
-        key = f"{component_type}:{component_id}"
+        # Versions of one id are distinct nodes: two branches can pin the same
+        # child at different versions, and each version's config is its own.
+        key = f"{component_type}:{component_id}:{version}"
         if key in _seen:
             return
         _seen.add(key)
@@ -902,23 +904,28 @@ class StudioRunnerTools(Toolkit):
             )
         from agno.db.base import ComponentType
 
-        pins: Dict[str, Optional[int]] = {}
+        # Every pinned version of a child is checked, not one per id: two
+        # branches can pin the same child id at different versions, and either
+        # version's config may need the registry.
+        pinned_versions: Dict[str, set] = {}
         for link in self._load_links_from_db(component_id, version=version):
             child_id = link.get("child_component_id")
             if child_id:
-                pins[child_id] = link.get("child_version")
+                pinned_versions.setdefault(child_id, set()).add(link.get("child_version"))
         for ref_type, ref_id in _component_references(component_type, config):
-            ref_loaded = self._load_config_row_from_db(
-                ref_id, version=pins.get(ref_id), component_type=ComponentType(ref_type)
-            )
-            if ref_loaded is None:
-                raise ComponentNeedsRegistryError(
-                    f"{component_type.capitalize()} '{component_id}' references {ref_type} '{ref_id}', "
-                    "which is not stored in the database (a code-defined component); "
-                    "construct StudioRunnerTools with the registry to run it."
+            versions = pinned_versions.get(ref_id) or {None}
+            for ref_version in sorted(versions, key=lambda v: (v is None, v)):
+                ref_loaded = self._load_config_row_from_db(
+                    ref_id, version=ref_version, component_type=ComponentType(ref_type)
                 )
-            ref_config, ref_resolved_version = ref_loaded
-            self._require_registry_for(ref_type, ref_id, ref_config, _seen, version=ref_resolved_version)
+                if ref_loaded is None:
+                    raise ComponentNeedsRegistryError(
+                        f"{component_type.capitalize()} '{component_id}' references {ref_type} '{ref_id}', "
+                        "which is not stored in the database (a code-defined component); "
+                        "construct StudioRunnerTools with the registry to run it."
+                    )
+                ref_config, ref_resolved_version = ref_loaded
+                self._require_registry_for(ref_type, ref_id, ref_config, _seen, version=ref_resolved_version)
 
     def _dispatch_refusal(
         self,
@@ -1199,22 +1206,24 @@ class StudioRunnerTools(Toolkit):
         from; an unpinned child was rebuilt at its current version. ``configs``
         caches each (type, id, version) config row so a shared reference is
         read once per dispatch, and the row's resolved version feeds the
-        child's own links read."""
+        child's own links read.
+
+        A workflow's checks are per OCCURRENCE, not per child id: two branches
+        can pin the same child id at different versions, and each rebuilt
+        branch object must be compared against the config version its own
+        branch-qualified link pinned - collapsing by id would validate one
+        (config, object) pairing and admit the other unexamined."""
         from agno.db.base import ComponentType
 
-        key = (component_type, component_id)
+        key = (component_type, component_id, version)
         # `seen` is the cycle guard and nothing else: counting it bounded how
         # WIDE a graph could be rather than how deep, so a team with more
-        # members than the cap stopped checking the rest of them.
+        # members than the cap stopped checking the rest of them. Versions of
+        # one id are distinct nodes; the depth cap bounds any version chain.
         if key in seen or depth > _GRAPH_DEPTH_CAP:
             return
         seen.add(key)
-        pins: Dict[str, Optional[int]] = {}
-        for link in self._load_links_from_db(component_id, version=version):
-            child_id = link.get("child_component_id")
-            if child_id:
-                pins[child_id] = link.get("child_version")
-        rebuilt = self._components_by_id(component)
+        links = self._load_links_from_db(component_id, version=version)
         registered = {
             (self._component_kind(instance), instance_id)
             for instance, instance_id in (
@@ -1222,8 +1231,30 @@ class StudioRunnerTools(Toolkit):
             )
             if isinstance(instance_id, str)
         }
-        for ref_type, ref_id in _component_references(component_type, config):
-            target = rebuilt.get((ref_type, ref_id))
+        if component_type == "workflow":
+            checks = []
+            checked_occurrences = set()
+            for link_kind, link_key, ref_type, ref_id, target in self._step_occurrences(component):
+                if not isinstance(ref_id, str) or target is None:
+                    continue
+                ref_version = self._occurrence_pin(links, link_kind, link_key, ref_id)
+                occurrence = (ref_type, ref_id, ref_version, id(target))
+                if occurrence in checked_occurrences:
+                    continue
+                checked_occurrences.add(occurrence)
+                checks.append((ref_type, ref_id, ref_version, target))
+        else:
+            pins: Dict[str, Optional[int]] = {}
+            for link in links:
+                child_id = link.get("child_component_id")
+                if child_id:
+                    pins[child_id] = link.get("child_version")
+            rebuilt = self._components_by_id(component)
+            checks = [
+                (ref_type, ref_id, pins.get(ref_id), rebuilt.get((ref_type, ref_id)))
+                for ref_type, ref_id in _component_references(component_type, config)
+            ]
+        for ref_type, ref_id, ref_version, target in checks:
             if target is None:
                 continue
             if (ref_type, ref_id) in registered:
@@ -1241,7 +1272,6 @@ class StudioRunnerTools(Toolkit):
                 continue
             # A db read that fails is not evidence of fidelity, so it must not
             # pass as one: let it reach the caller's handler.
-            ref_version = pins.get(ref_id)
             cache_key = (ref_type, ref_id, ref_version)
             if cache_key in configs:
                 ref_config, ref_resolved_version = configs[cache_key]
@@ -1266,6 +1296,86 @@ class StudioRunnerTools(Toolkit):
             self._check_references(
                 target, ref_config, ref_type, ref_id, seen, configs, depth + 1, version=ref_resolved_version
             )
+
+    @staticmethod
+    def _step_occurrences(workflow: Any) -> List[tuple]:
+        """Each step-family reference below a workflow, with the branch-qualified
+        link key it was pinned under: (link_kind, link_key, ref_type, ref_id, object).
+
+        Mirrors the save traversal and Step.from_dict's key rule: a step's key
+        is its step_id (or name) plus one ``#else`` per enclosing else branch.
+        The same child id can appear on several branches at different pinned
+        versions, so each occurrence carries its own key instead of collapsing
+        by id."""
+        from agno.workflow.condition import Condition
+        from agno.workflow.loop import Loop
+        from agno.workflow.parallel import Parallel
+        from agno.workflow.router import Router
+        from agno.workflow.step import Step
+        from agno.workflow.steps import Steps
+
+        found: List[tuple] = []
+
+        def walk(step: Any, suffix: str) -> None:
+            if isinstance(step, Step):
+                key_base = getattr(step, "step_id", None) or getattr(step, "name", None)
+                qualified = f"{key_base}{suffix}" if key_base else None
+                agent = getattr(step, "agent", None)
+                if agent is not None:
+                    found.append(("step_agent", qualified, "agent", getattr(agent, "id", None), agent))
+                team = getattr(step, "team", None)
+                if team is not None:
+                    found.append(("step_team", qualified, "team", getattr(team, "id", None), team))
+                nested_workflow = getattr(step, "workflow", None)
+                if nested_workflow is not None:
+                    found.append(
+                        ("step_workflow", qualified, "workflow", getattr(nested_workflow, "id", None), nested_workflow)
+                    )
+                return
+            if isinstance(step, (Parallel, Loop, Steps, Condition)):
+                for nested in getattr(step, "steps", None) or []:
+                    walk(nested, suffix)
+                for nested in getattr(step, "else_steps", None) or []:
+                    walk(nested, f"{suffix}#else")
+                return
+            if isinstance(step, Router):
+                for nested in getattr(step, "choices", None) or []:
+                    walk(nested, suffix)
+                return
+            # A bare component used directly as a step has no Step wrapper and
+            # no link key; it still has to be checked, under the id-level rule.
+            kind = StudioRunnerTools._component_kind(step)
+            if kind in ("agent", "team", "workflow") and isinstance(getattr(step, "id", None), str):
+                link_kind = {"agent": "step_agent", "team": "step_team", "workflow": "step_workflow"}[kind]
+                found.append((link_kind, None, kind, step.id, step))
+
+        steps = getattr(workflow, "steps", None)
+        for step in steps if isinstance(steps, list) else []:
+            walk(step, "")
+        return found
+
+    @staticmethod
+    def _occurrence_pin(
+        links: List[Dict[str, Any]], link_kind: str, link_key: Optional[str], child_id: str
+    ) -> Optional[int]:
+        """The version pinned for one step occurrence.
+
+        The exact branch-qualified key wins; without an exact match the
+        id-level pin applies only when every pin for the child agrees - the
+        same resolution rule Step.from_dict rebuilds with, so the version
+        checked is the version the object was built from."""
+        child_links = [
+            link for link in links if link.get("link_kind") == link_kind and link.get("child_component_id") == child_id
+        ]
+        if not child_links:
+            return None
+        for link in child_links:
+            if link_key is not None and link.get("link_key") == link_key:
+                return link.get("child_version")
+        versions = {link.get("child_version") for link in child_links}
+        if len(versions) == 1:
+            return child_links[0].get("child_version")
+        return None
 
     @staticmethod
     def _components_by_id(node: Any) -> Dict[tuple, Any]:

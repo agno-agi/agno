@@ -2078,6 +2078,84 @@ class TestDispatchCheckInvariants:
             assert "no db resolved" in error or "routes differently" in error, component_id
             assert "member" in error, component_id
 
+    def test_branch_pins_pair_each_occurrence_with_its_own_config(self, db, registry):
+        """Two branches pin the same child id at different versions. The walk
+        must pair each rebuilt branch object with the config version its own
+        branch-qualified link pinned: collapsed by id, the v1 branch (which
+        declares a reasoning model nothing reconstructs) was validated against
+        the v2 config and dispatched degraded."""
+        from agno.agent import Agent
+        from agno.workflow.condition import Condition
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import Workflow
+
+        model = OpenAIResponses(id="gpt-5.4")
+        rich = Agent(id="shared-agent", name="A", model=model, reasoning_model=OpenAIResponses(id="gpt-5.5"))
+        plain = Agent(id="shared-agent", name="A", model=model)
+        Workflow(
+            id="branch-workflow",
+            name="Branch workflow",
+            steps=[
+                Condition(
+                    name="branch",
+                    evaluator=True,
+                    steps=[Step(step_id="aaa-rich", name="rich", agent=rich)],
+                    else_steps=[Step(step_id="zzz-plain", name="plain", agent=plain)],
+                )
+            ],
+        ).save(db=db)
+
+        runner = StudioRunnerTools(registry=registry, db=db)
+        error = _loads(runner.run_workflow("branch-workflow", "hi")).get("error", "")
+        assert "reasoning_model" in error
+        assert "shared-agent" in error
+
+    def test_branch_pins_catch_a_redirected_db_before_any_write(self, db, registry, tmp_path):
+        """The isolated branch's agent declares tenant tables the registry's
+        shared instance does not route to. Collapsed by id, only the shared
+        occurrence was compared, the dispatch completed and the isolated
+        branch's session landed in the shared table."""
+        from agno.agent import Agent
+        from agno.db.json import JsonDb
+        from agno.workflow.condition import Condition
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import Workflow
+
+        isolated = JsonDb(id="tenant-json", db_path=str(tmp_path / "isolated"), session_table="isolated_sessions")
+        shared = JsonDb(id="tenant-json", db_path=str(tmp_path / "shared"), session_table="shared_sessions")
+        registry.dbs = [db, shared]
+        model = OpenAIResponses(id="gpt-5.4")
+        Workflow(
+            id="tenant-workflow",
+            name="Tenant workflow",
+            steps=[
+                Condition(
+                    name="branch",
+                    evaluator=True,
+                    steps=[
+                        Step(
+                            step_id="aaa-isolated",
+                            name="isolated",
+                            agent=Agent(id="tenant-agent", name="A", model=model, db=isolated),
+                        )
+                    ],
+                    else_steps=[
+                        Step(
+                            step_id="zzz-shared",
+                            name="shared",
+                            agent=Agent(id="tenant-agent", name="A", model=model, db=shared),
+                        )
+                    ],
+                )
+            ],
+        ).save(db=db)
+
+        runner = StudioRunnerTools(registry=registry, db=db)
+        error = _loads(runner.run_workflow("tenant-workflow", "hi")).get("error", "")
+        assert "routes differently" in error and "session_table" in error
+        assert shared.get_sessions() in ([], ([], 0))
+        assert isolated.get_sessions() in ([], ([], 0))
+
     def test_a_code_only_allowlist_is_listable_without_a_database(self):
         """An allowlist runs without a database, so it has to be findable
         without one: the caller is told to list first and run by id."""
