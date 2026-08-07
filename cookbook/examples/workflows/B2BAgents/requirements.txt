@@ -1,0 +1,6 @@
+agno
+google-generativeai
+requests
+sqlalchemy
+python-dotenv
+
