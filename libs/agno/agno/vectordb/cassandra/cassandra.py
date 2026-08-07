@@ -1,4 +1,5 @@
 import asyncio
+from hashlib import md5
 from typing import Any, Dict, Iterable, List, Optional, Union
 
 from agno.filters import FilterExpr
@@ -7,6 +8,12 @@ from agno.knowledge.embedder import Embedder
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb.base import VectorDb
 from agno.vectordb.cassandra.index import AgnoMetadataVectorCassandraTable
+
+# Per-user isolation. cassio's metadata filter is equality/AND only, so the owner is a
+# reserved metadata key (shared rows get an explicit sentinel) and "own OR shared" is
+# served by merging two equality-filtered ANN searches.
+USER_ID_METADATA_KEY = "user_id"
+SHARED_USER_ID_VALUE = "__shared__"
 
 
 class Cassandra(VectorDb):
@@ -65,7 +72,8 @@ class Cassandra(VectorDb):
         await asyncio.to_thread(self.create)
 
     def _row_to_document(self, row: Dict[str, Any]) -> Document:
-        metadata = row["metadata"]
+        # user_id is a reserved key; never surface it as caller-visible metadata.
+        metadata = {k: v for k, v in row["metadata"].items() if k != USER_ID_METADATA_KEY}
         return Document(
             id=row["row_id"],
             content=row["body_blob"],
@@ -91,24 +99,77 @@ class Cassandra(VectorDb):
         result = self.session.execute(query, (id,))
         return result.one()[0] > 0
 
-    def content_hash_exists(self, content_hash: str) -> bool:
-        """Check if a document exists by content hash."""
-        query = f"SELECT COUNT(*) FROM {self.keyspace}.{self.table_name} WHERE metadata_s['content_hash'] = %s ALLOW FILTERING"
-        result = self.session.execute(query, (content_hash,))
+    def _validate_user_id(self, user_id: Optional[str]) -> None:
+        """Reject a user_id the sentinel-based contract cannot tell apart from shared.
+
+        The shared bucket is a value stored in the row, not the absence of one, so a
+        caller whose real id is that value addresses the shared bucket outright: their
+        uploads publish org-wide, they read every other owner's shared content as their
+        own, and a scoped delete of theirs clears out of the shared bucket - which the
+        strict-delete contract says is nobody's to remove but an admin's. Refuse the
+        collision rather than store it; use None for shared/unscoped access.
+        """
+        if user_id == SHARED_USER_ID_VALUE:
+            raise ValueError(
+                f"user_id must not be '{SHARED_USER_ID_VALUE}' - that value is reserved to mark content "
+                "shared with every user"
+            )
+
+    def _scoped_row_id(self, base_id: str, content_hash: str, user_id: Optional[str]) -> str:
+        """Fold the owner into the deterministic primary key so two users inserting the
+        same content get distinct row ids. None keeps the stable base id.
+
+        ``base_id`` is caller-controlled and variable length, so it is collapsed with
+        ``content_hash`` into a fixed-length digest before the owner is folded in -
+        otherwise the '_' boundary moves and ('doc_1', 'alice') and ('doc', '1_alice')
+        collapse to the same row id, letting one owner overwrite the other's chunk.
+        """
+        row_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+        if user_id is None:
+            return row_id
+        return md5(f"{row_id}_{user_id}".encode()).hexdigest()
+
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        """Check if a document exists by content hash, scoped to the owner; None scopes
+        to the shared bucket only so it never matches another user's owned row.
+
+        This is the guard half of the upsert dedup pair, so None addresses the shared
+        bucket alone rather than every owner - the same bucket delete_by_content_hash
+        clears for None.
+        """
+        self._validate_user_id(user_id)
+        owner = user_id if user_id is not None else SHARED_USER_ID_VALUE
+        query = (
+            f"SELECT COUNT(*) FROM {self.keyspace}.{self.table_name} "
+            f"WHERE metadata_s['content_hash'] = %s AND metadata_s['{USER_ID_METADATA_KEY}'] = %s ALLOW FILTERING"
+        )
+        result = self.session.execute(query, (content_hash, owner))
         return result.one()[0] > 0
 
-    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
+        self._validate_user_id(user_id)
         log_info(f"Cassandra VectorDB : Inserting Documents to the table {self.table_name}")
         futures = []
         for doc in documents:
             doc.embed(embedder=self.embedder)
             metadata = {key: str(value) for key, value in doc.meta_data.items()}
-            metadata.update(filters or {})
+            metadata.update({key: str(value) for key, value in (filters or {}).items()})
             metadata["content_id"] = doc.content_id or ""
             metadata["content_hash"] = content_hash
+            # Stamp the owner; shared rows get the sentinel so they stay queryable.
+            metadata[USER_ID_METADATA_KEY] = user_id if user_id is not None else SHARED_USER_ID_VALUE
+            cleaned_content = (doc.content or "").replace("\x00", "\ufffd")
+            # Include content_hash in ID to ensure uniqueness across different content hashes
+            base_id = doc.id or md5(cleaned_content.encode()).hexdigest()
             futures.append(
                 self.table.put_async(
-                    row_id=doc.id,
+                    row_id=self._scoped_row_id(base_id, content_hash, user_id),
                     vector=doc.embedding,
                     metadata=metadata or {},
                     body_blob=doc.content,
@@ -124,8 +185,10 @@ class Cassandra(VectorDb):
         content_hash: str,
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """Insert documents asynchronously by running in a thread."""
+        self._validate_user_id(user_id)
         log_info(f"Cassandra VectorDB : Inserting Documents to the table {self.table_name}")
 
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
@@ -178,12 +241,17 @@ class Cassandra(VectorDb):
         futures = []
         for doc in documents:
             metadata = {key: str(value) for key, value in doc.meta_data.items()}
-            metadata.update(filters or {})
+            metadata.update({key: str(value) for key, value in (filters or {}).items()})
             metadata["content_id"] = doc.content_id or ""
             metadata["content_hash"] = content_hash
+            # Stamp the owner; shared rows get the sentinel so they stay queryable.
+            metadata[USER_ID_METADATA_KEY] = user_id if user_id is not None else SHARED_USER_ID_VALUE
+            cleaned_content = (doc.content or "").replace("\x00", "\ufffd")
+            # Include content_hash in ID to ensure uniqueness across different content hashes
+            base_id = doc.id or md5(cleaned_content.encode()).hexdigest()
             futures.append(
                 self.table.put_async(
-                    row_id=doc.id,
+                    row_id=self._scoped_row_id(base_id, content_hash, user_id),
                     vector=doc.embedding,
                     metadata=metadata or {},
                     body_blob=doc.content,
@@ -194,34 +262,55 @@ class Cassandra(VectorDb):
         for f in futures:
             f.result()
 
-    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """Insert or update documents based on primary key."""
-        if self.content_hash_exists(content_hash):
-            self.delete_by_content_hash(content_hash)
-        self.insert(content_hash, documents, filters)
+        # Dedup within the owner's own bucket only.
+        if self.content_hash_exists(content_hash, user_id=user_id):
+            self.delete_by_content_hash(content_hash, user_id=user_id)
+        self.insert(content_hash, documents, filters, user_id=user_id)
 
     async def async_upsert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """Upsert documents asynchronously by running in a thread."""
-        if self.content_hash_exists(content_hash):
-            self.delete_by_content_hash(content_hash)
-        await self.async_insert(content_hash, documents, filters)
+        # Dedup within the owner's own bucket only.
+        if self.content_hash_exists(content_hash, user_id=user_id):
+            self.delete_by_content_hash(content_hash, user_id=user_id)
+        await self.async_insert(content_hash, documents, filters, user_id=user_id)
 
     def search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """Keyword-based search on document metadata."""
+        self._validate_user_id(user_id)
         log_debug(f"Cassandra VectorDB : Performing Vector Search on {self.table_name} with query {query}")
         if filters is not None:
             log_warning("Filters are not yet supported in Cassandra. No filters will be applied.")
-        return self.vector_search(query=query, limit=limit)
+        return self.vector_search(query=query, limit=limit, user_id=user_id)
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """Search asynchronously by running in a thread."""
-        return await asyncio.to_thread(self.search, query, limit, filters)
+        return await asyncio.to_thread(self.search, query, limit, filters, user_id)
 
     def _search_to_documents(
         self,
@@ -230,19 +319,43 @@ class Cassandra(VectorDb):
         return [self._row_to_document(row=hit) for hit in hits]
 
     def vector_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """Vector similarity search implementation."""
+        self._validate_user_id(user_id)
         query_embedding = self.embedder.get_embedding(query)
-        hits = list(
+
+        if user_id is None:
+            # Unscoped / admin view: one unfiltered search sees every owner.
+            hits = list(self.table.metric_ann_search(vector=query_embedding, n=limit, metric="cos"))
+            return self._search_to_documents(hits)
+
+        # Own OR shared: cassio's metadata filter is equality-only, so union two
+        # equality-filtered searches and re-rank the merged top-k (cos distance is
+        # reversed: higher == more similar).
+        own_hits = list(
             self.table.metric_ann_search(
-                vector=query_embedding,
-                n=limit,
-                metric="cos",
+                vector=query_embedding, n=limit, metric="cos", metadata={USER_ID_METADATA_KEY: user_id}
             )
         )
-        d = self._search_to_documents(hits)
-        return d
+        shared_hits = list(
+            self.table.metric_ann_search(
+                vector=query_embedding, n=limit, metric="cos", metadata={USER_ID_METADATA_KEY: SHARED_USER_ID_VALUE}
+            )
+        )
+        seen: set = set()
+        merged: List[Dict[str, Any]] = []
+        for hit in sorted([*own_hits, *shared_hits], key=lambda h: h.get("distance", 0.0), reverse=True):
+            row_id = hit.get("row_id")
+            if row_id in seen:
+                continue
+            seen.add(row_id)
+            merged.append(hit)
+        return self._search_to_documents(merged[:limit])
 
     def drop(self) -> None:
         """Drop the vector table in Cassandra."""
@@ -365,16 +478,19 @@ class Cassandra(VectorDb):
             log_debug(f"Error deleting documents with metadata {metadata}: {e}")
             return False
 
-    def delete_by_content_id(self, content_id: str) -> bool:
+    def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
         """
         Delete documents by content ID.
 
         Args:
             content_id (str): The content ID to delete
+            user_id (Optional[str]): Restrict the delete to the owner's bucket. None
+                deletes across all owners (legacy / admin).
 
         Returns:
             bool: True if documents were deleted, False otherwise
         """
+        self._validate_user_id(user_id)
         try:
             log_debug(f"Cassandra VectorDB : Deleting documents with content_id {content_id}")
             # Query to find documents with matching content_id in metadata
@@ -385,27 +501,35 @@ class Cassandra(VectorDb):
                 # Check if the row's metadata contains the content_id
                 # Use attribute access for Row objects
                 row_metadata = getattr(row, "metadata_s", {})
-                if row_metadata.get("content_id") == content_id:
-                    # Delete this specific document
-                    delete_query = f"DELETE FROM {self.keyspace}.{self.table_name} WHERE row_id = %s"
-                    self.session.execute(delete_query, (getattr(row, "row_id"),))
-                    deleted_count += 1
+                if row_metadata.get("content_id") != content_id:
+                    continue
+                # Scope to the owner exactly when user_id is set.
+                if user_id is not None and row_metadata.get(USER_ID_METADATA_KEY) != user_id:
+                    continue
+                # Delete this specific document
+                delete_query = f"DELETE FROM {self.keyspace}.{self.table_name} WHERE row_id = %s"
+                self.session.execute(delete_query, (getattr(row, "row_id"),))
+                deleted_count += 1
 
             return deleted_count > 0
         except Exception as e:
             log_info(f"Error deleting documents with content_id {content_id}: {e}")
             return False
 
-    def delete_by_content_hash(self, content_hash: str) -> bool:
+    def delete_by_content_hash(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """
         Delete documents by content hash.
 
         Args:
             content_hash (str): The content hash to delete
+            user_id (Optional[str]): Restrict the delete to the owner's bucket. None
+                scopes to the shared bucket only so it can't wipe every owner.
 
         Returns:
             bool: True if documents were deleted, False otherwise
         """
+        self._validate_user_id(user_id)
+        owner = user_id if user_id is not None else SHARED_USER_ID_VALUE
         try:
             log_debug(f"Cassandra VectorDB : Deleting documents with content_hash {content_hash}")
             # Query to find documents with matching content_hash in metadata
@@ -417,6 +541,9 @@ class Cassandra(VectorDb):
                 # Use attribute access for Row objects
                 row_metadata = getattr(row, "metadata_s", {})
                 if row_metadata.get("content_hash") == content_hash:
+                    # Scope to the owner's bucket (shared sentinel when user_id is None).
+                    if row_metadata.get(USER_ID_METADATA_KEY) != owner:
+                        continue
                     # Delete this specific document
                     delete_query = f"DELETE FROM {self.keyspace}.{self.table_name} WHERE row_id = %s"
                     self.session.execute(delete_query, (getattr(row, "row_id"),))
@@ -474,10 +601,15 @@ class Cassandra(VectorDb):
             for row in result:
                 row_metadata = getattr(row, "metadata_s", {})
                 if row_metadata.get("content_id") == content_id:
-                    # Merge existing metadata with new metadata
-                    updated_metadata = row_metadata.copy()
-                    # Convert new metadata values to strings (Cassandra requirement)
-                    string_metadata = {key: str(value) for key, value in metadata.items()}
+                    # Merge existing metadata with new metadata. The driver hands
+                    # back metadata_s as an ordered-map type, so copy into a
+                    # plain dict before mutating.
+                    updated_metadata = dict(row_metadata)
+                    # Convert new metadata values to strings (Cassandra requirement).
+                    # user_id is the reserved owner key; never let caller metadata reassign it.
+                    string_metadata = {
+                        key: str(value) for key, value in metadata.items() if key != USER_ID_METADATA_KEY
+                    }
                     updated_metadata.update(string_metadata)
 
                     # Update the document with merged metadata

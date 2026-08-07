@@ -84,6 +84,7 @@ class Knowledge(RemoteKnowledge):
         skip_if_exists: bool = False,
         reader: Optional[Reader] = None,
         auth: Optional[ContentAuth] = None,
+        user_id: Optional[str] = None,
     ) -> None: ...
 
     @overload
@@ -105,6 +106,7 @@ class Knowledge(RemoteKnowledge):
         upsert: bool = True,
         skip_if_exists: bool = False,
         auth: Optional[ContentAuth] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """
         Synchronously insert content into the knowledge base.
@@ -123,6 +125,8 @@ class Knowledge(RemoteKnowledge):
             exclude: Optional list of file patterns to exclude
             upsert: Whether to update existing content if it already exists (only used when skip_if_exists=False)
             skip_if_exists: Whether to skip inserting content if it already exists (default: False)
+            user_id: Owner of this content. ``None`` writes to the shared
+                bucket (visible to everyone). See ``ainsert`` for details.
         """
         # Validation: At least one of the parameters must be provided
         if all(argument is None for argument in [path, url, text_content, topics, remote_content]):
@@ -150,6 +154,7 @@ class Knowledge(RemoteKnowledge):
             remote_content=remote_content,
             reader=reader,
             auth=auth,
+            user_id=user_id,
         )
         content.content_hash = self._build_content_hash(content)
         content.id = generate_id(content.content_hash)
@@ -170,6 +175,7 @@ class Knowledge(RemoteKnowledge):
         skip_if_exists: bool = False,
         reader: Optional[Reader] = None,
         auth: Optional[ContentAuth] = None,
+        user_id: Optional[str] = None,
     ) -> None: ...
 
     @overload
@@ -191,7 +197,17 @@ class Knowledge(RemoteKnowledge):
         upsert: bool = True,
         skip_if_exists: bool = False,
         auth: Optional[ContentAuth] = None,
+        user_id: Optional[str] = None,
     ) -> None:
+        """Insert a single piece of content.
+
+        Args:
+            user_id: Owner of this content. ``None`` writes to the shared
+                bucket (visible to everyone). A string scopes the content
+                to that user — only they (and admins / unscoped callers)
+                will see it via per-user retrieval. See
+                ``KNOWLEDGE_ISOLATION_DESIGN.md``.
+        """
         # Validation: At least one of the parameters must be provided
         if all(argument is None for argument in [path, url, text_content, topics, remote_content]):
             log_warning(
@@ -218,6 +234,7 @@ class Knowledge(RemoteKnowledge):
             remote_content=remote_content,
             reader=reader,
             auth=auth,
+            user_id=user_id,
         )
         content.content_hash = self._build_content_hash(content)
         content.id = generate_id(content.content_hash)
@@ -226,7 +243,14 @@ class Knowledge(RemoteKnowledge):
 
     # --- Insert Many ---
     @overload
-    async def ainsert_many(self, contents: List[ContentDict]) -> None: ...
+    async def ainsert_many(
+        self,
+        contents: List[ContentDict],
+        *,
+        upsert: bool = True,
+        skip_if_exists: bool = False,
+        user_id: Optional[str] = None,
+    ) -> None: ...
 
     @overload
     async def ainsert_many(
@@ -243,13 +267,16 @@ class Knowledge(RemoteKnowledge):
         upsert: bool = True,
         skip_if_exists: bool = False,
         remote_content: Optional[RemoteContent] = None,
+        user_id: Optional[str] = None,
     ) -> None: ...
 
     async def ainsert_many(self, *args, **kwargs) -> None:
+        """Asynchronously insert multiple content items. See ``insert_many``."""
         if args and isinstance(args[0], list):
             arguments = args[0]
             upsert = kwargs.get("upsert", True)
             skip_if_exists = kwargs.get("skip_if_exists", False)
+            user_id = kwargs.get("user_id")
             for argument in arguments:
                 await self.ainsert(
                     name=argument.get("name"),
@@ -266,6 +293,7 @@ class Knowledge(RemoteKnowledge):
                     skip_if_exists=argument.get("skip_if_exists", skip_if_exists),
                     remote_content=argument.get("remote_content", None),
                     auth=argument.get("auth"),
+                    user_id=argument.get("user_id", user_id),
                 )
 
         elif kwargs:
@@ -283,6 +311,7 @@ class Knowledge(RemoteKnowledge):
             skip_if_exists = kwargs.get("skip_if_exists", False)
             remote_content = kwargs.get("remote_content", None)
             auth = kwargs.get("auth")
+            user_id = kwargs.get("user_id")
             for path in paths:
                 await self.ainsert(
                     name=name,
@@ -295,6 +324,7 @@ class Knowledge(RemoteKnowledge):
                     skip_if_exists=skip_if_exists,
                     reader=reader,
                     auth=auth,
+                    user_id=user_id,
                 )
             for url in urls:
                 await self.ainsert(
@@ -308,6 +338,7 @@ class Knowledge(RemoteKnowledge):
                     skip_if_exists=skip_if_exists,
                     reader=reader,
                     auth=auth,
+                    user_id=user_id,
                 )
             for i, text_content in enumerate(text_contents):
                 content_name = f"{name}_{i}" if name else f"text_content_{i}"
@@ -323,6 +354,7 @@ class Knowledge(RemoteKnowledge):
                     skip_if_exists=skip_if_exists,
                     reader=reader,
                     auth=auth,
+                    user_id=user_id,
                 )
             if topics:
                 await self.ainsert(
@@ -336,6 +368,7 @@ class Knowledge(RemoteKnowledge):
                     skip_if_exists=skip_if_exists,
                     reader=reader,
                     auth=auth,
+                    user_id=user_id,
                 )
 
             if remote_content:
@@ -348,13 +381,21 @@ class Knowledge(RemoteKnowledge):
                     skip_if_exists=skip_if_exists,
                     reader=reader,
                     auth=auth,
+                    user_id=user_id,
                 )
 
         else:
             raise ValueError("Invalid usage of insert_many.")
 
     @overload
-    def insert_many(self, contents: List[ContentDict]) -> None: ...
+    def insert_many(
+        self,
+        contents: List[ContentDict],
+        *,
+        upsert: bool = True,
+        skip_if_exists: bool = False,
+        user_id: Optional[str] = None,
+    ) -> None: ...
 
     @overload
     def insert_many(
@@ -371,6 +412,7 @@ class Knowledge(RemoteKnowledge):
         upsert: bool = True,
         skip_if_exists: bool = False,
         remote_content: Optional[RemoteContent] = None,
+        user_id: Optional[str] = None,
     ) -> None: ...
 
     def insert_many(self, *args, **kwargs) -> None:
@@ -394,11 +436,15 @@ class Knowledge(RemoteKnowledge):
             upsert: Whether to update existing content if it already exists (only used when skip_if_exists=False)
             skip_if_exists: Whether to skip inserting content if it already exists (default: True)
             remote_content: Optional remote content (S3, GCS, etc.) to insert
+            user_id: Owner applied to every item in this call. ``None`` writes
+                to the shared bucket. A per-item ``user_id`` in the list form
+                takes precedence. See ``insert`` for details.
         """
         if args and isinstance(args[0], list):
             arguments = args[0]
             upsert = kwargs.get("upsert", True)
             skip_if_exists = kwargs.get("skip_if_exists", False)
+            user_id = kwargs.get("user_id")
             for argument in arguments:
                 self.insert(
                     name=argument.get("name"),
@@ -415,6 +461,7 @@ class Knowledge(RemoteKnowledge):
                     skip_if_exists=argument.get("skip_if_exists", skip_if_exists),
                     remote_content=argument.get("remote_content", None),
                     auth=argument.get("auth"),
+                    user_id=argument.get("user_id", user_id),
                 )
 
         elif kwargs:
@@ -432,6 +479,7 @@ class Knowledge(RemoteKnowledge):
             skip_if_exists = kwargs.get("skip_if_exists", False)
             remote_content = kwargs.get("remote_content", None)
             auth = kwargs.get("auth")
+            user_id = kwargs.get("user_id")
             for path in paths:
                 self.insert(
                     name=name,
@@ -444,6 +492,7 @@ class Knowledge(RemoteKnowledge):
                     skip_if_exists=skip_if_exists,
                     reader=reader,
                     auth=auth,
+                    user_id=user_id,
                 )
             for url in urls:
                 self.insert(
@@ -457,6 +506,7 @@ class Knowledge(RemoteKnowledge):
                     skip_if_exists=skip_if_exists,
                     reader=reader,
                     auth=auth,
+                    user_id=user_id,
                 )
             for i, text_content in enumerate(text_contents):
                 content_name = f"{name}_{i}" if name else f"text_content_{i}"
@@ -472,6 +522,7 @@ class Knowledge(RemoteKnowledge):
                     skip_if_exists=skip_if_exists,
                     reader=reader,
                     auth=auth,
+                    user_id=user_id,
                 )
             if topics:
                 self.insert(
@@ -485,6 +536,7 @@ class Knowledge(RemoteKnowledge):
                     skip_if_exists=skip_if_exists,
                     reader=reader,
                     auth=auth,
+                    user_id=user_id,
                 )
 
             if remote_content:
@@ -497,6 +549,7 @@ class Knowledge(RemoteKnowledge):
                     skip_if_exists=skip_if_exists,
                     reader=reader,
                     auth=auth,
+                    user_id=user_id,
                 )
 
         else:
@@ -506,14 +559,49 @@ class Knowledge(RemoteKnowledge):
     # PUBLIC API - SEARCH METHODS
     # ==========================================
 
+    def _inject_instance_scope_filter(
+        self,
+        search_filters: Optional[Union[Dict[str, Any], List["FilterExpr"]]],
+    ) -> Optional[Union[Dict[str, Any], List["FilterExpr"]]]:
+        """Inject the ``linked_to`` (Knowledge instance) scope into the
+        caller-provided filters when ``isolate_vector_search`` is on.
+
+        ``user_id`` is NOT mixed into the filter DSL — each backend handles
+        per-user isolation natively (pgvector uses a column predicate, Chroma
+        uses per-user collections, Pinecone uses namespaces, etc.). The
+        ``user_id`` value flows separately to ``vector_db.search(user_id=...)``.
+
+        Returns the new filter object — original ``search_filters`` is not
+        mutated.
+        """
+        if not (self.isolate_vector_search and self.name):
+            return search_filters
+
+        if search_filters is None:
+            return {"linked_to": self.name}
+        if isinstance(search_filters, dict):
+            return {**search_filters, "linked_to": self.name}
+        if isinstance(search_filters, list):
+            return [EQ("linked_to", self.name), *search_filters]
+        return search_filters
+
     def search(
         self,
         query: str,
         max_results: Optional[int] = None,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         search_type: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
-        """Returns relevant documents matching a query"""
+        """Returns relevant documents matching a query.
+
+        Args:
+            user_id: Per-user RAG isolation scope. Forwarded directly to the
+                underlying ``vector_db.search(user_id=...)`` — each backend
+                handles isolation using its native primitive (pgvector
+                column, Chroma collection, etc.). ``None`` returns
+                everything (admin / isolation-off behaviour).
+        """
         from agno.vectordb import VectorDb
         from agno.vectordb.search import SearchType
 
@@ -530,19 +618,11 @@ class Knowledge(RemoteKnowledge):
                 log_warning("No vector db provided")
                 return []
 
-            # Inject linked_to filter when isolate_vector_search is enabled and knowledge has a name
-            search_filters = filters
-            if self.isolate_vector_search and self.name:
-                if search_filters is None:
-                    search_filters = {"linked_to": self.name}
-                elif isinstance(search_filters, dict):
-                    search_filters = {**search_filters, "linked_to": self.name}
-                elif isinstance(search_filters, list):
-                    search_filters = [EQ("linked_to", self.name), *search_filters]
+            search_filters = self._inject_instance_scope_filter(filters)
 
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
-            return self.vector_db.search(query=query, limit=_max_results, filters=search_filters)
+            return self.vector_db.search(query=query, limit=_max_results, filters=search_filters, user_id=user_id)
         except Exception as e:
             log_error(f"Error searching for documents: {str(e)}")
             return []
@@ -553,8 +633,9 @@ class Knowledge(RemoteKnowledge):
         max_results: Optional[int] = None,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         search_type: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
-        """Returns relevant documents matching a query"""
+        """Returns relevant documents matching a query. See ``search``."""
         from agno.vectordb import VectorDb
         from agno.vectordb.search import SearchType
 
@@ -570,23 +651,17 @@ class Knowledge(RemoteKnowledge):
                 log_warning("No vector db provided")
                 return []
 
-            # Inject linked_to filter when isolate_vector_search is enabled and knowledge has a name
-            search_filters = filters
-            if self.isolate_vector_search and self.name:
-                if search_filters is None:
-                    search_filters = {"linked_to": self.name}
-                elif isinstance(search_filters, dict):
-                    search_filters = {**search_filters, "linked_to": self.name}
-                elif isinstance(search_filters, list):
-                    search_filters = [EQ("linked_to", self.name), *search_filters]
+            search_filters = self._inject_instance_scope_filter(filters)
 
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
             try:
-                return await self.vector_db.async_search(query=query, limit=_max_results, filters=search_filters)
+                return await self.vector_db.async_search(
+                    query=query, limit=_max_results, filters=search_filters, user_id=user_id
+                )
             except NotImplementedError:
                 log_info("Vector db does not support async search")
-                return self.vector_db.search(query=query, limit=_max_results, filters=search_filters)
+                return self.vector_db.search(query=query, limit=_max_results, filters=search_filters, user_id=user_id)
         except Exception as e:
             log_error(f"Error searching for documents: {str(e)}")
             return []
@@ -746,7 +821,13 @@ class Knowledge(RemoteKnowledge):
                 else:
                     log_warning(f"No external_id found for content {content_id}, cannot delete from LightRAG")
             else:
-                self.vector_db.delete_by_content_id(content_id)
+                # Scope the vector-DB delete to the same ``user_id`` that
+                # scopes the contents-DB delete below — otherwise a caller
+                # whose ownership check fails on the contents row could
+                # still wipe the vector chunks. Backends that don't yet
+                # implement per-user isolation accept ``user_id`` as a
+                # no-op (see VectorDb.delete_by_content_id).
+                self.vector_db.delete_by_content_id(content_id, user_id=user_id)
 
         if self.contents_db is not None:
             self.contents_db.delete_knowledge_content(content_id, user_id=user_id)
@@ -769,7 +850,8 @@ class Knowledge(RemoteKnowledge):
                 else:
                     log_warning(f"No external_id found for content {content_id}, cannot delete from LightRAG")
             else:
-                self.vector_db.delete_by_content_id(content_id)
+                # See the matching comment in ``remove_content_by_id``.
+                self.vector_db.delete_by_content_id(content_id, user_id=user_id)
 
         if self.contents_db is not None:
             if isinstance(self.contents_db, AsyncBaseDb):
@@ -1197,13 +1279,18 @@ class Knowledge(RemoteKnowledge):
         if content.remote_content:
             await self._aload_from_remote_content(content, upsert, skip_if_exists)
 
-    def _should_skip(self, content_hash: str, skip_if_exists: bool) -> bool:
+    def _should_skip(self, content_hash: str, skip_if_exists: bool, user_id: Optional[str] = None) -> bool:
         """
         Handle the skip_if_exists logic for content that already exists in the vector database.
 
         Args:
             content_hash: The content hash string to check for existence
             skip_if_exists: Whether to skip if content already exists
+            user_id: Owner of the content being loaded. The existence check is scoped
+                to that owner, so an upload another owner already made does not deny
+                this one a copy of chunks it could never read. ``None`` addresses the
+                shared bucket alone — see ``VectorDb.content_hash_exists``, where the
+                same value would otherwise let a private copy skip a shared publish.
 
         Returns:
             bool: True if should skip processing, False if should continue
@@ -1211,7 +1298,7 @@ class Knowledge(RemoteKnowledge):
         from agno.vectordb import VectorDb
 
         self.vector_db = cast(VectorDb, self.vector_db)
-        if self.vector_db and self.vector_db.content_hash_exists(content_hash) and skip_if_exists:
+        if self.vector_db and self.vector_db.content_hash_exists(content_hash, user_id=user_id) and skip_if_exists:
             log_debug(f"Content already exists: {content_hash}, skipping...")
             return True
 
@@ -1354,7 +1441,14 @@ class Knowledge(RemoteKnowledge):
         metadata: Optional[Dict[str, Any]] = None,
     ) -> List[Document]:
         """
-        Prepare documents for insertion by assigning content_id and optionally calculating sizes and updating metadata.
+        Prepare documents for insertion by assigning content_id and optionally
+        calculating sizes and updating metadata.
+
+        Note: ``user_id`` is NOT written into ``meta_data`` here. It flows as
+        an explicit parameter on the ``vector_db.insert`` / ``async_insert``
+        calls (see ``_aload_content`` etc.) — that keeps owner identity out
+        of the user-controlled JSONB blob and avoids collisions with any
+        ``user_id`` key callers might legitimately have in their own metadata.
 
         Args:
             documents: List of documents to prepare
@@ -1417,7 +1511,7 @@ class Knowledge(RemoteKnowledge):
                     content.name = path.name
 
                 await self._ainsert_contents_db(content)
-                if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
+                if self._should_skip(content.content_hash, skip_if_exists, user_id=content.user_id):  # type: ignore[arg-type]
                     content.status = ContentStatus.COMPLETED
                     await self._aupdate_content(content)
                     return
@@ -1503,7 +1597,7 @@ class Knowledge(RemoteKnowledge):
                     content.name = path.name
 
                 self._insert_contents_db(content)
-                if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
+                if self._should_skip(content.content_hash, skip_if_exists, user_id=content.user_id):  # type: ignore[arg-type]
                     content.status = ContentStatus.COMPLETED
                     self._update_content(content)
                     return
@@ -1602,7 +1696,7 @@ class Knowledge(RemoteKnowledge):
 
         # 1. Add content to contents database
         await self._ainsert_contents_db(content)
-        if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
+        if self._should_skip(content.content_hash, skip_if_exists, user_id=content.user_id):  # type: ignore[arg-type]
             content.status = ContentStatus.COMPLETED
             await self._aupdate_content(content)
             return
@@ -1686,7 +1780,7 @@ class Knowledge(RemoteKnowledge):
                 doc_hash = self._build_document_content_hash(source_docs[0], content)
 
                 # Check skip_if_exists for each source individually
-                if self._should_skip(doc_hash, skip_if_exists):
+                if self._should_skip(doc_hash, skip_if_exists, user_id=content.user_id):
                     log_debug(f"Skipping already indexed: {source_url}")
                     continue
 
@@ -1696,13 +1790,20 @@ class Knowledge(RemoteKnowledge):
                 # Insert with per-document hash
                 if self.vector_db.upsert_available() and upsert:
                     try:
-                        await self.vector_db.async_upsert(doc_hash, source_docs, content.metadata)
+                        await self.vector_db.async_upsert(
+                            doc_hash, source_docs, content.metadata, user_id=content.user_id
+                        )
                     except Exception as e:
                         log_error(f"Error upserting document from {source_url}: {str(e)}")
                         continue
                 else:
                     try:
-                        await self.vector_db.async_insert(doc_hash, documents=source_docs, filters=content.metadata)
+                        await self.vector_db.async_insert(
+                            doc_hash,
+                            documents=source_docs,
+                            filters=content.metadata,
+                            user_id=content.user_id,
+                        )
                     except Exception as e:
                         log_error(f"Error inserting document from {source_url}: {str(e)}")
                         continue
@@ -1756,7 +1857,7 @@ class Knowledge(RemoteKnowledge):
 
         # 1. Add content to contents database
         self._insert_contents_db(content)
-        if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
+        if self._should_skip(content.content_hash, skip_if_exists, user_id=content.user_id):  # type: ignore[arg-type]
             content.status = ContentStatus.COMPLETED
             self._update_content(content)
             return
@@ -1841,7 +1942,7 @@ class Knowledge(RemoteKnowledge):
                 doc_hash = self._build_document_content_hash(source_docs[0], content)
 
                 # Check skip_if_exists for each source individually
-                if self._should_skip(doc_hash, skip_if_exists):
+                if self._should_skip(doc_hash, skip_if_exists, user_id=content.user_id):
                     log_debug(f"Skipping already indexed: {source_url}")
                     continue
 
@@ -1851,13 +1952,18 @@ class Knowledge(RemoteKnowledge):
                 # Insert with per-document hash
                 if self.vector_db.upsert_available() and upsert:
                     try:
-                        self.vector_db.upsert(doc_hash, source_docs, content.metadata)
+                        self.vector_db.upsert(doc_hash, source_docs, content.metadata, user_id=content.user_id)
                     except Exception as e:
                         log_error(f"Error upserting document from {source_url}: {str(e)}")
                         continue
                 else:
                     try:
-                        self.vector_db.insert(doc_hash, documents=source_docs, filters=content.metadata)
+                        self.vector_db.insert(
+                            doc_hash,
+                            documents=source_docs,
+                            filters=content.metadata,
+                            user_id=content.user_id,
+                        )
                     except Exception as e:
                         log_error(f"Error inserting document from {source_url}: {str(e)}")
                         continue
@@ -1906,7 +2012,7 @@ class Knowledge(RemoteKnowledge):
         log_info(f"Adding content from {content.name}")
 
         await self._ainsert_contents_db(content)
-        if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
+        if self._should_skip(content.content_hash, skip_if_exists, user_id=content.user_id):  # type: ignore[arg-type]
             content.status = ContentStatus.COMPLETED
             await self._aupdate_content(content)
             return
@@ -2013,7 +2119,7 @@ class Knowledge(RemoteKnowledge):
         log_info(f"Adding content from {content.name}")
 
         self._insert_contents_db(content)
-        if self._should_skip(content.content_hash, skip_if_exists):  # type: ignore[arg-type]
+        if self._should_skip(content.content_hash, skip_if_exists, user_id=content.user_id):  # type: ignore[arg-type]
             content.status = ContentStatus.COMPLETED
             self._update_content(content)
             return
@@ -2116,7 +2222,7 @@ class Knowledge(RemoteKnowledge):
             content.id = generate_id(content.content_hash)
 
             await self._ainsert_contents_db(content)
-            if self._should_skip(content.content_hash, skip_if_exists):
+            if self._should_skip(content.content_hash, skip_if_exists, user_id=content.user_id):
                 content.status = ContentStatus.COMPLETED
                 await self._aupdate_content(content)
                 continue  # Skip to next topic, don't exit loop
@@ -2124,10 +2230,6 @@ class Knowledge(RemoteKnowledge):
             if self.vector_db.__class__.__name__ == "LightRag":
                 await self._aprocess_lightrag_content(content, KnowledgeContentOrigin.TOPIC)
                 continue  # Skip to next topic, don't exit loop
-
-            if self.vector_db and self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
-                log_info(f"Content {content.content_hash} already exists, skipping")
-                continue
 
             if content.reader is None:
                 log_error(f"No reader available for topic: {topic}")
@@ -2178,7 +2280,7 @@ class Knowledge(RemoteKnowledge):
             content.id = generate_id(content.content_hash)
 
             self._insert_contents_db(content)
-            if self._should_skip(content.content_hash, skip_if_exists):
+            if self._should_skip(content.content_hash, skip_if_exists, user_id=content.user_id):
                 content.status = ContentStatus.COMPLETED
                 self._update_content(content)
                 continue  # Skip to next topic, don't exit loop
@@ -2186,10 +2288,6 @@ class Knowledge(RemoteKnowledge):
             if self.vector_db.__class__.__name__ == "LightRag":
                 self._process_lightrag_content(content, KnowledgeContentOrigin.TOPIC)
                 continue  # Skip to next topic, don't exit loop
-
-            if self.vector_db and self.vector_db.content_hash_exists(content.content_hash) and skip_if_exists:
-                log_info(f"Content {content.content_hash} already exists, skipping")
-                continue
 
             if content.reader is None:
                 log_error(f"No reader available for topic: {topic}")
@@ -2532,7 +2630,12 @@ class Knowledge(RemoteKnowledge):
 
         if self.vector_db.upsert_available() and upsert:
             try:
-                await self.vector_db.async_upsert(content.content_hash, read_documents, content.metadata)  # type: ignore[arg-type]
+                await self.vector_db.async_upsert(
+                    content.content_hash,  # type: ignore[arg-type]
+                    read_documents,
+                    content.metadata,
+                    user_id=content.user_id,
+                )
             except Exception as e:
                 log_error(f"Error upserting document: {str(e)}")
                 content.status = ContentStatus.FAILED
@@ -2545,6 +2648,7 @@ class Knowledge(RemoteKnowledge):
                     content.content_hash,  # type: ignore[arg-type]
                     documents=read_documents,
                     filters=content.metadata,  # type: ignore[arg-type]
+                    user_id=content.user_id,
                 )
             except Exception as e:
                 log_error(f"Error inserting document: {str(e)}")
@@ -2571,7 +2675,12 @@ class Knowledge(RemoteKnowledge):
 
         if self.vector_db.upsert_available() and upsert:
             try:
-                self.vector_db.upsert(content.content_hash, read_documents, content.metadata)  # type: ignore[arg-type]
+                self.vector_db.upsert(
+                    content.content_hash,  # type: ignore[arg-type]
+                    read_documents,
+                    content.metadata,
+                    user_id=content.user_id,
+                )
             except Exception as e:
                 log_error(f"Error upserting document: {str(e)}")
                 content.status = ContentStatus.FAILED
@@ -2584,6 +2693,7 @@ class Knowledge(RemoteKnowledge):
                     content.content_hash,  # type: ignore[arg-type]
                     documents=read_documents,
                     filters=content.metadata,  # type: ignore[arg-type]
+                    user_id=content.user_id,
                 )
             except Exception as e:
                 log_error(f"Error inserting document: {str(e)}")
@@ -3473,6 +3583,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
         query: str,
         max_results: Optional[int] = None,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
         **kwargs,
     ) -> List[Document]:
         """Retrieve documents for context injection.
@@ -3484,32 +3595,26 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             query: The query string.
             max_results: Maximum number of results.
             filters: Filters to apply.
+            user_id: Owner-scope filter forwarded to ``search``. ``None``
+                returns everything (admin / RBAC-off); a string returns the
+                caller's chunks plus the shared bucket.
             **kwargs: Additional parameters.
 
         Returns:
             List of Document objects.
         """
-        return self.search(query=query, max_results=max_results, filters=filters)
+        return self.search(query=query, max_results=max_results, filters=filters, user_id=user_id)
 
     async def aretrieve(
         self,
         query: str,
         max_results: Optional[int] = None,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
         **kwargs,
     ) -> List[Document]:
-        """Async version of retrieve.
-
-        Args:
-            query: The query string.
-            max_results: Maximum number of results.
-            filters: Filters to apply.
-            **kwargs: Additional parameters.
-
-        Returns:
-            List of Document objects.
-        """
-        return await self.asearch(query=query, max_results=max_results, filters=filters)
+        """Async version of retrieve. See ``retrieve`` for arg semantics."""
+        return await self.asearch(query=query, max_results=max_results, filters=filters, user_id=user_id)
 
     # ========================================================================
     # Deprecated Methods (for backward compatibility)

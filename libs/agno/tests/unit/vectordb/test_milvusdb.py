@@ -123,7 +123,10 @@ def test_create_collection(milvus_db, mock_milvus_client):
         # Verify parameters
         args, kwargs = mock_milvus_client.create_collection.call_args
         assert kwargs["collection_name"] == "test_collection"
-        assert kwargs["dimension"] == milvus_db.dimensions
+        fields = {f.name: f for f in kwargs["schema"].fields}
+        assert fields["vector"].params["dim"] == milvus_db.dimensions
+        # Shared rows carry an explicit sentinel, so the owner column is never null.
+        assert fields["user_id"].nullable is False
 
 
 def test_exists(milvus_db, mock_milvus_client):
@@ -284,7 +287,7 @@ def test_distance_setting(mock_embedder, mock_milvus_client):
         with patch.object(db1, "exists", return_value=False):
             db1.create()
             args, kwargs = mock_milvus_client.create_collection.call_args
-            assert kwargs["metric_type"] == "COSINE"
+            assert kwargs["index_params"].add_index.call_args.kwargs["metric_type"] == "COSINE"
 
     # Test with L2 distance
     with patch("pymilvus.MilvusClient", return_value=mock_milvus_client):
@@ -294,7 +297,7 @@ def test_distance_setting(mock_embedder, mock_milvus_client):
         with patch.object(db2, "exists", return_value=False):
             db2.create()
             args, kwargs = mock_milvus_client.create_collection.call_args
-            assert kwargs["metric_type"] == "L2"
+            assert kwargs["index_params"].add_index.call_args.kwargs["metric_type"] == "L2"
 
     # Test with inner product distance
     with patch("pymilvus.MilvusClient", return_value=mock_milvus_client):
@@ -304,7 +307,7 @@ def test_distance_setting(mock_embedder, mock_milvus_client):
         with patch.object(db3, "exists", return_value=False):
             db3.create()
             args, kwargs = mock_milvus_client.create_collection.call_args
-            assert kwargs["metric_type"] == "IP"
+            assert kwargs["index_params"].add_index.call_args.kwargs["metric_type"] == "IP"
 
 
 def test_build_expr(milvus_db):
