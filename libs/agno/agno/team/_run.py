@@ -5435,17 +5435,21 @@ def _backfill_approval_to_requirements(
     dicts are accepted), so every field on them is unverified client input.
     When the pre-overwrite stored requirements are available, each payload
     entry must bind one-to-one to a stored requirement — matched by
-    requirement id (cross-checked against the tool_call_id), falling back to
-    tool_call_id only when exactly one stored requirement carries it — and
+    requirement id, falling back to tool_call_id only when the supplied id
+    matches no stored requirement (ids are client-optional and regenerate on
+    deserialization, so an unknown id is indistinguishable from an absent
+    one) and exactly one stored requirement carries that tool call — and
     the STORED requirement becomes the object routing sees, with only the
     client's decision state merged onto it (_merge_requirement_decision).
     Trusting the wire copy instead mis-executes: a swapped or duplicated id
     binds one member's approved arguments to another member's tool.
 
     Raises RunNotContinuableError — with the run left paused — for a payload
-    entry that is ambiguous (several stored requirements share its
-    tool_call_id and no id matches), matches no stored requirement, or maps
-    a stored requirement that another entry already claimed.
+    entry whose matched id names a different tool call than the entry carries
+    (a conflicting identity must not fall back to the tool call), that is
+    ambiguous (several stored requirements share its tool_call_id and no id
+    matches), matches no stored requirement, or maps a stored requirement
+    that another entry already claimed.
 
     Without stored requirements (a caller-supplied bare run object), the
     payload is kept as-is and only approval metadata is backfilled from
@@ -5496,7 +5500,16 @@ def _backfill_approval_to_requirements(
         if old_req is not None and tool_call_id:
             old_te = getattr(old_req, "tool_execution", None)
             if old_te is not None and old_te.tool_call_id and old_te.tool_call_id != tool_call_id:
-                old_req = None
+                # A matched id whose tool call disagrees is a conflicting
+                # identity, not a fallback case: dropping the id match here
+                # would bind the client's decision to whichever requirement
+                # owns the payload's tool call — another member's tool.
+                raise RunNotContinuableError(
+                    f"Cannot continue run {run_id}: the requirement with id '{getattr(req, 'id', None)}' "
+                    f"names tool call '{tool_call_id}', but the stored requirement with that id belongs "
+                    f"to tool call '{old_te.tool_call_id}'. Resend the requirements exactly as issued. "
+                    f"The run remains paused."
+                )
         if old_req is None and tool_call_id:
             candidates = old_by_tool_call_id.get(tool_call_id, [])
             if len(candidates) == 1:
