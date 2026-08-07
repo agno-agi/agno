@@ -1195,6 +1195,115 @@ def test_post_hook_receives_messages_via_run_context():
     assert captured_messages == run_context.messages
 
 
+def test_function_call_with_missing_required_args():
+    """Test that executing a function call with empty arguments returns a
+    descriptive error instead of crashing with a pydantic ValidationError.
+
+    Regression test: when the LLM sends a tool call without arguments,
+    the framework should return a failure result with a clear error message
+    so the LLM can retry, rather than raising an unhandled exception.
+    """
+
+    def search_learnings(query: str, limit: int = 5) -> str:
+        """Search for relevant insights."""
+        return f"results for {query}"
+
+    func = Function.from_callable(search_learnings, strict=True)
+    func.process_entrypoint()
+
+    call = FunctionCall(function=func, arguments=None)
+
+    result = call.execute()
+    assert result.status == "failure"
+    assert "query" in result.error
+    assert "search_learnings" in result.error
+    assert "Missing required argument" in result.error
+
+
+def test_function_call_with_empty_dict_args():
+    """Test that executing with an empty dict also validates missing required args."""
+
+    def my_tool(query: str) -> str:
+        return f"result for {query}"
+
+    func = Function(name="my_tool", entrypoint=my_tool)
+    func.process_entrypoint()
+
+    call = FunctionCall(function=func, arguments={})
+
+    result = call.execute()
+    assert result.status == "failure"
+    assert "query" in result.error
+
+
+def test_function_call_with_all_defaults_no_args():
+    """Test that a function with only default params succeeds with empty args."""
+
+    def my_tool(query: str = "default", limit: int = 5) -> str:
+        return f"result for {query}"
+
+    func = Function(name="my_tool", entrypoint=my_tool)
+    func.process_entrypoint()
+
+    call = FunctionCall(function=func, arguments=None)
+
+    result = call.execute()
+    assert result.status == "success"
+    assert result.result == "result for default"
+
+
+def test_function_call_with_no_params_no_args():
+    """Test that a function with no params succeeds with empty args."""
+
+    def my_tool() -> str:
+        return "hello"
+
+    func = Function(name="my_tool", entrypoint=my_tool)
+    func.process_entrypoint()
+
+    call = FunctionCall(function=func, arguments=None)
+
+    result = call.execute()
+    assert result.status == "success"
+    assert result.result == "hello"
+
+
+@pytest.mark.asyncio
+async def test_async_function_call_with_missing_required_args():
+    """Test that async execution also validates missing required args."""
+
+    async def search_learnings(query: str, limit: int = 5) -> str:
+        """Search for relevant insights."""
+        return f"results for {query}"
+
+    func = Function.from_callable(search_learnings, strict=True)
+    func.process_entrypoint()
+
+    call = FunctionCall(function=func, arguments=None)
+
+    result = await call.aexecute()
+    assert result.status == "failure"
+    assert "query" in result.error
+    assert "search_learnings" in result.error
+
+
+def test_function_call_with_provided_args_succeeds():
+    """Test that providing the required args works normally."""
+
+    def search_learnings(query: str, limit: int = 5) -> str:
+        """Search for relevant insights."""
+        return f"results for {query}"
+
+    func = Function.from_callable(search_learnings, strict=True)
+    func.process_entrypoint()
+
+    call = FunctionCall(function=func, arguments={"query": "test", "limit": 3})
+
+    result = call.execute()
+    assert result.status == "success"
+    assert result.result == "results for test"
+
+
 def test_tool_hook_receives_messages_via_run_context():
     """Test that tool hooks can access current run message history via run_context.messages."""
     captured_messages: Optional[List[Message]] = None
