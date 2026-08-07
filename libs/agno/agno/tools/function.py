@@ -157,40 +157,71 @@ def _is_framework_typed(hint: Any) -> bool:
       * a union naming Agent or Team beside an ordinary type
         (owner: Union[str, Agent]). The model can only ever send JSON, so such a
         parameter receives a plain dict or string, never a live Agent."""
-    hint = _unwrap_annotation(hint)
-    if isinstance(hint, type):
-        return issubclass(hint, _identity_injected_types())
-    if _union_names_type(hint, (RunContext,)) or _union_is_only(hint, _identity_injected_types()):
-        return True
-    # A container of identity (ctxs: list[RunContext], dict[str, Agent]) is the
-    # same hazard one level down: the framework cannot fill it, and leaving it
-    # model-facing lets pydantic build the identity object out of what the
-    # model sent. Media containers stay fillable -- media is injected by
-    # reserved name alone, so hiding one would leave it unfillable by anything.
-    return _container_holds_identity(hint)
+    return _reaches_identity(hint)
 
 
-def _container_holds_identity(hint: Any, depth: int = 0) -> bool:
-    """True when a container's arguments reach an identity type.
+def _reaches_identity(hint: Any, depth: int = 0, seen: Optional[List[Any]] = None) -> bool:
+    """Whether an annotation can deliver an identity object the model chose.
 
-    Unions are not containers and are deliberately skipped: the rules above
-    already decided them, and ``owner: Union[str, Agent]`` is model-fillable by
-    design -- the model can only ever send JSON, so such a parameter receives a
-    string, never a live Agent. Treating a union as a container here would hide
-    it and leave it unfillable."""
+    Walks the whole annotation -- containers, the container arms of a union,
+    and the fields of a dataclass or pydantic model -- because every one of
+    those is a place pydantic will happily build a RunContext out of a
+    model-supplied dict.
+
+    Two rules that look inconsistent and are not:
+
+      * ANY appearance of RunContext hides the parameter. It is the one
+        identity type pydantic constructs from JSON, so wherever it can be
+        reached, the model can choose the caller's identity.
+      * Agent and Team hide only when the annotation offers no half a model
+        could legitimately fill -- bare, or a union of identity alone.
+        ``owner: Union[str, Agent]`` stays the model's to fill, at the top
+        level and inside a list alike: validate_call is skipped for those
+        types, so the tool receives a plain dict or string, never a live
+        Agent, and hiding it would leave it fillable by nothing.
+
+    Media never reaches here as identity: it is injected by reserved name
+    alone, so hiding a media container would make it unfillable."""
+    from dataclasses import fields as dataclass_fields
+    from dataclasses import is_dataclass
     from typing import get_args
 
-    if depth > 4:  # Deep enough for list[dict[str, RunContext]]; stop there.
+    if depth > 16:
+        # No real signature nests this far. Past it the annotation cannot be
+        # read, and an annotation this walk cannot read is not one to hand the
+        # model -- fail closed, the opposite of what the first version did.
+        return True
+    seen = [] if seen is None else seen
+    hint = _unwrap_annotation(hint)
+    if any(hint is s for s in seen):
         return False
+    seen = seen + [hint]
+
+    if isinstance(hint, type):
+        if issubclass(hint, _identity_injected_types()):
+            return True
+        # A user type that carries identity in a field is the same hazard one
+        # indirection further: pydantic builds the wrapper, and the wrapper's
+        # RunContext with it.
+        annotations: List[Any] = []
+        model_fields = getattr(hint, "model_fields", None)
+        if isinstance(model_fields, dict):
+            annotations = [getattr(field, "annotation", None) for field in model_fields.values()]
+        elif is_dataclass(hint):
+            annotations = [field.type for field in dataclass_fields(hint)]
+        return any(
+            annotation is not None and _reaches_identity(annotation, depth + 1, seen) for annotation in annotations
+        )
+
     if _is_union(hint):
-        return False
-    for argument in get_args(hint):
-        argument = _unwrap_annotation(argument)
-        if isinstance(argument, type) and issubclass(argument, _identity_injected_types()):
+        if _union_names_type(hint, (RunContext,)) or _union_is_only(hint, _identity_injected_types()):
             return True
-        if _container_holds_identity(argument, depth + 1):
-            return True
-    return False
+        # Only the container arms: a bare Agent arm beside an ordinary type is
+        # the documented model-fillable shape, and descending into it plainly
+        # would hide exactly that.
+        return any(get_args(arm) and _reaches_identity(arm, depth + 1, seen) for arm in get_args(hint))
+
+    return any(_reaches_identity(argument, depth + 1, seen) for argument in get_args(hint))
 
 
 def _is_bare_media_typed(hint: Any) -> bool:

@@ -2334,6 +2334,88 @@ def test_identity_is_recognised_through_a_newtype_and_a_container():
         assert "ATTACKER" not in str(result.result)
 
 
+def test_the_whole_annotation_graph_decides_identity():
+    """The rule, not the shapes it was reported in. RunContext hides the
+    parameter wherever it can be reached, because it is the one identity type
+    pydantic builds from JSON; Agent and Team hide only where the annotation
+    offers no half a model could legitimately fill. Every entry here was a way
+    to smuggle one past a narrower version of this check."""
+    from dataclasses import dataclass
+    from typing import Dict, List, Optional, Union
+
+    from pydantic import BaseModel
+
+    from agno.agent.agent import Agent
+    from agno.media import Image
+    from agno.tools.function import _is_framework_typed
+
+    @dataclass
+    class DataclassWrapper:
+        ctx: RunContext
+
+    class ModelWrapper(BaseModel):
+        model_config = {"arbitrary_types_allowed": True}
+        ctx: RunContext
+
+    hidden = [
+        List[RunContext],
+        List[Union[str, RunContext]],
+        Optional[List[RunContext]],
+        Dict[str, List[RunContext]],
+        List[List[List[List[List[List[RunContext]]]]]],
+        DataclassWrapper,
+        ModelWrapper,
+        Dict[str, Agent],
+        Optional[Agent],
+    ]
+    fillable = [
+        # Agent beside an ordinary type is the documented model-fillable shape:
+        # validate_call is skipped for it, so the tool receives a string or a
+        # plain dict, never a live Agent. That holds inside a list too.
+        Union[str, Agent],
+        Optional[Union[str, Agent]],
+        List[Union[str, Agent]],
+        List[str],
+        Dict[str, List[int]],
+        List[Image],
+        List[List[List[List[List[List[str]]]]]],
+    ]
+    assert [h for h in hidden if not _is_framework_typed(h)] == []
+    assert [h for h in fillable if _is_framework_typed(h)] == []
+
+
+def test_no_container_shape_can_smuggle_a_model_chosen_identity():
+    """The truth table above, driven through a real call: whatever the shape,
+    the tool must read the caller's identity and not the model's."""
+    from dataclasses import dataclass
+    from typing import List, Optional, Union
+
+    @dataclass
+    class Wrapper:
+        ctx: RunContext
+
+    spoof = {"run_id": "x", "session_id": "y", "user_id": "ATTACKER"}
+    namespace = {"RunContext": RunContext, "List": List, "Optional": Optional, "Union": Union, "Wrapper": Wrapper}
+    for index, (annotation, supplied) in enumerate(
+        (
+            ("List[Union[str, RunContext]]", [spoof]),
+            ("Optional[List[RunContext]]", [spoof]),
+            ("List[List[RunContext]]", [[spoof]]),
+            ("Wrapper", {"ctx": spoof}),
+        )
+    ):
+        name = f"probe_{index}"
+        exec(f"def {name}(query: str, p: {annotation} = None) -> str:\n    return str(p)", namespace)
+        func = Function(name=name, entrypoint=namespace[name])
+        func.process_entrypoint()
+        assert "p" not in (func.parameters or {}).get("properties", {}), annotation
+
+        func._run_context = RunContext(run_id="r", session_id="s", user_id="real-owner")
+        result = FunctionCall(function=func, arguments={"query": "q", "p": supplied}).execute()
+        assert result.status == "success", annotation
+        assert "ATTACKER" not in str(result.result), annotation
+
+
 def test_a_union_naming_an_identity_type_stays_the_models_to_fill():
     """The control for the rule above. `owner: Union[str, Agent]` is declared
     model-fillable: the model can only send JSON, so it receives a string and
