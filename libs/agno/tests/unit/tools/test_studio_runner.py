@@ -1965,6 +1965,66 @@ class TestDispatchCheckInvariants:
 
         assert "Report" in _loads(StudioRunnerTools(registry=registry, db=db).run_team("outer", "hi"))["error"]
 
+    def test_a_tool_bound_from_another_toolkit_is_refused(self, db):
+        """A serialized tool carries the toolkit that owned it. When that
+        toolkit is gone, rehydration binds a same-named function from a
+        different one and keeps the recorded owning_toolkit, so the component
+        executes someone else's code under the right name. Same-named members
+        are ordinary -- search, lookup, run -- so this is not an exotic case."""
+        from agno.agent import Agent
+        from agno.registry import Registry
+        from agno.tools.toolkit import Toolkit
+
+        class Alpha(Toolkit):
+            def __init__(self):
+                super().__init__(name="alpha_tools", tools=[self.lookup])
+
+            def lookup(self) -> str:
+                """Look up."""
+                return "ALPHA"
+
+        class Beta(Toolkit):
+            def __init__(self):
+                super().__init__(name="beta_tools", tools=[self.lookup])
+
+            def lookup(self) -> str:
+                """Look up."""
+                return "BETA"
+
+        Agent(id="tooled", name="Tooled", model=OpenAIResponses(id="gpt-5.4"), tools=[Alpha()]).save(db=db)
+
+        substitute = Registry(name="R", dbs=[db], models=[OpenAIResponses(id="gpt-5.4")], tools=[Beta()])
+        error = _loads(StudioRunnerTools(registry=substitute, db=db).run_agent("tooled", "hi"))["error"]
+        assert "another toolkit" in error and "alpha_tools.lookup" in error
+
+        # The toolkit that was recorded still dispatches, and runs its own code.
+        intact = Registry(name="R", dbs=[db], models=[OpenAIResponses(id="gpt-5.4")], tools=[Alpha()])
+        dispatched = StudioRunnerTools(registry=intact, db=db)._agent_for_run("tooled")
+        assert dispatched is not None
+        assert dispatched.tools[0].entrypoint() == "ALPHA"
+
+    def test_a_lost_auxiliary_model_is_announced_rather_than_refused(self, db, caplog):
+        """A reasoning, parser or output model is serialized and never read
+        back -- from_dict's reconstruction for them is still a TODO -- so no
+        registry can supply one. Refusing would make every component that
+        declares one permanently undispatchable rather than protect anything,
+        which is why the primary model's loss warns too (#9420, #9452)."""
+        from agno.agent import Agent
+        from agno.registry import Registry
+
+        Agent(
+            id="rich",
+            name="Rich",
+            model=OpenAIResponses(id="gpt-5.4"),
+            reasoning_model=OpenAIResponses(id="o3-deep"),
+        ).save(db=db)
+
+        registry = Registry(name="R", dbs=[db], models=[OpenAIResponses(id="gpt-5.4")])
+        runner = StudioRunnerTools(registry=registry, db=db)
+        with caplog.at_level("WARNING"):
+            assert runner._agent_for_run("rich") is not None
+        assert any("reasoning_model" in record.message for record in caplog.records)
+
     def test_an_anonymous_caller_is_not_written_into_the_targets_user(self, db):
         """The module promises per-user state lands on the human who asked and
         never on a service default. Passing None for a caller that HAS a context
