@@ -167,7 +167,15 @@ class CodexAdapter(ClientAdapter):
         (shared by the write and remove paths so their refusal behavior cannot drift)."""
         if not self.config_path.exists():
             return "", {}
-        text = self.config_path.read_text()
+        # TOML is UTF-8 by spec; a file that is not decodable is as unusable as one that
+        # does not parse, so it refuses through the same path rather than as a traceback.
+        try:
+            text = self.config_path.read_text(encoding="utf-8")
+        except UnicodeDecodeError as e:
+            raise CLIError(
+                "Refusing to modify " + str(self.config_path) + ": the file is not valid UTF-8 (" + str(e) + ").",
+                hint="TOML must be UTF-8. Re-save the file as UTF-8, then re-run.",
+            )
         try:
             return text, tomllib.loads(text)
         except tomllib.TOMLDecodeError as e:
@@ -188,8 +196,8 @@ class CodexAdapter(ClientAdapter):
         if not self.config_path.exists():
             return None
         try:
-            return tomllib.loads(self.config_path.read_text())
-        except (OSError, tomllib.TOMLDecodeError):
+            return tomllib.loads(self.config_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
             return None
 
     @staticmethod
