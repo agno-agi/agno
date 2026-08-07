@@ -49,12 +49,12 @@ def _stamp_approval_id_on_tools(
     """Stamp approval_id on every tool that has approval_type set."""
     if tools:
         for tool in tools:
-            if getattr(tool, "approval_type", None) is not None:
+            if getattr(tool, "approval_type", None) is not None and getattr(tool, "approval_id", None) is None:
                 tool.approval_id = approval_id
     if requirements:
         for req in requirements:
             te = getattr(req, "tool_execution", None)
-            if te and getattr(te, "approval_type", None) is not None:
+            if te and getattr(te, "approval_type", None) is not None and getattr(te, "approval_id", None) is None:
                 te.approval_id = approval_id
 
 
@@ -482,6 +482,7 @@ def _group_tools_by_approval(db: Any, run_id: str, run_response: Any, tools: Lis
                 except (NotImplementedError, Exception):
                     cache[aid] = None
             record = cache[aid]
+        mid: Optional[str] = None
         if record is None:
             mid = _member_run_id_for_tool(run_response, tool)
             if mid:
@@ -489,7 +490,10 @@ def _group_tools_by_approval(db: Any, run_id: str, run_response: Any, tools: Lis
                 if key not in cache:
                     cache[key] = _get_approval_for_run(db, mid)
                 record = cache[key]
-        if record is None:
+        if record is None and not aid and not mid:
+            # The run-level lookup serves only tools with no scoped identity.
+            # A tool whose own record is gone stays unresolved: pairing it with
+            # a sibling's record would let that sibling's approval execute it.
             if not fallback_used:
                 fallback_used = True
                 for rid in _collect_all_run_ids(run_id, run_response):
@@ -520,6 +524,7 @@ async def _agroup_tools_by_approval(db: Any, run_id: str, run_response: Any, too
                 except (NotImplementedError, Exception):
                     cache[aid] = None
             record = cache[aid]
+        mid: Optional[str] = None
         if record is None:
             mid = _member_run_id_for_tool(run_response, tool)
             if mid:
@@ -527,7 +532,10 @@ async def _agroup_tools_by_approval(db: Any, run_id: str, run_response: Any, too
                 if key not in cache:
                     cache[key] = await _aget_approval_for_run(db, mid)
                 record = cache[key]
-        if record is None:
+        if record is None and not aid and not mid:
+            # The run-level lookup serves only tools with no scoped identity.
+            # A tool whose own record is gone stays unresolved: pairing it with
+            # a sibling's record would let that sibling's approval execute it.
             if not fallback_used:
                 fallback_used = True
                 for rid in _collect_all_run_ids(run_id, run_response):

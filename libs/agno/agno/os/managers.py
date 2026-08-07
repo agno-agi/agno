@@ -226,7 +226,9 @@ class EventsBuffer:
 
         if run_id not in self.events:
             self.events[run_id] = []
-            self._next_index[run_id] = 0
+            # A reclaimed paused run keeps its index; a continuation must not
+            # recycle event indices a client has already seen.
+            self._next_index.setdefault(run_id, 0)
             self.run_metadata[run_id] = {
                 "status": RunStatus.running,
                 "created_at": current_time,
@@ -324,7 +326,11 @@ class EventsBuffer:
         """Remove buffer for a completed run (called after retention period)"""
         if run_id in self.events:
             del self.events[run_id]
-        self._next_index.pop(run_id, None)
+        # A paused run can be continued later under the same id: its monotonic
+        # index survives the reclaim, so the continuation's event indices keep
+        # ascending past every index a client has already seen.
+        if (self.run_metadata.get(run_id) or {}).get("status") != RunStatus.paused:
+            self._next_index.pop(run_id, None)
         if run_id in self.run_metadata:
             del self.run_metadata[run_id]
         log_debug(f"Cleaned up event buffer for run {run_id}")

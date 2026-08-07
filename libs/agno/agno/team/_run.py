@@ -8341,26 +8341,38 @@ async def _acontinue_run_background_stream(
                 elif producer_error is not None:
                     final_status = RunStatus.error
                 else:
-                    # The run that actually executed. final_output covers the
-                    # run_id-only path, where run_response stays None; a re-pause
-                    # or cancellation must not be advertised as completed. A
-                    # fork or regenerate produces a run with a DIFFERENT id;
-                    # its status must not land under this run's key.
-                    produced_status = (
-                        final_output.status
-                        if final_output is not None and getattr(final_output, "run_id", None) == _run_id
-                        else None
-                    )
-                    if produced_status is None and run_response is not None:
-                        produced_status = run_response.status
-                    if isinstance(produced_status, RunStatus) and produced_status in (
-                        RunStatus.paused,
-                        RunStatus.cancelled,
-                        RunStatus.error,
-                    ):
-                        final_status = produced_status
+                    if fork or regenerate:
+                        # The executed run carries a DIFFERENT id; this key
+                        # keeps the original run's own stored status, never the
+                        # fork's status and never the caller object's.
+                        if isinstance(status_before_takeover, RunStatus) and status_before_takeover in (
+                            RunStatus.paused,
+                            RunStatus.cancelled,
+                            RunStatus.error,
+                        ):
+                            final_status = status_before_takeover
+                        else:
+                            final_status = RunStatus.completed
                     else:
-                        final_status = RunStatus.completed
+                        # The run that actually executed. final_output covers
+                        # the run_id-only path, where run_response stays None;
+                        # a re-pause or cancellation must not be advertised as
+                        # completed.
+                        produced_status = (
+                            final_output.status
+                            if final_output is not None and getattr(final_output, "run_id", None) == _run_id
+                            else None
+                        )
+                        if produced_status is None and run_response is not None:
+                            produced_status = run_response.status
+                        if isinstance(produced_status, RunStatus) and produced_status in (
+                            RunStatus.paused,
+                            RunStatus.cancelled,
+                            RunStatus.error,
+                        ):
+                            final_status = produced_status
+                        else:
+                            final_status = RunStatus.completed
                 event_buffer.set_run_completed(_run_id, final_status)
             except Exception:
                 log_warning(f"Failed to mark continue-run {_run_id} as completed in event buffer")

@@ -5293,6 +5293,43 @@ async def test_a_background_fork_does_not_restamp_the_original_runs_buffer(tmp_p
     )
 
 
+@pytest.mark.asyncio
+async def test_a_run_id_auto_fork_does_not_restamp_the_original_runs_buffer(tmp_path):
+    """A background continue of a completed run by run_id auto-forks; the
+    auto-fork's status must not land under the original run's buffer key."""
+    from agno.os.managers import event_buffer
+
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "auto_fork_buffer.db")
+    session_id = "s-auto-fork-buffer"
+
+    run1 = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email a@example.com", session_id=session_id
+    )
+    assert run1.is_paused
+    await _build_flat_team(SqliteDb(db_file=db_file), resuming=True).acontinue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+    )
+    assert [r for r in _reload_runs(db_file, session_id) if r.run_id == run1.run_id][0].status == RunStatus.completed
+
+    # No fork flag: the dispatcher auto-forks the completed run, and the
+    # resuming=False team replays the delegation so the fork pauses.
+    async for _ in _build_flat_team(SqliteDb(db_file=db_file), resuming=False).acontinue_run(
+        run_id=run1.run_id,
+        session_id=session_id,
+        stream=True,
+        stream_events=True,
+        background=True,
+    ):
+        pass
+    await _drain_background_tasks()
+
+    buffer_status = event_buffer.get_run_status(run1.run_id)
+    assert buffer_status == RunStatus.completed, (
+        f"the original completed run's buffer entry took the auto-fork's status: {buffer_status!r}"
+    )
+
+
 class _BoomModel(_ScriptedModel):
     def invoke(self, *args: Any, **kwargs: Any) -> Any:
         raise RuntimeError("leader boom")
@@ -5617,6 +5654,173 @@ async def test_one_approval_does_not_resolve_a_sibling_with_colliding_tool_call_
     run2 = await team2.acontinue_run(run_id=run1.run_id, session_id=session_id)
     assert run2.status == RunStatus.paused, f"a pending sibling approval let the run reach {run2.status}"
     assert _FIRED == [], f"a tool executed while its own approval was pending: {_FIRED}"
+
+
+def test_a_deleted_sibling_approval_blocks_the_continue(tmp_path):
+    """A tool whose own approval record is gone stays unresolved. Falling back
+    to a sibling's record would let that sibling's approval execute it."""
+    _FIRED.clear()
+    db_file = str(tmp_path / "deleted_approval.db")
+    session_id = "s-deleted-approval"
+
+    db = SqliteDb(db_file=db_file)
+    run1 = _two_member_approval_team(db, resuming=False).run("Do both", session_id=session_id)
+    assert run1.is_paused
+
+    db.update_approval(_approval_record_for_tool(db, "alpha_action")["id"], status="approved", resolution_data=None)
+    assert db.delete_approval(_approval_record_for_tool(db, "beta_action")["id"])
+
+    team2 = _two_member_approval_team(SqliteDb(db_file=db_file), resuming=True)
+    run2 = team2.continue_run(run_id=run1.run_id, session_id=session_id)
+    assert run2.status == RunStatus.paused, f"a deleted sibling record let the run reach {run2.status}"
+    assert _FIRED == [], f"a tool executed with its own approval record deleted: {_FIRED}"
+
+
+_MIXED: List[str] = []
+
+
+@tool(requires_confirmation=True)
+@approval(type="required")
+def announce(item: str) -> str:
+    _MIXED.append(f"announce:{item}")
+    return f"announced {item}"
+
+
+@tool(requires_confirmation=True)
+@approval(type="required")
+def notify(to: str) -> str:
+    _MIXED.append(f"notify:{to}")
+    return f"notified {to}"
+
+
+def _mixed_approval_team(db: SqliteDb, resuming: bool) -> Team:
+    """A team-level gated tool plus a delegated member gated tool, each backed
+    by its own approval record."""
+    noter = Agent(
+        name="Noter",
+        id="noter",
+        model=_ScriptedModel(
+            "m-noter",
+            [("content", "Notified.")]
+            if resuming
+            else [("tool", "notify", {"to": "ops@example.com"}, "tc-notify"), ("content", "Notified.")],
+        ),
+        tools=[notify],
+        db=db,
+        telemetry=False,
+    )
+    return Team(
+        name="Mixed Team",
+        id="mixed-team",
+        model=_ScriptedModel(
+            "m-lead",
+            [("content", "All done.")]
+            if resuming
+            else [
+                (
+                    "tools",
+                    [
+                        ("delegate_task_to_member", {"member_id": "noter", "task": "notify ops"}, "tc-deleg"),
+                        ("announce", {"item": "release"}, "tc-announce"),
+                    ],
+                ),
+                ("content", "All done."),
+            ],
+        ),
+        tools=[announce],
+        members=[noter],
+        db=db,
+        telemetry=False,
+    )
+
+
+def test_a_team_approval_does_not_decide_a_member_tools_record(tmp_path):
+    """The team pause's record must not overwrite the approval id a member
+    tool already owns; approving only the team record leaves the member's
+    record pending and nothing executes."""
+    _MIXED.clear()
+    db_file = str(tmp_path / "mixed_team_member.db")
+    session_id = "s-mixed-team-member"
+
+    db = SqliteDb(db_file=db_file)
+    run1 = _mixed_approval_team(db, resuming=False).run("Announce and notify", session_id=session_id)
+    assert run1.is_paused
+    records, _ = db.get_approvals(approval_type="required", limit=50)
+    assert len(records) == 2, f"expected a team record and a member record, got {len(records)}"
+
+    db.update_approval(_approval_record_for_tool(db, "announce")["id"], status="approved", resolution_data=None)
+
+    team2 = _mixed_approval_team(SqliteDb(db_file=db_file), resuming=True)
+    run2 = team2.continue_run(run_id=run1.run_id, session_id=session_id)
+    assert run2.status == RunStatus.paused, f"the member's pending record was ignored: {run2.status}"
+    assert _MIXED == [], f"a tool executed on the team record alone: {_MIXED}"
+
+    db2 = SqliteDb(db_file=db_file)
+    db2.update_approval(_approval_record_for_tool(db2, "notify")["id"], status="approved", resolution_data=None)
+    team3 = _mixed_approval_team(SqliteDb(db_file=db_file), resuming=True)
+    run3 = team3.continue_run(run_id=run1.run_id, session_id=session_id)
+    assert run3.status == RunStatus.completed, run3.status
+    assert sorted(_MIXED) == ["announce:release", "notify:ops@example.com"], _MIXED
+
+
+def test_a_reclaimed_paused_buffer_keeps_its_event_index():
+    """Reclaiming a paused entry must not reset the monotonic event index: a
+    later continuation would recycle indices a client's cursor already covers,
+    and its events would be silently deduplicated away."""
+    from agno.os.managers import EventsBuffer
+
+    buf = EventsBuffer(cleanup_interval=3600)
+    assert buf.add_event("r-reclaim-idx", MagicMock()) == 0
+    assert buf.add_event("r-reclaim-idx", MagicMock()) == 1
+    buf.set_run_completed("r-reclaim-idx", RunStatus.paused)
+    buf.cleanup_interval = -1
+    buf.cleanup_runs()
+    assert buf.get_run_status("r-reclaim-idx") is None
+
+    # The continuation after the reclaim keeps ascending.
+    buf.cleanup_interval = 3600
+    assert buf.add_event("r-reclaim-idx", MagicMock()) == 2, "the reclaimed run's event index restarted"
+    assert buf.get_run_status("r-reclaim-idx") == RunStatus.running
+
+
+@pytest.mark.asyncio
+async def test_a_background_fork_from_a_stale_object_keeps_the_originals_buffer_status(tmp_path):
+    """A fork's bookkeeping under the original run's key reflects the original
+    run's stored status, not the stale caller object's."""
+    from agno.os.managers import event_buffer
+
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "stale_fork_buffer.db")
+    session_id = "s-stale-fork-buffer"
+
+    run1 = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email a@example.com", session_id=session_id
+    )
+    assert run1.is_paused
+    done = await _build_flat_team(SqliteDb(db_file=db_file), resuming=True).acontinue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+    )
+    assert done.status == RunStatus.completed
+
+    # The caller still holds the stale paused object and forks off it.
+    team3 = _build_flat_team(SqliteDb(db_file=db_file), resuming=False)
+    async for _ in team3.acontinue_run(
+        run_response=run1,
+        session_id=session_id,
+        fork=True,
+        stream=True,
+        stream_events=True,
+        background=True,
+    ):
+        pass
+    await _drain_background_tasks()
+
+    assert [r for r in _reload_runs(db_file, session_id) if r.run_id == run1.run_id][0].status == RunStatus.completed
+    buffer_status = event_buffer.get_run_status(run1.run_id)
+    assert buffer_status == RunStatus.completed, (
+        f"the completed original is advertised as {buffer_status!r} because the stale object leaked into "
+        "the fork's bookkeeping"
+    )
 
 
 def test_a_paused_buffer_entry_reused_by_a_continue_is_not_reclaimed():
