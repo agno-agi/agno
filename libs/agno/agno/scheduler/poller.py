@@ -4,7 +4,7 @@ import asyncio
 from typing import Any, Dict, Optional, Set, Union
 from uuid import uuid4
 
-from agno.db.schemas.scheduler import Schedule
+from agno.db.schemas.scheduler import Schedule, is_studio_managed_schedule
 from agno.utils.log import log_error, log_info, log_warning
 
 # Default timeout (in seconds) when stopping the poller
@@ -65,10 +65,8 @@ class SchedulePoller:
                     asyncio.gather(*self._in_flight, return_exceptions=True),
                     timeout=self.stop_timeout,
                 )
-            except asyncio.TimeoutError as e:
-                log_warning(
-                    f"Timed out waiting for {len(self._in_flight)} in-flight tasks during shutdown: {e}",
-                )
+            except asyncio.TimeoutError:
+                log_warning(f"Timed out waiting for {len(self._in_flight)} in-flight tasks during shutdown")
 
             self._in_flight.clear()
         # Close the executor's httpx client
@@ -86,8 +84,8 @@ class SchedulePoller:
                 await asyncio.sleep(self.poll_interval)
             except asyncio.CancelledError:
                 break
-            except Exception as exc:
-                log_error(f"Scheduler poll error: {exc}")
+            except Exception:
+                log_error("Scheduler poll error")
                 await asyncio.sleep(self.poll_interval)
 
     async def _poll_once(self) -> None:
@@ -113,8 +111,8 @@ class SchedulePoller:
                 task = asyncio.create_task(self._execute_safe(sched))
                 self._in_flight.add(task)
                 task.add_done_callback(lambda t: self._in_flight.discard(t))
-            except Exception as exc:
-                log_error(f"Error claiming schedule: {exc}")
+            except Exception:
+                log_error("Error claiming schedule")
                 break
 
     async def _execute_safe(self, schedule: Union[Schedule, Dict[str, Any]]) -> None:
@@ -123,7 +121,10 @@ class SchedulePoller:
             await self.executor.execute(schedule, self.db)
         except Exception as exc:
             sched_id = schedule.id if isinstance(schedule, Schedule) else schedule.get("id")
-            log_error(f"Error executing schedule {sched_id}: {exc}")
+            if is_studio_managed_schedule(schedule):
+                log_error(f"Error executing Studio schedule {sched_id}")
+            else:
+                log_error(f"Error executing schedule {sched_id}: {exc}")
 
     async def trigger(self, schedule_id: str) -> None:
         """Manually trigger a schedule by ID (immediate execution)."""
@@ -147,5 +148,5 @@ class SchedulePoller:
             task = asyncio.create_task(self.executor.execute(sched, self.db, release_schedule=False))
             self._in_flight.add(task)
             task.add_done_callback(self._in_flight.discard)
-        except Exception as exc:
-            log_error(f"Error triggering schedule {schedule_id}: {exc}")
+        except Exception:
+            log_error(f"Error triggering schedule {schedule_id}")

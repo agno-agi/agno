@@ -6,7 +6,7 @@ import time
 from typing import Any, Dict, List, Literal, Optional
 from uuid import uuid4
 
-from agno.db.schemas.scheduler import Schedule, ScheduleRun
+from agno.db.schemas.scheduler import Schedule, ScheduleNameConflictError, ScheduleRun, is_studio_managed_schedule
 from agno.utils.log import log_debug, log_warning
 
 # Valid DB method names for the scheduler
@@ -24,6 +24,19 @@ SchedulerDbMethod = Literal[
     "get_schedule_run",
     "get_schedule_runs",
 ]
+
+_STUDIO_PROVENANCE_FIELDS = frozenset(
+    {
+        "managed_by",
+        "owner_actor_id",
+        "target_type",
+        "target_id",
+        "created_by_run_id",
+        "created_by_session_id",
+        "updated_by_run_id",
+        "updated_by_session_id",
+    }
+)
 
 
 class ScheduleManager:
@@ -99,6 +112,48 @@ class ScheduleManager:
             return []
         return [ScheduleRun.from_dict(d) if isinstance(d, dict) else d for d in data]
 
+    def _resolve_existing_create(
+        self,
+        existing: Schedule,
+        name: str,
+        if_exists: str,
+        update_values: Dict[str, Any],
+    ) -> Schedule:
+        """Apply create's name-collision policy to an already stored schedule."""
+        if is_studio_managed_schedule(existing):
+            raise ValueError(f"Schedule name '{name}' is reserved by Studio") from None
+        if if_exists == "skip":
+            log_debug(f"Schedule '{name}' already exists, skipping")
+            return existing
+        if if_exists == "update":
+            log_debug(f"Schedule '{name}' already exists, updating")
+            updated = self._to_schedule(self._call("update_schedule", existing.id, **update_values))
+            if updated is None:
+                raise RuntimeError(f"Failed to update existing schedule '{name}'") from None
+            return updated
+        raise ValueError(f"Schedule with name '{name}' already exists") from None
+
+    async def _aresolve_existing_create(
+        self,
+        existing: Schedule,
+        name: str,
+        if_exists: str,
+        update_values: Dict[str, Any],
+    ) -> Schedule:
+        """Async counterpart to :meth:`_resolve_existing_create`."""
+        if is_studio_managed_schedule(existing):
+            raise ValueError(f"Schedule name '{name}' is reserved by Studio") from None
+        if if_exists == "skip":
+            log_debug(f"Schedule '{name}' already exists, skipping")
+            return existing
+        if if_exists == "update":
+            log_debug(f"Schedule '{name}' already exists, updating")
+            updated = self._to_schedule(await self._acall("update_schedule", existing.id, **update_values))
+            if updated is None:
+                raise RuntimeError(f"Failed to update existing schedule '{name}'") from None
+            return updated
+        raise ValueError(f"Schedule with name '{name}' already exists") from None
+
     # --- Sync API ---
 
     def create(
@@ -134,34 +189,23 @@ class ScheduleManager:
         if not validate_timezone(timezone):
             raise ValueError(f"Invalid timezone: {timezone}")
 
+        next_run_at = compute_next_run(cron, timezone)
+        update_values = {
+            "cron_expr": cron,
+            "endpoint": endpoint,
+            "method": method.upper(),
+            "description": description,
+            "payload": payload,
+            "timezone": timezone,
+            "timeout_seconds": timeout_seconds,
+            "max_retries": max_retries,
+            "retry_delay_seconds": retry_delay_seconds,
+            "next_run_at": next_run_at,
+        }
         existing = self._to_schedule(self._call("get_schedule_by_name", name))
         if existing is not None:
-            if if_exists == "skip":
-                log_debug(f"Schedule '{name}' already exists, skipping")
-                return existing
-            if if_exists == "update":
-                log_debug(f"Schedule '{name}' already exists, updating")
-                next_run_at = compute_next_run(cron, timezone)
-                updated = self._to_schedule(
-                    self._call(
-                        "update_schedule",
-                        existing.id,
-                        cron_expr=cron,
-                        endpoint=endpoint,
-                        method=method.upper(),
-                        description=description,
-                        payload=payload,
-                        timezone=timezone,
-                        timeout_seconds=timeout_seconds,
-                        max_retries=max_retries,
-                        retry_delay_seconds=retry_delay_seconds,
-                        next_run_at=next_run_at,
-                    )
-                )
-                return updated or existing
-            raise ValueError(f"Schedule with name '{name}' already exists")
+            return self._resolve_existing_create(existing, name, if_exists, update_values)
 
-        next_run_at = compute_next_run(cron, timezone)
         now = int(time.time())
 
         schedule = Schedule(
@@ -184,15 +228,37 @@ class ScheduleManager:
             updated_at=None,
         )
 
-        result = self._to_schedule(self._call("create_schedule", schedule.to_dict()))
-        if result is None:
-            raise RuntimeError("Failed to create schedule")
-        log_debug(f"Schedule '{name}' created (id={result.id}, cron={cron})")
-        return result
+        try:
+            result = self._to_schedule(self._call("create_schedule", schedule.to_dict()))
+        except ScheduleNameConflictError:
+            # The unique name index is the concurrency authority. Another
+            # creator can win after our initial lookup; re-read that committed
+            # row and apply the caller's collision policy instead of exposing a
+            # backend-specific uniqueness exception.
+            winner = self._to_schedule(self._call("get_schedule_by_name", name))
+            if winner is None:
+                raise
+        else:
+            if result is None:
+                raise RuntimeError("Failed to create schedule")
+            log_debug(f"Schedule '{name}' created (id={result.id}, cron={cron})")
+            return result
+        # Resolve outside the exception handler so a deliberate collision
+        # result has no backend exception attached as implicit context.
+        return self._resolve_existing_create(winner, name, if_exists, update_values)
 
-    def list(self, enabled: Optional[bool] = None, limit: int = 100, page: int = 1) -> List[Schedule]:
+    def list(
+        self,
+        enabled: Optional[bool] = None,
+        limit: int = 100,
+        page: int = 1,
+        exclude_managed_by: Optional[str] = None,
+    ) -> List[Schedule]:
         """List all schedules."""
-        result = self._call("get_schedules", enabled=enabled, limit=limit, page=page)
+        query: Dict[str, Any] = {"enabled": enabled, "limit": limit, "page": page}
+        if exclude_managed_by is not None:
+            query["exclude_managed_by"] = exclude_managed_by
+        result = self._call("get_schedules", **query)
         # get_schedules returns (schedules_list, total_count) tuple
         schedules_data = result[0] if isinstance(result, tuple) else result
         return self._to_schedule_list(schedules_data)
@@ -203,6 +269,12 @@ class ScheduleManager:
 
     def update(self, schedule_id: str, **kwargs: Any) -> Optional[Schedule]:
         """Update a schedule."""
+        if _STUDIO_PROVENANCE_FIELDS.intersection(kwargs):
+            raise ValueError("Studio schedule provenance cannot be changed through ScheduleManager.update")
+        return self._to_schedule(self._call("update_schedule", schedule_id, **kwargs))
+
+    def _update_studio(self, schedule_id: str, **kwargs: Any) -> Optional[Schedule]:
+        """Trusted Studio-only update path for server-owned provenance."""
         return self._to_schedule(self._call("update_schedule", schedule_id, **kwargs))
 
     def delete(self, schedule_id: str) -> bool:
@@ -278,34 +350,23 @@ class ScheduleManager:
         if not validate_timezone(timezone):
             raise ValueError(f"Invalid timezone: {timezone}")
 
+        next_run_at = compute_next_run(cron, timezone)
+        update_values = {
+            "cron_expr": cron,
+            "endpoint": endpoint,
+            "method": method.upper(),
+            "description": description,
+            "payload": payload,
+            "timezone": timezone,
+            "timeout_seconds": timeout_seconds,
+            "max_retries": max_retries,
+            "retry_delay_seconds": retry_delay_seconds,
+            "next_run_at": next_run_at,
+        }
         existing = self._to_schedule(await self._acall("get_schedule_by_name", name))
         if existing is not None:
-            if if_exists == "skip":
-                log_debug(f"Schedule '{name}' already exists, skipping")
-                return existing
-            if if_exists == "update":
-                log_debug(f"Schedule '{name}' already exists, updating")
-                next_run_at = compute_next_run(cron, timezone)
-                updated = self._to_schedule(
-                    await self._acall(
-                        "update_schedule",
-                        existing.id,
-                        cron_expr=cron,
-                        endpoint=endpoint,
-                        method=method.upper(),
-                        description=description,
-                        payload=payload,
-                        timezone=timezone,
-                        timeout_seconds=timeout_seconds,
-                        max_retries=max_retries,
-                        retry_delay_seconds=retry_delay_seconds,
-                        next_run_at=next_run_at,
-                    )
-                )
-                return updated or existing
-            raise ValueError(f"Schedule with name '{name}' already exists")
+            return await self._aresolve_existing_create(existing, name, if_exists, update_values)
 
-        next_run_at = compute_next_run(cron, timezone)
         now = int(time.time())
 
         schedule = Schedule(
@@ -328,15 +389,31 @@ class ScheduleManager:
             updated_at=None,
         )
 
-        result = self._to_schedule(await self._acall("create_schedule", schedule.to_dict()))
-        if result is None:
-            raise RuntimeError("Failed to create schedule")
-        log_debug(f"Schedule '{name}' created (id={result.id}, cron={cron})")
-        return result
+        try:
+            result = self._to_schedule(await self._acall("create_schedule", schedule.to_dict()))
+        except ScheduleNameConflictError:
+            winner = self._to_schedule(await self._acall("get_schedule_by_name", name))
+            if winner is None:
+                raise
+        else:
+            if result is None:
+                raise RuntimeError("Failed to create schedule")
+            log_debug(f"Schedule '{name}' created (id={result.id}, cron={cron})")
+            return result
+        return await self._aresolve_existing_create(winner, name, if_exists, update_values)
 
-    async def alist(self, enabled: Optional[bool] = None, limit: int = 100, page: int = 1) -> List[Schedule]:
+    async def alist(
+        self,
+        enabled: Optional[bool] = None,
+        limit: int = 100,
+        page: int = 1,
+        exclude_managed_by: Optional[str] = None,
+    ) -> List[Schedule]:
         """Async list all schedules."""
-        result = await self._acall("get_schedules", enabled=enabled, limit=limit, page=page)
+        query: Dict[str, Any] = {"enabled": enabled, "limit": limit, "page": page}
+        if exclude_managed_by is not None:
+            query["exclude_managed_by"] = exclude_managed_by
+        result = await self._acall("get_schedules", **query)
         # get_schedules returns (schedules_list, total_count) tuple
         schedules_data = result[0] if isinstance(result, tuple) else result
         return self._to_schedule_list(schedules_data)
@@ -347,6 +424,12 @@ class ScheduleManager:
 
     async def aupdate(self, schedule_id: str, **kwargs: Any) -> Optional[Schedule]:
         """Async update a schedule."""
+        if _STUDIO_PROVENANCE_FIELDS.intersection(kwargs):
+            raise ValueError("Studio schedule provenance cannot be changed through ScheduleManager.aupdate")
+        return self._to_schedule(await self._acall("update_schedule", schedule_id, **kwargs))
+
+    async def _aupdate_studio(self, schedule_id: str, **kwargs: Any) -> Optional[Schedule]:
+        """Trusted Studio-only async update path for server-owned provenance."""
         return self._to_schedule(await self._acall("update_schedule", schedule_id, **kwargs))
 
     async def adelete(self, schedule_id: str) -> bool:

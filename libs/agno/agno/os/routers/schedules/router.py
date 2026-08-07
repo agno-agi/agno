@@ -7,6 +7,11 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from agno.db.schemas.scheduler import (
+    STUDIO_SCHEDULE_MANAGED_BY,
+    ScheduleNameConflictError,
+    is_studio_managed_schedule,
+)
 from agno.os.routers.schedules.schema import (
     ScheduleCreate,
     ScheduleResponse,
@@ -56,8 +61,8 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
 
             _require_croniter()
             _require_pytz()
-        except ImportError as exc:
-            raise HTTPException(status_code=503, detail=str(exc))
+        except ImportError:
+            raise HTTPException(status_code=503, detail="Scheduler dependencies are not installed")
 
     async def _db_call(method_name: _SchedulerDbMethod, *args: Any, **kwargs: Any) -> Any:
         fn = getattr(os_db, method_name, None)
@@ -70,6 +75,23 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         except NotImplementedError:
             raise HTTPException(status_code=503, detail="Scheduler not supported by the configured database")
 
+    async def _get_generic_schedule(schedule_id: str) -> Dict[str, Any]:
+        """Load an ordinary scheduler record without disclosing Studio rows."""
+        schedule = await _db_call("get_schedule", schedule_id)
+        if schedule is None or is_studio_managed_schedule(schedule):
+            raise HTTPException(status_code=404, detail="Schedule not found")
+        return schedule
+
+    def _name_conflict(name: str) -> HTTPException:
+        return HTTPException(status_code=409, detail=f"Schedule with name '{name}' already exists")
+
+    async def _schedule_name_is_taken(name: str, *, excluding_schedule_id: Optional[str] = None) -> bool:
+        existing = await _db_call("get_schedule_by_name", name)
+        if existing is None:
+            return False
+        existing_id = existing.get("id") if isinstance(existing, dict) else getattr(existing, "id", None)
+        return excluding_schedule_id is None or existing_id != excluding_schedule_id
+
     # ------------------------------------------------------------------
     # Endpoints
     # ------------------------------------------------------------------
@@ -81,10 +103,20 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         page: int = Query(1, ge=1),
         _: bool = Depends(auth_dependency),
     ) -> PaginatedResponse[ScheduleResponse]:
-        schedules, total_count = await _db_call("get_schedules", enabled=enabled, limit=limit, page=page)
+        schedules, total_count = await _db_call(
+            "get_schedules",
+            enabled=enabled,
+            limit=limit,
+            page=page,
+            exclude_managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+        )
+        # Keep a response-boundary guard in case a custom adapter ignores the
+        # server-owned query filter. Official adapters filter before counting
+        # and pagination, so this does not underfill their pages.
+        visible_schedules = [schedule for schedule in schedules if not is_studio_managed_schedule(schedule)]
         total_pages = (total_count + limit - 1) // limit if total_count > 0 else 0
         return PaginatedResponse(
-            data=schedules,
+            data=visible_schedules,
             meta=PaginationInfo(
                 page=page,
                 limit=limit,
@@ -107,9 +139,8 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
             raise HTTPException(status_code=422, detail=f"Invalid timezone: {body.timezone}")
 
         # Check name uniqueness
-        existing = await _db_call("get_schedule_by_name", body.name)
-        if existing is not None:
-            raise HTTPException(status_code=409, detail=f"Schedule with name '{body.name}' already exists")
+        if await _schedule_name_is_taken(body.name):
+            raise _name_conflict(body.name)
 
         next_run_at = compute_next_run(body.cron_expr, body.timezone)
         now = int(time.time())
@@ -134,8 +165,22 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
             "updated_at": None,
         }
 
-        result = await _db_call("create_schedule", schedule_dict)
+        try:
+            result = await _db_call("create_schedule", schedule_dict)
+        except ScheduleNameConflictError as error:
+            raise _name_conflict(error.name) from None
+        except HTTPException:
+            raise
+        except Exception:
+            # The database's unique name constraint is authoritative. Another
+            # request can win after the preflight lookup, so translate only a
+            # confirmed competing row into the stable API conflict response.
+            if await _schedule_name_is_taken(body.name, excluding_schedule_id=schedule_dict["id"]):
+                raise _name_conflict(body.name) from None
+            raise
         if result is None:
+            if await _schedule_name_is_taken(body.name, excluding_schedule_id=schedule_dict["id"]):
+                raise _name_conflict(body.name)
             raise HTTPException(status_code=500, detail="Failed to create schedule")
         return result
 
@@ -144,10 +189,7 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         schedule_id: str,
         _: bool = Depends(auth_dependency),
     ) -> Dict[str, Any]:
-        schedule = await _db_call("get_schedule", schedule_id)
-        if schedule is None:
-            raise HTTPException(status_code=404, detail="Schedule not found")
-        return schedule
+        return await _get_generic_schedule(schedule_id)
 
     @router.patch("/schedules/{schedule_id}", response_model=ScheduleResponse)
     async def update_schedule(
@@ -155,9 +197,7 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         body: ScheduleUpdate,
         _: bool = Depends(auth_dependency),
     ) -> Dict[str, Any]:
-        existing = await _db_call("get_schedule", schedule_id)
-        if existing is None:
-            raise HTTPException(status_code=404, detail="Schedule not found")
+        existing = await _get_generic_schedule(schedule_id)
 
         updates = body.model_dump(exclude_unset=True)
         if not updates:
@@ -180,12 +220,22 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
 
         # Validate name uniqueness if changing
         if "name" in updates and updates["name"] != existing["name"]:
-            dup = await _db_call("get_schedule_by_name", updates["name"])
-            if dup is not None:
-                raise HTTPException(status_code=409, detail=f"Schedule with name '{updates['name']}' already exists")
+            if await _schedule_name_is_taken(updates["name"]):
+                raise _name_conflict(updates["name"])
 
-        result = await _db_call("update_schedule", schedule_id, **updates)
+        try:
+            result = await _db_call("update_schedule", schedule_id, **updates)
+        except ScheduleNameConflictError as error:
+            raise _name_conflict(error.name) from None
+        except HTTPException:
+            raise
+        except Exception:
+            if "name" in updates and await _schedule_name_is_taken(updates["name"], excluding_schedule_id=schedule_id):
+                raise _name_conflict(updates["name"]) from None
+            raise
         if result is None:
+            if "name" in updates and await _schedule_name_is_taken(updates["name"], excluding_schedule_id=schedule_id):
+                raise _name_conflict(updates["name"])
             raise HTTPException(status_code=500, detail="Failed to update schedule")
         return result
 
@@ -194,9 +244,7 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         schedule_id: str,
         _: bool = Depends(auth_dependency),
     ) -> None:
-        existing = await _db_call("get_schedule", schedule_id)
-        if existing is None:
-            raise HTTPException(status_code=404, detail="Schedule not found")
+        await _get_generic_schedule(schedule_id)
         deleted = await _db_call("delete_schedule", schedule_id)
         if not deleted:
             raise HTTPException(status_code=500, detail="Failed to delete schedule")
@@ -206,9 +254,7 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         schedule_id: str,
         _: bool = Depends(auth_dependency),
     ) -> Dict[str, Any]:
-        existing = await _db_call("get_schedule", schedule_id)
-        if existing is None:
-            raise HTTPException(status_code=404, detail="Schedule not found")
+        existing = await _get_generic_schedule(schedule_id)
 
         _check_scheduler_deps()
         from agno.scheduler.cron import compute_next_run
@@ -225,9 +271,7 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         schedule_id: str,
         _: bool = Depends(auth_dependency),
     ) -> Dict[str, Any]:
-        existing = await _db_call("get_schedule", schedule_id)
-        if existing is None:
-            raise HTTPException(status_code=404, detail="Schedule not found")
+        existing = await _get_generic_schedule(schedule_id)
 
         result = await _db_call("update_schedule", schedule_id, enabled=False)
         if result is None:
@@ -241,9 +285,7 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         request: Request,
         _: bool = Depends(auth_dependency),
     ) -> Dict[str, Any]:
-        existing = await _db_call("get_schedule", schedule_id)
-        if existing is None:
-            raise HTTPException(status_code=404, detail="Schedule not found")
+        existing = await _get_generic_schedule(schedule_id)
 
         if not existing.get("enabled", True):
             raise HTTPException(status_code=409, detail="Schedule is disabled")
@@ -262,9 +304,7 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         page: int = Query(1, ge=1),
         _: bool = Depends(auth_dependency),
     ) -> PaginatedResponse[ScheduleRunResponse]:
-        existing = await _db_call("get_schedule", schedule_id)
-        if existing is None:
-            raise HTTPException(status_code=404, detail="Schedule not found")
+        await _get_generic_schedule(schedule_id)
         runs, total_count = await _db_call("get_schedule_runs", schedule_id, limit=limit, page=page)
         total_pages = (total_count + limit - 1) // limit if total_count > 0 else 0
         return PaginatedResponse(
@@ -283,6 +323,7 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         run_id: str,
         _: bool = Depends(auth_dependency),
     ) -> Dict[str, Any]:
+        await _get_generic_schedule(schedule_id)
         run = await _db_call("get_schedule_run", run_id)
         if run is None or run.get("schedule_id") != schedule_id:
             raise HTTPException(status_code=404, detail="Schedule run not found")

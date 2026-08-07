@@ -42,6 +42,8 @@ def mock_db():
     db = MockDbClass()
 
     # Configure common mock methods
+    db.get_component = MagicMock(return_value=None)
+    db.create_component_with_config = MagicMock(return_value=({"component_id": "test-agent"}, {"version": 1}))
     db.upsert_component = MagicMock()
     db.upsert_config = MagicMock(return_value={"version": 1})
     db.delete_component = MagicMock(return_value=True)
@@ -604,24 +606,28 @@ class TestAgentKnowledgeRoundtrip:
 class TestAgentSave:
     """Tests for Agent.save() method."""
 
-    def test_save_calls_upsert_component(self, basic_agent, mock_db):
-        """Test save calls upsert_component with correct parameters."""
-        mock_db.upsert_config.return_value = {"version": 1}
-
+    def test_save_creates_component_and_initial_config_atomically(self, basic_agent, mock_db):
+        """Test first save creates the component and config together."""
         basic_agent.db = mock_db
         version = basic_agent.save()
 
-        mock_db.upsert_component.assert_called_once_with(
-            component_id="test-agent",
-            component_type=ComponentType.AGENT,
-            name="Test Agent",
-            description="A test agent for unit testing",
-            metadata=None,
-        )
+        call_args = mock_db.create_component_with_config.call_args
+        assert call_args.kwargs["component_id"] == "test-agent"
+        assert call_args.kwargs["component_type"] == ComponentType.AGENT
+        assert call_args.kwargs["name"] == "Test Agent"
+        assert call_args.kwargs["description"] == "A test agent for unit testing"
+        assert call_args.kwargs["config"]["id"] == "test-agent"
+        mock_db.upsert_component.assert_not_called()
+        mock_db.upsert_config.assert_not_called()
         assert version == 1
 
-    def test_save_calls_upsert_config(self, basic_agent, mock_db):
-        """Test save calls upsert_config with agent config."""
+    def test_existing_save_upserts_config_with_projection(self, basic_agent, mock_db):
+        """Test a published save updates config and projection together."""
+        mock_db.get_component.return_value = {
+            "component_id": "test-agent",
+            "component_type": "agent",
+            "deleted_at": None,
+        }
         mock_db.upsert_config.return_value = {"version": 2}
 
         basic_agent.db = mock_db
@@ -631,46 +637,44 @@ class TestAgentSave:
         call_args = mock_db.upsert_config.call_args
         assert call_args.kwargs["component_id"] == "test-agent"
         assert "config" in call_args.kwargs
+        assert call_args.kwargs["projection"] == {
+            "name": "Test Agent",
+            "description": "A test agent for unit testing",
+            "metadata": None,
+        }
         assert version == 2
 
     def test_save_with_explicit_db(self, basic_agent, mock_db):
         """Test save uses explicitly provided db."""
-        mock_db.upsert_config.return_value = {"version": 1}
-
         version = basic_agent.save(db=mock_db)
 
-        mock_db.upsert_component.assert_called_once()
-        mock_db.upsert_config.assert_called_once()
+        mock_db.create_component_with_config.assert_called_once()
+        mock_db.upsert_component.assert_not_called()
+        mock_db.upsert_config.assert_not_called()
         assert version == 1
 
     def test_save_with_label(self, basic_agent, mock_db):
-        """Test save passes label to upsert_config."""
-        mock_db.upsert_config.return_value = {"version": 1}
-
+        """Test first save passes the label to the atomic create."""
         basic_agent.db = mock_db
         basic_agent.save(label="production")
 
-        call_args = mock_db.upsert_config.call_args
+        call_args = mock_db.create_component_with_config.call_args
         assert call_args.kwargs["label"] == "production"
 
     def test_save_with_stage(self, basic_agent, mock_db):
-        """Test save passes stage to upsert_config."""
-        mock_db.upsert_config.return_value = {"version": 1}
-
+        """Test first save passes the stage to the atomic create."""
         basic_agent.db = mock_db
         basic_agent.save(stage="draft")
 
-        call_args = mock_db.upsert_config.call_args
+        call_args = mock_db.create_component_with_config.call_args
         assert call_args.kwargs["stage"] == "draft"
 
     def test_save_with_notes(self, basic_agent, mock_db):
-        """Test save passes notes to upsert_config."""
-        mock_db.upsert_config.return_value = {"version": 1}
-
+        """Test first save passes notes to the atomic create."""
         basic_agent.db = mock_db
         basic_agent.save(notes="Initial version")
 
-        call_args = mock_db.upsert_config.call_args
+        call_args = mock_db.create_component_with_config.call_args
         assert call_args.kwargs["notes"] == "Initial version"
 
     def test_save_without_db_raises_error(self, basic_agent):
@@ -680,19 +684,17 @@ class TestAgentSave:
 
     def test_save_generates_id_from_name(self, mock_db):
         """Test save generates id from name if not provided."""
-        mock_db.upsert_config.return_value = {"version": 1}
-
         agent = Agent(name="My Test Agent", db=mock_db)
         agent.save()
 
         # ID should be generated from name
         assert agent.id is not None
-        call_args = mock_db.upsert_component.call_args
+        call_args = mock_db.create_component_with_config.call_args
         assert call_args.kwargs["component_id"] is not None
 
     def test_save_handles_db_error(self, basic_agent, mock_db):
         """Test save raises error when database operation fails."""
-        mock_db.upsert_component.side_effect = Exception("Database error")
+        mock_db.create_component_with_config.side_effect = Exception("Database error")
 
         basic_agent.db = mock_db
 
@@ -778,14 +780,14 @@ class TestAgentLoad:
         """Test that store_history_messages=True survives save/load round-trip."""
         agent = Agent(id="persist-agent", name="Persist Agent", store_history_messages=True, db=mock_db)
 
-        # Capture the config passed to upsert_config during save
+        # Capture the config passed to the atomic first-save operation.
         saved_config = {}
 
         def capture_config(**kwargs):
             saved_config.update(kwargs.get("config", {}))
-            return {"version": 1}
+            return {"component_id": "persist-agent"}, {"version": 1}
 
-        mock_db.upsert_config.side_effect = capture_config
+        mock_db.create_component_with_config.side_effect = capture_config
         agent.save()
 
         assert saved_config.get("store_history_messages") is True

@@ -8,6 +8,7 @@ from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from starlette.concurrency import run_in_threadpool
 
+from agno.db.schemas.scheduler import STUDIO_SCHEDULE_ACTOR_HEADER, is_valid_studio_schedule_actor_id
 from agno.os.scopes import (
     get_accessible_resource_ids,
     get_default_scope_mappings,
@@ -41,6 +42,20 @@ INTERNAL_SERVICE_SCOPES: List[str] = [
     "schedules:write",
     "schedules:delete",
 ]
+
+
+def resolve_internal_scheduler_actor(request: Request) -> str:
+    """Resolve a server-delegated Studio actor carried by the internal token.
+
+    The header is ignored for every other credential path. The scheduler
+    executor derives it only from server-owned schedule provenance.
+    """
+    actor_id = request.headers.get(STUDIO_SCHEDULE_ACTOR_HEADER)
+    if actor_id is None:
+        return "__scheduler__"
+    if not is_valid_studio_schedule_actor_id(actor_id):
+        raise ValueError("Invalid delegated scheduler actor")
+    return actor_id
 
 
 def get_auth_token_from_request(request: Request) -> Optional[str]:
@@ -248,7 +263,10 @@ def get_authentication_dependency(settings: AgnoAPISettings):
         internal_token = getattr(request.app.state, "internal_service_token", None)
         if internal_token and hmac.compare_digest(token, internal_token):
             request.state.authenticated = True
-            request.state.user_id = "__scheduler__"
+            try:
+                request.state.user_id = resolve_internal_scheduler_actor(request)
+            except ValueError:
+                raise HTTPException(status_code=401, detail="Invalid delegated scheduler actor")
             request.state.scopes = list(INTERNAL_SERVICE_SCOPES)
             return True
 

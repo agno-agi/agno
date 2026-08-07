@@ -1,3 +1,4 @@
+from copy import deepcopy
 from enum import Enum
 from typing import Any, Dict, Literal, Optional, Union, get_args, get_origin
 
@@ -44,77 +45,120 @@ def get_json_type_for_py_type(arg: str) -> str:
 
 
 def inline_pydantic_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Recursively inline Pydantic model schemas by replacing $ref with actual schema.
+    """Inline local Pydantic ``$defs`` references throughout a JSON schema.
+
+    Pydantic emits discriminated unions as ``oneOf`` branches plus a
+    ``discriminator.mapping`` whose values point at ``$defs``. Once those
+    definitions are inlined the mapping is both redundant (each branch keeps
+    its discriminator ``const``) and invalid, because its targets no longer
+    exist. Keep ``propertyName`` and discard only that stale mapping.
     """
     if not isinstance(schema, dict):
         return schema
 
-    def resolve_ref(ref: str, defs: Dict[str, Any]) -> Dict[str, Any]:
+    definitions = schema.get("$defs", {})
+    if not isinstance(definitions, dict):
+        definitions = {}
+
+    schema_value_keys = {
+        "additionalProperties",
+        "contains",
+        "contentSchema",
+        "else",
+        "if",
+        "items",
+        "not",
+        "propertyNames",
+        "then",
+        "unevaluatedItems",
+        "unevaluatedProperties",
+    }
+    schema_list_keys = {"allOf", "anyOf", "oneOf", "prefixItems"}
+    schema_map_keys = {"dependentSchemas", "patternProperties", "properties"}
+
+    def resolve_ref(ref: str, resolving: frozenset[str]) -> Dict[str, Any]:
         """Resolve a $ref to its actual schema."""
         if not ref.startswith("#/$defs/"):
             return {"type": "object"}  # Fallback for external refs
 
         def_name = ref.split("/")[-1]
-        if def_name in defs:
-            return defs[def_name]
-        return {"type": "object"}  # Fallback if definition not found
+        definition = definitions.get(def_name)
+        if not isinstance(definition, dict):
+            return {"type": "object"}
+        # A recursive model cannot be fully inlined into finite JSON. Match the
+        # existing fallback behavior instead of retaining a dangling local ref.
+        if def_name in resolving:
+            return {"type": "object"}
+        return process_schema(definition, resolving | {def_name})
 
-    def process_schema(s: Dict[str, Any], defs: Dict[str, Any]) -> Dict[str, Any]:
-        """Process a schema dictionary, resolving all references."""
-        if not isinstance(s, dict):
-            return s
+    def process_discriminator(discriminator: Dict[str, Any]) -> Dict[str, Any]:
+        """Keep discriminator metadata that remains valid after inlining."""
+        result: Dict[str, Any] = {}
+        for key, value in discriminator.items():
+            if key != "mapping" or not isinstance(value, dict):
+                result[key] = deepcopy(value)
+                continue
 
-        # Handle $ref
-        if "$ref" in s:
-            return resolve_ref(s["$ref"], defs)
-
-        # Create a new dict to avoid modifying the input
-        result = s.copy()
-
-        # Handle arrays
-        if "items" in result:
-            result["items"] = process_schema(result["items"], defs)
-
-        # Handle object properties
-        if "properties" in result:
-            for prop_name, prop_schema in result["properties"].items():
-                result["properties"][prop_name] = process_schema(prop_schema, defs)
-
-        # Handle anyOf (for Union types)
-        if "anyOf" in result:
-            result["anyOf"] = [process_schema(sub_schema, defs) for sub_schema in result["anyOf"]]
-
-        # Handle allOf (for inheritance)
-        if "allOf" in result:
-            result["allOf"] = [process_schema(sub_schema, defs) for sub_schema in result["allOf"]]
-
-        # Handle additionalProperties
-        if "additionalProperties" in result:
-            result["additionalProperties"] = process_schema(result["additionalProperties"], defs)
-
-        # Handle propertyNames
-        if "propertyNames" in result:
-            result["propertyNames"] = process_schema(result["propertyNames"], defs)
-
+            # Local mapping targets disappear with $defs. Preserve any external
+            # mappings rather than discarding unrelated discriminator metadata.
+            external_mapping = {
+                tag: target
+                for tag, target in value.items()
+                if not (isinstance(target, str) and target.startswith("#/$defs/"))
+            }
+            if external_mapping:
+                result[key] = external_mapping
         return result
 
-    # Store definitions for later use
-    definitions = schema.pop("$defs", {})
+    def process_keyword(key: str, value: Any, resolving: frozenset[str]) -> Any:
+        """Process only values JSON Schema defines as nested schemas.
 
-    # First, resolve any nested references in definitions
-    resolved_definitions = {}
-    for def_name, def_schema in definitions.items():
-        resolved_definitions[def_name] = process_schema(def_schema, definitions)
+        Values under ``default``, ``examples``, ``const``, ``enum`` and
+        extension keywords are arbitrary JSON payloads. Recursing through
+        those values would mistake payload keys such as ``$defs`` or
+        ``discriminator`` for schema syntax and silently corrupt them.
+        """
+        if key == "discriminator" and isinstance(value, dict):
+            return process_discriminator(value)
+        if key in schema_value_keys:
+            if isinstance(value, list):
+                return [process_schema(item, resolving) for item in value]
+            if isinstance(value, dict):
+                return process_schema(value, resolving)
+            return deepcopy(value)
+        if key in schema_list_keys and isinstance(value, list):
+            return [process_schema(item, resolving) for item in value]
+        if key in schema_map_keys and isinstance(value, dict):
+            return {name: process_schema(item, resolving) for name, item in value.items()}
+        if key == "dependencies" and isinstance(value, dict):
+            return {
+                name: process_schema(item, resolving) if isinstance(item, dict) else deepcopy(item)
+                for name, item in value.items()
+            }
+        return deepcopy(value)
 
-    # Process the main schema with resolved definitions
-    result = process_schema(schema, resolved_definitions)
+    def process_schema(value: Any, resolving: frozenset[str] = frozenset()) -> Any:
+        """Recursively resolve refs in every dict/list schema position."""
+        if isinstance(value, list):
+            return [process_schema(item, resolving) for item in value]
+        if not isinstance(value, dict):
+            return value
 
-    # Remove any remaining definitions
-    if "$defs" in result:
-        del result["$defs"]
+        if "$ref" in value:
+            resolved = resolve_ref(value["$ref"], resolving)
+            # JSON Schema permits siblings beside $ref. Preserve them after the
+            # referenced schema so an explicit sibling can refine metadata.
+            siblings = {key: process_keyword(key, item, resolving) for key, item in value.items() if key != "$ref"}
+            return {**resolved, **siblings}
 
-    return result
+        result: Dict[str, Any] = {}
+        for key, item in value.items():
+            if key == "$defs":
+                continue
+            result[key] = process_keyword(key, item, resolving)
+        return result
+
+    return process_schema(schema)
 
 
 def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:

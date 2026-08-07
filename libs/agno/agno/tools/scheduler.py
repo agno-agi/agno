@@ -22,6 +22,7 @@ import json
 import time
 from typing import Any, Callable, Dict, List, Optional
 
+from agno.db.schemas.scheduler import STUDIO_SCHEDULE_MANAGED_BY, is_studio_managed_schedule
 from agno.scheduler.manager import ScheduleManager
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_debug, logger
@@ -103,6 +104,19 @@ class SchedulerTools(Toolkit):
         """Check if the endpoint targets an agent/team/workflow run route."""
         return method.upper() == "POST" and endpoint.rstrip("/").endswith("/runs")
 
+    @staticmethod
+    def _not_found() -> str:
+        """Return a non-disclosing result for a Studio-managed schedule."""
+        return json.dumps({"error": "Schedule not found"})
+
+    def _schedule_by_name(self, name: str) -> Any:
+        """Read a name conflict before the manager's update-on-create path."""
+        return self.manager._call("get_schedule_by_name", name)
+
+    async def _aschedule_by_name(self, name: str) -> Any:
+        """Async counterpart to :meth:`_schedule_by_name`."""
+        return await self.manager._acall("get_schedule_by_name", name)
+
     # ------------------------------------------------------------------
     # Sync tools
     # ------------------------------------------------------------------
@@ -154,6 +168,9 @@ class SchedulerTools(Toolkit):
                 )
 
         try:
+            existing = self._schedule_by_name(name)
+            if existing is not None and is_studio_managed_schedule(existing):
+                return json.dumps({"error": "Schedule with that name is not available"})
             schedule = self.manager.create(
                 name=name,
                 cron=cron,
@@ -192,7 +209,10 @@ class SchedulerTools(Toolkit):
         """
         try:
             enabled_filter = True if enabled_only else None
-            schedules = self.manager.list(enabled=enabled_filter)
+            schedules = self.manager.list(
+                enabled=enabled_filter,
+                exclude_managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+            )
             result = [
                 {
                     "id": s.id,
@@ -204,6 +224,7 @@ class SchedulerTools(Toolkit):
                     "description": s.description,
                 }
                 for s in schedules
+                if not is_studio_managed_schedule(s)
             ]
             return json.dumps({"schedules": result, "count": len(result)})
         except Exception as e:
@@ -223,6 +244,8 @@ class SchedulerTools(Toolkit):
             schedule = self.manager.get(schedule_id)
             if schedule is None:
                 return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+            if is_studio_managed_schedule(schedule):
+                return self._not_found()
             return json.dumps(
                 {
                     "id": schedule.id,
@@ -250,6 +273,9 @@ class SchedulerTools(Toolkit):
             str: JSON string confirming deletion.
         """
         try:
+            schedule = self.manager.get(schedule_id)
+            if schedule is not None and is_studio_managed_schedule(schedule):
+                return self._not_found()
             deleted = self.manager.delete(schedule_id)
             if deleted:
                 return json.dumps({"status": "deleted", "id": schedule_id})
@@ -268,6 +294,9 @@ class SchedulerTools(Toolkit):
             str: JSON string with the updated schedule details.
         """
         try:
+            existing = self.manager.get(schedule_id)
+            if existing is not None and is_studio_managed_schedule(existing):
+                return self._not_found()
             schedule = self.manager.enable(schedule_id)
             if schedule is None:
                 return json.dumps({"error": f"Schedule not found: {schedule_id}"})
@@ -293,6 +322,9 @@ class SchedulerTools(Toolkit):
             str: JSON string with the updated schedule details.
         """
         try:
+            existing = self.manager.get(schedule_id)
+            if existing is not None and is_studio_managed_schedule(existing):
+                return self._not_found()
             schedule = self.manager.disable(schedule_id)
             if schedule is None:
                 return json.dumps({"error": f"Schedule not found: {schedule_id}"})
@@ -325,6 +357,8 @@ class SchedulerTools(Toolkit):
             schedule = self.manager.get(schedule_id)
             if schedule is None:
                 return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+            if is_studio_managed_schedule(schedule):
+                return self._not_found()
             if not schedule.enabled:
                 return json.dumps(
                     {"error": f"Schedule is disabled: {schedule_id}. Call enable_schedule first, then trigger it."}
@@ -352,6 +386,9 @@ class SchedulerTools(Toolkit):
             str: JSON string with the list of runs.
         """
         try:
+            schedule = self.manager.get(schedule_id)
+            if schedule is not None and is_studio_managed_schedule(schedule):
+                return self._not_found()
             runs = self.manager.get_runs(schedule_id, limit=limit)
             result = [
                 {
@@ -419,6 +456,9 @@ class SchedulerTools(Toolkit):
                 )
 
         try:
+            existing = await self._aschedule_by_name(name)
+            if existing is not None and is_studio_managed_schedule(existing):
+                return json.dumps({"error": "Schedule with that name is not available"})
             schedule = await self.manager.acreate(
                 name=name,
                 cron=cron,
@@ -457,7 +497,10 @@ class SchedulerTools(Toolkit):
         """
         try:
             enabled_filter = True if enabled_only else None
-            schedules = await self.manager.alist(enabled=enabled_filter)
+            schedules = await self.manager.alist(
+                enabled=enabled_filter,
+                exclude_managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+            )
             result = [
                 {
                     "id": s.id,
@@ -469,6 +512,7 @@ class SchedulerTools(Toolkit):
                     "description": s.description,
                 }
                 for s in schedules
+                if not is_studio_managed_schedule(s)
             ]
             return json.dumps({"schedules": result, "count": len(result)})
         except Exception as e:
@@ -488,6 +532,8 @@ class SchedulerTools(Toolkit):
             schedule = await self.manager.aget(schedule_id)
             if schedule is None:
                 return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+            if is_studio_managed_schedule(schedule):
+                return self._not_found()
             return json.dumps(
                 {
                     "id": schedule.id,
@@ -515,6 +561,9 @@ class SchedulerTools(Toolkit):
             str: JSON string confirming deletion.
         """
         try:
+            schedule = await self.manager.aget(schedule_id)
+            if schedule is not None and is_studio_managed_schedule(schedule):
+                return self._not_found()
             deleted = await self.manager.adelete(schedule_id)
             if deleted:
                 return json.dumps({"status": "deleted", "id": schedule_id})
@@ -533,6 +582,9 @@ class SchedulerTools(Toolkit):
             str: JSON string with the updated schedule details.
         """
         try:
+            existing = await self.manager.aget(schedule_id)
+            if existing is not None and is_studio_managed_schedule(existing):
+                return self._not_found()
             schedule = await self.manager.aenable(schedule_id)
             if schedule is None:
                 return json.dumps({"error": f"Schedule not found: {schedule_id}"})
@@ -558,6 +610,9 @@ class SchedulerTools(Toolkit):
             str: JSON string with the updated schedule details.
         """
         try:
+            existing = await self.manager.aget(schedule_id)
+            if existing is not None and is_studio_managed_schedule(existing):
+                return self._not_found()
             schedule = await self.manager.adisable(schedule_id)
             if schedule is None:
                 return json.dumps({"error": f"Schedule not found: {schedule_id}"})
@@ -590,6 +645,8 @@ class SchedulerTools(Toolkit):
             schedule = await self.manager.aget(schedule_id)
             if schedule is None:
                 return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+            if is_studio_managed_schedule(schedule):
+                return self._not_found()
             if not schedule.enabled:
                 return json.dumps(
                     {"error": f"Schedule is disabled: {schedule_id}. Call enable_schedule first, then trigger it."}
@@ -617,6 +674,9 @@ class SchedulerTools(Toolkit):
             str: JSON string with the list of runs.
         """
         try:
+            schedule = await self.manager.aget(schedule_id)
+            if schedule is not None and is_studio_managed_schedule(schedule):
+                return self._not_found()
             runs = await self.manager.aget_runs(schedule_id, limit=limit)
             result = [
                 {

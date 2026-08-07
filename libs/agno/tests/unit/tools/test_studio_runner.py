@@ -7,11 +7,12 @@ stream kwargs the runner threads through.
 """
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 import pytest
 from pydantic import BaseModel
 
+from agno.db.base import ComponentVersionGuard
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.registry import Registry
@@ -19,7 +20,21 @@ from agno.run import RunContext
 from agno.run.base import RunStatus
 from agno.tools.function import FunctionCall
 from agno.tools.studio import StudioTools
-from agno.tools.studio_runner import StudioRunnerTools
+from agno.tools.studio_runner import ComponentNeedsRegistryError, StudioRunnerTools
+from agno.tools.studio_schema import (
+    AgentCreate,
+    AgentPatch,
+    AgentWorkflowStep,
+    ComponentRef,
+    FunctionWorkflowStep,
+    ModelRef,
+    StudioResult,
+    TeamCreate,
+    TeamPatch,
+    ToolRef,
+    WorkflowCreate,
+    WorkflowPatch,
+)
 
 # ----------------------------------------------------------------------
 # Fixtures and stubs
@@ -46,6 +61,82 @@ def _loads(s: str) -> Dict[str, Any]:
 
 def _context(user_id: Optional[str] = "ash", session_id: str = "caller-sess") -> RunContext:
     return RunContext(run_id="caller-run", session_id=session_id, user_id=user_id)
+
+
+def _authorize_studio(_run_context: RunContext, _access: str, _action: str) -> bool:
+    return True
+
+
+def _studio(registry: Registry, db: SqliteDb, **kwargs: Any) -> StudioTools:
+    return StudioTools(registry=registry, db=db, authorize=_authorize_studio, **kwargs)
+
+
+def _data(result: StudioResult[Any]) -> Any:
+    assert result.ok, result.error
+    assert result.data is not None
+    return result.data
+
+
+def _agent_request(
+    name: str,
+    instructions: str = "i",
+    *,
+    component_id: Optional[str] = None,
+    description: Optional[str] = None,
+    tools: Optional[List[ToolRef]] = None,
+) -> AgentCreate:
+    return AgentCreate(
+        component_id=component_id,
+        name=name,
+        instructions=instructions,
+        description=description,
+        model=ModelRef(id="gpt-5.4"),
+        tools=tools or [],
+    )
+
+
+def _team_request(
+    name: str,
+    members: List[ComponentRef],
+    instructions: str = "i",
+    *,
+    component_id: Optional[str] = None,
+) -> TeamCreate:
+    return TeamCreate(
+        component_id=component_id,
+        name=name,
+        instructions=instructions,
+        members=members,
+        model=ModelRef(id="gpt-5.4"),
+    )
+
+
+def _workflow_request(
+    name: str,
+    steps: List[AgentWorkflowStep],
+    *,
+    component_id: Optional[str] = None,
+    description: Optional[str] = "d",
+) -> WorkflowCreate:
+    return WorkflowCreate(component_id=component_id, name=name, description=description, steps=steps)
+
+
+def _create_agent(
+    studio: StudioTools, request: AgentCreate, *, save_as: Literal["draft", "published"] = "published"
+) -> Any:
+    return _data(studio.create_agent(request, save_as=save_as, _agno_run_context=_context()))
+
+
+def _create_team(
+    studio: StudioTools, request: TeamCreate, *, save_as: Literal["draft", "published"] = "published"
+) -> Any:
+    return _data(studio.create_team(request, save_as=save_as, _agno_run_context=_context()))
+
+
+def _create_workflow(
+    studio: StudioTools, request: WorkflowCreate, *, save_as: Literal["draft", "published"] = "published"
+) -> Any:
+    return _data(studio.create_workflow(request, save_as=save_as, _agno_run_context=_context()))
 
 
 def _sub_session(component_type: str, component_id: str, caller_session: str = "caller-sess") -> Optional[str]:
@@ -167,6 +258,33 @@ class _StubWorkflow:
         return clone
 
 
+PRIVATE_RUNTIME_ERROR = "postgres://admin:private-password@db.internal/catalog"
+
+
+class _FailingAgent(_StubAgent):
+    def run(self, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError(PRIVATE_RUNTIME_ERROR)
+
+    async def arun(self, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError(PRIVATE_RUNTIME_ERROR)
+
+
+class _FailingTeam(_StubTeam):
+    def run(self, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError(PRIVATE_RUNTIME_ERROR)
+
+    async def arun(self, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError(PRIVATE_RUNTIME_ERROR)
+
+
+class _FailingWorkflow(_StubWorkflow):
+    def run(self, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError(PRIVATE_RUNTIME_ERROR)
+
+    async def arun(self, *args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError(PRIVATE_RUNTIME_ERROR)
+
+
 # ----------------------------------------------------------------------
 # Registration
 # ----------------------------------------------------------------------
@@ -199,6 +317,19 @@ class TestRegistration:
             function.process_entrypoint()
             properties = (function.parameters or {}).get("properties") or {}
             assert set(properties) == {"agent_id", "message"}
+
+    def test_model_guidance_does_not_promise_slug_aliases_for_explicit_ids(self, db):
+        runner = StudioRunnerTools(db=db)
+        instructions = str(runner.instructions or "")
+        assert "Use the exact id from a list tool; an exact display name also resolves" in instructions
+        assert "display name or its slug" not in instructions
+
+        for functions in (runner.functions, runner.async_functions):
+            function = functions["run_agent"]
+            function.process_entrypoint()
+            agent_id_description = function.parameters["properties"]["agent_id"]["description"]
+            assert "Exact agent id, or an exact display name" in agent_id_description
+            assert "or its slug" not in agent_id_description
 
 
 # ----------------------------------------------------------------------
@@ -476,9 +607,9 @@ class TestInjectionGuard:
 
 class TestResolution:
     def test_find_agent_resolves_db_component_by_display_name(self, registry, db):
-        studio = StudioTools(registry=registry, db=db)
-        created = _loads(studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4"))
-        assert created["id"] == "radar-scout"
+        studio = _studio(registry, db)
+        created = _create_agent(studio, _agent_request("Radar Scout"))
+        assert created.component_id == "radar-scout"
 
         runner = StudioRunnerTools(registry=registry, db=db)
         by_id = runner._find_agent("radar-scout")
@@ -492,9 +623,12 @@ class TestResolution:
         assert out == {"error": "Agent not found: nope"}
 
     def test_run_agent_rejects_team_id(self, registry, db):
-        studio = StudioTools(registry=registry, db=db, teams=True)
-        studio.create_agent(name="member", instructions="i", model_id="gpt-5.4")
-        studio.create_team(name="squad", instructions="i", member_ids=["member"], model_id="gpt-5.4")
+        studio = _studio(registry, db, teams=True)
+        _create_agent(studio, _agent_request("member"))
+        _create_team(
+            studio,
+            _team_request("squad", [ComponentRef(component_type="agent", component_id="member")]),
+        )
 
         runner = StudioRunnerTools(registry=registry, db=db)
         out = _loads(runner.run_agent("squad", "hi"))
@@ -511,8 +645,8 @@ class TestResolution:
         assert runner._find_agent("researcher") is target
 
     def test_db_exact_id_beats_code_defined_display_name(self, registry, db):
-        studio = StudioTools(registry=registry, db=db)
-        studio.create_agent(name="radar", instructions="i", model_id="gpt-5.4")
+        studio = _studio(registry, db)
+        _create_agent(studio, _agent_request("radar"))
         shadow = _StubAgent()
         shadow.id = "other"
         shadow.name = "radar"
@@ -522,24 +656,45 @@ class TestResolution:
         assert getattr(found, "id", None) == "radar"
 
     def test_display_name_resolves_across_type_slug_collision(self, registry, db):
-        # The team owns the base slug; the same-named agent got a -2 suffix.
-        # Name resolution is typed, so each type's lookup reaches its own component.
-        studio = StudioTools(registry=registry, db=db, teams=True)
-        studio.create_agent(name="member", instructions="i", model_id="gpt-5.4")
-        studio.create_team(name="Radar Scout", instructions="i", member_ids=["member"], model_id="gpt-5.4")
-        created = _loads(studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4"))
-        assert created["id"] == "radar-scout-2"
+        # Stable ids are global, while display-name resolution remains typed.
+        studio = _studio(registry, db, teams=True)
+        _create_agent(studio, _agent_request("member"))
+        _create_team(
+            studio,
+            _team_request(
+                "Radar Scout",
+                [ComponentRef(component_type="agent", component_id="member")],
+                component_id="radar-scout-team",
+            ),
+        )
+        created = _create_agent(
+            studio,
+            _agent_request("Radar Scout", component_id="radar-scout-agent"),
+        )
+        assert created.component_id == "radar-scout-agent"
 
         runner = StudioRunnerTools(registry=registry, db=db)
         agent = runner._find_agent("Radar Scout")
         team = runner._find_team("Radar Scout")
-        assert agent is not None and agent.id == "radar-scout-2"
-        assert team is not None and team.id == "radar-scout"
+        assert agent is not None and agent.id == "radar-scout-agent"
+        assert team is not None and team.id == "radar-scout-team"
+
+    def test_display_name_slug_is_not_an_alias_for_an_explicit_component_id(self, registry, db):
+        studio = _studio(registry, db)
+        _create_agent(
+            studio,
+            _agent_request("Radar Scout", component_id="radar-scout-agent"),
+        )
+
+        runner = StudioRunnerTools(registry=registry, db=db)
+        assert runner._find_agent("Radar Scout") is not None
+        assert runner._find_agent("radar-scout") is None
+        assert runner._find_agent("radar-scout-agent") is not None
 
     def test_ambiguous_display_name_errors_with_matching_ids(self, registry, db):
-        studio = StudioTools(registry=registry, db=db)
-        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
-        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
+        studio = _studio(registry, db)
+        _create_agent(studio, _agent_request("Radar Scout", component_id="radar-scout"))
+        _create_agent(studio, _agent_request("Radar Scout", component_id="radar-scout-2"))
 
         runner = StudioRunnerTools(registry=registry, db=db)
         out = _loads(runner.run_agent("Radar Scout", "hi"))
@@ -551,17 +706,17 @@ class TestResolution:
 
     @pytest.mark.asyncio
     async def test_async_ambiguous_display_name_errors(self, registry, db):
-        studio = StudioTools(registry=registry, db=db)
-        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
-        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
+        studio = _studio(registry, db)
+        _create_agent(studio, _agent_request("Radar Scout", component_id="radar-scout"))
+        _create_agent(studio, _agent_request("Radar Scout", component_id="radar-scout-2"))
 
         runner = StudioRunnerTools(registry=registry, db=db)
         out = _loads(await runner.arun_agent("Radar Scout", "hi"))
         assert "Ambiguous" in out["error"]
 
     def test_slug_fallback_resolves_when_name_lookup_misses(self, registry, db):
-        studio = StudioTools(registry=registry, db=db)
-        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
+        studio = _studio(registry, db)
+        _create_agent(studio, _agent_request("Radar Scout"))
 
         runner = StudioRunnerTools(registry=registry, db=db)
         found = runner._find_agent("radar scout!")
@@ -571,9 +726,9 @@ class TestResolution:
         import agno.tools.studio_runner as studio_runner_module
 
         monkeypatch.setattr(studio_runner_module, "_NAME_LOOKUP_PAGE", 1)
-        studio = StudioTools(registry=registry, db=db)
+        studio = _studio(registry, db)
         for name in ("Oldest Match", "newer-a", "newer-b"):
-            studio.create_agent(name=name, instructions="i", model_id="gpt-5.4")
+            _create_agent(studio, _agent_request(name))
 
         runner = StudioRunnerTools(registry=registry, db=db)
         found = runner._find_agent("Oldest Match")
@@ -597,10 +752,10 @@ class TestResolution:
         # silently dispatch the name match.
         from agno.agent.agent import Agent as AgentClass
 
-        studio = StudioTools(registry=registry, db=db)
-        studio.create_agent(name="Reports", instructions="i", model_id="gpt-5.4")
-        created = _loads(studio.create_agent(name="reports", instructions="i", model_id="gpt-5.4"))
-        assert created["id"] == "reports-2"
+        studio = _studio(registry, db)
+        _create_agent(studio, _agent_request("Reports", component_id="reports"))
+        created = _create_agent(studio, _agent_request("reports", component_id="reports-2"))
+        assert created.component_id == "reports-2"
 
         original_from_dict = AgentClass.from_dict
 
@@ -628,15 +783,113 @@ class TestResolution:
         missing = _loads(runner.run_agent("nope", "hi"))
         assert missing == {"error": "Agent not found: nope"}
 
-    def test_db_failure_during_resolution_returns_error_payload(self, db):
+    def test_db_failure_during_resolution_is_sanitized(self, db, caplog):
         runner = StudioRunnerTools(db=db)
 
         def boom(*args, **kwargs):
-            raise RuntimeError("connection reset")
+            raise RuntimeError(PRIVATE_RUNTIME_ERROR)
 
         runner.db.list_components = boom  # type: ignore[method-assign]
         out = _loads(runner.run_agent("Some Name", "hi"))
-        assert "connection reset" in out["error"]
+        assert out == {"error": "StudioRunnerTools could not resolve agent."}
+        assert PRIVATE_RUNTIME_ERROR not in json.dumps(out)
+        assert PRIVATE_RUNTIME_ERROR not in caplog.text
+
+
+class TestUnexpectedFailureSanitization:
+    def test_deep_copy_failure_does_not_expose_exception_text(self, db, caplog):
+        class _SecretCopyAgent(_StubAgent):
+            def deep_copy(self):
+                raise RuntimeError(PRIVATE_RUNTIME_ERROR)
+
+        runner = StudioRunnerTools(db=db, agents_list=[_SecretCopyAgent()])
+
+        out = _loads(runner.run_agent("stub", "hi"))
+
+        assert "deep_copy failed for 'stub'" in out["error"]
+        assert PRIVATE_RUNTIME_ERROR not in json.dumps(out)
+        assert PRIVATE_RUNTIME_ERROR not in caplog.text
+
+    @pytest.mark.parametrize(
+        ("component_type", "method_name", "component_id", "component"),
+        [
+            ("agent", "run_agent", "stub", _FailingAgent()),
+            ("team", "run_team", "stub-team", _FailingTeam()),
+            ("workflow", "run_workflow", "stub-wf", _FailingWorkflow()),
+        ],
+    )
+    def test_sync_runtime_errors_are_sanitized(
+        self,
+        db,
+        caplog,
+        component_type: str,
+        method_name: str,
+        component_id: str,
+        component: Any,
+    ):
+        runner = StudioRunnerTools(db=db, **{f"{component_type}s_list": [component]})
+
+        out = _loads(getattr(runner, method_name)(component_id, "hi", _agno_run_context=_context()))
+
+        assert out == {"error": f"StudioRunnerTools could not run {component_type}."}
+        assert PRIVATE_RUNTIME_ERROR not in json.dumps(out)
+        assert PRIVATE_RUNTIME_ERROR not in caplog.text
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("component_type", "method_name", "component_id", "component"),
+        [
+            ("agent", "arun_agent", "stub", _FailingAgent()),
+            ("team", "arun_team", "stub-team", _FailingTeam()),
+            ("workflow", "arun_workflow", "stub-wf", _FailingWorkflow()),
+        ],
+    )
+    async def test_async_runtime_errors_are_sanitized(
+        self,
+        db,
+        caplog,
+        component_type: str,
+        method_name: str,
+        component_id: str,
+        component: Any,
+    ):
+        runner = StudioRunnerTools(db=db, **{f"{component_type}s_list": [component]})
+
+        out = _loads(await getattr(runner, method_name)(component_id, "hi", _agno_run_context=_context()))
+
+        assert out == {"error": f"StudioRunnerTools could not run {component_type}."}
+        assert PRIVATE_RUNTIME_ERROR not in json.dumps(out)
+        assert PRIVATE_RUNTIME_ERROR not in caplog.text
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("component_type", "method_name", "resolver_name"),
+        [
+            ("agent", "arun_agent", "_agent_for_run"),
+            ("team", "arun_team", "_team_for_run"),
+            ("workflow", "arun_workflow", "_workflow_for_run"),
+        ],
+    )
+    async def test_async_resolution_errors_are_sanitized(
+        self,
+        db,
+        caplog,
+        monkeypatch: pytest.MonkeyPatch,
+        component_type: str,
+        method_name: str,
+        resolver_name: str,
+    ):
+        runner = StudioRunnerTools(db=db)
+
+        def fail_resolution(*_args: Any, **_kwargs: Any) -> None:
+            raise RuntimeError(PRIVATE_RUNTIME_ERROR)
+
+        monkeypatch.setattr(runner, resolver_name, fail_resolution)
+        out = _loads(await getattr(runner, method_name)("hidden", "hi"))
+
+        assert out == {"error": f"StudioRunnerTools could not resolve {component_type}."}
+        assert PRIVATE_RUNTIME_ERROR not in json.dumps(out)
+        assert PRIVATE_RUNTIME_ERROR not in caplog.text
 
 
 # ----------------------------------------------------------------------
@@ -820,8 +1073,8 @@ class TestDispatchIsolation:
         # table overrides) must not be overwritten by the catalog db.
         from agno.agent.agent import Agent as AgentClass
 
-        studio = StudioTools(registry=registry, db=db)
-        studio.create_agent(name="Radar", instructions="i", model_id="gpt-5.4")
+        studio = _studio(registry, db)
+        _create_agent(studio, _agent_request("Radar"))
 
         own_db = SqliteDb(id="component-own-db", db_file=str(tmp_path / "own.db"))
         original_from_dict = AgentClass.from_dict
@@ -845,8 +1098,8 @@ class TestDispatchIsolation:
 
 class TestDiscovery:
     def test_list_agents_shows_db_components_only(self, registry, db):
-        studio = StudioTools(registry=registry, db=db)
-        studio.create_agent(name="Radar", instructions="i", model_id="gpt-5.4", description="scans the week")
+        studio = _studio(registry, db)
+        _create_agent(studio, _agent_request("Radar", description="scans the week"))
 
         runner = StudioRunnerTools(registry=registry, db=db, agents_list=[_StubAgent()])
         out = _loads(runner.list_agents())
@@ -854,9 +1107,9 @@ class TestDiscovery:
         assert out["agents"] == [{"id": "radar", "name": "Radar", "description": "scans the week"}]
 
     def test_list_agents_reports_total_beyond_cap(self, registry, db):
-        studio = StudioTools(registry=registry, db=db)
+        studio = _studio(registry, db)
         for name in ("one", "two", "three"):
-            studio.create_agent(name=name, instructions="i", model_id="gpt-5.4")
+            _create_agent(studio, _agent_request(name))
 
         runner = StudioRunnerTools(registry=registry, db=db, list_limit=2)
         out = _loads(runner.list_agents())
@@ -877,6 +1130,19 @@ class TestDiscovery:
         out = _loads(runner.list_agents())
         assert out == {"agents": [], "count": 0, "total": 0}
 
+    def test_list_failure_does_not_expose_exception_text(self, db, caplog):
+        def fail_list(*_args, **_kwargs):
+            raise RuntimeError(PRIVATE_RUNTIME_ERROR)
+
+        db.list_components = fail_list
+        runner = StudioRunnerTools(db=db)
+
+        out = _loads(runner.list_agents())
+
+        assert out == {"error": "StudioRunnerTools could not list agents."}
+        assert PRIVATE_RUNTIME_ERROR not in json.dumps(out)
+        assert PRIVATE_RUNTIME_ERROR not in caplog.text
+
 
 # ----------------------------------------------------------------------
 # StudioTools embedding
@@ -886,25 +1152,25 @@ class TestDiscovery:
 class TestStudioEmbedding:
     def test_public_run_methods_forward_to_the_runner(self, registry, db):
         stub = _StubAgent()
-        studio = StudioTools(registry=registry, db=db, agents_list=[stub])
+        studio = _studio(registry, db, agents_list=[stub])
         for name in ("run_agent", "run_team", "run_workflow", "arun_agent", "arun_team", "arun_workflow"):
             assert hasattr(studio, name)
-        out = _loads(studio.run_agent("stub", "hi"))
+        out = _loads(studio.run_agent("stub", "hi", _agno_run_context=_context()))
         assert out["agent_id"] == "stub"
         assert stub.seen is not None
 
     @pytest.mark.asyncio
     async def test_public_arun_agent_forwards_to_the_runner(self, registry, db):
         stub = _StubAgent()
-        studio = StudioTools(registry=registry, db=db, agents_list=[stub])
-        out = _loads(await studio.arun_agent("stub", "hi"))
+        studio = _studio(registry, db, agents_list=[stub])
+        out = _loads(await studio.arun_agent("stub", "hi", _agno_run_context=_context()))
         assert out["agent_id"] == "stub"
 
     def test_studio_registers_its_own_run_methods(self, registry, db):
         # The registered tool must be StudioTools' own method, not the embedded
         # runner's bound method, or a subclass override never sits on the path the
         # model takes.
-        studio = StudioTools(registry=registry, db=db, teams=True, workflows=True)
+        studio = _studio(registry, db, teams=True, workflows=True)
         for name in ("run_agent", "run_team", "run_workflow"):
             entrypoint = studio.functions[name].entrypoint
             assert getattr(entrypoint, "__self__", None) is studio
@@ -920,16 +1186,20 @@ class TestStudioEmbedding:
                 return super().run_agent(agent_id, message, _agno_run_context)
 
         stub = _StubAgent()
-        studio = Guarded(registry=registry, db=db, agents_list=[stub])
+        studio = Guarded(
+            registry=registry,
+            db=db,
+            authorize=_authorize_studio,
+            agents_list=[stub],
+        )
         out = _loads(studio.functions["run_agent"].entrypoint("stub", "hi", _agno_run_context=_context()))
         assert calls == ["stub"]
         assert out["agent_id"] == "stub"
-        # The compat alias survives the override.
-        assert out["id"] == "stub"
+        assert "id" not in out
 
     def test_identity_threads_through_studio_registered_tool(self, registry, db):
         stub = _StubAgent()
-        studio = StudioTools(registry=registry, db=db, agents_list=[stub])
+        studio = _studio(registry, db, agents_list=[stub])
         out = _loads(studio.functions["run_agent"].entrypoint("stub", "hi", _agno_run_context=_context()))
         assert stub.seen == {
             "message": "hi",
@@ -939,85 +1209,129 @@ class TestStudioEmbedding:
         }
         assert out["agent_id"] == "stub"
 
-    def test_studio_lookups_gain_name_resolution(self, registry, db):
-        studio = StudioTools(registry=registry, db=db)
-        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
-        # get_agent by display name resolves via the shared runner lookup path.
-        out = _loads(studio.get_agent("Radar Scout"))
-        assert out.get("id") == "radar-scout"
+    def test_studio_lookup_uses_exact_component_id(self, registry, db):
+        studio = _studio(registry, db)
+        _create_agent(studio, _agent_request("Radar Scout"))
+        missing = studio.get_agent("Radar Scout", _agno_run_context=_context())
+        assert missing.error is not None and missing.error.code == "invalid_component_id"
+        assert _data(studio.get_agent("radar-scout", _agno_run_context=_context())).component_id == "radar-scout"
 
-    def test_get_agent_ambiguous_name_errors(self, registry, db):
-        studio = StudioTools(registry=registry, db=db)
-        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
-        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
-        out = _loads(studio.get_agent("Radar Scout"))
-        assert "Ambiguous" in out.get("error", "")
+    def test_same_display_name_is_safe_with_exact_component_ids(self, registry, db):
+        studio = _studio(registry, db)
+        _create_agent(studio, _agent_request("Radar Scout", component_id="radar-a"))
+        _create_agent(studio, _agent_request("Radar Scout", component_id="radar-b"))
+        first = _data(studio.get_agent("radar-a", _agno_run_context=_context()))
+        second = _data(studio.get_agent("radar-b", _agno_run_context=_context()))
+        assert first.component_id == "radar-a"
+        assert second.component_id == "radar-b"
 
-    def test_edit_resolves_display_name_to_canonical_id(self, registry, db):
-        studio = StudioTools(registry=registry, db=db)
-        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
-        out = _loads(studio.edit_agent("Radar Scout", instructions="updated"))
-        assert out.get("status") == "edited"
-        assert out.get("id") == "radar-scout"
-        fetched = _loads(studio.get_agent("radar-scout"))
-        assert fetched["instructions"] == "updated"
+    def test_edit_uses_exact_component_id(self, registry, db):
+        studio = _studio(registry, db)
+        _create_agent(studio, _agent_request("Radar Scout"))
+        out = studio.edit_agent(
+            "radar-scout",
+            AgentPatch(instructions="updated"),
+            expected_version=1,
+            save_as="published",
+            _agno_run_context=_context(),
+        )
+        assert out.ok and out.status == "edited"
+        assert out.data is not None and out.data.component_id == "radar-scout"
+        fetched = _data(studio.get_agent("radar-scout", _agno_run_context=_context()))
+        assert fetched.instructions == "updated"
 
     def test_exact_team_member_id_beats_agent_display_name(self, registry, db):
-        studio = StudioTools(registry=registry, db=db, teams=True)
-        studio.create_agent(name="member", instructions="i", model_id="gpt-5.4")
-        studio.create_team(name="support", instructions="i", member_ids=["member"], model_id="gpt-5.4")
-        # An agent NAMED "support" (stored as support-2) must not steal the
-        # team's exact id in member resolution.
-        created_agent = _loads(studio.create_agent(name="support", instructions="i", model_id="gpt-5.4"))
-        assert created_agent["id"] == "support-2"
+        studio = _studio(registry, db, teams=True)
+        _create_agent(studio, _agent_request("member"))
+        _create_team(
+            studio,
+            _team_request(
+                "support",
+                [ComponentRef(component_type="agent", component_id="member")],
+                component_id="support-team",
+            ),
+        )
+        _create_agent(studio, _agent_request("support", component_id="support-agent"))
 
-        created = _loads(studio.create_team(name="squad", instructions="i", member_ids=["support"], model_id="gpt-5.4"))
-        assert created.get("member_ids") == ["support"]
+        created = _create_team(
+            studio,
+            _team_request(
+                "squad",
+                [ComponentRef(component_type="team", component_id="support-team")],
+            ),
+        )
+        assert created.members == [ComponentRef(component_type="team", component_id="support-team", version=1)]
 
     def test_list_shows_db_component_named_like_a_code_id(self, registry, db):
         code_agent = _StubAgent()
         code_agent.id = "support"
         code_agent.name = "Support Code"
-        shadowed = StudioTools(registry=registry, db=db, agents_list=[code_agent])
-        created = _loads(shadowed.create_agent(name="support", instructions="i", model_id="gpt-5.4"))
-        assert created["id"] == "support-2"
+        shadowed = _studio(registry, db, agents_list=[code_agent])
+        created = _create_agent(
+            shadowed,
+            _agent_request("Support Code", component_id="support-db"),
+        )
+        assert created.component_id == "support-db"
 
-        listed = _loads(shadowed.list_agents())
-        ids = {row["id"] for row in listed["agents"]}
+        listed = _data(shadowed.list_agents(_agno_run_context=_context()))
+        ids = {row.component_id for row in listed}
         assert "support" in ids
-        assert "support-2" in ids
+        assert "support-db" in ids
 
-    def test_edit_collision_error_points_at_the_editable_component(self, registry, db):
-        studio = StudioTools(registry=registry, db=db)
-        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
+    def test_exact_db_id_remains_editable_when_code_name_collides(self, registry, db):
+        studio = _studio(registry, db)
+        _create_agent(studio, _agent_request("Radar Scout"))
         shadow = _StubAgent()
         shadow.id = "code-1"
         shadow.name = "Radar Scout"
-        shadowed = StudioTools(registry=registry, db=db, agents_list=[shadow])
-        out = _loads(shadowed.edit_agent("Radar Scout", instructions="x"))
-        assert "Cannot edit code-defined agent" in out["error"]
-        assert "radar-scout" in out["error"]
+        shadowed = _studio(registry, db, agents_list=[shadow])
+        out = shadowed.edit_agent(
+            "radar-scout",
+            AgentPatch(instructions="x"),
+            expected_version=1,
+            save_as="published",
+            _agno_run_context=_context(),
+        )
+        assert out.ok
+        assert out.data is not None and out.data.component_id == "radar-scout"
 
-    def test_cross_type_member_id_collision_errors(self, registry, db):
-        # An agent and team may legally share an id (uniqueness is per type);
-        # member resolution must refuse rather than silently pick the agent.
-        studio = StudioTools(registry=registry, db=db, teams=True)
-        studio.create_agent(name="helper", instructions="i", model_id="gpt-5.4")
-        studio.create_team(name="shared", instructions="i", member_ids=["helper"], model_id="gpt-5.4")
+    def test_typed_member_ref_selects_team_when_code_agent_shares_id(self, registry, db):
+        studio = _studio(registry, db, teams=True)
+        _create_agent(studio, _agent_request("helper"))
+        _create_team(
+            studio,
+            _team_request(
+                "shared",
+                [ComponentRef(component_type="agent", component_id="helper")],
+            ),
+        )
         code_agent = _StubAgent()
         code_agent.id = "shared"
         code_agent.name = "Shared Agent"
-        shadowed = StudioTools(registry=registry, db=db, teams=True, agents_list=[code_agent])
-        out = _loads(shadowed.create_team(name="squad", instructions="i", member_ids=["shared"], model_id="gpt-5.4"))
-        assert "matches both an agent and a team" in out.get("error", "")
+        shadowed = _studio(registry, db, teams=True, agents_list=[code_agent])
+        created = _create_team(
+            shadowed,
+            _team_request("squad", [ComponentRef(component_type="team", component_id="shared")]),
+        )
+        assert created.members[0].component_type == "team"
 
-    def test_cross_type_member_name_collision_errors(self, registry, db):
-        studio = StudioTools(registry=registry, db=db, teams=True)
-        studio.create_agent(name="Ops", instructions="i", model_id="gpt-5.4")
-        studio.create_agent(name="helper", instructions="i", model_id="gpt-5.4")
-        studio.create_team(name="Ops", instructions="i", member_ids=["helper"], model_id="gpt-5.4")
-        out = _loads(studio.create_team(name="squad", instructions="i", member_ids=["Ops"], model_id="gpt-5.4"))
-        assert "matches both an agent and a team" in out.get("error", "")
+    def test_typed_member_ref_ignores_cross_type_name_collision(self, registry, db):
+        studio = _studio(registry, db, teams=True)
+        _create_agent(studio, _agent_request("Ops", component_id="ops-agent"))
+        _create_agent(studio, _agent_request("helper"))
+        _create_team(
+            studio,
+            _team_request(
+                "Ops",
+                [ComponentRef(component_type="agent", component_id="helper")],
+                component_id="ops-team",
+            ),
+        )
+        created = _create_team(
+            studio,
+            _team_request("squad", [ComponentRef(component_type="team", component_id="ops-team")]),
+        )
+        assert created.members[0].component_id == "ops-team"
 
     def test_registry_less_runner_refuses_tool_bearing_component(self, db):
         from agno.tools.calculator import CalculatorTools
@@ -1028,8 +1342,11 @@ class TestStudioEmbedding:
             tools=[CalculatorTools()],
             dbs=[db],
         )
-        studio = StudioTools(registry=armed_registry, db=db)
-        studio.create_agent(name="Armed", instructions="i", model_id="gpt-5.4", tool_names=["calculator"])
+        studio = _studio(armed_registry, db)
+        _create_agent(
+            studio,
+            _agent_request("Armed", tools=[ToolRef(kind="toolkit", name="calculator")]),
+        )
         runner = StudioRunnerTools(db=db)
         out = _loads(runner.run_agent("armed", "hi"))
         assert "registry" in out.get("error", "")
@@ -1046,9 +1363,15 @@ class TestStudioEmbedding:
             tools=[CalculatorTools()],
             dbs=[db],
         )
-        studio = StudioTools(registry=armed_registry, db=db, teams=True)
-        studio.create_agent(name="Armed", instructions="i", model_id="gpt-5.4", tool_names=["calculator"])
-        studio.create_team(name="Crew", instructions="i", member_ids=["armed"], model_id="gpt-5.4")
+        studio = _studio(armed_registry, db, teams=True)
+        _create_agent(
+            studio,
+            _agent_request("Armed", tools=[ToolRef(kind="toolkit", name="calculator")]),
+        )
+        _create_team(
+            studio,
+            _team_request("Crew", [ComponentRef(component_type="agent", component_id="armed")]),
+        )
 
         runner = StudioRunnerTools(db=db)
         out = _loads(runner.run_team("crew", "hi"))
@@ -1067,21 +1390,36 @@ class TestStudioEmbedding:
             tools=[CalculatorTools()],
             dbs=[db],
         )
-        studio = StudioTools(registry=armed_registry, db=db, teams=True, workflows=True)
-        studio.create_agent(name="Armed", instructions="i", model_id="gpt-5.4", tool_names=["calculator"])
-        studio.create_team(name="Crew", instructions="i", member_ids=["armed"], model_id="gpt-5.4")
-        studio.create_workflow(name="Flow", description="d", step_specs=[{"name": "s1", "agent_id": "armed"}])
+        studio = _studio(armed_registry, db, teams=True, workflows=True)
+        _create_agent(
+            studio,
+            _agent_request("Armed", tools=[ToolRef(kind="toolkit", name="calculator")]),
+        )
+        _create_team(
+            studio,
+            _team_request("Crew", [ComponentRef(component_type="agent", component_id="armed")]),
+        )
+        _create_workflow(
+            studio,
+            _workflow_request(
+                "Flow",
+                [AgentWorkflowStep(kind="agent", name="s1", component_id="armed")],
+            ),
+        )
 
         toolless_registry = Registry(name="Toolless", models=[OpenAIResponses(id="gpt-5.4")], dbs=[db])
         runner = StudioRunnerTools(registry=toolless_registry, db=db)
 
         out = _loads(runner.run_team("crew", "hi"))
-        # The refusal names the member and the tool functions it lost.
-        assert "nested component armed" in out.get("error", "")
+        # The refusal names the pinned member and the tool functions it lost.
+        assert "member agent 'armed'" in out.get("error", "")
+        assert "version 1" in out.get("error", "")
         assert "add" in out.get("error", "")
 
         out = _loads(runner.run_workflow("flow", "go"))
-        assert "nested component armed" in out.get("error", "")
+        assert "pins agent 'armed'" in out.get("error", "")
+        assert "version 1" in out.get("error", "")
+        assert "add" in out.get("error", "")
 
         # The complete registry still dispatches: the guard refuses degradation,
         # not composition.
@@ -1090,8 +1428,25 @@ class TestStudioEmbedding:
 
     def test_registry_less_runner_refuses_workflow_with_code_defined_step(self, registry, db):
         code_agent = _StubAgent()
-        studio = StudioTools(registry=registry, db=db, workflows=True, agents_list=[code_agent])
-        studio.create_workflow(name="Flow", description="d", step_specs=[{"name": "s1", "agent_id": "stub"}])
+        studio = _studio(registry, db, workflows=True, agents_list=[code_agent])
+        created = _create_workflow(
+            studio,
+            _workflow_request(
+                "Flow",
+                [AgentWorkflowStep(kind="agent", name="s1", component_id="stub")],
+            ),
+            save_as="draft",
+        )
+        assert created.stage == "draft"
+
+        # Persisted legacy/external configs can still carry code-defined refs;
+        # runner dispatch must fail closed without the registry.
+        db.upsert_config(
+            component_id="flow",
+            version=1,
+            stage="published",
+            guard=ComponentVersionGuard(latest_version=1, current_version=None),
+        )
 
         runner = StudioRunnerTools(db=db)
         out = _loads(runner.run_workflow("flow", "go"))
@@ -1128,9 +1483,18 @@ class TestStudioEmbedding:
         armed_registry = Registry(
             name="Armed Registry", models=[OpenAIResponses(id="gpt-5.4")], tools=[CalculatorTools()], dbs=[db]
         )
-        studio = StudioTools(registry=armed_registry, db=db, workflows=True)
-        studio.create_agent(name="Armed", instructions="i", model_id="gpt-5.4", tool_names=["calculator"])
-        studio.create_workflow(name="Direct", description="d", step_specs=[{"name": "s", "agent_id": "armed"}])
+        studio = _studio(armed_registry, db, workflows=True)
+        _create_agent(
+            studio,
+            _agent_request("Armed", tools=[ToolRef(kind="toolkit", name="calculator")]),
+        )
+        _create_workflow(
+            studio,
+            _workflow_request(
+                "Direct",
+                [AgentWorkflowStep(kind="agent", name="s", component_id="armed")],
+            ),
+        )
         # StudioTools cannot author a compound step, so the persisted config for
         # the nested shape is written directly, the way a posted config arrives.
         db.upsert_component(component_id="nested", component_type="workflow", name="Nested")
@@ -1405,7 +1769,7 @@ class TestStudioEmbedding:
         runner = StudioRunnerTools(registry=registry, db=db)
         assert "cannot reconstruct" not in _loads(runner.run_workflow("fy", "hi")).get("error", "")
 
-    def test_a_failed_reference_read_refuses_rather_than_passes(self, db, registry):
+    def test_a_failed_reference_read_refuses_without_exposing_exception_text(self, db, registry, caplog):
         """A db read that fails is not evidence of fidelity. Swallowing it would
         turn "could not check" into "checked and fine" for the one component the
         check exists to inspect."""
@@ -1435,11 +1799,15 @@ class TestStudioEmbedding:
 
         def failing(component_id, **kwargs):
             if component_id == "worker":
-                raise RuntimeError("transient db failure")
+                raise RuntimeError(PRIVATE_RUNTIME_ERROR)
             return original(component_id, **kwargs)
 
         runner._load_config_row_from_db = failing  # type: ignore[method-assign]
-        assert "transient db failure" in _loads(runner.run_team("crew", "hi"))["error"]
+        out = _loads(runner.run_team("crew", "hi"))
+
+        assert out == {"error": "StudioRunnerTools could not resolve team."}
+        assert PRIVATE_RUNTIME_ERROR not in json.dumps(out)
+        assert PRIVATE_RUNTIME_ERROR not in caplog.text
 
     def test_reference_stored_under_another_type_is_refused(self, db, registry):
         """A code-defined reference is simply absent from the components table.
@@ -1502,49 +1870,39 @@ class TestStudioEmbedding:
         assert whole._workflow_for_run("flow").steps[0].agent.output_schema is Report
 
     def test_create_refuses_an_idless_member_or_step(self, registry, db):
-        # Persisting a reference to a code-defined component with no id would
-        # store agent_id null; on reload a registry lookup by id=None binds
-        # whichever id-less component it sees first. Refuse at write time.
-        from agno.agent.agent import Agent as AgentClass
-
-        helper = AgentClass(name="Helper", model=OpenAIResponses(id="gpt-5.4"))
-        studio = StudioTools(registry=registry, db=db, teams=True, workflows=True, agents_list=[helper])
-
-        created = _loads(studio.create_team(name="crew", instructions="i", member_ids=["Helper"], model_id="gpt-5.4"))
-        assert "no id" in created.get("error", "")
+        # Typed component refs require a stable non-empty id before Studio can
+        # persist either a team member or workflow executor.
+        with pytest.raises(ValueError):
+            ComponentRef(component_type="agent", component_id="")
+        with pytest.raises(ValueError):
+            AgentWorkflowStep(kind="agent", name="s1", component_id="")
         assert db.get_component("crew") is None
+        assert db.get_component("flow") is None
 
-        created = _loads(
-            studio.create_workflow(name="flow", description="d", step_specs=[{"name": "s1", "agent_id": "Helper"}])
-        )
-        assert "no id" in created.get("error", "")
-
-        # An empty-string id is refused the same way: the write guard matches
-        # the load guard's falsiness test, or the component is created and
-        # listed but never loadable.
-        blank = AgentClass(id="", name="Blank", model=OpenAIResponses(id="gpt-5.4"))
-        studio_blank = StudioTools(registry=registry, db=db, teams=True, agents_list=[blank])
-        created = _loads(
-            studio_blank.create_team(name="crew2", instructions="i", member_ids=["Blank"], model_id="gpt-5.4")
-        )
-        assert "no id" in created.get("error", "")
-
-    def test_edit_team_refuses_to_drop_unresolvable_members(self, registry, db):
-        # Team.from_dict resolves members through the registry and db only; a
-        # code-defined agents_list member is invisible to it, so an unrelated
-        # edit must refuse rather than publish the silently shrunken roster.
+    def test_edit_team_preserves_code_defined_member_ref(self, registry, db):
         from agno.agent.agent import Agent as AgentClass
 
         worker = AgentClass(id="worker", name="Worker", model=OpenAIResponses(id="gpt-5.4"))
-        studio = StudioTools(registry=registry, db=db, teams=True, agents_list=[worker])
-        created = _loads(studio.create_team(name="crew", instructions="i", member_ids=["worker"], model_id="gpt-5.4"))
-        assert "error" not in created
+        studio = _studio(registry, db, teams=True, agents_list=[worker])
+        created = _create_team(
+            studio,
+            _team_request("crew", [ComponentRef(component_type="agent", component_id="worker")]),
+            save_as="draft",
+        )
+        assert created.members == [ComponentRef(component_type="agent", component_id="worker")]
 
-        out = _loads(studio.edit_team("crew", instructions="new"))
-        assert "would drop members" in out.get("error", "")
+        out = studio.edit_team(
+            "crew",
+            TeamPatch(instructions="new"),
+            expected_version=1,
+            _agno_run_context=_context(),
+        )
+        assert out.ok, out.error
+        assert out.data is not None
+        assert out.data.members == [ComponentRef(component_type="agent", component_id="worker")]
 
         # The stored roster is intact and still names the member.
-        row = db.get_config(component_id="crew")
+        row = db.get_config(component_id="crew", version=2)
         stored = row.get("config") if isinstance(row, dict) else {}
         assert (stored or {}).get("members"), "edit must not have persisted a memberless version"
 
@@ -1626,47 +1984,84 @@ class TestStudioEmbedding:
                 self.topic = topic
                 super().__init__(**kwargs)
 
-        researcher = _UncopyableAgent(
-            "ai", id="researcher", name="Researcher", model=OpenAIResponses(id="gpt-5.4"), db=db
+        live_model = OpenAIResponses(id="gpt-5.4")
+        researcher = _UncopyableAgent("ai", id="researcher", name="Researcher", model=live_model, db=db)
+        reg = Registry(name="Singleton Registry", agents=[researcher], models=[live_model], dbs=[db])
+        studio = _studio(reg, db, workflows=True)
+        created = _create_workflow(
+            studio,
+            _workflow_request(
+                "Flow",
+                [AgentWorkflowStep(kind="agent", name="s1", component_id="researcher")],
+            ),
+            save_as="draft",
         )
-        reg = Registry(name="Singleton Registry", agents=[researcher], models=[OpenAIResponses(id="gpt-5.4")], dbs=[db])
-        studio = StudioTools(registry=reg, db=db, workflows=True)
-        created = _loads(
-            studio.create_workflow(name="Flow", description="d", step_specs=[{"name": "s1", "agent_id": "researcher"}])
+        assert created.stage == "draft"
+        db.upsert_config(
+            component_id="flow",
+            version=1,
+            stage="published",
+            guard=ComponentVersionGuard(latest_version=1, current_version=None),
         )
-        assert "error" not in created
 
         out = _loads(StudioRunnerTools(registry=reg, db=db).run_workflow("flow", "go"))
         assert "shared registry instance" in out.get("error", "")
 
         # Reads reach the workflow, and no read or edit reports the dispatch
         # refusal, so the offending step stays repairable.
-        assert "error" not in _loads(studio.get_workflow("flow"))
-        assert "shared registry instance" not in _loads(studio.edit_workflow("flow", description="new")).get(
-            "error", ""
+        assert studio.get_workflow("flow", _agno_run_context=_context()).ok
+        edited = studio.edit_workflow(
+            "flow",
+            WorkflowPatch(description="new"),
+            expected_version=1,
+            _agno_run_context=_context(),
         )
+        assert edited.ok, edited.error
 
     def test_healthy_workflow_step_dispatches(self, registry, db):
         # The isolation check must not refuse a step whose registry agent
         # copies cleanly.
         from agno.agent.agent import Agent as AgentClass
 
-        researcher = AgentClass(id="researcher", name="Researcher", model=OpenAIResponses(id="gpt-5.4"), db=db)
-        reg = Registry(name="Healthy Registry", agents=[researcher], models=[OpenAIResponses(id="gpt-5.4")], dbs=[db])
-        studio = StudioTools(registry=reg, db=db, workflows=True)
-        studio.create_workflow(name="Flow", description="d", step_specs=[{"name": "s1", "agent_id": "researcher"}])
+        live_model = OpenAIResponses(id="gpt-5.4")
+        researcher = AgentClass(id="researcher", name="Researcher", model=live_model, db=db)
+        reg = Registry(name="Healthy Registry", agents=[researcher], models=[live_model], dbs=[db])
+        studio = _studio(reg, db, workflows=True)
+        _create_workflow(
+            studio,
+            _workflow_request(
+                "Flow",
+                [AgentWorkflowStep(kind="agent", name="s1", component_id="researcher")],
+            ),
+            save_as="draft",
+        )
+        db.upsert_config(
+            component_id="flow",
+            version=1,
+            stage="published",
+            guard=ComponentVersionGuard(latest_version=1, current_version=None),
+        )
 
         loaded = StudioRunnerTools(registry=reg, db=db)._workflow_for_run("flow")
         assert loaded is not None
         assert loaded.steps[0].agent is not researcher
 
-    def test_model_rebuild_warning_fires_on_dispatch_without_registry(self, registry, db):
-        # Model connection settings are never persisted; a rebuilt model must
-        # announce that provider defaults apply. Reads stay quiet.
+    def test_legacy_model_rebuild_warning_fires_on_dispatch_without_registry(self, registry, db):
+        # Legacy configs retain the warning-only behavior. Typed Studio configs
+        # are covered below and fail closed instead. Reads stay quiet.
         import logging
 
-        studio = StudioTools(registry=registry, db=db)
-        studio.create_agent(name="Plain", instructions="i", model_id="gpt-5.4")
+        db.upsert_component(component_id="plain", component_type="agent", name="Plain")
+        db.upsert_config(
+            component_id="plain",
+            stage="published",
+            config={
+                "id": "plain",
+                "name": "Plain",
+                "instructions": "hi",
+                "model": {"id": "gpt-5.4", "provider": "OpenAI", "name": "OpenAIResponses"},
+            },
+        )
 
         records: list = []
         handler = logging.Handler()
@@ -1698,54 +2093,207 @@ class TestStudioEmbedding:
             logging.getLogger("agno").removeHandler(handler)
         assert not any("rebuilt from its stored config" in message for message in records)
 
-    def test_compat_run_methods_carry_legacy_id_key(self, registry, db):
-        stub = _StubAgent()
-        studio = StudioTools(registry=registry, db=db, agents_list=[stub])
-        payload = _loads(studio.run_agent("stub", "hi"))
-        assert payload["id"] == payload["agent_id"] == "stub"
+    def test_typed_agent_requires_registry_before_any_model_call(self, db, monkeypatch):
+        private_model = OpenAIResponses(
+            id="private-model",
+            base_url="https://private-model.invalid/v1",
+            api_key="private-key",
+        )
+        full = Registry(name="Full", models=[private_model], dbs=[db])
+        studio = _studio(full, db)
+        _create_agent(
+            studio,
+            AgentCreate(
+                component_id="private-agent",
+                name="Private Agent",
+                instructions="Use the private endpoint",
+                model=ModelRef(id="private-model", provider="OpenAI", name="OpenAIResponses"),
+            ),
+        )
 
-        error = _loads(studio.run_agent("no-such-agent", "hi"))
+        stored = db.get_config("private-agent")
+        assert stored is not None
+        assert stored["config"]["model"] == {
+            "id": "private-model",
+            "provider": "OpenAI",
+            "name": "OpenAIResponses",
+        }
+
+        network_calls: List[str] = []
+
+        def fail_network(*_args: Any, **_kwargs: Any) -> None:
+            network_calls.append("invoke")
+            raise AssertionError("model network path must not be reached")
+
+        monkeypatch.setattr(OpenAIResponses, "invoke", fail_network)
+        error = _loads(StudioRunnerTools(db=db).run_agent("private-agent", "hi"))["error"]
+
+        assert "typed Studio" in error
+        assert "registry" in error
+        assert network_calls == []
+
+    def test_typed_agent_refuses_a_rebuilt_model_from_an_incomplete_registry(self, db, monkeypatch):
+        private_model = OpenAIResponses(
+            id="private-model",
+            base_url="https://private-model.invalid/v1",
+            api_key="private-key",
+        )
+        full = Registry(name="Full", models=[private_model], dbs=[db])
+        _create_agent(
+            _studio(full, db),
+            AgentCreate(
+                component_id="private-agent",
+                name="Private Agent",
+                instructions="Use the private endpoint",
+                model=ModelRef(id="private-model", provider="OpenAI", name="OpenAIResponses"),
+            ),
+        )
+        incomplete = Registry(name="Incomplete", models=[OpenAIResponses(id="another-model")], dbs=[db])
+
+        network_calls: List[str] = []
+
+        def fail_network(*_args: Any, **_kwargs: Any) -> None:
+            network_calls.append("invoke")
+            raise AssertionError("model network path must not be reached")
+
+        monkeypatch.setattr(OpenAIResponses, "invoke", fail_network)
+        error = _loads(StudioRunnerTools(registry=incomplete, db=db).run_agent("private-agent", "hi"))["error"]
+
+        assert "private-model" in error
+        assert "registry.models" in error
+        assert "base_url" in error
+        assert network_calls == []
+
+    def test_typed_team_and_workflow_require_registered_nested_models(self, db, monkeypatch):
+        coordinator_model = OpenAIResponses(id="gpt-5.4")
+        private_model = OpenAIResponses(
+            id="private-model",
+            base_url="https://private-model.invalid/v1",
+            api_key="private-key",
+        )
+        full = Registry(name="Full", models=[coordinator_model, private_model], dbs=[db])
+        studio = _studio(full, db, teams=True, workflows=True)
+        _create_agent(
+            studio,
+            AgentCreate(
+                component_id="private-agent",
+                name="Private Agent",
+                instructions="Use the private endpoint",
+                model=ModelRef(id="private-model", provider="OpenAI", name="OpenAIResponses"),
+            ),
+        )
+        _create_team(
+            studio,
+            _team_request(
+                "Crew",
+                [ComponentRef(component_type="agent", component_id="private-agent")],
+            ),
+        )
+        _create_workflow(
+            studio,
+            _workflow_request(
+                "Flow",
+                [AgentWorkflowStep(kind="agent", name="private-step", component_id="private-agent")],
+            ),
+        )
+
+        incomplete = Registry(name="Incomplete", models=[coordinator_model], dbs=[db])
+        network_calls: List[str] = []
+
+        def fail_network(*_args: Any, **_kwargs: Any) -> None:
+            network_calls.append("invoke")
+            raise AssertionError("model network path must not be reached")
+
+        monkeypatch.setattr(OpenAIResponses, "invoke", fail_network)
+        runner = StudioRunnerTools(registry=incomplete, db=db)
+        team_error = _loads(runner.run_team("crew", "hi"))["error"]
+        workflow_error = _loads(runner.run_workflow("flow", "hi"))["error"]
+
+        for error in (team_error, workflow_error):
+            assert "private-agent" in error
+            assert "private-model" in error
+            assert "registry.models" in error
+        assert network_calls == []
+
+    def test_code_defined_custom_model_keeps_existing_runner_behavior(self, db):
+        stub = _StubAgent()
+        stub.model = OpenAIResponses(
+            id="code-model",
+            base_url="https://code-model.invalid/v1",
+            api_key="code-key",
+        )
+
+        result = _loads(StudioRunnerTools(db=db, agents_list=[stub]).run_agent("stub", "hi"))
+
+        assert result["status"] == "COMPLETED"
+        assert stub.seen is not None
+
+    def test_studio_run_methods_preserve_runner_payload(self, registry, db):
+        stub = _StubAgent()
+        studio = _studio(registry, db, agents_list=[stub])
+        payload = _loads(studio.run_agent("stub", "hi", _agno_run_context=_context()))
+        assert payload["agent_id"] == "stub"
+        assert "id" not in payload
+
+        error = _loads(studio.run_agent("no-such-agent", "hi", _agno_run_context=_context()))
         assert "error" in error and "id" not in error
 
-    def test_create_team_ambiguous_member_name_errors(self, registry, db):
-        studio = StudioTools(registry=registry, db=db, teams=True)
-        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
-        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
-        out = _loads(studio.create_team(name="squad", instructions="i", member_ids=["Radar Scout"], model_id="gpt-5.4"))
-        assert "Ambiguous" in out.get("error", "")
+    def test_create_team_uses_exact_typed_member_ref(self, registry, db):
+        studio = _studio(registry, db, teams=True)
+        _create_agent(studio, _agent_request("Radar Scout", component_id="radar-a"))
+        _create_agent(studio, _agent_request("Radar Scout", component_id="radar-b"))
+        created = _create_team(
+            studio,
+            _team_request("squad", [ComponentRef(component_type="agent", component_id="radar-b")]),
+        )
+        assert created.members == [ComponentRef(component_type="agent", component_id="radar-b", version=1)]
 
-    def test_delete_requires_exact_id_and_points_to_it(self, registry, db):
-        studio = StudioTools(registry=registry, db=db)
-        studio.create_agent(name="Radar Scout", instructions="i", model_id="gpt-5.4")
-        out = _loads(studio.delete_agent("Radar Scout"))
-        assert "error" in out
-        assert "radar-scout" in out["error"]
-        assert _loads(studio.delete_agent("radar-scout"))["status"] == "deleted"
+    def test_archive_requires_exact_component_id(self, registry, db):
+        studio = _studio(registry, db)
+        _create_agent(studio, _agent_request("Radar Scout"))
+        missing = studio.archive_agent("Radar Scout", expected_current_version=1, _agno_run_context=_context())
+        assert missing.error is not None and missing.error.code == "invalid_component_id"
+        archived = studio.archive_agent("radar-scout", expected_current_version=1, _agno_run_context=_context())
+        assert archived.ok and archived.status == "archived"
 
     def test_edit_reaches_db_component_shadowed_by_code_defined_name(self, registry, db):
         # A code-defined component NAMED like a DB component's id must not make
         # the DB component uneditable: exact ids win on every path.
-        studio = StudioTools(registry=registry, db=db)
-        studio.create_agent(name="support", instructions="i", model_id="gpt-5.4")
+        studio = _studio(registry, db)
+        _create_agent(studio, _agent_request("support"))
         shadow = _StubAgent()
         shadow.id = "code-1"
         shadow.name = "support"
-        shadowed = StudioTools(registry=registry, db=db, agents_list=[shadow])
-        got = _loads(shadowed.get_agent("support"))
-        assert got["id"] == "support"
-        out = _loads(shadowed.edit_agent("support", instructions="updated"))
-        assert out.get("status") == "edited"
-        assert out.get("id") == "support"
+        shadowed = _studio(registry, db, agents_list=[shadow])
+        got = _data(shadowed.get_agent("support", _agno_run_context=_context()))
+        assert got.component_id == "support"
+        out = shadowed.edit_agent(
+            "support",
+            AgentPatch(instructions="updated"),
+            expected_version=1,
+            save_as="published",
+            _agno_run_context=_context(),
+        )
+        assert out.ok and out.status == "edited"
+        assert out.data is not None and out.data.component_id == "support"
 
-    def test_edit_by_display_name_accumulates_drafts_with_versions(self, registry, db):
-        # The edit base version must come from the RESOLVED id: a display-name
-        # edit picks up the pending draft, not the published config.
-        studio = StudioTools(registry=registry, db=db, versions=True)
-        studio.create_agent(name="Radar Scout", instructions="original", model_id="gpt-5.4")
-        first = _loads(studio.edit_agent("radar-scout", instructions="first-change"))
-        assert first.get("status") == "edited"
-        second = _loads(studio.edit_agent("Radar Scout", description="second-change"))
-        assert second.get("status") == "edited"
+    def test_exact_id_edits_accumulate_drafts_with_expected_version(self, registry, db):
+        studio = _studio(registry, db)
+        _create_agent(studio, _agent_request("Radar Scout", instructions="original"))
+        first = studio.edit_agent(
+            "radar-scout",
+            AgentPatch(instructions="first-change"),
+            expected_version=1,
+            _agno_run_context=_context(),
+        )
+        assert first.ok and first.status == "edited"
+        second = studio.edit_agent(
+            "radar-scout",
+            AgentPatch(description="second-change"),
+            expected_version=2,
+            _agno_run_context=_context(),
+        )
+        assert second.ok and second.status == "edited"
 
         configs = db.list_configs("radar-scout", include_config=True)
         drafts = [c for c in configs if c.get("stage") == "draft"]
@@ -1754,10 +2302,175 @@ class TestStudioEmbedding:
         assert latest["config"]["description"] == "second-change"
 
     def test_studio_instructions_carry_run_guidance(self, registry, db):
-        studio = StudioTools(registry=registry, db=db)
+        studio = _studio(registry, db)
         instructions = studio.instructions or ""
-        assert "sequentially" in instructions
-        assert "ambiguous display name" in instructions.lower()
+        assert "current published version" in instructions
+        assert "exact typed references" in instructions.lower()
+
+
+class TestTypedRegistryExactness:
+    def test_dispatch_refuses_an_ambiguous_exact_model_reference(self, db):
+        intended = OpenAIResponses(
+            id="private-model",
+            base_url="https://intended-model.invalid/v1",
+            api_key="intended-secret",
+        )
+        initial_registry = Registry(name="initial", models=[intended], dbs=[db])
+        studio = _studio(initial_registry, db)
+        _create_agent(
+            studio,
+            AgentCreate(
+                component_id="model-bound-agent",
+                name="Model bound agent",
+                instructions="Use the exact private model.",
+                model=ModelRef(id="private-model", provider=intended.provider, name=intended.name),
+            ),
+        )
+        wrong = OpenAIResponses(
+            id="private-model",
+            base_url="https://wrong-model.invalid/v1",
+            api_key="wrong-secret",
+        )
+        ambiguous_registry = Registry(name="ambiguous", models=[wrong, intended], dbs=[db])
+
+        with pytest.raises(ComponentNeedsRegistryError, match="model reference.*ambiguous") as error:
+            StudioRunnerTools(registry=ambiguous_registry, db=db)._agent_for_run("model-bound-agent")
+
+        assert "wrong-model.invalid" not in str(error.value)
+        assert "wrong-secret" not in str(error.value)
+
+    def test_dispatch_refuses_an_ambiguous_exact_tool_reference(self, db):
+        model = OpenAIResponses(id="gpt-5.4")
+
+        def intended_lookup(query: str) -> str:
+            return f"intended: {query}"
+
+        def wrong_lookup(query: str) -> str:
+            return f"wrong: {query}"
+
+        intended_lookup.__name__ = "lookup"
+        wrong_lookup.__name__ = "lookup"
+        initial_registry = Registry(name="initial", tools=[intended_lookup], models=[model], dbs=[db])
+        studio = _studio(initial_registry, db)
+        _create_agent(
+            studio,
+            _agent_request(
+                "Tool bound agent",
+                component_id="tool-bound-agent",
+                tools=[ToolRef(kind="function", name="lookup")],
+            ),
+        )
+        ambiguous_registry = Registry(
+            name="ambiguous",
+            tools=[intended_lookup, wrong_lookup],
+            models=[model],
+            dbs=[db],
+        )
+
+        with pytest.raises(ComponentNeedsRegistryError, match="tool reference.*ambiguous"):
+            StudioRunnerTools(registry=ambiguous_registry, db=db)._agent_for_run("tool-bound-agent")
+
+    def test_dispatch_refuses_when_a_toolkit_member_shadows_a_direct_function(self, db):
+        from agno.tools.toolkit import Toolkit
+
+        model = OpenAIResponses(id="gpt-5.4")
+
+        def intended_lookup(query: str) -> str:
+            return f"intended: {query}"
+
+        def wrong_lookup(query: str) -> str:
+            return f"wrong: {query}"
+
+        intended_lookup.__name__ = "lookup"
+        wrong_lookup.__name__ = "lookup"
+        wrong_toolkit = Toolkit(name="wrongkit", tools=[wrong_lookup])
+        initial_registry = Registry(
+            name="initial",
+            tools=[intended_lookup],
+            models=[model],
+            dbs=[db],
+        )
+        studio = _studio(initial_registry, db)
+        _create_agent(
+            studio,
+            _agent_request(
+                "Shadowed tool agent",
+                component_id="shadowed-tool-agent",
+                tools=[ToolRef(kind="function", name="lookup")],
+            ),
+        )
+
+        shadowed_registry = Registry(
+            name="shadowed",
+            tools=[intended_lookup, wrong_toolkit],
+            models=[model],
+            dbs=[db],
+        )
+
+        with pytest.raises(ComponentNeedsRegistryError, match="runtime binding.*diverges"):
+            StudioRunnerTools(registry=shadowed_registry, db=db)._agent_for_run("shadowed-tool-agent")
+
+    def test_same_entrypoint_registered_directly_and_in_a_toolkit_is_safe(self, db):
+        from agno.tools.toolkit import Toolkit
+
+        model = OpenAIResponses(id="gpt-5.4")
+
+        def lookup(query: str) -> str:
+            return f"same: {query}"
+
+        registry = Registry(
+            name="same behavior",
+            tools=[lookup, Toolkit(name="samekit", tools=[lookup])],
+            models=[model],
+            dbs=[db],
+        )
+        studio = _studio(registry, db)
+        _create_agent(
+            studio,
+            _agent_request(
+                "Same behavior agent",
+                component_id="same-behavior-agent",
+                tools=[ToolRef(kind="function", name="lookup")],
+            ),
+        )
+
+        loaded = StudioRunnerTools(registry=registry, db=db)._agent_for_run("same-behavior-agent")
+        assert loaded is not None
+
+    def test_dispatch_refuses_an_ambiguous_workflow_function_reference(self, db):
+        def intended_execute(value: str) -> str:
+            return f"intended: {value}"
+
+        def wrong_execute(value: str) -> str:
+            return f"wrong: {value}"
+
+        intended_execute.__name__ = "execute"
+        wrong_execute.__name__ = "execute"
+        initial_registry = Registry(name="initial", functions=[intended_execute], dbs=[db])
+        studio = _studio(initial_registry, db, workflows=True)
+        _create_workflow(
+            studio,
+            WorkflowCreate(
+                component_id="function-bound-workflow",
+                name="Function bound workflow",
+                steps=[
+                    FunctionWorkflowStep(
+                        kind="function",
+                        step_id="execute-step",
+                        name="Execute",
+                        function_name="execute",
+                    )
+                ],
+            ),
+        )
+        ambiguous_registry = Registry(
+            name="ambiguous",
+            functions=[wrong_execute, intended_execute],
+            dbs=[db],
+        )
+
+        with pytest.raises(ComponentNeedsRegistryError, match="function reference.*ambiguous"):
+            StudioRunnerTools(registry=ambiguous_registry, db=db)._workflow_for_run("function-bound-workflow")
 
 
 class TestDispatchCheckInvariants:
@@ -2064,7 +2777,7 @@ class TestIncludeAllComponents:
 
     def test_studio_tools_keeps_its_reach(self, registry_with_agent, db):
         # StudioTools holds the registry as its build palette, so its run_* are unchanged.
-        assert StudioTools(registry=registry_with_agent, db=db)._runner_tools.include_all_components is True
+        assert _studio(registry_with_agent, db)._runner_tools.include_all_components is True
 
 
 class TestPartialRegistryFailsClosed:
@@ -2132,8 +2845,14 @@ class TestPartialRegistryFailsClosed:
         from agno.tools.calculator import CalculatorTools
 
         full = Registry(name="full", dbs=[db], models=[OpenAIResponses(id="gpt-5.4")], tools=[CalculatorTools()])
-        StudioTools(registry=full, db=db, default_model_id="gpt-5.4").create_agent(
-            name="Calc Agent", instructions="math", model_id="gpt-5.4", tool_names=["calculator"]
+        studio = _studio(full, db, default_model=ModelRef(id="gpt-5.4"))
+        _create_agent(
+            studio,
+            AgentCreate(
+                name="Calc Agent",
+                instructions="math",
+                tools=[ToolRef(kind="toolkit", name="calculator")],
+            ),
         )
 
         partial = Registry(name="partial", dbs=[db], models=[OpenAIResponses(id="gpt-5.4")])
@@ -2143,14 +2862,17 @@ class TestPartialRegistryFailsClosed:
         assert "calc-agent" in error and "registry" in error
 
         # The component stays loadable and repairable on the same partial registry.
-        assert _loads(StudioTools(registry=partial, db=db).get_agent("calc-agent"))["id"] == "calc-agent"
+        partial_studio = _studio(partial, db)
+        assert _data(partial_studio.get_agent("calc-agent", _agno_run_context=_context())).component_id == "calc-agent"
 
     def test_a_component_without_registry_references_is_unaffected(self, db):
         from agno.registry import Registry
 
         registry = Registry(name="r", dbs=[db], models=[OpenAIResponses(id="gpt-5.4")])
-        StudioTools(registry=registry, db=db, default_model_id="gpt-5.4").create_agent(
-            name="Plain", instructions="hi", model_id="gpt-5.4"
+        studio = _studio(registry, db, default_model=ModelRef(id="gpt-5.4"))
+        _create_agent(
+            studio,
+            AgentCreate(name="Plain", instructions="hi"),
         )
         assert StudioRunnerTools(registry=registry, db=db)._find_agent("plain", for_dispatch=True) is not None
 

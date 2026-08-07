@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
 from agno.db.base import BaseDb, ComponentType, SessionType
-from agno.db.utils import resolve_db_from_config
+from agno.db.utils import resolve_db_from_config, save_component_config
 from agno.exceptions import ComponentRehydrationError
 from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
@@ -1128,18 +1128,13 @@ def save(
         agent.id = generate_id_from_name(agent.name)
 
     try:
-        # Create or update component
-        db_.upsert_component(
+        config = save_component_config(
+            db_,
             component_id=agent.id,
             component_type=ComponentType.AGENT,
             name=getattr(agent, "name", agent.id),
             description=getattr(agent, "description", None),
             metadata=getattr(agent, "metadata", None),
-        )
-
-        # Create or update config
-        config = db_.upsert_config(
-            component_id=agent.id,
             config=to_dict(agent),
             label=label,
             stage=stage,

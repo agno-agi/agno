@@ -25,6 +25,21 @@ from agno.workflow.workflow import Workflow, get_workflow_by_id, get_workflows
 # =============================================================================
 
 
+def _corrupt_delete_config_row(db: Any, component_id: str, version: int) -> None:
+    """Simulate an externally corrupted pin without weakening the public API."""
+    configs_table = db._get_table(table_type="component_configs")
+    assert configs_table is not None
+    with db.Session() as session:
+        result = session.execute(
+            configs_table.delete().where(
+                configs_table.c.component_id == component_id,
+                configs_table.c.version == version,
+            )
+        )
+        session.commit()
+    assert result.rowcount == 1
+
+
 def _create_mock_db_class():
     """Create a concrete BaseDb subclass with all abstract methods stubbed."""
     abstract_methods = {}
@@ -42,6 +57,8 @@ def mock_db():
     db = MockDbClass()
 
     # Configure common mock methods
+    db.get_component = MagicMock(return_value=None)
+    db.create_component_with_config = MagicMock(return_value=({"component_id": "test-workflow"}, {"version": 1}))
     db.upsert_component = MagicMock()
     db.upsert_config = MagicMock(return_value={"version": 1})
     db.delete_component = MagicMock(return_value=True)
@@ -284,24 +301,28 @@ class TestWorkflowFromDict:
 class TestWorkflowSave:
     """Tests for Workflow.save() method."""
 
-    def test_save_calls_upsert_component(self, basic_workflow, mock_db):
-        """Test save calls upsert_component with correct parameters."""
-        mock_db.upsert_config.return_value = {"version": 1}
-
+    def test_save_creates_component_and_initial_config_atomically(self, basic_workflow, mock_db):
+        """Test first save creates the component and config together."""
         basic_workflow.db = mock_db
         version = basic_workflow.save()
 
-        mock_db.upsert_component.assert_called_once_with(
-            component_id="test-workflow",
-            component_type=ComponentType.WORKFLOW,
-            name="Test Workflow",
-            description="A test workflow for unit testing",
-            metadata=None,
-        )
+        call_args = mock_db.create_component_with_config.call_args
+        assert call_args.kwargs["component_id"] == "test-workflow"
+        assert call_args.kwargs["component_type"] == ComponentType.WORKFLOW
+        assert call_args.kwargs["name"] == "Test Workflow"
+        assert call_args.kwargs["description"] == "A test workflow for unit testing"
+        assert call_args.kwargs["config"]["id"] == "test-workflow"
+        mock_db.upsert_component.assert_not_called()
+        mock_db.upsert_config.assert_not_called()
         assert version == 1
 
-    def test_save_calls_upsert_config(self, basic_workflow, mock_db):
-        """Test save calls upsert_config with workflow config."""
+    def test_existing_save_upserts_config_with_projection(self, basic_workflow, mock_db):
+        """Test a published save updates config and projection together."""
+        mock_db.get_component.return_value = {
+            "component_id": "test-workflow",
+            "component_type": "workflow",
+            "deleted_at": None,
+        }
         mock_db.upsert_config.return_value = {"version": 2}
 
         basic_workflow.db = mock_db
@@ -311,46 +332,44 @@ class TestWorkflowSave:
         call_args = mock_db.upsert_config.call_args
         assert call_args.kwargs["component_id"] == "test-workflow"
         assert "config" in call_args.kwargs
+        assert call_args.kwargs["projection"] == {
+            "name": "Test Workflow",
+            "description": "A test workflow for unit testing",
+            "metadata": None,
+        }
         assert version == 2
 
     def test_save_with_explicit_db(self, basic_workflow, mock_db):
         """Test save uses explicitly provided db."""
-        mock_db.upsert_config.return_value = {"version": 1}
-
         version = basic_workflow.save(db=mock_db)
 
-        mock_db.upsert_component.assert_called_once()
-        mock_db.upsert_config.assert_called_once()
+        mock_db.create_component_with_config.assert_called_once()
+        mock_db.upsert_component.assert_not_called()
+        mock_db.upsert_config.assert_not_called()
         assert version == 1
 
     def test_save_with_label(self, basic_workflow, mock_db):
-        """Test save passes label to upsert_config."""
-        mock_db.upsert_config.return_value = {"version": 1}
-
+        """Test first save passes the label to the atomic create."""
         basic_workflow.db = mock_db
         basic_workflow.save(label="production")
 
-        call_args = mock_db.upsert_config.call_args
+        call_args = mock_db.create_component_with_config.call_args
         assert call_args.kwargs["label"] == "production"
 
     def test_save_with_stage(self, basic_workflow, mock_db):
-        """Test save passes stage to upsert_config."""
-        mock_db.upsert_config.return_value = {"version": 1}
-
+        """Test first save passes the stage to the atomic create."""
         basic_workflow.db = mock_db
         basic_workflow.save(stage="draft")
 
-        call_args = mock_db.upsert_config.call_args
+        call_args = mock_db.create_component_with_config.call_args
         assert call_args.kwargs["stage"] == "draft"
 
     def test_save_with_notes(self, basic_workflow, mock_db):
-        """Test save passes notes to upsert_config."""
-        mock_db.upsert_config.return_value = {"version": 1}
-
+        """Test first save passes notes to the atomic create."""
         basic_workflow.db = mock_db
         basic_workflow.save(notes="Initial version")
 
-        call_args = mock_db.upsert_config.call_args
+        call_args = mock_db.create_component_with_config.call_args
         assert call_args.kwargs["notes"] == "Initial version"
 
     def test_save_without_db_raises_error(self, basic_workflow):
@@ -388,7 +407,7 @@ class TestWorkflowSave:
 
     def test_save_returns_none_on_error(self, basic_workflow, mock_db):
         """Test save returns None when database operation fails."""
-        mock_db.upsert_component.side_effect = Exception("Database error")
+        mock_db.create_component_with_config.side_effect = Exception("Database error")
 
         basic_workflow.db = mock_db
         version = basic_workflow.save()
@@ -817,7 +836,7 @@ class TestStepPinFailures:
         member.save(db=db)
         links = db.get_links(component_id="dp-wf", version=1)
         pinned = next(link for link in links if link["link_kind"] == "step_agent")["child_version"]
-        assert db.delete_config(component_id="dp-agent", version=pinned)
+        _corrupt_delete_config_row(db, "dp-agent", pinned)
 
         lenient = get_workflow_by_id(db=db, id="dp-wf", strict=False)
         assert lenient is not None
@@ -878,7 +897,10 @@ class TestWritePathFidelity:
 
         db = SqliteDb(db_file=str(tmp_path / "noname.db"))
         Workflow(id="nn-wf", name="WF", steps=[Step(agent=Agent(id="nn-agent", name="A"))]).save(db=db)
-        db.delete_component("nn-agent", hard_delete=True)
+        # Deliberately corrupt the graph to exercise lenient degradation. The
+        # normal lifecycle is dependency-safe, so this test-only setup must
+        # explicitly bypass that guard.
+        db.delete_component("nn-agent", hard_delete=True, require_no_dependents=False)
 
         loaded = Workflow.load(id="nn-wf", db=db, strict=False)
 

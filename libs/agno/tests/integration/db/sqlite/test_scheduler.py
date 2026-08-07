@@ -7,6 +7,7 @@ import uuid
 
 import pytest
 
+from agno.db.schemas.scheduler import STUDIO_SCHEDULE_MANAGED_BY
 from agno.db.sqlite import SqliteDb
 
 
@@ -115,6 +116,36 @@ class TestScheduleCRUD:
         ids = {s["id"] for s in all_schedules}
         assert s1["id"] in ids
         assert s2["id"] in ids
+
+    def test_list_excludes_studio_before_count_and_pagination(self, db):
+        studio = _make_schedule(
+            name="aaa-studio-hidden",
+            created_at=3,
+            managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+            owner_actor_id="studio-actor",
+            target_type="agent",
+            target_id="studio-agent",
+        )
+        ordinary_first = _make_schedule(name="bbb-ordinary-first", created_at=2)
+        ordinary_second = _make_schedule(name="ccc-ordinary-second", created_at=1)
+        db.create_schedule(studio)
+        db.create_schedule(ordinary_first)
+        db.create_schedule(ordinary_second)
+
+        page_one, total_count = db.get_schedules(
+            limit=1,
+            page=1,
+            exclude_managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+        )
+        page_two, second_total_count = db.get_schedules(
+            limit=1,
+            page=2,
+            exclude_managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+        )
+
+        assert total_count == second_total_count == 2
+        assert [schedule["id"] for schedule in page_one] == [ordinary_first["id"]]
+        assert [schedule["id"] for schedule in page_two] == [ordinary_second["id"]]
 
     def test_update_schedule(self, db):
         sched = _make_schedule()

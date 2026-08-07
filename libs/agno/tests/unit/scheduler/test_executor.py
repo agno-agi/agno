@@ -6,6 +6,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from agno.db.schemas.scheduler import (
+    STUDIO_SCHEDULE_ACTOR_HEADER,
+    STUDIO_SCHEDULE_MANAGED_BY,
+    Schedule,
+)
 from agno.scheduler.executor import ScheduleExecutor, _to_form_value
 
 
@@ -158,6 +163,85 @@ class TestExecutorBackgroundRun:
         )
         assert result["status"] == "failed"
         assert "Missing run_id" in result["error"]
+
+
+class TestStudioScheduleIdentity:
+    @pytest.fixture
+    def executor(self):
+        return ScheduleExecutor(base_url="http://localhost:8000", internal_service_token="tok", poll_interval=0)
+
+    @staticmethod
+    def schedule(**overrides):
+        values = {
+            "id": "studio-schedule",
+            "name": "Daily research",
+            "cron_expr": "0 9 * * *",
+            "endpoint": "/agents/researcher/runs",
+            "method": "POST",
+            "payload": {"message": "private schedule prompt"},
+            "managed_by": STUDIO_SCHEDULE_MANAGED_BY,
+            "owner_actor_id": "actor-123",
+            "target_type": "agent",
+            "target_id": "researcher",
+        }
+        values.update(overrides)
+        return Schedule(**values)
+
+    @pytest.mark.asyncio
+    async def test_studio_schedule_delegates_server_owned_actor_without_payload_provenance(self, executor):
+        client = AsyncMock()
+        with patch.object(executor, "_get_client", AsyncMock(return_value=client)):
+            with patch.object(
+                executor,
+                "_background_run",
+                AsyncMock(return_value={"status": "success"}),
+            ) as background_run:
+                await executor._call_endpoint(self.schedule())
+
+        _, _, headers, form_payload, _, _, _ = background_run.await_args.args
+        assert headers["Authorization"] == "Bearer tok"
+        assert headers[STUDIO_SCHEDULE_ACTOR_HEADER] == "actor-123"
+        assert form_payload == {
+            "message": "private schedule prompt",
+            "stream": "false",
+            "background": "true",
+        }
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            {"owner_actor_id": "  "},
+            {"owner_actor_id": "actor\nspoof"},
+            {"owner_actor_id": "josé"},
+            {"target_id": "different-agent"},
+            {"target_type": "team"},
+            {"method": "GET"},
+        ],
+    )
+    async def test_malformed_studio_provenance_fails_before_http(self, executor, overrides):
+        get_client = AsyncMock()
+        with patch.object(executor, "_get_client", get_client):
+            with pytest.raises(RuntimeError, match="provenance is invalid"):
+                await executor._call_endpoint(self.schedule(**overrides))
+        get_client.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_studio_execution_exception_is_redacted_from_runs_and_logs(self, executor, caplog):
+        secret = "postgresql://admin:private-password@internal.example/agno"
+        db = MagicMock()
+        db.create_schedule_run = MagicMock()
+        db.update_schedule_run = MagicMock()
+        db.release_schedule = MagicMock()
+        db.update_schedule = MagicMock()
+
+        with patch.object(executor, "_call_endpoint", AsyncMock(side_effect=RuntimeError(secret))):
+            result = await executor.execute(self.schedule(), db)
+
+        assert result["status"] == "failed"
+        assert result["error"] == "Studio schedule execution failed"
+        assert secret not in caplog.text
+        assert secret not in str(db.update_schedule_run.call_args_list)
 
 
 class TestExecutorPollRun:

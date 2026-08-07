@@ -1492,7 +1492,7 @@ def collect_mcp_tools_from_registry(registry: Optional[Registry], mcp_tools: Lis
     Registry tools are not attached to any agent, team or workflow, so the
     other collectors never see them. They still must be connected in the
     AgentOS lifespan: components created from registry tools (e.g. via
-    StudioTool) serialize a toolkit's functions at persist time, and an
+    StudioTools) serialize a toolkit's functions at persist time, and an
     unconnected MCP toolkit has none -- its tools would be silently dropped.
     """
     if registry is None or not registry.tools:

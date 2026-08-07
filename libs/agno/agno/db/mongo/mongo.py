@@ -28,6 +28,7 @@ from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.schemas.scheduler import ScheduleNameConflictError
 from agno.db.utils import deserialize_session, deserialize_session_json_fields, deserialize_sessions
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info
@@ -43,6 +44,12 @@ except ImportError:
     raise ImportError("`pymongo` not installed. Please install it using `pip install pymongo`")
 
 DRIVER_METADATA = DriverInfo(name="Agno", version=metadata.version("agno"))
+
+
+def _is_schedule_name_conflict(error: DuplicateKeyError) -> bool:
+    """Match only MongoDB's unique schedule-name index."""
+    details = error.details
+    return isinstance(details, dict) and details.get("keyPattern") == {"name": 1}
 
 
 class MongoDb(BaseDb):
@@ -2718,8 +2725,8 @@ class MongoDb(BaseDb):
 
             result.pop("_id", None)
             return result
-        except Exception as e:
-            log_debug(f"Error getting schedule: {e}")
+        except Exception:
+            log_debug("Error getting schedule")
             return None
 
     def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
@@ -2734,8 +2741,8 @@ class MongoDb(BaseDb):
 
             result.pop("_id", None)
             return result
-        except Exception as e:
-            log_debug(f"Error getting schedule by name: {e}")
+        except Exception:
+            log_debug("Error getting schedule by name")
             return None
 
     def get_schedules(
@@ -2743,6 +2750,7 @@ class MongoDb(BaseDb):
         enabled: Optional[bool] = None,
         limit: int = 100,
         page: int = 1,
+        exclude_managed_by: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             collection = self._get_collection(table_type="schedules")
@@ -2752,6 +2760,8 @@ class MongoDb(BaseDb):
             query: Dict[str, Any] = {}
             if enabled is not None:
                 query["enabled"] = enabled
+            if exclude_managed_by is not None:
+                query["managed_by"] = {"$ne": exclude_managed_by}
 
             total_count = collection.count_documents(query)
 
@@ -2761,8 +2771,8 @@ class MongoDb(BaseDb):
             for schedule in schedules:
                 schedule.pop("_id", None)
             return schedules, total_count
-        except Exception as e:
-            log_debug(f"Error listing schedules: {e}")
+        except Exception:
+            log_debug("Error listing schedules")
             return [], 0
 
     def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -2774,9 +2784,14 @@ class MongoDb(BaseDb):
             collection.insert_one(schedule_data)
             schedule_data.pop("_id", None)
             return schedule_data
-        except Exception as e:
-            log_error(f"Error creating schedule: {e}")
-            raise e
+        except DuplicateKeyError as error:
+            if _is_schedule_name_conflict(error):
+                raise ScheduleNameConflictError(schedule_data["name"]) from None
+            log_error("Error creating schedule")
+            raise
+        except Exception:
+            log_error("Error creating schedule")
+            raise
 
     def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
         try:
@@ -2789,8 +2804,14 @@ class MongoDb(BaseDb):
             if result.matched_count == 0:
                 return None
             return self.get_schedule(schedule_id)
-        except Exception as e:
-            log_debug(f"Error updating schedule: {e}")
+        except DuplicateKeyError as error:
+            name = kwargs.get("name")
+            if isinstance(name, str) and _is_schedule_name_conflict(error):
+                raise ScheduleNameConflictError(name) from None
+            log_debug("Error updating schedule")
+            return None
+        except Exception:
+            log_debug("Error updating schedule")
             return None
 
     def delete_schedule(self, schedule_id: str) -> bool:
@@ -2805,8 +2826,8 @@ class MongoDb(BaseDb):
 
             result = schedules_collection.delete_one({"id": schedule_id})
             return result.deleted_count > 0
-        except Exception as e:
-            log_debug(f"Error deleting schedule: {e}")
+        except Exception:
+            log_debug("Error deleting schedule")
             return False
 
     def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
@@ -2836,8 +2857,8 @@ class MongoDb(BaseDb):
 
             result.pop("_id", None)
             return result
-        except Exception as e:
-            log_debug(f"Error claiming schedule: {e}")
+        except Exception:
+            log_debug("Error claiming schedule")
             return None
 
     def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
@@ -2852,8 +2873,8 @@ class MongoDb(BaseDb):
 
             result = collection.update_one({"id": schedule_id}, {"$set": updates})
             return result.matched_count > 0
-        except Exception as e:
-            log_debug(f"Error releasing schedule: {e}")
+        except Exception:
+            log_debug("Error releasing schedule")
             return False
 
     def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -2865,9 +2886,9 @@ class MongoDb(BaseDb):
             collection.insert_one(run_data)
             run_data.pop("_id", None)
             return run_data
-        except Exception as e:
-            log_error(f"Error creating schedule run: {e}")
-            raise e
+        except Exception:
+            log_error("Error creating schedule run")
+            raise
 
     def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
         try:
@@ -2879,8 +2900,8 @@ class MongoDb(BaseDb):
             if result.matched_count == 0:
                 return None
             return self.get_schedule_run(schedule_run_id)
-        except Exception as e:
-            log_debug(f"Error updating schedule run: {e}")
+        except Exception:
+            log_debug("Error updating schedule run")
             return None
 
     def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
@@ -2894,8 +2915,8 @@ class MongoDb(BaseDb):
 
             result.pop("_id", None)
             return result
-        except Exception as e:
-            log_debug(f"Error getting schedule run: {e}")
+        except Exception:
+            log_debug("Error getting schedule run")
             return None
 
     def get_schedule_runs(
@@ -2918,8 +2939,8 @@ class MongoDb(BaseDb):
             for run in runs:
                 run.pop("_id", None)
             return runs, total_count
-        except Exception as e:
-            log_debug(f"Error getting schedule runs: {e}")
+        except Exception:
+            log_debug("Error getting schedule runs")
             return [], 0
 
     # -- Learning methods (stubs) --

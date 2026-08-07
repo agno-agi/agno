@@ -7,7 +7,12 @@ import time
 from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
-from agno.db.schemas.scheduler import Schedule
+from agno.db.schemas.scheduler import (
+    STUDIO_SCHEDULE_ACTOR_HEADER,
+    Schedule,
+    is_studio_managed_schedule,
+    is_valid_studio_schedule_actor_id,
+)
 from agno.utils.log import log_error, log_info, log_warning
 
 try:
@@ -92,6 +97,7 @@ class ScheduleExecutor:
 
         # Normalize to Schedule dataclass for typed access
         sched = Schedule.from_dict(schedule) if isinstance(schedule, dict) else schedule
+        studio_managed = is_studio_managed_schedule(sched)
 
         schedule_id: Optional[str] = None
         run_id_value: Optional[str] = None
@@ -167,8 +173,12 @@ class ScheduleExecutor:
 
                 except Exception as exc:
                     last_status = "failed"
-                    last_error = str(exc)
-                    log_error(f"Schedule {schedule_id} attempt {attempt} failed: {exc}")
+                    if studio_managed:
+                        last_error = "Studio schedule execution failed"
+                        log_error(f"Studio schedule {schedule_id} attempt {attempt} failed")
+                    else:
+                        last_error = str(exc)
+                        log_error(f"Schedule {schedule_id} attempt {attempt} failed: {exc}")
 
                     updates = {
                         "completed_at": int(time.time()),
@@ -198,8 +208,11 @@ class ScheduleExecutor:
 
             return final_run
 
-        except asyncio.CancelledError as e:
-            log_warning(f"Schedule {schedule_id} execution cancelled: {str(e)}")
+        except asyncio.CancelledError as exc:
+            if studio_managed:
+                log_warning(f"Studio schedule {schedule_id} execution cancelled")
+            else:
+                log_warning(f"Schedule {schedule_id} execution cancelled: {exc}")
             if run_record_id is not None:
                 cancel_updates: Dict[str, Any] = {
                     "completed_at": int(time.time()),
@@ -223,11 +236,17 @@ class ScheduleExecutor:
                         sched.cron_expr,
                         sched.timezone or "UTC",
                     )
-                except Exception as e:
-                    log_warning(
-                        f"Failed to compute next_run_at for schedule {schedule_id}; : {e}"
-                        f"disabling schedule to prevent it from becoming stuck: {e}",
-                    )
+                except Exception as exc:
+                    if studio_managed:
+                        log_warning(
+                            f"Failed to compute next_run_at for Studio schedule {schedule_id}; "
+                            "disabling it to prevent a stuck lock"
+                        )
+                    else:
+                        log_warning(
+                            f"Failed to compute next_run_at for schedule {schedule_id}; "
+                            f"disabling it to prevent a stuck lock: {exc}"
+                        )
 
                     next_run_at = None
                     try:
@@ -236,7 +255,10 @@ class ScheduleExecutor:
                         else:
                             db.update_schedule(schedule_id, enabled=False)
                     except Exception as exc:
-                        log_error(f"Failed to disable schedule {schedule_id} after cron failure: {exc}")
+                        if studio_managed:
+                            log_error(f"Failed to disable Studio schedule {schedule_id} after cron failure")
+                        else:
+                            log_error(f"Failed to disable schedule {schedule_id} after cron failure: {exc}")
 
                 try:
                     if asyncio.iscoroutinefunction(getattr(db, "release_schedule", None)):
@@ -244,7 +266,10 @@ class ScheduleExecutor:
                     else:
                         db.release_schedule(schedule_id, next_run_at=next_run_at)
                 except Exception as exc:
-                    log_error(f"Failed to release schedule {schedule_id}: {exc}")
+                    if studio_managed:
+                        log_error(f"Failed to release Studio schedule {schedule_id}")
+                    else:
+                        log_error(f"Failed to release schedule {schedule_id}: {exc}")
 
     # ------------------------------------------------------------------
     async def _call_endpoint(self, schedule: Schedule) -> Dict[str, Any]:
@@ -261,6 +286,23 @@ class ScheduleExecutor:
         headers: Dict[str, str] = {
             "Authorization": f"Bearer {self.internal_service_token}",
         }
+
+        if is_studio_managed_schedule(schedule):
+            owner_actor_id = schedule.owner_actor_id
+            expected_target_type = schedule.target_type
+            expected_target_id = schedule.target_id
+            if (
+                not is_valid_studio_schedule_actor_id(owner_actor_id)
+                or not is_run_endpoint
+                or match is None
+                or expected_target_type not in ("agent", "team", "workflow")
+                or match.group(1) != f"{expected_target_type}s"
+                or not isinstance(expected_target_id, str)
+                or match.group(2) != expected_target_id
+            ):
+                raise RuntimeError("Studio schedule provenance is invalid")
+            assert isinstance(owner_actor_id, str)
+            headers[STUDIO_SCHEDULE_ACTOR_HEADER] = owner_actor_id
 
         client = await self._get_client()
 
@@ -415,8 +457,8 @@ class ScheduleExecutor:
                     headers=headers,
                     params={"session_id": session_id},
                 )
-            except Exception as exc:
-                log_warning(f"Poll request failed for run {run_id}: {exc}: {exc}")
+            except Exception:
+                log_warning(f"Poll request failed for run {run_id}")
                 continue
 
             if resp.status_code == 404:
@@ -436,8 +478,8 @@ class ScheduleExecutor:
 
             try:
                 data = resp.json()
-            except (json.JSONDecodeError, ValueError) as e:
-                log_warning(f"Invalid JSON in poll response for run {run_id}: {str(e)}")
+            except (json.JSONDecodeError, ValueError):
+                log_warning(f"Invalid JSON in poll response for run {run_id}")
                 continue
 
             run_status = data.get("status")

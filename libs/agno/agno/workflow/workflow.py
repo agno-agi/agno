@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 from agno.agent.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
-from agno.db.utils import resolve_db_from_config
+from agno.db.utils import resolve_db_from_config, save_component_config
 from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
@@ -1147,15 +1147,13 @@ class Workflow:
                 deduped_links.append(link)
             all_links = deduped_links
 
-            db_.upsert_component(
+            config = save_component_config(
+                db_,
                 component_id=self.id,
                 component_type=ComponentType.WORKFLOW,
                 name=self.name,
                 description=self.description,
                 metadata=self.metadata,
-            )
-            config = db_.upsert_config(
-                component_id=self.id,
                 config=self.to_dict(),
                 links=all_links,
                 label=label,

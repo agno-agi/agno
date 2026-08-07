@@ -239,6 +239,14 @@ SCHEDULE_TABLE_SCHEMA = {
     "timeout_seconds": {"type": BigInteger, "nullable": False},
     "max_retries": {"type": BigInteger, "nullable": False},
     "retry_delay_seconds": {"type": BigInteger, "nullable": False},
+    "managed_by": {"type": String, "nullable": True, "index": True},
+    "owner_actor_id": {"type": String, "nullable": True, "index": True},
+    "target_type": {"type": String, "nullable": True},
+    "target_id": {"type": String, "nullable": True},
+    "created_by_run_id": {"type": String, "nullable": True},
+    "created_by_session_id": {"type": String, "nullable": True},
+    "updated_by_run_id": {"type": String, "nullable": True},
+    "updated_by_session_id": {"type": String, "nullable": True},
     "enabled": {"type": Boolean, "nullable": False, "default": True},
     "next_run_at": {"type": BigInteger, "nullable": True, "index": True},
     "locked_by": {"type": String, "nullable": True},
@@ -248,6 +256,7 @@ SCHEDULE_TABLE_SCHEMA = {
     "__composite_indexes__": [
         {"name": "enabled_next_run_at", "columns": ["enabled", "next_run_at"]},
     ],
+    "_partial_unique_indexes": [{"name": "uq_name", "columns": ["name"], "where": "name IS NOT NULL"}],
 }
 
 

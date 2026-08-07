@@ -1,14 +1,22 @@
 """Tests for the schedule REST API router."""
 
 import time
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier, Event
 from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from agno.db.schemas.scheduler import STUDIO_SCHEDULE_MANAGED_BY, ScheduleNameConflictError
+from agno.db.sqlite import SqliteDb
 from agno.os.routers.schedules import get_schedule_router
 from agno.os.settings import AgnoAPISettings
+
+STUDIO_SCHEDULE_ID = "studio-router-private-id"
+STUDIO_PROMPT = "studio-router-private-prompt"
+STUDIO_ACTOR = "studio-router-private-actor"
 
 # =============================================================================
 # Fixtures
@@ -41,6 +49,23 @@ def _make_schedule_dict(**overrides):
     return d
 
 
+def _make_studio_schedule_dict(**overrides):
+    """Create a Studio-owned schedule whose private fields must stay hidden."""
+    defaults = {
+        "id": STUDIO_SCHEDULE_ID,
+        "name": "studio-router-private-schedule",
+        "payload": {"message": STUDIO_PROMPT},
+        "managed_by": "studio",
+        "owner_actor_id": STUDIO_ACTOR,
+        "target_type": "agent",
+        "target_id": "studio-private-agent",
+        "created_by_run_id": "studio-router-private-run",
+        "created_by_session_id": "studio-router-private-session",
+    }
+    defaults.update(overrides)
+    return _make_schedule_dict(**defaults)
+
+
 @pytest.fixture
 def mock_db():
     """Create a mock DB with schedule methods."""
@@ -70,6 +95,88 @@ def client(mock_db, settings):
     return TestClient(app)
 
 
+def _make_client_for_db(db) -> TestClient:
+    app = FastAPI()
+    app.include_router(get_schedule_router(os_db=db, settings=AgnoAPISettings()))
+    return TestClient(app, raise_server_exceptions=False)
+
+
+class _RacingCreateSqliteDb:
+    """Coordinate two requests so both miss create's name preflight."""
+
+    def __init__(self, db, barrier, winner_created, wins_insert):
+        self._db = db
+        self._barrier = barrier
+        self._winner_created = winner_created
+        self._wins_insert = wins_insert
+        self._first_lookup = True
+
+    def __getattr__(self, name):
+        return getattr(self._db, name)
+
+    def get_schedule_by_name(self, name):
+        result = self._db.get_schedule_by_name(name)
+        if self._first_lookup:
+            self._first_lookup = False
+            self._barrier.wait(timeout=5)
+        return result
+
+    def create_schedule(self, schedule_data):
+        if self._wins_insert:
+            try:
+                return self._db.create_schedule(schedule_data)
+            finally:
+                self._winner_created.set()
+        if not self._winner_created.wait(timeout=5):
+            raise RuntimeError("winning insert did not complete")
+        try:
+            return self._db.create_schedule(schedule_data)
+        except ScheduleNameConflictError:
+            winner = self._db.get_schedule_by_name(schedule_data["name"])
+            assert winner is not None
+            assert self._db.delete_schedule(winner["id"]) is True
+            raise
+
+
+class _RacingRenameSqliteDb:
+    """Coordinate two requests so both miss rename's name preflight."""
+
+    def __init__(self, db, barrier, winner_updated, wins_update, raced_name):
+        self._db = db
+        self._barrier = barrier
+        self._winner_updated = winner_updated
+        self._wins_update = wins_update
+        self._raced_name = raced_name
+        self._first_lookup = True
+
+    def __getattr__(self, name):
+        return getattr(self._db, name)
+
+    def get_schedule_by_name(self, name):
+        result = self._db.get_schedule_by_name(name)
+        if name == self._raced_name and self._first_lookup:
+            self._first_lookup = False
+            self._barrier.wait(timeout=5)
+        return result
+
+    def update_schedule(self, schedule_id, **kwargs):
+        if self._wins_update:
+            try:
+                return self._db.update_schedule(schedule_id, **kwargs)
+            finally:
+                self._winner_updated.set()
+        if not self._winner_updated.wait(timeout=5):
+            raise RuntimeError("winning update did not complete")
+        try:
+            return self._db.update_schedule(schedule_id, **kwargs)
+        except ScheduleNameConflictError:
+            winner = self._db.get_schedule_by_name(self._raced_name)
+            assert winner is not None
+            renamed = self._db.update_schedule(winner["id"], name="winner-after-race")
+            assert renamed is not None
+            raise
+
+
 # =============================================================================
 # Tests: GET /schedules
 # =============================================================================
@@ -97,6 +204,7 @@ class TestListSchedules:
         mock_db.get_schedules.assert_called_once()
         call_kwargs = mock_db.get_schedules.call_args[1]
         assert call_kwargs["enabled"] is True
+        assert call_kwargs["exclude_managed_by"] == STUDIO_SCHEDULE_MANAGED_BY
 
 
 # =============================================================================
@@ -105,6 +213,22 @@ class TestListSchedules:
 
 
 class TestCreateSchedule:
+    def test_missing_scheduler_dependency_does_not_expose_exception_details(self, client):
+        secret = "postgresql://admin:private-password@internal.example/agno"
+        with patch("agno.scheduler.cron._require_croniter", side_effect=ImportError(secret)):
+            response = client.post(
+                "/schedules",
+                json={
+                    "name": "dependency-check",
+                    "cron_expr": "0 9 * * *",
+                    "endpoint": "/agents/a1/runs",
+                },
+            )
+
+        assert response.status_code == 503
+        assert response.json() == {"detail": "Scheduler dependencies are not installed"}
+        assert secret not in response.text
+
     @patch("agno.scheduler.cron._require_pytz")
     @patch("agno.scheduler.cron._require_croniter")
     @patch("agno.scheduler.cron.validate_cron_expr", return_value=True)
@@ -161,6 +285,36 @@ class TestCreateSchedule:
         assert resp.status_code == 409
         assert "already exists" in resp.json()["detail"]
 
+    def test_concurrent_sqlite_create_returns_conflict_after_winner_is_deleted(self, tmp_path):
+        db_path = str(tmp_path / "router-create-race.db")
+        winner_db = SqliteDb(db_file=db_path, schedules_table="router_create_race_schedules")
+        winner_db.create_schedule(_make_schedule_dict(id="prime", name="prime"))
+        assert winner_db.delete_schedule("prime") is True
+        loser_db = SqliteDb(db_file=db_path, schedules_table="router_create_race_schedules")
+
+        barrier = Barrier(2)
+        winner_created = Event()
+        winner_client = _make_client_for_db(_RacingCreateSqliteDb(winner_db, barrier, winner_created, wins_insert=True))
+        loser_client = _make_client_for_db(_RacingCreateSqliteDb(loser_db, barrier, winner_created, wins_insert=False))
+        body = {
+            "name": "shared-name",
+            "cron_expr": "0 9 * * *",
+            "endpoint": "/agents/a1/runs",
+        }
+
+        with winner_client, loser_client, ThreadPoolExecutor(max_workers=2) as pool:
+            winner_future = pool.submit(winner_client.post, "/schedules", json=body)
+            loser_future = pool.submit(loser_client.post, "/schedules", json=body)
+            winner_response = winner_future.result(timeout=10)
+            loser_response = loser_future.result(timeout=10)
+
+        assert winner_response.status_code == 201
+        assert loser_response.status_code == 409
+        assert loser_response.json() == {"detail": "Schedule with name 'shared-name' already exists"}
+        schedules, total = winner_db.get_schedules()
+        assert total == 0
+        assert schedules == []
+
 
 # =============================================================================
 # Tests: GET /schedules/{schedule_id}
@@ -208,6 +362,36 @@ class TestUpdateSchedule:
         resp = client.patch("/schedules/sched-1", json={})
         assert resp.status_code == 200
         mock_db.update_schedule.assert_not_called()
+
+    def test_concurrent_sqlite_rename_returns_conflict_after_winner_is_renamed(self, tmp_path):
+        db_path = str(tmp_path / "router-rename-race.db")
+        winner_db = SqliteDb(db_file=db_path, schedules_table="router_rename_race_schedules")
+        winner_db.create_schedule(_make_schedule_dict(id="winner", name="winner-old"))
+        winner_db.create_schedule(_make_schedule_dict(id="loser", name="loser-old"))
+        loser_db = SqliteDb(db_file=db_path, schedules_table="router_rename_race_schedules")
+
+        raced_name = "shared-name"
+        barrier = Barrier(2)
+        winner_updated = Event()
+        winner_client = _make_client_for_db(
+            _RacingRenameSqliteDb(winner_db, barrier, winner_updated, wins_update=True, raced_name=raced_name)
+        )
+        loser_client = _make_client_for_db(
+            _RacingRenameSqliteDb(loser_db, barrier, winner_updated, wins_update=False, raced_name=raced_name)
+        )
+
+        with winner_client, loser_client, ThreadPoolExecutor(max_workers=2) as pool:
+            winner_future = pool.submit(winner_client.patch, "/schedules/winner", json={"name": raced_name})
+            loser_future = pool.submit(loser_client.patch, "/schedules/loser", json={"name": raced_name})
+            winner_response = winner_future.result(timeout=10)
+            loser_response = loser_future.result(timeout=10)
+
+        assert winner_response.status_code == 200
+        assert loser_response.status_code == 409
+        assert loser_response.json() == {"detail": "Schedule with name 'shared-name' already exists"}
+        assert winner_db.get_schedule_by_name(raced_name) is None
+        assert winner_db.get_schedule("winner")["name"] == "winner-after-race"
+        assert winner_db.get_schedule("loser")["name"] == "loser-old"
 
 
 # =============================================================================
@@ -351,12 +535,14 @@ class TestGetScheduleRun:
             "error": None,
             "created_at": now,
         }
+        mock_db.get_schedule = MagicMock(return_value=_make_schedule_dict())
         mock_db.get_schedule_run = MagicMock(return_value=run)
         resp = client.get("/schedules/sched-1/runs/r1")
         assert resp.status_code == 200
         assert resp.json()["id"] == "r1"
 
     def test_get_run_not_found(self, client, mock_db):
+        mock_db.get_schedule = MagicMock(return_value=_make_schedule_dict())
         mock_db.get_schedule_run = MagicMock(return_value=None)
         resp = client.get("/schedules/sched-1/runs/missing")
         assert resp.status_code == 404
@@ -369,9 +555,96 @@ class TestGetScheduleRun:
             "status": "success",
             "created_at": int(time.time()),
         }
+        mock_db.get_schedule = MagicMock(return_value=_make_schedule_dict())
         mock_db.get_schedule_run = MagicMock(return_value=run)
         resp = client.get("/schedules/sched-1/runs/r1")
         assert resp.status_code == 404
+
+
+# =============================================================================
+# Tests: Studio-managed schedule isolation
+# =============================================================================
+
+
+class TestStudioManagedIsolation:
+    @staticmethod
+    def _assert_private_values_hidden(response_text: str) -> None:
+        assert STUDIO_SCHEDULE_ID not in response_text
+        assert STUDIO_PROMPT not in response_text
+        assert STUDIO_ACTOR not in response_text
+        assert "studio-router-private-run" not in response_text
+        assert "studio-router-private-session" not in response_text
+        assert "managed_by" not in response_text
+
+    def test_list_hides_studio_schedule_and_provenance(self, client, mock_db):
+        ordinary = _make_schedule_dict(id="ordinary-id", name="ordinary")
+        studio = _make_studio_schedule_dict()
+        # A custom/non-compliant adapter may ignore the query filter. The
+        # response boundary must still refuse to serialize the Studio row.
+        mock_db.get_schedules = MagicMock(return_value=([studio, ordinary], 1))
+
+        response = client.get("/schedules")
+
+        assert response.status_code == 200
+        assert [schedule["id"] for schedule in response.json()["data"]] == ["ordinary-id"]
+        assert response.json()["meta"]["total_count"] == 1
+        self._assert_private_values_hidden(response.text)
+        mock_db.get_schedules.assert_called_once_with(
+            enabled=None,
+            limit=100,
+            page=1,
+            exclude_managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+        )
+
+    @pytest.mark.parametrize(
+        ("method", "path", "body"),
+        [
+            ("GET", f"/schedules/{STUDIO_SCHEDULE_ID}", None),
+            ("PATCH", f"/schedules/{STUDIO_SCHEDULE_ID}", {"description": "changed"}),
+            ("DELETE", f"/schedules/{STUDIO_SCHEDULE_ID}", None),
+            ("POST", f"/schedules/{STUDIO_SCHEDULE_ID}/enable", None),
+            ("POST", f"/schedules/{STUDIO_SCHEDULE_ID}/disable", None),
+            ("POST", f"/schedules/{STUDIO_SCHEDULE_ID}/trigger", None),
+            ("GET", f"/schedules/{STUDIO_SCHEDULE_ID}/runs", None),
+            ("GET", f"/schedules/{STUDIO_SCHEDULE_ID}/runs/private-run-id", None),
+        ],
+    )
+    def test_direct_reads_and_mutations_treat_studio_schedule_as_not_found(self, method, path, body, client, mock_db):
+        mock_db.get_schedule = MagicMock(return_value=_make_studio_schedule_dict())
+
+        response = client.request(method, path, json=body)
+
+        assert response.status_code == 404
+        assert response.json() == {"detail": "Schedule not found"}
+        self._assert_private_values_hidden(response.text)
+        mock_db.update_schedule.assert_not_called()
+        mock_db.delete_schedule.assert_not_called()
+        mock_db.get_schedule_runs.assert_not_called()
+        mock_db.get_schedule_run.assert_not_called()
+
+    @patch("agno.scheduler.cron._require_pytz")
+    @patch("agno.scheduler.cron._require_croniter")
+    @patch("agno.scheduler.cron.validate_cron_expr", return_value=True)
+    @patch("agno.scheduler.cron.validate_timezone", return_value=True)
+    @patch("agno.scheduler.cron.compute_next_run", return_value=int(time.time()) + 60)
+    def test_create_cannot_replace_studio_schedule_with_same_name(
+        self, mock_compute, mock_tz, mock_cron, mock_req_cron, mock_req_pytz, client, mock_db
+    ):
+        studio = _make_studio_schedule_dict()
+        mock_db.get_schedule_by_name = MagicMock(return_value=studio)
+
+        response = client.post(
+            "/schedules",
+            json={
+                "name": studio["name"],
+                "cron_expr": "0 9 * * *",
+                "endpoint": "/agents/a1/runs",
+            },
+        )
+
+        assert response.status_code == 409
+        self._assert_private_values_hidden(response.text)
+        mock_db.create_schedule.assert_not_called()
 
 
 # =============================================================================

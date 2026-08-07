@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from agno.db.schemas.scheduler import Schedule
+from agno.db.schemas.scheduler import STUDIO_SCHEDULE_MANAGED_BY, Schedule
 from agno.scheduler.poller import SchedulePoller
 
 
@@ -241,3 +241,19 @@ class TestPollerExecuteSafe:
         poller = SchedulePoller(db=mock_db, executor=executor)
         # Should not raise
         await poller._execute_safe({"id": "s1"})
+
+    @pytest.mark.asyncio
+    async def test_studio_execution_error_does_not_log_backend_details(self, mock_db, caplog):
+        secret = "postgresql://admin:private-password@internal.example/agno"
+        executor = MagicMock()
+        executor.execute = AsyncMock(side_effect=RuntimeError(secret))
+        poller = SchedulePoller(db=mock_db, executor=executor)
+
+        await poller._execute_safe(
+            {
+                "id": "studio-schedule",
+                "managed_by": STUDIO_SCHEDULE_MANAGED_BY,
+            }
+        )
+
+        assert secret not in caplog.text

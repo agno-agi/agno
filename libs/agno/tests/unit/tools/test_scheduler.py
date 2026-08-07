@@ -8,8 +8,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agno.db.schemas.scheduler import Schedule, ScheduleRun
+from agno.db.schemas.scheduler import STUDIO_SCHEDULE_MANAGED_BY, Schedule, ScheduleRun
 from agno.tools.scheduler import SchedulerTools
+
+STUDIO_SCHEDULE_ID = "studio-schedule-private-id"
+STUDIO_PROMPT = "studio-schedule-private-prompt"
+STUDIO_ACTOR = "studio-schedule-private-actor"
 
 
 def _make_schedule(**overrides):
@@ -27,6 +31,23 @@ def _make_schedule(**overrides):
     }
     defaults.update(overrides)
     return Schedule(**defaults)
+
+
+def _make_studio_schedule(**overrides):
+    """Create a Studio-owned schedule whose private fields must stay hidden."""
+    defaults = {
+        "id": STUDIO_SCHEDULE_ID,
+        "name": "studio-private-schedule",
+        "payload": {"message": STUDIO_PROMPT},
+        "managed_by": "studio",
+        "owner_actor_id": STUDIO_ACTOR,
+        "target_type": "agent",
+        "target_id": "studio-agent",
+        "created_by_run_id": "studio-private-run",
+        "created_by_session_id": "studio-private-session",
+    }
+    defaults.update(overrides)
+    return _make_schedule(**defaults)
 
 
 def _make_run(**overrides):
@@ -52,6 +73,8 @@ def mock_db():
 def tools(mock_db):
     with patch("agno.tools.scheduler.ScheduleManager") as MockManager:
         manager_instance = MagicMock()
+        manager_instance._call.return_value = None
+        manager_instance._acall = AsyncMock(return_value=None)
         MockManager.return_value = manager_instance
         t = SchedulerTools(
             db=mock_db,
@@ -66,6 +89,8 @@ def tools(mock_db):
 def tools_no_defaults(mock_db):
     with patch("agno.tools.scheduler.ScheduleManager") as MockManager:
         manager_instance = MagicMock()
+        manager_instance._call.return_value = None
+        manager_instance._acall = AsyncMock(return_value=None)
         MockManager.return_value = manager_instance
         t = SchedulerTools(db=mock_db)
         t.manager = manager_instance
@@ -145,6 +170,7 @@ class TestCreateSchedule:
         assert result["name"] == "daily-check"
         assert result["cron"] == "0 9 * * *"
         tools.manager.create.assert_called_once()
+        assert tools.manager.create.call_args.kwargs["if_exists"] == "update"
 
     def test_create_uses_defaults(self, tools):
         schedule = _make_schedule()
@@ -258,14 +284,20 @@ class TestListSchedules:
 
         tools.list_schedules(enabled_only=True)
 
-        tools.manager.list.assert_called_once_with(enabled=True)
+        tools.manager.list.assert_called_once_with(
+            enabled=True,
+            exclude_managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+        )
 
     def test_list_all_no_filter(self, tools):
         tools.manager.list.return_value = []
 
         tools.list_schedules(enabled_only=False)
 
-        tools.manager.list.assert_called_once_with(enabled=None)
+        tools.manager.list.assert_called_once_with(
+            enabled=None,
+            exclude_managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+        )
 
     def test_list_exception(self, tools):
         tools.manager.list.side_effect = RuntimeError("DB error")
@@ -397,6 +429,122 @@ class TestGetScheduleRuns:
         assert "error" in result
 
 
+class TestStudioManagedIsolation:
+    @staticmethod
+    def _assert_private_values_hidden(result: str) -> None:
+        assert STUDIO_SCHEDULE_ID not in result
+        assert STUDIO_PROMPT not in result
+        assert STUDIO_ACTOR not in result
+        assert "studio-private-run" not in result
+        assert "studio-private-session" not in result
+        assert "managed_by" not in result
+
+    def test_sync_reads_and_mutations_treat_studio_schedule_as_not_found(self, tools):
+        ordinary = _make_schedule(id="ordinary-id", name="ordinary")
+        studio = _make_studio_schedule()
+        tools.manager.list.return_value = [studio, ordinary]
+        tools.manager.get.return_value = studio
+
+        listed = tools.list_schedules()
+        results = [
+            tools.get_schedule(STUDIO_SCHEDULE_ID),
+            tools.get_schedule_runs(STUDIO_SCHEDULE_ID),
+            tools.trigger_schedule(STUDIO_SCHEDULE_ID),
+            tools.enable_schedule(STUDIO_SCHEDULE_ID),
+            tools.disable_schedule(STUDIO_SCHEDULE_ID),
+            tools.delete_schedule(STUDIO_SCHEDULE_ID),
+        ]
+
+        assert json.loads(listed) == {
+            "schedules": [
+                {
+                    "id": "ordinary-id",
+                    "name": "ordinary",
+                    "cron": ordinary.cron_expr,
+                    "endpoint": ordinary.endpoint,
+                    "timezone": ordinary.timezone,
+                    "enabled": ordinary.enabled,
+                    "description": ordinary.description,
+                }
+            ],
+            "count": 1,
+        }
+        self._assert_private_values_hidden(listed)
+        tools.manager.list.assert_called_once_with(
+            enabled=None,
+            exclude_managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+        )
+        for result in results:
+            assert json.loads(result) == {"error": "Schedule not found"}
+            self._assert_private_values_hidden(result)
+
+        tools.manager.get_runs.assert_not_called()
+        tools.manager.update.assert_not_called()
+        tools.manager.enable.assert_not_called()
+        tools.manager.disable.assert_not_called()
+        tools.manager.delete.assert_not_called()
+
+    def test_sync_create_cannot_update_studio_schedule_with_same_name(self, tools):
+        studio = _make_studio_schedule()
+        tools.manager._call.return_value = studio
+
+        result = tools.create_schedule(name=studio.name, cron="0 10 * * *")
+
+        assert json.loads(result) == {"error": "Schedule with that name is not available"}
+        self._assert_private_values_hidden(result)
+        tools.manager.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_async_reads_and_mutations_treat_studio_schedule_as_not_found(self, tools):
+        ordinary = _make_schedule(id="ordinary-id", name="ordinary")
+        studio = _make_studio_schedule()
+        tools.manager.alist = AsyncMock(return_value=[studio, ordinary])
+        tools.manager.aget = AsyncMock(return_value=studio)
+        tools.manager.aget_runs = AsyncMock()
+        tools.manager.aupdate = AsyncMock()
+        tools.manager.aenable = AsyncMock()
+        tools.manager.adisable = AsyncMock()
+        tools.manager.adelete = AsyncMock()
+
+        listed = await tools.alist_schedules()
+        results = [
+            await tools.aget_schedule(STUDIO_SCHEDULE_ID),
+            await tools.aget_schedule_runs(STUDIO_SCHEDULE_ID),
+            await tools.atrigger_schedule(STUDIO_SCHEDULE_ID),
+            await tools.aenable_schedule(STUDIO_SCHEDULE_ID),
+            await tools.adisable_schedule(STUDIO_SCHEDULE_ID),
+            await tools.adelete_schedule(STUDIO_SCHEDULE_ID),
+        ]
+
+        assert [item["id"] for item in json.loads(listed)["schedules"]] == ["ordinary-id"]
+        self._assert_private_values_hidden(listed)
+        tools.manager.alist.assert_awaited_once_with(
+            enabled=None,
+            exclude_managed_by=STUDIO_SCHEDULE_MANAGED_BY,
+        )
+        for result in results:
+            assert json.loads(result) == {"error": "Schedule not found"}
+            self._assert_private_values_hidden(result)
+
+        tools.manager.aget_runs.assert_not_awaited()
+        tools.manager.aupdate.assert_not_awaited()
+        tools.manager.aenable.assert_not_awaited()
+        tools.manager.adisable.assert_not_awaited()
+        tools.manager.adelete.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_async_create_cannot_update_studio_schedule_with_same_name(self, tools):
+        studio = _make_studio_schedule()
+        tools.manager._acall = AsyncMock(return_value=studio)
+        tools.manager.acreate = AsyncMock()
+
+        result = await tools.acreate_schedule(name=studio.name, cron="0 10 * * *")
+
+        assert json.loads(result) == {"error": "Schedule with that name is not available"}
+        self._assert_private_values_hidden(result)
+        tools.manager.acreate.assert_not_awaited()
+
+
 class TestIsRunEndpoint:
     def test_agent_runs(self):
         assert SchedulerTools._is_run_endpoint("/agents/test/runs", "POST") is True
@@ -433,6 +581,8 @@ class TestAsyncCreateSchedule:
 
         assert result["status"] == "created"
         assert result["name"] == "daily-check"
+        tools.manager.acreate.assert_awaited_once()
+        assert tools.manager.acreate.call_args.kwargs["if_exists"] == "update"
 
     async def test_acreate_run_endpoint_requires_message(self, tools_no_defaults):
         result = json.loads(

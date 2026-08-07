@@ -5,17 +5,16 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union, cast
 from uuid import uuid4
 
-from sqlalchemy import or_
-
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
-from agno.db.base import AsyncBaseDb, ComponentType, SessionType
+from agno.db.base import AsyncBaseDb, ComponentProjection, ComponentType, ComponentVersionGuard, SessionType
 from agno.db.migrations.manager import MigrationManager
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
+from agno.db.schemas.scheduler import ScheduleNameConflictError
 from agno.db.schemas.service_accounts import (
     resolve_service_account_sort_column,
     validate_service_account_update,
@@ -44,12 +43,18 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import Column, ForeignKey, MetaData, String, Table, func, select, text
+    from sqlalchemy import Column, ForeignKey, MetaData, String, Table, func, or_, select, text
     from sqlalchemy.dialects import sqlite
+    from sqlalchemy.exc import IntegrityError
     from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
     from sqlalchemy.schema import Index, UniqueConstraint
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
+
+
+def _is_schedule_name_conflict(error: IntegrityError, table_name: str) -> bool:
+    """Match only SQLite's single-column schedule-name uniqueness failure."""
+    return str(error.orig) == f"UNIQUE constraint failed: {table_name}.name"
 
 
 class AsyncSqliteDb(AsyncBaseDb):
@@ -3718,6 +3723,8 @@ class AsyncSqliteDb(AsyncBaseDb):
         self,
         component_id: str,
         component_type: Optional[ComponentType] = None,
+        *,
+        include_deleted: bool = False,
     ) -> Optional[Dict[str, Any]]:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
@@ -3727,6 +3734,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         component_type: Optional[ComponentType] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
+        current_version: Optional[int] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         raise NotImplementedError("Component methods not yet supported for async databases")
@@ -3735,6 +3743,10 @@ class AsyncSqliteDb(AsyncBaseDb):
         self,
         component_id: str,
         hard_delete: bool = False,
+        *,
+        guard: Optional[ComponentVersionGuard] = None,
+        require_no_dependents: bool = True,
+        projection: Optional[ComponentProjection] = None,
     ) -> bool:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
@@ -3780,6 +3792,9 @@ class AsyncSqliteDb(AsyncBaseDb):
         stage: Optional[str] = None,
         notes: Optional[str] = None,
         links: Optional[List[Dict[str, Any]]] = None,
+        *,
+        guard: Optional[ComponentVersionGuard] = None,
+        projection: Optional[ComponentProjection] = None,
     ) -> Dict[str, Any]:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
@@ -3787,6 +3802,9 @@ class AsyncSqliteDb(AsyncBaseDb):
         self,
         component_id: str,
         version: int,
+        *,
+        guard: Optional[ComponentVersionGuard] = None,
+        projection: Optional[ComponentProjection] = None,
     ) -> bool:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
@@ -3801,6 +3819,9 @@ class AsyncSqliteDb(AsyncBaseDb):
         self,
         component_id: str,
         version: int,
+        *,
+        guard: Optional[ComponentVersionGuard] = None,
+        projection: Optional[ComponentProjection] = None,
     ) -> bool:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
@@ -3816,6 +3837,8 @@ class AsyncSqliteDb(AsyncBaseDb):
         self,
         component_id: str,
         version: Optional[int] = None,
+        *,
+        active_parents_only: bool = False,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
@@ -3837,8 +3860,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                 result = await sess.execute(select(table).where(table.c.id == schedule_id))
                 row = result.fetchone()
                 return dict(row._mapping) if row else None
-        except Exception as e:
-            log_debug(f"Error getting schedule: {e}")
+        except Exception:
+            log_debug("Error getting schedule")
             return None
 
     async def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
@@ -3850,8 +3873,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                 result = await sess.execute(select(table).where(table.c.name == name))
                 row = result.fetchone()
                 return dict(row._mapping) if row else None
-        except Exception as e:
-            log_debug(f"Error getting schedule by name: {e}")
+        except Exception:
+            log_debug("Error getting schedule by name")
             return None
 
     async def get_schedules(
@@ -3859,6 +3882,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         enabled: Optional[bool] = None,
         limit: int = 100,
         page: int = 1,
+        exclude_managed_by: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = await self._get_table(table_type="schedules")
@@ -3869,6 +3893,10 @@ class AsyncSqliteDb(AsyncBaseDb):
                 base_query = select(table)
                 if enabled is not None:
                     base_query = base_query.where(table.c.enabled == enabled)
+                if exclude_managed_by is not None:
+                    base_query = base_query.where(
+                        or_(table.c.managed_by.is_(None), table.c.managed_by != exclude_managed_by)
+                    )
 
                 # Get total count
                 count_stmt = select(func.count()).select_from(base_query.alias())
@@ -3882,8 +3910,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                 stmt = base_query.order_by(table.c.created_at.desc()).limit(limit).offset(offset)
                 result = await sess.execute(stmt)
                 return [dict(row._mapping) for row in result.fetchall()], total_count
-        except Exception as e:
-            log_debug(f"Error listing schedules: {e}")
+        except Exception:
+            log_debug("Error listing schedules")
             return [], 0
 
     async def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -3895,8 +3923,13 @@ class AsyncSqliteDb(AsyncBaseDb):
                 async with sess.begin():
                     await sess.execute(table.insert().values(**schedule_data))
             return schedule_data
-        except Exception as e:
-            log_error(f"Error creating schedule: {str(e)}")
+        except IntegrityError as error:
+            if _is_schedule_name_conflict(error, self.schedules_table_name):
+                raise ScheduleNameConflictError(schedule_data["name"]) from None
+            log_error("Error creating schedule")
+            raise
+        except Exception:
+            log_error("Error creating schedule")
             raise
 
     async def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
@@ -3909,8 +3942,14 @@ class AsyncSqliteDb(AsyncBaseDb):
                 async with sess.begin():
                     await sess.execute(table.update().where(table.c.id == schedule_id).values(**kwargs))
             return await self.get_schedule(schedule_id)
-        except Exception as e:
-            log_debug(f"Error updating schedule: {e}")
+        except IntegrityError as error:
+            name = kwargs.get("name")
+            if isinstance(name, str) and _is_schedule_name_conflict(error, self.schedules_table_name):
+                raise ScheduleNameConflictError(name) from None
+            log_debug("Error updating schedule")
+            return None
+        except Exception:
+            log_debug("Error updating schedule")
             return None
 
     async def delete_schedule(self, schedule_id: str) -> bool:
@@ -3925,8 +3964,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                         await sess.execute(runs_table.delete().where(runs_table.c.schedule_id == schedule_id))
                     result = await sess.execute(table.delete().where(table.c.id == schedule_id))
                     return result.rowcount > 0  # type: ignore[attr-defined]
-        except Exception as e:
-            log_debug(f"Error deleting schedule: {e}")
+        except Exception:
+            log_debug("Error deleting schedule")
             return False
 
     async def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
@@ -3972,8 +4011,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                     schedule["locked_by"] = worker_id
                     schedule["locked_at"] = now
                     return schedule
-        except Exception as e:
-            log_debug(f"Error claiming schedule: {e}")
+        except Exception:
+            log_debug("Error claiming schedule")
             return None
 
     async def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
@@ -3988,8 +4027,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                 async with sess.begin():
                     result = await sess.execute(table.update().where(table.c.id == schedule_id).values(**updates))
                     return result.rowcount > 0  # type: ignore[attr-defined]
-        except Exception as e:
-            log_debug(f"Error releasing schedule: {e}")
+        except Exception:
+            log_debug("Error releasing schedule")
             return False
 
     async def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -4001,8 +4040,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                 async with sess.begin():
                     await sess.execute(table.insert().values(**run_data))
             return run_data
-        except Exception as e:
-            log_error(f"Error creating schedule run: {str(e)}")
+        except Exception:
+            log_error("Error creating schedule run")
             raise
 
     async def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
@@ -4014,8 +4053,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                 async with sess.begin():
                     await sess.execute(table.update().where(table.c.id == schedule_run_id).values(**kwargs))
             return await self.get_schedule_run(schedule_run_id)
-        except Exception as e:
-            log_debug(f"Error updating schedule run: {e}")
+        except Exception:
+            log_debug("Error updating schedule run")
             return None
 
     async def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
@@ -4027,8 +4066,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                 result = await sess.execute(select(table).where(table.c.id == run_id))
                 row = result.fetchone()
                 return dict(row._mapping) if row else None
-        except Exception as e:
-            log_debug(f"Error getting schedule run: {e}")
+        except Exception:
+            log_debug("Error getting schedule run")
             return None
 
     async def get_schedule_runs(
@@ -4060,8 +4099,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                 )
                 result = await sess.execute(stmt)
                 return [dict(row._mapping) for row in result.fetchall()], total_count
-        except Exception as e:
-            log_debug(f"Error getting schedule runs: {e}")
+        except Exception:
+            log_debug("Error getting schedule runs")
             return [], 0
 
     # -- Approval methods --

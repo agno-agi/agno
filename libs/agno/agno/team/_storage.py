@@ -21,7 +21,7 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
-from agno.db.utils import resolve_db_from_config
+from agno.db.utils import resolve_db_from_config, save_component_config
 from agno.exceptions import ComponentPinError, ComponentRehydrationError
 from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
@@ -1255,18 +1255,13 @@ def save(
                 }
             )
 
-        # Create or update component
-        db_.upsert_component(
+        config = save_component_config(
+            db_,
             component_id=team.id,
             component_type=ComponentType.TEAM,
             name=getattr(team, "name", team.id),
             description=getattr(team, "description", None),
             metadata=getattr(team, "metadata", None),
-        )
-
-        # Create or update config with links
-        config = db_.upsert_config(
-            component_id=team.id,
             config=team.to_dict(),
             links=all_links if all_links else None,
             label=label,

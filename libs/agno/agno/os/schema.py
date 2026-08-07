@@ -807,6 +807,8 @@ class ComponentType(str, Enum):
 
 
 class ComponentCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(..., description="Display name")
     component_id: Optional[str] = Field(
         None, description="Unique identifier for the entity. Auto-generated from name if not provided."
@@ -817,9 +819,8 @@ class ComponentCreate(BaseModel):
     # Config parameters are optional, but if provided, they will be used to create the initial config
     config: Optional[Dict[str, Any]] = Field(None, description="Optional configuration")
     label: Optional[str] = Field(None, description="Optional label (e.g., 'stable')")
-    stage: str = Field("draft", description="Stage: 'draft' or 'published'")
+    stage: Literal["draft", "published"] = Field("draft", description="Stage: 'draft' or 'published'")
     notes: Optional[str] = Field(None, description="Optional notes")
-    set_current: bool = Field(True, description="Set as current version")
 
 
 class ComponentResponse(BaseModel):
@@ -833,14 +834,24 @@ class ComponentResponse(BaseModel):
     updated_at: Optional[int] = None
 
 
+class ComponentVersionGuardRequest(BaseModel):
+    """Required compare-and-set state for a component config mutation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    latest_version: int = Field(..., ge=1, description="Expected latest visible config version")
+    current_version: Optional[int] = Field(..., ge=1, description="Expected current published config version")
+
+
 class ConfigCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     config: Dict[str, Any] = Field(..., description="The configuration data")
-    version: Optional[int] = Field(None, description="Optional version number")
     label: Optional[str] = Field(None, description="Optional label (e.g., 'stable')")
-    stage: str = Field("draft", description="Stage: 'draft' or 'published'")
+    stage: Literal["draft", "published"] = Field("draft", description="Stage: 'draft' or 'published'")
     notes: Optional[str] = Field(None, description="Optional notes")
     links: Optional[List[Dict[str, Any]]] = Field(None, description="Optional links to child components")
-    set_current: bool = Field(True, description="Set as current version")
+    guard: ComponentVersionGuardRequest = Field(..., description="Expected component version state")
 
 
 class ComponentConfigResponse(BaseModel):
@@ -848,26 +859,52 @@ class ComponentConfigResponse(BaseModel):
     version: int
     label: Optional[str] = None
     stage: str
-    config: Dict[str, Any]
+    config: Optional[Dict[str, Any]] = None
     notes: Optional[str] = None
     created_at: int
     updated_at: Optional[int] = None
 
 
 class ComponentUpdate(BaseModel):
-    name: Optional[str] = None
+    """Guarded metadata edit that appends a new draft config version."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: Optional[str] = Field(None, min_length=1)
     description: Optional[str] = None
-    component_type: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
-    current_version: Optional[int] = None
+    guard: ComponentVersionGuardRequest = Field(..., description="Expected component version state")
 
 
 class ConfigUpdate(BaseModel):
-    config: Optional[Dict[str, Any]] = None
-    label: Optional[str] = None
-    stage: Optional[str] = None
-    notes: Optional[str] = None
-    links: Optional[List[Dict[str, Any]]] = None
+    """Publish an existing latest draft without mutating its immutable payload."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    stage: Literal["published"]
+    guard: ComponentVersionGuardRequest = Field(..., description="Expected component version state")
+
+
+class SetCurrentConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    guard: ComponentVersionGuardRequest = Field(..., description="Expected component version state")
+
+
+class ComponentDelete(BaseModel):
+    """Guarded soft-archive request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    guard: ComponentVersionGuardRequest = Field(..., description="Expected component version state")
+
+
+class ConfigDelete(BaseModel):
+    """Guarded draft-version deletion request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    guard: ComponentVersionGuardRequest = Field(..., description="Expected component version state")
 
 
 class RegistryResourceType(str, Enum):

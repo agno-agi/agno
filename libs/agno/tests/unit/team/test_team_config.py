@@ -28,6 +28,21 @@ from agno.team.team import Team, get_team_by_id, get_teams
 # =============================================================================
 
 
+def _corrupt_delete_config_row(db: SqliteDb, component_id: str, version: int) -> None:
+    """Simulate an externally corrupted pin without weakening the public API."""
+    configs_table = db._get_table(table_type="component_configs")
+    assert configs_table is not None
+    with db.Session() as session:
+        result = session.execute(
+            configs_table.delete().where(
+                configs_table.c.component_id == component_id,
+                configs_table.c.version == version,
+            )
+        )
+        session.commit()
+    assert result.rowcount == 1
+
+
 def _create_mock_db_class():
     """Create a concrete BaseDb subclass with all abstract methods stubbed."""
     abstract_methods = {}
@@ -45,6 +60,8 @@ def mock_db():
     db = MockDbClass()
 
     # Configure common mock methods
+    db.get_component = MagicMock(return_value=None)
+    db.create_component_with_config = MagicMock(return_value=({"component_id": "test-team"}, {"version": 1}))
     db.upsert_component = MagicMock()
     db.upsert_config = MagicMock(return_value={"version": 1})
     db.delete_component = MagicMock(return_value=True)
@@ -641,24 +658,28 @@ class TestTeamFromDict:
 class TestTeamSave:
     """Tests for Team.save() method."""
 
-    def test_save_calls_upsert_component(self, basic_team, mock_db):
-        """Test save calls upsert_component with correct parameters."""
-        mock_db.upsert_config.return_value = {"version": 1}
-
+    def test_save_creates_component_and_initial_config_atomically(self, basic_team, mock_db):
+        """Test first save creates the component and config together."""
         basic_team.db = mock_db
         version = basic_team.save()
 
-        mock_db.upsert_component.assert_called_once_with(
-            component_id="test-team",
-            component_type=ComponentType.TEAM,
-            name="Test Team",
-            description="A test team for unit testing",
-            metadata=None,
-        )
+        call_args = mock_db.create_component_with_config.call_args
+        assert call_args.kwargs["component_id"] == "test-team"
+        assert call_args.kwargs["component_type"] == ComponentType.TEAM
+        assert call_args.kwargs["name"] == "Test Team"
+        assert call_args.kwargs["description"] == "A test team for unit testing"
+        assert call_args.kwargs["config"]["id"] == "test-team"
+        mock_db.upsert_component.assert_not_called()
+        mock_db.upsert_config.assert_not_called()
         assert version == 1
 
-    def test_save_calls_upsert_config(self, basic_team, mock_db):
-        """Test save calls upsert_config with team config."""
+    def test_existing_save_upserts_config_with_projection(self, basic_team, mock_db):
+        """Test a published save updates config and projection together."""
+        mock_db.get_component.return_value = {
+            "component_id": "test-team",
+            "component_type": "team",
+            "deleted_at": None,
+        }
         mock_db.upsert_config.return_value = {"version": 2}
 
         basic_team.db = mock_db
@@ -668,6 +689,11 @@ class TestTeamSave:
         call_args = mock_db.upsert_config.call_args
         assert call_args.kwargs["component_id"] == "test-team"
         assert "config" in call_args.kwargs
+        assert call_args.kwargs["projection"] == {
+            "name": "Test Team",
+            "description": "A test team for unit testing",
+            "metadata": None,
+        }
         assert version == 2
 
     def test_save_with_members_saves_each_member(self, mock_db, member_agent):
@@ -701,8 +727,8 @@ class TestTeamSave:
         )
         team.save()
 
-        # Check that links were passed to upsert_config
-        call_args = mock_db.upsert_config.call_args
+        # Check that links were committed with the initial config
+        call_args = mock_db.create_component_with_config.call_args
         links = call_args.kwargs.get("links")
         assert links is not None
         assert len(links) == 1
@@ -713,33 +739,47 @@ class TestTeamSave:
 
     def test_save_with_explicit_db(self, basic_team, mock_db):
         """Test save uses explicitly provided db."""
-        mock_db.upsert_config.return_value = {"version": 1}
-
         version = basic_team.save(db=mock_db)
 
-        mock_db.upsert_component.assert_called_once()
-        mock_db.upsert_config.assert_called_once()
+        mock_db.create_component_with_config.assert_called_once()
+        mock_db.upsert_component.assert_not_called()
+        mock_db.upsert_config.assert_not_called()
         assert version == 1
 
     def test_save_with_label(self, basic_team, mock_db):
-        """Test save passes label to upsert_config."""
-        mock_db.upsert_config.return_value = {"version": 1}
-
+        """Test first save passes the label to the atomic create."""
         basic_team.db = mock_db
         basic_team.save(label="production")
 
-        call_args = mock_db.upsert_config.call_args
+        call_args = mock_db.create_component_with_config.call_args
         assert call_args.kwargs["label"] == "production"
 
     def test_save_with_stage(self, basic_team, mock_db):
-        """Test save passes stage to upsert_config."""
-        mock_db.upsert_config.return_value = {"version": 1}
-
+        """Test first save passes the stage to the atomic create."""
         basic_team.db = mock_db
         basic_team.save(stage="draft")
 
-        call_args = mock_db.upsert_config.call_args
+        call_args = mock_db.create_component_with_config.call_args
         assert call_args.kwargs["stage"] == "draft"
+
+    def test_save_draft_team_with_draft_member_on_real_sqlite(self, tmp_path):
+        """A draft composite may pin a draft child; publication validates it later."""
+        db = SqliteDb(db_file=str(tmp_path / "draft_team.db"))
+        member = Agent(id="draft-member", name="Draft Member")
+        team = Team(id="draft-team", name="Draft Team", members=[member], db=db)
+
+        version = team.save(stage="draft")
+
+        assert version == 1
+        assert db.get_config("draft-member", version=1)["stage"] == "draft"  # type: ignore[index]
+        assert db.get_config("draft-team", version=1)["stage"] == "draft"  # type: ignore[index]
+        links = db.get_links("draft-team", 1)
+        assert len(links) == 1
+        assert links[0]["link_kind"] == "member"
+        assert links[0]["link_key"] == "member_0"
+        assert links[0]["child_component_id"] == "draft-member"
+        assert links[0]["child_version"] == 1
+        assert links[0]["meta"] == {"type": "agent"}
 
     def test_save_without_db_raises_error(self, basic_team):
         """Test save raises error when no db is available."""
@@ -748,7 +788,7 @@ class TestTeamSave:
 
     def test_save_handles_db_error(self, basic_team, mock_db):
         """Test save raises error when database operation fails."""
-        mock_db.upsert_component.side_effect = Exception("Database error")
+        mock_db.create_component_with_config.side_effect = Exception("Database error")
 
         basic_team.db = mock_db
 
@@ -1332,7 +1372,7 @@ class TestMemberPinFailures:
         member.save(db=db)
         links = db.get_links(component_id="pm-team", version=1)
         pinned = next(link for link in links if link["link_kind"] == "member")["child_version"]
-        assert db.delete_config(component_id="pm-member", version=pinned)
+        _corrupt_delete_config_row(db, "pm-member", pinned)
 
         with pytest.raises(ComponentRehydrationError, match=f"pins member agent 'pm-member' at version {pinned}"):
             get_team_by_id(db=db, id="pm-team", strict=True)
@@ -1349,7 +1389,7 @@ class TestMemberPinFailures:
         member.save(db=db)
         links = db.get_links(component_id="ps-team", version=1)
         pinned = next(link for link in links if link["link_kind"] == "member")["child_version"]
-        assert db.delete_config(component_id="ps-member", version=pinned)
+        _corrupt_delete_config_row(db, "ps-member", pinned)
         registry = Registry(agents=[Agent(id="ps-member", name="Code Member")])
 
         with pytest.raises(ComponentRehydrationError, match="pins member agent 'ps-member'"):

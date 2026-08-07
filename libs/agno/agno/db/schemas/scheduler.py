@@ -1,7 +1,18 @@
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional, Union
 
 from agno.utils.dttm import now_epoch_s, to_epoch_s
+
+STUDIO_SCHEDULE_MANAGED_BY = "studio"
+STUDIO_SCHEDULE_ACTOR_HEADER = "X-Agno-Studio-Schedule-Actor"
+
+
+class ScheduleNameConflictError(ValueError):
+    """Raised when a schedule write violates the database-unique name constraint."""
+
+    def __init__(self, name: str):
+        self.name = name
+        super().__init__(f"Schedule with name '{name}' already exists")
 
 
 @dataclass
@@ -19,6 +30,16 @@ class Schedule:
     timeout_seconds: int = 3600
     max_retries: int = 0
     retry_delay_seconds: int = 60
+    # Server-owned control-plane provenance. Generic schedule APIs never accept
+    # or mutate these fields; Studio writes them through its trusted catalog DB.
+    managed_by: Optional[str] = None
+    owner_actor_id: Optional[str] = None
+    target_type: Optional[str] = None
+    target_id: Optional[str] = None
+    created_by_run_id: Optional[str] = None
+    created_by_session_id: Optional[str] = None
+    updated_by_run_id: Optional[str] = None
+    updated_by_session_id: Optional[str] = None
     enabled: bool = True
     next_run_at: Optional[int] = None
     locked_by: Optional[str] = None
@@ -49,6 +70,14 @@ class Schedule:
             "timeout_seconds": self.timeout_seconds,
             "max_retries": self.max_retries,
             "retry_delay_seconds": self.retry_delay_seconds,
+            "managed_by": self.managed_by,
+            "owner_actor_id": self.owner_actor_id,
+            "target_type": self.target_type,
+            "target_id": self.target_id,
+            "created_by_run_id": self.created_by_run_id,
+            "created_by_session_id": self.created_by_session_id,
+            "updated_by_run_id": self.updated_by_run_id,
+            "updated_by_session_id": self.updated_by_session_id,
             "enabled": self.enabled,
             "next_run_at": self.next_run_at,
             "locked_by": self.locked_by,
@@ -72,6 +101,14 @@ class Schedule:
             "timeout_seconds",
             "max_retries",
             "retry_delay_seconds",
+            "managed_by",
+            "owner_actor_id",
+            "target_type",
+            "target_id",
+            "created_by_run_id",
+            "created_by_session_id",
+            "updated_by_run_id",
+            "updated_by_session_id",
             "enabled",
             "next_run_at",
             "locked_by",
@@ -81,6 +118,23 @@ class Schedule:
         }
         filtered = {k: v for k, v in data.items() if k in valid_keys}
         return cls(**filtered)
+
+
+def is_studio_managed_schedule(schedule: Union[Schedule, Mapping[str, Any]]) -> bool:
+    """Return whether a record carries server-owned Studio provenance."""
+    managed_by = schedule.managed_by if isinstance(schedule, Schedule) else schedule.get("managed_by")
+    return managed_by == STUDIO_SCHEDULE_MANAGED_BY
+
+
+def is_valid_studio_schedule_actor_id(actor_id: Any) -> bool:
+    """Return whether an actor ID is safe to place in the internal HTTP header."""
+    return (
+        isinstance(actor_id, str)
+        and bool(actor_id.strip())
+        and actor_id == actor_id.strip()
+        and len(actor_id) <= 255
+        and not any(ord(character) < 32 or ord(character) > 126 for character in actor_id)
+    )
 
 
 @dataclass
