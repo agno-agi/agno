@@ -168,18 +168,27 @@ def test_insert(surrealdb_vector, mock_surrealdb_client, sample_documents):
 
 
 def test_upsert(surrealdb_vector, mock_surrealdb_client, sample_documents):
-    surrealdb_vector.upsert(content_hash="test_hash", documents=sample_documents)
+    # A doc with an id is upserted via UPSERT type::record() so a
+    # reader-assigned id is bound as a param; the owner is folded into the
+    # record id.
+    for i, doc in enumerate(sample_documents):
+        doc.id = f"doc-{i}"
+    surrealdb_vector.upsert(content_hash="test_hash", documents=sample_documents, user_id="user1")
 
     # Verify query was called for each document
     assert mock_surrealdb_client.query.call_count == 3
 
     # Check args for first call
     args, _ = mock_surrealdb_client.query.call_args_list[0]
-    assert "UPSERT test_collection" in args[0]
+    assert "UPSERT type::record($table, $record_id)" in args[0]
     assert "SET content = $content" in args[0]
     assert "content" in args[1]
     assert "embedding" in args[1]
     assert "meta_data" in args[1]
+    # Owner threaded and folded into the record id
+    assert args[1]["table"] == "test_collection"
+    assert args[1]["record_id"] == "doc-0:user1"
+    assert args[1]["user_id"] == "user1"
 
 
 def test_search(surrealdb_vector: SurrealDb, mock_surrealdb_client: MagicMock) -> None:
@@ -296,18 +305,24 @@ async def test_async_insert(async_surrealdb_vector, mock_async_surrealdb_client,
 @pytest.mark.asyncio
 async def test_async_upsert(async_surrealdb_vector, mock_async_surrealdb_client, sample_documents):
     """Test async upserting documents"""
-    await async_surrealdb_vector.async_upsert(content_hash="test_hash", documents=sample_documents)
+    for i, doc in enumerate(sample_documents):
+        doc.id = f"doc-{i}"
+    await async_surrealdb_vector.async_upsert(content_hash="test_hash", documents=sample_documents, user_id="user1")
 
     # Verify query was called for each document
     assert mock_async_surrealdb_client.query.await_count == 3
 
     # Check args for first call
     args, kwargs = mock_async_surrealdb_client.query.await_args_list[0]
-    assert "UPSERT test_collection" in args[0]
+    assert "UPSERT type::record($table, $record_id)" in args[0]
     assert "SET content = $content" in args[0]
     assert "content" in args[1]
     assert "embedding" in args[1]
     assert "meta_data" in args[1]
+    # Owner threaded and folded into the record id
+    assert args[1]["table"] == "test_collection"
+    assert args[1]["record_id"] == "doc-0:user1"
+    assert args[1]["user_id"] == "user1"
 
 
 @pytest.mark.asyncio

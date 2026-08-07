@@ -312,7 +312,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[d
                         bucket["model_counts"][key] = bucket["model_counts"].get(key, 0) + 1
 
             # Parse session_data from JSON string
-            session_data = session.get("session_data", {})
+            session_data = session.get("session_data") or {}
             if isinstance(session_data, str):
                 session_data = json.loads(session_data)
             session_metrics = session_data.get("session_metrics", {})

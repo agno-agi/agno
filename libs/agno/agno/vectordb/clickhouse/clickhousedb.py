@@ -19,6 +19,9 @@ from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
 
+# Empty string marks a shared/unowned chunk in the user_id String column.
+SHARED_OWNER = ""
+
 
 class Clickhouse(VectorDb):
     def __init__(
@@ -170,6 +173,7 @@ class Clickhouse(VectorDb):
                     usage JSON,
                     created_at DateTime('UTC') DEFAULT now(),
                     content_hash String,
+                    user_id String DEFAULT '',
                     PRIMARY KEY (id),
                     {index}
                 ) ENGINE = ReplacingMergeTree ORDER BY id""",
@@ -215,6 +219,7 @@ class Clickhouse(VectorDb):
                     usage JSON,
                     created_at DateTime('UTC') DEFAULT now(),
                     content_hash String,
+                    user_id String DEFAULT '',
                     PRIMARY KEY (id),
                     {index}
                 ) ENGINE = ReplacingMergeTree ORDER BY id""",
@@ -266,17 +271,28 @@ class Clickhouse(VectorDb):
         )
         return len(result.result_rows) > 0 if result.result_rows else False
 
+    def _validate_user_id(self, user_id: Optional[str]) -> None:
+        """Reject an empty user_id: "" is the reserved shared-owner sentinel, so a
+        scoped caller passing "" would target the shared bucket. Use None for shared."""
+        if user_id == "":
+            raise ValueError("user_id must not be an empty string; use None for shared/unscoped access")
+
     def insert(
         self,
         content_hash: str,
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
+        self._validate_user_id(user_id)
+        owner = user_id if user_id is not None else SHARED_OWNER
         rows: List[List[Any]] = []
         for document in documents:
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
             _id = md5(cleaned_content.encode()).hexdigest()
+            if user_id is not None:
+                _id = md5(f"{_id}_{user_id}".encode()).hexdigest()
 
             row: List[Any] = [
                 _id,
@@ -288,6 +304,7 @@ class Clickhouse(VectorDb):
                 document.embedding,
                 document.usage,
                 content_hash,
+                owner,
             ]
             rows.append(row)
 
@@ -304,14 +321,21 @@ class Clickhouse(VectorDb):
                 "embedding",
                 "usage",
                 "content_hash",
+                "user_id",
             ],
         )
         log_debug(f"Inserted {len(documents)} documents")
 
     async def async_insert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """Insert documents asynchronously."""
+        self._validate_user_id(user_id)
+        owner = user_id if user_id is not None else SHARED_OWNER
         rows: List[List[Any]] = []
         async_client = await self._ensure_async_client()
 
@@ -357,6 +381,8 @@ class Clickhouse(VectorDb):
         for document in documents:
             cleaned_content = document.content.replace("\x00", "\ufffd")
             _id = md5(cleaned_content.encode()).hexdigest()
+            if user_id is not None:
+                _id = md5(f"{_id}_{user_id}".encode()).hexdigest()
 
             row: List[Any] = [
                 _id,
@@ -368,6 +394,7 @@ class Clickhouse(VectorDb):
                 document.embedding,
                 document.usage,
                 content_hash,
+                owner,
             ]
             rows.append(row)
 
@@ -384,6 +411,7 @@ class Clickhouse(VectorDb):
                 "embedding",
                 "usage",
                 "content_hash",
+                "user_id",
             ],
         )
         log_debug(f"Async inserted {len(documents)} documents")
@@ -396,19 +424,22 @@ class Clickhouse(VectorDb):
         content_hash: str,
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """
         Upsert documents into the database.
         """
-        if self.content_hash_exists(content_hash):
-            self._delete_by_content_hash(content_hash)
-        self.insert(content_hash=content_hash, documents=documents, filters=filters)
+        self._validate_user_id(user_id)
+        if self.content_hash_exists(content_hash, user_id=user_id):
+            self._delete_by_content_hash(content_hash, user_id=user_id)
+        self.insert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
 
     def _upsert(
         self,
         content_hash: str,
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """
         Upsert documents into the database.
@@ -416,11 +447,11 @@ class Clickhouse(VectorDb):
         Args:
             documents (List[Document]): List of documents to upsert
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting documents
-            batch_size (int): Batch size for upserting documents
+            user_id (Optional[str]): Explicit owner for per-user RAG isolation.
         """
         # We are using ReplacingMergeTree engine in our table, so we need to insert the documents,
         # then call SELECT with FINAL
-        self.insert(content_hash=content_hash, documents=documents, filters=filters)
+        self.insert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
 
         parameters = self._get_base_parameters()
         self.client.query(
@@ -429,20 +460,29 @@ class Clickhouse(VectorDb):
         )
 
     async def async_upsert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """Upsert documents asynchronously."""
-        if self.content_hash_exists(content_hash):
-            self._delete_by_content_hash(content_hash)
-        await self._async_upsert(content_hash=content_hash, documents=documents, filters=filters)
+        self._validate_user_id(user_id)
+        if self.content_hash_exists(content_hash, user_id=user_id):
+            self._delete_by_content_hash(content_hash, user_id=user_id)
+        await self._async_upsert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
 
     async def _async_upsert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """Upsert documents asynchronously."""
         # We are using ReplacingMergeTree engine in our table, so we need to insert the documents,
         # then call SELECT with FINAL
-        await self.async_insert(content_hash=content_hash, documents=documents, filters=filters)
+        await self.async_insert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
 
         parameters = self._get_base_parameters()
         await self.async_client.query(  # type: ignore
@@ -450,9 +490,24 @@ class Clickhouse(VectorDb):
             parameters=parameters,
         )
 
+    def _apply_user_scope(self, parameters: Dict[str, Any], user_id: Optional[str]) -> str:
+        """Scope WHERE fragment matching the owner's rows plus shared ('') rows.
+
+        Returns "" (no scope) when user_id is None. user_id is bound, not interpolated.
+        """
+        if user_id is None:
+            return ""
+        parameters["user_id"] = user_id
+        return "WHERE (user_id = {user_id:String} OR user_id = '')"
+
     def search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
+        self._validate_user_id(user_id)
         if filters is not None:
             log_warning("Filters are not yet supported in Clickhouse. No filters will be applied.")
         query_embedding = self.embedder.get_embedding(query)
@@ -461,7 +516,7 @@ class Clickhouse(VectorDb):
             return []
 
         parameters = self._get_base_parameters()
-        where_query = ""
+        where_query = self._apply_user_scope(parameters, user_id)
 
         order_by_query = ""
         if self.distance == Distance.l2 or self.distance == Distance.max_inner_product:
@@ -508,9 +563,14 @@ class Clickhouse(VectorDb):
         return search_results
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """Search for documents asynchronously."""
+        self._validate_user_id(user_id)
         async_client = await self._ensure_async_client()
 
         if filters is not None:
@@ -522,7 +582,7 @@ class Clickhouse(VectorDb):
             return []
 
         parameters = self._get_base_parameters()
-        where_query = ""
+        where_query = self._apply_user_scope(parameters, user_id)
 
         order_by_query = ""
         if self.distance == Distance.l2 or self.distance == Distance.max_inner_product:
@@ -684,15 +744,31 @@ class Clickhouse(VectorDb):
             log_debug(f"ClickHouse VectorDB : Deleting documents with metadata {metadata}")
             parameters = self._get_base_parameters()
 
-            # Build WHERE clause for metadata matching using proper ClickHouse JSON syntax
+            # Build a parameterised WHERE clause so that user-supplied metadata
+            # keys and values are never interpolated directly into SQL.
+            # Each key/value pair gets its own named ClickHouse parameter
+            # ({meta_key_N:String} / {meta_val_N:String|Float64|Bool}) so the
+            # client driver handles escaping, eliminating the SQL-injection path.
             where_conditions = []
-            for key, value in metadata.items():
+            for i, (key, value) in enumerate(metadata.items()):
+                param_key = f"meta_key_{i}"
+                param_val = f"meta_val_{i}"
+                parameters[param_key] = key
                 if isinstance(value, bool):
-                    where_conditions.append(f"JSONExtractBool(toString(filters), '{key}') = {str(value).lower()}")
+                    parameters[param_val] = value
+                    where_conditions.append(
+                        f"JSONExtractBool(toString(filters), {{{param_key}:String}}) = {{{param_val}:Bool}}"
+                    )
                 elif isinstance(value, (int, float)):
-                    where_conditions.append(f"JSONExtractFloat(toString(filters), '{key}') = {value}")
+                    parameters[param_val] = float(value)
+                    where_conditions.append(
+                        f"JSONExtractFloat(toString(filters), {{{param_key}:String}}) = {{{param_val}:Float64}}"
+                    )
                 else:
-                    where_conditions.append(f"JSONExtractString(toString(filters), '{key}') = '{value}'")
+                    parameters[param_val] = str(value)
+                    where_conditions.append(
+                        f"JSONExtractString(toString(filters), {{{param_key}:String}}) = {{{param_val}:String}}"
+                    )
 
             if not where_conditions:
                 return False
@@ -708,23 +784,30 @@ class Clickhouse(VectorDb):
             log_info(f"Error deleting documents with metadata {metadata}: {e}")
             return False
 
-    def delete_by_content_id(self, content_id: str) -> bool:
+    def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
         """
         Delete documents by content ID.
 
         Args:
             content_id (str): The content ID to delete
+            user_id (Optional[str]): When set, scope the delete to this owner's rows.
 
         Returns:
             bool: True if documents were deleted, False otherwise
         """
+        self._validate_user_id(user_id)
         try:
             log_debug(f"ClickHouse VectorDB : Deleting documents with content_id {content_id}")
             parameters = self._get_base_parameters()
             parameters["content_id"] = content_id
 
+            where_clause = "WHERE content_id = {content_id:String}"
+            if user_id is not None:
+                parameters["user_id"] = user_id
+                where_clause += " AND user_id = {user_id:String}"
+
             self.client.command(
-                "DELETE FROM {database_name:Identifier}.{table_name:Identifier} WHERE content_id = {content_id:String}",
+                f"DELETE FROM {{database_name:Identifier}}.{{table_name:Identifier}} {where_clause}",
                 parameters=parameters,
             )
             return True
@@ -732,32 +815,45 @@ class Clickhouse(VectorDb):
             log_info(f"Error deleting documents with content_id {content_id}: {e}")
             return False
 
-    def content_hash_exists(self, content_hash: str) -> bool:
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """
         Validate if a row with this content_hash exists or not
 
         Args:
             content_hash (str): Content hash to check
+            user_id (Optional[str]): Owner to scope the check to (shared owner "" for None).
         """
+        self._validate_user_id(user_id)
         parameters = self._get_base_parameters()
         parameters["content_hash"] = content_hash
+        parameters["user_id"] = user_id if user_id is not None else SHARED_OWNER
 
         result = self.client.query(
-            "SELECT content_hash FROM {database_name:Identifier}.{table_name:Identifier} WHERE content_hash = {content_hash:String}",
+            "SELECT content_hash FROM {database_name:Identifier}.{table_name:Identifier} WHERE content_hash = {content_hash:String} AND user_id = {user_id:String}",
             parameters=parameters,
         )
         return len(result.result_rows) > 0 if result.result_rows else False
 
-    def _delete_by_content_hash(self, content_hash: str) -> bool:
+    def _delete_by_content_hash(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """
         Delete documents by content hash.
+
+        Args:
+            content_hash (str): The content hash to delete
+            user_id (Optional[str]): Owner to scope the delete to; None scopes to
+                the shared bucket ("") so a shared re-upsert never wipes a scoped
+                owner's identical-content row. The value is bound, never interpolated.
         """
+        self._validate_user_id(user_id)
         try:
             parameters = self._get_base_parameters()
             parameters["content_hash"] = content_hash
+            parameters["user_id"] = user_id if user_id is not None else SHARED_OWNER
+
+            where_clause = "WHERE content_hash = {content_hash:String} AND user_id = {user_id:String}"
 
             self.client.command(
-                "DELETE FROM {database_name:Identifier}.{table_name:Identifier} WHERE content_hash = {content_hash:String}",
+                f"DELETE FROM {{database_name:Identifier}}.{{table_name:Identifier}} {where_clause}",
                 parameters=parameters,
             )
             return True

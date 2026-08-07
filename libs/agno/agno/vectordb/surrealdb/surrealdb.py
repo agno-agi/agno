@@ -28,6 +28,8 @@ class SurrealDb(VectorDb):
         DEFINE FIELD IF NOT EXISTS content ON {collection} TYPE string;
         DEFINE FIELD IF NOT EXISTS embedding ON {collection} TYPE array<float>;
         DEFINE FIELD IF NOT EXISTS meta_data ON {collection} TYPE object FLEXIBLE;
+        DEFINE FIELD IF NOT EXISTS content_id ON {collection} TYPE option<string>;
+        DEFINE FIELD IF NOT EXISTS user_id ON {collection} TYPE option<string>;
         DEFINE INDEX IF NOT EXISTS vector_idx ON {collection} FIELDS embedding HNSW DIMENSION {dimensions} DIST {distance};
     """
 
@@ -67,13 +69,16 @@ class SurrealDb(VectorDb):
     DELETE_BY_CONTENT_ID_QUERY: Final[str] = """
         DELETE FROM {collection}
         WHERE content_id = $content_id
+        {scope_condition}
     """
 
     UPSERT_QUERY: Final[str] = """
-        UPSERT {thing}
+        UPSERT type::record($table, $record_id)
         SET content = $content,
             embedding = $embedding,
-            meta_data = $meta_data
+            meta_data = $meta_data,
+            content_id = $content_id,
+            user_id = $user_id
     """
 
     SEARCH_QUERY: Final[str] = """
@@ -83,6 +88,7 @@ class SurrealDb(VectorDb):
             vector::distance::knn() as distance
         FROM {collection}
         WHERE embedding <|{limit}, {search_ef}|> $query_embedding
+        {scope_condition}
         {filter_condition}
         ORDER BY distance ASC
         LIMIT {limit};
@@ -201,6 +207,36 @@ class SurrealDb(VectorDb):
         conditions = [f"meta_data.{key} = ${key}" for key in filters]
         return "AND " + " AND ".join(conditions)
 
+    @staticmethod
+    def _user_scope_condition(user_id: Optional[str]) -> str:
+        """Build the per-user scope predicate for the search WHERE clause.
+
+        A non-None owner matches its own rows plus the shared (NONE) bucket;
+        user_id=None applies no scope. Bound as $scope_user_id so a caller's own
+        metadata filter can't collide with the owner scope.
+        """
+        if user_id is None:
+            return ""
+        return "AND (user_id = $scope_user_id OR user_id = NONE)"
+
+    @staticmethod
+    def _fold_record_id(doc_id: str, user_id: Optional[str]) -> str:
+        """Fold the owner into the record id so two owners' identical content
+        don't collide onto one record. user_id=None keeps the bare doc id.
+
+        ':' is both the fold delimiter and a legal char in doc_id/user_id, so
+        each side is percent-escaped before joining — otherwise ("a:x", "y") and
+        ("a", "x:y") would both fold to "a:x:y" and clobber each other. Stable,
+        so re-upserting the same pair updates the same record in place.
+        """
+        if user_id is None:
+            return doc_id
+
+        def _esc(value: str) -> str:
+            return value.replace("%", "%25").replace(":", "%3A")
+
+        return f"{_esc(doc_id)}:{_esc(user_id)}"
+
     # Synchronous methods
     def create(self) -> None:
         """Create the vector collection and index."""
@@ -259,45 +295,84 @@ class SurrealDb(VectorDb):
         )
         return bool(self._extract_result(result))
 
-    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """Insert documents into the vector store.
 
         Args:
             content_hash: The content hash for the documents.
             documents: A list of documents to insert.
             filters: A dictionary of filters to apply to the query.
+            user_id: Owner of these chunks for per-user isolation. None
+                (default) writes to the shared bucket, visible to everyone.
 
         """
         for doc in documents:
             doc.embed(embedder=self.embedder)
             meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
             meta_data["content_hash"] = content_hash
-            data: Dict[str, Any] = {"content": doc.content, "embedding": doc.embedding, "meta_data": meta_data}
+            data: Dict[str, Any] = {
+                "content": doc.content,
+                "embedding": doc.embedding,
+                "meta_data": meta_data,
+                "content_id": doc.content_id,
+                "user_id": user_id,
+            }
             if filters:
                 data["meta_data"].update(filters)
             self.client.create(self.collection, data)
 
-    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """Upsert documents into the vector store.
 
         Args:
             content_hash: The content hash for the documents.
             documents: A list of documents to upsert.
             filters: A dictionary of filters to apply to the query.
+            user_id: Owner of these chunks for per-user isolation. None
+                (default) writes to the shared bucket, visible to everyone.
 
         """
         for doc in documents:
             doc.embed(embedder=self.embedder)
             meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
             meta_data["content_hash"] = content_hash
-            data: Dict[str, Any] = {"content": doc.content, "embedding": doc.embedding, "meta_data": meta_data}
+            data: Dict[str, Any] = {
+                "content": doc.content,
+                "embedding": doc.embedding,
+                "meta_data": meta_data,
+                "content_id": doc.content_id,
+                "user_id": user_id,
+            }
             if filters:
                 data["meta_data"].update(filters)
-            thing = f"{self.collection}:{doc.id}" if doc.id else self.collection
-            self.client.query(self.UPSERT_QUERY.format(thing=thing), data)  # type: ignore[arg-type]
+            if doc.id:
+                # Bind the record id via type::record so a reader-assigned UUID
+                # (hyphenated, digit-leading) is accepted, and fold the owner into
+                # the id so two owners' identical content don't collide; None keeps the base id.
+                data["table"] = self.collection
+                data["record_id"] = self._fold_record_id(doc.id, user_id)
+                self.client.query(self.UPSERT_QUERY, data)  # type: ignore[arg-type]
+            else:
+                self.client.create(self.collection, data)
 
     def search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """Search for similar documents.
 
@@ -305,6 +380,8 @@ class SurrealDb(VectorDb):
             query: The query to search for.
             limit: The maximum number of documents to return.
             filters: A dictionary of filters to apply to the query.
+            user_id: When set, restrict results to the caller's own chunks plus
+                the shared (NONE-owned) bucket. None (default) applies no scope.
 
         Returns:
             A list of documents that are similar to the query.
@@ -324,13 +401,16 @@ class SurrealDb(VectorDb):
             collection=self.collection,
             limit=limit,
             search_ef=self.search_ef,
+            scope_condition=self._user_scope_condition(user_id),
             filter_condition=filter_condition,
             distance=self.distance,
         )
         log_debug(f"Search query: {search_query}")
-        search_params: Any = (
-            {"query_embedding": query_embedding, **filters} if filters else {"query_embedding": query_embedding}
-        )
+        search_params: Dict[str, Any] = {"query_embedding": query_embedding}
+        if filters:
+            search_params.update(filters)
+        if user_id is not None:
+            search_params["scope_user_id"] = user_id
         response: Any = self.client.query(search_query, search_params)
         log_debug(f"Search response: {response}")
 
@@ -421,19 +501,26 @@ class SurrealDb(VectorDb):
         result = self.client.query(query, metadata)
         return bool(result)
 
-    def delete_by_content_id(self, content_id: str) -> bool:
+    def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
         """Delete documents by their content ID.
 
         Args:
             content_id: The content ID of the documents to delete.
+            user_id: When set, delete only that owner's own chunks; None
+                (default) deletes across all owners.
 
         Returns:
             True if documents were deleted, False otherwise.
 
         """
         log_debug(f"Deleting documents by content ID: {content_id}")
+        scope_condition = "AND user_id = $user_id" if user_id is not None else ""
+        params: Dict[str, Any] = {"content_id": content_id}
+        if user_id is not None:
+            params["user_id"] = user_id
         result = self.client.query(
-            self.DELETE_BY_CONTENT_ID_QUERY.format(collection=self.collection), {"content_id": content_id}
+            self.DELETE_BY_CONTENT_ID_QUERY.format(collection=self.collection, scope_condition=scope_condition),
+            params,
         )
         return bool(result)
 
@@ -484,7 +571,11 @@ class SurrealDb(VectorDb):
         return bool(self._extract_result(response))
 
     async def async_insert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """Insert documents into the vector store asynchronously.
 
@@ -492,20 +583,32 @@ class SurrealDb(VectorDb):
             content_hash: The content hash for the documents.
             documents: A list of documents to insert.
             filters: A dictionary of filters to apply to the query.
+            user_id: Owner of these chunks for per-user isolation. None
+                (default) writes to the shared bucket, visible to everyone.
 
         """
         for doc in documents:
             doc.embed(embedder=self.embedder)
             meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
             meta_data["content_hash"] = content_hash
-            data: Dict[str, Any] = {"content": doc.content, "embedding": doc.embedding, "meta_data": meta_data}
+            data: Dict[str, Any] = {
+                "content": doc.content,
+                "embedding": doc.embedding,
+                "meta_data": meta_data,
+                "content_id": doc.content_id,
+                "user_id": user_id,
+            }
             if filters:
                 data["meta_data"].update(filters)
             log_debug(f"Inserting document asynchronously: {doc.name} ({doc.meta_data})")
             await self.async_client.create(self.collection, data)
 
     async def async_upsert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """Upsert documents into the vector store asynchronously.
 
@@ -513,24 +616,40 @@ class SurrealDb(VectorDb):
             content_hash: The content hash for the documents.
             documents: A list of documents to upsert.
             filters: A dictionary of filters to apply to the query.
+            user_id: Owner of these chunks for per-user isolation. None
+                (default) writes to the shared bucket, visible to everyone.
 
         """
         for doc in documents:
             doc.embed(embedder=self.embedder)
             meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
             meta_data["content_hash"] = content_hash
-            data: Dict[str, Any] = {"content": doc.content, "embedding": doc.embedding, "meta_data": meta_data}
+            data: Dict[str, Any] = {
+                "content": doc.content,
+                "embedding": doc.embedding,
+                "meta_data": meta_data,
+                "content_id": doc.content_id,
+                "user_id": user_id,
+            }
             if filters:
                 data["meta_data"].update(filters)
             log_debug(f"Upserting document asynchronously: {doc.name} ({doc.meta_data})")
-            thing = f"{self.collection}:{doc.id}" if doc.id else self.collection
-            await self.async_client.query(self.UPSERT_QUERY.format(thing=thing), data)  # type: ignore[arg-type]
+            if doc.id:
+                # Bind the record id via type::record so a reader-assigned UUID
+                # (hyphenated, digit-leading) is accepted, and fold the owner into
+                # the id so two owners' identical content don't collide; None keeps the base id.
+                data["table"] = self.collection
+                data["record_id"] = self._fold_record_id(doc.id, user_id)
+                await self.async_client.query(self.UPSERT_QUERY, data)  # type: ignore[arg-type]
+            else:
+                await self.async_client.create(self.collection, data)
 
     async def async_search(
         self,
         query: str,
         limit: int = 5,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """Search for similar documents asynchronously.
 
@@ -538,6 +657,8 @@ class SurrealDb(VectorDb):
             query: The query to search for.
             limit: The maximum number of documents to return.
             filters: A dictionary of filters to apply to the query.
+            user_id: When set, restrict results to the caller's own chunks plus
+                the shared (NONE-owned) bucket. None (default) applies no scope.
 
         Returns:
             A list of documents that are similar to the query.
@@ -557,12 +678,15 @@ class SurrealDb(VectorDb):
             collection=self.collection,
             limit=limit,
             search_ef=self.search_ef,
+            scope_condition=self._user_scope_condition(user_id),
             filter_condition=filter_condition,
             distance=self.distance,
         )
-        search_params: Any = (
-            {"query_embedding": query_embedding, **filters} if filters else {"query_embedding": query_embedding}
-        )
+        search_params: Dict[str, Any] = {"query_embedding": query_embedding}
+        if filters:
+            search_params.update(filters)
+        if user_id is not None:
+            search_params["scope_user_id"] = user_id
         response: Any = await self.async_client.query(search_query, search_params)
         log_debug(f"Search response: {response}")
         documents = []

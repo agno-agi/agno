@@ -546,8 +546,7 @@ class TestRouterUserSelection:
                 Step(name="fetch", executor=fetch_data),
                 Router(
                     name="route_selector",
-                    human_review=HumanReview(requires_user_input=True),
-                    allow_multiple_selections=True,
+                    human_review=HumanReview(requires_user_input=True, allow_multiple_selections=True),
                     choices=[
                         Step(name="route_a", executor=route_a),
                         Step(name="route_b", executor=route_b),
