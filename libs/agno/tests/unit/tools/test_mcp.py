@@ -408,6 +408,48 @@ def test_headers_with_stdio_transport_raises_error():
 
 
 @pytest.mark.asyncio
+async def test_mcp_toolbox_headers_not_sent_to_mcp_connect():
+    """MCPToolbox toolbox-core credentials in self.headers must not reach the MCP handshake.
+
+    Regression for the Greptile P1 on #9444: MCPTools merges MCP-intended headers for
+    connect/session, but MCPToolbox historically stores toolbox-core client_headers in
+    self.headers. Those must stay isolated from the MCP transport.
+    """
+    import sys
+    from types import ModuleType
+
+    toolbox_core = ModuleType("toolbox_core")
+    toolbox_core.ToolboxClient = MagicMock()
+    sys.modules["toolbox_core"] = toolbox_core
+    sys.modules.pop("agno.tools.mcp_toolbox", None)
+
+    from agno.tools.mcp_toolbox import MCPToolbox
+
+    toolbox_headers = {"Authorization": "Bearer toolbox-secret"}
+    tools = MCPToolbox(
+        url="http://localhost:8000",
+        headers=toolbox_headers,
+        append_mcp_to_url=True,
+    )
+    assert tools.headers == toolbox_headers
+    assert tools._merge_http_headers() == {}
+
+    with (
+        patch(
+            "agno.tools.mcp.mcp.streamablehttp_client",
+            return_value=_AsyncContextManager(("read", "write")),
+        ) as streamable_http_mock,
+        patch("agno.tools.mcp.mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
+        patch.object(MCPTools, "initialize", new=AsyncMock()),
+    ):
+        await tools._connect()
+
+    sent_headers = streamable_http_mock.call_args.kwargs.get("headers") or {}
+    assert "Authorization" not in sent_headers
+    assert "toolbox-secret" not in str(streamable_http_mock.call_args)
+
+
+@pytest.mark.asyncio
 async def test_multimcp_connect_merges_init_headers_when_streamable_http_headers_default_to_none():
     tools = MultiMCPTools(
         server_params_list=[StreamableHTTPClientParams(url="http://localhost:8080/mcp")],

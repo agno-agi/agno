@@ -154,14 +154,16 @@ class MCPTools(Toolkit):
 
         self.transport = transport
 
-        self.headers: Optional[dict[str, Any]] = None
+        # Stored separately from any subclass attribute named `headers`
+        # (e.g. MCPToolbox uses `self.headers` for toolbox-core credentials).
+        self._mcp_headers: Optional[dict[str, Any]] = None
         if headers is not None:
             if self.transport not in ["sse", "streamable-http"]:
                 raise ValueError(
                     f"headers is not supported with '{self.transport}' transport. "
                     "Use 'sse' or 'streamable-http' transport instead."
                 )
-            self.headers = headers
+            self._mcp_headers = headers
 
         self.header_provider = None
         if header_provider is not None:
@@ -296,12 +298,12 @@ class MCPTools(Toolkit):
         agent: Optional["Agent"] = None,
         team: Optional["Team"] = None,
     ) -> dict[str, Any]:
-        """Merge server_params headers, static headers, and header_provider output."""
+        """Merge server_params headers, static MCP headers, and header_provider output."""
         merged: dict[str, Any] = {}
         if base_headers:
             merged.update(base_headers)
-        if self.headers:
-            merged.update(self.headers)
+        if self._mcp_headers:
+            merged.update(self._mcp_headers)
         if self.header_provider is not None:
             merged.update(self._call_header_provider(run_context=run_context, agent=agent, team=team))
         return merged
