@@ -100,13 +100,21 @@ def _make_private_dir(directory: Any) -> None:
         except FileExistsError:
             pass
 
-    owner = os.geteuid() if hasattr(os, "geteuid") else None
+    if not hasattr(os, "geteuid"):
+        # Ownership and permission bits mean nothing here: every directory
+        # reports the same mode, so there is nothing to read them for.
+        return
+
+    owner = os.geteuid()
     for level in (directory, directory.parent, directory.parent.parent):
         info = level.stat()
-        if owner is not None and info.st_uid != owner:
+        if info.st_uid != owner:
             raise PermissionError(f"Refusing a cache directory owned by another user: {level}")
         if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
-            raise PermissionError(f"Refusing a cache directory others can write to: {level}")
+            # These three levels are ours to keep, and an earlier release made
+            # them with whatever the umask allowed. Close them rather than
+            # refuse them, so upgrading does not cost a caller its caching.
+            level.chmod(info.st_mode & ~(stat.S_IWGRP | stat.S_IWOTH))
 
 
 def _has_injected_media(entrypoint_args: Dict[str, Any]) -> bool:
@@ -1527,13 +1535,6 @@ class Function(BaseModel):
                 log_debug(f"Skipping cache for {self.name}: a result carrying media is not cacheable")
                 return
             if isinstance(result, ToolResult):
-                if False:
-                    # The cache holds JSON, and it excludes media by design:
-                    # media is forwarded from the live result rather than
-                    # rebuilt from a file. Skipping the write keeps the media
-                    # intact on every call at the cost of re-executing.
-                    log_debug(f"Skipping cache for {self.name}: a ToolResult carrying media is not cacheable")
-                    return
                 # Tag the entry so a cache hit restores a ToolResult instead of
                 # handing the model loop a plain dict.
                 cache_data["result"] = result.model_dump()

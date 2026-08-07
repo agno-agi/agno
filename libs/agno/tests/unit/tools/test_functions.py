@@ -3634,12 +3634,15 @@ def test_a_link_planted_at_the_cache_path_is_not_read(tmp_path):
     assert executions == [1]
 
 
-def test_a_cache_directory_others_can_write_is_refused(tmp_path):
-    """A directory somebody else can write to can choose what a hit reads, and
-    losing the cache is not a reason to lose the tool call."""
-    hostile = tmp_path / "cache" / "functions" / f"v{function_module.CACHE_FORMAT}" / "hostile"
-    hostile.mkdir(parents=True)
-    hostile.chmod(0o777)
+def test_a_cache_directory_others_can_write_is_closed(tmp_path):
+    """An earlier release made these directories with whatever the umask
+    allowed. They are ours to keep, so they are closed rather than refused: a
+    caller must not lose its caching by upgrading."""
+    import stat
+
+    open_dir = tmp_path / "cache" / "functions" / f"v{function_module.CACHE_FORMAT}" / "widely_open"
+    open_dir.mkdir(parents=True)
+    open_dir.chmod(0o777)
 
     executions = []
 
@@ -3647,20 +3650,15 @@ def test_a_cache_directory_others_can_write_is_refused(tmp_path):
         executions.append(1)
         return "value"
 
-    func = Function(name="hostile", entrypoint=compute, cache_results=True, cache_dir=str(tmp_path / "cache"))
+    func = Function(name="widely_open", entrypoint=compute, cache_results=True, cache_dir=str(tmp_path / "cache"))
 
     first = FunctionCall(function=func, arguments={}).execute()
     second = FunctionCall(function=func, arguments={}).execute()
 
     assert first.status == "success"
-    assert second.status == "success"
-    assert len(executions) == 2
-    assert list(hostile.glob("*.json")) == []
-
-
-# =============================================================================
-# What the call may not change under the cache
-# =============================================================================
+    assert second.result == "value"
+    assert executions == [1]
+    assert not stat.S_IMODE(open_dir.stat().st_mode) & (stat.S_IWGRP | stat.S_IWOTH)
 
 
 def test_a_tool_that_changes_the_caller_cannot_store_under_the_new_identity(tmp_path):
