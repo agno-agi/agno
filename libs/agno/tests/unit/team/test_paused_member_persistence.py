@@ -8,6 +8,7 @@ persisted to session.runs so subsequent continue_run calls can find it after
 session reload.
 """
 
+import asyncio
 import json
 from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Tuple
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -3927,3 +3928,182 @@ def test_spared_leaf_keeps_tool_messages_when_owning_member_stores_them():
     )
     kept_calls = [call["id"] for m in leaf.messages or [] if m.role == "assistant" for call in m.tool_calls or []]
     assert kept_calls == ["tc-done", "tc-pending"], "both tool calls must survive when the owning member stores them"
+
+
+# ---------------------------------------------------------------------------
+# Round 11: the payload binding must carry a failure, and must not latch
+# ---------------------------------------------------------------------------
+
+
+@tool(external_execution=True)
+def fetch_ledger(quarter: str) -> str:
+    raise AssertionError("an external-execution tool must never run in-process")
+
+
+def _build_external_execution_team(db_file: str, resuming: bool) -> Team:
+    return Team(
+        name="Ledger Team",
+        id="ledger-team",
+        model=_ScriptedModel(
+            "m-leader",
+            [("content", "All done.")]
+            if resuming
+            else [("tool", "fetch_ledger", {"quarter": "q3"}, "tc-ledger"), ("content", "All done.")],
+        ),
+        tools=[fetch_ledger],
+        members=[_emailer_agent(SqliteDb(db_file=db_file), resuming)],
+        db=SqliteDb(db_file=db_file),
+        telemetry=False,
+    )
+
+
+def test_external_execution_error_flag_survives_the_binding(tmp_path):
+    """A frontend tool that reported a failure must not be rebound as a success.
+
+    agno's own AG-UI interface sets tool_call_error before handing the
+    requirements to continue_run, so dropping the flag while copying the result
+    turns every reported failure into a success in the transcript and in
+    storage.
+    """
+    db_file = str(tmp_path / "extern_err.db")
+    session_id = "s-extern-err"
+
+    run1 = _build_external_execution_team(db_file, resuming=False).run("Fetch it", session_id=session_id)
+    assert run1.is_paused
+
+    # Exactly what os/interfaces/agui/resume.py does for a failed frontend tool.
+    payload: List[RunRequirement] = []
+    for data in [r.to_dict() for r in run1.requirements or []]:
+        req = RunRequirement.from_dict(data)
+        req.tool_execution.tool_call_error = True
+        req.set_external_execution_result("Ledger service returned 503")
+        payload.append(req)
+
+    run2 = _build_external_execution_team(db_file, resuming=True).continue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=payload
+    )
+
+    msgs = [m for m in (run2.messages or []) if getattr(m, "tool_call_id", None) == "tc-ledger"]
+    assert msgs, "the external execution result must reach the conversation"
+    assert msgs[0].content == "Ledger service returned 503"
+    assert msgs[0].tool_call_error is True, "a failed frontend tool must be recorded as an error"
+
+    stored = [r for r in _reload_runs(db_file, session_id) if getattr(r, "team_id", None) == "ledger-team"]
+    tools = [t for t in (stored[0].tools or []) if t.tool_name == "fetch_ledger"]
+    assert [t.tool_call_error for t in tools] == [True], "the error flag must survive the storage round trip"
+
+
+def test_rolling_back_a_refused_merge_restores_the_error_flag():
+    """tool_call_error is a decision field, so the refusal snapshot has to cover
+    it — otherwise a refused payload leaves its error flag written behind."""
+    from agno.team._run import _requirement_decision_slots
+
+    req = RunRequirement(
+        tool_execution=ToolExecution(
+            tool_name="fetch_ledger",
+            tool_args={"quarter": "q3"},
+            tool_call_id="tc-ledger",
+            external_execution_required=True,
+        )
+    )
+    slots = {attr for obj, attr in _requirement_decision_slots([req]) if obj is req.tool_execution}
+    assert "tool_call_error" in slots, "the rollback must restore tool_call_error along with the result it describes"
+
+
+def test_wire_answered_false_does_not_latch_a_prefilled_pause():
+    """Only True is an accept gesture.
+
+    The branch that honours an explicit wire flag sits under `answered is None`,
+    so writing a wire False closes that guard for good: nothing in the codebase
+    ever re-nulls the flag, and the pause becomes unresumable for the rest of
+    the session with no client-side recovery.
+    """
+    from agno.team._run import _merge_requirement_decision
+
+    stored = _prefilled_input_requirement()
+
+    not_yet = RunRequirement.from_dict(stored.to_dict())
+    not_yet.tool_execution.answered = False
+    _merge_requirement_decision(stored, not_yet)
+    assert not stored.is_resolved(), "answered=False must leave the pause unresolved"
+    assert stored.tool_execution.answered is not False, "a wire False must not be written onto the stored requirement"
+
+    accepted = RunRequirement.from_dict(stored.to_dict())
+    accepted.tool_execution.answered = True
+    _merge_requirement_decision(stored, accepted)
+
+    assert stored.tool_execution.answered is True, "a later answered=True must still take effect"
+    assert stored.is_resolved()
+
+
+# ---------------------------------------------------------------------------
+# Round 11: the storage view must never be the session's public state
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_concurrent_async_saves_keep_the_live_member_responses(monkeypatch):
+    """Two overlapping saves on one session must not leave the scrubbed view live.
+
+    cache_session hands every caller the same TeamSession, so rebinding
+    session.runs for the length of an awaited write publishes the throwaway view:
+    the second save captures it as the state to restore and puts it back for good.
+    """
+    from agno.session import TeamSession
+    from agno.team import _storage as team_storage
+    from agno.team._session import asave_session
+
+    worker = Agent(name="Worker", id="worker", telemetry=False)
+    team = Team(name="Root", id="root", members=[worker], telemetry=False)
+    team.db = object()  # only truthiness is read; the upsert is stubbed below
+
+    completed = RunOutput(run_id="m1", agent_id="worker", status=RunStatus.completed)
+    team_run = TeamRunOutput(run_id="t1", team_id="root", member_responses=[completed])
+    session = TeamSession(session_id="s1", team_id="root", runs=[team_run])
+
+    async def _slow_upsert(team, session):
+        await asyncio.sleep(0.01)
+
+    monkeypatch.setattr(team_storage, "_aupsert_session", _slow_upsert)
+    monkeypatch.setattr("agno.team._init._has_async_db", lambda t: True)
+
+    await asyncio.gather(asave_session(team, session), asave_session(team, session))
+
+    assert session.runs[0].member_responses == [completed], (
+        "the live session lost its member responses to the storage view"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_run_finishing_during_an_async_save_is_not_discarded(monkeypatch):
+    """A concurrent upsert_run must not land in the throwaway view and vanish."""
+    from agno.session import TeamSession
+    from agno.team import _storage as team_storage
+    from agno.team._session import asave_session
+
+    worker = Agent(name="Worker", id="worker", telemetry=False)
+    team = Team(name="Root", id="root", members=[worker], telemetry=False)
+    team.db = object()
+
+    run_a = TeamRunOutput(run_id="run-a", team_id="root", session_id="s")
+    run_a.member_responses = []
+    session = TeamSession(session_id="s", team_id="root", runs=[run_a])
+
+    async def _slow_upsert(team, session):
+        await asyncio.sleep(0.05)
+
+    monkeypatch.setattr(team_storage, "_aupsert_session", _slow_upsert)
+    monkeypatch.setattr("agno.team._init._has_async_db", lambda t: True)
+
+    save = asyncio.create_task(asave_session(team, session))
+    await asyncio.sleep(0.01)  # land inside the DB-write window
+
+    run_b = TeamRunOutput(run_id="run-b", team_id="root", session_id="s")
+    run_b.member_responses = []
+    session.upsert_run(run_b)
+
+    await save
+
+    ids = [r.run_id for r in session.runs or []]
+    assert "run-b" in ids, f"the concurrently added run was dropped by the restore; runs={ids}"
+
