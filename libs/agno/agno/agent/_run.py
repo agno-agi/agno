@@ -62,9 +62,11 @@ from agno.run.cancel import (
     acancel_run as acancel_run_global,
 )
 from agno.run.cancel import (
+    acleanup_member_runs,
     acleanup_run,
     araise_if_cancelled,
     aregister_run,
+    cleanup_member_runs,
     cleanup_run,
     raise_if_cancelled,
     register_run,
@@ -745,8 +747,9 @@ def _run(
 
         # Always disconnect connectable tools
         disconnect_connectable_tools(agent)
-        # Always clean up the run tracking
+        # Always clean up the run tracking (including any subagent member-run mappings)
         cleanup_run(run_response.run_id)  # type: ignore
+        cleanup_member_runs(run_response.run_id)  # type: ignore
 
     return run_response
 
@@ -1288,8 +1291,9 @@ def _run_stream(
 
         # Always disconnect connectable tools
         disconnect_connectable_tools(agent)
-        # Always clean up the run tracking
+        # Always clean up the run tracking (including any subagent member-run mappings)
         cleanup_run(run_response.run_id)  # type: ignore
+        cleanup_member_runs(run_response.run_id)  # type: ignore
 
 
 def run_dispatch(
@@ -1921,8 +1925,9 @@ async def _arun(
             except asyncio.CancelledError:
                 pass
 
-        # Always clean up the run tracking
+        # Always clean up the run tracking (including any subagent member-run mappings)
         await acleanup_run(run_response.run_id)  # type: ignore
+        await acleanup_member_runs(run_response.run_id)  # type: ignore
 
     return run_response
 
@@ -2736,8 +2741,9 @@ async def _arun_stream(
             except asyncio.CancelledError:
                 pass
 
-        # Always clean up the run tracking
+        # Always clean up the run tracking (including any subagent member-run mappings)
         await acleanup_run(run_response.run_id)  # type: ignore
+        await acleanup_member_runs(run_response.run_id)  # type: ignore
 
 
 def arun_dispatch(  # type: ignore
@@ -3801,8 +3807,9 @@ def _continue_run(
     finally:
         # Always disconnect connectable tools
         disconnect_connectable_tools(agent)
-        # Always clean up the run tracking
+        # Always clean up the run tracking (including any subagent member-run mappings)
         cleanup_run(run_response.run_id)  # type: ignore
+        cleanup_member_runs(run_response.run_id)  # type: ignore
     return run_response
 
 
@@ -4112,8 +4119,9 @@ def _continue_run_stream(
     finally:
         # Always disconnect connectable tools
         disconnect_connectable_tools(agent)
-        # Always clean up the run tracking
+        # Always clean up the run tracking (including any subagent member-run mappings)
         cleanup_run(run_response.run_id)  # type: ignore
+        cleanup_member_runs(run_response.run_id)  # type: ignore
 
 
 def acontinue_run_dispatch(  # type: ignore
@@ -4964,8 +4972,9 @@ async def _acontinue_run(
         # Always disconnect MCP tools
         await disconnect_mcp_tools(agent)
 
-        # Always clean up the run tracking
+        # Always clean up the run tracking (including any subagent member-run mappings)
         await acleanup_run(run_response.run_id)  # type: ignore
+        await acleanup_member_runs(run_response.run_id)  # type: ignore
     return run_response  # type: ignore
 
 
@@ -5579,6 +5588,7 @@ async def _acontinue_run_stream(
         cleanup_run_id = run_response.run_id if run_response and run_response.run_id is not None else run_id
         if cleanup_run_id is not None:
             await acleanup_run(cleanup_run_id)
+            await acleanup_member_runs(cleanup_run_id)
 
 
 # ---------------------------------------------------------------------------
@@ -5952,6 +5962,7 @@ def _persist_cancelled_run_in_background(
             # re-cancelled; clean up here too so the run is never left tracked.
             if run_response.run_id:
                 await acleanup_run(run_response.run_id)
+                await acleanup_member_runs(run_response.run_id)
         except Exception as store_err:
             log_warning(f"Failed to persist cancelled run: {store_err}")
 

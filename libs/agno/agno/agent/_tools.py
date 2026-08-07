@@ -536,6 +536,16 @@ def determine_tools_for_model(
 ) -> List[Union[Function, dict]]:
     _functions: List[Union[Function, dict]] = []
 
+    # Add the spawn_agent tool when subagents are enabled. Built per run (like Team
+    # delegate tools) so the tool description lists the real allowed model/tool options.
+    if agent._subagents is not None:
+        spawn_function = agent._subagents.get_spawn_function(
+            agent=agent,
+            run_context=run_context,
+            async_mode=async_mode,
+        )
+        processed_tools = [*(processed_tools or []), spawn_function]
+
     # Get Agent tools
     if processed_tools is not None and len(processed_tools) > 0:
         log_debug("Processing tools for model")
