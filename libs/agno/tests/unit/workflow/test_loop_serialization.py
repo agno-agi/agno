@@ -507,3 +507,23 @@ class TestLoopNestedContainerSerialization:
         assert restored.steps[0].name == "steps-container"
         assert isinstance(restored.steps[0], Steps)
         assert len(restored.steps[0].steps) == 2
+
+
+class TestPlaceholderExecutionHonesty:
+    def test_end_condition_placeholder_refuses_instead_of_running_to_max_iterations(self):
+        """The loop's tolerant end-condition handling must not swallow the
+        placeholder's refusal: running with the reference missing is loud."""
+        from agno.workflow.step import UnresolvableCallableError
+
+        data = {
+            "type": "Loop",
+            "name": "l",
+            "description": None,
+            "max_iterations": 5,
+            "end_condition": "missing_condition",
+            "steps": [],
+        }
+        loop = Loop.from_dict(data, registry=Registry(), strict=False)
+
+        with pytest.raises(UnresolvableCallableError, match="missing_condition"):
+            loop._evaluate_end_condition([])

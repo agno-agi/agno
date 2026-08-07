@@ -1784,6 +1784,10 @@ def get_agent_by_id(
 
         agent = Agent.from_dict(cfg, registry=registry, strict=strict)
         agent.id = id
+        # Only fall back to the caller-provided db if the config didn't
+        # reconstruct one, matching Agent.load.
+        if agent.db is None:
+            agent.db = db
 
         return agent
 

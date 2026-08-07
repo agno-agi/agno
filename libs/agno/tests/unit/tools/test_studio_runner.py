@@ -1431,14 +1431,14 @@ class TestStudioEmbedding:
 
         # With a registry present, the reference check is the only reader of a
         # member's stored config, so this fault lands on exactly that read.
-        original = runner._load_config_from_db
+        original = runner._load_config_row_from_db
 
         def failing(component_id, **kwargs):
             if component_id == "worker":
                 raise RuntimeError("transient db failure")
             return original(component_id, **kwargs)
 
-        runner._load_config_from_db = failing  # type: ignore[method-assign]
+        runner._load_config_row_from_db = failing  # type: ignore[method-assign]
         assert "transient db failure" in _loads(runner.run_team("crew", "hi"))["error"]
 
     def test_reference_stored_under_another_type_is_refused(self, db, registry):

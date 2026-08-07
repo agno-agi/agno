@@ -19,7 +19,7 @@ from agno.run.workflow import (
 from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, log_error, log_warning, logger
 from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_loop_end_condition, is_cel_expression
-from agno.workflow.step import Step
+from agno.workflow.step import Step, UnresolvableCallableError
 from agno.workflow.types import HumanReview, OnReject, StepInput, StepOutput, StepRequirement, StepType
 
 WorkflowSteps = List[
@@ -327,6 +327,8 @@ class Loop:
         if callable(self.end_condition):
             try:
                 return self.end_condition(iteration_results)
+            except UnresolvableCallableError:
+                raise
             except Exception as e:
                 log_warning(f"End condition evaluation failed: {str(e)}")
                 return False
@@ -356,6 +358,8 @@ class Loop:
                     return await self.end_condition(iteration_results)
                 else:
                     return self.end_condition(iteration_results)
+            except UnresolvableCallableError:
+                raise
             except Exception as e:
                 log_warning(f"End condition evaluation failed: {str(e)}")
                 return False

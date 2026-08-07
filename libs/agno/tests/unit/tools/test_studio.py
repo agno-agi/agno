@@ -1713,3 +1713,68 @@ def test_studio_loads_component_with_broken_refs_for_repair(tmp_path):
 
     assert loaded is not None
     assert loaded.id == "repair-agent"
+
+
+class TestEditPreservation:
+    """Edits round-trip through leniently loaded objects; the persisted config
+    must not lose what the load could not resolve, nor its member pins."""
+
+    def test_description_edit_preserves_unresolved_output_schema(self, tmp_path):
+        from pydantic import BaseModel
+
+        from agno.db.sqlite import SqliteDb
+        from agno.models.openai import OpenAIChat
+        from agno.registry import Registry
+        from agno.tools.studio import StudioTools
+
+        class Report(BaseModel):
+            text: str
+
+        db = SqliteDb(db_file=str(tmp_path / "preserve.db"))
+        Agent(id="schema-agent", name="S", model=OpenAIChat(id="gpt-4o-mini"), output_schema=Report).save(db=db)
+
+        studio = StudioTools(registry=Registry(), db=db)
+        out = _loads(studio.edit_agent("schema-agent", description="edited"))
+        assert out.get("status") == "edited"
+
+        row = db.get_config(component_id="schema-agent")
+        assert row["config"]["output_schema"] == "Report"
+        assert row["config"]["description"] == "edited"
+
+    def test_team_edit_repins_members(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+        from agno.registry import Registry
+        from agno.team.team import Team
+        from agno.tools.studio import StudioTools
+
+        db = SqliteDb(db_file=str(tmp_path / "repin_team.db"))
+        member = Agent(id="rp-member", name="Member")
+        Team(id="rp-team", name="Team", members=[member]).save(db=db)
+
+        studio = StudioTools(registry=Registry(), db=db, teams=True)
+        out = _loads(studio.edit_team("rp-team", description="edited"))
+        assert out.get("status") == "edited"
+
+        version = out.get("version") or out.get("draft_version")
+        links = db.get_links(component_id="rp-team", version=version)
+        assert [link["child_component_id"] for link in links] == ["rp-member"]
+        assert all(link["child_version"] is not None for link in links)
+
+    def test_workflow_edit_repins_step_members(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+        from agno.registry import Registry
+        from agno.tools.studio import StudioTools
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import Workflow
+
+        db = SqliteDb(db_file=str(tmp_path / "repin_wf.db"))
+        agent = Agent(id="rw-agent", name="A")
+        Workflow(id="rw-wf", name="WF", steps=[Step(name="s1", agent=agent)]).save(db=db)
+
+        studio = StudioTools(registry=Registry(), db=db, workflows=True)
+        out = _loads(studio.edit_workflow("rw-wf", description="edited"))
+        assert out.get("status") == "edited"
+
+        version = out.get("version") or out.get("draft_version")
+        links = db.get_links(component_id="rw-wf", version=version)
+        assert "rw-agent" in [link["child_component_id"] for link in links]

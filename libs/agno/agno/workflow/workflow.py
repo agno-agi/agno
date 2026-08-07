@@ -1094,6 +1094,13 @@ class Workflow:
                     if step.team.id is not None and team_version is not None:
                         saved_versions[step.team.id] = team_version
 
+                # Save nested workflow if present; without a saved version its
+                # step_workflow link cannot be written and the save would fail.
+                if step.workflow is not None and isinstance(step.workflow, Workflow):
+                    workflow_version = step.workflow.save(db=db_, stage=stage, label=label, notes=notes)
+                    if step.workflow.id is not None and workflow_version is not None:
+                        saved_versions[step.workflow.id] = workflow_version
+
                 # Add links with position and pinned version
                 for link in step.get_links(position=position):
                     if link["child_component_id"] in saved_versions:
@@ -1105,7 +1112,12 @@ class Workflow:
                 for nested_position, nested_step in enumerate(step.steps):
                     _save_step_agents(nested_step, nested_position, saved_versions, all_links)
                 for nested_position, nested_step in enumerate(getattr(step, "else_steps", None) or []):
+                    else_link_start = len(all_links)
                     _save_step_agents(nested_step, nested_position, saved_versions, all_links)
+                    # The links table keys on (link_kind, link_key); an else-step
+                    # that shares a name with an if-step must not collide with it.
+                    for link in all_links[else_link_start:]:
+                        link["link_key"] = f"{link.get('link_key')}#else"
 
             elif isinstance(step, Router):
                 # Router uses 'choices' instead of 'steps'
@@ -1116,6 +1128,24 @@ class Workflow:
             steps_to_save = self.steps if isinstance(self.steps, list) else []
             for position, step in enumerate(steps_to_save):
                 _save_step_agents(step, position, saved_versions, all_links)
+
+            # The links table keys on (link_kind, link_key): a remaining
+            # duplicate (steps sharing a name across containers) would fail
+            # the whole save, so keep the first and say what was dropped.
+            seen_link_keys: set = set()
+            deduped_links: List[Dict[str, Any]] = []
+            for link in all_links:
+                dedupe_key = (link.get("link_kind"), link.get("link_key"))
+                if dedupe_key in seen_link_keys:
+                    log_warning(
+                        f"Workflow '{self.id}': dropping duplicate {link.get('link_kind')} link for "
+                        f"key '{link.get('link_key')}' (child '{link.get('child_component_id')}'); "
+                        "give steps distinct names so each pin is kept."
+                    )
+                    continue
+                seen_link_keys.add(dedupe_key)
+                deduped_links.append(link)
+            all_links = deduped_links
 
             db_.upsert_component(
                 component_id=self.id,
@@ -10716,6 +10746,7 @@ class Workflow:
                 description=step.description,
                 max_iterations=step.max_iterations,
                 end_condition=step.end_condition,
+                forward_iteration_output=step.forward_iteration_output,
                 requires_confirmation=step.requires_confirmation,
                 confirmation_message=step.confirmation_message,
                 on_reject=step.on_reject,
@@ -10728,7 +10759,7 @@ class Workflow:
         if isinstance(step, Condition):
             copied_condition_steps = [self._deep_copy_single_step(s) for s in step.steps] if step.steps else []
             copied_else_steps = [self._deep_copy_single_step(s) for s in step.else_steps] if step.else_steps else None
-            return Condition(
+            condition_kwargs: Dict[str, Any] = dict(
                 evaluator=step.evaluator,
                 steps=copied_condition_steps,
                 name=step.name,
@@ -10738,11 +10769,14 @@ class Workflow:
                 confirmation_message=step.confirmation_message,
                 on_reject=step.on_reject,
             )
+            if getattr(step, "human_review", None) is not None:
+                condition_kwargs["human_review"] = step.human_review
+            return Condition(**condition_kwargs)
 
         # Handle Router steps
         if isinstance(step, Router):
             copied_choices = [self._deep_copy_single_step(s) for s in step.choices] if step.choices else []
-            return Router(
+            router_kwargs: Dict[str, Any] = dict(
                 choices=copied_choices,
                 name=step.name,
                 description=step.description,
@@ -10757,11 +10791,14 @@ class Workflow:
                 output_review_message=step.output_review_message,
                 hitl_max_retries=step.hitl_max_retries,
             )
+            if getattr(step, "human_review", None) is not None:
+                router_kwargs["human_review"] = step.human_review
+            return Router(**router_kwargs)
 
         # Handle Steps container
         if isinstance(step, Steps):
             copied_steps = [self._deep_copy_single_step(s) for s in step.steps] if step.steps else []
-            return Steps(
+            steps_kwargs: Dict[str, Any] = dict(
                 name=step.name,
                 description=step.description,
                 steps=copied_steps,
@@ -10769,6 +10806,9 @@ class Workflow:
                 confirmation_message=step.confirmation_message,
                 on_reject=step.on_reject,
             )
+            if getattr(step, "human_review", None) is not None:
+                steps_kwargs["human_review"] = step.human_review
+            return Steps(**steps_kwargs)
 
         # For other types, attempt deep copy
         try:
@@ -10834,6 +10874,10 @@ def get_workflow_by_id(
 
         # Ensure workflow.id is set to the component_id
         workflow.id = id
+        # Only fall back to the caller-provided db if the config didn't
+        # reconstruct one, matching Workflow.load.
+        if workflow.db is None:
+            workflow.db = db
 
         return workflow
 

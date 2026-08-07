@@ -100,6 +100,14 @@ StepExecutor = Callable[
 ]
 
 
+class UnresolvableCallableError(RuntimeError):
+    """Raised when a lenient-load placeholder for an unresolved callable executes.
+
+    Container evaluators that tolerate ordinary callable failures re-raise
+    this one: running with the reference missing is not a recoverable error.
+    """
+
+
 def _unresolvable_callable_placeholder(kind: str, ref: str) -> Callable[..., Any]:
     """A constructible stand-in for a callable ref a lenient load could not resolve.
 
@@ -109,7 +117,7 @@ def _unresolvable_callable_placeholder(kind: str, ref: str) -> Callable[..., Any
     """
 
     def _unresolvable(*args: Any, **kwargs: Any) -> Any:
-        raise RuntimeError(
+        raise UnresolvableCallableError(
             f"{kind} '{ref}' was not resolvable from the registry when this workflow was "
             "loaded, so it cannot execute. Register the function and reload."
         )
@@ -133,6 +141,10 @@ def _unresolvable_ref_placeholder(config: Dict[str, Any], kind: str, ref: Any) -
             success=False,
         )
 
+    # An unnamed Step derives its name from the executor, so the placeholder
+    # must carry the reference's name, not its own.
+    _unresolvable.__name__ = str(ref)
+    _unresolvable.__qualname__ = str(ref)
     _unresolvable.__agno_unresolved__ = {  # type: ignore[attr-defined]
         key: config[key] for key in ("agent_id", "team_id", "executor_ref") if config.get(key)
     }
@@ -247,8 +259,10 @@ class Step:
                 if user_input_schema is None and hitl_metadata.get("user_input_schema"):
                     user_input_schema = hitl_metadata["user_input_schema"]
 
-        # Auto-detect name for function executors if not provided
-        if name is None and executor is not None:
+        # Auto-detect name for function executors if not provided. A lenient
+        # placeholder stands in for an unresolved reference; the step must not
+        # take its name, so an unnamed step round-trips as unnamed.
+        if name is None and executor is not None and getattr(executor, "__agno_unresolved__", None) is None:
             name = getattr(executor, "__name__", None)
 
         self.name = name
@@ -554,6 +568,8 @@ class Step:
                     success=False,
                 )
 
+            _placeholder.__name__ = str(workflow_id)
+            _placeholder.__qualname__ = str(workflow_id)
             _placeholder.__agno_unresolved__ = {"workflow_id": workflow_id}  # type: ignore[attr-defined]
             executor = _placeholder
 

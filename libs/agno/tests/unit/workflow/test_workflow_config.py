@@ -866,3 +866,71 @@ class TestElseBranchPersistence:
         assert loaded is not None
         else_step = loaded.steps[0].else_steps[0]
         assert else_step.agent.description == "v1"
+
+
+class TestWritePathFidelity:
+    def test_unnamed_degraded_step_round_trips_without_a_placeholder_name(self, tmp_path):
+        """A nameless step whose reference degrades must stay nameless: the
+        placeholder must never become the step's stored display name."""
+        from agno.agent.agent import Agent
+        from agno.db.sqlite import SqliteDb
+        from agno.workflow.step import Step
+
+        db = SqliteDb(db_file=str(tmp_path / "noname.db"))
+        Workflow(id="nn-wf", name="WF", steps=[Step(agent=Agent(id="nn-agent", name="A"))]).save(db=db)
+        db.delete_component("nn-agent", hard_delete=True)
+
+        loaded = Workflow.load(id="nn-wf", db=db, strict=False)
+
+        assert loaded is not None
+        assert loaded.steps[0].name is None
+        assert loaded.steps[0].to_dict().get("agent_id") == "nn-agent"
+
+    def test_deep_copy_preserves_container_review_config(self):
+        """deep_copy must not reset container HITL/error config: the per-request
+        AgentOS path deep-copies every workflow before it runs."""
+        from agno.workflow.condition import Condition
+        from agno.workflow.loop import Loop
+        from agno.workflow.step import Step, StepInput, StepOutput
+        from agno.workflow.types import HumanReview
+
+        def go(step_input: StepInput) -> StepOutput:
+            return StepOutput(content="x")
+
+        workflow = Workflow(
+            id="hr-wf",
+            name="WF",
+            steps=[
+                Condition(
+                    name="c",
+                    evaluator=True,
+                    steps=[Step(name="s", executor=go)],
+                    human_review=HumanReview(requires_confirmation=True, on_error="cancel", max_retries=9),
+                ),
+                Loop(name="l", steps=[Step(name="s2", executor=go)], forward_iteration_output=True),
+            ],
+        )
+
+        copied = workflow.deep_copy()
+
+        assert copied.steps[0].human_review.on_error == workflow.steps[0].human_review.on_error
+        assert copied.steps[0].human_review.max_retries == 9
+        assert copied.steps[1].forward_iteration_output is True
+
+    def test_save_persists_a_nested_workflow_step_and_pins_it(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+        from agno.workflow.step import Step, StepInput, StepOutput
+
+        def leaf(step_input: StepInput) -> StepOutput:
+            return StepOutput(content="x")
+
+        db = SqliteDb(db_file=str(tmp_path / "nested_save.db"))
+        sub = Workflow(id="sub-wf", name="Sub", steps=[Step(name="x", executor=leaf)])
+        parent = Workflow(id="parent-wf", name="Parent", steps=[Step(name="n", workflow=sub)])
+
+        version = parent.save(db=db)
+
+        assert version == 1
+        links = db.get_links(component_id="parent-wf", version=1)
+        nested = [link for link in links if link["child_component_id"] == "sub-wf"]
+        assert nested and nested[0]["child_version"] is not None

@@ -52,6 +52,9 @@ class Registry:
     schemas: List[Type[BaseModel]] = field(default_factory=list)
     functions: List[Callable] = field(default_factory=list)
     knowledge: List[Any] = field(default_factory=list)
+    # Names claimed by two distinct knowledge instances: lenient resolution
+    # keeps the first, strict resolution refuses the ambiguity.
+    _ambiguous_knowledge_names: Set[str] = field(default_factory=set, init=False, repr=False)
     memory_managers: List[Any] = field(default_factory=list)
     session_summary_managers: List[Any] = field(default_factory=list)
     # Code-defined agents and teams (for workflow rehydration)
@@ -213,6 +216,15 @@ class Registry:
             try:
                 rehydrated.append(self._rehydrate_function(func_dict, rebuild_state, strict=strict))
             except ValidationError as e:
+                if strict:
+                    from agno.exceptions import ComponentRehydrationError
+
+                    raise ComponentRehydrationError(
+                        f"Tool dict '{func_dict.get('name')}' is a serialized Function that does "
+                        f"not validate ({e.error_count()} error(s)); the stored config is corrupt. "
+                        "Re-save the component, or pass strict=False to pass the dict through to "
+                        "the model provider unchanged."
+                    ) from e
                 log_warning(
                     f"Registry: tool dict '{func_dict.get('name')}' looks like a serialized "
                     f"Function but does not validate as one ({e.error_count()} error(s)); "
@@ -472,9 +484,11 @@ class Registry:
         existing = self.get_knowledge(name)
         if existing is not None:
             if existing is not knowledge:
+                self._ambiguous_knowledge_names.add(name)
                 log_warning(
                     f"Registry: multiple distinct knowledge instances share name '{name}'; "
-                    "keeping the first. Give them distinct names to avoid one shadowing the other."
+                    "keeping the first for lenient loads. Strict loads refuse the ambiguity: "
+                    "give the instances distinct names."
                 )
             return
         self.knowledge.append(knowledge)

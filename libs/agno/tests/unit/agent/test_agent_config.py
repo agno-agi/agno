@@ -1084,3 +1084,64 @@ class TestStrictToolResolution:
         lenient = Agent.from_dict(config, registry=registry, strict=False)
         bound = [t for t in lenient.tools if isinstance(t, Function) and t.name == "search"]
         assert bound and bound[0].entrypoint is not None
+
+
+class TestLookupLoaderDbFallback:
+    def test_get_agent_by_id_falls_back_to_caller_db(self, tmp_path):
+        """An unresolvable serialized db must not leave the loaded agent with
+        db=None; the caller's db is the fallback, matching Agent.load."""
+        from agno.agent.agent import get_agent_by_id
+        from agno.db.base import ComponentType
+        from agno.db.sqlite import SqliteDb
+
+        db = SqliteDb(db_file=str(tmp_path / "fallback.db"))
+        db.upsert_component(component_id="db-agent", component_type=ComponentType.AGENT, name="A")
+        db.upsert_config(
+            component_id="db-agent",
+            config={"id": "db-agent", "name": "A", "db": {"id": "private-db"}},
+            stage="published",
+        )
+
+        agent = get_agent_by_id(db=db, id="db-agent")
+
+        assert agent is not None
+        assert agent.db is db
+
+
+class TestAmbiguousKnowledge:
+    def test_strict_refuses_a_knowledge_name_two_instances_claim(self):
+        from agno.exceptions import ComponentRehydrationError
+
+        class KB:
+            def __init__(self, marker):
+                self.name = "shared"
+                self.marker = marker
+
+        registry = Registry()
+        first, second = KB("first"), KB("second")
+        registry.add_knowledge(first)
+        registry.add_knowledge(second)
+
+        config = {"id": "kb-agent", "knowledge": {"name": "shared"}, "search_knowledge": True}
+
+        with pytest.raises(ComponentRehydrationError, match="two distinct"):
+            Agent.from_dict(config, registry=registry, strict=True)
+
+        lenient = Agent.from_dict(config, registry=registry, strict=False)
+        assert lenient.knowledge is first
+
+
+class TestMalformedFunctionDicts:
+    def test_strict_refuses_a_function_dict_that_fails_validation(self):
+        from agno.exceptions import ComponentRehydrationError
+
+        config = {
+            "id": "bad-tool-agent",
+            "tools": [{"name": "broken", "parameters": 5}],
+        }
+
+        with pytest.raises(ComponentRehydrationError, match="does not validate"):
+            Agent.from_dict(config, registry=Registry(), strict=True)
+
+        lenient = Agent.from_dict(config, registry=Registry(), strict=False)
+        assert lenient.tools == [{"name": "broken", "parameters": 5}]

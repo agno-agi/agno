@@ -59,7 +59,7 @@ Persistence:
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Union
 
 from agno.run import RunContext
 from agno.tools.function import Function
@@ -1211,7 +1211,7 @@ class StudioTools(Toolkit):
             if add_datetime_to_context is not None:
                 agent.add_datetime_to_context = add_datetime_to_context
 
-            result = self._save_edit(agent)
+            result = self._save_edit(agent, replaced_keys={"tools"} if tool_names is not None else None)
             log_debug(f"StudioTools edited agent id={agent.id} result={result}")
             return json.dumps({"status": "edited", "id": getattr(agent, "id", None) or agent_id, **result})
         except Exception as e:
@@ -2173,20 +2173,135 @@ class StudioTools(Toolkit):
                 return [], f"Step '{step_name}' must specify agent_id, team_id, or function_name"
         return steps, None
 
-    def _save_edit(self, component: Component) -> Dict[str, Any]:
+    # Reference keys a lenient load drops when they cannot resolve; an edit
+    # that did not replace them must not persist the loss.
+    _LENIENT_DROPPABLE_KEYS = ("tools", "input_schema", "output_schema", "knowledge", "db")
+
+    def _save_edit(self, component: Component, replaced_keys: Optional[Set[str]] = None) -> Dict[str, Any]:
         """Persist an edited component.
 
         With versioning enabled the edit is saved as a draft awaiting
         publish_component; otherwise it is published immediately as the new
         current version.
+
+        The edit round-trips through a leniently loaded object, so the config
+        written here keeps the stored value for any unresolvable reference the
+        load dropped (unless this edit replaced that key), and re-emits the
+        member/step links so the new version stays pinned.
         """
+        config = _component_to_dict(component)
+        self._preserve_unresolved_keys(getattr(component, "id", None), config, replaced_keys or set())
+        links = self._links_for_component(component)
         if self.enable_versions:
-            version = self._upsert_draft(component)
+            version = self._upsert_draft(component, config=config, links=links)
             return {"draft_version": version, "stage": "draft"}
-        version = _persist_only(component, self.db)
+        version = _persist_only(component, self.db, config=config, links=links)
         return {"version": version, "stage": "published"}
 
-    def _upsert_draft(self, component: Component) -> Optional[int]:
+    def _preserve_unresolved_keys(
+        self, component_id: Optional[str], config: Dict[str, Any], replaced_keys: Set[str]
+    ) -> None:
+        """Copy stored reference keys the lenient load dropped back into ``config``."""
+        if self.db is None or component_id is None:
+            return
+        base = self._runner_tools._load_config_from_db(component_id, version=self._edit_base_version(component_id))
+        if not isinstance(base, dict):
+            return
+        for key in self._LENIENT_DROPPABLE_KEYS:
+            if key in replaced_keys:
+                continue
+            if key in base and key not in config:
+                config[key] = base[key]
+                log_debug(f"StudioTools: preserving stored '{key}' the lenient load could not resolve.")
+
+    def _links_for_component(self, component: Component) -> Optional[List[Dict[str, Any]]]:
+        """Member/step links for a component snapshot, pinned at each child's
+        current stored version.
+
+        The edit paths persist without cascading saves, so children are not
+        re-saved; a child with no stored version (code-defined) gets no link,
+        matching how rehydration resolves it from the registry.
+        """
+        from agno.team.team import Team
+        from agno.workflow.condition import Condition
+        from agno.workflow.loop import Loop
+        from agno.workflow.parallel import Parallel
+        from agno.workflow.router import Router
+        from agno.workflow.step import Step
+        from agno.workflow.steps import Steps
+        from agno.workflow.workflow import Workflow
+
+        if self.db is None:
+            return None
+
+        def current_version(child_id: Optional[str]) -> Optional[int]:
+            if not child_id:
+                return None
+            loaded = self._runner_tools._load_config_row_from_db(child_id)
+            return loaded[1] if loaded is not None else None
+
+        links: List[Dict[str, Any]] = []
+        if isinstance(component, Team):
+            from agno.agent.agent import Agent
+
+            members = component.members if isinstance(component.members, list) else []
+            for position, member in enumerate(members):
+                child_version = current_version(getattr(member, "id", None))
+                if child_version is None:
+                    continue
+                links.append(
+                    {
+                        "link_kind": "member",
+                        "link_key": f"member_{position}",
+                        "child_component_id": member.id,
+                        "child_version": child_version,
+                        "position": position,
+                        "meta": {"type": "agent" if isinstance(member, Agent) else "team"},
+                    }
+                )
+        elif isinstance(component, Workflow):
+
+            def walk(step: Any, position: int, key_suffix: str = "") -> None:
+                if isinstance(step, Step):
+                    for link in step.get_links(position=position):
+                        child_version = current_version(link.get("child_component_id"))
+                        if child_version is None:
+                            continue
+                        link["child_version"] = child_version
+                        if key_suffix:
+                            link["link_key"] = f"{link.get('link_key')}{key_suffix}"
+                        links.append(link)
+                elif isinstance(step, (Parallel, Loop, Steps, Condition)):
+                    for nested_position, nested in enumerate(getattr(step, "steps", None) or []):
+                        walk(nested, nested_position, key_suffix)
+                    for nested_position, nested in enumerate(getattr(step, "else_steps", None) or []):
+                        walk(nested, nested_position, "#else")
+                elif isinstance(step, Router):
+                    for nested_position, nested in enumerate(getattr(step, "choices", None) or []):
+                        walk(nested, nested_position, key_suffix)
+
+            steps = component.steps if isinstance(component.steps, list) else []
+            for position, step in enumerate(steps):
+                walk(step, position)
+            seen_keys: Set[tuple] = set()
+            deduped: List[Dict[str, Any]] = []
+            for link in links:
+                dedupe_key = (link.get("link_kind"), link.get("link_key"))
+                if dedupe_key in seen_keys:
+                    continue
+                seen_keys.add(dedupe_key)
+                deduped.append(link)
+            links = deduped
+        else:
+            return None
+        return links
+
+    def _upsert_draft(
+        self,
+        component: Component,
+        config: Optional[Dict[str, Any]] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+    ) -> Optional[int]:
         """Save a component as a draft. Updates the latest draft in place, else creates one.
 
         The component row's name/description/metadata are NOT updated here --
@@ -2213,8 +2328,9 @@ class StudioTools(Toolkit):
         result = self.db.upsert_config(
             component_id=component_id,
             version=self._latest_draft_version(component_id),
-            config=_component_to_dict(component),
+            config=config if config is not None else _component_to_dict(component),
             stage="draft",
+            links=links,
         )
         return result.get("version")
 
@@ -2258,7 +2374,13 @@ def _summarize_tools(tools: Any) -> List[str]:
     return names
 
 
-def _persist_only(component: Component, db: Optional["BaseDb"], stage: str = "published") -> Optional[int]:
+def _persist_only(
+    component: Component,
+    db: Optional["BaseDb"],
+    stage: str = "published",
+    config: Optional[Dict[str, Any]] = None,
+    links: Optional[List[Dict[str, Any]]] = None,
+) -> Optional[int]:
     """Save a component WITHOUT cascading to members or step agents.
 
     Agno's built-in ``component.save()`` recursively persists every member of
@@ -2286,8 +2408,9 @@ def _persist_only(component: Component, db: Optional["BaseDb"], stage: str = "pu
     )
     result = db.upsert_config(
         component_id=component_id,
-        config=_component_to_dict(component),
+        config=config if config is not None else _component_to_dict(component),
         stage=stage,
+        links=links,
     )
     return result.get("version")
 

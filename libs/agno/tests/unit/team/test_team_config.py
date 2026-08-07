@@ -1359,3 +1359,24 @@ class TestMemberPinFailures:
         # team stays usable without silently substituting the registry object.
         lenient = get_team_by_id(db=db, id="ps-team", registry=registry, strict=False)
         assert lenient.members[0].description == "v2"
+
+
+def test_from_dict_without_registry_loads_registry_free_tools_under_strict():
+    """Provider-native dicts and external-execution tools need no registry, so
+    a strict team load without one accepts them."""
+    config = {
+        "id": "registry-free-team",
+        "tools": [
+            {"type": "web_search"},
+            {
+                "name": "charge_card",
+                "description": "Charge",
+                "parameters": {"type": "object", "properties": {}},
+                "external_execution": True,
+            },
+        ],
+    }
+
+    team = Team.from_dict(config, strict=True)
+
+    assert team.tools is not None and len(team.tools) == 2

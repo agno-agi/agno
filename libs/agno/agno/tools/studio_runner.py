@@ -824,16 +824,17 @@ class StudioRunnerTools(Toolkit):
             if child_id:
                 pins[child_id] = link.get("child_version")
         for ref_type, ref_id in _component_references(component_type, config):
-            ref_config = self._load_config_from_db(
+            ref_loaded = self._load_config_row_from_db(
                 ref_id, version=pins.get(ref_id), component_type=ComponentType(ref_type)
             )
-            if ref_config is None:
+            if ref_loaded is None:
                 raise ComponentNeedsRegistryError(
                     f"{component_type.capitalize()} '{component_id}' references {ref_type} '{ref_id}', "
                     "which is not stored in the database (a code-defined component); "
                     "construct StudioRunnerTools with the registry to run it."
                 )
-            self._require_registry_for(ref_type, ref_id, ref_config, _seen, version=pins.get(ref_id))
+            ref_config, ref_resolved_version = ref_loaded
+            self._require_registry_for(ref_type, ref_id, ref_config, _seen, version=ref_resolved_version)
 
     def _dispatch_refusal(
         self,
@@ -1071,8 +1072,9 @@ class StudioRunnerTools(Toolkit):
         lost the schema it declared. Each child is compared against the config
         version the parent's links pin, which is the version it was rebuilt
         from; an unpinned child was rebuilt at its current version. ``configs``
-        caches each (type, id, version) config so a shared reference is read
-        once per dispatch."""
+        caches each (type, id, version) config row so a shared reference is
+        read once per dispatch, and the row's resolved version feeds the
+        child's own links read."""
         from agno.db.base import ComponentType
 
         key = (component_type, component_id)
@@ -1112,10 +1114,11 @@ class StudioRunnerTools(Toolkit):
             ref_version = pins.get(ref_id)
             cache_key = (ref_type, ref_id, ref_version)
             if cache_key in configs:
-                ref_config = configs[cache_key]
+                ref_config, ref_resolved_version = configs[cache_key]
             else:
-                ref_config = self._load_config_from_db(ref_id, version=ref_version, component_type=stored_type)
-                configs[cache_key] = ref_config
+                ref_loaded = self._load_config_row_from_db(ref_id, version=ref_version, component_type=stored_type)
+                ref_config, ref_resolved_version = ref_loaded if ref_loaded is not None else (None, None)
+                configs[cache_key] = (ref_config, ref_resolved_version)
             if ref_config is None:
                 # A code-defined reference has no stored config to compare
                 # against, and _require_registry_for covers an absent registry.
@@ -1125,7 +1128,7 @@ class StudioRunnerTools(Toolkit):
                 self._require_reference_type_matches(ref_type, ref_id, component_type, component_id)
                 continue
             self._require_faithful_rebuild(target, ref_config, ref_type, ref_id)
-            self._check_references(target, ref_config, ref_type, ref_id, seen, configs, version=ref_version)
+            self._check_references(target, ref_config, ref_type, ref_id, seen, configs, version=ref_resolved_version)
 
     @staticmethod
     def _components_by_id(node: Any) -> Dict[tuple, Any]:

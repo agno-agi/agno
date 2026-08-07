@@ -1840,6 +1840,10 @@ def get_team_by_id(
         team = Team.from_dict(cfg, db=db, registry=registry, links=links, strict=strict)
         # Ensure team.id is set to the component_id
         team.id = id
+        # Only fall back to the caller-provided db if the config didn't
+        # reconstruct one, matching Team.load.
+        if team.db is None:
+            team.db = db
 
         return team
 
