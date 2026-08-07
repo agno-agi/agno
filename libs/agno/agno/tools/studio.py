@@ -145,6 +145,7 @@ class StudioTools(Toolkit):
         # Rehydration resolves code-defined references through the registry
         # only; a component reachable solely via these live lists could be
         # referenced at create time but never reload. Make the lists visible.
+        pending_mirrors: List[tuple] = []
         for source, bucket, source_name in (
             (agents_list, registry.agents, "agents_list"),
             (teams_list, registry.teams, "teams_list"),
@@ -155,7 +156,7 @@ class StudioTools(Toolkit):
                     continue
                 existing = next((entry for entry in bucket if getattr(entry, "id", None) == component_id), None)
                 if existing is None:
-                    bucket.append(component)
+                    pending_mirrors.append((bucket, component))
                 elif existing is not component:
                     # Studio lookup prefers the explicit list; rehydration
                     # resolves through the registry. Two distinct objects under
@@ -164,6 +165,8 @@ class StudioTools(Toolkit):
                         f"{source_name} and the registry define distinct components with id "
                         f"'{component_id}'; pass the same object to both, or remove one."
                     )
+        for bucket, component in pending_mirrors:
+            bucket.append(component)
         self.default_model_id = default_model_id
         self.default_num_history_runs = default_num_history_runs
 
@@ -1048,8 +1051,7 @@ class StudioTools(Toolkit):
                 message = f"Db not found: {db_id}" if db_id is not None else "StudioTools has no db configured."
                 return json.dumps({"error": message})
             try:
-                members, missing = self._resolve_members(member_ids)
-                missing = self._resolve_missing_from_target_db(members, missing, db)
+                members, missing = self._resolve_members(member_ids, target_db=db)
             except ValueError as e:
                 # Ambiguity and id-less refusals are validation of model input,
                 # not system failures: no traceback in the operator log.
@@ -1333,7 +1335,9 @@ class StudioTools(Toolkit):
                 try:
                     members, missing = self._resolve_members(member_ids)
                     if self.db is not None:
-                        members, replaced_pins = self._bind_members_to_target_db(members, self.db)
+                        members, replaced_pins = self._bind_members_to_target_db(
+                            members, self.db, require_published=not self.enable_versions
+                        )
                 except ValueError as e:
                     return json.dumps({"error": str(e)})
                 if missing:
@@ -1442,7 +1446,9 @@ class StudioTools(Toolkit):
                     return json.dumps({"error": err})
                 if self.db is not None:
                     try:
-                        replaced_pins = self._bind_steps_to_target_db(steps, self.db)
+                        replaced_pins = self._bind_steps_to_target_db(
+                            steps, self.db, require_published=not self.enable_versions
+                        )
                     except ValueError as e:
                         return json.dumps({"error": str(e)})
                 wf.steps = steps
@@ -2141,41 +2147,9 @@ class StudioTools(Toolkit):
                 return True
         return db.get_component(component_id) is not None
 
-    def _resolve_missing_from_target_db(self, members: List[Any], missing: List[str], target_db: "BaseDb") -> List[str]:
-        """Resolve leftover exact-id member references from the target db.
-
-        Catalog resolution runs against the Studio db; a component that lives
-        only in the selected target db is legitimate and resolves here by
-        exact id (name matching stays catalog-only). Members are appended in
-        place; identifiers still unresolved are returned.
-        """
-        from agno.agent.agent import get_agent_by_id
-        from agno.exceptions import ComponentRehydrationError
-        from agno.team.team import get_team_by_id
-
-        if target_db is self.db:
-            return missing
-        still_missing: List[str] = []
-        for mid in missing:
-            try:
-                agent_row = target_db.get_component(mid, component_type=None)
-            except NotImplementedError:
-                agent_row = None
-            if agent_row is None:
-                still_missing.append(mid)
-                continue
-            loader = get_team_by_id if agent_row.get("component_type") == "team" else get_agent_by_id
-            try:
-                resolved = loader(db=target_db, id=mid, registry=self.registry, strict=False)  # MUTATION
-            except ComponentRehydrationError as e:
-                raise ValueError(f"Member '{mid}' in the target db cannot be rebuilt: {e}") from e
-            if resolved is None:
-                still_missing.append(mid)
-            else:
-                members.append(resolved)
-        return still_missing
-
-    def _bind_child_to_target_db(self, child: Any, target_db: "BaseDb", noun: str) -> tuple[Any, Optional[int]]:
+    def _bind_child_to_target_db(
+        self, child: Any, target_db: "BaseDb", noun: str, require_published: bool = True
+    ) -> tuple[Any, Optional[int]]:
         """The object a stored reference will actually reload from ``target_db``,
         with the version to pin it at.
 
@@ -2187,7 +2161,13 @@ class StudioTools(Toolkit):
         refuses; a db-backed child present there is strictly re-resolved from
         that exact db AND version, so the reference, the pin, and the reload
         name one row - and a row too degraded to rebuild refuses at create
-        instead of persisting a parent guaranteed not to dispatch.
+        instead of persisting a parent guaranteed not to dispatch. A published
+        parent additionally refuses a draft child, whose config can change in
+        place under the pin.
+
+        The db offers no transactions, so the typed-metadata and config reads
+        are re-verified once; a pair that still disagrees (a concurrent
+        replace or delete) refuses rather than persisting a torn snapshot.
         """
         from agno.agent.agent import get_agent_by_id
         from agno.db.base import ComponentType
@@ -2200,12 +2180,33 @@ class StudioTools(Toolkit):
         candidates = self._iter_teams() if is_team else self._iter_agents()
         code_defined = any(getattr(candidate, "id", None) == child_id for candidate in candidates)
         db_label = getattr(target_db, "id", None) or type(target_db).__name__
-        try:
-            component_row = target_db.get_component(child_id, component_type=expected_type)
-            untyped_row = target_db.get_component(child_id) if component_row is None else component_row
-            row = target_db.get_config(component_id=child_id) if component_row is not None else None
-        except NotImplementedError:
-            component_row = untyped_row = row = None
+
+        def read_snapshot() -> tuple:
+            try:
+                typed_row = target_db.get_component(child_id, component_type=expected_type)
+                untyped = target_db.get_component(child_id) if typed_row is None else typed_row
+                config_row = target_db.get_config(component_id=child_id) if typed_row is not None else None
+            except NotImplementedError:
+                return None, None, None
+            return typed_row, untyped, config_row
+
+        component_row, untyped_row, row = read_snapshot()
+        verify_component_row, verify_untyped_row, verify_row = read_snapshot()
+        torn = (
+            (component_row is None) != (verify_component_row is None)
+            or (row is None) != (verify_row is None)
+            or (
+                isinstance(row, dict)
+                and isinstance(verify_row, dict)
+                and row.get("version") != verify_row.get("version")
+            )
+        )
+        if torn:
+            raise ValueError(
+                f"{noun} '{child_id}' in db '{db_label}' changed while it was being referenced; retry the operation."
+            )
+        untyped_row = verify_untyped_row if untyped_row is None else untyped_row
+
         if code_defined and row is not None:
             raise ValueError(
                 f"{noun} id '{child_id}' is claimed by both a code-defined component and a stored "
@@ -2213,6 +2214,18 @@ class StudioTools(Toolkit):
                 "Give them distinct ids."
             )
         if code_defined:
+            # Reconcile the live lists with the registry at selection time:
+            # rehydration resolves the registry, so the object being written
+            # about must be the object the registry will answer with.
+            bucket = self.registry.teams if is_team else self.registry.agents
+            registered = next((entry for entry in bucket if getattr(entry, "id", None) == child_id), None)
+            if registered is None:
+                bucket.append(child)
+            elif registered is not child:
+                raise ValueError(
+                    f"{noun} '{child_id}' from the live list is not the registry's object for that "
+                    "id; a reload would bind the registry's. Align the list and the registry."
+                )
             return child, None
         if component_row is None and untyped_row is not None:
             raise ValueError(
@@ -2225,48 +2238,91 @@ class StudioTools(Toolkit):
                 f"{noun} '{child_id}' is not stored in db '{db_label}'. Create it there first, or "
                 "reference a code-defined component."
             )
+        if require_published and row.get("stage") != "published":
+            raise ValueError(
+                f"{noun} '{child_id}' in db '{db_label}' has only a {row.get('stage')} config, "
+                "which can change in place under a published parent's pin. Publish the child first."
+            )
         resolved_version = row.get("version") if isinstance(row, dict) else None
         loader = get_team_by_id if is_team else get_agent_by_id
         try:
-            rebound = loader(
-                db=target_db, id=child_id, version=resolved_version, registry=self.registry, strict=False
-            )  # MUTATION
+            rebound = loader(db=target_db, id=child_id, version=resolved_version, registry=self.registry, strict=True)
         except ComponentRehydrationError as e:
             raise ValueError(f"{noun} '{child_id}' in db '{db_label}' cannot be rebuilt: {e}") from e
         if rebound is None:
             raise ValueError(f"{noun} '{child_id}' could not be loaded from db '{db_label}'.")
         return rebound, (resolved_version if isinstance(resolved_version, int) else None)
 
-    def _bind_members_to_target_db(self, members: List[Any], target_db: "BaseDb") -> tuple[List[Any], Dict[str, int]]:
+    def _bind_members_to_target_db(
+        self, members: List[Any], target_db: "BaseDb", require_published: bool = True
+    ) -> tuple[List[Any], Dict[str, int]]:
         bound: List[Any] = []
         pins: Dict[str, int] = {}
         for member in members:
-            rebound, version = self._bind_child_to_target_db(member, target_db, "Member")
+            rebound, version = self._bind_child_to_target_db(
+                member, target_db, "Member", require_published=require_published
+            )
             bound.append(rebound)
             if version is not None and getattr(rebound, "id", None):
                 pins[rebound.id] = version
         return bound, pins
 
-    def _bind_steps_to_target_db(self, steps: List[Any], target_db: "BaseDb") -> Dict[str, int]:
+    def _bind_steps_to_target_db(
+        self, steps: List[Any], target_db: "BaseDb", require_published: bool = True
+    ) -> Dict[str, int]:
         pins: Dict[str, int] = {}
         for step in steps:
             for attr, noun in (("agent", "Step agent"), ("team", "Step team")):
                 child = getattr(step, attr, None)
                 if child is None:
                     continue
-                rebound, version = self._bind_child_to_target_db(child, target_db, noun)
+                rebound, version = self._bind_child_to_target_db(
+                    child, target_db, noun, require_published=require_published
+                )
                 setattr(step, attr, rebound)
                 if version is not None and getattr(rebound, "id", None):
                     pins[rebound.id] = version
         return pins
 
-    def _resolve_members(self, member_ids: List[str]) -> tuple[List[TeamMember], List[str]]:
-        """Resolve member identifiers to agents or teams.
+    def _target_db_exact(self, identifier: str, target_db: "BaseDb") -> Optional[Any]:
+        """The component ``identifier`` names by exact id in the target db.
 
-        Exact ids resolve across BOTH types before any name matching, so an
-        agent merely named like a team's id can never steal that member slot.
-        An identifier naming a stored component that fails to load counts as
-        missing rather than falling through to name matching.
+        Checked across both types; a target db claiming the id as both an
+        agent and a team is undecidable from the identifier alone.
+        """
+        from agno.agent.agent import get_agent_by_id
+        from agno.db.base import ComponentType
+        from agno.exceptions import ComponentRehydrationError
+        from agno.team.team import get_team_by_id
+
+        try:
+            agent_row = target_db.get_component(identifier, component_type=ComponentType.AGENT)
+            team_row = target_db.get_component(identifier, component_type=ComponentType.TEAM)
+        except NotImplementedError:
+            return None
+        if agent_row is not None and team_row is not None:
+            raise ValueError(
+                f"Ambiguous member id: '{identifier}' is stored in the target db as both an agent "
+                "and a team. Give the components distinct ids."
+            )
+        if agent_row is None and team_row is None:
+            return None
+        loader = get_agent_by_id if agent_row is not None else get_team_by_id
+        try:
+            return loader(db=target_db, id=identifier, registry=self.registry, strict=True)
+        except ComponentRehydrationError as e:
+            raise ValueError(f"Member '{identifier}' in the target db cannot be rebuilt: {e}") from e
+
+    def _resolve_members(
+        self, member_ids: List[str], target_db: Optional["BaseDb"] = None
+    ) -> tuple[List[TeamMember], List[str]]:
+        """Resolve member identifiers to agents or teams, in request order.
+
+        Exact ids resolve before any name matching - across code-defined
+        components, the catalog db, AND the selected target db - so a live
+        component merely named like a stored id can never steal that member
+        slot. An identifier naming a stored component that fails to load
+        counts as missing rather than falling through to name matching.
         """
         runner = self._runner_tools
         members: List[TeamMember] = []
@@ -2274,6 +2330,12 @@ class StudioTools(Toolkit):
         for mid in member_ids:
             agent_match = runner._find_agent_by_exact_id(mid)
             team_match = runner._find_team_by_exact_id(mid)
+            if agent_match is None and team_match is None and target_db is not None and target_db is not self.db:
+                # Exact ids in the selected target db outrank every name tier.
+                target_match = self._target_db_exact(mid, target_db)
+                if target_match is not None:
+                    members.append(target_match)
+                    continue
             if agent_match is not None and team_match is not None:
                 # Ids are only unique per type, so an agent and a team may
                 # legally share one; member_ids cannot disambiguate.
@@ -2316,20 +2378,21 @@ class StudioTools(Toolkit):
             return [], "step_specs must contain at least one step"
 
         def find_agent(identifier: str) -> Optional[Any]:
-            found = self._find_agent(identifier)
+            found = self._runner_tools._find_agent_by_exact_id(identifier)
             if found is None and fallback_db is not None and fallback_db is not self.db:
                 from agno.agent.agent import get_agent_by_id
 
+                # Exact ids in the selected target db outrank catalog name tiers.
                 found = get_agent_by_id(db=fallback_db, id=identifier, registry=self.registry)
-            return found
+            return found if found is not None else self._find_agent(identifier)
 
         def find_team(identifier: str) -> Optional[Any]:
-            found = self._find_team(identifier)
+            found = self._runner_tools._find_team_by_exact_id(identifier)
             if found is None and fallback_db is not None and fallback_db is not self.db:
                 from agno.team.team import get_team_by_id
 
                 found = get_team_by_id(db=fallback_db, id=identifier, registry=self.registry)
-            return found
+            return found if found is not None else self._find_team(identifier)
 
         steps: List[Step] = []
         for i, spec in enumerate(step_specs):
@@ -2478,13 +2541,22 @@ class StudioTools(Toolkit):
         def code_defined(child_id: Optional[str], candidates: List[Any]) -> bool:
             return any(getattr(candidate, "id", None) == child_id for candidate in candidates)
 
-        def current_version(child_id: Optional[str]) -> Optional[int]:
+        def current_version(child_id: Optional[str], expected_type: Optional[str] = None) -> Optional[int]:
             if not child_id:
                 return None
             if pinned_versions is not None and child_id in pinned_versions:
                 # The binder already selected this exact version; a fresh read
                 # could see a publish that happened since.
                 return pinned_versions[child_id]
+            if expected_type is not None:
+                from agno.db.base import ComponentType
+
+                try:
+                    if target_db.get_component(child_id, component_type=ComponentType(expected_type)) is None:
+                        # A same-id row of a different type is not this child.
+                        return None
+                except NotImplementedError:
+                    return None
             try:
                 row = target_db.get_config(component_id=child_id)
             except NotImplementedError:
@@ -2501,10 +2573,11 @@ class StudioTools(Toolkit):
             members = component.members if isinstance(component.members, list) else []
             for position, member in enumerate(members):
                 member_id = getattr(member, "id", None)
-                candidates = code_teams if isinstance(member, Team) else code_agents
+                is_member_team = isinstance(member, Team)
+                candidates = code_teams if is_member_team else code_agents
                 if code_defined(member_id, candidates):
                     continue
-                child_version = current_version(member_id)
+                child_version = current_version(member_id, "team" if is_member_team else "agent")
                 if child_version is None:
                     continue
                 links.append(
@@ -2528,13 +2601,16 @@ class StudioTools(Toolkit):
                         link_kind = link.get("link_kind")
                         if link_kind == "step_team":
                             candidates = code_teams
+                            child_type = "team"
                         elif link_kind == "step_workflow":
                             candidates = list(self._iter_workflows())
+                            child_type = "workflow"
                         else:
                             candidates = code_agents
+                            child_type = "agent"
                         if code_defined(child_id, candidates):
                             continue
-                        child_version = current_version(child_id)
+                        child_version = current_version(child_id, child_type)
                         if child_version is None:
                             continue
                         link["child_version"] = child_version

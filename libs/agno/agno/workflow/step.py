@@ -411,11 +411,11 @@ class Step:
         step_link_key = config.get("step_id") or config.get("name")
         qualified_link_key = f"{step_link_key}{branch_suffix}" if step_link_key else None
 
-        def _pinned_version(child_id: Optional[str]) -> Optional[int]:
+        def _pinned_version(child_id: Optional[str], link_kind: str) -> Optional[int]:
             child_links = [
                 link
                 for link in links or []
-                if link.get("link_kind") in ("step_agent", "step_team") and link.get("child_component_id") == child_id
+                if link.get("link_kind") == link_kind and link.get("child_component_id") == child_id
             ]
             if not child_links:
                 return None
@@ -439,7 +439,7 @@ class Step:
         # --- Handle Agent reconstruction ---
         if "agent_id" in config and config["agent_id"]:
             agent_id = config.get("agent_id")
-            pinned = _pinned_version(agent_id)
+            pinned = _pinned_version(agent_id, "step_agent")
 
             # An explicit pin resolves from the db first: the pin names one
             # exact stored version, which a code-defined registry agent is not.
@@ -537,7 +537,7 @@ class Step:
         # --- Handle Team reconstruction ---
         if "team_id" in config and config["team_id"]:
             team_id = config.get("team_id")
-            pinned = _pinned_version(team_id)
+            pinned = _pinned_version(team_id, "step_team")
 
             # An explicit pin resolves from the db first: the pin names one
             # exact stored version, which a code-defined registry team is not.

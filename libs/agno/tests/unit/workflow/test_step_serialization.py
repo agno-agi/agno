@@ -502,3 +502,30 @@ class TestNestedWorkflowRefs:
             step.executor(MagicMock())
         assert step.to_dict().get("workflow_id") == "inner-wf"
         assert "executor_ref" not in step.to_dict()
+
+
+class TestPinKindSafety:
+    def test_a_step_team_pin_never_applies_to_an_agent_step(self, tmp_path):
+        """Pin lookup is scoped by link kind: a team pin for a shared child id
+        must not bind an agent step to the team's version."""
+        from agno.agent.agent import Agent
+        from agno.db.sqlite import SqliteDb
+
+        db = SqliteDb(db_file=str(tmp_path / "kind.db"))
+        agent = Agent(id="shared", name="A", description="current")
+        agent.save(db=db)
+        links = [
+            {
+                "link_kind": "step_team",
+                "link_key": "other-step",
+                "child_component_id": "shared",
+                "child_version": 99,
+                "position": 0,
+            }
+        ]
+        data = {"type": "Step", "step_id": "mine", "name": "mine", "agent_id": "shared"}
+
+        step = Step.from_dict(data, db=db, links=links, strict=True)
+
+        assert step.agent is not None
+        assert step.agent.description == "current"

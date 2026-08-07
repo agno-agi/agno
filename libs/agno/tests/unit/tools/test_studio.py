@@ -2092,8 +2092,8 @@ class TestSourceConsistency:
         assert "as a" in out.get("error", "") and "not the referenced type" in out.get("error", "")
 
     def test_create_pins_the_version_the_binder_selected(self, tmp_path):
-        """A publish between binding and link emission must not desynchronize
-        the rebuilt object from its pin: one read decides both."""
+        """The binder's verified snapshot decides the pin: a publish between
+        its reads refuses, a publish after them stays self-consistent."""
         from agno.db.sqlite import SqliteDb
         from agno.models.openai import OpenAIChat
         from agno.registry import Registry
@@ -2108,21 +2108,39 @@ class TestSourceConsistency:
         real_get_config = db.get_config
         state = {"calls": 0}
 
-        def racy_get_config(component_id=None, version=None, **kwargs):
-            row = real_get_config(component_id=component_id, version=version, **kwargs)
-            if component_id == "sn-member":
-                state["calls"] += 1
-                # Publish right after the binder's single row read: the pin
-                # and the rebuilt member must still name the same version.
-                if state["calls"] == 2:
-                    member.description = "v2"
-                    member.save(db=db)
-            return row
+        def racy_get_config(trigger_call):
+            def wrapper(component_id=None, version=None, **kwargs):
+                row = real_get_config(component_id=component_id, version=version, **kwargs)
+                if component_id == "sn-member":
+                    state["calls"] += 1
+                    if state["calls"] == trigger_call:
+                        member.description = "v2"
+                        member.save(db=db)
+                return row
 
-        db.get_config = racy_get_config
+            return wrapper
+
+        # A publish BETWEEN the binder's snapshot and verify reads is detected
+        # and refused rather than persisted torn.
+        db.get_config = racy_get_config(2)
         try:
             out = _loads(
                 studio.create_team(name="SN", instructions="i", member_ids=["sn-member"], model_id="gpt-4o-mini")
+            )
+        finally:
+            del db.get_config
+        assert "changed while it was being referenced" in out.get("error", "")
+
+        # A publish AFTER the verified snapshot leaves a self-consistent pin:
+        # the committed version rides through to the link and the reload.
+        member.description = "v1"
+        member.save(db=db)
+        committed = db.get_config(component_id="sn-member")["version"]
+        state["calls"] = 0
+        db.get_config = racy_get_config(3)
+        try:
+            out = _loads(
+                studio.create_team(name="SN2", instructions="i", member_ids=["sn-member"], model_id="gpt-4o-mini")
             )
         finally:
             del db.get_config
@@ -2132,7 +2150,7 @@ class TestSourceConsistency:
 
         links = db.get_links(component_id=out["id"], version=1)
         pins = [link["child_version"] for link in links if link["link_kind"] == "member"]
-        assert pins == [1]
+        assert pins == [committed]
         loaded = get_team_by_id(db=db, id=out["id"], strict=True)
         assert loaded is not None
         assert loaded.members[0].description == "v1"
@@ -2182,3 +2200,90 @@ class TestSourceConsistency:
 
         nested = [link for link in links if link["link_kind"] == "step_workflow"]
         assert nested and nested[0]["child_component_id"] == "sub-flow"
+
+
+class TestResolutionPrecedence:
+    def test_target_db_exact_id_beats_catalog_display_name(self, tmp_path):
+        """A live component merely NAMED like a target-db id must not steal
+        the reference from the target db's exact-id row."""
+        from agno.db.sqlite import SqliteDb
+        from agno.models.openai import OpenAIChat
+        from agno.registry import Registry
+        from agno.team.team import get_team_by_id
+        from agno.tools.studio import StudioTools
+
+        db_a = SqliteDb(id="cat-a", db_file=str(tmp_path / "prec_a.db"))
+        db_b = SqliteDb(id="cat-b", db_file=str(tmp_path / "prec_b.db"))
+        Agent(id="target-id", name="Target Row", description="from-target").save(db=db_b)
+        impostor = Agent(id="impostor", name="target-id")
+        model = OpenAIChat(id="gpt-4o-mini")
+        studio = StudioTools(
+            registry=Registry(models=[model], dbs=[db_a, db_b]), db=db_a, teams=True, agents_list=[impostor]
+        )
+
+        out = _loads(
+            studio.create_team(
+                name="PT", instructions="i", member_ids=["target-id"], db_id="cat-b", model_id="gpt-4o-mini"
+            )
+        )
+        assert out.get("status") == "created"
+
+        loaded = get_team_by_id(db=db_b, id=out["id"], strict=True)
+        assert loaded is not None
+        assert loaded.members[0].description == "from-target"
+
+    def test_agent_appended_to_the_live_list_after_construction_reloads(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+        from agno.models.openai import OpenAIChat
+        from agno.registry import Registry
+        from agno.team.team import get_team_by_id
+        from agno.tools.studio import StudioTools
+
+        db = SqliteDb(id="cat", db_file=str(tmp_path / "late.db"))
+        live: list = []
+        model = OpenAIChat(id="gpt-4o-mini")
+        studio = StudioTools(registry=Registry(models=[model], dbs=[db]), db=db, teams=True, agents_list=live)
+        live.append(Agent(id="late", name="Late Arrival"))
+
+        out = _loads(studio.create_team(name="LL", instructions="i", member_ids=["late"], model_id="gpt-4o-mini"))
+        assert out.get("status") == "created"
+
+        loaded = get_team_by_id(db=db, id=out["id"], registry=studio.registry, strict=True)
+        assert loaded is not None
+        assert loaded.members[0].id == "late"
+
+    def test_replaced_live_list_entry_refuses_instead_of_reload_flipping(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+        from agno.models.openai import OpenAIChat
+        from agno.registry import Registry
+        from agno.tools.studio import StudioTools
+
+        db = SqliteDb(id="cat", db_file=str(tmp_path / "replace.db"))
+        original = Agent(id="swap", name="Original")
+        live = [original]
+        model = OpenAIChat(id="gpt-4o-mini")
+        studio = StudioTools(registry=Registry(models=[model], dbs=[db]), db=db, teams=True, agents_list=live)
+        live[0] = Agent(id="swap", name="Replacement")
+
+        out = _loads(studio.create_team(name="RL", instructions="i", member_ids=["swap"], model_id="gpt-4o-mini"))
+
+        assert "not the registry's object" in out.get("error", "")
+
+    def test_create_refuses_a_draft_only_child(self, tmp_path):
+        from agno.db.base import ComponentType
+        from agno.db.sqlite import SqliteDb
+        from agno.models.openai import OpenAIChat
+        from agno.registry import Registry
+        from agno.tools.studio import StudioTools
+
+        db = SqliteDb(id="cat", db_file=str(tmp_path / "draft.db"))
+        db.upsert_component(component_id="draft-child", component_type=ComponentType.AGENT, name="D")
+        db.upsert_config(component_id="draft-child", config={"id": "draft-child", "name": "D"}, stage="draft")
+        model = OpenAIChat(id="gpt-4o-mini")
+        studio = StudioTools(registry=Registry(models=[model], dbs=[db]), db=db, teams=True)
+
+        out = _loads(
+            studio.create_team(name="DC", instructions="i", member_ids=["draft-child"], model_id="gpt-4o-mini")
+        )
+
+        assert "Publish the child first" in out.get("error", "")
