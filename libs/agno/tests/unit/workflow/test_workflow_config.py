@@ -936,30 +936,79 @@ class TestWritePathFidelity:
         assert nested and nested[0]["child_version"] is not None
 
 
+def _honesty_enrich(step_input):
+    from agno.workflow.step import StepOutput
+
+    return StepOutput(content="x")
+
+
+def _honesty_cases():
+    from agno.workflow.condition import Condition
+    from agno.workflow.parallel import Parallel
+    from agno.workflow.step import Step
+    from agno.workflow.steps import Steps
+
+    return {
+        "plain": lambda: [Step(name="s1", executor=_honesty_enrich)],
+        "skip_on_failure": lambda: [Step(name="s1", executor=_honesty_enrich, skip_on_failure=True)],
+        "condition_on_error_skip": lambda: [
+            Condition(name="c", evaluator=True, steps=[Step(name="s1", executor=_honesty_enrich)], on_error="skip")
+        ],
+        "steps_container": lambda: [Steps(name="grp", steps=[Step(name="s1", executor=_honesty_enrich)])],
+        "parallel_container": lambda: [Parallel(Step(name="s1", executor=_honesty_enrich), name="par")],
+    }
+
+
 class TestLenientRunHonesty:
-    def test_default_lenient_run_does_not_false_complete_over_a_placeholder(self, tmp_path):
-        """A run over an unresolved step must fail loudly, never report
-        COMPLETED with the step silently skipped."""
+    """A run over an unresolved placeholder must refuse on every entry path
+    and through every tolerance knob; skipping a step that could not do its
+    work is not error tolerance."""
+
+    def _load_broken(self, tmp_path, tag):
         from agno.db.sqlite import SqliteDb
         from agno.registry import Registry
-        from agno.run.base import RunStatus
-        from agno.workflow.step import Step, StepInput, StepOutput, UnresolvableCallableError
 
-        def enrich(step_input: StepInput) -> StepOutput:
-            return StepOutput(content="x")
-
-        db = SqliteDb(db_file=str(tmp_path / "honest.db"))
-        Workflow(id="h-wf", name="WF", steps=[Step(name="s1", executor=enrich)]).save(db=db)
-
-        loaded = Workflow.load(id="h-wf", db=db, registry=Registry())
+        db = SqliteDb(db_file=str(tmp_path / f"{tag}.db"))
+        Workflow(id=f"{tag}-wf", name="WF", steps=_honesty_cases()[tag]()).save(db=db)
+        loaded = Workflow.load(id=f"{tag}-wf", db=db, registry=Registry())
         assert loaded is not None
+        return loaded
 
-        try:
-            output = loaded.run(input="go")
-            status = getattr(output, "status", None)
-        except UnresolvableCallableError:
-            status = "refused"
-        assert status != RunStatus.completed
+    @pytest.mark.parametrize("tag", list(_honesty_cases().keys()))
+    def test_sync_run_refuses(self, tmp_path, tag):
+        from agno.workflow.step import UnresolvableCallableError
+
+        loaded = self._load_broken(tmp_path, tag)
+        with pytest.raises(UnresolvableCallableError):
+            loaded.run(input="go")
+
+    @pytest.mark.parametrize("tag", list(_honesty_cases().keys()))
+    def test_sync_stream_refuses(self, tmp_path, tag):
+        from agno.workflow.step import UnresolvableCallableError
+
+        loaded = self._load_broken(tmp_path, tag)
+        with pytest.raises(UnresolvableCallableError):
+            for _ in loaded.run(input="go", stream=True):
+                pass
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tag", list(_honesty_cases().keys()))
+    async def test_async_run_refuses(self, tmp_path, tag):
+        from agno.workflow.step import UnresolvableCallableError
+
+        loaded = self._load_broken(tmp_path, tag)
+        with pytest.raises(UnresolvableCallableError):
+            await loaded.arun(input="go")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tag", list(_honesty_cases().keys()))
+    async def test_async_stream_refuses(self, tmp_path, tag):
+        from agno.workflow.step import UnresolvableCallableError
+
+        loaded = self._load_broken(tmp_path, tag)
+        with pytest.raises(UnresolvableCallableError):
+            async for _ in loaded.arun(input="go", stream=True):
+                pass
 
 
 class TestSaveCollisions:
@@ -981,7 +1030,11 @@ class TestSaveCollisions:
             ],
         )
 
-        assert workflow.save(db=db) is None
+        with pytest.raises(ValueError, match="give steps distinct names"):
+            workflow.save(db=db)
+
+        # The parent snapshot was refused whole: no config version exists.
+        assert db.get_config(component_id="col-wf") is None
 
     def test_else_branch_pin_resolves_to_its_own_version(self, tmp_path):
         """The same child id pinned differently in the if and else branches
@@ -1002,8 +1055,11 @@ class TestSaveCollisions:
                 Condition(
                     name="branch",
                     evaluator=True,
-                    steps=[Step(name="if-step", agent=if_agent)],
-                    else_steps=[Step(name="else-step", agent=else_agent)],
+                    # Explicit ordered step_ids: with the '#else' lookup broken
+                    # the fallback returns the FIRST link (the if pin), so this
+                    # test fails on a revert instead of passing by row order.
+                    steps=[Step(step_id="aaa-if", name="if-step", agent=if_agent)],
+                    else_steps=[Step(step_id="bbb-else", name="else-step", agent=else_agent)],
                 )
             ],
         ).save(db=db)

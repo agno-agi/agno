@@ -2173,9 +2173,18 @@ class StudioTools(Toolkit):
                 return [], f"Step '{step_name}' must specify agent_id, team_id, or function_name"
         return steps, None
 
-    # Reference keys a lenient load drops when they cannot resolve; an edit
+    # Reference keys a lenient load drops when they cannot resolve (the three
+    # model keys are serialized but not yet consumed by from_dict); an edit
     # that did not replace them must not persist the loss.
-    _LENIENT_DROPPABLE_KEYS = ("tools", "input_schema", "output_schema", "knowledge", "db")
+    _LENIENT_DROPPABLE_KEYS = (
+        "tools",
+        "input_schema",
+        "output_schema",
+        "knowledge",
+        "reasoning_model",
+        "parser_model",
+        "output_model",
+    )
 
     def _save_edit(self, component: Component, replaced_keys: Optional[Set[str]] = None) -> Dict[str, Any]:
         """Persist an edited component.
@@ -2216,18 +2225,20 @@ class StudioTools(Toolkit):
         base = self._runner_tools._load_config_from_db(component_id, version=self._edit_base_version(component_id))
         if not isinstance(base, dict):
             return
+        # The db reference and untouched composition subtrees are
+        # base-authoritative: no edit surface changes them, the runtime object
+        # cannot improve on them, and re-serializing them churns identity
+        # (fresh step_ids would orphan every carried-forward pin).
+        for key in ("db", "steps", "members"):
+            if key in replaced_keys:
+                continue
+            config.pop(key, None)
+            if key in base:
+                config[key] = base[key]
         for key in self._LENIENT_DROPPABLE_KEYS:
             if key in replaced_keys:
                 continue
-            if key == "db":
-                # No edit surface changes the db, and the runtime catalog-db
-                # assignment must not overwrite the stored reference: the base
-                # config's db key is authoritative, present or absent.
-                config.pop("db", None)
-                if "db" in base:
-                    config["db"] = base["db"]
-                continue
-            if key in base and key not in config:
+            if key in base and base.get(key) is not None and config.get(key) is None:
                 config[key] = base[key]
                 log_debug(f"StudioTools: preserving stored '{key}' the lenient load could not resolve.")
 

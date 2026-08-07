@@ -320,6 +320,10 @@ def _create_skipped_step_output(
     )
 
 
+class WorkflowLinkCollisionError(ValueError):
+    """Raised when a save produces two different pins for one link key."""
+
+
 def _step_from_dict(
     data: Dict[str, Any],
     registry: Optional["Registry"] = None,
@@ -1145,7 +1149,7 @@ class Workflow:
                         continue
                     # A save that silently drops one of two different pins
                     # would float that child to its latest version forever.
-                    raise ValueError(
+                    raise WorkflowLinkCollisionError(
                         f"Workflow '{self.id}' produces two different links for key "
                         f"'{link.get('link_key')}' ('{existing.get('child_component_id')}' "
                         f"v{existing.get('child_version')} and "
@@ -1174,6 +1178,10 @@ class Workflow:
 
             return config.get("version")
 
+        except WorkflowLinkCollisionError:
+            # The refusal must reach the caller: returning None here would
+            # read as an I/O failure and hide that the snapshot was rejected.
+            raise
         except Exception as e:
             log_error(f"Error saving workflow: {str(e)}")
             return None

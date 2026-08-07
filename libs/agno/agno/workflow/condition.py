@@ -18,7 +18,7 @@ from agno.run.workflow import (
 from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, log_error, log_warning, logger
 from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_condition_evaluator, is_cel_expression
-from agno.workflow.step import Step
+from agno.workflow.step import Step, UnresolvableCallableError
 from agno.workflow.types import (
     ErrorRequirement,
     HumanReview,
@@ -660,6 +660,10 @@ class Condition:
 
             except RunCancelledException:
                 raise
+            except UnresolvableCallableError:
+                # A placeholder for an unresolved reference can never succeed:
+                # converting it to a failed StepOutput would let the run complete.
+                raise
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.exception(f"Condition step {step_name} failed")
@@ -909,6 +913,10 @@ class Condition:
 
             except RunCancelledException:
                 raise
+            except UnresolvableCallableError:
+                # A placeholder for an unresolved reference can never succeed:
+                # converting it to a failed StepOutput would let the run complete.
+                raise
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.exception(f"Condition step {step_name} streaming failed")
@@ -1100,6 +1108,10 @@ class Condition:
                 )
 
             except RunCancelledException:
+                raise
+            except UnresolvableCallableError:
+                # A placeholder for an unresolved reference can never succeed:
+                # converting it to a failed StepOutput would let the run complete.
                 raise
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
@@ -1350,6 +1362,10 @@ class Condition:
                         )
 
             except RunCancelledException:
+                raise
+            except UnresolvableCallableError:
+                # A placeholder for an unresolved reference can never succeed:
+                # converting it to a failed StepOutput would let the run complete.
                 raise
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")

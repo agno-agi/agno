@@ -475,7 +475,13 @@ class Step:
             if agent is None and pinned is not None and registry and agent_id:
                 registry_agent = registry.get_agent(agent_id)
                 if registry_agent is not None:
-                    agent = registry_agent.deep_copy()
+                    try:
+                        agent = registry_agent.deep_copy()
+                    except Exception as e:
+                        log_warning(
+                            f"deep_copy() failed for registry agent '{agent_id}', using shared instance: {e}",
+                        )
+                        agent = registry_agent
 
             if agent is None and agent_id:
                 if strict:
@@ -551,7 +557,13 @@ class Step:
             if team is None and pinned is not None and registry and team_id:
                 registry_team = registry.get_team(team_id)
                 if registry_team is not None:
-                    team = registry_team.deep_copy()
+                    try:
+                        team = registry_team.deep_copy()
+                    except Exception as e:
+                        log_warning(
+                            f"deep_copy() failed for registry team '{team_id}', using shared instance: {e}",
+                        )
+                        team = registry_team
 
             if team is None and team_id:
                 if strict:
@@ -1174,6 +1186,10 @@ class Step:
             except RunCancelledException:
                 # Don't retry a cancelled run
                 raise
+            except UnresolvableCallableError:
+                # A placeholder for an unresolved reference can never succeed:
+                # retrying or skipping it would complete a run that did no work.
+                raise
             except Exception as e:
                 self.retry_count = attempt + 1
                 log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
@@ -1563,6 +1579,10 @@ class Step:
             except RunCancelledException:
                 # Don't retry a cancelled run
                 raise
+            except UnresolvableCallableError:
+                # A placeholder for an unresolved reference can never succeed:
+                # retrying or skipping it would complete a run that did no work.
+                raise
             except Exception as e:
                 self.retry_count = attempt + 1
                 log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
@@ -1847,6 +1867,10 @@ class Step:
 
             except RunCancelledException:
                 # Don't retry a cancelled run
+                raise
+            except UnresolvableCallableError:
+                # A placeholder for an unresolved reference can never succeed:
+                # retrying or skipping it would complete a run that did no work.
                 raise
             except Exception as e:
                 self.retry_count = attempt + 1
@@ -2210,6 +2234,10 @@ class Step:
 
             except RunCancelledException:
                 # Don't retry a cancelled run
+                raise
+            except UnresolvableCallableError:
+                # A placeholder for an unresolved reference can never succeed:
+                # retrying or skipping it would complete a run that did no work.
                 raise
             except Exception as e:
                 self.retry_count = attempt + 1

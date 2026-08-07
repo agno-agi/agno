@@ -23,7 +23,7 @@ from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, log_error, logger
 from agno.utils.merge_dict import merge_parallel_session_states
 from agno.workflow.condition import Condition
-from agno.workflow.step import Step
+from agno.workflow.step import Step, UnresolvableCallableError
 from agno.workflow.types import HumanReview, StepInput, StepOutput, StepType
 
 WorkflowSteps = List[
@@ -349,6 +349,10 @@ class Parallel:
                 return idx, step_result, step_session_state
             except RunCancelledException:
                 raise
+            except UnresolvableCallableError:
+                # A placeholder for an unresolved reference can never succeed:
+                # converting it to a failed StepOutput would let the run complete.
+                raise
             except Exception as exc:
                 parallel_step_name = getattr(step, "name", f"step_{idx}")
                 log_error(f"Parallel step {parallel_step_name} failed: {exc}")
@@ -385,6 +389,10 @@ class Parallel:
                     step_name = getattr(self.steps[index], "name", f"step_{index}")
                     log_debug(f"Parallel step {step_name} completed")
                 except RunCancelledException:
+                    raise
+                except UnresolvableCallableError:
+                    # A placeholder for an unresolved reference can never succeed:
+                    # converting it to a failed StepOutput would let the run complete.
                     raise
                 except Exception as e:
                     index = future_to_index[future]
@@ -536,6 +544,10 @@ class Parallel:
                 return idx, step_outputs, step_session_state
             except RunCancelledException:
                 raise
+            except UnresolvableCallableError:
+                # A placeholder for an unresolved reference can never succeed:
+                # converting it to a failed StepOutput would let the run complete.
+                raise
             except Exception as exc:
                 parallel_step_name = getattr(step, "name", f"step_{idx}")
                 log_error(f"Parallel step {parallel_step_name} streaming failed: {exc}")
@@ -597,6 +609,10 @@ class Parallel:
                 try:
                     future.result()
                 except RunCancelledException:
+                    raise
+                except UnresolvableCallableError:
+                    # A placeholder for an unresolved reference can never
+                    # succeed; the refusal must reach the caller.
                     raise
                 except Exception:
                     logger.exception("Future completion error")
@@ -697,6 +713,10 @@ class Parallel:
                 return idx, inner_step_result, step_session_state
             except RunCancelledException:
                 raise
+            except UnresolvableCallableError:
+                # A placeholder for an unresolved reference can never succeed:
+                # converting it to a failed StepOutput would let the run complete.
+                raise
             except Exception as exc:
                 parallel_step_name = getattr(step, "name", f"step_{idx}")
                 log_error(f"Parallel step {parallel_step_name} failed: {exc}")
@@ -724,6 +744,10 @@ class Parallel:
         processed_results_with_indices = []
         modified_session_states = []
         for i, result in enumerate(results_with_indices):
+            if isinstance(result, UnresolvableCallableError):
+                # A placeholder for an unresolved reference can never succeed:
+                # converting it to a failed StepOutput would let the run complete.
+                raise result
             if isinstance(result, Exception):
                 step_name = getattr(self.steps[i], "name", f"step_{i}")
                 log_error(f"Parallel step {step_name} failed: {result}")
@@ -882,6 +906,12 @@ class Parallel:
                 return idx, step_outputs, step_session_state
             except RunCancelledException:
                 raise
+            except UnresolvableCallableError as unresolved:
+                # A placeholder for an unresolved reference can never succeed,
+                # and raising here would leave the consumer awaiting a
+                # completion that never comes: signal it through the queue.
+                await event_queue.put(("unresolvable", idx, unresolved))
+                return idx, [], step_session_state
             except Exception as e:
                 parallel_step_name = getattr(step, "name", f"step_{idx}")
                 logger.exception(f"Parallel step {parallel_step_name} async streaming failed")
@@ -923,6 +953,13 @@ class Parallel:
                     step_name = getattr(self.steps[step_idx], "name", f"step_{step_idx}")
                     log_debug(f"Parallel step {step_name} async streaming completed")
 
+                elif message_type == "unresolvable":
+                    for task in tasks:
+                        task.cancel()
+                    raise data[0]
+
+            except UnresolvableCallableError:
+                raise
             except Exception:
                 logger.exception("Error processing parallel step events")
                 completed_steps += 1

@@ -1785,7 +1785,6 @@ class TestSnapshotSafety:
         from agno.db.sqlite import SqliteDb
         from agno.models.openai import OpenAIChat
         from agno.registry import Registry
-        from agno.team.team import Team
         from agno.tools.studio import StudioTools
 
         db = SqliteDb(db_file=str(tmp_path / "create_pin.db"))
@@ -1848,3 +1847,62 @@ class TestSnapshotSafety:
         row = db.get_config(component_id="opaque-agent")
         assert row["config"]["db"] == stored_db
         assert row["config"]["description"] == "edited"
+
+
+class TestEditIdentityStability:
+    def test_description_edit_keeps_step_ids_and_per_step_pins(self, tmp_path):
+        """An unrelated edit must not re-mint step_ids: carried-forward link
+        keys name steps by step_id, so churn orphans every pin."""
+        from agno.db.sqlite import SqliteDb
+        from agno.registry import Registry
+        from agno.tools.studio import StudioTools
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import Workflow
+
+        db = SqliteDb(db_file=str(tmp_path / "stepid.db"))
+        agent = Agent(id="si-agent", name="A")
+        Workflow(id="si-wf", name="WF", steps=[Step(name="s1", agent=agent)]).save(db=db)
+        base_ids = [s["step_id"] for s in db.get_config(component_id="si-wf")["config"]["steps"]]
+
+        studio = StudioTools(registry=Registry(dbs=[db]), db=db, workflows=True)
+        out = _loads(studio.edit_workflow("si-wf", description="edited"))
+        assert out.get("status") == "edited"
+
+        version = out.get("version") or out.get("draft_version")
+        new_config = db.get_config(component_id="si-wf", version=version)["config"]
+        assert [s["step_id"] for s in new_config["steps"]] == base_ids
+        link_keys = {link["link_key"] for link in db.get_links(component_id="si-wf", version=version)}
+        assert link_keys <= set(base_ids)
+
+    def test_description_edit_keeps_auxiliary_model_keys(self, tmp_path):
+        """to_dict emits reasoning/parser/output models that from_dict does not
+        yet consume; an unrelated edit must not persist their loss."""
+        from agno.db.base import ComponentType
+        from agno.db.sqlite import SqliteDb
+        from agno.registry import Registry
+        from agno.tools.studio import StudioTools
+
+        db = SqliteDb(db_file=str(tmp_path / "auxmodels.db"))
+        db.upsert_component(component_id="aux-agent", component_type=ComponentType.AGENT, name="A")
+        aux = {"provider": "OpenAI", "id": "gpt-5.5"}
+        db.upsert_config(
+            component_id="aux-agent",
+            config={
+                "id": "aux-agent",
+                "name": "A",
+                "reasoning_model": aux,
+                "parser_model": aux,
+                "output_model": aux,
+                "parser_model_prompt": "parse",
+            },
+            stage="published",
+        )
+
+        studio = StudioTools(registry=Registry(dbs=[db]), db=db)
+        out = _loads(studio.edit_agent("aux-agent", description="edited"))
+        assert out.get("status") == "edited"
+
+        config = db.get_config(component_id="aux-agent")["config"]
+        assert config["reasoning_model"] == aux
+        assert config["parser_model"] == aux
+        assert config["output_model"] == aux

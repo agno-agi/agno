@@ -16,7 +16,7 @@ from agno.run.workflow import (
 )
 from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, logger
-from agno.workflow.step import Step
+from agno.workflow.step import Step, UnresolvableCallableError
 from agno.workflow.types import HumanReview, OnReject, StepInput, StepOutput, StepRequirement, StepType
 
 WorkflowSteps = List[
@@ -358,6 +358,10 @@ class Steps:
 
         except RunCancelledException:
             raise
+        except UnresolvableCallableError:
+            # A placeholder for an unresolved reference can never succeed:
+            # converting it to a failed StepOutput would let the run complete.
+            raise
         except Exception as e:
             logger.exception("Steps execution failed")
             return StepOutput(
@@ -526,6 +530,10 @@ class Steps:
 
         except RunCancelledException:
             raise
+        except UnresolvableCallableError:
+            # A placeholder for an unresolved reference can never succeed:
+            # converting it to a failed StepOutput would let the run complete.
+            raise
         except Exception as e:
             logger.exception("Steps streaming failed")
             error_result = StepOutput(
@@ -650,6 +658,10 @@ class Steps:
             )
 
         except RunCancelledException:
+            raise
+        except UnresolvableCallableError:
+            # A placeholder for an unresolved reference can never succeed:
+            # converting it to a failed StepOutput would let the run complete.
             raise
         except Exception as e:
             logger.exception("Async steps execution failed")
@@ -817,6 +829,10 @@ class Steps:
             )
 
         except RunCancelledException:
+            raise
+        except UnresolvableCallableError:
+            # A placeholder for an unresolved reference can never succeed:
+            # converting it to a failed StepOutput would let the run complete.
             raise
         except Exception as e:
             logger.exception("Async steps streaming failed")
