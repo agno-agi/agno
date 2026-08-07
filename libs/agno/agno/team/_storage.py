@@ -629,10 +629,23 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         for tool in team.tools:
             try:
                 if isinstance(tool, Function):
-                    serialized_tools.append(tool.to_dict())
+                    func_dict = tool.to_dict()
+                    # A rehydrated team holds bare Functions; re-stamp the
+                    # attribution they carry so it survives the round trip.
+                    if tool.owning_toolkit:
+                        func_dict["toolkit"] = tool.owning_toolkit
+                    serialized_tools.append(func_dict)
                 elif isinstance(tool, Toolkit):
-                    for func in tool.functions.values():
-                        serialized_tools.append(func.to_dict())
+                    # get_functions() is the exposed subset -- the only functions
+                    # the team runtime ever calls.
+                    for func in tool.get_functions().values():
+                        func_dict = func.to_dict()
+                        # Record the owning toolkit so rehydration can re-bind
+                        # same-named functions to the right toolkit (see
+                        # Registry.rehydrate_function).
+                        if isinstance(tool.name, str) and tool.name:
+                            func_dict["toolkit"] = tool.name
+                        serialized_tools.append(func_dict)
                 elif callable(tool):
                     func = Function.from_callable(tool)
                     serialized_tools.append(func.to_dict())
@@ -913,7 +926,7 @@ def from_dict(
     # --- Handle tools reconstruction ---
     if "tools" in config and config["tools"]:
         if registry:
-            config["tools"] = [registry.rehydrate_function(t) for t in config["tools"]]
+            config["tools"] = registry.rehydrate_functions(config["tools"])
         else:
             log_warning("No registry provided, tools will not be rehydrated.")
             del config["tools"]
@@ -1242,7 +1255,7 @@ def _hydrate_from_graph(
         member_type = link_meta.get("type")
 
         if member_type == "agent":
-            agent = Agent.from_dict(child_config)
+            agent = Agent.from_dict(child_config, registry=registry)
             agent.id = child_graph["component"]["component_id"]
             if agent.db is None:
                 agent.db = db

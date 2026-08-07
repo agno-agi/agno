@@ -18,6 +18,7 @@ import pytest
 
 from agno.agent.agent import Agent
 from agno.db.base import BaseDb, ComponentType
+from agno.db.sqlite import SqliteDb
 from agno.registry import Registry
 from agno.session import TeamSession
 from agno.team.team import Team, get_team_by_id, get_teams
@@ -290,6 +291,88 @@ class TestTeamToDict:
         assert config["mode"] == "coordinate"
         assert "max_iterations" not in config  # default=10 should not be serialized
 
+    def test_to_dict_records_owning_toolkit(self):
+        """Functions flattened from a toolkit carry the toolkit's name so
+        rehydration can re-bind same-named functions to the right toolkit
+        (see Registry.rehydrate_function). Plain tools stay unqualified."""
+        from agno.tools.toolkit import Toolkit
+
+        def read_file(path: str) -> str:
+            """Read a file."""
+            return path
+
+        def plain_tool(x: int) -> int:
+            """A plain callable tool."""
+            return x
+
+        toolkit = Toolkit(name="agent_files", tools=[read_file])
+        team = Team(
+            id="toolkit-team",
+            members=[],
+            tools=[toolkit, plain_tool],
+        )
+
+        config = team.to_dict()
+
+        tools_by_name = {t["name"]: t for t in config["tools"]}
+        assert tools_by_name["read_file"]["toolkit"] == "agent_files"
+        assert "toolkit" not in tools_by_name["plain_tool"]
+
+    def test_to_dict_round_trip_preserves_toolkit(self):
+        """A rehydrated team holds bare Functions, not Toolkits; their
+        owning_toolkit re-stamps the "toolkit" key so the attribution
+        survives load -> save (e.g. a Studio edit)."""
+        from agno.registry import Registry
+        from agno.tools.toolkit import Toolkit
+
+        def read_file(path: str) -> str:
+            """Read a file."""
+            return path
+
+        toolkit = Toolkit(name="agent_files", tools=[read_file])
+        team = Team(id="round-trip-team", members=[], tools=[toolkit])
+        registry = Registry(tools=[toolkit])
+
+        config = team.to_dict()
+        assert config["tools"][0]["toolkit"] == "agent_files"
+
+        loaded = Team.from_dict(config, registry=registry)
+        assert loaded.tools[0].entrypoint is read_file
+
+        config_resaved = loaded.to_dict()
+
+        tools_by_name = {t["name"]: t for t in config_resaved["tools"]}
+        assert tools_by_name["read_file"]["toolkit"] == "agent_files"
+
+    def test_to_dict_serializes_per_get_functions(self):
+        """The team serializer reads get_functions() -- what the team runtime
+        exposes -- so a toolkit subclass hiding a member never persists it."""
+        from agno.tools.toolkit import Toolkit
+
+        def only_a(x: str) -> str:
+            """Tool a."""
+            return x
+
+        def _make_search(tag):
+            def search(q: str) -> str:
+                """Search."""
+                return f"{tag}:{q}"
+
+            return search
+
+        class GatedToolkit(Toolkit):
+            def get_functions(self):
+                return {name: f for name, f in self.functions.items() if name != "search"}
+
+        alpha = GatedToolkit(name="alpha", tools=[only_a, _make_search("alpha")])
+        beta = Toolkit(name="beta", tools=[_make_search("beta")])
+        team = Team(id="gated-team", members=[], tools=[alpha, beta])
+
+        config = team.to_dict()
+
+        serialized = {(t["name"], t.get("toolkit")) for t in config["tools"]}
+        assert serialized == {("only_a", "alpha"), ("search", "beta")}
+
 
 # =============================================================================
 # from_dict() Tests
@@ -378,20 +461,23 @@ class TestTeamFromDict:
             assert team.db == mock_db
 
     def test_from_dict_with_registry_tools(self):
-        """Test from_dict uses registry to rehydrate tools."""
-        config = {
-            "id": "tools-team",
-            "tools": [{"name": "search", "description": "Search the web"}],
-        }
+        """from_dict rehydrates the whole tools list in ONE batch call, so a
+        component load shares a single lookup-rebuild budget."""
+        tool_dicts = [
+            {"name": "search", "description": "Search the web"},
+            {"name": "read_file", "description": "Read a file"},
+            {"name": "write_file", "description": "Write a file"},
+        ]
+        config = {"id": "tools-team", "tools": list(tool_dicts)}
 
         mock_registry = MagicMock()
-        mock_tool = MagicMock()
-        mock_registry.rehydrate_function.return_value = mock_tool
+        mock_tools = [MagicMock(), MagicMock(), MagicMock()]
+        mock_registry.rehydrate_functions.return_value = mock_tools
 
         team = Team.from_dict(config, registry=mock_registry)
 
-        mock_registry.rehydrate_function.assert_called_once()
-        assert team.tools == [mock_tool]
+        mock_registry.rehydrate_functions.assert_called_once_with(tool_dicts)
+        assert team.tools == mock_tools
 
     def test_from_dict_without_registry_removes_tools(self):
         """Test from_dict removes tools when no registry is provided."""
@@ -814,6 +900,78 @@ class TestTeamLoad:
         assert team is not None
         assert team.db == mock_db
 
+    def test_load_round_trips_on_real_sqlite_db(self, tmp_path):
+        """Test save/load round-trips on a real SqliteDb.
+
+        The mock_db fixture accepts any call signature, so only a real backend
+        catches an override whose signature diverges from BaseDb (SqliteDb's
+        load_component_graph rejected the label kwarg that load() always passes).
+        """
+        db = SqliteDb(db_file=str(tmp_path / "team_load.db"))
+        team = Team(id="rt-team", name="Round Trip Team", members=[Agent(id="rt-agent", name="Round Trip Agent")])
+        team.save(db=db)
+
+        loaded = Team.load(id="rt-team", db=db)
+
+        assert loaded is not None
+        assert loaded.id == "rt-team"
+        assert loaded.name == "Round Trip Team"
+        assert len(loaded.members) == 1
+        assert loaded.members[0].id == "rt-agent"
+
+    def test_load_rehydrates_member_agent_tools(self, tmp_path):
+        """A member agent's tools must be rehydrated against the same registry
+        the team was loaded with. Without it Agent.from_dict takes its
+        no-registry branch, drops the tools outright, and the member comes back
+        with none -- the nested-team branch already forwards the registry."""
+        from agno.models.openai import OpenAIResponses
+        from agno.tools.toolkit import Toolkit
+
+        def search_web(query: str) -> str:
+            """Search the web."""
+            return "results"
+
+        toolkit = Toolkit(
+            name="web",
+            tools=[search_web],
+            instructions="Cite every source.",
+            add_instructions=True,
+        )
+        model = OpenAIResponses(id="gpt-5.5")
+        db = SqliteDb(db_file=str(tmp_path / "team_member_tools.db"))
+        member = Agent(id="member", name="Member", model=model, tools=[toolkit])
+        Team(id="tool-team", name="Tool Team", model=model, members=[member]).save(db=db)
+
+        loaded = Team.load(id="tool-team", db=db, registry=Registry(tools=[toolkit], models=[model]))
+
+        assert loaded is not None
+        member_tools = loaded.members[0].tools or []
+        assert [tool.name for tool in member_tools] == ["search_web"]
+        assert member_tools[0].entrypoint is not None
+        # And the toolkit came with them, so its guidance survives the reload.
+        assert member_tools[0].source_toolkit is toolkit
+
+    def test_load_passes_member_provider_dict_tools_through(self, tmp_path):
+        """Provider-run tools persist as plain dicts, typed builtins and
+        untyped custom shapes alike. Rehydrating one as a Function config
+        raised a ValidationError that took the whole team load down; they must
+        ride through the member's tools untouched instead."""
+        from agno.models.openai import OpenAIResponses
+
+        provider_dicts = [
+            {"type": "web_search"},
+            {"name": "get_weather", "description": "Weather", "input_schema": {"type": "object"}},
+        ]
+        model = OpenAIResponses(id="gpt-5.5")
+        db = SqliteDb(db_file=str(tmp_path / "team_builtin_tools.db"))
+        member = Agent(id="builtin-member", name="Member", model=model, tools=list(provider_dicts))
+        Team(id="builtin-team", name="Builtin Team", model=model, members=[member]).save(db=db)
+
+        loaded = Team.load(id="builtin-team", db=db, registry=Registry(models=[model]))
+
+        assert loaded is not None
+        assert loaded.members[0].tools == provider_dicts
+
 
 # =============================================================================
 # delete() Tests
@@ -920,7 +1078,7 @@ class TestGetTeamById:
         mock_db.get_config.return_value = {"config": {"id": "registry-team", "tools": [{"name": "calc"}]}}
 
         mock_registry = MagicMock()
-        mock_registry.rehydrate_function.return_value = MagicMock()
+        mock_registry.rehydrate_functions.return_value = [MagicMock()]
 
         team = get_team_by_id(db=mock_db, id="registry-team", registry=mock_registry)
 
@@ -1010,7 +1168,7 @@ class TestGetTeams:
         mock_db.get_config.return_value = {"config": {"id": "tools-team", "tools": [{"name": "search"}]}}
 
         mock_registry = MagicMock()
-        mock_registry.rehydrate_function.return_value = MagicMock()
+        mock_registry.rehydrate_functions.return_value = [MagicMock()]
 
         teams = get_teams(db=mock_db, registry=mock_registry)
 

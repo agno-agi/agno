@@ -1228,3 +1228,26 @@ def test_tool_hook_receives_messages_via_run_context():
     # Verify it's a copy (not the same reference), so hook mutations don't affect the run
     assert captured_messages is not run_context.messages
     assert captured_messages == run_context.messages
+
+
+def test_model_copy_deep_isolates_user_input_schema():
+    """model_copy(deep=True) is the per-run copy parse_tools hands the model,
+    and the model layer writes the user's answers into user_input_schema in
+    place. An aliased schema would carry one run's input into every later run
+    of the same component."""
+
+    def send_email(to: str, subject: str, body: str) -> str:
+        """Send an email."""
+        return "sent"
+
+    func = Function.from_callable(send_email)
+    func.requires_user_input = True
+    func.user_input_fields = ["body"]
+    func.process_entrypoint()
+    assert func.user_input_schema
+
+    copied = func.model_copy(deep=True)
+    assert copied.user_input_schema is not func.user_input_schema
+
+    copied.user_input_schema[0].value = "run-scoped answer"
+    assert func.user_input_schema[0].value is None
