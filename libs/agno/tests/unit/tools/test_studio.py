@@ -2031,3 +2031,154 @@ class TestTargetDbBinding:
         loaded = get_team_by_id(db=db, id=out["id"], registry=studio.registry, strict=True)
         assert loaded is not None
         assert loaded.members[0].id == "listed"
+
+
+class TestSourceConsistency:
+    def test_construction_refuses_distinct_list_and_registry_objects_sharing_an_id(self):
+        from agno.registry import Registry
+        from agno.tools.studio import StudioTools
+
+        registry_agent = Agent(id="split", name="Registry Object")
+        list_agent = Agent(id="split", name="List Object")
+
+        with pytest.raises(ValueError, match="distinct components with id 'split'"):
+            StudioTools(registry=Registry(agents=[registry_agent]), agents_list=[list_agent])
+
+        # The same object in both places is consistent and accepted.
+        shared = Agent(id="shared", name="Shared")
+        StudioTools(registry=Registry(agents=[shared]), agents_list=[shared])
+
+    def test_edit_workflow_step_replacement_refuses_code_db_ambiguity(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+        from agno.models.openai import OpenAIChat
+        from agno.registry import Registry
+        from agno.tools.studio import StudioTools
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import Workflow
+
+        db = SqliteDb(id="cat", db_file=str(tmp_path / "ewb.db"))
+        Agent(id="amb", name="DB Row").save(db=db)
+        clean = Agent(id="clean", name="Clean")
+        clean.save(db=db)
+        Workflow(id="ew-wf", name="WF", steps=[Step(name="s1", agent=clean)]).save(db=db)
+        code_agent = Agent(id="amb", name="Live Code")
+        model = OpenAIChat(id="gpt-4o-mini")
+        studio = StudioTools(
+            registry=Registry(models=[model], dbs=[db]), db=db, workflows=True, agents_list=[code_agent]
+        )
+
+        out = _loads(studio.edit_workflow("ew-wf", step_specs=[{"name": "s1", "agent_id": "amb"}]))
+
+        assert "claimed by both" in out.get("error", "")
+
+    def test_create_refuses_a_same_id_row_of_the_wrong_type(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+        from agno.models.openai import OpenAIChat
+        from agno.registry import Registry
+        from agno.team.team import Team
+        from agno.tools.studio import StudioTools
+
+        db_a = SqliteDb(id="cat-a", db_file=str(tmp_path / "wt_a.db"))
+        db_b = SqliteDb(id="cat-b", db_file=str(tmp_path / "wt_b.db"))
+        Agent(id="typed", name="Agent In A").save(db=db_a)
+        Team(id="typed", name="Team In B", members=[Agent(id="tm", name="M")]).save(db=db_b)
+        model = OpenAIChat(id="gpt-4o-mini")
+        studio = StudioTools(registry=Registry(models=[model], dbs=[db_a, db_b]), db=db_a, teams=True)
+
+        out = _loads(
+            studio.create_team(name="WT", instructions="i", member_ids=["typed"], db_id="cat-b", model_id="gpt-4o-mini")
+        )
+
+        assert "as a" in out.get("error", "") and "not the referenced type" in out.get("error", "")
+
+    def test_create_pins_the_version_the_binder_selected(self, tmp_path):
+        """A publish between binding and link emission must not desynchronize
+        the rebuilt object from its pin: one read decides both."""
+        from agno.db.sqlite import SqliteDb
+        from agno.models.openai import OpenAIChat
+        from agno.registry import Registry
+        from agno.tools.studio import StudioTools
+
+        db = SqliteDb(id="cat", db_file=str(tmp_path / "snap.db"))
+        member = Agent(id="sn-member", name="M", description="v1")
+        member.save(db=db)
+        model = OpenAIChat(id="gpt-4o-mini")
+        studio = StudioTools(registry=Registry(models=[model], dbs=[db]), db=db, teams=True)
+
+        real_get_config = db.get_config
+        state = {"calls": 0}
+
+        def racy_get_config(component_id=None, version=None, **kwargs):
+            row = real_get_config(component_id=component_id, version=version, **kwargs)
+            if component_id == "sn-member":
+                state["calls"] += 1
+                # Publish right after the binder's single row read: the pin
+                # and the rebuilt member must still name the same version.
+                if state["calls"] == 2:
+                    member.description = "v2"
+                    member.save(db=db)
+            return row
+
+        db.get_config = racy_get_config
+        try:
+            out = _loads(
+                studio.create_team(name="SN", instructions="i", member_ids=["sn-member"], model_id="gpt-4o-mini")
+            )
+        finally:
+            del db.get_config
+
+        assert out.get("status") == "created"
+        from agno.team.team import get_team_by_id
+
+        links = db.get_links(component_id=out["id"], version=1)
+        pins = [link["child_version"] for link in links if link["link_kind"] == "member"]
+        assert pins == [1]
+        loaded = get_team_by_id(db=db, id=out["id"], strict=True)
+        assert loaded is not None
+        assert loaded.members[0].description == "v1"
+
+    def test_member_existing_only_in_the_target_db_resolves(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+        from agno.models.openai import OpenAIChat
+        from agno.registry import Registry
+        from agno.team.team import get_team_by_id
+        from agno.tools.studio import StudioTools
+
+        db_a = SqliteDb(id="cat-a", db_file=str(tmp_path / "only_a.db"))
+        db_b = SqliteDb(id="cat-b", db_file=str(tmp_path / "only_b.db"))
+        Agent(id="b-only", name="B Only").save(db=db_b)
+        model = OpenAIChat(id="gpt-4o-mini")
+        studio = StudioTools(registry=Registry(models=[model], dbs=[db_a, db_b]), db=db_a, teams=True)
+
+        out = _loads(
+            studio.create_team(
+                name="BO", instructions="i", member_ids=["b-only"], db_id="cat-b", model_id="gpt-4o-mini"
+            )
+        )
+        assert out.get("status") == "created"
+
+        loaded = get_team_by_id(db=db_b, id=out["id"], strict=True)
+        assert loaded is not None
+        assert loaded.members[0].id == "b-only"
+
+    def test_step_workflow_pins_are_not_suppressed_by_a_same_id_agent(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+        from agno.registry import Registry
+        from agno.tools.studio import StudioTools
+        from agno.workflow.step import Step, StepInput, StepOutput
+        from agno.workflow.workflow import Workflow
+
+        def leaf(step_input: StepInput) -> StepOutput:
+            return StepOutput(content="x")
+
+        db = SqliteDb(id="cat", db_file=str(tmp_path / "swf.db"))
+        sub = Workflow(id="sub-flow", name="Sub", steps=[Step(name="x", executor=leaf)])
+        sub.save(db=db)
+        parent = Workflow(id="par-flow", name="Par", steps=[Step(name="n", workflow=sub)])
+        lookalike_agent = Agent(id="sub-flow", name="Unrelated Agent")
+
+        studio = StudioTools(registry=Registry(dbs=[db]), db=db, workflows=True, agents_list=[lookalike_agent])
+        links = studio._links_for_component(parent)
+
+        nested = [link for link in links if link["link_kind"] == "step_workflow"]
+        assert nested and nested[0]["child_component_id"] == "sub-flow"

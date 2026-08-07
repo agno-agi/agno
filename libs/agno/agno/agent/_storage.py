@@ -442,8 +442,11 @@ def _unresolvable_tool_name(entry: Any) -> Optional[str]:
         if entry.entrypoint is None and not entry.external_execution:
             return f"{entry.owning_toolkit}.{entry.name}" if entry.owning_toolkit else entry.name
         return None
-    if isinstance(entry, dict) and "type" not in entry and "input_schema" not in entry and "parameters" not in entry:
-        return str(entry.get("name") or "?")
+    if isinstance(entry, dict) and entry.get("name") and set(entry.keys()) <= {"name", "description", "toolkit"}:
+        # Positively a reference: nothing but a name (and provenance). Every
+        # provider-native shape carries more - a type, a schema, parameters,
+        # or a provider envelope - and rides through untouched.
+        return str(entry["name"])
     return None
 
 

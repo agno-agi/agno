@@ -1162,3 +1162,16 @@ def test_strict_refuses_constructor_supplied_ambiguous_knowledge():
 
     with pytest.raises(ComponentRehydrationError, match="two distinct"):
         Agent.from_dict(config, registry=registry, strict=True)
+
+
+def test_strict_passes_provider_envelope_tools_through():
+    """A provider-native envelope like Bedrock's {'function': {...}} carries
+    itself; strict must not refuse it, with or without a registry."""
+    bedrock_tool = {"function": {"name": "get_weather", "description": "W", "parameters": {"type": "object"}}}
+    config = {"id": "br-agent", "tools": [bedrock_tool]}
+
+    with_registry = Agent.from_dict(config, registry=Registry(), strict=True)
+    without_registry = Agent.from_dict(config, strict=True)
+
+    assert with_registry.tools == [bedrock_tool]
+    assert without_registry.tools == [bedrock_tool]
