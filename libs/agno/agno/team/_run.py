@@ -5830,6 +5830,7 @@ def _group_requirements_for_continue(
     run_response: TeamRunOutput,
     session: TeamSession,
     run_context: Optional[RunContext],
+    _depth: int = 0,
 ) -> List[Tuple[Union["Agent", "Team"], Optional[Union[RunOutput, TeamRunOutput]], List["RunRequirement"]]]:
     """Group HITL requirements by the paused run that will continue them.
 
@@ -5913,7 +5914,47 @@ def _group_requirements_for_continue(
                     break
         if not merged:
             entries.append((member, target, list(reqs)))
+
+    if _depth < _MAX_CONTINUE_PREFLIGHT_DEPTH:
+        _preflight_subteam_routes(entries, session, _depth)
     return entries
+
+
+_MAX_CONTINUE_PREFLIGHT_DEPTH = 12
+
+
+def _preflight_subteam_routes(
+    entries: List[Tuple[Union["Agent", "Team"], Optional[Union[RunOutput, TeamRunOutput]], List["RunRequirement"]]],
+    session: TeamSession,
+    depth: int,
+) -> None:
+    """Raise now if any sub-team in these entries could not route its own share.
+
+    Refusals at this level are all-or-nothing: nothing has run when they fire.
+    A sub-team's refusal is not, because the sub-team only reaches its own
+    grouping once its continue_run is already under way — by then the members
+    scheduled alongside it have executed their approved tools. The caller is
+    then told the run is still paused, which is false for those members, and
+    the retry it invites runs them again.
+
+    Descending here moves that refusal back to where it is still free. The
+    sub-team's grouping is a pure resolution pass over stored state — it
+    executes nothing — so running it early costs a lookup and buys the
+    all-or-nothing guarantee the refusal message claims.
+
+    This closes resolution drift, which is what a reload can introduce: a
+    member renamed or removed while the run sat paused. It cannot close a
+    failure that strikes mid-execution, so routing stays best-effort past this
+    point.
+    """
+    from agno.team.team import Team
+
+    for member, target, _reqs in entries:
+        if not isinstance(member, Team) or not isinstance(target, TeamRunOutput):
+            continue
+        if not _has_member_requirements(target.requirements or []):
+            continue
+        _group_requirements_for_continue(member, target, session, None, _depth=depth + 1)
 
 
 def _route_requirements_to_members(

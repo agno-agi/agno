@@ -4107,3 +4107,340 @@ async def test_a_run_finishing_during_an_async_save_is_not_discarded(monkeypatch
     ids = [r.run_id for r in session.runs or []]
     assert "run-b" in ids, f"the concurrently added run was dropped by the restore; runs={ids}"
 
+
+
+# ---------------------------------------------------------------------------
+# Round 11: a refusal must arrive before any member has executed
+# ---------------------------------------------------------------------------
+
+
+def _build_dup_leaf_org(db: SqliteDb, resuming: bool, break_right_leaf: bool = False) -> Team:
+    """Two sub-teams, each delegating to a leaf named 'dup'.
+
+    With break_right_leaf the right sub-team's leaf has been renamed, which is
+    what a deploy landing while a run sits paused looks like: the stored run
+    still names 'dup', so the right sub-team can no longer route its share.
+    Without a preflight that refusal surfaces only once the right sub-team's
+    own continue is under way — after the left sub-team has sent its email.
+    """
+
+    def make_subteam(side: str, send_tool, to: str, leaf_id: str) -> Team:
+        agent_script = (
+            [("content", "Email sent.")]
+            if resuming
+            else [("tool", "send_email", {"to": to}, f"tc-send-{side}"), ("content", "Email sent.")]
+        )
+        sub_script = (
+            [("content", f"{side} done.")]
+            if resuming
+            else [
+                ("tool", "delegate_task_to_member", {"member_id": "dup", "task": "send it"}, f"tc-deleg-{side}"),
+                ("content", f"{side} done."),
+            ]
+        )
+        return Team(
+            name=f"{side} Team",
+            id=f"{side}-team",
+            model=_ScriptedModel(f"m-{side}", sub_script),
+            members=[
+                Agent(
+                    name="Dup",
+                    id=leaf_id,
+                    model=_ScriptedModel(f"m-agent-{side}", agent_script),
+                    tools=[send_tool],
+                    db=db,
+                    telemetry=False,
+                )
+            ],
+            db=db,
+            telemetry=False,
+        )
+
+    leader_turn = (
+        "tools",
+        [
+            ("delegate_task_to_member", {"member_id": "left-team", "task": "send left"}, "tc-outer-left"),
+            ("delegate_task_to_member", {"member_id": "right-team", "task": "send right"}, "tc-outer-right"),
+        ],
+    )
+    return Team(
+        name="Org Team",
+        id="org-team",
+        model=_ScriptedModel(
+            "m-outer", [("content", "All done.")] if resuming else [leader_turn, ("content", "All done.")]
+        ),
+        members=[
+            make_subteam("left", left_send_email, "left@example.com", "dup"),
+            make_subteam("right", right_send_email, "right@example.com", "renamed" if break_right_leaf else "dup"),
+        ],
+        db=db,
+        telemetry=False,
+    )
+
+
+def test_a_subteam_that_cannot_route_refuses_before_a_sibling_executes(tmp_path):
+    """The refusal says the run remains paused, so nothing may have run."""
+    _LEFT_EXECUTED.clear()
+    _RIGHT_EXECUTED.clear()
+    db_file = str(tmp_path / "preflight_sync.db")
+    session_id = "s-preflight-sync"
+
+    run1 = _build_dup_leaf_org(SqliteDb(db_file=db_file), resuming=False).run(
+        "Email both sides", session_id=session_id
+    )
+    assert run1.is_paused
+    assert len(run1.requirements or []) == 2
+
+    broken = _build_dup_leaf_org(SqliteDb(db_file=db_file), resuming=True, break_right_leaf=True)
+    with pytest.raises(RunNotContinuableError):
+        broken.continue_run(
+            run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+        )
+
+    assert _LEFT_EXECUTED == [], f"the refusal claims the run is untouched, but a sibling fired: {_LEFT_EXECUTED}"
+    assert _RIGHT_EXECUTED == []
+
+
+@pytest.mark.asyncio
+async def test_a_subteam_that_cannot_route_refuses_before_a_sibling_executes_async(tmp_path):
+    """Async twin: members are gathered, so without a preflight the refusal
+    lands only after every sibling coroutine has already finished."""
+    _LEFT_EXECUTED.clear()
+    _RIGHT_EXECUTED.clear()
+    db_file = str(tmp_path / "preflight_async.db")
+    session_id = "s-preflight-async"
+
+    run1 = await _build_dup_leaf_org(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email both sides", session_id=session_id
+    )
+    assert run1.is_paused
+
+    broken = _build_dup_leaf_org(SqliteDb(db_file=db_file), resuming=True, break_right_leaf=True)
+    with pytest.raises(RunNotContinuableError):
+        await broken.acontinue_run(
+            run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+        )
+
+    assert _LEFT_EXECUTED == [], f"the refusal claims the run is untouched, but a sibling fired: {_LEFT_EXECUTED}"
+    assert _RIGHT_EXECUTED == []
+
+
+@pytest.mark.asyncio
+async def test_a_refused_continue_still_resumes_once_the_member_is_back(tmp_path):
+    """The refusal must leave the run resumable, and the resume must run each
+    approved tool exactly once."""
+    _LEFT_EXECUTED.clear()
+    _RIGHT_EXECUTED.clear()
+    db_file = str(tmp_path / "preflight_retry.db")
+    session_id = "s-preflight-retry"
+
+    run1 = await _build_dup_leaf_org(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email both sides", session_id=session_id
+    )
+    assert run1.is_paused
+
+    broken = _build_dup_leaf_org(SqliteDb(db_file=db_file), resuming=True, break_right_leaf=True)
+    with pytest.raises(RunNotContinuableError):
+        await broken.acontinue_run(
+            run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+        )
+
+    fixed = _build_dup_leaf_org(SqliteDb(db_file=db_file), resuming=True)
+    run2 = await fixed.acontinue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+    )
+
+    assert run2.status == RunStatus.completed
+    assert _LEFT_EXECUTED == ["left@example.com"], f"the approved tool did not run exactly once: {_LEFT_EXECUTED}"
+    assert _RIGHT_EXECUTED == ["right@example.com"]
+
+
+def test_preflight_does_not_disturb_a_healthy_nested_continue(tmp_path):
+    """The extra resolution pass must stay invisible when everything resolves."""
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "preflight_healthy.db")
+    session_id = "s-preflight-healthy"
+
+    run1 = _build_nested_team(SqliteDb(db_file=db_file), resuming=False).run("Send it", session_id=session_id)
+    assert run1.is_paused
+
+    run2 = _build_nested_team(SqliteDb(db_file=db_file), resuming=True).continue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+    )
+
+    assert not run2.is_paused
+    assert _EXECUTED == ["a@example.com"], f"the healthy nested continue must still run its tool once: {_EXECUTED}"
+
+
+# ---------------------------------------------------------------------------
+# Round 11: an unresolved member requirement re-pauses; a refused background
+# continue is reported
+# ---------------------------------------------------------------------------
+
+
+@tool(name="file_expense", requires_user_input=True, user_input_fields=["approver"])
+def file_expense(amount: str, approver: str) -> str:
+    _EXECUTED.append(f"{amount}:{approver}")
+    return f"filed {amount} with {approver}"
+
+
+def _build_user_input_member_team(db: SqliteDb, resuming: bool) -> Team:
+    """A member whose gated tool needs a field the model did not fill."""
+    agent_script = (
+        [("content", "Filed.")]
+        if resuming
+        else [("tool", "file_expense", {"amount": "900"}, "tc-expense"), ("content", "Filed.")]
+    )
+    leader_script = (
+        [("content", "All done.")]
+        if resuming
+        else [
+            ("tool", "delegate_task_to_member", {"member_id": "filer", "task": "file it"}, "tc-deleg"),
+            ("content", "All done."),
+        ]
+    )
+    return Team(
+        name="Finance Team",
+        id="finance-team",
+        model=_ScriptedModel("m-leader", leader_script),
+        members=[
+            Agent(
+                name="Filer",
+                id="filer",
+                model=_ScriptedModel("m-filer", agent_script),
+                tools=[file_expense],
+                db=db,
+                telemetry=False,
+            )
+        ],
+        db=db,
+        telemetry=False,
+    )
+
+
+def test_an_unresolved_member_requirement_repauses_instead_of_executing(tmp_path):
+    """The team-level lane re-pauses its own unresolved requirements; the member
+    lane must too, rather than run the gated tool on input nobody supplied."""
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "unresolved_member.db")
+    session_id = "s-unresolved-member"
+
+    run1 = _build_user_input_member_team(SqliteDb(db_file=db_file), resuming=False).run(
+        "File the expense", session_id=session_id
+    )
+    assert run1.is_paused
+    assert not run1.requirements[0].is_resolved(), "the requested field is unfilled, so the pause is unresolved"
+
+    # The client sends the payload straight back without filling the field.
+    untouched = [RunRequirement.from_dict(r.to_dict()) for r in run1.requirements or []]
+    run2 = _build_user_input_member_team(SqliteDb(db_file=db_file), resuming=True).continue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=untouched
+    )
+
+    assert _EXECUTED == [], f"a gated tool ran on input nobody supplied: {_EXECUTED}"
+    assert run2.is_paused, "an unresolved member requirement must leave the run paused"
+
+
+@pytest.mark.asyncio
+async def test_an_unresolved_member_requirement_repauses_instead_of_executing_async(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "unresolved_member_async.db")
+    session_id = "s-unresolved-member-async"
+
+    run1 = await _build_user_input_member_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "File the expense", session_id=session_id
+    )
+    assert run1.is_paused
+
+    untouched = [RunRequirement.from_dict(r.to_dict()) for r in run1.requirements or []]
+    run2 = await _build_user_input_member_team(SqliteDb(db_file=db_file), resuming=True).acontinue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=untouched
+    )
+
+    assert _EXECUTED == [], f"a gated tool ran on input nobody supplied: {_EXECUTED}"
+    assert run2.is_paused, "an unresolved member requirement must leave the run paused"
+
+
+async def _drain_background_tasks() -> None:
+    """The SSE generator returns when the producer pushes its sentinel, which
+    happens before set_run_completed; wait for the detached task itself."""
+    from agno.team._run import _background_tasks
+
+    for _ in range(300):
+        if not [t for t in list(_background_tasks) if not t.done()]:
+            return
+        await asyncio.sleep(0.01)
+
+
+def _unbindable_payload(requirements):
+    payload = _wire_requirements(requirements)
+    payload[0].id = "not-a-stored-requirement-id"
+    payload[0].tool_execution.tool_call_id = "tc-bogus"
+    return payload
+
+
+@pytest.mark.asyncio
+async def test_background_continue_reports_a_refusal_to_the_client(tmp_path):
+    """A refused continue must not reach the caller as an empty, successful stream."""
+    from agno.os.managers import event_buffer
+
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "bg_refusal.db")
+    session_id = "s-bg-refusal"
+
+    run1 = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email a@example.com", session_id=session_id
+    )
+    assert run1.is_paused
+
+    team2 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
+    chunks = []
+    async for chunk in team2.acontinue_run(
+        run_id=run1.run_id,
+        session_id=session_id,
+        requirements=_unbindable_payload(run1.requirements),
+        stream=True,
+        stream_events=True,
+        background=True,
+    ):
+        chunks.append(chunk)
+    await _drain_background_tasks()
+
+    assert _EXECUTED == [], "a refused continue must not execute the gated tool"
+    assert [c for c in chunks if "RunError" in c], f"the refusal reached the client as an empty stream: {chunks!r}"
+    assert event_buffer.get_run_status(run1.run_id) != RunStatus.completed, (
+        "a refused continue must not be recorded as a completed run"
+    )
+    db_status = [r for r in _reload_runs(db_file, session_id) if r.run_id == run1.run_id][0].status
+    assert db_status == RunStatus.paused
+
+
+@pytest.mark.asyncio
+async def test_background_continue_refusal_keeps_the_run_resumable(tmp_path):
+    """The run_response shape persisted ERROR over the pause the refusal was
+    protecting, leaving nothing to resume."""
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "bg_refusal_obj.db")
+    session_id = "s-bg-refusal-obj"
+
+    run1 = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email a@example.com", session_id=session_id
+    )
+    assert run1.is_paused
+
+    team2 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
+    async for _ in team2.acontinue_run(
+        run_response=run1,
+        session_id=session_id,
+        requirements=_unbindable_payload(run1.requirements),
+        stream=True,
+        stream_events=True,
+        background=True,
+    ):
+        pass
+    await _drain_background_tasks()
+
+    db_status = [r for r in _reload_runs(db_file, session_id) if r.run_id == run1.run_id][0].status
+    assert db_status == RunStatus.paused, (
+        f"the refusal clobbered the paused run to {db_status!r}; it can no longer be resumed"
+    )
