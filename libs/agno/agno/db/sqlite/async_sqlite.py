@@ -762,12 +762,17 @@ class AsyncSqliteDb(AsyncBaseDb):
                 # A NULL index has no position and breaks ORDER BY run_index. ON CONFLICT
                 # preserves the existing index, so this only sets it on a genuine insert.
                 if row.get("run_index") is None:
-                    current_max = (
-                        await sess.execute(
-                            select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
-                        )
-                    ).scalar()
-                    row["run_index"] = (current_max + 1) if current_max is not None else 0
+                    # Computed INSIDE the insert statement: SQLite holds the
+                    # database write lock for the whole statement, so two
+                    # concurrent backfills cannot read the same MAX (the old
+                    # two-statement read-then-insert could - a busy-waiting
+                    # second writer landed a duplicate index after the first
+                    # committed).
+                    row["run_index"] = (
+                        select(func.coalesce(func.max(runs_table.c.run_index) + 1, 0))
+                        .where(runs_table.c.session_id == session_id)
+                        .scalar_subquery()
+                    )
 
                 stmt = sqlite.insert(runs_table).values(**row)
                 stmt = stmt.on_conflict_do_update(
@@ -4276,6 +4281,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         self,
         component_id: str,
         component_type: Optional[ComponentType] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
@@ -4286,6 +4292,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         name: Optional[str] = None,
         description: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
@@ -4293,6 +4300,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         self,
         component_id: str,
         hard_delete: bool = False,
+        user_id: Optional[str] = None,
     ) -> bool:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
@@ -4303,6 +4311,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         limit: int = 20,
         offset: int = 0,
         exclude_component_ids: Optional[Set[str]] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         raise NotImplementedError("Component methods not yet supported for async databases")
 
@@ -4318,6 +4327,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         stage: str = "draft",
         notes: Optional[str] = None,
         links: Optional[List[Dict[str, Any]]] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         raise NotImplementedError("Component methods not yet supported for async databases")
 

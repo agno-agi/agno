@@ -35,6 +35,7 @@ from agno.db.utils import (
     filter_context_runs,
     json_serializer,
     merge_runs_table_with_legacy_blob,
+    run_index_lock_name,
     validate_pagination,
 )
 from agno.run.agent import RunOutput
@@ -618,29 +619,50 @@ class MySQLDb(BaseDb):
                 run_index=run_index,
             )
 
-            with self.Session() as sess, sess.begin():
-                # Backfill a monotonic run_index when the run arrives without one
-                # (e.g. a background/continue save that couldn't resolve its position).
-                # A NULL index has no position and breaks ORDER BY run_index. ON DUPLICATE KEY
-                # preserves the existing index, so this only sets it on a genuine insert.
-                if row.get("run_index") is None:
-                    current_max = sess.execute(
-                        select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
-                    ).scalar()
-                    row["run_index"] = (current_max + 1) if current_max is not None else 0
+            backfill_lock: Optional[str] = None
+            with self.Session() as sess:
+                try:
+                    with sess.begin():
+                        # Backfill a monotonic run_index when the run arrives without one
+                        # (e.g. a background/continue save that couldn't resolve its position).
+                        # A NULL index has no position and breaks ORDER BY run_index. ON DUPLICATE KEY
+                        # preserves the existing index, so this only sets it on a genuine insert.
+                        if row.get("run_index") is None:
+                            # Serialize same-session backfills: two concurrent
+                            # max-reads can both see the same MAX and land
+                            # duplicate indexes. GET_LOCK is connection-scoped
+                            # and survives COMMIT, so it is released in the
+                            # finally below - AFTER the row is durable.
+                            backfill_lock = run_index_lock_name(session_id)
+                            acquired = sess.execute(text("SELECT GET_LOCK(:name, 5)"), {"name": backfill_lock}).scalar()
+                            if not acquired:
+                                log_warning(
+                                    f"run_index backfill lock timed out for session {session_id}; "
+                                    "proceeding unserialized"
+                                )
+                            current_max = sess.execute(
+                                select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
+                            ).scalar()
+                            row["run_index"] = (current_max + 1) if current_max is not None else 0
 
-                stmt = mysql.insert(runs_table).values(**row)  # type: ignore
-                stmt = stmt.on_duplicate_key_update(
-                    status=stmt.inserted.status,
-                    run_data=stmt.inserted.run_data,
-                    user_id=stmt.inserted.user_id,
-                    parent_run_id=stmt.inserted.parent_run_id,
-                    updated_at=stmt.inserted.updated_at,
-                    # Preserve a non-null run_index; only fill it in for a legacy row
-                    # that was stored as NULL (COALESCE keeps the existing value if set).
-                    run_index=func.coalesce(runs_table.c.run_index, stmt.inserted.run_index),
-                )
-                sess.execute(stmt)
+                        stmt = mysql.insert(runs_table).values(**row)  # type: ignore
+                        stmt = stmt.on_duplicate_key_update(
+                            status=stmt.inserted.status,
+                            run_data=stmt.inserted.run_data,
+                            user_id=stmt.inserted.user_id,
+                            parent_run_id=stmt.inserted.parent_run_id,
+                            updated_at=stmt.inserted.updated_at,
+                            # Preserve a non-null run_index; only fill it in for a legacy row
+                            # that was stored as NULL (COALESCE keeps the existing value if set).
+                            run_index=func.coalesce(runs_table.c.run_index, stmt.inserted.run_index),
+                        )
+                        sess.execute(stmt)
+                finally:
+                    if backfill_lock is not None:
+                        try:
+                            sess.execute(text("SELECT RELEASE_LOCK(:name)"), {"name": backfill_lock})
+                        except Exception:
+                            pass  # a dead connection frees its named locks on close
 
         except Exception as e:
             log_error(f"Exception upserting run to runs table: {str(e)}")
