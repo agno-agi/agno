@@ -1,6 +1,8 @@
 """Tests for the ScheduleManager Pythonic API."""
 
 import time
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier, Event
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -8,6 +10,8 @@ import pytest
 pytest.importorskip("croniter", reason="croniter not installed")
 pytest.importorskip("pytz", reason="pytz not installed")
 
+from agno.db.schemas.scheduler import ScheduleNameConflictError  # noqa: E402
+from agno.db.sqlite import SqliteDb  # noqa: E402
 from agno.scheduler.manager import ScheduleManager  # noqa: E402
 
 # =============================================================================
@@ -43,12 +47,14 @@ def _make_schedule(**overrides):
 @pytest.fixture
 def mock_db():
     db = MagicMock()
+    db.scheduler_api_version = 2
     db.get_schedule = MagicMock(return_value=_make_schedule())
     db.get_schedule_by_name = MagicMock(return_value=None)
     db.get_schedules = MagicMock(return_value=[_make_schedule()])
     db.create_schedule = MagicMock(side_effect=lambda d: d)
     db.update_schedule = MagicMock(return_value=_make_schedule())
     db.delete_schedule = MagicMock(return_value=True)
+    db.trigger_schedule = MagicMock(return_value=_make_schedule())
     db.get_schedule_runs = MagicMock(return_value=[])
     return db
 
@@ -102,6 +108,153 @@ class TestManagerCreate:
         with pytest.raises(RuntimeError, match="Failed to create"):
             mgr.create(name="fail", cron="0 9 * * *", endpoint="/test")
 
+    def test_create_skip_recovers_when_another_creator_wins_the_name_race(self, mgr, mock_db):
+        winner = _make_schedule(id="winner", name="raced")
+        mock_db.get_schedule_by_name = MagicMock(side_effect=[None, winner])
+        mock_db.create_schedule = MagicMock(side_effect=ScheduleNameConflictError("raced"))
+
+        result = mgr.create(name="raced", cron="0 9 * * *", endpoint="/loser", if_exists="skip")
+
+        assert result.id == "winner"
+        assert result.endpoint == "/agents/a1/runs"
+        mock_db.update_schedule.assert_not_called()
+
+    def test_create_update_recovers_when_another_creator_wins_the_name_race(self, mgr, mock_db):
+        winner = _make_schedule(id="winner", name="raced", endpoint="/winner")
+        updated = _make_schedule(id="winner", name="raced", endpoint="/loser", method="PATCH")
+        mock_db.get_schedule_by_name = MagicMock(side_effect=[None, winner])
+        mock_db.create_schedule = MagicMock(side_effect=ScheduleNameConflictError("raced"))
+        mock_db.update_schedule = MagicMock(return_value=updated)
+
+        result = mgr.create(
+            name="raced",
+            cron="15 10 * * *",
+            endpoint="/loser",
+            method="patch",
+            if_exists="update",
+        )
+
+        assert result.id == "winner"
+        assert result.endpoint == "/loser"
+        mock_db.update_schedule.assert_called_once()
+        assert mock_db.update_schedule.call_args.args == ("winner",)
+        assert mock_db.update_schedule.call_args.kwargs["cron_expr"] == "15 10 * * *"
+        assert mock_db.update_schedule.call_args.kwargs["method"] == "PATCH"
+
+    def test_create_raise_converts_a_lost_name_race_to_value_error(self, mgr, mock_db):
+        mock_db.get_schedule_by_name = MagicMock(side_effect=[None, _make_schedule(id="winner", name="raced")])
+        mock_db.create_schedule = MagicMock(side_effect=ScheduleNameConflictError("raced"))
+
+        with pytest.raises(ValueError, match="already exists") as exc_info:
+            mgr.create(name="raced", cron="0 9 * * *", endpoint="/loser")
+
+        assert exc_info.value.__cause__ is None
+        assert exc_info.value.__context__ is None
+
+    def test_create_does_not_classify_an_unrelated_backend_failure_as_a_name_race(self, mgr, mock_db):
+        backend_error = RuntimeError("database unavailable")
+        mock_db.get_schedule_by_name = MagicMock(side_effect=[None, _make_schedule(id="unrelated", name="raced")])
+        mock_db.create_schedule = MagicMock(side_effect=backend_error)
+
+        with pytest.raises(RuntimeError) as exc_info:
+            mgr.create(name="raced", cron="0 9 * * *", endpoint="/loser", if_exists="skip")
+
+        assert exc_info.value is backend_error
+        mock_db.get_schedule_by_name.assert_called_once_with(
+            "raced",
+            managed_by=None,
+            owner_actor_id=None,
+            exclude_managed_by="studio",
+        )
+
+
+class _RacingSqliteDb:
+    """Coordinate two managers so both miss the preflight name lookup."""
+
+    def __init__(self, db, barrier, winner_created, wins_insert):
+        self._db = db
+        self._barrier = barrier
+        self._winner_created = winner_created
+        self._wins_insert = wins_insert
+        self._first_lookup = True
+
+    def __getattr__(self, name):
+        return getattr(self._db, name)
+
+    def get_schedule_by_name(
+        self,
+        name,
+        *,
+        managed_by=None,
+        owner_actor_id=None,
+        exclude_managed_by=None,
+    ):
+        result = self._db.get_schedule_by_name(
+            name,
+            managed_by=managed_by,
+            owner_actor_id=owner_actor_id,
+            exclude_managed_by=exclude_managed_by,
+        )
+        if self._first_lookup:
+            self._first_lookup = False
+            self._barrier.wait(timeout=5)
+        return result
+
+    def create_schedule(self, schedule_data):
+        if self._wins_insert:
+            try:
+                return self._db.create_schedule(schedule_data)
+            finally:
+                self._winner_created.set()
+        if not self._winner_created.wait(timeout=5):
+            raise RuntimeError("winning insert did not complete")
+        return self._db.create_schedule(schedule_data)
+
+
+@pytest.mark.parametrize(
+    ("if_exists", "expected_endpoint"),
+    [("skip", "/winner"), ("update", "/loser")],
+)
+def test_concurrent_sqlite_create_recovers_from_the_unique_name_race(tmp_path, if_exists, expected_endpoint):
+    db_path = str(tmp_path / f"schedule-{if_exists}.db")
+    winner_db = SqliteDb(session_table="manager_race_sessions", db_file=db_path)
+    # Materialize the table and unique index before the two inserts race.
+    winner_db.create_schedule(_make_schedule(id="prime", name="prime"))
+    assert winner_db.delete_schedule("prime") is True
+    loser_db = SqliteDb(session_table="manager_race_sessions", db_file=db_path)
+
+    barrier = Barrier(2)
+    winner_created = Event()
+    winner = ScheduleManager(_RacingSqliteDb(winner_db, barrier, winner_created, wins_insert=True))
+    loser = ScheduleManager(_RacingSqliteDb(loser_db, barrier, winner_created, wins_insert=False))
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        winner_future = pool.submit(
+            winner.create,
+            name="shared-name",
+            cron="0 9 * * *",
+            endpoint="/winner",
+            if_exists=if_exists,
+        )
+        loser_future = pool.submit(
+            loser.create,
+            name="shared-name",
+            cron="30 10 * * *",
+            endpoint="/loser",
+            if_exists=if_exists,
+        )
+        winner_result = winner_future.result(timeout=10)
+        loser_result = loser_future.result(timeout=10)
+
+    stored = winner_db.get_schedule_by_name("shared-name")
+    assert stored is not None
+    assert winner_result.id == loser_result.id == stored["id"]
+    assert loser_result.endpoint == expected_endpoint
+    assert stored["endpoint"] == expected_endpoint
+    schedules, total = winner_db.get_schedules()
+    assert total == 1
+    assert [schedule["name"] for schedule in schedules] == ["shared-name"]
+
 
 class TestManagerList:
     def test_list_all(self, mgr, mock_db):
@@ -112,6 +265,40 @@ class TestManagerList:
     def test_list_with_filters(self, mgr, mock_db):
         mgr.list(enabled=True, limit=10, page=2)
         mock_db.get_schedules.assert_called_once_with(enabled=True, limit=10, page=2)
+
+    def test_list_can_exclude_a_management_surface(self, mgr, mock_db):
+        mgr.list(exclude_managed_by="studio")
+        mock_db.get_schedules.assert_called_once_with(
+            enabled=None,
+            limit=100,
+            page=1,
+            exclude_managed_by="studio",
+        )
+
+    def test_v1_list_uses_exact_signature_and_filters_before_pagination(self):
+        class LegacyScheduleDb:
+            scheduler_api_version = 1
+
+            def __init__(self):
+                self.calls = []
+
+            def get_schedules(self, enabled=None, limit=100, page=1):
+                self.calls.append({"enabled": enabled, "limit": limit, "page": page})
+                return (
+                    [
+                        _make_schedule(id="generic-1", name="generic-1"),
+                        _make_schedule(id="studio", name="private", managed_by="studio"),
+                        _make_schedule(id="generic-2", name="generic-2"),
+                    ],
+                    3,
+                )
+
+        db = LegacyScheduleDb()
+
+        result = ScheduleManager(db).list(limit=1, page=2, exclude_managed_by="studio")
+
+        assert [schedule.id for schedule in result] == ["generic-2"]
+        assert db.calls == [{"enabled": None, "limit": 1000, "page": 1}]
 
 
 class TestManagerGet:
@@ -161,9 +348,25 @@ class TestManagerDisable:
 
 
 class TestManagerTrigger:
-    def test_trigger_returns_none(self, mgr, mock_db):
+    def test_trigger_durably_queues_schedule(self, mgr, mock_db):
         result = mgr.trigger("sched-1")
-        assert result is None
+        assert result is not None
+        assert result.id == "sched-1"
+        mock_db.trigger_schedule.assert_called_once_with("sched-1")
+
+    def test_v1_trigger_uses_historical_due_now_fallback(self):
+        db = MagicMock()
+        db.scheduler_api_version = 1
+        db.update_schedule.return_value = _make_schedule(next_run_at=123)
+        manager = ScheduleManager(db)
+
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            monkeypatch.setattr(time, "time", lambda: 123.9)
+            result = manager.trigger("sched-1")
+
+        assert result is not None
+        db.update_schedule.assert_called_once_with("sched-1", next_run_at=123)
+        db.trigger_schedule.assert_not_called()
 
 
 class TestManagerGetRuns:
@@ -192,6 +395,7 @@ class TestManagerCallMissingMethod:
 @pytest.fixture
 def mock_async_db():
     db = MagicMock()
+    db.scheduler_api_version = 2
     db.get_schedule = AsyncMock(return_value=_make_schedule())
     db.get_schedule_by_name = AsyncMock(return_value=None)
     db.get_schedules = AsyncMock(return_value=[_make_schedule()])
@@ -225,12 +429,86 @@ class TestAsyncCreate:
         with pytest.raises(ValueError, match="already exists"):
             await async_mgr.acreate(name="test-schedule", cron="0 9 * * *", endpoint="/test")
 
+    @pytest.mark.asyncio
+    async def test_acreate_update_recovers_when_another_creator_wins_the_name_race(self, async_mgr, mock_async_db):
+        winner = _make_schedule(id="winner", name="raced", endpoint="/winner")
+        updated = _make_schedule(id="winner", name="raced", endpoint="/async-loser")
+        mock_async_db.get_schedule_by_name = AsyncMock(side_effect=[None, winner])
+        mock_async_db.create_schedule = AsyncMock(side_effect=ScheduleNameConflictError("raced"))
+        mock_async_db.update_schedule = AsyncMock(return_value=updated)
+
+        result = await async_mgr.acreate(
+            name="raced",
+            cron="0 9 * * *",
+            endpoint="/async-loser",
+            if_exists="update",
+        )
+
+        assert result.id == "winner"
+        assert result.endpoint == "/async-loser"
+        mock_async_db.update_schedule.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_acreate_does_not_classify_an_unrelated_backend_failure_as_a_name_race(
+        self, async_mgr, mock_async_db
+    ):
+        backend_error = RuntimeError("database unavailable")
+        mock_async_db.get_schedule_by_name = AsyncMock(side_effect=[None, _make_schedule(id="unrelated", name="raced")])
+        mock_async_db.create_schedule = AsyncMock(side_effect=backend_error)
+
+        with pytest.raises(RuntimeError) as exc_info:
+            await async_mgr.acreate(name="raced", cron="0 9 * * *", endpoint="/loser", if_exists="skip")
+
+        assert exc_info.value is backend_error
+        mock_async_db.get_schedule_by_name.assert_awaited_once_with(
+            "raced",
+            managed_by=None,
+            owner_actor_id=None,
+            exclude_managed_by="studio",
+        )
+
 
 class TestAsyncList:
     @pytest.mark.asyncio
     async def test_alist(self, async_mgr, mock_async_db):
         result = await async_mgr.alist()
         assert len(result) == 1
+
+    @pytest.mark.asyncio
+    async def test_alist_can_exclude_a_management_surface(self, async_mgr, mock_async_db):
+        await async_mgr.alist(exclude_managed_by="studio")
+        mock_async_db.get_schedules.assert_awaited_once_with(
+            enabled=None,
+            limit=100,
+            page=1,
+            exclude_managed_by="studio",
+        )
+
+    @pytest.mark.asyncio
+    async def test_v1_alist_uses_exact_signature_and_filters_before_pagination(self):
+        class LegacyAsyncScheduleDb:
+            scheduler_api_version = 1
+
+            def __init__(self):
+                self.calls = []
+
+            async def get_schedules(self, enabled=None, limit=100, page=1):
+                self.calls.append({"enabled": enabled, "limit": limit, "page": page})
+                return (
+                    [
+                        _make_schedule(id="generic-1", name="generic-1"),
+                        _make_schedule(id="studio", name="private", managed_by="studio"),
+                        _make_schedule(id="generic-2", name="generic-2"),
+                    ],
+                    3,
+                )
+
+        db = LegacyAsyncScheduleDb()
+
+        result = await ScheduleManager(db).alist(limit=1, page=2, exclude_managed_by="studio")
+
+        assert [schedule.id for schedule in result] == ["generic-2"]
+        assert db.calls == [{"enabled": None, "limit": 1000, "page": 1}]
 
 
 class TestAsyncGet:
@@ -273,6 +551,31 @@ class TestAsyncDisable:
     async def test_adisable(self, async_mgr, mock_async_db):
         result = await async_mgr.adisable("sched-1")
         assert result is not None
+
+
+class TestAsyncTrigger:
+    @pytest.mark.asyncio
+    async def test_v2_atrigger_uses_durable_primitive(self, async_mgr, mock_async_db):
+        mock_async_db.trigger_schedule = AsyncMock(return_value=_make_schedule())
+
+        result = await async_mgr.atrigger("sched-1")
+
+        assert result is not None
+        mock_async_db.trigger_schedule.assert_awaited_once_with("sched-1")
+
+    @pytest.mark.asyncio
+    async def test_v1_atrigger_uses_historical_due_now_fallback(self):
+        db = MagicMock()
+        db.scheduler_api_version = 1
+        db.update_schedule = AsyncMock(return_value=_make_schedule(next_run_at=456))
+        manager = ScheduleManager(db)
+
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            monkeypatch.setattr(time, "time", lambda: 456.7)
+            result = await manager.atrigger("sched-1")
+
+        assert result is not None
+        db.update_schedule.assert_awaited_once_with("sched-1", next_run_at=456)
 
 
 class TestAsyncGetRuns:

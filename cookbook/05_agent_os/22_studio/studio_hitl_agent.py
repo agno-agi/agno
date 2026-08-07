@@ -21,8 +21,10 @@ from agno.db.sqlite import SqliteDb
 from agno.models.anthropic import Claude
 from agno.models.openai import OpenAIResponses
 from agno.registry import Registry
+from agno.run import RunContext
 from agno.tools.calculator import CalculatorTools
-from agno.tools.studio import StudioTools
+from agno.tools.studio import StudioAccess, StudioAction, StudioTools
+from agno.tools.studio_schema import ModelRef
 from agno.tools.user_control_flow import UserControlFlowTools
 from agno.tools.user_feedback import UserFeedbackTools
 
@@ -31,6 +33,17 @@ from agno.tools.user_feedback import UserFeedbackTools
 # ---------------------------------------------------------------------------
 
 AUTO_INSTRUCTIONS = "Explain reliable research methods in concise steps."
+STUDIO_ADMIN_USER_ID = "studio-admin"
+
+
+def authorize_studio_admin(
+    run_context: RunContext,
+    _access: StudioAccess,
+    _action: StudioAction,
+) -> bool:
+    """Limit the administrative Studio surface to the demo admin."""
+    return run_context.user_id == STUDIO_ADMIN_USER_ID
+
 
 DB_DIR = Path(__file__).parent / "tmp"
 DB_DIR.mkdir(exist_ok=True)
@@ -58,22 +71,26 @@ studio_agent = Agent(
         StudioTools(
             registry=registry,
             db=db,
-            default_model_id="gpt-5.5",
-            requires_confirmation_tools=["create_agent"],
+            authorize=authorize_studio_admin,
+            default_model=ModelRef(
+                id="gpt-5.5",
+                provider="OpenAI",
+                name="OpenAIResponses",
+            ),
         ),
         UserFeedbackTools(),
         UserControlFlowTools(),
     ],
     instructions=[
         "Help the user compose one Agent from registry primitives.",
-        "Call list_tools, list_models, and list_dbs first.",
+        "Call list_tools and list_models first; Studio already has one fixed catalog database.",
         "If tools are missing, call ask_user with one multi-select question whose "
         "options are exact names returned by list_tools.",
         "If instructions are missing, call get_user_input with one string field.",
         "Do not combine the missing tool and instruction questions in chat.",
-        "Use the exact database id returned by list_dbs when creating the Agent. "
-        "Never pass an empty string or the word 'default' as db_id.",
-        "Call create_agent only after both answers are available.",
+        "Translate each selected tool into the exact ToolRef returned by list_tools.",
+        "Call create_agent with one AgentCreate request only after both answers are available.",
+        "Keep the new component as a draft; publication is a separate admin decision.",
     ],
     db=db,
     markdown=True,
@@ -121,11 +138,25 @@ def resolve_input(requirement: Any, auto: bool) -> None:
     requirement.provide_user_input(values)
 
 
-def resolve_confirmation(requirement: Any, auto: bool) -> bool:
+def resolve_confirmation(requirement: Any, auto: bool, component_id: str) -> bool:
     """Approve or reject the pending create_agent call."""
     tool = requirement.tool_execution
     if tool is None:
         raise RuntimeError("Confirmation requirement did not include a tool")
+    tool_args = tool.tool_args
+    request = tool_args.get("request") if isinstance(tool_args, dict) else None
+    requested_id = (
+        request.get("component_id") or request.get("name")
+        if isinstance(request, dict)
+        else None
+    )
+    if (
+        tool.tool_name != "create_agent"
+        or requested_id != component_id
+        or not isinstance(tool_args, dict)
+        or tool_args.get("save_as", "draft") != "draft"
+    ):
+        raise RuntimeError(f"Unexpected Studio confirmation: {tool}")
     print(f"\nConfirmation needed: {tool.tool_name}")
     print(f"Arguments: {tool.tool_args}")
     approved = auto or input("Approve? (y/n): ").strip().lower() == "y"
@@ -139,7 +170,10 @@ def resolve_confirmation(requirement: Any, auto: bool) -> bool:
 def run_console_demo(auto: bool = False) -> None:
     """Resolve feedback, input, and confirmation pauses in one run."""
     component_id = f"console-research-buddy-{uuid4().hex[:8]}"
-    run = studio_agent.run(f"Create an agent called '{component_id}'.")
+    run = studio_agent.run(
+        f"Create an agent called '{component_id}'.",
+        user_id=STUDIO_ADMIN_USER_ID,
+    )
     observed: list[str] = []
     confirmation_approved: bool | None = None
     rounds = 0
@@ -156,7 +190,11 @@ def run_console_demo(auto: bool = False) -> None:
                 resolve_input(requirement, auto)
                 observed.append("user_input")
             elif requirement.needs_confirmation:
-                confirmation_approved = resolve_confirmation(requirement, auto)
+                confirmation_approved = resolve_confirmation(
+                    requirement,
+                    auto,
+                    component_id,
+                )
                 observed.append("confirmation")
             else:
                 raise RuntimeError(f"Unsupported requirement: {requirement}")
@@ -164,6 +202,7 @@ def run_console_demo(auto: bool = False) -> None:
         run = studio_agent.continue_run(
             run_id=run.run_id,
             requirements=run.requirements,
+            user_id=STUDIO_ADMIN_USER_ID,
         )
         rounds += 1
         if rounds > 6:
@@ -177,6 +216,14 @@ def run_console_demo(auto: bool = False) -> None:
     component = db.get_component(component_id)
     if confirmation_approved and component is None:
         raise RuntimeError("Confirmed create_agent call did not persist the component")
+    if confirmation_approved:
+        config = db.get_config(component_id, version=1)
+        if component is None or component.get("current_version") is not None:
+            raise RuntimeError(
+                f"Expected a non-current draft component, got {component}"
+            )
+        if config is None or config.get("stage") != "draft":
+            raise RuntimeError(f"Expected draft version 1, got {config}")
     if confirmation_approved is False and component is not None:
         raise RuntimeError(
             "Rejected create_agent call unexpectedly persisted a component"
