@@ -1,7 +1,8 @@
 """StudioRunnerTools -- discovery and execution over Studio-built components.
 
 The runner is the dispatch half of the Studio: list the agents, teams, and
-workflows that exist in the platform database, and run one by id. It carries no
+workflows this runner can run -- those in the platform database, plus any
+code-defined components it admits -- and run one by id. It carries no
 create/edit/delete surface, so it is safe to mount on any component that should
 hand work to built components -- a team lead, a router -- without granting the
 Studio's mutation tools.
@@ -1180,7 +1181,7 @@ class StudioRunnerTools(Toolkit):
             # A member or step executor declares its own models, so the loss is
             # reported where it happened rather than only for the component the
             # caller named.
-            self._warn_if_auxiliary_models_lost(ref_config, ref_type, ref_id)
+            self._require_declared_models(ref_config, ref_type, ref_id)
             self._require_matching_db(ref_config, target, ref_type, ref_id)
             self._check_references(target, ref_config, ref_type, ref_id, seen, configs, depth + 1)
 
@@ -1268,26 +1269,27 @@ class StudioRunnerTools(Toolkit):
                 )
 
     @staticmethod
-    def _warn_if_auxiliary_models_lost(config: Dict[str, Any], component_type: str, component_id: str) -> None:
-        """Log when a serialized reasoning, parser or output model is gone.
+    def _require_declared_models(config: Dict[str, Any], component_type: str, component_id: str) -> None:
+        """Refuse a component whose declared reasoning, parser or output model
+        cannot be reconstructed.
 
-        These are written by to_dict and never read back: from_dict's
-        reconstruction for them is commented out (agent/_storage.py, TODO), so
-        no registry can supply one and every stored component that declares one
-        rebuilds without it. Refusing would therefore make the feature
-        undispatchable rather than protect anything, which is the same reason
-        the primary model's loss warns rather than refuses (#9420). Warned so
-        the run is not silently a different pipeline. Tracked in #9452."""
-        lost = [field for field in ("reasoning_model", "parser_model", "output_model") if config.get(field)]
-        if not lost:
+        These are written by to_dict and never read back -- from_dict's
+        reconstruction for them is commented out (#9452) -- so a component that
+        declares one always rebuilds without it and answers through a
+        materially different pipeline than it was configured for. The run
+        succeeds, so a log line is invisible to whoever asked.
+
+        Until #9452 lands, not dispatchable is the honest description of the
+        capability: the alternative is a successful answer computed some other
+        way, which is the failure this toolkit exists to prevent. Reads and
+        edits still load the component, so it stays inspectable."""
+        declared = [field for field in ("reasoning_model", "parser_model", "output_model") if config.get(field)]
+        if not declared:
             return
-        logger.warning(
-            "StudioRunnerTools: %s '%s' declares %s, which the framework does not reconstruct; "
-            "the run proceeds without %s.",
-            component_type,
-            component_id,
-            ", ".join(lost),
-            "them" if len(lost) > 1 else "it",
+        raise ComponentNotDispatchableError(
+            f"{component_type.capitalize()} '{component_id}' declares {', '.join(declared)}, which the framework "
+            "does not reconstruct (#9452), so the run would answer through a different pipeline than it was "
+            "configured for. Remove the declaration, or run it as a code-defined component."
         )
 
     def _warn_if_model_rebuilt(self, component: Any, component_type: str, component_id: str) -> None:
@@ -1338,7 +1340,19 @@ class StudioRunnerTools(Toolkit):
         if not isinstance(db_config, dict):
             return
         actual_db = getattr(component, "db", None)
-        actual = actual_db.to_dict() if actual_db is not None else {}
+        if actual_db is None:
+            # Nothing resolved at all. Comparing against an empty mapping would
+            # find no differing keys and admit it, which is the loudest
+            # mismatch reading as a match. A referenced member or step executor
+            # is the case that reaches here: the loaders give the dispatched
+            # component the catalog db, but nothing backfills a nested one.
+            declared_id = db_config.get("id") or db_config.get("type") or "unknown"
+            raise ComponentNotDispatchableError(
+                f"{component_type.capitalize()} '{component_id}' declares db '{declared_id}', and no db resolved "
+                "for it at all; running it would write its sessions and memory nowhere it was configured to. "
+                "Register that db, or remove the declaration."
+            )
+        actual = actual_db.to_dict()
         differing = sorted(
             key
             for key, value in db_config.items()
@@ -1555,7 +1569,7 @@ class StudioRunnerTools(Toolkit):
             return None
         if for_dispatch:
             self._require_matching_db(config, agent, "agent", agent_id)
-            self._warn_if_auxiliary_models_lost(config, "agent", agent_id)
+            self._require_declared_models(config, "agent", agent_id)
             self._require_inspectable_depth(agent, "agent", agent_id)
             self._require_faithful_rebuild(agent, config, "agent", agent_id)
         return agent
@@ -1596,7 +1610,7 @@ class StudioRunnerTools(Toolkit):
             return None
         if for_dispatch:
             self._require_matching_db(config, team, "team", team_id)
-            self._warn_if_auxiliary_models_lost(config, "team", team_id)
+            self._require_declared_models(config, "team", team_id)
             self._require_inspectable_depth(team, "team", team_id)
             self._require_faithful_rebuild(team, config, "team", team_id)
             self._require_faithful_registry_copies(team, "team", team_id)
@@ -1639,7 +1653,7 @@ class StudioRunnerTools(Toolkit):
             return None
         if for_dispatch:
             self._require_matching_db(config, wf, "workflow", workflow_id)
-            self._warn_if_auxiliary_models_lost(config, "workflow", workflow_id)
+            self._require_declared_models(config, "workflow", workflow_id)
             self._require_inspectable_depth(wf, "workflow", workflow_id)
             self._require_reconstructable_steps(config, workflow_id)
             self._require_faithful_rebuild(wf, config, "workflow", workflow_id)
@@ -1704,8 +1718,11 @@ class StudioRunnerTools(Toolkit):
     # ------------------------------------------------------------------
 
     def list_agents(self) -> str:
-        """List agents this runner can run: those stored in the platform database, newest first,
-        preceded by any code-defined agents it admits.
+        """List agents this runner can run, newest first.
+
+        Reports the components stored in the platform database, preceded by any
+        code-defined agents this runner admits (an explicit list, or the
+        registry under include_all_components). What can be run can be found.
 
         Returns:
             str: JSON object with 'agents' (each {id, name, description}), 'count'
@@ -1715,8 +1732,11 @@ class StudioRunnerTools(Toolkit):
         return self._list_payload("agent", "agents")
 
     def list_teams(self) -> str:
-        """List teams this runner can run: those stored in the platform database, newest first,
-        preceded by any code-defined teams it admits.
+        """List teams this runner can run, newest first.
+
+        Reports the components stored in the platform database, preceded by any
+        code-defined teams this runner admits (an explicit list, or the
+        registry under include_all_components). What can be run can be found.
 
         Returns:
             str: JSON object with 'teams' (each {id, name, description}), 'count'
@@ -1726,8 +1746,11 @@ class StudioRunnerTools(Toolkit):
         return self._list_payload("team", "teams")
 
     def list_workflows(self) -> str:
-        """List workflows this runner can run: those stored in the platform database, newest first,
-        preceded by any code-defined workflows it admits.
+        """List workflows this runner can run, newest first.
+
+        Reports the components stored in the platform database, preceded by any
+        code-defined workflows this runner admits (an explicit list, or the
+        registry under include_all_components). What can be run can be found.
 
         Returns:
             str: JSON object with 'workflows' (each {id, name, description}), 'count'
@@ -1737,7 +1760,12 @@ class StudioRunnerTools(Toolkit):
         return self._list_payload("workflow", "workflows")
 
     def _list_payload(self, component_type: str, key: str) -> str:
+        admitted = self._admitted_code_components(component_type)
         if self.db is None:
+            # A code allowlist runs without a database, so it has to be findable
+            # without one too; only the database half is unavailable here.
+            if admitted:
+                return json.dumps({key: admitted, "count": len(admitted), "total": len(admitted)})
             return json.dumps({"error": "StudioRunnerTools has no db configured; cannot list components."})
         try:
             items, total = self._list_db_component_rows(component_type)
@@ -1745,10 +1773,12 @@ class StudioRunnerTools(Toolkit):
             # tell the caller to list first and run by id, so a component that
             # runs and cannot be found leaves it no way to reach it. Code
             # components come first, which is the order dispatch resolves in.
-            admitted = self._admitted_code_components(component_type)
             seen_ids = {entry["id"] for entry in admitted}
+            shadowed = sum(1 for entry in items if entry.get("id") in seen_ids)
             items = admitted + [entry for entry in items if entry.get("id") not in seen_ids]
-            return json.dumps({key: items, "count": len(items), "total": total + len(admitted)})
+            # A code component shadows the stored one it shares an id with, so
+            # the pair is one component to run, not two to count.
+            return json.dumps({key: items, "count": len(items), "total": total + len(admitted) - shadowed})
         except Exception as e:
             logger.exception("Failed to list %s", key)
             return json.dumps({"error": str(e) or type(e).__name__})

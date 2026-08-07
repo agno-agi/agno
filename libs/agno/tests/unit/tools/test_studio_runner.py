@@ -2051,7 +2051,65 @@ class TestDispatchCheckInvariants:
         registry.dbs = [db, JsonDb(id="tenant-json", db_path=str(tmp_path / "ok"), session_table="isolated_sessions")]
         assert StudioRunnerTools(registry=registry, db=db)._agent_for_run("a1") is not None
 
-    def test_a_nested_members_lost_model_is_announced_where_it_happened(self, db, registry, caplog):
+    def test_a_declared_db_that_resolves_to_nothing_is_refused(self, db, registry):
+        """Comparing a declared db against an absent one finds no differing
+        keys, so the loudest mismatch read as a match. A referenced member or
+        step executor is what reaches this: the loaders hand the dispatched
+        component the catalog db, and nothing backfills a nested one."""
+        model_config = {"name": "OpenAIResponses", "id": "gpt-5.4", "provider": "OpenAI"}
+        for component_id, component_type, extra in (
+            ("member", "agent", {"db": {"type": "redis", "id": "ghost-db"}}),
+            ("crew", "team", {"members": [{"type": "agent", "agent_id": "member"}]}),
+            ("flow", "workflow", {"steps": [{"name": "s", "agent_id": "member"}]}),
+        ):
+            config = {"id": component_id, "name": component_id, "model": model_config}
+            config.update(extra)
+            db.upsert_component(component_id=component_id, component_type=component_type, name=component_id)
+            db.upsert_config(component_id=component_id, config=config, stage="published")
+
+        runner = StudioRunnerTools(registry=registry, db=db)
+        for component_id, tool in (("crew", runner.run_team), ("flow", runner.run_workflow)):
+            error = _loads(tool(component_id, "hi")).get("error", "")
+            assert "no db resolved" in error and "member" in error, component_id
+
+    def test_a_code_only_allowlist_is_listable_without_a_database(self):
+        """An allowlist runs without a database, so it has to be findable
+        without one: the caller is told to list first and run by id."""
+        from agno.agent import Agent
+        from agno.registry import Registry
+
+        coded = Agent(id="helper", name="Helper", model=OpenAIResponses(id="gpt-5.4"))
+        runner = StudioRunnerTools(registry=Registry(name="R"), agents_list=[coded])
+
+        listing = _loads(runner.list_agents())
+        assert listing["agents"] == [{"id": "helper", "name": "Helper", "description": None}]
+        assert runner._agent_for_run("helper") is not None
+
+        # With nothing admitted and no database there is genuinely nothing to
+        # report, and saying so beats an empty list.
+        assert "error" in _loads(StudioRunnerTools(registry=Registry(name="R")).list_agents())
+
+    def test_a_shadowed_id_is_one_component_not_two(self, db, registry):
+        """A code component shadows the stored one it shares an id with at
+        dispatch, so the pair is one component to run rather than two to
+        count."""
+        from agno.agent import Agent
+
+        studio = StudioTools(registry=registry, db=db)
+        studio.create_agent(name="dup", instructions="i", model_id="gpt-5.4")
+
+        runner = StudioRunnerTools(
+            registry=registry,
+            db=db,
+            agents_list=[Agent(id="dup", name="dup-in-code", model=OpenAIResponses(id="gpt-5.4"))],
+        )
+        listing = _loads(runner.list_agents())
+        assert [entry["id"] for entry in listing["agents"]] == ["dup"]
+        assert listing["count"] == 1 and listing["total"] == 1
+        # The code component is the one that runs, so it is the one listed.
+        assert listing["agents"][0]["name"] == "dup-in-code"
+
+    def test_a_nested_members_lost_model_is_refused_where_it_happened(self, db, registry):
         """A member declares its own models, so the loss belongs to the member
         rather than only to the component the caller named."""
         model_config = {"name": "OpenAIResponses", "id": "gpt-5.4", "provider": "OpenAI"}
@@ -2064,18 +2122,17 @@ class TestDispatchCheckInvariants:
             db.upsert_component(component_id=component_id, component_type=component_type, name=component_id)
             db.upsert_config(component_id=component_id, config=config, stage="published")
 
-        with caplog.at_level("WARNING"):
-            assert StudioRunnerTools(registry=registry, db=db)._team_for_run("crew") is not None
-        assert any("reasoning_model" in record.message and "member" in record.message for record in caplog.records)
+        error = _loads(StudioRunnerTools(registry=registry, db=db).run_team("crew", "hi"))["error"]
+        assert "reasoning_model" in error and "member" in error
 
-    def test_a_lost_auxiliary_model_is_announced_rather_than_refused(self, db, caplog):
-        """A reasoning, parser or output model is serialized and never read
-        back -- from_dict's reconstruction for them is still a TODO -- so no
-        registry can supply one. Refusing would make every component that
-        declares one permanently undispatchable rather than protect anything,
-        which is why the primary model's loss warns too (#9420, #9452)."""
+    def test_a_declared_model_that_cannot_be_rebuilt_is_refused(self, db, registry):
+        """A reasoning, parser or output model is serialized and never read back
+        -- from_dict's reconstruction for all three is still a TODO (#9452) --
+        so a component declaring one always answers through a different
+        pipeline than it was configured for. The run succeeds, which makes a
+        log line invisible to whoever asked, so dispatch refuses instead. Until
+        #9452 lands, not dispatchable is what the capability actually is."""
         from agno.agent import Agent
-        from agno.registry import Registry
 
         Agent(
             id="rich",
@@ -2084,11 +2141,15 @@ class TestDispatchCheckInvariants:
             reasoning_model=OpenAIResponses(id="o3-deep"),
         ).save(db=db)
 
-        registry = Registry(name="R", dbs=[db], models=[OpenAIResponses(id="gpt-5.4")])
         runner = StudioRunnerTools(registry=registry, db=db)
-        with caplog.at_level("WARNING"):
-            assert runner._agent_for_run("rich") is not None
-        assert any("reasoning_model" in record.message for record in caplog.records)
+        assert "reasoning_model" in _loads(runner.run_agent("rich", "hi"))["error"]
+
+        # Reads and edits still load it, so the declaration stays repairable.
+        assert runner._find_agent("rich") is not None
+
+        # A component declaring none of them is untouched.
+        Agent(id="plain", name="Plain", model=OpenAIResponses(id="gpt-5.4")).save(db=db)
+        assert runner._agent_for_run("plain") is not None
 
     def test_an_anonymous_caller_is_not_written_into_the_targets_user(self, db):
         """The module promises per-user state lands on the human who asked and
