@@ -943,6 +943,9 @@ class StudioRunnerTools(Toolkit):
                 missing.append(f"tools ({', '.join(unresolved)})")
             elif len(rebuilt_tools) < len(declared_tools):
                 missing.append(f"tools ({len(declared_tools) - len(rebuilt_tools)} of {len(declared_tools)} dropped)")
+            substituted = self._tools_from_another_toolkit(rebuilt_tools)
+            if substituted:
+                missing.append(f"tools bound from another toolkit ({', '.join(substituted)})")
 
         declared_knowledge = config.get("knowledge")
         if isinstance(declared_knowledge, dict) and getattr(component, "knowledge", None) is None:
@@ -1060,6 +1063,38 @@ class StudioRunnerTools(Toolkit):
             found.append(child)
             found.extend(StudioRunnerTools._descendants(child, depth + 1, seen))
         return found
+
+    def _tools_from_another_toolkit(self, rebuilt_tools: List[Any]) -> List[str]:
+        """Tools whose recorded toolkit is not the one that supplied them.
+
+        A serialized tool carries the toolkit that owned it. When the registry
+        no longer provides that toolkit, rehydration falls back to the flat
+        name and binds a same-named function from a DIFFERENT toolkit -- it
+        warns, then keeps the recorded owning_toolkit on the rebuilt Function,
+        so nothing downstream can see that other code is now behind the name.
+        Same-named members are common (``search``, ``lookup``, ``run``), so
+        this is how a component silently starts executing someone else's tool.
+
+        Checked against the registry's own toolkits, which is the same question
+        its qualified lookup asks."""
+        from agno.tools.function import Function
+
+        if self.registry is None:
+            return []
+        provided = {
+            (getattr(toolkit, "name", None), function_name)
+            for toolkit in (self.registry.tools or [])
+            for function_name in (getattr(toolkit, "functions", None) or {})
+        }
+        substituted = []
+        for tool in rebuilt_tools:
+            owner = getattr(tool, "owning_toolkit", None)
+            name = getattr(tool, "name", None)
+            if not isinstance(tool, Function) or owner is None or name is None:
+                continue
+            if (owner, name) not in provided:
+                substituted.append(f"{owner}.{name}")
+        return sorted(set(substituted))
 
     def _require_faithful_references(
         self, component: Any, config: Dict[str, Any], component_type: str, component_id: str
@@ -1226,6 +1261,29 @@ class StudioRunnerTools(Toolkit):
                     label,
                     attribute,
                 )
+
+    @staticmethod
+    def _warn_if_auxiliary_models_lost(config: Dict[str, Any], component_type: str, component_id: str) -> None:
+        """Log when a serialized reasoning, parser or output model is gone.
+
+        These are written by to_dict and never read back: from_dict's
+        reconstruction for them is commented out (agent/_storage.py, TODO), so
+        no registry can supply one and every stored component that declares one
+        rebuilds without it. Refusing would therefore make the feature
+        undispatchable rather than protect anything, which is the same reason
+        the primary model's loss warns rather than refuses (#9420). Warned so
+        the run is not silently a different pipeline. Tracked in #9452."""
+        lost = [field for field in ("reasoning_model", "parser_model", "output_model") if config.get(field)]
+        if not lost:
+            return
+        logger.warning(
+            "StudioRunnerTools: %s '%s' declares %s, which the framework does not reconstruct; "
+            "the run proceeds without %s.",
+            component_type,
+            component_id,
+            ", ".join(lost),
+            "them" if len(lost) > 1 else "it",
+        )
 
     def _warn_if_model_rebuilt(self, component: Any, component_type: str, component_id: str) -> None:
         """Log when a dispatched agent's or team's model is a config rebuild.
@@ -1494,6 +1552,7 @@ class StudioRunnerTools(Toolkit):
         if for_dispatch:
             if fell_back_to_catalog:
                 self._require_matching_db(config, "agent", agent_id)
+            self._warn_if_auxiliary_models_lost(config, "agent", agent_id)
             self._require_inspectable_depth(agent, "agent", agent_id)
             self._require_faithful_rebuild(agent, config, "agent", agent_id)
         return agent
@@ -1536,6 +1595,7 @@ class StudioRunnerTools(Toolkit):
         if for_dispatch:
             if fell_back_to_catalog:
                 self._require_matching_db(config, "team", team_id)
+            self._warn_if_auxiliary_models_lost(config, "team", team_id)
             self._require_inspectable_depth(team, "team", team_id)
             self._require_faithful_rebuild(team, config, "team", team_id)
             self._require_faithful_registry_copies(team, "team", team_id)
@@ -1580,6 +1640,7 @@ class StudioRunnerTools(Toolkit):
         if for_dispatch:
             if fell_back_to_catalog:
                 self._require_matching_db(config, "workflow", workflow_id)
+            self._warn_if_auxiliary_models_lost(config, "workflow", workflow_id)
             self._require_inspectable_depth(wf, "workflow", workflow_id)
             self._require_reconstructable_steps(config, workflow_id)
             self._require_faithful_rebuild(wf, config, "workflow", workflow_id)
