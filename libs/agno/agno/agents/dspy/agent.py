@@ -2,6 +2,8 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Dict, List, Optional
 from uuid import uuid4
 
+from pydantic import BaseModel
+
 from agno.agents.base import BaseExternalAgent
 from agno.agents.dspy.utils import build_input_with_history
 from agno.models.response import ToolExecution
@@ -77,8 +79,12 @@ class DSPyAgent(BaseExternalAgent):
             preserved.setdefault("model_type", model_type)
         return dspy.LM(lm.model, **preserved)
 
-    async def _arun_adapter(self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any) -> str:
-        """Non-streaming: run the DSPy program and return the output field."""
+    async def _arun_adapter(self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any) -> Any:
+        """Non-streaming: run the DSPy program and return the output field.
+
+        Returns a model instance when the program's OutputField is Pydantic-typed,
+        otherwise a string.
+        """
         try:
             import dspy
         except ImportError:
@@ -106,6 +112,11 @@ class DSPyAgent(BaseExternalAgent):
         if output is None:
             # Fall back to string representation of the whole prediction
             return str(result)
+        # A Pydantic-typed OutputField yields a model instance; hand it back
+        # untouched so a run-level output_schema validates against it instead of
+        # a stringified repr. The base class leaves non-str content alone.
+        if isinstance(output, BaseModel):
+            return output
         return str(output)
 
     async def _arun_adapter_stream(
