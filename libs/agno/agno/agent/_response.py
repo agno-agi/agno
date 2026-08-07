@@ -1058,6 +1058,16 @@ def handle_model_response_stream(
 ) -> Iterator[RunOutputEvent]:
     agent.model = cast(Model, agent.model)
 
+    # Pre-loop compaction: compress history BEFORE first model call
+    if agent.context_compaction_manager is not None:
+        compaction_result = agent.context_compaction_manager.compact(
+            run_messages.messages,
+            run_response=run_response,
+            run_metrics=run_response.metrics,
+        )
+        if compaction_result.summary:
+            run_messages.compacted_messages = compaction_result.compacted_messages
+
     reasoning_state = {
         "reasoning_started": False,
         "reasoning_time_taken": 0.0,
@@ -1218,6 +1228,16 @@ async def ahandle_model_response_stream(
     run_context: Optional[RunContext] = None,
 ) -> AsyncIterator[RunOutputEvent]:
     agent.model = cast(Model, agent.model)
+
+    # Pre-loop compaction: compress history BEFORE first model call
+    if agent.context_compaction_manager is not None:
+        compaction_result = await agent.context_compaction_manager.acompact(
+            run_messages.messages,
+            run_response=run_response,
+            run_metrics=run_response.metrics,
+        )
+        if compaction_result.summary:
+            run_messages.compacted_messages = compaction_result.compacted_messages
 
     reasoning_state = {
         "reasoning_started": False,
