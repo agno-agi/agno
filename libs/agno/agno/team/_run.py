@@ -8100,7 +8100,21 @@ async def _acontinue_run_background_stream(
     team_session = await _aread_or_create_session(team, session_id=session_id, user_id=user_id)
     _update_metadata(team, session=team_session)
 
+    stored_run = next((r for r in team_session.runs or [] if getattr(r, "run_id", None) == _run_id), None)
+    status_before_takeover = getattr(stored_run, "status", None)
+
     if run_response is not None:
+        # A caller-held run object outlives the run it describes. If it still
+        # reads as paused while the stored run has finished, someone else
+        # continued this run in between and the object is stale: writing it back
+        # would republish a finished run as a pending approval, and its gated
+        # tool could then be approved a second time. Nothing downstream can undo
+        # that, so refuse before the run is touched.
+        if status_before_takeover == RunStatus.completed and getattr(run_response, "is_paused", False):
+            raise RunNotContinuableError(
+                f"Cannot continue run {_run_id}: it has already completed, but the run_response passed in "
+                f"still reads as paused. Re-read the run before continuing it. The stored run is unchanged."
+            )
         run_response.status = RunStatus.running
         team_session.upsert_run(run_response=run_response)
     await asave_session(team, session=team_session)
@@ -8179,13 +8193,17 @@ async def _acontinue_run_background_stream(
                 # later continue can pick it up.
                 log_info(f"Background continue-run stream {_run_id} refused the continue: {e}")
                 try:
-                    if run_response is not None:
-                        run_response.status = RunStatus.paused
+                    # Put back exactly what step 1 overwrote. Restoring a blanket
+                    # PAUSED instead would hand a resumable pause to any run that
+                    # had not been paused to begin with, and a pause is an
+                    # invitation to approve its gated tool.
+                    if run_response is not None and status_before_takeover is not None:
+                        run_response.status = status_before_takeover
                         team_session.upsert_run(run_response=run_response)
                         await asave_session(team, session=team_session)
                 except Exception:
                     log_error(
-                        f"Failed to restore paused state for background continue-run stream {_run_id}",
+                        f"Failed to restore the pre-continue state for background continue-run stream {_run_id}",
                         exc_info=True,
                     )
             else:
@@ -8230,7 +8248,10 @@ async def _acontinue_run_background_stream(
             # left behind — not completed.
             try:
                 if isinstance(producer_error, RunNotContinuableError):
-                    final_status = RunStatus.paused
+                    # A refusal leaves the run as it was, whatever that was.
+                    # Advertising a blanket PAUSED would tell every reconnecting
+                    # client that a cancelled run is awaiting an approval.
+                    final_status = status_before_takeover or RunStatus.paused
                 elif producer_error is not None:
                     final_status = RunStatus.error
                 else:

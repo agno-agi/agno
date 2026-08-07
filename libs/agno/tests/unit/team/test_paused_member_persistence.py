@@ -4441,3 +4441,136 @@ async def test_background_continue_refusal_keeps_the_run_resumable(tmp_path):
     assert db_status == RunStatus.paused, (
         f"the refusal clobbered the paused run to {db_status!r}; it can no longer be resumed"
     )
+
+
+@pytest.mark.asyncio
+async def test_a_stale_run_response_cannot_resurrect_a_finished_run(tmp_path):
+    """A caller-held run object outlives the run it describes.
+
+    If it still reads as paused after someone else finished the run, writing it
+    back would republish the finished run as a pending approval — and its gated
+    tool could then be approved a second time.
+    """
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "stale_takeover.db")
+    session_id = "s-stale-takeover"
+
+    run1 = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email a@example.com", session_id=session_id
+    )
+    assert run1.is_paused
+    good = _wire_requirements(run1.requirements)
+
+    done = await _build_flat_team(SqliteDb(db_file=db_file), resuming=True).acontinue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+    )
+    assert done.status == RunStatus.completed
+    assert _EXECUTED == ["a@example.com"]
+
+    # The caller still holds the stale paused object from before that completion.
+    team3 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
+    with pytest.raises(RunNotContinuableError):
+        async for _ in team3.acontinue_run(
+            run_response=run1,
+            session_id=session_id,
+            requirements=_unbindable_payload(run1.requirements),
+            stream=True,
+            stream_events=True,
+            background=True,
+        ):
+            pass
+    await _drain_background_tasks()
+
+    status = [r for r in _reload_runs(db_file, session_id) if r.run_id == run1.run_id][0].status
+    assert status == RunStatus.completed, f"a finished run was resurrected to {status!r}"
+
+    team4 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
+    try:
+        await team4.acontinue_run(run_id=run1.run_id, session_id=session_id, requirements=good)
+    except Exception:
+        pass
+    assert _EXECUTED == ["a@example.com"], f"the gated tool ran a second time: {_EXECUTED}"
+
+
+@pytest.mark.asyncio
+async def test_a_refused_continue_restores_the_status_it_replaced(tmp_path):
+    """The refusal must put back whatever it took over, not a blanket pause.
+
+    A cancelled run handed a refused continue has to come out cancelled. Coming
+    out paused would turn every terminal state into a resumable approval.
+    """
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "restore_status.db")
+    session_id = "s-restore-status"
+
+    run1 = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email a@example.com", session_id=session_id
+    )
+    assert run1.is_paused
+
+    db = SqliteDb(db_file=db_file)
+    session = db.get_session(session_id=session_id, session_type="team")
+    for r in session.runs or []:
+        if r.run_id == run1.run_id:
+            r.status = RunStatus.cancelled
+    db.upsert_session(session)
+
+    # The caller still holds the paused object from before the cancellation.
+    team2 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
+    async for _ in team2.acontinue_run(
+        run_response=run1,
+        session_id=session_id,
+        requirements=_unbindable_payload(run1.requirements),
+        stream=True,
+        stream_events=True,
+        background=True,
+    ):
+        pass
+    await _drain_background_tasks()
+
+    status = [r for r in _reload_runs(db_file, session_id) if r.run_id == run1.run_id][0].status
+    assert status == RunStatus.cancelled, f"a cancelled run came back as {status!r} after a refused continue"
+    assert _EXECUTED == []
+
+
+@pytest.mark.asyncio
+async def test_the_event_buffer_does_not_advertise_a_cancelled_run_as_paused(tmp_path):
+    """Reconnecting clients read the buffer, not the DB.
+
+    Recording a blanket PAUSED for any refusal tells every one of them that a
+    cancelled run is waiting on an approval.
+    """
+    from agno.os.managers import event_buffer
+
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "buffer_status.db")
+    session_id = "s-buffer-status"
+
+    run1 = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email a@example.com", session_id=session_id
+    )
+    assert run1.is_paused
+
+    db = SqliteDb(db_file=db_file)
+    session = db.get_session(session_id=session_id, session_type="team")
+    for r in session.runs or []:
+        if r.run_id == run1.run_id:
+            r.status = RunStatus.cancelled
+    db.upsert_session(session)
+
+    team2 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
+    async for _ in team2.acontinue_run(
+        run_id=run1.run_id,
+        session_id=session_id,
+        requirements=_unbindable_payload(run1.requirements),
+        stream=True,
+        stream_events=True,
+        background=True,
+    ):
+        pass
+    await _drain_background_tasks()
+
+    assert event_buffer.get_run_status(run1.run_id) != RunStatus.paused, (
+        "the buffer advertises a cancelled run as paused, so every reconnecting client reads it as resumable"
+    )
+    assert [r for r in _reload_runs(db_file, session_id) if r.run_id == run1.run_id][0].status == RunStatus.cancelled
