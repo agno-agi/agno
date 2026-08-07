@@ -333,6 +333,8 @@ def save_session(team: "Team", session: TeamSession) -> None:
     Args:
         session: The TeamSession to save.
     """
+    from copy import copy
+
     from agno.team._init import _has_async_db
     from agno.team._run import _scrub_member_responses
     from agno.team._storage import _upsert_session
@@ -347,15 +349,21 @@ def save_session(team: "Team", session: TeamSession) -> None:
             session.session_data["session_state"].pop("current_run_id", None)
 
         # scrub the member responses based on storage settings
-        live_runs = session.runs
+        storage_session = session
         if session.runs is not None:
             if not team.store_member_responses:
-                # Hand the DB a scrubbed view and give the session its live runs
-                # back. Keeping the view would freeze the stored copy of a
-                # paused member run at PAUSED — the resume continues the live
-                # run, so a cached session would advertise a pending approval on
-                # a finished run for good.
-                session.runs = [
+                # Hand the DB a scrubbed view on a session of its own. Storing
+                # the view on the caller's session instead — even briefly —
+                # publishes it to everyone holding that session: with
+                # cache_session the object is shared, so a concurrent
+                # upsert_run would land in the throwaway list and a concurrent
+                # save would capture it as the state to restore. The view is
+                # also only ever a view: keeping it would freeze the stored
+                # copy of a paused member run at PAUSED, and the resume
+                # continues the live run, so a cached session would advertise
+                # a pending approval on a finished run for good.
+                storage_session = copy(session)
+                storage_session.runs = [
                     _scrub_member_responses_keeping_paused(team, run) if hasattr(run, "member_responses") else run
                     for run in session.runs
                 ]
@@ -364,10 +372,7 @@ def save_session(team: "Team", session: TeamSession) -> None:
                     if hasattr(run, "member_responses"):
                         # Scrub individual member responses based on their storage flags
                         _scrub_member_responses(team, run.member_responses)
-        try:
-            _upsert_session(team, session=session)
-        finally:
-            session.runs = live_runs
+        _upsert_session(team, session=storage_session)
         log_debug(f"Created or updated TeamSession record: {session.session_id}")
 
 
@@ -378,6 +383,8 @@ async def asave_session(team: "Team", session: TeamSession) -> None:
     Args:
         session: The TeamSession to save.
     """
+    from copy import copy
+
     from agno.team._init import _has_async_db
     from agno.team._run import _scrub_member_responses
     from agno.team._storage import _aupsert_session, _upsert_session
@@ -389,11 +396,16 @@ async def asave_session(team: "Team", session: TeamSession) -> None:
             session.session_data["session_state"].pop("current_run_id", None)
 
         # scrub the member responses based on storage settings
-        live_runs = session.runs
+        storage_session = session
         if session.runs is not None:
             if not team.store_member_responses:
-                # See save_session: the scrubbed view is for the DB write only.
-                session.runs = [
+                # See save_session: the scrubbed view is for the DB write only,
+                # and it goes on a session of its own. Here the await makes the
+                # window a real one — two overlapping saves on a shared session
+                # would restore each other's snapshots out of order and leave
+                # the scrubbed list live.
+                storage_session = copy(session)
+                storage_session.runs = [
                     _scrub_member_responses_keeping_paused(team, run) if hasattr(run, "member_responses") else run
                     for run in session.runs
                 ]
@@ -403,13 +415,10 @@ async def asave_session(team: "Team", session: TeamSession) -> None:
                         # Scrub individual member responses based on their storage flags
                         _scrub_member_responses(team, run.member_responses)
 
-        try:
-            if _has_async_db(team):
-                await _aupsert_session(team, session=session)
-            else:
-                _upsert_session(team, session=session)
-        finally:
-            session.runs = live_runs
+        if _has_async_db(team):
+            await _aupsert_session(team, session=storage_session)
+        else:
+            _upsert_session(team, session=storage_session)
         log_debug(f"Created or updated TeamSession record: {session.session_id}")
 
 
