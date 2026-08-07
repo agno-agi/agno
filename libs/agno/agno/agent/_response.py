@@ -1083,7 +1083,7 @@ def handle_model_response_stream(
         log_debug("Response model set, model response is not streamed.")
         stream_model_response = False
 
-    from agno.agent._run import build_after_tool_results_callback
+    from agno.agent._run import build_after_tool_results_callback, build_compaction_callback
 
     for model_response_event in call_model_stream_with_fallback(
         agent.model,
@@ -1097,6 +1097,11 @@ def handle_model_response_stream(
         run_response=run_response,
         send_media_to_model=agent.send_media_to_model,
         compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+        compaction_callback=build_compaction_callback(
+            agent,
+            run_messages=run_messages,
+            run_response=run_response,
+        ),
         after_tool_results=build_after_tool_results_callback(
             agent,
             run_response=run_response,
@@ -1254,7 +1259,7 @@ async def ahandle_model_response_stream(
         log_debug("Response model set, model response is not streamed.")
         stream_model_response = False
 
-    from agno.agent._run import abuild_after_tool_results_callback
+    from agno.agent._run import abuild_after_tool_results_callback, abuild_compaction_callback
 
     model_response_stream = acall_model_stream_with_fallback(
         agent.model,
@@ -1268,6 +1273,11 @@ async def ahandle_model_response_stream(
         run_response=run_response,
         send_media_to_model=agent.send_media_to_model,
         compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+        compaction_callback=await abuild_compaction_callback(
+            agent,
+            run_messages=run_messages,
+            run_response=run_response,
+        ),
         after_tool_results=abuild_after_tool_results_callback(
             agent,
             run_response=run_response,

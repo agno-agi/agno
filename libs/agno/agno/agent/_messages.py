@@ -1291,13 +1291,20 @@ def get_run_messages(
         from copy import deepcopy
 
         # Find applicable compaction state from previous runs
+        log_debug("[MESSAGES] Looking for compaction state from previous runs...")
         compaction = session.get_latest_compaction()
 
         # Inject compaction summary before history (replaces compacted messages)
         if compaction:
+            log_debug(
+                f"[MESSAGES] Found compaction: total={compaction.total_compactions}, ids={len(compaction.compacted_message_ids)}"
+            )
+            log_debug(f"[MESSAGES] Injecting summary: {compaction.summary[:100] if compaction.summary else 'None'}...")
             run_messages.messages.append(compaction.get_summary_message())
             # Seed run_response.compaction for mid-loop compaction to build on
             run_response.compaction = deepcopy(compaction)
+        else:
+            log_debug("[MESSAGES] No prior compaction found")
 
         # Only skip messages from history when system_message_role is NOT a standard conversation role.
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered
@@ -1327,7 +1334,7 @@ def get_run_messages(
             if agent.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
 
-            log_debug(f"Adding {len(history_copy)} messages from history")
+            log_debug(f"[MESSAGES] Adding {len(history_copy)} messages from history (filtered from {len(history)})")
 
             run_messages.messages += history_copy
 
@@ -1508,13 +1515,20 @@ async def aget_run_messages(
         from copy import deepcopy
 
         # Find applicable compaction state from previous runs
+        log_debug("[MESSAGES] Looking for compaction state from previous runs...")
         compaction = session.get_latest_compaction()
 
         # Inject compaction summary before history (replaces compacted messages)
         if compaction:
+            log_debug(
+                f"[MESSAGES] Found compaction: total={compaction.total_compactions}, ids={len(compaction.compacted_message_ids)}"
+            )
+            log_debug(f"[MESSAGES] Injecting summary: {compaction.summary[:100] if compaction.summary else 'None'}...")
             run_messages.messages.append(compaction.get_summary_message())
             # Seed run_response.compaction for mid-loop compaction to build on
             run_response.compaction = deepcopy(compaction)
+        else:
+            log_debug("[MESSAGES] No prior compaction found")
 
         # Only skip messages from history when system_message_role is NOT a standard conversation role.
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered
@@ -1544,7 +1558,7 @@ async def aget_run_messages(
             if agent.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
 
-            log_debug(f"Adding {len(history_copy)} messages from history")
+            log_debug(f"[MESSAGES] Adding {len(history_copy)} messages from history (filtered from {len(history)})")
 
             run_messages.messages += history_copy
 
@@ -1723,7 +1737,7 @@ def get_continue_run_messages(
             if agent.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
 
-            log_debug(f"Adding {len(history_copy)} messages from history")
+            log_debug(f"[MESSAGES] Adding {len(history_copy)} messages from history (filtered from {len(history)})")
             run_messages.messages += history_copy
 
     # 3. Add the remaining input messages (skip the system message to avoid duplication)

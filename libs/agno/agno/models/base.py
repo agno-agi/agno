@@ -657,7 +657,8 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
-        after_tool_results: Optional[Callable[["ModelResponse"], Optional[List[Message]]]] = None,
+        compaction_callback: Optional[Callable[[], Optional[List[Message]]]] = None,
+        after_tool_results: Optional[Callable[["ModelResponse"], None]] = None,
         compacted_messages: Optional[List[Message]] = None,
     ) -> ModelResponse:
         """
@@ -671,6 +672,9 @@ class Model(ABC):
             tool_call_limit: Tool call limit
             run_response: Run response to use
             send_media_to_model: Whether to send media to the model
+            compaction_callback: Optional callback for context compaction. Called after tool results
+                are appended. Returns Optional[List[Message]] — if non-None, the returned list
+                becomes the model-facing message view for subsequent iterations.
             after_tool_results: Optional callback invoked once per tool batch, after tool result
                 messages are appended to ``messages`` and before the next model call (or break).
                 Receives the current ``ModelResponse`` (with accumulated ``tool_executions``)
@@ -846,9 +850,17 @@ class Model(ABC):
                 if any(m.stop_after_tool_call for m in function_call_results):
                     break
 
-                # Per-turn checkpoint hook: post-gather barrier. Tool results have been
-                # appended to messages; fire the hook before deciding whether to loop or break.
-                # Failure to checkpoint must not kill a working run — log and continue.
+                # Compaction hook: may return updated compacted view for next iteration
+                if compaction_callback is not None:
+                    try:
+                        new_compacted = compaction_callback()
+                        if new_compacted is not None:
+                            compacted_messages = new_compacted
+                    except Exception as e:
+                        log_error(f"compaction_callback failed: {e}")
+
+                # Checkpoint hook: post-gather barrier. Tool results have been appended to
+                # messages; fire the hook before deciding whether to loop or break.
                 if after_tool_results is not None:
                     try:
                         after_tool_results(model_response)
@@ -898,11 +910,16 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        compaction_callback: Optional[Callable[[], Awaitable[Optional[List[Message]]]]] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], Awaitable[None]]] = None,
         compacted_messages: Optional[List[Message]] = None,
     ) -> ModelResponse:
         """
         Generate an asynchronous response from the model.
+
+        ``compaction_callback``: optional async callback for context compaction. Called after tool
+        results are appended. Returns Optional[List[Message]] — if non-None, the returned list
+        becomes the model-facing message view for subsequent iterations.
 
         ``after_tool_results``: optional async callback invoked once per tool batch, after tool
         result messages are appended to ``messages`` and before the next model call (or break).
@@ -1077,9 +1094,17 @@ class Model(ABC):
                 if any(m.stop_after_tool_call for m in function_call_results):
                     break
 
-                # Per-turn checkpoint hook: post-gather barrier. Tool results have been
-                # appended to messages; fire the hook before deciding whether to loop or break.
-                # Failure to checkpoint must not kill a working run — log and continue.
+                # Compaction hook: may return updated compacted view for next iteration
+                if compaction_callback is not None:
+                    try:
+                        new_compacted = await compaction_callback()
+                        if new_compacted is not None:
+                            compacted_messages = new_compacted
+                    except Exception as e:
+                        log_error(f"compaction_callback failed: {e}")
+
+                # Checkpoint hook: post-gather barrier. Tool results have been appended to
+                # messages; fire the hook before deciding whether to loop or break.
                 if after_tool_results is not None:
                     try:
                         await after_tool_results(model_response)
@@ -1390,11 +1415,16 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        compaction_callback: Optional[Callable[[], Optional[List[Message]]]] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], None]] = None,
         compacted_messages: Optional[List[Message]] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate a streaming response from the model.
+
+        ``compaction_callback``: optional callback for context compaction. Called after tool results
+        are appended. Returns Optional[List[Message]] — if non-None, the returned list becomes the
+        model-facing message view for subsequent iterations.
 
         ``after_tool_results``: optional callback invoked once per tool batch, after tool result
         messages are appended to ``messages`` and before the next model call (or break). Receives
@@ -1594,9 +1624,17 @@ class Model(ABC):
                 if any(m.stop_after_tool_call for m in function_call_results):
                     break
 
-                # Per-turn checkpoint hook: post-gather barrier. Tool results have been
-                # appended to messages; fire the hook before deciding whether to loop or break.
-                # Failure to checkpoint must not kill a working run — log and continue.
+                # Compaction hook: may return updated compacted view for next iteration
+                if compaction_callback is not None:
+                    try:
+                        new_compacted = compaction_callback()
+                        if new_compacted is not None:
+                            compacted_messages = new_compacted
+                    except Exception as e:
+                        log_error(f"compaction_callback failed: {e}")
+
+                # Checkpoint hook: post-gather barrier. Tool results have been appended to
+                # messages; fire the hook before deciding whether to loop or break.
                 if after_tool_results is not None:
                     try:
                         after_tool_results(model_response)
@@ -1680,11 +1718,16 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        compaction_callback: Optional[Callable[[], Awaitable[Optional[List[Message]]]]] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], Awaitable[None]]] = None,
         compacted_messages: Optional[List[Message]] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate an asynchronous streaming response from the model.
+
+        ``compaction_callback``: optional async callback for context compaction. Called after tool
+        results are appended. Returns Optional[List[Message]] — if non-None, the returned list
+        becomes the model-facing message view for subsequent iterations.
 
         ``after_tool_results``: optional async callback invoked once per tool batch, after tool
         result messages are appended to ``messages`` and before the next model call (or break).
@@ -1884,9 +1927,17 @@ class Model(ABC):
                 if any(m.stop_after_tool_call for m in function_call_results):
                     break
 
-                # Per-turn checkpoint hook: post-gather barrier. Tool results have been
-                # appended to messages; fire the hook before deciding whether to loop or break.
-                # Failure to checkpoint must not kill a working run — log and continue.
+                # Compaction hook: may return updated compacted view for next iteration
+                if compaction_callback is not None:
+                    try:
+                        new_compacted = await compaction_callback()
+                        if new_compacted is not None:
+                            compacted_messages = new_compacted
+                    except Exception as e:
+                        log_error(f"compaction_callback failed: {e}")
+
+                # Checkpoint hook: post-gather barrier. Tool results have been appended to
+                # messages; fire the hook before deciding whether to loop or break.
                 if after_tool_results is not None:
                     try:
                         await after_tool_results(model_response)
