@@ -5,7 +5,7 @@ from fastapi import APIRouter
 
 from agno.agent import Agent, RemoteAgent
 from agno.team import RemoteTeam, Team
-from agno.workflow import RemoteWorkflow, Workflow
+from agno.workflow import Workflow
 
 
 class BaseInterface(ABC):
@@ -13,7 +13,7 @@ class BaseInterface(ABC):
     version: str = "1.0"
     agent: Optional[Union[Agent, RemoteAgent]] = None
     team: Optional[Union[Team, RemoteTeam]] = None
-    workflow: Optional[Union[Workflow, RemoteWorkflow]] = None
+    workflow: Optional[Workflow] = None
 
     prefix: str
     tags: List[str]

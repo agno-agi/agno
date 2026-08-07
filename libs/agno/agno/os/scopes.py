@@ -590,14 +590,14 @@ def get_resource_context_from_path(path: str) -> Tuple[Optional[str], Optional[s
     """Extract (resource_type, resource_id) from a path like /agents/my-agent/runs."""
     # Anchor to the first path segment to avoid misclassifying paths like
     # /knowledge/agents/sources as "agents" resources. Only /agents, /teams,
-    # /workflows (and /a2a/{family}) own the resource type.
-    type_match = re.match(r"^/(?:a2a/)?(agents|teams|workflows)(?:/|$)", path)
+    # /workflows (and /a2a/{family}, /remote/{family}) own the resource type.
+    type_match = re.match(r"^/(?:a2a/|remote/)?(agents|teams|workflows)(?:/|$)", path)
     if not type_match:
         return None, None
 
     resource_type = type_match.group(1)
 
-    id_match = re.match(rf"^/(?:a2a/)?{resource_type}/([^/]+)", path)
+    id_match = re.match(rf"^/(?:a2a/|remote/)?{resource_type}/([^/]+)", path)
     if id_match:
         return resource_type, id_match.group(1)
 

@@ -2,7 +2,7 @@
 Remote AgentOS Server for System Tests.
 
 This server hosts the actual agents, teams, and workflows that the gateway
-consumes via RemoteAgent, RemoteTeam, and RemoteWorkflow.
+consumes via RemoteAgent and RemoteTeam.
 """
 
 import os
@@ -13,6 +13,7 @@ from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIChat
 from agno.os import AgentOS
+from agno.os.interfaces.remote_access import RemoteAccess
 from agno.os.middleware.jwt import JWTMiddleware
 from agno.team.team import Team
 from agno.tools.calculator import CalculatorTools
@@ -142,6 +143,14 @@ agent_os = AgentOS(
     teams=[research_team],
     workflows=[qa_workflow],
     knowledge=[knowledge],
+    interfaces=[
+        # Opt the entities into remote execution so the gateway's RemoteAgent
+        # and RemoteTeam instances can reach them.
+        RemoteAccess(
+            agents=[assistant, researcher],
+            teams=[research_team],
+        ),
+    ],
     tracing=True,
     db=db,
 )
@@ -165,6 +174,8 @@ app.add_middleware(
         "/teams/*",
         "/workflows",
         "/workflows/*",
+        "/remote",
+        "/remote/*",
     ],
 )
 

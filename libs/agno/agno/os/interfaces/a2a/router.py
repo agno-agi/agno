@@ -34,7 +34,7 @@ from agno.os.interfaces.a2a.utils import (
 from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id, verify_run_in_session
 from agno.os.utils import get_agent_by_id, get_request_kwargs, get_team_by_id, get_workflow_by_id
 from agno.team import RemoteTeam, Team
-from agno.workflow import RemoteWorkflow, Workflow
+from agno.workflow import Workflow
 
 
 def _enforce_dynamic_dispatch_scope(request: Request, entity: object, entity_id: str) -> None:
@@ -50,7 +50,7 @@ def _enforce_dynamic_dispatch_scope(request: Request, entity: object, entity_id:
         return
     if isinstance(entity, (Team, RemoteTeam)):
         family = "teams"
-    elif isinstance(entity, (Workflow, RemoteWorkflow)):
+    elif isinstance(entity, Workflow):
         family = "workflows"
     else:
         family = "agents"
@@ -75,7 +75,7 @@ def attach_routes(
     router: APIRouter,
     agents: Optional[List[Union[Agent, RemoteAgent, AgentProtocol]]] = None,
     teams: Optional[List[Union[Team, RemoteTeam]]] = None,
-    workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = None,
+    workflows: Optional[List[Workflow]] = None,
 ) -> APIRouter:
     if agents is None and teams is None and workflows is None:
         raise ValueError("Agents, Teams, or Workflows are required to setup the A2A interface.")
@@ -943,7 +943,7 @@ def attach_routes(
                 status_code=400,
                 detail="Entity ID required. Provide it via 'agentId' in params.message or 'X-Agent-ID' header.",
             )
-        entity: Optional[Union[Agent, RemoteAgent, AgentProtocol, Team, RemoteTeam, Workflow, RemoteWorkflow]] = None
+        entity: Optional[Union[Agent, RemoteAgent, AgentProtocol, Team, RemoteTeam, Workflow]] = None
         if agents:
             entity = get_agent_by_id(agent_id, agents, create_fresh=True)
         if not entity and teams:
@@ -1058,7 +1058,7 @@ def attach_routes(
                 status_code=400,
                 detail="Entity ID required. Provide 'agentId' in params.message or 'X-Agent-ID' header.",
             )
-        entity: Optional[Union[Agent, RemoteAgent, AgentProtocol, Team, RemoteTeam, Workflow, RemoteWorkflow]] = None
+        entity: Optional[Union[Agent, RemoteAgent, AgentProtocol, Team, RemoteTeam, Workflow]] = None
         if agents:
             entity = get_agent_by_id(agent_id, agents, create_fresh=True)
         if not entity and teams:

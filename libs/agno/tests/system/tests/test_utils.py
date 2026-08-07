@@ -19,19 +19,16 @@ STREAMING_TIMEOUT = 120.0  # seconds - streaming requests need longer timeout
 
 # Expected agents, teams, and workflows
 EXPECTED_LOCAL_AGENTS = ["gateway-agent"]
-EXPECTED_REMOTE_AGENTS = ["assistant-agent", "researcher-agent", "facts_agent"]
-EXPECTED_A2A_AGENTS = ["assistant-agent-2", "researcher-agent-2"]
-EXPECTED_ALL_AGENTS = EXPECTED_LOCAL_AGENTS + EXPECTED_REMOTE_AGENTS + EXPECTED_A2A_AGENTS
+EXPECTED_REMOTE_AGENTS = ["assistant-agent", "researcher-agent"]
+EXPECTED_ALL_AGENTS = EXPECTED_LOCAL_AGENTS + EXPECTED_REMOTE_AGENTS
 
 EXPECTED_LOCAL_TEAMS = ["gateway-team"]
 EXPECTED_REMOTE_TEAMS = ["research-team"]
-EXPECTED_A2A_TEAMS = ["research-team-2"]
-EXPECTED_ALL_TEAMS = EXPECTED_LOCAL_TEAMS + EXPECTED_REMOTE_TEAMS + EXPECTED_A2A_TEAMS
+EXPECTED_ALL_TEAMS = EXPECTED_LOCAL_TEAMS + EXPECTED_REMOTE_TEAMS
 
+# The gateway only serves its own local workflow (remote workflow proxying no longer exists)
 EXPECTED_LOCAL_WORKFLOWS = ["gateway-workflow"]
-EXPECTED_REMOTE_WORKFLOWS = ["qa-workflow"]
-EXPECTED_A2A_WORKFLOWS = ["qa-workflow-2"]
-EXPECTED_ALL_WORKFLOWS = EXPECTED_LOCAL_WORKFLOWS + EXPECTED_REMOTE_WORKFLOWS + EXPECTED_A2A_WORKFLOWS
+EXPECTED_ALL_WORKFLOWS = EXPECTED_LOCAL_WORKFLOWS
 
 # Agents to test for session/memory operations (both local and remote)
 TEST_AGENTS = ["gateway-agent", "assistant-agent"]

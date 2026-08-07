@@ -21,7 +21,7 @@ from agno.run.agent import RunOutput
 from agno.run.team import TeamRunOutput
 from agno.team import RemoteTeam, Team
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.workflow import RemoteWorkflow, Workflow
+from agno.workflow import Workflow
 
 try:
     from telebot.async_telebot import AsyncTeleBot
@@ -66,7 +66,7 @@ def attach_routes(
     router: APIRouter,
     agent: Optional[Union[Agent, RemoteAgent]] = None,
     team: Optional[Union[Team, RemoteTeam]] = None,
-    workflow: Optional[Union[Workflow, RemoteWorkflow]] = None,
+    workflow: Optional[Workflow] = None,
     token: Optional[str] = None,
     reply_to_mentions_only: bool = True,
     reply_to_bot_messages: bool = True,

@@ -290,6 +290,10 @@ class TeamResponse(BaseModel):
         if team.model and team.model.provider is not None:
             _team_model_data["provider"] = team.model.provider
 
+        from agno.agent.remote import RemoteAgent
+        from agno.team.remote import RemoteTeam
+        from agno.utils.log import log_warning
+
         members: List[Union[AgentResponse, TeamResponse]] = []
         for member in team.members if isinstance(team.members, list) else []:
             if isinstance(member, Agent):
@@ -298,6 +302,18 @@ class TeamResponse(BaseModel):
             if isinstance(member, Team):
                 team_response = await TeamResponse.from_team(member)
                 members.append(team_response)
+            if isinstance(member, RemoteAgent):
+                try:
+                    members.append(await member.get_agent_config())
+                except Exception as e:
+                    log_warning(f"Could not fetch config for remote agent member '{member.agent_id}': {e}")
+                    members.append(AgentResponse(id=member.agent_id, name=member.agent_id))
+            if isinstance(member, RemoteTeam):
+                try:
+                    members.append(await member.get_team_config())
+                except Exception as e:
+                    log_warning(f"Could not fetch config for remote team member '{member.team_id}': {e}")
+                    members.append(TeamResponse(id=member.team_id, name=member.team_id))
 
         return TeamResponse(
             id=team.id,
