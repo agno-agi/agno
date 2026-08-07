@@ -2133,6 +2133,9 @@ async def _arun_tasks(
 
         # 2. Determine tools for model (includes task management tools)
         team_run_context: Dict[str, Any] = {}
+        from agno.team._tools import _aresolve_callable_resources
+
+        await _aresolve_callable_resources(team, run_context=run_context)
         await _check_and_refresh_mcp_tools(team)
         learning_tools = await _aget_learning_tools(team, user_id, team_session)
         _tools = _determine_tools_for_model(
@@ -2499,6 +2502,9 @@ async def _arun_tasks_stream(
 
         # 2. Determine tools for model (includes task management tools)
         team_run_context: Dict[str, Any] = {}
+        from agno.team._tools import _aresolve_callable_resources
+
+        await _aresolve_callable_resources(team, run_context=run_context)
         await _check_and_refresh_mcp_tools(team)
         learning_tools = await _aget_learning_tools(team, user_id, team_session)
         _tools = _determine_tools_for_model(
@@ -6651,6 +6657,12 @@ def continue_run_dispatch(
     # Route member requirements to member agents
     member_results: List[str] = []
     if has_member:
+        # Resolve callable factories before routing so factory-provided members are
+        # routable and the leader's tools/knowledge are ready for the continuation.
+        from agno.team._tools import _resolve_callable_resources
+
+        _resolve_callable_resources(team, run_context=run_context)
+
         member_reqs = [r for r in (run_response.requirements or []) if getattr(r, "member_agent_id", None) is not None]
         team_level_reqs = [r for r in (run_response.requirements or []) if getattr(r, "member_agent_id", None) is None]
         # Set only member reqs for routing; _route_requirements_to_members
@@ -8051,6 +8063,12 @@ async def _acontinue_run(
                 # Route member requirements
                 member_results: List[str] = []
                 if has_member:
+                    # Resolve callable factories before routing so factory-provided members are
+                    # routable and the leader's tools/knowledge are ready for the continuation.
+                    from agno.team._tools import _aresolve_callable_resources
+
+                    await _aresolve_callable_resources(team, run_context=run_context)
+
                     member_reqs = [
                         r for r in (run_response.requirements or []) if getattr(r, "member_agent_id", None) is not None
                     ]
@@ -8099,6 +8117,9 @@ async def _acontinue_run(
                         )
 
                     team.model = cast(Model, team.model)
+                    from agno.team._tools import _aresolve_callable_resources
+
+                    await _aresolve_callable_resources(team, run_context=run_context)
                     await _check_and_refresh_mcp_tools(team)
 
                     team_run_context: Dict[str, Any] = {}
@@ -8478,6 +8499,12 @@ async def _acontinue_run_stream(
                 # Route member requirements
                 member_results: List[str] = []
                 if has_member:
+                    # Resolve callable factories before routing so factory-provided members are
+                    # routable and the leader's tools/knowledge are ready for the continuation.
+                    from agno.team._tools import _aresolve_callable_resources
+
+                    await _aresolve_callable_resources(team, run_context=run_context)
+
                     member_reqs = [
                         r for r in (run_response.requirements or []) if getattr(r, "member_agent_id", None) is not None
                     ]
@@ -8536,6 +8563,9 @@ async def _acontinue_run_stream(
                         return
 
                     team.model = cast(Model, team.model)
+                    from agno.team._tools import _aresolve_callable_resources
+
+                    await _aresolve_callable_resources(team, run_context=run_context)
                     await _check_and_refresh_mcp_tools(team)
 
                     team_run_context: Dict[str, Any] = {}

@@ -123,6 +123,16 @@ class TestGetToolNamesSyncMode:
         names = _get_tool_names(member)
         assert "my_function" in names
 
+    def test_callable_factory_tools_not_resolved(self):
+        """Callable-factory tools are not invoked here; they yield no names."""
+
+        def tools_factory():
+            return [lambda: "x"]
+
+        member = _make_member(tools_factory)
+        assert _get_tool_names(member) == []
+        assert _get_tool_names(member, async_mode=True) == []
+
 
 # ---------------------------------------------------------------------------
 # Tests — async mode (async_mode=True)

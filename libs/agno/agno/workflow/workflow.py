@@ -1909,8 +1909,8 @@ class Workflow:
             if hasattr(executor, "debug_mode"):
                 executor.debug_mode = True
 
-            # If it's a team, propagate to all members
-            if hasattr(executor, "members"):
+            # If it's a team, propagate to all members - only if members is iterable (not a callable factory)
+            if hasattr(executor, "members") and not callable(executor.members):
                 for member in executor.members:
                     if hasattr(member, "debug_mode"):
                         member.debug_mode = True
@@ -9873,7 +9873,9 @@ class Workflow:
                     prepared_steps.append(Step(name=step_name, description=step.description, agent=step))
                 elif isinstance(step, Team):
                     step_name = step.name or f"step_{i + 1}"
-                    log_debug(f"Step {i + 1}: Team '{step_name}' with {len(step.members)} members")
+                    # step.members may be a callable factory (resolved at run time); guard len().
+                    num_members = len(step.members) if isinstance(step.members, list) else "callable"
+                    log_debug(f"Step {i + 1}: Team '{step_name}' with {num_members} members")
                     prepared_steps.append(Step(name=step_name, description=step.description, team=step))
                 elif isinstance(step, Workflow):
                     step_name = step.name or f"step_{i + 1}"
@@ -10246,8 +10248,8 @@ class Workflow:
                     if hasattr(active_executor, "workflow_id"):
                         active_executor.workflow_id = self.id
 
-                    # If it's a team, update all members
-                    if hasattr(active_executor, "members"):
+                    # If it's a team, update all members - only if members is iterable (not a callable factory)
+                    if hasattr(active_executor, "members") and not callable(active_executor.members):
                         for member in active_executor.members:  # type: ignore
                             if hasattr(member, "workflow_id"):
                                 member.workflow_id = self.id
