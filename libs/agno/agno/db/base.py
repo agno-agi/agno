@@ -1581,8 +1581,15 @@ class BaseDb(ABC):
         """Create a service account. Raises on failure (including duplicate active name)."""
         raise NotImplementedError
 
-    def get_service_account(self, service_account_id: str) -> Optional[Dict[str, Any]]:
-        """Get a service account by ID."""
+    def get_service_account(self, service_account_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get a service account by ID.
+
+        Args:
+            service_account_id (str): The ID of the service account.
+            user_id (Optional[str]): Owner-scoping filter. When set, only
+                returns the account if it is owned by ``user_id`` or is a
+                workspace-level account (no owner).
+        """
         raise NotImplementedError
 
     def get_service_account_by_token_hash(self, token_hash: str) -> Optional[Dict[str, Any]]:
@@ -1600,6 +1607,7 @@ class BaseDb(ABC):
         page: int = 1,
         sort_by: str = "created_at",
         sort_order: str = "desc",
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List service accounts.
 
@@ -2611,8 +2619,17 @@ class AsyncBaseDb(ABC):
         """Create a service account. Raises on failure (including duplicate active name)."""
         raise NotImplementedError
 
-    async def get_service_account(self, service_account_id: str) -> Optional[Dict[str, Any]]:
-        """Get a service account by ID."""
+    async def get_service_account(
+        self, service_account_id: str, user_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Get a service account by ID.
+
+        Args:
+            service_account_id (str): The ID of the service account.
+            user_id (Optional[str]): Owner-scoping filter. When set, only
+                returns the account if it is owned by ``user_id`` or is a
+                workspace-level account (no owner).
+        """
         raise NotImplementedError
 
     async def get_service_account_by_token_hash(self, token_hash: str) -> Optional[Dict[str, Any]]:
@@ -2630,6 +2647,7 @@ class AsyncBaseDb(ABC):
         page: int = 1,
         sort_by: str = "created_at",
         sort_order: str = "desc",
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List service accounts.
 

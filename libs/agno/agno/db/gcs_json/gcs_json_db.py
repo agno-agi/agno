@@ -1288,7 +1288,7 @@ class GcsJsonDb(BaseDb):
         return owner is None or owner == user_id
 
     def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
-        """Delete knowledge content by ID.
+        """Delete a knowledge row from the GCS JSON file.
 
         Args:
             id (str): The ID of the knowledge row to delete.

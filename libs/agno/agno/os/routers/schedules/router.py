@@ -8,7 +8,6 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from agno.db.schemas.scheduler import RUN_ENDPOINT_RE
-from agno.os.middleware.jwt import is_reserved_principal
 from agno.os.middleware.user_scope import get_scoped_user_id
 from agno.os.routers.schedules.schema import (
     ScheduleCreate,
@@ -164,12 +163,15 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         # owner column, so even admin-created schedules carry the creator's id.
         scoped_user_id = get_scoped_user_id(request)
         creator_user_id = scoped_user_id or getattr(request.state, "user_id", None)
-        # A reserved principal (the internal service token authenticates as
-        # ``__scheduler__``) is not a real owner. Stamping it would attribute every
-        # fired run to it, and leaving the schedule unowned would give it the
-        # executor's unscoped reach, so refuse instead.
-        if is_reserved_principal(creator_user_id):
-            raise HTTPException(status_code=403, detail="A reserved principal may not own a schedule")
+        # The executor's own identity is not a real owner. Stamping it would
+        # attribute every fired run to it, and leaving the schedule unowned would
+        # give it the executor's unscoped reach, so refuse instead. Service
+        # accounts and MCP-OAuth clients are server-assigned identities that own
+        # their own sessions and memories, so they may own a schedule too.
+        from agno.os.auth import INTERNAL_SCHEDULER_USER_ID
+
+        if creator_user_id == INTERNAL_SCHEDULER_USER_ID:
+            raise HTTPException(status_code=403, detail="The scheduler executor may not own a schedule")
 
         # Check name uniqueness within the caller's scope
         existing = await _db_call("get_schedule_by_name", body.name, user_id=scoped_user_id)

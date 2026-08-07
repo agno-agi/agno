@@ -100,6 +100,10 @@ def _aggregate_metrics_by_date(rows: List[dict]) -> List[dict]:
             day_key = day.isoformat()
         elif isinstance(day, str):
             day_key = day
+        elif isinstance(day, (int, float)) and not isinstance(day, bool):
+            # SurrealDB stores the day as an epoch second and converts back on
+            # the way out, so it is the one backend that hands this a number.
+            day_key = datetime.fromtimestamp(day, tz=timezone.utc).date().isoformat()
         else:
             # The response carries a day, so a record whose date is not one
             # cannot be returned at all. Skip it rather than fail every other

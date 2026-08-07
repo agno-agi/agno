@@ -2049,8 +2049,6 @@ class DynamoDb(BaseDb):
             log_error(f"Failed to get metrics: {str(e)}")
             raise e
 
-    # --- Knowledge methods ---
-
     # -- Knowledge methods --
     # DynamoDB has no SQL OR predicate, so we post-filter in Python: the row
     # is visible if its ``user_id`` matches the caller OR is unowned (None /

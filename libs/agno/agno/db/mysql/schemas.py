@@ -98,10 +98,8 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "status_message": {"type": Text, "nullable": True},
     "external_id": {"type": lambda: String(128), "nullable": True},
     # Per-user knowledge ownership; reads scope on
-    # ``(user_id = :uid OR user_id IS NULL)``. Binary collation because the
-    # server default (utf8mb4_0900_ai_ci) is case- and accent-insensitive, which
-    # would make ``alice`` and ``ALICE`` the same owner.
-    "user_id": {"type": lambda: String(128, collation="utf8mb4_bin"), "nullable": True, "index": True},
+    # ``(user_id = :uid OR user_id IS NULL)``.
+    "user_id": {"type": lambda: String(128), "nullable": True, "index": True},
 }
 
 METRICS_TABLE_SCHEMA = {
@@ -121,12 +119,7 @@ METRICS_TABLE_SCHEMA = {
     # (RBAC off / pre-isolation deployments / system runs) so the unique
     # constraint behaves predictably. ``get_metrics`` maps ``""`` back to
     # ``None`` for API consumers.
-    "user_id": {
-        "type": lambda: String(128, collation="utf8mb4_bin"),
-        "nullable": False,
-        "default": "",
-        "index": True,
-    },
+    "user_id": {"type": lambda: String(128), "nullable": False, "default": "", "index": True},
     "created_at": {"type": BigInteger, "nullable": False},
     "updated_at": {"type": BigInteger, "nullable": True},
     "completed": {"type": Boolean, "nullable": False, "default": False},

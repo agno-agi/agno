@@ -8,6 +8,7 @@ import pytest
 pytest.importorskip("croniter", reason="croniter not installed")
 pytest.importorskip("pytz", reason="pytz not installed")
 
+from agno.db.sqlite import SqliteDb  # noqa: E402
 from agno.scheduler.manager import ScheduleManager  # noqa: E402
 
 # =============================================================================
@@ -101,6 +102,82 @@ class TestManagerCreate:
         mock_db.create_schedule = MagicMock(return_value=None)
         with pytest.raises(RuntimeError, match="Failed to create"):
             mgr.create(name="fail", cron="0 9 * * *", endpoint="/test")
+
+
+class TestManagerCreateNameScope:
+    """The ``if_exists`` name lookup is scoped to the owner, so two owners may
+    each hold a schedule of one name. Needs a real db -- ``MagicMock`` swallows
+    the ``user_id`` kwarg and hands back whatever the lookup was stubbed with,
+    which is exactly the bug these cases are here to catch."""
+
+    @pytest.fixture
+    def db_mgr(self, tmp_path):
+        return ScheduleManager(SqliteDb(db_file=str(tmp_path / "schedules.db")))
+
+    def test_another_owners_name_does_not_block_a_create(self, db_mgr):
+        bob = db_mgr.create(name="nightly", cron="0 9 * * *", endpoint="/bob", user_id="bob")
+        alice = db_mgr.create(name="nightly", cron="0 9 * * *", endpoint="/alice", user_id="alice")
+
+        assert alice.id != bob.id
+        assert alice.user_id == "alice"
+
+    def test_skip_does_not_hand_back_another_owners_schedule(self, db_mgr):
+        bob = db_mgr.create(name="nightly", cron="0 9 * * *", endpoint="/bob", user_id="bob")
+        alice = db_mgr.create(name="nightly", cron="0 9 * * *", endpoint="/alice", if_exists="skip", user_id="alice")
+
+        assert alice.id != bob.id
+        assert alice.endpoint == "/alice"
+
+    def test_skip_returns_the_owners_own_schedule(self, db_mgr):
+        first = db_mgr.create(name="nightly", cron="0 9 * * *", endpoint="/first", user_id="alice")
+        second = db_mgr.create(name="nightly", cron="0 9 * * *", endpoint="/second", if_exists="skip", user_id="alice")
+
+        assert second.id == first.id
+        assert second.endpoint == "/first"
+
+    def test_update_leaves_another_owners_schedule_alone(self, db_mgr):
+        bob = db_mgr.create(name="nightly", cron="0 9 * * *", endpoint="/bob", user_id="bob")
+        alice = db_mgr.create(name="nightly", cron="0 10 * * *", endpoint="/alice", if_exists="update", user_id="alice")
+
+        # An unscoped lookup would resolve to bob's row, and the scoped update
+        # against it is a no-op -- so alice would be handed bob's schedule back.
+        assert alice.id != bob.id
+        assert alice.user_id == "alice"
+        assert db_mgr.get(bob.id).endpoint == "/bob"
+
+    def test_update_overwrites_the_owners_own_schedule(self, db_mgr):
+        first = db_mgr.create(name="nightly", cron="0 9 * * *", endpoint="/first", user_id="alice")
+        updated = db_mgr.create(
+            name="nightly", cron="0 10 * * *", endpoint="/second", if_exists="update", user_id="alice"
+        )
+
+        assert updated.id == first.id
+        assert updated.endpoint == "/second"
+
+    def test_duplicate_name_within_one_owner_still_raises(self, db_mgr):
+        db_mgr.create(name="nightly", cron="0 9 * * *", endpoint="/test", user_id="alice")
+        with pytest.raises(ValueError, match="already exists"):
+            db_mgr.create(name="nightly", cron="0 9 * * *", endpoint="/test", user_id="alice")
+
+    @pytest.mark.asyncio
+    async def test_acreate_scopes_the_name_lookup_to_the_owner(self, db_mgr):
+        bob = await db_mgr.acreate(name="nightly", cron="0 9 * * *", endpoint="/bob", user_id="bob")
+        alice = await db_mgr.acreate(
+            name="nightly", cron="0 9 * * *", endpoint="/alice", if_exists="skip", user_id="alice"
+        )
+
+        assert alice.id != bob.id
+        assert alice.endpoint == "/alice"
+
+    @pytest.mark.asyncio
+    async def test_acreate_update_leaves_another_owners_schedule_alone(self, db_mgr):
+        bob = await db_mgr.acreate(name="nightly", cron="0 9 * * *", endpoint="/bob", user_id="bob")
+        alice = await db_mgr.acreate(
+            name="nightly", cron="0 10 * * *", endpoint="/alice", if_exists="update", user_id="alice"
+        )
+
+        assert alice.id != bob.id
+        assert (await db_mgr.aget(bob.id)).endpoint == "/bob"
 
 
 class TestManagerList:

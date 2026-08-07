@@ -465,9 +465,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             reader_id=reader_id if reader_id and reader_id.strip() else None,
         )
 
-        # Pre-check ownership: 404 if the row exists but is owned by someone
-        # else. apatch_content reaches into the row by id without an owner
-        # filter (existing behaviour), so the gate has to be at the route.
+        # Pre-check ownership so the caller gets a 404 for someone else's row and
+        # a 403 for shared content, rather than the silent no-op the scoped
+        # ``apatch_content`` below would otherwise return.
         scoped_user_id = get_scoped_user_id(request)
         existing = await knowledge.aget_content_by_id(content_id=content_id, user_id=scoped_user_id)
         if existing is None:
@@ -481,9 +481,6 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             name=update_data.name,
             description=update_data.description,
             metadata=update_data.metadata,
-            # Preserve ownership across the patch — Knowledge._build_knowledge_row
-            # writes ``user_id`` straight from Content, so reasserting the owner
-            # here prevents an accidental NULL-out of a previously owned row.
             user_id=existing.user_id,
         )
 
@@ -497,9 +494,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         updated_content_dict = None
         try:
             if knowledge.contents_db is not None and isinstance(knowledge.contents_db, AsyncBaseDb):
-                updated_content_dict = await knowledge.apatch_content(content)
+                updated_content_dict = await knowledge.apatch_content(content, user_id=scoped_user_id)
             else:
-                updated_content_dict = knowledge.patch_content(content)
+                updated_content_dict = knowledge.patch_content(content, user_id=scoped_user_id)
         except Exception as e:
             log_error(f"Error updating content: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error updating content: {str(e)}")

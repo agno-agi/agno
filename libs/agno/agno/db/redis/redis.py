@@ -34,6 +34,7 @@ from agno.db.utils import (
     deserialize_sessions,
     filter_context_runs,
     merge_runs_table_with_legacy_blob,
+    metric_record_day,
 )
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -1420,13 +1421,16 @@ class RedisDb(BaseDb):
                 completed_metrics = [m for m in all_metrics if m.get("completed", False)]
                 if completed_metrics:
                     latest_completed = max(completed_metrics, key=lambda x: x.get("date", ""))
-                    return datetime.fromisoformat(latest_completed["date"]).date() + timedelta(days=1)
+                    latest_day = metric_record_day(latest_completed)
+                    if latest_day is not None:
+                        return latest_day + timedelta(days=1)
                 else:
                     # Find the earliest incomplete metric
                     incomplete_metrics = [m for m in all_metrics if not m.get("completed", False)]
                     if incomplete_metrics:
-                        earliest_incomplete = min(incomplete_metrics, key=lambda x: x.get("date", ""))
-                        return datetime.fromisoformat(earliest_incomplete["date"]).date()
+                        earliest_day = metric_record_day(min(incomplete_metrics, key=lambda x: x.get("date", "")))
+                        if earliest_day is not None:
+                            return earliest_day
 
             # No metrics records, find first session
             sessions_raw, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
@@ -1533,7 +1537,9 @@ class RedisDb(BaseDb):
             if starting_date is not None or ending_date is not None:
                 filtered_metrics = []
                 for metric in all_metrics:
-                    metric_date = datetime.fromisoformat(metric.get("date", "")).date()
+                    metric_date = metric_record_day(metric)
+                    if metric_date is None:
+                        continue
                     if starting_date is not None and metric_date < starting_date:
                         continue
                     if ending_date is not None and metric_date > ending_date:

@@ -2,20 +2,20 @@
 Per-user knowledge ownership
 ============================
 
-With AuthorizationConfig(user_isolation=True) every uploaded content row is
-stamped with the JWT subject. A non-admin reads their own rows plus the shared
-(unowned) org-wide rows, but may only modify or delete the rows they own. The
-smoke proves the read scope, the 403 on shared content, the 404 on another
-user's content, and the admin bypass.
+Turn on AuthorizationConfig(user_isolation=True) so every knowledge content row
+is owned by the JWT subject, and a row with no owner is shared, org-wide
+content. The smoke proves the read scope, the 403 on shared content, the 404 on
+another user's content, and the admin bypass. Rows are seeded straight into the
+contents db because POST /knowledge/content also runs ingest, which has no
+vector db here and would leave every row with status "failed".
 
 Prerequisites: none
 Run: .venvs/demo/bin/python cookbook/05_agent_os/07_security/user_isolation_knowledge.py
-Try: call DELETE /knowledge/content as alice and watch the shared row survive
+Try: send DELETE /knowledge/content with the printed alice token; the shared row survives
 """
 
 import os
 from datetime import UTC, datetime, timedelta
-from uuid import uuid4
 
 import jwt
 from agno.agent import Agent
@@ -81,12 +81,7 @@ def _auth(token: str) -> dict[str, str]:
 
 
 def _seed(content_id: str, name: str, owner: str | None) -> None:
-    """Write one content row. ``owner=None`` is shared, org-wide content.
-
-    The ingest pipeline needs a vector db and an embedder; this smoke is about
-    the ownership rules the routes apply on top of the rows, so it writes them
-    straight to the contents db.
-    """
+    """Write one content row; an owner of None is shared, org-wide content."""
     db.upsert_knowledge_content(
         KnowledgeRow(
             id=content_id,
@@ -99,60 +94,62 @@ def _seed(content_id: str, name: str, owner: str | None) -> None:
 
 
 def run_smoke() -> dict[str, object]:
-    suffix = uuid4().hex[:8]
-    shared_id = f"handbook-{suffix}"
-    alice_id = f"alice-notes-{suffix}"
-    bob_id = f"bob-notes-{suffix}"
-    alice_user = f"alice-{suffix}"
-    bob_user = f"bob-{suffix}"
     user_scopes = ["knowledge:read", "knowledge:write", "knowledge:delete"]
-    alice = make_token(alice_user, user_scopes)
+    alice = make_token("alice", user_scopes)
     admin = make_token("security-admin", ["agent_os:admin"])
 
-    _seed(shared_id, "Company handbook", None)
-    _seed(alice_id, "Alice notes", alice_user)
-    _seed(bob_id, "Bob notes", bob_user)
+    _seed("company-handbook", "Company handbook", None)
+    _seed("retired-handbook", "Retired handbook", None)
+    _seed("alice-notes", "Alice notes", "alice")
+    _seed("bob-notes", "Bob notes", "bob")
 
     with TestClient(app) as client:
         alice_rows = client.get("/knowledge/content", headers=_auth(alice)).json()[
             "data"
         ]
         patch_shared = client.patch(
-            f"/knowledge/content/{shared_id}",
+            "/knowledge/content/company-handbook",
             data={"name": "Rewritten handbook"},
             headers=_auth(alice),
         )
         delete_shared = client.delete(
-            f"/knowledge/content/{shared_id}", headers=_auth(alice)
+            "/knowledge/content/company-handbook", headers=_auth(alice)
         )
-        delete_bob = client.delete(f"/knowledge/content/{bob_id}", headers=_auth(alice))
+        delete_bob = client.delete("/knowledge/content/bob-notes", headers=_auth(alice))
         bulk_delete = client.delete("/knowledge/content", headers=_auth(alice))
         after_bulk = client.get("/knowledge/content", headers=_auth(alice)).json()[
             "data"
         ]
         admin_delete_shared = client.delete(
-            f"/knowledge/content/{shared_id}", headers=_auth(admin)
+            "/knowledge/content/retired-handbook", headers=_auth(admin)
+        )
+        admin_delete_bob = client.delete(
+            "/knowledge/content/bob-notes", headers=_auth(admin)
         )
 
-    # A non-admin sees their own rows plus the shared one, never another user's.
-    assert {row["name"] for row in alice_rows} == {"Company handbook", "Alice notes"}
-    # Shared content is readable but not writable by a scoped caller.
+    assert {row["name"] for row in alice_rows} == {
+        "Company handbook",
+        "Retired handbook",
+        "Alice notes",
+    }
     assert patch_shared.status_code == 403, patch_shared.text
     assert delete_shared.status_code == 403, delete_shared.text
-    # Another user's row is invisible, so it reads as missing rather than denied.
     assert delete_bob.status_code == 404, delete_bob.text
-    # A bulk delete clears the caller's own rows and spares the shared one.
     assert bulk_delete.status_code == 200, bulk_delete.text
-    assert {row["name"] for row in after_bulk} == {"Company handbook"}
-    # Removing shared content is the admin path.
+    assert {row["name"] for row in after_bulk} == {
+        "Company handbook",
+        "Retired handbook",
+    }
     assert admin_delete_shared.status_code == 200, admin_delete_shared.text
+    assert admin_delete_bob.status_code == 200, admin_delete_bob.text
     return {
-        "alice_visible": [row["name"] for row in alice_rows],
+        "alice_visible": sorted(row["name"] for row in alice_rows),
         "patch_shared": patch_shared.status_code,
         "delete_shared": delete_shared.status_code,
         "delete_other_user": delete_bob.status_code,
-        "after_bulk_delete": [row["name"] for row in after_bulk],
+        "after_bulk_delete": sorted(row["name"] for row in after_bulk),
         "admin_delete_shared": admin_delete_shared.status_code,
+        "admin_delete_other_user": admin_delete_bob.status_code,
     }
 
 
@@ -164,4 +161,11 @@ if __name__ == "__main__":
     isolation_result = run_smoke()
     print("Per-user knowledge ownership smoke passed:")
     print(isolation_result)
+
+    _seed("alice-notes", "Alice notes", "alice")
+    print("\nServed content: the shared Company handbook and one row owned by alice.")
+    print("Alice token (knowledge:read, knowledge:write, knowledge:delete):")
+    print(
+        make_token("alice", ["knowledge:read", "knowledge:write", "knowledge:delete"])
+    )
     agent_os.serve(app=app, port=7777)

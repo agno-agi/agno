@@ -1,3 +1,9 @@
+"""Schemas and shared constants for the scheduler.
+
+The constants below live here because ``agno[scheduler]`` does not depend on
+fastapi, so the executor and manager cannot reach them through ``agno.os``.
+"""
+
 import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
@@ -10,14 +16,14 @@ from agno.utils.dttm import now_epoch_s, to_epoch_s
 # honoured for callers that already authenticated with the internal token.
 SCHEDULE_OWNER_HEADER: str = "X-Schedule-Owner"
 
+# The user_id the internal scheduler token authenticates as. Reserved: a JWT must
+# never be allowed to claim it (see ``is_reserved_principal``), and it identifies
+# the *caller* rather than the *owner* of any work, so it may not own a schedule.
+INTERNAL_SCHEDULER_USER_ID: str = "__scheduler__"
+
 # Matches a run endpoint and captures resource type + ID. ``\Z`` rather than
 # ``$`` so a trailing newline can't slip past the run-endpoint check.
 RUN_ENDPOINT_RE = re.compile(r"^/(agents|teams|workflows)/([^/]+)/runs/?\Z")
-
-# The header and the pattern live here, next to ``Schedule``, because the
-# executor and the schedules router both classify the same endpoint and agree
-# on the same header. ``agno[scheduler]`` does not depend on fastapi, so the
-# executor cannot reach them through ``agno.os``.
 
 
 @dataclass

@@ -3157,7 +3157,7 @@ class MongoDb(BaseDb):
             log_error(f"Error getting spans: {str(e)}")
             return []
 
-    # -- Scheduler methods --
+    # -- Schedule methods --
     # User-facing reads/updates/deletes carry an optional ``user_id`` filter so the
     # routes can scope by owner. The executor pair (``claim_due_schedule`` /
     # ``release_schedule``) intentionally has no user_id — the poller must be

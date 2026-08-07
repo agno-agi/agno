@@ -66,6 +66,7 @@ SESSION_ID_REQUIRED = "session_id is required for this action"
 WORKFLOW_ID_REQUIRED_RECONNECT = "workflow_id is required to reconnect to a workflow run"
 SESSION_ID_REQUIRED_RECONNECT = "session_id is required to reconnect to a workflow run"
 INSUFFICIENT_PERMISSIONS_WS_RECONNECT = "Insufficient permissions to reconnect to this workflow"
+MISSING_USER_IDENTITY = "Authenticated request is missing a user identity"
 
 
 def _has_admin_scope(scopes: List[str], admin_scope: Optional[str] = None) -> bool:
@@ -141,7 +142,7 @@ def get_scoped_user_id(request: Request) -> Optional[str]:
         # identity. Fail closed instead of falling through to unscoped ("see
         # everything"), which would make a malformed token on the
         # ``validate=False`` path more permissive than a valid one with no sub.
-        raise HTTPException(status_code=403, detail="Authenticated request is missing a user identity")
+        raise HTTPException(status_code=403, detail=MISSING_USER_IDENTITY)
 
     # Scheduler executor caller: the sentinel never means "scope to user
     # __scheduler__" — that user does not exist. Scope to the schedule owner
@@ -168,14 +169,14 @@ def _schedule_owner_from_header(request: Request) -> Optional[str]:
     treated as "unowned", which would widen the call to every user's data.
     """
     from agno.db.schemas.scheduler import SCHEDULE_OWNER_HEADER
-    from agno.os.middleware.jwt import is_reserved_principal
+    from agno.os.auth import INTERNAL_SCHEDULER_USER_ID
 
     raw = request.headers.get(SCHEDULE_OWNER_HEADER)
     if raw is None:
         return None
 
     owner = unquote(raw)
-    if not owner.strip() or is_reserved_principal(owner):
+    if not owner.strip() or owner == INTERNAL_SCHEDULER_USER_ID:
         raise HTTPException(status_code=403, detail="Schedule owner is not a usable identity")
     return owner
 

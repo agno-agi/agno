@@ -776,11 +776,10 @@ def test_unowned_content_hash_backward_compatible():
     knowledge = Knowledge(vector_db=MockVectorDb())
 
     unowned = Content(url="https://example.com/doc.pdf", name="Doc")
+    same_unowned = Content(url="https://example.com/doc.pdf", name="Doc")
     owned = Content(url="https://example.com/doc.pdf", name="Doc", user_id="alice")
 
-    assert knowledge._build_content_hash(unowned) == knowledge._build_content_hash(
-        Content(url="https://example.com/doc.pdf", name="Doc")
-    )
+    assert knowledge._build_content_hash(unowned) == knowledge._build_content_hash(same_unowned)
     assert knowledge._build_content_hash(owned) != knowledge._build_content_hash(unowned)
 
 
@@ -792,3 +791,38 @@ def test_same_owner_same_content_produces_same_hash():
     second = Content(name="notes", user_id="alice", path="notes.md")
 
     assert knowledge._build_content_hash(first) == knowledge._build_content_hash(second)
+
+
+def test_empty_string_owner_is_a_real_owner():
+    """The guard is ``is not None``, so ``""`` leads the hash like any other
+    owner instead of collapsing onto the unowned row."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+
+    empty_owner = Content(url="https://example.com/doc.pdf", name="Doc", user_id="")
+    unowned = Content(url="https://example.com/doc.pdf", name="Doc")
+
+    assert knowledge._build_content_hash(empty_owner) != knowledge._build_content_hash(unowned)
+
+
+def test_owner_produces_different_document_hash_for_the_same_page():
+    """``_should_skip`` dedups on the per-source id, so a second owner's crawl
+    of one page must not look like one that is already indexed."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+    doc = Document(content="Page content", meta_data={"url": "https://example.com/page"})
+
+    alice = Content(url="https://example.com", name="Site", user_id="alice")
+    bob = Content(url="https://example.com", name="Site", user_id="bob")
+
+    assert knowledge._build_document_content_hash(doc, alice) != knowledge._build_document_content_hash(doc, bob)
+
+
+def test_empty_string_owner_is_a_real_owner_for_document_hashes():
+    knowledge = Knowledge(vector_db=MockVectorDb())
+    doc = Document(content="Page content", meta_data={"url": "https://example.com/page"})
+
+    empty_owner = Content(url="https://example.com", name="Site", user_id="")
+    unowned = Content(url="https://example.com", name="Site")
+
+    assert knowledge._build_document_content_hash(doc, empty_owner) != knowledge._build_document_content_hash(
+        doc, unowned
+    )

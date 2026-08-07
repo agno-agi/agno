@@ -28,6 +28,7 @@ from agno.os.auth import (
 )
 from agno.os.managers import event_buffer, websocket_manager
 from agno.os.middleware.user_scope import (
+    MISSING_USER_IDENTITY,
     SESSION_ID_REQUIRED,
     SESSION_ID_REQUIRED_RECONNECT,
     WORKFLOW_ID_REQUIRED_RECONNECT,
@@ -249,6 +250,13 @@ async def handle_workflow_subscription(
         # isolation is on) a caller with workflows:run could read another user's
         # run events by guessing the run_id. With isolation off, RBAC alone
         # governs reconnect access.
+        if jwt_enabled and user_isolation_enabled and not is_admin and not user_id:
+            # Mirrors ``get_scoped_user_id``: a caller that reached an agno auth
+            # layer but carries no identity is refused, not let through unscoped,
+            # which here would replay every user's run buffer.
+            await websocket.send_text(json.dumps({"event": "error", "error": MISSING_USER_IDENTITY}))
+            return
+
         if jwt_enabled and user_isolation_enabled and not is_admin and user_id:
             if not session_id:
                 await websocket.send_text(
@@ -468,7 +476,15 @@ async def handle_workflow_continue_via_websocket(
         # Enforce ownership for non-admin callers when user isolation is enabled.
         # Mirrors the HTTP cancel/resume routes: a non-admin caller must own
         # both the session and the run before we even fetch the paused state.
-        if ws_auth and ws_auth.jwt_enabled and ws_auth.user_isolation_enabled and not ws_auth.is_admin and user_id:
+        scoped_ws_caller = bool(
+            ws_auth and ws_auth.jwt_enabled and ws_auth.user_isolation_enabled and not ws_auth.is_admin
+        )
+        if scoped_ws_caller and not user_id:
+            # See the matching guard in the reconnect handler.
+            await websocket.send_text(json.dumps({"event": "error", "error": MISSING_USER_IDENTITY}))
+            return
+
+        if scoped_ws_caller and user_id:
             if not session_id:
                 await websocket.send_text(json.dumps({"event": "error", "error": SESSION_ID_REQUIRED}))
                 return

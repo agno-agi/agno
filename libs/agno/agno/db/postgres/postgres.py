@@ -6270,13 +6270,16 @@ class PostgresDb(BaseDb):
             log_error(f"Error creating service account: {str(e)}")
             raise
 
-    def get_service_account(self, service_account_id: str) -> Optional[Dict[str, Any]]:
+    def get_service_account(self, service_account_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             table = self._get_table(table_type="service_accounts")
             if table is None:
                 return None
             with self.Session() as sess:
-                result = sess.execute(select(table).where(table.c.id == service_account_id)).fetchone()
+                stmt = select(table).where(table.c.id == service_account_id)
+                if user_id is not None:
+                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
+                result = sess.execute(stmt).fetchone()
                 return dict(result._mapping) if result else None
         except Exception as e:
             log_debug(f"Error getting service account: {e}")
@@ -6328,6 +6331,7 @@ class PostgresDb(BaseDb):
         page: int = 1,
         sort_by: str = "created_at",
         sort_order: str = "desc",
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = self._get_table(table_type="service_accounts")
@@ -6338,6 +6342,8 @@ class PostgresDb(BaseDb):
                 base_query = select(table)
                 if not include_revoked:
                     base_query = base_query.where(table.c.revoked_at.is_(None))
+                if user_id is not None:
+                    base_query = base_query.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
 
                 # Get total count
                 count_stmt = select(func.count()).select_from(base_query.alias())

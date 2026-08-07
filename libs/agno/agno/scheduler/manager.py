@@ -6,7 +6,7 @@ import time
 from typing import Any, Dict, List, Literal, Optional
 from uuid import uuid4
 
-from agno.db.schemas.scheduler import Schedule, ScheduleRun
+from agno.db.schemas.scheduler import INTERNAL_SCHEDULER_USER_ID, Schedule, ScheduleRun
 from agno.utils.log import log_debug, log_warning
 
 # Valid DB method names for the scheduler
@@ -131,6 +131,12 @@ class ScheduleManager:
 
         if if_exists not in ("raise", "skip", "update"):
             raise ValueError(f"if_exists must be 'raise', 'skip', or 'update', got '{if_exists}'")
+
+        # An owner has to be one the route will accept when the executor forwards
+        # it, or the schedule is stored only to fail on every fire. ``None`` is
+        # still fine -- that is an unowned schedule, which forwards no owner.
+        if user_id is not None and (not user_id.strip() or user_id == INTERNAL_SCHEDULER_USER_ID):
+            raise ValueError(f"'{user_id}' is not a usable schedule owner")
 
         if not validate_cron_expr(cron):
             raise ValueError(f"Invalid cron expression: {cron}")
@@ -288,6 +294,12 @@ class ScheduleManager:
 
         if if_exists not in ("raise", "skip", "update"):
             raise ValueError(f"if_exists must be 'raise', 'skip', or 'update', got '{if_exists}'")
+
+        # An owner has to be one the route will accept when the executor forwards
+        # it, or the schedule is stored only to fail on every fire. ``None`` is
+        # still fine -- that is an unowned schedule, which forwards no owner.
+        if user_id is not None and (not user_id.strip() or user_id == INTERNAL_SCHEDULER_USER_ID):
+            raise ValueError(f"'{user_id}' is not a usable schedule owner")
 
         if not validate_cron_expr(cron):
             raise ValueError(f"Invalid cron expression: {cron}")
