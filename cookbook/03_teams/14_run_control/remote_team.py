@@ -3,6 +3,10 @@ Remote Team
 =============================
 
 Demonstrates calling and streaming a team hosted on a remote AgentOS instance.
+
+The remote AgentOS must mount the RemoteAccess interface and pass the team to it.
+Start the backing server first:
+    python cookbook/05_agent_os/remote/server.py
 """
 
 import asyncio

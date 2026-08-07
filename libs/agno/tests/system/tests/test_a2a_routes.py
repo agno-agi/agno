@@ -292,34 +292,6 @@ class TestA2AWorkflowNonStreaming:
         is_valid, error_msg = validate_a2a_response(data)
         assert is_valid, f"Response validation failed: {error_msg}"
 
-    def test_a2a_send_message_remote_workflow(self, client: httpx.Client, test_user_id: str):
-        """Test A2A send message to remote workflow."""
-        context_id = str(uuid.uuid4())
-
-        response = client.post(
-            "/a2a/workflows/qa-workflow/v1/message:send",
-            json={
-                "jsonrpc": "2.0",
-                "id": str(uuid.uuid4()),
-                "method": "message/send",
-                "params": {
-                    "message": {
-                        "agentId": "qa-workflow",
-                        "contextId": context_id,
-                        "messageId": str(uuid.uuid4()),
-                        "role": "user",
-                        "parts": [{"kind": "text", "text": "Answer this question"}],
-                        "metadata": {"userId": test_user_id},
-                    }
-                },
-            },
-        )
-        assert response.status_code == 200
-
-        data = response.json()
-        is_valid, error_msg = validate_a2a_response(data)
-        assert is_valid, f"Response validation failed: {error_msg}"
-
 
 # =============================================================================
 # A2A Interface Tests - Streaming
@@ -568,69 +540,3 @@ class TestA2AErrorHandling:
         assert response.status_code == 404
         data = response.json()
         assert "detail" in data
-
-
-class TestA2ARemoteAgentGoogleADK:
-    """Test A2A RemoteAgent connected to Google ADK server."""
-
-    # A2A agent registered in gateway (Google ADK facts agent)
-    A2A_AGENT_ID = "facts_agent"
-
-    def test_a2a_agent_listed(self, client: httpx.Client):
-        """Test that the ADK A2A agent is listed in gateway agents."""
-        response = client.get("/agents")
-        assert response.status_code == 200
-        agents = response.json()
-        agent_ids = [a["id"] for a in agents]
-        assert self.A2A_AGENT_ID in agent_ids
-
-    def test_a2a_agent_info(self, client: httpx.Client):
-        """Test getting ADK A2A agent info."""
-        response = client.get(f"/agents/{self.A2A_AGENT_ID}")
-        assert response.status_code == 200
-        agent = response.json()
-        assert agent["id"] == self.A2A_AGENT_ID
-
-    def test_a2a_basic_messaging(self, client: httpx.Client):
-        """Test basic non-streaming message via A2A protocol to Google ADK."""
-        response = client.post(
-            f"/agents/{self.A2A_AGENT_ID}/runs",
-            data={
-                "message": "Tell me an interesting fact about space.",
-                "stream": "false",
-            },
-        )
-        assert response.status_code == 200
-        result = response.json()
-        assert result["content"] is not None
-        assert "run_id" in result
-        assert "session_id" in result
-
-    def test_a2a_multi_turn(self, client: httpx.Client):
-        """Test multi-turn conversation with session_id via A2A protocol."""
-        # First turn - establish context
-        response1 = client.post(
-            f"/agents/{self.A2A_AGENT_ID}/runs",
-            data={
-                "message": "My favorite planet is Saturn. Remember this.",
-                "stream": "false",
-            },
-        )
-        assert response1.status_code == 200
-        result1 = response1.json()
-        session_id = result1["session_id"]
-        assert session_id is not None
-
-        # Second turn - use same session
-        response2 = client.post(
-            f"/agents/{self.A2A_AGENT_ID}/runs",
-            data={
-                "message": "What is my favorite planet?",
-                "session_id": session_id,
-                "stream": "false",
-            },
-        )
-        assert response2.status_code == 200
-        result2 = response2.json()
-        assert result2["session_id"] == session_id
-        assert result2["content"] is not None

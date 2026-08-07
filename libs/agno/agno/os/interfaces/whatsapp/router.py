@@ -27,7 +27,7 @@ from agno.session.workflow import WorkflowSession
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
 from agno.utils.log import log_error, log_info, log_warning
-from agno.workflow import RemoteWorkflow, Workflow
+from agno.workflow import Workflow
 
 _ERROR_MESSAGE = "Sorry, there was an error processing your message. Please try again later."
 _SESSION_RESET_MESSAGE = "New conversation started!"
@@ -119,7 +119,7 @@ def attach_routes(
     router: APIRouter,
     agent: Optional[Union[Agent, RemoteAgent]] = None,
     team: Optional[Union[Team, RemoteTeam]] = None,
-    workflow: Optional[Union[Workflow, RemoteWorkflow]] = None,
+    workflow: Optional[Workflow] = None,
     show_reasoning: bool = False,
     send_user_number_to_context: bool = False,
     access_token: Optional[str] = None,

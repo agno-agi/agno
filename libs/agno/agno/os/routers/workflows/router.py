@@ -59,7 +59,6 @@ from agno.run.workflow import WorkflowErrorEvent
 from agno.utils.log import log_debug, log_warning, logger
 from agno.utils.serialize import json_serializer
 from agno.workflow.factory import WorkflowFactory
-from agno.workflow.remote import RemoteWorkflow
 from agno.workflow.workflow import Workflow
 
 if TYPE_CHECKING:
@@ -142,12 +141,6 @@ async def handle_workflow_via_websocket(
                 return
         if not workflow:
             await websocket.send_text(json.dumps({"event": "error", "error": f"Workflow {workflow_id} not found"}))
-            return
-
-        if isinstance(workflow, RemoteWorkflow):
-            await websocket.send_text(
-                json.dumps({"event": "error", "error": "Remote workflows are not supported via WebSocket"})
-            )
             return
 
         # Generate session_id if not provided
@@ -495,12 +488,6 @@ async def handle_workflow_continue_via_websocket(
         if not workflow:
             await websocket.send_text(json.dumps({"event": "error", "error": f"Workflow {workflow_id} not found"}))
             return
-        if isinstance(workflow, RemoteWorkflow):
-            await websocket.send_text(
-                json.dumps({"event": "error", "error": "Continue is not supported for remote workflows via WebSocket"})
-            )
-            return
-
         # Load the paused run
         existing_run = await workflow.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)
         if existing_run is None:
@@ -569,7 +556,7 @@ async def handle_workflow_continue_via_websocket(
 
 
 async def workflow_response_streamer(
-    workflow: Union[Workflow, RemoteWorkflow],
+    workflow: Workflow,
     input: Union[str, Dict[str, Any], List[Any], BaseModel],
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
@@ -587,10 +574,6 @@ async def workflow_response_streamer(
         else:
             stream_events = True
 
-        # Pass auth_token for remote workflows
-        if auth_token and isinstance(workflow, RemoteWorkflow):
-            kwargs["auth_token"] = auth_token
-
         run_response = workflow.arun(  # type: ignore
             input=input,
             session_id=session_id,
@@ -606,8 +589,6 @@ async def workflow_response_streamer(
         # If the workflow paused, yield WorkflowPausedEvent as the new clean
         # snapshot event. Also yield the legacy "WorkflowRunOutput" event for
         # backwards compatibility with older clients.
-        if isinstance(workflow, RemoteWorkflow):
-            return
         _session = await workflow.aget_session(session_id=session_id)
         if _session and _session.runs:
             _last_run = _session.runs[-1]
@@ -661,7 +642,7 @@ async def workflow_response_streamer(
 
 
 async def workflow_resumable_response_streamer(
-    workflow: Union[Workflow, RemoteWorkflow],
+    workflow: Workflow,
     input: Union[str, Dict[str, Any], List[Any], BaseModel],
     session_id: Optional[str] = None,
     user_id: Optional[str] = None,
@@ -685,9 +666,6 @@ async def workflow_resumable_response_streamer(
         stream_events = kwargs.pop("stream_events")
     else:
         stream_events = True
-
-    if auth_token and isinstance(workflow, RemoteWorkflow):
-        kwargs["auth_token"] = auth_token
 
     try:
         async for sse_data in workflow.arun(  # type: ignore
@@ -803,7 +781,7 @@ async def workflow_continue_response_streamer(
 
 
 async def _resume_stream_generator(
-    workflow: Union[Workflow, RemoteWorkflow],
+    workflow: Workflow,
     run_id: str,
     last_event_index: Optional[int],
     session_id: Optional[str],
@@ -822,7 +800,7 @@ async def _resume_stream_generator(
 
     if buffer_status is None:
         # PATH 3: Not in buffer -- fall back to database
-        if session_id and not isinstance(workflow, RemoteWorkflow):
+        if session_id:
             try:
                 run_output = await workflow.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)
             except Exception as e:
@@ -1110,10 +1088,7 @@ def get_workflow_router(
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
 
-        if isinstance(workflow, RemoteWorkflow):
-            return await workflow.get_workflow_config()
-        else:
-            return await WorkflowResponse.from_workflow(workflow=workflow)
+        return await WorkflowResponse.from_workflow(workflow=workflow)
 
     @router.post(
         "/workflows/{workflow_id}/runs",
@@ -1225,11 +1200,6 @@ def get_workflow_router(
 
         # Background execution
         if background:
-            if isinstance(workflow, RemoteWorkflow):
-                raise HTTPException(
-                    status_code=400, detail="Background execution is not supported for remote workflows"
-                )
-
             if stream:
                 # background=True, stream=True: resumable SSE streaming
                 # Workflow runs in a detached asyncio.Task that survives client disconnections.
@@ -1288,10 +1258,6 @@ def get_workflow_router(
                     media_type="text/event-stream",
                 )
             else:
-                # Pass auth_token for remote workflows
-                if auth_token and isinstance(workflow, RemoteWorkflow):
-                    kwargs["auth_token"] = auth_token
-
                 run_response = await workflow.arun(
                     input=message,
                     session_id=session_id,
@@ -1372,9 +1338,6 @@ def get_workflow_router(
             session_id=session_id,
             factory_input=factory_input,
         )
-
-        if isinstance(workflow, RemoteWorkflow):
-            raise HTTPException(status_code=400, detail="Continue is not supported for remote workflows")
 
         # Ownership check before status validation — see continue_agent_run.
         # Non-admin callers must own the session AND the run must belong to
@@ -1600,8 +1563,6 @@ def get_workflow_router(
         )
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
-        if isinstance(workflow, RemoteWorkflow):
-            raise HTTPException(status_code=400, detail="Stream resumption is not supported for remote workflows")
 
         if scoped_user_id is not None:
             assert session_id is not None
@@ -1672,8 +1633,6 @@ def get_workflow_router(
                 raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
             if workflow is None:
                 raise HTTPException(status_code=404, detail="Workflow not found")
-        if isinstance(workflow, RemoteWorkflow):
-            raise HTTPException(status_code=400, detail="Run polling is not supported for remote workflows")
 
         user_id = get_scoped_user_id(request)
 
@@ -1744,9 +1703,6 @@ def get_workflow_router(
             session_id=session_id,
             factory_input=factory_input,
         )
-        if isinstance(workflow, RemoteWorkflow):
-            raise HTTPException(status_code=400, detail="Run listing is not supported for remote workflows")
-
         # Read-only session lookup (no create) so we don't manufacture a session
         # for a user who shouldn't see it. For non-admins, scope by user_id so
         # mismatched ownership returns 404, not a leak.

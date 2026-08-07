@@ -25,7 +25,7 @@ from agno.os.interfaces.slack.ids import (
 from agno.os.interfaces.slack.security import verify_slack_signature
 from agno.team import RemoteTeam, Team
 from agno.tools.slack import SlackTools
-from agno.workflow import RemoteWorkflow, Workflow
+from agno.workflow import Workflow
 
 
 class SlackEventResponse(BaseModel):
@@ -40,7 +40,7 @@ def attach_routes(
     router: APIRouter,
     agent: Optional[Union[Agent, RemoteAgent]] = None,
     team: Optional[Union[Team, RemoteTeam]] = None,
-    workflow: Optional[Union[Workflow, RemoteWorkflow]] = None,
+    workflow: Optional[Workflow] = None,
     reply_to_mentions_only: bool = True,
     token: Optional[str] = None,
     user_token: Optional[str] = None,

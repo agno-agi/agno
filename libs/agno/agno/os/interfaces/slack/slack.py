@@ -7,7 +7,7 @@ from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.base import BaseInterface
 from agno.os.interfaces.slack.router import attach_routes
 from agno.team import RemoteTeam, Team
-from agno.workflow import RemoteWorkflow, Workflow
+from agno.workflow import Workflow
 
 
 class Slack(BaseInterface):
@@ -23,7 +23,7 @@ class Slack(BaseInterface):
         self,
         agent: Optional[Union[Agent, RemoteAgent]] = None,
         team: Optional[Union[Team, RemoteTeam]] = None,
-        workflow: Optional[Union[Workflow, RemoteWorkflow]] = None,
+        workflow: Optional[Workflow] = None,
         prefix: str = "/slack",
         tags: Optional[List[str]] = None,
         reply_to_mentions_only: bool = True,

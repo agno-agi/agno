@@ -9,7 +9,6 @@ Runnable workflow examples under: cookbook/04_workflows/06_advanced_concepts/run
 - event_storage.py: Demonstrates event storage.
 - executor_events.py: Demonstrates executor events.
 - metrics.py: Demonstrates metrics.
-- remote_workflow.py: Demonstrates remote workflow.
 - workflow_cli.py: Demonstrates workflow cli.
 - workflow_serialization.py: Demonstrates workflow serialization.
 

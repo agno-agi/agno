@@ -5,7 +5,6 @@ from agno.workflow.decorators import pause
 from agno.workflow.factory import WorkflowFactory
 from agno.workflow.loop import Loop
 from agno.workflow.parallel import Parallel
-from agno.workflow.remote import RemoteWorkflow
 from agno.workflow.router import Router
 from agno.workflow.step import Step
 from agno.workflow.steps import Steps
@@ -16,7 +15,6 @@ __all__ = [
     "Workflow",
     "WorkflowAgent",
     "WorkflowFactory",
-    "RemoteWorkflow",
     "Steps",
     "Step",
     "Loop",

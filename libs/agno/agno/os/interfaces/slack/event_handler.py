@@ -29,7 +29,7 @@ from agno.os.interfaces.slack.types import tool_name
 from agno.team import RemoteTeam, Team
 from agno.tools.slack import SlackTools
 from agno.utils.log import log_error
-from agno.workflow import RemoteWorkflow, Workflow
+from agno.workflow import Workflow
 
 _ERROR_MESSAGE = "Sorry, there was an error processing your message."
 _STREAM_CHAR_LIMIT = 39000
@@ -71,7 +71,7 @@ _IGNORED_SUBTYPES = frozenset(
 class SlackEventHandler:
     slack_tools: SlackTools
     ssl: Optional[SSLContext]
-    entity: Union[Agent, RemoteAgent, Team, RemoteTeam, Workflow, RemoteWorkflow]
+    entity: Union[Agent, RemoteAgent, Team, RemoteTeam, Workflow]
     entity_id: str
     entity_name: str
     entity_type: Literal["agent", "team", "workflow"]

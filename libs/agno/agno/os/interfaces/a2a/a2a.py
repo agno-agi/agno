@@ -11,7 +11,7 @@ from agno.agent.remote import RemoteAgent
 from agno.os.interfaces.a2a.router import attach_routes
 from agno.os.interfaces.base import BaseInterface
 from agno.team import RemoteTeam, Team
-from agno.workflow import RemoteWorkflow, Workflow
+from agno.workflow import Workflow
 
 
 class A2A(BaseInterface):
@@ -23,7 +23,7 @@ class A2A(BaseInterface):
         self,
         agents: Optional[List[Union[Agent, RemoteAgent, AgentProtocol]]] = None,
         teams: Optional[List[Union[Team, RemoteTeam]]] = None,
-        workflows: Optional[List[Union[Workflow, RemoteWorkflow]]] = None,
+        workflows: Optional[List[Workflow]] = None,
         prefix: str = "/a2a",
         tags: Optional[List[str]] = None,
     ):

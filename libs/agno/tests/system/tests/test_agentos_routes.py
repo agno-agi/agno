@@ -69,16 +69,6 @@ def test_remote_team_accessible(client: httpx.Client):
     assert "members" in data
 
 
-def test_remote_workflow_accessible(client: httpx.Client):
-    """Test remote qa-workflow is accessible through gateway."""
-    response = client.get("/workflows/qa-workflow")
-    assert response.status_code == 200
-    data = response.json()
-
-    assert data["id"] == "qa-workflow"
-    assert data["name"] == "QA Workflow"
-
-
 # =============================================================================
 # Error Handling Tests
 # =============================================================================

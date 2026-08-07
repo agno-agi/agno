@@ -28,7 +28,6 @@ from agno.team.factory import TeamFactory
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
 from agno.workflow.factory import WorkflowFactory
-from agno.workflow.remote import RemoteWorkflow
 from agno.workflow.workflow import Workflow
 
 
@@ -233,7 +232,7 @@ class WorkflowSummaryResponse(BaseModel):
     @classmethod
     def from_workflow(
         cls,
-        workflow: Union[Workflow, RemoteWorkflow, WorkflowFactory],
+        workflow: Union[Workflow, WorkflowFactory],
         is_component: bool = False,
     ) -> "WorkflowSummaryResponse":
         if isinstance(workflow, WorkflowFactory):

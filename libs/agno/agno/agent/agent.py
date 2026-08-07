@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import (
+    TYPE_CHECKING,
     Any,
     AsyncIterator,
     Callable,
@@ -63,6 +64,9 @@ from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.log import log_warning
 from agno.utils.safe_formatter import SafeFormatter
+
+if TYPE_CHECKING:
+    from agno.contacts.contacts import Contact
 
 
 @dataclass(init=False)
@@ -188,6 +192,11 @@ class Agent:
 
     # A function that acts as middleware and is called around tool calls.
     tool_hooks: Optional[List[Callable]] = None
+
+    # --- Agent Contacts ---
+    # Other user-built agents and teams this agent can message via the message_contact tool.
+    # Contacts run like child runs inside this agent's session, streaming nested events.
+    contacts: Optional[List[Contact]] = None
 
     # --- Agent Hooks ---
     # Functions called right after agent-session is loaded, before processing starts
@@ -438,6 +447,7 @@ class Agent:
         tool_call_limit: Optional[int] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
         tool_hooks: Optional[List[Callable]] = None,
+        contacts: Optional[List[Contact]] = None,
         pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
         post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
         reasoning: bool = False,
@@ -607,6 +617,7 @@ class Agent:
         self.tool_call_limit = tool_call_limit
         self.tool_choice = tool_choice
         self.tool_hooks = tool_hooks
+        self.contacts = contacts
 
         self.pre_hooks = pre_hooks
         self.post_hooks = post_hooks

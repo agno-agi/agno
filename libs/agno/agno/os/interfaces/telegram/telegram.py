@@ -12,7 +12,7 @@ from agno.os.interfaces.telegram.router import (
     attach_routes,
 )
 from agno.team import RemoteTeam, Team
-from agno.workflow import RemoteWorkflow, Workflow
+from agno.workflow import Workflow
 
 DEFAULT_BOT_COMMANDS: List[Dict[str, str]] = [
     {"command": "start", "description": "Start the bot"},
@@ -34,7 +34,7 @@ class Telegram(BaseInterface):
         self,
         agent: Optional[Union[Agent, RemoteAgent]] = None,
         team: Optional[Union[Team, RemoteTeam]] = None,
-        workflow: Optional[Union[Workflow, RemoteWorkflow]] = None,
+        workflow: Optional[Workflow] = None,
         prefix: str = "/telegram",
         tags: Optional[List[str]] = None,
         token: Optional[str] = None,

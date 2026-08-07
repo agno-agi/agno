@@ -264,7 +264,6 @@ async def test_get_agentos_config(mcp_client: MCPTestClient):
     # Verify workflows are present
     workflow_ids = [workflow["id"] for workflow in result["workflows"]]
     assert "gateway-workflow" in workflow_ids, "Local workflow 'gateway-workflow' should be present"
-    assert "qa-workflow" in workflow_ids, "Remote workflow 'qa-workflow' should be present"
 
 
 @pytest.mark.asyncio
@@ -329,24 +328,6 @@ async def test_run_local_workflow(mcp_client: MCPTestClient):
         {
             "workflow_id": "gateway-workflow",
             "message": "Process this message",
-        },
-    )
-
-    # Check the result has expected fields
-    assert result is not None
-    # Trimmed result: the text block is the answer itself (a plain string unless the
-    # answer happens to be JSON); structured ids live in structuredContent.
-    assert isinstance(result, str) or (isinstance(result, dict) and ("content" in result or "run_id" in result))
-
-
-@pytest.mark.asyncio
-async def test_run_remote_workflow(mcp_client: MCPTestClient):
-    """Test running a remote workflow via MCP."""
-    result = await mcp_client.call_tool(
-        "run_workflow",
-        {
-            "workflow_id": "qa-workflow",
-            "message": "Answer this question: What is 2+2?",
         },
     )
 

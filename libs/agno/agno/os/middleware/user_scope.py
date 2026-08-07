@@ -55,7 +55,7 @@ if TYPE_CHECKING:
     from agno.agent.protocol import AgentProtocol
     from agno.os.app import AgentOS
     from agno.team import RemoteTeam, Team
-    from agno.workflow import RemoteWorkflow, Workflow
+    from agno.workflow import Workflow
 
 
 ComponentType = Literal["agents", "teams", "workflows"]
@@ -514,7 +514,7 @@ def resolve_owned_workflow(os: "AgentOS") -> Callable:
             default=None,
             description="Session ID the run belongs to. Required for non-admin JWT users.",
         ),
-    ) -> "Union[Workflow, RemoteWorkflow]":
+    ) -> "Workflow":
         workflow = get_workflow_by_id(
             workflow_id=workflow_id,
             workflows=os.workflows,
