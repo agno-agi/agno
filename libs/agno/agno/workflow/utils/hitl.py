@@ -237,7 +237,10 @@ def save_paused_session(
     session: "WorkflowSession",
     workflow_run_response: "WorkflowRunOutput",
 ) -> None:
-    """Save the session with paused state.
+    """Save the session and the paused run.
+
+    Under v3 storage, the session row and the run row are persisted
+    independently; this helper writes both (O(1) each).
 
     Args:
         workflow: The workflow instance.
@@ -246,7 +249,7 @@ def save_paused_session(
     """
     workflow._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
     session.upsert_run(run=workflow_run_response)
-    workflow.save_session(session=session)
+    workflow._persist_session_and_run(session=session, run=workflow_run_response)
 
 
 async def asave_paused_session(
@@ -254,7 +257,10 @@ async def asave_paused_session(
     session: "WorkflowSession",
     workflow_run_response: "WorkflowRunOutput",
 ) -> None:
-    """Save the session with paused state (async version).
+    """Save the session and the paused run (async version).
+
+    Under v3 storage, the session row and the run row are persisted
+    independently; this helper writes both (O(1) each).
 
     Args:
         workflow: The workflow instance.
@@ -264,9 +270,9 @@ async def asave_paused_session(
     workflow._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
     session.upsert_run(run=workflow_run_response)
     if workflow._has_async_db():
-        await workflow.asave_session(session=session)
+        await workflow._apersist_session_and_run(session=session, run=workflow_run_response)
     else:
-        workflow.save_session(session=session)
+        workflow._persist_session_and_run(session=session, run=workflow_run_response)
 
 
 def check_output_review_status(

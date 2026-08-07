@@ -164,35 +164,35 @@ def get_session_metrics_internal(team: "Team", session: TeamSession) -> SessionM
 def _read_session(
     team: "Team", session_id: str, session_type: SessionType = SessionType.TEAM, user_id: Optional[str] = None
 ) -> Optional[Union[TeamSession, WorkflowSession]]:
-    """Get a Session from the database."""
-    try:
-        if not team.db:
-            raise ValueError("Db not initialized")
-        session = team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
-        return session  # type: ignore
-    except Exception as e:
-        log_warning(f"Error getting session from db: {str(e)}")
-        return None
+    """Get a Session from the database.
+
+    Read errors propagate. Do NOT coerce failures to None here: an empty result
+    is indistinguishable from "row does not exist", and the caller will happily
+    create a fresh session with the same id and overwrite the real row on the
+    next write. This is how a transient Postgres failover wiped six weeks of
+    conversation history in a real incident. Let the exception surface and
+    fail the run loudly -- a failed run is recoverable, a wiped session is not.
+    """
+    if not team.db:
+        raise ValueError("Db not initialized")
+    session = team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
+    return session  # type: ignore
 
 
 async def _aread_session(
     team: "Team", session_id: str, session_type: SessionType = SessionType.TEAM, user_id: Optional[str] = None
 ) -> Optional[Union[TeamSession, WorkflowSession]]:
-    """Get a Session from the database."""
+    """Async twin of :func:`_read_session`. Same rationale: do NOT swallow errors."""
     from agno.team._init import _has_async_db
 
-    try:
-        if not team.db:
-            raise ValueError("Db not initialized")
-        if _has_async_db(team):
-            team.db = cast(AsyncBaseDb, team.db)
-            session = await team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
-        else:
-            session = team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore[assignment]
-        return session  # type: ignore
-    except Exception as e:
-        log_warning(f"Error getting session from db: {str(e)}")
-        return None
+    if not team.db:
+        raise ValueError("Db not initialized")
+    if _has_async_db(team):
+        team.db = cast(AsyncBaseDb, team.db)
+        session = await team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)
+    else:
+        session = team.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore[assignment]
+    return session  # type: ignore
 
 
 def _upsert_session(team: "Team", session: TeamSession) -> Optional[TeamSession]:
@@ -221,6 +221,63 @@ async def _aupsert_session(team: "Team", session: TeamSession) -> Optional[TeamS
     except Exception as e:
         log_warning(f"Error upserting session into db: {str(e)}")
     return None
+
+
+def _upsert_run(
+    team: "Team",
+    run: Union[TeamRunOutput, RunOutput],
+    session_id: str,
+    user_id: Optional[str] = None,
+    run_index: Optional[int] = None,
+) -> None:
+    """Persist a single run to the runs storage (O(1) write).
+
+    Silently no-ops on adapters that have not implemented ``upsert_run`` yet.
+    """
+    try:
+        if not team.db:
+            return
+        from agno.run.status_persist import persist_worker_owned_run
+
+        # Queue-worker-owned runs save through the attempt-fenced primitive;
+        # member-run saves pass through untouched (their run_ids are never
+        # registered - a zombie leg's member writes orphan, not clobber)
+        if persist_worker_owned_run(team.db, run, session_id=session_id, user_id=user_id):
+            return
+        team.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
+    except NotImplementedError:
+        log_debug(f"{type(team.db).__name__} does not implement upsert_run; skipping per-run write")
+    except Exception as e:
+        log_warning(f"Error upserting run into db: {str(e)}")
+
+
+async def _aupsert_run(
+    team: "Team",
+    run: Union[TeamRunOutput, RunOutput],
+    session_id: str,
+    user_id: Optional[str] = None,
+    run_index: Optional[int] = None,
+) -> None:
+    """Async version of ``_upsert_run``."""
+    from agno.team._init import _has_async_db
+
+    try:
+        if not team.db:
+            return
+        from agno.run.status_persist import apersist_worker_owned_run
+
+        # Queue-worker-owned runs save through the attempt-fenced primitive;
+        # member-run saves pass through untouched (see _upsert_run)
+        if await apersist_worker_owned_run(team.db, run, session_id=session_id, user_id=user_id):
+            return
+        if _has_async_db(team):
+            await team.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr,misc]
+        else:
+            team.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
+    except NotImplementedError:
+        log_debug(f"{type(team.db).__name__} does not implement upsert_run; skipping per-run write")
+    except Exception as e:
+        log_warning(f"Error upserting run into db: {str(e)}")
 
 
 def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str] = None) -> TeamSession:
@@ -267,17 +324,26 @@ def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str
         if team.introduction is not None:
             from uuid import uuid4
 
-            team_session.upsert_run(
-                TeamRunOutput(
-                    run_id=str(uuid4()),
-                    team_id=team.id,
-                    session_id=session_id,
-                    user_id=user_id,
-                    team_name=team.name,
-                    content=team.introduction,
-                    messages=[Message(role=team.model.assistant_message_role, content=team.introduction)],  # type: ignore
-                )
+            introduction_run = TeamRunOutput(
+                run_id=str(uuid4()),
+                team_id=team.id,
+                session_id=session_id,
+                user_id=user_id,
+                team_name=team.name,
+                content=team.introduction,
+                messages=[Message(role=team.model.assistant_message_role, content=team.introduction)],  # type: ignore
             )
+            team_session.upsert_run(introduction_run)
+
+            # v3: session.runs is in-memory; persist the intro to the runs table
+            # so a session reload picks it up (pre-3.0's save_session wrote the
+            # entire runs blob, so this happened for free).
+            if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
+                from agno.team._session import save_session
+                from agno.team._storage import _upsert_run
+
+                save_session(team, session=team_session)
+                _upsert_run(team, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
 
     # Cache the session if relevant
     if team_session is not None and team.cache_session:
@@ -334,17 +400,31 @@ async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optio
         if team.introduction is not None:
             from uuid import uuid4
 
-            team_session.upsert_run(
-                TeamRunOutput(
-                    run_id=str(uuid4()),
-                    team_id=team.id,
-                    session_id=session_id,
-                    user_id=user_id,
-                    team_name=team.name,
-                    content=team.introduction,
-                    messages=[Message(role=team.model.assistant_message_role, content=team.introduction)],  # type: ignore
-                )
+            introduction_run = TeamRunOutput(
+                run_id=str(uuid4()),
+                team_id=team.id,
+                session_id=session_id,
+                user_id=user_id,
+                team_name=team.name,
+                content=team.introduction,
+                messages=[Message(role=team.model.assistant_message_role, content=team.introduction)],  # type: ignore
             )
+            team_session.upsert_run(introduction_run)
+
+            # v3: session.runs is in-memory; persist the intro to the runs table
+            # so a session reload picks it up (pre-3.0's save_session wrote the
+            # entire runs blob, so this happened for free).
+            if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
+                from agno.team._init import _has_async_db
+                from agno.team._session import asave_session, save_session
+                from agno.team._storage import _aupsert_run, _upsert_run
+
+                if _has_async_db(team):
+                    await asave_session(team, session=team_session)
+                    await _aupsert_run(team, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
+                else:
+                    save_session(team, session=team_session)
+                    _upsert_run(team, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
 
     # Cache the session if relevant
     if team_session is not None and team.cache_session:
@@ -549,10 +629,23 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         for tool in team.tools:
             try:
                 if isinstance(tool, Function):
-                    serialized_tools.append(tool.to_dict())
+                    func_dict = tool.to_dict()
+                    # A rehydrated team holds bare Functions; re-stamp the
+                    # attribution they carry so it survives the round trip.
+                    if tool.owning_toolkit:
+                        func_dict["toolkit"] = tool.owning_toolkit
+                    serialized_tools.append(func_dict)
                 elif isinstance(tool, Toolkit):
-                    for func in tool.functions.values():
-                        serialized_tools.append(func.to_dict())
+                    # get_functions() is the exposed subset -- the only functions
+                    # the team runtime ever calls.
+                    for func in tool.get_functions().values():
+                        func_dict = func.to_dict()
+                        # Record the owning toolkit so rehydration can re-bind
+                        # same-named functions to the right toolkit (see
+                        # Registry.rehydrate_function).
+                        if isinstance(tool.name, str) and tool.name:
+                            func_dict["toolkit"] = tool.name
+                        serialized_tools.append(func_dict)
                 elif callable(tool):
                     func = Function.from_callable(tool)
                     serialized_tools.append(func.to_dict())
@@ -820,7 +913,7 @@ def from_dict(
     # --- Handle tools reconstruction ---
     if "tools" in config and config["tools"]:
         if registry:
-            config["tools"] = [registry.rehydrate_function(t) for t in config["tools"]]
+            config["tools"] = registry.rehydrate_functions(config["tools"])
         else:
             log_warning("No registry provided, tools will not be rehydrated.")
             del config["tools"]
@@ -1149,7 +1242,7 @@ def _hydrate_from_graph(
         member_type = link_meta.get("type")
 
         if member_type == "agent":
-            agent = Agent.from_dict(child_config)
+            agent = Agent.from_dict(child_config, registry=registry)
             agent.id = child_graph["component"]["component_id"]
             if agent.db is None:
                 agent.db = db

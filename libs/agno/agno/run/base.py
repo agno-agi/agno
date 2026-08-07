@@ -43,8 +43,35 @@ class RunContext:
     client_tools: Optional[List[Any]] = None
 
 
+class _EventIndexCarrier:
+    """Plain (non-dataclass) base carrying ``event_index``.
+
+    The stream-assigned monotonic index, stamped by the event stream's
+    add_event at publish time. Stamping the shared object means the
+    component's own session save persists the REAL index with the stored
+    event - which is what lets the DB replay fallback honor a client's
+    last_event_index instead of renumbering from zero (indices are NOT
+    gapless: retries and continuation legs leave gaps that positional
+    renumbering destroys). None for events that never rode a stream
+    (non-streaming runs, legacy rows).
+
+    DELIBERATELY NOT a dataclass field. The only field form that lets a
+    defaulted base attribute coexist with subclasses' required positional
+    fields is field(kw_only=True) - which is Python 3.10+, and this package
+    supports 3.9. Annotations on a NON-dataclass base are not fields (on
+    any Python version, and to mypy's dataclass plugin alike), so there is
+    no ordering constraint and no constructor parameter - while instance
+    assignment still shadows the class default per-object and type checkers
+    see an ordinary Optional[int] attribute. Because asdict()/fields() do
+    not see it, to_dict and from_dict carry it EXPLICITLY - keep the three
+    in sync.
+    """
+
+    event_index: Optional[int] = None
+
+
 @dataclass
-class BaseRunOutputEvent:
+class BaseRunOutputEvent(_EventIndexCarrier):
     def to_dict(self) -> Dict[str, Any]:
         _dict = {
             k: v
@@ -75,6 +102,11 @@ class BaseRunOutputEvent:
                 "followups",
             ]
         }
+
+        # Not a dataclass field (3.9-compatible class attribute - see its
+        # declaration), so asdict() misses it: carry it explicitly
+        if self.event_index is not None:
+            _dict["event_index"] = self.event_index
 
         if hasattr(self, "metadata") and self.metadata is not None:
             _dict["metadata"] = self.metadata
@@ -206,6 +238,10 @@ class BaseRunOutputEvent:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]):
+        # Not a dataclass field (see its declaration): pop before
+        # construction, restore by assignment after
+        event_index = data.pop("event_index", None)
+
         tool = data.pop("tool", None)
         if tool:
             from agno.models.response import ToolExecution
@@ -306,14 +342,16 @@ class BaseRunOutputEvent:
         # Filter data to only include fields that are actually defined in the target class
         # CustomEvent accepts arbitrary fields, so skip filtering for it
         if cls.__name__ == "CustomEvent":
-            return cls(**data)
+            event = cls(**data)
+        else:
+            from dataclasses import fields
 
-        from dataclasses import fields
-
-        supported_fields = {f.name for f in fields(cls)}
-        filtered_data = {k: v for k, v in data.items() if k in supported_fields}
-
-        return cls(**filtered_data)
+            supported_fields = {f.name for f in fields(cls)}
+            filtered_data = {k: v for k, v in data.items() if k in supported_fields}
+            event = cls(**filtered_data)
+        if event_index is not None:
+            event.event_index = event_index
+        return event
 
     @property
     def is_paused(self):
@@ -339,3 +377,16 @@ class RunStatus(str, Enum):
     # history-builders can skip it when rebuilding context. Pass replace_original=false
     # to keep the original COMPLETED and visible instead.
     regenerated = "REGENERATED"
+
+
+# Canonical set of run statuses excluded when rebuilding message history/context.
+# Single source of truth: session.get_messages (agent + team) and the DB-level
+# bounded-history read (agno.db.utils.HISTORY_SKIP_STATUSES) both derive from this,
+# so the full-load and "most recent N" read paths can never return different
+# history windows for the same session.
+HISTORY_SKIP_STATUSES: list["RunStatus"] = [
+    RunStatus.paused,
+    RunStatus.cancelled,
+    RunStatus.error,
+    RunStatus.regenerated,
+]

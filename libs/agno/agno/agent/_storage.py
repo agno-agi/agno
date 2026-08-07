@@ -8,6 +8,7 @@ from typing import (
     Dict,
     List,
     Optional,
+    Set,
     Type,
     Union,
     cast,
@@ -27,6 +28,7 @@ from agno.registry.registry import Registry
 from agno.run.agent import RunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.tools.function import Function
+from agno.tools.toolkit import Toolkit
 from agno.utils.agent import (
     aget_last_run_output_util,
     aget_run_output_util,
@@ -128,46 +130,65 @@ async def aget_last_run_output(agent: Agent, session_id: Optional[str] = None) -
 
 
 def read_session(
-    agent: Agent, session_id: str, session_type: SessionType = SessionType.AGENT, user_id: Optional[str] = None
+    agent: Agent,
+    session_id: str,
+    session_type: SessionType = SessionType.AGENT,
+    user_id: Optional[str] = None,
+    runs_limit: Optional[int] = None,
 ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
-    """Get a Session from the database."""
-    try:
-        if not agent.db:
-            raise ValueError("Db not initialized")
-        return agent.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
-    except Exception as e:
-        import traceback
+    """Get a Session from the database.
 
-        traceback.print_exc(limit=3)
-        log_warning(f"Error getting session from db: {str(e)}")
-        return None
+    Read errors propagate. Do NOT coerce failures to None here: an empty result
+    is indistinguishable from "row does not exist", and the caller will happily
+    create a fresh session with the same id and overwrite the real row on the
+    next write. This is how a transient Postgres failover wiped six weeks of
+    conversation history in a real incident. Let the exception surface and
+    fail the run loudly -- a failed run is recoverable, a wiped session is not.
+    """
+    if not agent.db:
+        raise ValueError("Db not initialized")
+    # Every adapter accepts runs_limit; those that don't optimize it load the full
+    # history (a safe superset), so we can pass it unconditionally.
+    return agent.db.get_session(  # type: ignore
+        session_id=session_id, session_type=session_type, user_id=user_id, runs_limit=runs_limit
+    )
 
 
 async def aread_session(
-    agent: Agent, session_id: str, session_type: SessionType = SessionType.AGENT, user_id: Optional[str] = None
+    agent: Agent,
+    session_id: str,
+    session_type: SessionType = SessionType.AGENT,
+    user_id: Optional[str] = None,
+    runs_limit: Optional[int] = None,
 ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
-    """Get a Session from the database."""
+    """Async twin of :func:`read_session`. Same rationale: do NOT swallow errors."""
     from agno.agent import _init
 
-    try:
-        if not agent.db:
-            raise ValueError("Db not initialized")
-        if _init.has_async_db(agent):
-            return await agent.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
-        else:
-            return agent.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
-    except Exception as e:
-        import traceback
-
-        traceback.print_exc(limit=3)
-        log_warning(f"Error getting session from db: {str(e)}")
-        return None
+    if not agent.db:
+        raise ValueError("Db not initialized")
+    # Every adapter accepts runs_limit; those that don't optimize it load the full
+    # history (a safe superset), so we can pass it unconditionally.
+    if _init.has_async_db(agent):
+        return await agent.db.get_session(  # type: ignore
+            session_id=session_id, session_type=session_type, user_id=user_id, runs_limit=runs_limit
+        )
+    return agent.db.get_session(  # type: ignore
+        session_id=session_id, session_type=session_type, user_id=user_id, runs_limit=runs_limit
+    )
 
 
 def upsert_session(
     agent: Agent, session: Union[AgentSession, TeamSession, WorkflowSession]
 ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
-    """Upsert a Session into the database."""
+    """Upsert the session row.
+
+    Runs are persisted independently via ``upsert_run()`` — this writes only the
+    session row.
+
+    Args:
+        agent: The Agent instance.
+        session: The session to upsert.
+    """
 
     try:
         if not agent.db:
@@ -184,7 +205,15 @@ def upsert_session(
 async def aupsert_session(
     agent: Agent, session: Union[AgentSession, TeamSession, WorkflowSession]
 ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
-    """Upsert a Session into the database."""
+    """Upsert the session row.
+
+    Runs are persisted independently via ``upsert_run()`` — this writes only the
+    session row.
+
+    Args:
+        agent: The Agent instance.
+        session: The session to upsert.
+    """
     from agno.agent import _init
 
     try:
@@ -200,6 +229,96 @@ async def aupsert_session(
         traceback.print_exc(limit=3)
         log_warning(f"Error upserting session into db: {str(e)}")
         return None
+
+
+def upsert_run(
+    agent: Agent,
+    run: RunOutput,
+    session_id: str,
+    user_id: Optional[str] = None,
+    run_index: Optional[int] = None,
+) -> None:
+    """Upsert a single run to the database (O(1) operation).
+
+    This is optimized for updating existing runs (e.g., status changes in HITL
+    or background mode) without re-upserting all runs in the session.
+
+    Silently no-ops on adapters that have not been ported to v3 storage —
+    those adapters persist runs inline via ``upsert_session``.
+
+    Args:
+        agent: The Agent instance.
+        run: The run to upsert.
+        session_id: The session ID this run belongs to.
+        user_id: Optional user ID to associate with the run.
+        run_index: Optional run index for new runs.
+    """
+    try:
+        if not agent.db:
+            return
+        from agno.run.status_persist import persist_worker_owned_run
+
+        # Queue-worker-owned runs save through the attempt-fenced primitive;
+        # a zombie attempt's write is refused instead of clobbering the row
+        if persist_worker_owned_run(agent.db, run, session_id=session_id, user_id=user_id):
+            return
+        agent.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
+    except NotImplementedError:
+        # Adapter has not been ported to v3 storage; runs are persisted inline
+        # via upsert_session instead. Silent no-op.
+        log_debug(f"{type(agent.db).__name__} does not implement upsert_run; skipping per-run write")
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc(limit=3)
+        log_warning(f"Error upserting run into db: {str(e)}")
+
+
+async def aupsert_run(
+    agent: Agent,
+    run: RunOutput,
+    session_id: str,
+    user_id: Optional[str] = None,
+    run_index: Optional[int] = None,
+) -> None:
+    """Upsert a single run to the database (O(1) operation).
+
+    This is the async version of upsert_run(). Optimized for updating existing
+    runs (e.g., status changes in HITL or background mode) without re-upserting
+    all runs in the session.
+
+    Silently no-ops on adapters that have not been ported to v3 storage —
+    those adapters persist runs inline via ``upsert_session``.
+
+    Args:
+        agent: The Agent instance.
+        run: The run to upsert.
+        session_id: The session ID this run belongs to.
+        user_id: Optional user ID to associate with the run.
+        run_index: Optional run index for new runs.
+    """
+    from agno.agent import _init
+
+    try:
+        if not agent.db:
+            return
+        from agno.run.status_persist import apersist_worker_owned_run
+
+        # Queue-worker-owned runs save through the attempt-fenced primitive;
+        # a zombie attempt's write is refused instead of clobbering the row
+        if await apersist_worker_owned_run(agent.db, run, session_id=session_id, user_id=user_id):
+            return
+        if _init.has_async_db(agent):
+            await agent.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr,misc]
+        else:
+            agent.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
+    except NotImplementedError:
+        log_debug(f"{type(agent.db).__name__} does not implement upsert_run; skipping per-run write")
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc(limit=3)
+        log_warning(f"Error upserting run into db: {str(e)}")
 
 
 # ---------------------------------------------------------------------------
@@ -326,19 +445,28 @@ def read_or_create_session(
             created_at=int(time()),
         )
         if agent.introduction is not None:
-            agent_session.upsert_run(
-                RunOutput(
-                    run_id=str(uuid4()),
-                    session_id=session_id,
-                    agent_id=agent.id,
-                    agent_name=agent.name,
-                    user_id=user_id,
-                    content=agent.introduction,
-                    messages=[
-                        Message(role=agent.model.assistant_message_role, content=agent.introduction)  # type: ignore
-                    ],
-                )
+            introduction_run = RunOutput(
+                run_id=str(uuid4()),
+                session_id=session_id,
+                agent_id=agent.id,
+                agent_name=agent.name,
+                user_id=user_id,
+                content=agent.introduction,
+                messages=[
+                    Message(role=agent.model.assistant_message_role, content=agent.introduction)  # type: ignore
+                ],
             )
+            agent_session.upsert_run(introduction_run)
+
+            # v3: session.runs is in-memory; persist the intro to the runs table
+            # so a session reload picks it up (pre-3.0's save_session wrote the
+            # entire runs blob, so this happened for free).
+            if agent.db is not None and agent.team_id is None and agent.workflow_id is None:
+                from agno.agent._session import save_session
+                from agno.agent._storage import upsert_run
+
+                save_session(agent, session=agent_session)
+                upsert_run(agent, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
 
     if agent.cache_session:
         agent._cached_session = agent_session
@@ -391,19 +519,32 @@ async def aread_or_create_session(
             created_at=int(time()),
         )
         if agent.introduction is not None:
-            agent_session.upsert_run(
-                RunOutput(
-                    run_id=str(uuid4()),
-                    session_id=session_id,
-                    agent_id=agent.id,
-                    agent_name=agent.name,
-                    user_id=user_id,
-                    content=agent.introduction,
-                    messages=[
-                        Message(role=agent.model.assistant_message_role, content=agent.introduction)  # type: ignore
-                    ],
-                )
+            introduction_run = RunOutput(
+                run_id=str(uuid4()),
+                session_id=session_id,
+                agent_id=agent.id,
+                agent_name=agent.name,
+                user_id=user_id,
+                content=agent.introduction,
+                messages=[
+                    Message(role=agent.model.assistant_message_role, content=agent.introduction)  # type: ignore
+                ],
             )
+            agent_session.upsert_run(introduction_run)
+
+            # v3: session.runs is in-memory; persist the intro to the runs table
+            # so a session reload picks it up (pre-3.0's save_session wrote the
+            # entire runs blob, so this happened for free).
+            if agent.db is not None and agent.team_id is None and agent.workflow_id is None:
+                from agno.agent._session import asave_session, save_session
+                from agno.agent._storage import aupsert_run, upsert_run
+
+                if _init.has_async_db(agent):
+                    await asave_session(agent, session=agent_session)
+                    await aupsert_run(agent, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
+                else:
+                    save_session(agent, session=agent_session)
+                    upsert_run(agent, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
 
     if agent.cache_session:
         agent._cached_session = agent_session
@@ -550,18 +691,45 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     # --- Tools ---
     # Serialize tools to their dictionary representations (skip callable factories)
     _tools: List[Union[Function, dict]] = []
+    # Which toolkit each flattened function came from, so rehydration can
+    # re-bind same-named functions to the right toolkit (see
+    # Registry.rehydrate_function). Mirrors the parse_tools walk: tools are
+    # processed in declaration order and the first one to claim a name wins.
+    _owning_toolkit: Dict[str, str] = {}
     if agent.model is not None and agent.tools and isinstance(agent.tools, list):
         _tools = parse_tools(
             agent,
             model=agent.model,
             tools=agent.tools,
         )
+        _claimed_names: Set[str] = set()
+        for _tool in agent.tools:
+            if isinstance(_tool, Toolkit):
+                # get_functions() is what parse_tools serializes. Names are claimed
+                # by Function.name, which is what the serialized dict carries.
+                for _func in _tool.get_functions().values():
+                    if _func.name in _claimed_names:
+                        continue
+                    _claimed_names.add(_func.name)
+                    if isinstance(_tool.name, str) and _tool.name:
+                        _owning_toolkit[_func.name] = _tool.name
+            elif isinstance(_tool, Function):
+                if _tool.name not in _claimed_names:
+                    _claimed_names.add(_tool.name)
+                    if _tool.owning_toolkit:
+                        _owning_toolkit[_tool.name] = _tool.owning_toolkit
+            elif callable(_tool) and getattr(_tool, "__name__", None) is not None:
+                _claimed_names.add(_tool.__name__)
     if _tools:
         serialized_tools = []
         for tool in _tools:
             try:
                 if isinstance(tool, Function):
-                    serialized_tools.append(tool.to_dict())
+                    tool_dict = tool.to_dict()
+                    _toolkit_name = _owning_toolkit.get(tool.name)
+                    if _toolkit_name is not None:
+                        tool_dict["toolkit"] = _toolkit_name
+                    serialized_tools.append(tool_dict)
                 else:
                     serialized_tools.append(tool)
             except Exception as e:
@@ -792,7 +960,7 @@ def from_dict(cls: Type[Agent], data: Dict[str, Any], registry: Optional[Registr
     # --- Handle tools reconstruction ---
     if "tools" in config and config["tools"]:
         if registry:
-            config["tools"] = [registry.rehydrate_function(t) for t in config["tools"]]
+            config["tools"] = registry.rehydrate_functions(config["tools"])
         else:
             log_warning("No registry provided, tools will not be rehydrated.")
             del config["tools"]

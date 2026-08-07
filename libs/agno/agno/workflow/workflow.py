@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 from dataclasses import dataclass
 from datetime import datetime
 from os import getenv
@@ -68,6 +69,8 @@ from agno.run.cancel import (
 from agno.run.cancel import (
     cancel_run as cancel_run_global,
 )
+from agno.run.concurrency import SSE_KEEPALIVE_INTERVAL_SECONDS, background_run_slot
+from agno.run.status_persist import apersist_run_transition
 from agno.run.team import (
     RunCancelledEvent as TeamRunCancelledEvent,
 )
@@ -1487,15 +1490,24 @@ class Workflow:
         session write inline lets it be re-cancelled mid-flight, losing the run. Scheduling
         it on _workflow_background_tasks runs the write to completion outside that scope.
         """
+        from agno.run.concurrency import is_worker_managed
+
+        if workflow_run_response.run_id and is_worker_managed(workflow_run_response.run_id):
+            # Worker-claimed durable run: the cancellation reaching this helper
+            # is the QueueWorker's wait_for timeout or shutdown drain, not a
+            # client disconnect. The worker owns the terminal write (fenced,
+            # true cause); an unfenced CANCELLED here lands first and splits
+            # the run row from the ticket.
+            return
 
         async def _persist() -> None:
             try:
                 self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
                 session.upsert_run(run=workflow_run_response)
                 if self._has_async_db():
-                    await self.asave_session(session=session)
+                    await self._apersist_session_and_run(session=session, run=workflow_run_response)
                 else:
-                    self.save_session(session=session)
+                    self._persist_session_and_run(session=session, run=workflow_run_response)
                 if workflow_run_response.run_id:
                     await acleanup_run(workflow_run_response.run_id)
                     await acleanup_member_runs(workflow_run_response.run_id)
@@ -1556,34 +1568,34 @@ class Workflow:
 
     # -*- Session Database Functions
     async def _aread_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[WorkflowSession]:
-        """Get a Session from the database."""
-        try:
-            if not self.db:
-                raise ValueError("Db not initialized")
-            if self._has_async_db():
-                session = await self.db.get_session(
-                    session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id
-                )  # type: ignore
-            else:
-                session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id)
-            return session if isinstance(session, (WorkflowSession, type(None))) else None
-        except Exception as e:
-            log_warning(f"Error getting session from db: {str(e)}")
-            return None
+        """Get a Session from the database.
+
+        Read errors propagate. Do NOT coerce failures to None here: an empty result
+        is indistinguishable from "row does not exist", and the caller will happily
+        create a fresh session with the same id and overwrite the real row on the
+        next write. This is how a transient Postgres failover wiped six weeks of
+        conversation history in a real incident. Let the exception surface and
+        fail the run loudly -- a failed run is recoverable, a wiped session is not.
+        """
+        if not self.db:
+            raise ValueError("Db not initialized")
+        if self._has_async_db():
+            session = await self.db.get_session(
+                session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id
+            )  # type: ignore
+        else:
+            session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id)
+        return session if isinstance(session, (WorkflowSession, type(None))) else None
 
     def _read_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[WorkflowSession]:
-        """Get a Session from the database."""
+        """Sync twin of :meth:`_aread_session`. Same rationale: do NOT swallow errors."""
         if self._has_async_db():
             raise ValueError("Cannot use sync _read_session() with an async database. Use _aread_session() instead.")
 
-        try:
-            if not self.db:
-                raise ValueError("Db not initialized")
-            session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id)
-            return session if isinstance(session, (WorkflowSession, type(None))) else None
-        except Exception as e:
-            log_warning(f"Error getting session from db: {str(e)}")
-            return None
+        if not self.db:
+            raise ValueError("Db not initialized")
+        session = self.db.get_session(session_id=session_id, session_type=SessionType.WORKFLOW, user_id=user_id)
+        return session if isinstance(session, (WorkflowSession, type(None))) else None
 
     async def _aupsert_session(self, session: WorkflowSession) -> Optional[WorkflowSession]:
         """Upsert a Session into the database."""
@@ -1611,6 +1623,137 @@ class Workflow:
         except Exception as e:
             log_warning(f"Error upserting session into db: {str(e)}")
             return None
+
+    def save_run(
+        self,
+        run: "WorkflowRunOutput",
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> None:
+        """Persist a single run to the database (O(1) write).
+
+        Silently no-ops on adapters that have not implemented ``upsert_run`` yet.
+        """
+        if not self.db:
+            return
+        try:
+            from agno.run.status_persist import persist_worker_owned_run
+
+            # Queue-worker-owned runs save through the attempt-fenced
+            # primitive; a zombie attempt's write is refused, not applied
+            if persist_worker_owned_run(self.db, run, session_id=session_id, user_id=user_id):
+                return
+            self.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
+        except NotImplementedError:
+            log_debug(f"{type(self.db).__name__} does not implement upsert_run; skipping per-run write")
+        except Exception as e:
+            log_warning(f"Error upserting run into db: {str(e)}")
+
+    async def asave_run(
+        self,
+        run: "WorkflowRunOutput",
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> None:
+        """Async variant of ``save_run``."""
+        if not self.db:
+            return
+        try:
+            from agno.run.status_persist import apersist_worker_owned_run
+
+            # Queue-worker-owned runs save through the attempt-fenced
+            # primitive; a zombie attempt's write is refused, not applied
+            if await apersist_worker_owned_run(self.db, run, session_id=session_id, user_id=user_id):
+                return
+            if self._has_async_db():
+                await self.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr,misc]
+            else:
+                self.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
+        except NotImplementedError:
+            log_debug(f"{type(self.db).__name__} does not implement upsert_run; skipping per-run write")
+        except Exception as e:
+            log_warning(f"Error upserting run into db: {str(e)}")
+
+    def _persist_session_and_run(self, session: WorkflowSession, run: "WorkflowRunOutput") -> None:
+        """Persist the session row + this single run (both O(1) writes).
+
+        Replaces the v2.x pattern where ``save_session`` rewrote every run on
+        the session. Computes ``run_index`` from the session's in-memory runs
+        list (call ``session.upsert_run(run=...)`` before invoking this).
+        """
+        from agno.session._utils import resolve_run_index
+
+        run_index = resolve_run_index(session, run)
+        self.save_session(session=session)
+        self.save_run(
+            run=run,
+            session_id=session.session_id,
+            user_id=session.user_id,
+            run_index=run_index,
+        )
+
+    async def _apersist_session_and_run(self, session: WorkflowSession, run: "WorkflowRunOutput") -> None:
+        """Async variant of ``_persist_session_and_run``."""
+        from agno.session._utils import resolve_run_index
+
+        run_index = resolve_run_index(session, run)
+        await self.asave_session(session=session)
+        await self.asave_run(
+            run=run,
+            session_id=session.session_id,
+            user_id=session.user_id,
+            run_index=run_index,
+        )
+
+    def _persist_errored_run_stream(self, session: WorkflowSession, run: "WorkflowRunOutput") -> None:
+        """Persist an errored streaming run and finish its terminal bookkeeping.
+
+        Foreground streaming re-raises step exceptions past the fall-through
+        terminal persist, so without this the ERROR run would never reach the
+        runs store (breaking ``get_run``/history and ``/resume`` after a
+        restart). Mirrors the cancelled branch. Guarded so a persistence
+        failure never masks the original exception being re-raised.
+        """
+        if run.metrics:
+            run.metrics.stop_timer()
+        try:
+            self._update_session_metrics(session=session, workflow_run_response=run)
+            session.upsert_run(run=run)
+            self._persist_session_and_run(session=session, run=run)
+        except Exception as store_err:
+            log_warning(f"Failed to persist errored run: {store_err}")
+        cleanup_run(run.run_id)  # type: ignore
+        cleanup_member_runs(run.run_id)  # type: ignore
+        try:
+            from agno.os.managers import event_buffer
+
+            event_buffer.set_run_completed(run.run_id, run.status or RunStatus.error)  # type: ignore
+        except Exception as buffer_err:
+            log_debug(f"Failed to mark run as completed in buffer: {buffer_err}")
+
+    async def _apersist_errored_run_stream(self, session: WorkflowSession, run: "WorkflowRunOutput") -> None:
+        """Async variant of ``_persist_errored_run_stream``."""
+        if run.metrics:
+            run.metrics.stop_timer()
+        try:
+            self._update_session_metrics(session=session, workflow_run_response=run)
+            session.upsert_run(run=run)
+            if self._has_async_db():
+                await self._apersist_session_and_run(session=session, run=run)
+            else:
+                self._persist_session_and_run(session=session, run=run)
+        except Exception as store_err:
+            log_warning(f"Failed to persist errored run: {store_err}")
+        await acleanup_run(run.run_id)  # type: ignore
+        await acleanup_member_runs(run.run_id)  # type: ignore
+        try:
+            from agno.os.managers import event_buffer
+
+            event_buffer.set_run_completed(run.run_id, run.status or RunStatus.error)  # type: ignore
+        except Exception as buffer_err:
+            log_debug(f"Failed to mark run as completed in buffer: {buffer_err}")
 
     def _update_metadata(self, session: WorkflowSession):
         """Update the extra_data in the session"""
@@ -1705,11 +1848,63 @@ class Workflow:
             except RuntimeError:
                 pass
 
+    async def _aterminalize_workflow_agent_run(
+        self, workflow_run_response: WorkflowRunOutput, session_id: Optional[str], user_id: Optional[str]
+    ) -> None:
+        """Terminalize a workflow-agent background run after its generator ends.
+
+        _aexecute_workflow_agent maintains its own run output internally and
+        never mutates the caller's workflow_run_response, and its internal
+        session save does not flip the run row out of RUNNING. Without this,
+        the row stays RUNNING forever and the producers complete_run a stale
+        status. The generator finishing without raising means the leg is
+        complete; error paths are handled by the producers' except branches."""
+        if workflow_run_response.status in (RunStatus.running, RunStatus.pending):
+            workflow_run_response.status = RunStatus.completed
+            persist_session_id = session_id or workflow_run_response.session_id
+            if persist_session_id is None:
+                return
+            try:
+                await apersist_run_transition(
+                    self, "workflow", persist_session_id, workflow_run_response, user_id=user_id
+                )
+            except Exception:
+                log_warning(f"Failed to persist terminal status for workflow-agent run {workflow_run_response.run_id}")
+
+    async def _apublish_stream_event(
+        self,
+        event: Any,
+        run_id: str,
+        websocket_handler: Optional["WebSocketHandler"] = None,
+    ) -> Optional[int]:
+        """Publish one streamed event to the event stream and, when a
+        websocket_handler is attached, over the original socket with the
+        assigned index.
+
+        All events - the workflow's own and enriched child agent/team events -
+        are published under the WORKFLOW run id, so clients replay one unified
+        stream from any replica. Publishing is best-effort: a transport failure
+        never fails the run."""
+        from agno.os.event_streams import get_event_stream
+
+        event_index: Optional[int] = None
+        try:
+            event_index = await get_event_stream().add_event(run_id, event)
+        except Exception:
+            log_warning(f"Failed to publish event to event stream for workflow run {run_id}")
+
+        if websocket_handler:
+            try:
+                asyncio.create_task(websocket_handler.handle_event(event, event_index=event_index, run_id=run_id))
+            except RuntimeError:
+                pass
+
+        return event_index
+
     def _handle_event(
         self,
         event: "WorkflowRunOutputEvent",
         workflow_run_response: WorkflowRunOutput,
-        websocket_handler: Optional["WebSocketHandler"] = None,
     ) -> "WorkflowRunOutputEvent":
         """Handle workflow events for storage - similar to Team._handle_event"""
         from agno.run.agent import RunOutput
@@ -1741,72 +1936,9 @@ class Workflow:
                     workflow_run_response.events = []
                 workflow_run_response.events.append(event)
 
-        # Add to event buffer for reconnection support
-        # Use workflow_run_id for agent/team events, run_id for workflow events
-        buffer_run_id = None
-        event_index = None
-        if hasattr(event, "workflow_run_id") and event.workflow_run_id:
-            # Agent/Team event - use workflow_run_id
-            buffer_run_id = event.workflow_run_id
-        elif hasattr(event, "run_id") and event.run_id:
-            # Workflow event - use run_id
-            buffer_run_id = event.run_id
-
-        if buffer_run_id:
-            try:
-                from agno.os.managers import event_buffer
-
-                # add_event now returns the event_index
-                event_index = event_buffer.add_event(buffer_run_id, event)  # type: ignore
-            except Exception as e:
-                # Don't fail workflow execution if buffering fails
-                log_debug(f"Failed to add event to buffer: {e}")
-
-        # Broadcast to WebSocket if available (async context only)
-        # Include event_index for frontend reconnection support
-        if websocket_handler:
-            import asyncio
-
-            try:
-                loop = asyncio.get_running_loop()
-                if loop:
-                    # Pass event_index and run_id to websocket handler
-                    asyncio.create_task(
-                        websocket_handler.handle_event(event, event_index=event_index, run_id=buffer_run_id)
-                    )
-            except RuntimeError:
-                pass
-
-        # ALSO broadcast through websocket manager for reconnected clients
-        # This ensures clients who reconnect after workflow started still receive events
-        if buffer_run_id and websocket_handler:
-            try:
-                import asyncio
-
-                from agno.os.managers import websocket_manager
-
-                loop = asyncio.get_running_loop()
-                if loop:
-                    # Format the event for broadcast
-                    event_dict = event.model_dump() if hasattr(event, "model_dump") else event.to_dict()
-                    if event_index is not None:
-                        event_dict["event_index"] = event_index
-                    if "run_id" not in event_dict:
-                        event_dict["run_id"] = buffer_run_id
-
-                    # Broadcast to registered websocket (if different from original)
-                    import json
-
-                    from agno.utils.serialize import json_serializer
-
-                    asyncio.create_task(
-                        websocket_manager.broadcast_to_run(
-                            buffer_run_id, json.dumps(event_dict, default=json_serializer)
-                        )
-                    )
-            except Exception as e:
-                log_debug(f"Failed to broadcast through manager: {e}")
-
+        # Transport (event-stream publish + WebSocket delivery) happens in the
+        # background producers via _apublish_stream_event - this handler only
+        # shapes and stores the event.
         return event
 
     def _enrich_event_with_workflow_context(
@@ -2107,7 +2239,7 @@ class Workflow:
                 try:
                     self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
                     session.upsert_run(run=workflow_run_response)
-                    self.save_session(session=session)
+                    self._persist_session_and_run(session=session, run=workflow_run_response)
                 except Exception as store_err:
                     log_warning(f"Failed to persist workflow run: {store_err}")
                 cleanup_run(workflow_run_response.run_id)  # type: ignore
@@ -2206,7 +2338,7 @@ class Workflow:
                             # Save the session with paused state
                             self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
                             session.upsert_run(run=workflow_run_response)
-                            self.save_session(session=session)
+                            self._persist_session_and_run(session=session, run=workflow_run_response)
 
                             return workflow_run_response
                         elif step_on_error == "skip":
@@ -2388,7 +2520,7 @@ class Workflow:
                 try:
                     self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
                     session.upsert_run(run=workflow_run_response)
-                    self.save_session(session=session)
+                    self._persist_session_and_run(session=session, run=workflow_run_response)
                 except Exception as store_err:
                     log_warning(f"Failed to persist workflow run: {store_err}")
                 # Always clean up the run tracking
@@ -2454,7 +2586,7 @@ class Workflow:
                 try:
                     self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
                     session.upsert_run(run=workflow_run_response)
-                    self.save_session(session=session)
+                    self._persist_session_and_run(session=session, run=workflow_run_response)
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
                 cleanup_run(workflow_run_response.run_id)  # type: ignore
@@ -2484,6 +2616,27 @@ class Workflow:
                 if self.telemetry:
                     self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
                 return
+            except Exception as e:
+                logger.exception("Workflow execution failed")
+
+                from agno.run.workflow import WorkflowErrorEvent
+
+                error_event = WorkflowErrorEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    workflow_id=self.id,
+                    workflow_name=self.name,
+                    session_id=session.session_id,
+                    error=str(e),
+                )
+                yield error_event
+
+                # Update workflow_run_response with error
+                workflow_run_response.content = error_event.error
+                workflow_run_response.status = RunStatus.error
+
+                # Persist the ERROR run before re-raising so it is not lost.
+                self._persist_errored_run_stream(session=session, run=workflow_run_response)
+                raise e
 
         else:
             try:
@@ -2710,7 +2863,7 @@ class Workflow:
                             # Save the session with paused state
                             self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
                             session.upsert_run(run=workflow_run_response)
-                            self.save_session(session=session)
+                            self._persist_session_and_run(session=session, run=workflow_run_response)
 
                             return
                         elif step_on_error == "skip":
@@ -2892,7 +3045,7 @@ class Workflow:
                 try:
                     self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
                     session.upsert_run(run=workflow_run_response)
-                    self.save_session(session=session)
+                    self._persist_session_and_run(session=session, run=workflow_run_response)
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
                 cleanup_run(workflow_run_response.run_id)  # type: ignore
@@ -2922,17 +3075,6 @@ class Workflow:
                 )
                 yield self._handle_event(workflow_completed_event, workflow_run_response)
 
-                # Mark run as cancelled in event buffer so /resume and GC see the terminal state
-                try:
-                    from agno.os.managers import event_buffer
-
-                    event_buffer.set_run_completed(
-                        workflow_run_response.run_id,  # type: ignore
-                        workflow_run_response.status or RunStatus.cancelled,
-                    )
-                except Exception as e:
-                    log_debug(f"Failed to mark run as completed in buffer: {e}")
-
                 if self.telemetry:
                     self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
                 return
@@ -2954,6 +3096,9 @@ class Workflow:
                 # Update workflow_run_response with error
                 workflow_run_response.content = error_event.error
                 workflow_run_response.status = RunStatus.error
+
+                # Persist the ERROR run before re-raising so it is not lost.
+                self._persist_errored_run_stream(session=session, run=workflow_run_response)
                 raise e
 
         # Yield workflow completed event
@@ -2970,17 +3115,6 @@ class Workflow:
         )
         yield self._handle_event(workflow_completed_event, workflow_run_response)
 
-        # Mark run as completed in event buffer
-        try:
-            from agno.os.managers import event_buffer
-
-            event_buffer.set_run_completed(
-                workflow_run_response.run_id,  # type: ignore
-                workflow_run_response.status or RunStatus.completed,
-            )
-        except Exception as e:
-            log_debug(f"Failed to mark run as completed in buffer: {e}")
-
         # Stop timer on error
         if workflow_run_response.metrics:
             workflow_run_response.metrics.stop_timer()
@@ -2988,7 +3122,7 @@ class Workflow:
         # Store the completed workflow response
         self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
         session.upsert_run(run=workflow_run_response)
-        self.save_session(session=session)
+        self._persist_session_and_run(session=session, run=workflow_run_response)
 
         # Always clean up the run tracking
         cleanup_run(workflow_run_response.run_id)  # type: ignore
@@ -3232,9 +3366,11 @@ class Workflow:
                             )
                             workflow_session.upsert_run(run=workflow_run_response)
                             if self._has_async_db():
-                                await self.asave_session(session=workflow_session)
+                                await self._apersist_session_and_run(
+                                    session=workflow_session, run=workflow_run_response
+                                )
                             else:
-                                self.save_session(session=workflow_session)
+                                self._persist_session_and_run(session=workflow_session, run=workflow_run_response)
 
                             return workflow_run_response
                         elif step_on_error == "skip":
@@ -3414,9 +3550,9 @@ class Workflow:
         self._update_session_metrics(session=workflow_session, workflow_run_response=workflow_run_response)
         workflow_session.upsert_run(run=workflow_run_response)
         if self._has_async_db():
-            await self.asave_session(session=workflow_session)
+            await self._apersist_session_and_run(session=workflow_session, run=workflow_run_response)
         else:
-            self.save_session(session=workflow_session)
+            self._persist_session_and_run(session=workflow_session, run=workflow_run_response)
         # Always clean up the run tracking
         await acleanup_run(workflow_run_response.run_id)  # type: ignore
         await acleanup_member_runs(workflow_run_response.run_id)  # type: ignore
@@ -3435,7 +3571,6 @@ class Workflow:
         workflow_run_response: WorkflowRunOutput,
         run_context: RunContext,
         stream_events: bool = False,
-        websocket_handler: Optional["WebSocketHandler"] = None,
         background_tasks: Optional[Any] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
@@ -3459,7 +3594,7 @@ class Workflow:
             workflow_id=workflow_run_response.workflow_id,
             session_id=workflow_run_response.session_id,
         )
-        yield self._handle_event(workflow_started_event, workflow_run_response, websocket_handler=websocket_handler)
+        yield self._handle_event(workflow_started_event, workflow_run_response)
 
         if callable(self.steps):
             try:
@@ -3503,9 +3638,9 @@ class Workflow:
                     self._update_session_metrics(session=workflow_session, workflow_run_response=workflow_run_response)
                     workflow_session.upsert_run(run=workflow_run_response)
                     if self._has_async_db():
-                        await self.asave_session(session=workflow_session)
+                        await self._apersist_session_and_run(session=workflow_session, run=workflow_run_response)
                     else:
-                        self.save_session(session=workflow_session)
+                        self._persist_session_and_run(session=workflow_session, run=workflow_run_response)
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
                 await acleanup_run(workflow_run_response.run_id)  # type: ignore
@@ -3519,7 +3654,7 @@ class Workflow:
                     reason=str(e),
                     content=str(e),
                 )
-                yield self._handle_event(cancelled_event, workflow_run_response, websocket_handler=websocket_handler)
+                yield self._handle_event(cancelled_event, workflow_run_response)
 
                 workflow_completed_event = WorkflowCompletedEvent(
                     run_id=workflow_run_response.run_id or "",
@@ -3530,15 +3665,34 @@ class Workflow:
                     metadata=workflow_run_response.metadata,
                     run_output=workflow_run_response,
                 )
-                yield self._handle_event(
-                    workflow_completed_event, workflow_run_response, websocket_handler=websocket_handler
-                )
+                yield self._handle_event(workflow_completed_event, workflow_run_response)
 
                 if self.telemetry:
                     await self._alog_workflow_telemetry(
                         session_id=workflow_session.session_id, run_id=workflow_run_response.run_id
                     )
                 return
+            except Exception as e:
+                logger.exception("Workflow execution failed")
+
+                from agno.run.workflow import WorkflowErrorEvent
+
+                error_event = WorkflowErrorEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    workflow_id=self.id,
+                    workflow_name=self.name,
+                    session_id=session_id,
+                    error=str(e),
+                )
+                yield error_event
+
+                # Update workflow_run_response with error
+                workflow_run_response.content = error_event.error
+                workflow_run_response.status = RunStatus.error
+
+                # Persist the ERROR run before re-raising so it is not lost.
+                await self._apersist_errored_run_stream(session=workflow_session, run=workflow_run_response)
+                raise e
 
         else:
             try:
@@ -3604,9 +3758,7 @@ class Workflow:
                             paused_event = create_step_paused_event(
                                 workflow_run_response, step, step_name, i, pause_result
                             )
-                        yield self._handle_event(
-                            paused_event, workflow_run_response, websocket_handler=websocket_handler
-                        )
+                        yield self._handle_event(paused_event, workflow_run_response)
 
                         await asave_paused_session(self, workflow_session, workflow_run_response)
                         return
@@ -3726,9 +3878,7 @@ class Workflow:
                                 enriched_event = self._enrich_event_with_workflow_context(
                                     event, workflow_run_response, step_index=i, step=step
                                 )
-                                yield self._handle_event(
-                                    enriched_event, workflow_run_response, websocket_handler=websocket_handler
-                                )  # type: ignore
+                                yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
 
                             else:
                                 # Enrich other events with workflow context before yielding
@@ -3738,9 +3888,7 @@ class Workflow:
                                 if self.stream_executor_events or isinstance(
                                     event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES
                                 ):
-                                    yield self._handle_event(
-                                        enriched_event, workflow_run_response, websocket_handler=websocket_handler
-                                    )  # type: ignore
+                                    yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
 
                         if draining_after_cancel:
                             raise RunCancelledException(f"Run {workflow_run_response.run_id} was cancelled")
@@ -3780,9 +3928,7 @@ class Workflow:
                                 step_id=getattr(step, "step_id", None),
                                 error=str(step_error_exception),
                             )
-                            yield self._handle_event(
-                                error_paused_event, workflow_run_response, websocket_handler=websocket_handler
-                            )
+                            yield self._handle_event(error_paused_event, workflow_run_response)
 
                             # Save the session with paused state
                             self._update_session_metrics(
@@ -3790,9 +3936,11 @@ class Workflow:
                             )
                             workflow_session.upsert_run(run=workflow_run_response)
                             if self._has_async_db():
-                                await self.asave_session(session=workflow_session)
+                                await self._apersist_session_and_run(
+                                    session=workflow_session, run=workflow_run_response
+                                )
                             else:
-                                self.save_session(session=workflow_session)
+                                self._persist_session_and_run(session=workflow_session, run=workflow_run_response)
 
                             return
                         elif step_on_error == "skip":
@@ -3834,9 +3982,7 @@ class Workflow:
                                 if review_result.step_requirement
                                 else None,
                             )
-                            yield self._handle_event(
-                                review_event, workflow_run_response, websocket_handler=websocket_handler
-                            )
+                            yield self._handle_event(review_event, workflow_run_response)
                             await asave_paused_session(self, workflow_session, workflow_run_response)
                             return
 
@@ -3875,9 +4021,7 @@ class Workflow:
                             step_id=getattr(step, "step_id", None),
                             output_review_message=getattr(req, "output_review_message", None),
                         )
-                        yield self._handle_event(
-                            review_event, workflow_run_response, websocket_handler=websocket_handler
-                        )
+                        yield self._handle_event(review_event, workflow_run_response)
                         await asave_paused_session(self, workflow_session, workflow_run_response)
                         return
 
@@ -3986,9 +4130,9 @@ class Workflow:
                     self._update_session_metrics(session=workflow_session, workflow_run_response=workflow_run_response)
                     workflow_session.upsert_run(run=workflow_run_response)
                     if self._has_async_db():
-                        await self.asave_session(session=workflow_session)
+                        await self._apersist_session_and_run(session=workflow_session, run=workflow_run_response)
                     else:
-                        self.save_session(session=workflow_session)
+                        self._persist_session_and_run(session=workflow_session, run=workflow_run_response)
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
                 await acleanup_run(workflow_run_response.run_id)  # type: ignore
@@ -4005,7 +4149,6 @@ class Workflow:
                 yield self._handle_event(
                     cancelled_event,
                     workflow_run_response,
-                    websocket_handler=websocket_handler,
                 )
 
                 # Emit terminal completed event so clients have a single stream-end sentinel
@@ -4023,19 +4166,7 @@ class Workflow:
                 yield self._handle_event(
                     workflow_completed_event,
                     workflow_run_response,
-                    websocket_handler=websocket_handler,
                 )
-
-                # Mark run as cancelled in event buffer so /resume and GC see the terminal state
-                try:
-                    from agno.os.managers import event_buffer
-
-                    event_buffer.set_run_completed(
-                        workflow_run_response.run_id,  # type: ignore
-                        workflow_run_response.status or RunStatus.cancelled,
-                    )
-                except Exception as e:
-                    log_debug(f"Failed to mark run as completed in buffer: {e}")
 
                 if self.telemetry:
                     await self._alog_workflow_telemetry(session_id=session_id, run_id=workflow_run_response.run_id)
@@ -4058,6 +4189,9 @@ class Workflow:
                 # Update workflow_run_response with error
                 workflow_run_response.content = error_event.error
                 workflow_run_response.status = RunStatus.error
+
+                # Persist the ERROR run before re-raising so it is not lost.
+                await self._apersist_errored_run_stream(session=workflow_session, run=workflow_run_response)
                 raise e
 
         # Yield workflow completed event
@@ -4072,18 +4206,7 @@ class Workflow:
             metadata=workflow_run_response.metadata,
             run_output=workflow_run_response,  # Include full run output for nested workflows
         )
-        yield self._handle_event(workflow_completed_event, workflow_run_response, websocket_handler=websocket_handler)
-
-        # Mark run as completed in event buffer
-        try:
-            from agno.os.managers import event_buffer
-
-            event_buffer.set_run_completed(
-                workflow_run_response.run_id,  # type: ignore
-                workflow_run_response.status or RunStatus.completed,
-            )
-        except Exception as e:
-            log_debug(f"Failed to mark run as completed in buffer: {e}")
+        yield self._handle_event(workflow_completed_event, workflow_run_response)
 
         # Stop timer on error
         if workflow_run_response.metrics:
@@ -4093,9 +4216,9 @@ class Workflow:
         self._update_session_metrics(session=workflow_session, workflow_run_response=workflow_run_response)
         workflow_session.upsert_run(run=workflow_run_response)
         if self._has_async_db():
-            await self.asave_session(session=workflow_session)
+            await self._apersist_session_and_run(session=workflow_session, run=workflow_run_response)
         else:
-            self.save_session(session=workflow_session)
+            self._persist_session_and_run(session=workflow_session, run=workflow_run_response)
 
         # Log Workflow Telemetry
         if self.telemetry:
@@ -4175,12 +4298,22 @@ class Workflow:
         workflow_run_response.metrics = WorkflowMetrics(steps={})
         workflow_run_response.metrics.start_timer()
 
-        # Store PENDING response immediately
+        # Store PENDING response immediately - the workflow-agent case
+        # included. The placeholder is what makes the 202'd run id visible to
+        # pollers and verifiable by tenant-scoped cancel BEFORE execution
+        # starts writing; without it the run 404s while queued and (on the
+        # non-durable path, which has no ticket to fall back on) is fully
+        # invisible. Reconciliation is by construction: the workflow-agent
+        # tool and the direct-answer branch both persist the real run under
+        # THIS run id (see agent.py's run_workflow), and upsert_run replaces
+        # by run_id - the same contract the stream producers already rely on.
+        # The old "0 of N steps" duplicate belonged to the era when the tool
+        # minted a fresh id; id-reuse retired it.
         workflow_session.upsert_run(run=workflow_run_response)
         if self._has_async_db():
-            await self.asave_session(session=workflow_session)
+            await self._apersist_session_and_run(session=workflow_session, run=workflow_run_response)
         else:
-            self.save_session(session=workflow_session)
+            self._persist_session_and_run(session=workflow_session, run=workflow_run_response)
 
         # Prepare execution input
         inputs = WorkflowExecutionInput(
@@ -4195,53 +4328,99 @@ class Workflow:
         self.update_agents_and_teams_session_info()
 
         async def execute_workflow_background():
-            """Simple background execution"""
+            """Background execution: waits for a concurrency slot (background_run_slot);
+            the run stays PENDING while waiting in line and can be cancelled without
+            consuming a slot."""
+
             try:
-                # Update status to RUNNING and save
-                workflow_run_response.status = RunStatus.running
-                if self._has_async_db():
-                    await self.asave_session(session=workflow_session)
-                else:
-                    self.save_session(session=workflow_session)
+                async with background_run_slot(run_id=workflow_run_response.run_id):
+                    if self.agent is not None:
+                        # WorkflowAgent case: _aexecute_workflow_agent owns the
+                        # run rows and reuses this run id - its persist replaces
+                        # the PENDING placeholder pre-persisted above (upsert by
+                        # run_id), yielding a single run per turn.
+                        await self._aexecute_workflow_agent(
+                            user_input=input,  # type: ignore
+                            execution_input=inputs,
+                            run_context=run_context,
+                            stream=False,
+                            **kwargs,
+                        )
+                    else:
+                        # Update status to RUNNING and save (atomic helper:
+                        # row-locked patch when the DB supports it, fresh-read +
+                        # save otherwise)
+                        workflow_run_response.status = RunStatus.running
+                        await apersist_run_transition(
+                            self, "workflow", session_id, workflow_run_response, user_id=user_id
+                        )
+                        await self._aexecute(
+                            session_id=session_id,
+                            user_id=user_id,
+                            execution_input=inputs,
+                            workflow_run_response=workflow_run_response,
+                            run_context=run_context,
+                            session_state=session_state,
+                            add_dependencies_to_context=resolved["add_dependencies_to_context"],
+                            add_session_state_to_context=resolved["add_session_state_to_context"],
+                            **kwargs,
+                        )
 
-                if self.agent is not None:
-                    self._aexecute_workflow_agent(
-                        user_input=input,  # type: ignore
-                        execution_input=inputs,
-                        run_context=run_context,
-                        stream=False,
-                        **kwargs,
-                    )
-                else:
-                    await self._aexecute(
-                        session_id=session_id,
-                        user_id=user_id,
-                        execution_input=inputs,
-                        workflow_run_response=workflow_run_response,
-                        run_context=run_context,
-                        session_state=session_state,
-                        add_dependencies_to_context=resolved["add_dependencies_to_context"],
-                        add_session_state_to_context=resolved["add_session_state_to_context"],
-                        **kwargs,
-                    )
+                    log_debug(f"Background execution completed with status: {workflow_run_response.status}")
 
-                log_debug(f"Background execution completed with status: {workflow_run_response.status}")
+            except RunCancelledException:
+                # Cancelled while waiting for a slot — execution never started,
+                # so persist CANCELLED and deregister the run here.
+                log_info(f"Background run {workflow_run_response.run_id} cancelled while waiting for a slot")
+                workflow_run_response.status = RunStatus.cancelled
+                try:
+                    await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
+                except Exception:
+                    # A failed persist must not skip the cleanup below (parity
+                    # with the agent/team twins): the atomic primitive raises
+                    # rather than silently falling back, so this is reachable
+                    log_error(f"Failed to persist cancelled state for background run {run_id}", exc_info=True)
+                await acleanup_run(run_id)
+            except asyncio.CancelledError:
+                # Task-level shutdown, not run-cancellation: best-effort persist
+                # so pollers are not left with a stuck PENDING/RUNNING run
+                from agno.run.concurrency import is_worker_managed
 
+                if is_worker_managed(getattr(workflow_run_response, "run_id", None) or ""):
+                    raise  # worker-claimed: the QueueWorker owns this terminal
+                if workflow_run_response.status == RunStatus.paused:
+                    # The leg already PAUSED and parked valid, continuable HITL
+                    # state (persisted by the leg itself) - a routine deploy's
+                    # shutdown must not stamp CANCELLED over it. This in-memory
+                    # check is the ONLY protection off-Postgres: adapters without
+                    # the atomic primitive reach the whole-session fallback, which
+                    # no DB-side guard covers.
+                    raise
+                with contextlib.suppress(Exception):
+                    workflow_run_response.status = RunStatus.cancelled
+                    await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
+                raise
             except Exception as e:
                 logger.exception("Background workflow execution failed")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Background execution failed: {str(e)}"
-                if self._has_async_db():
-                    await self.asave_session(session=workflow_session)
-                else:
-                    self.save_session(session=workflow_session)
+                await apersist_run_transition(
+                    self,
+                    "workflow",
+                    session_id,
+                    workflow_run_response,
+                    user_id=user_id,
+                    full_run=True,
+                )
 
         # Create and start asyncio task
         loop = asyncio.get_running_loop()
-        loop.create_task(
+        task = loop.create_task(
             execute_workflow_background(),
             name=f"workflow-background-{workflow_run_response.run_id}",
         )
+        _workflow_background_tasks.add(task)
+        task.add_done_callback(_workflow_background_tasks.discard)
 
         # Return SAME object that will be updated by background execution
         return workflow_run_response
@@ -4330,36 +4509,73 @@ class Workflow:
 
         self.update_agents_and_teams_session_info()
 
+        # Persist the PENDING run so it is visible (e.g. to polling) while it
+        # waits for a concurrency slot.
+        workflow_session.upsert_run(run=workflow_run_response)
+        if self._has_async_db():
+            await self.asave_session(session=workflow_session)
+        else:
+            self.save_session(session=workflow_session)
+
         async def execute_workflow_background_stream():
-            """Background execution with streaming and WebSocket broadcasting"""
+            """Background execution with streaming and WebSocket broadcasting.
+
+            Execution waits for a concurrency slot (background_run_slot); the run
+            stays PENDING while waiting in line and can be cancelled without
+            consuming a slot."""
+            from agno.os.event_streams import get_event_stream
+
+            event_stream = get_event_stream()
+            publish_run_id = run_context.run_id or workflow_run_response.run_id or ""
+
+            # Pre-register so reconnecting clients can attach while queued
             try:
+                await event_stream.register_run(publish_run_id, RunStatus.pending)
+            except Exception:
+                log_warning(f"Failed to register workflow run {publish_run_id} with event stream")
+
+            slot_cm = background_run_slot(run_id=run_context.run_id)
+            slot_held = False
+            try:
+                await slot_cm.__aenter__()
+                slot_held = True
+
+                # Transition to RUNNING now that a slot is held - in BOTH
+                # branches, so pollers never see an executing run as PENDING
+                # (which now specifically means "queued for a slot")
+                workflow_run_response.status = RunStatus.running
+                await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
+                with contextlib.suppress(Exception):
+                    # Fail-open: coordination writes must not kill the run
+                    await event_stream.set_run_status(publish_run_id, RunStatus.running)
+
                 if self.agent is not None:
+                    # websocket_handler deliberately NOT passed down: every
+                    # broadcast site in _aexecute_workflow_agent yields the
+                    # same event, so delivering from this loop (with the
+                    # event-stream index attached) replaces the internal
+                    # index-less broadcasts without dropping or doubling frames
                     result = self._aexecute_workflow_agent(
                         user_input=input,  # type: ignore
                         run_context=run_context,
                         execution_input=inputs,
                         stream=True,
-                        websocket_handler=websocket_handler,
                         **kwargs,
                     )
-                    # For streaming, result is an async iterator
                     async for event in result:  # type: ignore
-                        # Events are automatically broadcast by _handle_event in the agent execution
-                        # We just consume them here to drive the execution
-                        pass
+                        if isinstance(event, WorkflowRunOutput):
+                            continue
+                        await self._apublish_stream_event(event, publish_run_id, websocket_handler=websocket_handler)
+                    # The workflow-agent generator maintains its own run output
+                    # and never mutates workflow_run_response: adopt the final
+                    # status from the run row so terminal persistence and
+                    # complete_run below see COMPLETED/PAUSED, not a stale
+                    # RUNNING
+                    await self._aterminalize_workflow_agent_run(workflow_run_response, session_id, user_id)
                     log_debug(
                         f"Background streaming execution (workflow agent) completed with status: {workflow_run_response.status}"
                     )
                 else:
-                    # Update status to RUNNING and save
-                    workflow_run_response.status = RunStatus.running
-
-                    workflow_session.upsert_run(run=workflow_run_response)
-                    if self._has_async_db():
-                        await self.asave_session(session=workflow_session)
-                    else:
-                        self.save_session(session=workflow_session)
-
                     # Execute with streaming - consume all events (they're auto-broadcast via _handle_event)
                     async for event in self._aexecute_stream(
                         session_id=session_id,
@@ -4368,14 +4584,13 @@ class Workflow:
                         workflow_run_response=workflow_run_response,
                         stream_events=stream_events,
                         run_context=run_context,
-                        websocket_handler=websocket_handler,
                         add_dependencies_to_context=resolved["add_dependencies_to_context"],
                         add_session_state_to_context=resolved["add_session_state_to_context"],
                         **kwargs,
                     ):
-                        # Events are automatically broadcast by _handle_event
-                        # We just consume them here to drive the execution
-                        pass
+                        if isinstance(event, WorkflowRunOutput):
+                            continue
+                        await self._apublish_stream_event(event, publish_run_id, websocket_handler=websocket_handler)
 
                 log_debug(f"Background streaming execution completed with status: {workflow_run_response.status}")
 
@@ -4400,32 +4615,78 @@ class Workflow:
                         content=workflow_run_response.content,
                         metadata=workflow_run_response.metadata,
                     )
-                    self._handle_event(paused_event, workflow_run_response, websocket_handler=websocket_handler)
+                    self._handle_event(paused_event, workflow_run_response)
+                    await self._apublish_stream_event(paused_event, publish_run_id, websocket_handler=websocket_handler)
 
-                # Update event buffer status so reconnecting clients know the run is paused
-                if workflow_run_response.is_paused and workflow_run_response.run_id:
-                    try:
-                        from agno.os.managers import event_buffer
+            except asyncio.CancelledError:
+                # Task-level shutdown, not run-cancellation: best-effort persist
+                # so pollers are not left with a run stuck at PENDING/RUNNING
+                # (parity with the non-stream producer)
+                from agno.run.concurrency import is_worker_managed
 
-                        event_buffer.set_run_completed(workflow_run_response.run_id, RunStatus.paused)
-                    except Exception as e:
-                        log_debug(f"Failed to update event buffer status: {e}")
-
+                if is_worker_managed(getattr(workflow_run_response, "run_id", None) or ""):
+                    raise  # worker-claimed: the QueueWorker owns this terminal
+                if workflow_run_response.status == RunStatus.paused:
+                    # The leg already PAUSED and parked valid, continuable HITL
+                    # state (persisted by the leg itself) - a routine deploy's
+                    # shutdown must not stamp CANCELLED over it. This in-memory
+                    # check is the ONLY protection off-Postgres: adapters without
+                    # the atomic primitive reach the whole-session fallback, which
+                    # no DB-side guard covers.
+                    raise
+                with contextlib.suppress(Exception):
+                    workflow_run_response.status = RunStatus.cancelled
+                    await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
+                raise
+            except RunCancelledException:
+                # Cancelled while waiting for a slot — execution never started, so
+                # persist CANCELLED and deregister the run here.
+                log_info(f"Background stream run {run_context.run_id} cancelled while waiting for a slot")
+                workflow_run_response.status = RunStatus.cancelled
+                try:
+                    await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
+                except Exception:
+                    # A failed persist must not skip the cleanup below (parity
+                    # with the agent/team twins)
+                    log_error(
+                        f"Failed to persist cancelled state for background stream run {run_context.run_id}",
+                        exc_info=True,
+                    )
+                await acleanup_run(run_context.run_id)
             except Exception as e:
                 logger.exception("Background streaming workflow execution failed")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Background streaming execution failed: {str(e)}"
-                if self._has_async_db():
-                    await self.asave_session(session=workflow_session)
-                else:
-                    self.save_session(session=workflow_session)
+                await apersist_run_transition(
+                    self,
+                    "workflow",
+                    session_id,
+                    workflow_run_response,
+                    user_id=user_id,
+                    full_run=True,
+                )
+            finally:
+                if slot_held:
+                    await slot_cm.__aexit__(None, None, None)
+
+                # Mark run terminal in the event stream and wake all tails
+                # (shielded to survive task cancellation). A pause is terminal
+                # for THIS attempt; the continue-run resumes the stream.
+                try:
+                    await asyncio.shield(
+                        event_stream.complete_run(publish_run_id, workflow_run_response.status or RunStatus.completed)
+                    )
+                except (Exception, asyncio.CancelledError):
+                    log_warning(f"Failed to mark workflow run {publish_run_id} as completed in event stream")
 
         # Create and start asyncio task for background streaming execution
         loop = asyncio.get_running_loop()
-        loop.create_task(
+        task = loop.create_task(
             execute_workflow_background_stream(),
             name=f"workflow-background-stream-ws-{workflow_run_response.run_id}",
         )
+        _workflow_background_tasks.add(task)
+        task.add_done_callback(_workflow_background_tasks.discard)
 
         # Return SAME object that will be updated by background execution
         return workflow_run_response
@@ -4451,7 +4712,7 @@ class Workflow:
 
         1. Persists RUNNING status in DB
         2. Spawns a detached asyncio.Task that runs _aexecute_stream
-        3. Buffers events (via event_buffer) and publishes to SSE subscribers
+        3. Publishes events through the event stream (buffer + live tails on any replica)
         4. Yields SSE-formatted strings via an asyncio.Queue
 
         The detached task keeps running even if the client disconnects.
@@ -4485,7 +4746,8 @@ class Workflow:
 
         self._prepare_steps()
 
-        # Create workflow run response with RUNNING status
+        # Create workflow run response with PENDING status. Execution (and the
+        # RUNNING transition) waits for a concurrency slot.
         workflow_run_response = WfRunOutput(
             run_id=run_id,
             input=input,
@@ -4494,21 +4756,29 @@ class Workflow:
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
-            status=RunStatus.running,
+            status=RunStatus.pending,
         )
 
         # Start the run metrics timer
         workflow_run_response.metrics = WorkflowMetrics(steps={})
         workflow_run_response.metrics.start_timer()
 
-        # Persist RUNNING status so the run is visible in the DB immediately
+        # Persist PENDING status so the run is visible in the DB immediately
         workflow_session.upsert_run(run=workflow_run_response)
         if self._has_async_db():
-            await self.asave_session(session=workflow_session)
+            await self._apersist_session_and_run(session=workflow_session, run=workflow_run_response)
         else:
-            self.save_session(session=workflow_session)
+            self._persist_session_and_run(session=workflow_session, run=workflow_run_response)
 
-        log_info(f"Background stream workflow run {run_id} persisted with RUNNING status")
+        # Pre-register with the event stream so reconnecting clients can attach
+        # and wait while the run is still queued (no events buffered yet).
+        from agno.os.event_streams import get_event_stream
+
+        with contextlib.suppress(Exception):
+            # Fail-open: a Redis blip must not strand an accepted run
+            await get_event_stream().register_run(run_id, RunStatus.pending)
+
+        log_info(f"Background stream workflow run {run_id} persisted with PENDING status")
 
         # Prepare execution input
         inputs = WorkflowExecutionInput(
@@ -4527,15 +4797,24 @@ class Workflow:
 
         # Spawn detached background task
         async def _background_producer() -> None:
-            from agno.os.managers import event_buffer, sse_subscriber_manager
+            from agno.os.event_streams import get_event_stream
             from agno.os.utils import format_sse_event_with_index
 
-            # _handle_event (called inside _aexecute_stream) already adds events to
-            # event_buffer.  We must NOT add them again here to avoid duplication.
-            # Instead, we read the current buffer count to derive the event_index
-            # that _handle_event just assigned.
+            event_stream = get_event_stream()
 
+            slot_cm = background_run_slot(run_id=run_id)
+            slot_held = False
             try:
+                await slot_cm.__aenter__()
+                slot_held = True
+
+                # Transition to RUNNING now that a slot is held (atomic helper)
+                workflow_run_response.status = RunStatus.running
+                await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
+                with contextlib.suppress(Exception):
+                    # Fail-open: coordination writes must not kill the run
+                    await event_stream.set_run_status(run_id, RunStatus.running)
+
                 if self.agent is not None:
                     result = self._aexecute_workflow_agent(
                         user_input=input,  # type: ignore
@@ -4548,25 +4827,19 @@ class Workflow:
                         if isinstance(event, WfRunOutput):
                             continue
 
-                        # Get the monotonic index that _handle_event already assigned
-                        event_index = event_buffer.get_last_index(run_id)
+                        # Publish to the event stream (buffer + live tails on any
+                        # replica); the stream owns index assignment
+                        event_index = await self._apublish_stream_event(event, run_id)
 
-                        # Format as SSE
+                        # Format as SSE for the primary queue (original client)
                         sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=run_id)
-
-                        # Push to primary queue (original client)
                         try:
                             await sse_queue.put(sse_data)
                         except Exception:
                             log_warning(f"Failed to push SSE data to queue for workflow run {run_id}")
-
-                        # Publish to SSE subscribers (resumed clients)
-                        try:
-                            await sse_subscriber_manager.publish(
-                                run_id, event_index if event_index is not None else -1, sse_data
-                            )
-                        except Exception:
-                            log_warning(f"Failed to publish SSE data to subscribers for workflow run {run_id}")
+                    # Same stale-status issue as the WS producer: the
+                    # workflow-agent generator never mutates workflow_run_response
+                    await self._aterminalize_workflow_agent_run(workflow_run_response, session_id, user_id)
                 else:
                     async for event in self._aexecute_stream(
                         session_id=session_id,
@@ -4581,63 +4854,84 @@ class Workflow:
                         if isinstance(event, WfRunOutput):
                             continue
 
-                        # Get the monotonic index that _handle_event already assigned
-                        event_index = event_buffer.get_last_index(run_id)
+                        # Publish to the event stream (buffer + live tails on any
+                        # replica); the stream owns index assignment
+                        event_index = await self._apublish_stream_event(event, run_id)
 
-                        # Format as SSE
+                        # Format as SSE for the primary queue (original client)
                         sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=run_id)
-
-                        # Push to primary queue (original client)
                         try:
                             await sse_queue.put(sse_data)
                         except Exception:
                             log_warning(f"Failed to push SSE data to queue for workflow run {run_id}")
 
-                        # Publish to SSE subscribers (resumed clients)
-                        try:
-                            await sse_subscriber_manager.publish(
-                                run_id, event_index if event_index is not None else -1, sse_data
-                            )
-                        except Exception:
-                            log_warning(f"Failed to publish SSE data to subscribers for workflow run {run_id}")
-
                 log_debug(
                     f"Background stream workflow run {run_id} completed with status: {workflow_run_response.status}"
                 )
 
+            except asyncio.CancelledError:
+                # Task-level shutdown, not run-cancellation: best-effort persist
+                # so pollers are not left with a run stuck at PENDING/RUNNING
+                # (parity with the non-stream producer)
+                from agno.run.concurrency import is_worker_managed
+
+                if is_worker_managed(getattr(workflow_run_response, "run_id", None) or ""):
+                    raise  # worker-claimed: the QueueWorker owns this terminal
+                if workflow_run_response.status == RunStatus.paused:
+                    # The leg already PAUSED and parked valid, continuable HITL
+                    # state (persisted by the leg itself) - a routine deploy's
+                    # shutdown must not stamp CANCELLED over it. This in-memory
+                    # check is the ONLY protection off-Postgres: adapters without
+                    # the atomic primitive reach the whole-session fallback, which
+                    # no DB-side guard covers.
+                    raise
+                with contextlib.suppress(Exception):
+                    workflow_run_response.status = RunStatus.cancelled
+                    await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
+                raise
+            except RunCancelledException:
+                # Cancelled while waiting for a slot — execution never started, so
+                # persist CANCELLED and deregister the run here.
+                log_info(f"Background stream workflow run {run_id} cancelled while waiting for a slot")
+                try:
+                    workflow_run_response.status = RunStatus.cancelled
+                    await apersist_run_transition(self, "workflow", session_id, workflow_run_response, user_id=user_id)
+                except Exception:
+                    log_error(
+                        f"Failed to persist cancelled state for background stream workflow run {run_id}", exc_info=True
+                    )
+                await acleanup_run(run_id)
             except Exception:
                 log_error(f"Background stream workflow run {run_id} failed", exc_info=True)
                 # Persist ERROR status
                 try:
                     workflow_run_response.status = RunStatus.error
-                    workflow_session.upsert_run(run=workflow_run_response)
-                    if self._has_async_db():
-                        await self.asave_session(session=workflow_session)
-                    else:
-                        self.save_session(session=workflow_session)
+                    await apersist_run_transition(
+                        self, "workflow", session_id, workflow_run_response, user_id=user_id, full_run=True
+                    )
                 except Exception:
                     log_error(
                         f"Failed to persist error state for background stream workflow run {run_id}", exc_info=True
                     )
 
             finally:
+                if slot_held:
+                    await slot_cm.__aexit__(None, None, None)
+
                 # Signal primary queue FIRST — unblocks the original client
                 try:
                     await sse_queue.put(None)
                 except Exception:
                     log_warning(f"Failed to signal primary queue for workflow run {run_id} completion")
 
-                # Mark run completed in event buffer
+                # Mark run terminal in the event stream and wake all tails
+                # (shielded to survive task cancellation)
                 try:
-                    event_buffer.set_run_completed(run_id, workflow_run_response.status or RunStatus.completed)
-                except Exception:
-                    log_warning(f"Failed to mark workflow run {run_id} as completed in event buffer")
-
-                # Signal SSE subscribers that run is done (shielded to survive task cancellation)
-                try:
-                    await asyncio.shield(sse_subscriber_manager.complete(run_id))
+                    await asyncio.shield(
+                        event_stream.complete_run(run_id, workflow_run_response.status or RunStatus.completed)
+                    )
                 except (Exception, asyncio.CancelledError):
-                    log_warning(f"Failed to signal SSE subscribers for workflow run {run_id} completion")
+                    log_warning(f"Failed to mark workflow run {run_id} as completed in event stream")
 
         task = asyncio.create_task(
             _background_producer(),
@@ -4646,9 +4940,15 @@ class Workflow:
         _workflow_background_tasks.add(task)
         task.add_done_callback(_workflow_background_tasks.discard)
 
-        # Yield SSE strings from the queue
+        # Yield SSE strings from the queue. Emit SSE keepalive comments on idle
+        # so proxies do not kill the connection while the run waits for a slot
+        # (or during long silent stretches of execution).
         while True:
-            sse_data = await sse_queue.get()
+            try:
+                sse_data = await asyncio.wait_for(sse_queue.get(), timeout=SSE_KEEPALIVE_INTERVAL_SECONDS)
+            except asyncio.TimeoutError:
+                yield ": keepalive\n\n"
+                continue
             if sse_data is None:
                 break
             yield sse_data
@@ -4825,8 +5125,11 @@ class Workflow:
 
         log_debug(f"Executing workflow agent with streaming - input: {agent_input}...")
 
-        # Create a workflow run response upfront for potential direct answer (will be used only if workflow is not executed)
-        run_id = str(uuid4())
+        # Create a workflow run response upfront for potential direct answer (will be used only if workflow is not executed).
+        # Reuse the caller's run id so a direct answer IS the polled run (the
+        # background path no longer pre-persists an empty outer run for the
+        # workflow-agent case, so there is no placeholder to merge with).
+        run_id = run_context.run_id or str(uuid4())
         direct_reply_run_response = WorkflowRunOutput(
             run_id=run_id,
             input=execution_input.input,
@@ -4917,8 +5220,8 @@ class Workflow:
 
             # Update the run in session
             session.upsert_run(run=workflow_run_response)
-            # Save session
-            self.save_session(session=session)
+            # Persist session row + the changed run (O(1))
+            self._persist_session_and_run(session=session, run=workflow_run_response)
 
         else:
             # Workflow was executed by the tool
@@ -4946,8 +5249,10 @@ class Workflow:
                     agent_response.parent_run_id = last_run.run_id
                     agent_response.workflow_id = last_run.workflow_id
 
-                # Save the reloaded session (which has the updated run)
-                self.save_session(session=reloaded_session)
+                # v3: save_session only writes the session row; the mutated run
+                # must be re-persisted to the runs table for workflow_agent_run
+                # to survive a reload.
+                self._persist_session_and_run(session=reloaded_session, run=last_run)
 
             else:
                 log_warning("Could not reload session or no runs found after workflow execution")
@@ -5007,8 +5312,10 @@ class Workflow:
 
         # Handle direct answer case (no workflow execution)
         if not workflow_executed:
-            # Create a new workflow run output for the direct answer
-            run_id = str(uuid4())
+            # Persist the direct answer under the CALLER'S run identity: a
+            # background 202's run_id must reach a terminal state under that
+            # same id, or pollers wait on RUNNING forever.
+            run_id = run_context.run_id or str(uuid4())
             workflow_run_response = WorkflowRunOutput(
                 run_id=run_id,
                 input=execution_input.input,
@@ -5029,7 +5336,7 @@ class Workflow:
 
             # Update the run in session
             session.upsert_run(run=workflow_run_response)
-            self.save_session(session=session)
+            self._persist_session_and_run(session=session, run=workflow_run_response)
 
             log_debug(f"Agent decision: workflow_executed={workflow_executed}")
 
@@ -5050,8 +5357,10 @@ class Workflow:
                     agent_response.parent_run_id = last_run.run_id
                     agent_response.workflow_id = last_run.workflow_id
 
-                # Save the reloaded session (which has the updated run)
-                self.save_session(session=reloaded_session)
+                # v3: save_session only writes the session row; the mutated run
+                # must be re-persisted to the runs table for workflow_agent_run
+                # to survive a reload.
+                self._persist_session_and_run(session=reloaded_session, run=last_run)
 
                 # Return the last run directly (WRO2 from inner workflow)
                 return last_run
@@ -5213,8 +5522,11 @@ class Workflow:
 
         log_debug(f"Executing async workflow agent with streaming - input: {agent_input}...")
 
-        # Create a workflow run response upfront for potential direct answer (will be used only if workflow is not executed)
-        run_id = str(uuid4())
+        # Create a workflow run response upfront for potential direct answer (will be used only if workflow is not executed).
+        # Reuse the caller's run id so a direct answer IS the polled run (the
+        # background path no longer pre-persists an empty outer run for the
+        # workflow-agent case, so there is no placeholder to merge with).
+        run_id = run_context.run_id or str(uuid4())
         direct_reply_run_response = WorkflowRunOutput(
             run_id=run_id,
             input=execution_input.input,
@@ -5313,11 +5625,11 @@ class Workflow:
 
             # Update the run in session
             session.upsert_run(run=workflow_run_response)
-            # Save session
+            # Persist session row + the changed run (O(1))
             if self._has_async_db():
-                await self.asave_session(session=session)
+                await self._apersist_session_and_run(session=session, run=workflow_run_response)
             else:
-                self.save_session(session=session)
+                self._persist_session_and_run(session=session, run=workflow_run_response)
 
         else:
             # Workflow was executed by the tool
@@ -5351,11 +5663,13 @@ class Workflow:
                     agent_response.parent_run_id = last_run.run_id
                     agent_response.workflow_id = last_run.workflow_id
 
-                # Save the reloaded session (which has the updated run)
+                # v3: save_session only writes the session row; the mutated run
+                # must be re-persisted to the runs table for workflow_agent_run
+                # to survive a reload.
                 if self._has_async_db():
-                    await self.asave_session(session=reloaded_session)
+                    await self._apersist_session_and_run(session=reloaded_session, run=last_run)
                 else:
-                    self.save_session(session=reloaded_session)
+                    self._persist_session_and_run(session=reloaded_session, run=last_run)
 
             else:
                 log_warning("Could not reload session or no runs found after workflow execution")
@@ -5412,8 +5726,10 @@ class Workflow:
 
         # Handle direct answer case (no workflow execution)
         if not workflow_executed:
-            # Create a new workflow run output for the direct answer
-            run_id = str(uuid4())
+            # Persist the direct answer under the CALLER'S run identity: a
+            # background 202's run_id must reach a terminal state under that
+            # same id, or pollers wait on RUNNING forever.
+            run_id = run_context.run_id or str(uuid4())
             workflow_run_response = WorkflowRunOutput(
                 run_id=run_id,
                 input=execution_input.input,
@@ -5432,12 +5748,12 @@ class Workflow:
                 agent_response.parent_run_id = workflow_run_response.run_id
                 agent_response.workflow_id = workflow_run_response.workflow_id
 
-            # Update the run in session
+            # Update the run in session, persist session row + the changed run (O(1))
             session.upsert_run(run=workflow_run_response)
             if self._has_async_db():
-                await self.asave_session(session=session)
+                await self._apersist_session_and_run(session=session, run=workflow_run_response)
             else:
-                self.save_session(session=session)
+                self._persist_session_and_run(session=session, run=workflow_run_response)
 
             log_debug(f"Agent decision: workflow_executed={workflow_executed}")
 
@@ -5469,11 +5785,13 @@ class Workflow:
                     agent_response.parent_run_id = last_run.run_id
                     agent_response.workflow_id = last_run.workflow_id
 
-                # Save the reloaded session (which has the updated run)
+                # v3: save_session only writes the session row; the mutated run
+                # must be re-persisted to the runs table for workflow_agent_run
+                # to survive a reload.
                 if self._has_async_db():
-                    await self.asave_session(session=reloaded_session)
+                    await self._apersist_session_and_run(session=reloaded_session, run=last_run)
                 else:
-                    self.save_session(session=reloaded_session)
+                    self._persist_session_and_run(session=reloaded_session, run=last_run)
 
                 log_debug(f"Agent decision: workflow_executed={workflow_executed}")
 
@@ -5714,7 +6032,7 @@ class Workflow:
                         _session = self.get_session(session_id=session_id)
                         if _session:
                             _session.upsert_run(run=run_response)
-                            self.save_session(session=_session)
+                            self._persist_session_and_run(session=_session, run=run_response)
                     if stream:
 
                         def max_retry_generator() -> Iterator[WorkflowRunOutputEvent]:
@@ -5767,7 +6085,7 @@ class Workflow:
                     session = self.get_session(session_id=session_id)
                     if session:
                         session.upsert_run(run=run_response)
-                        self.save_session(session=session)
+                        self._persist_session_and_run(session=session, run=run_response)
 
                 if stream:
 
@@ -6343,7 +6661,7 @@ class Workflow:
                         # Save the session with paused state
                         self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
                         session.upsert_run(run=workflow_run_response)
-                        self.save_session(session=session)
+                        self._persist_session_and_run(session=session, run=workflow_run_response)
 
                         return workflow_run_response
                     elif step_on_error == "skip":
@@ -6464,7 +6782,7 @@ class Workflow:
 
             self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
             session.upsert_run(run=workflow_run_response)
-            self.save_session(session=session)
+            self._persist_session_and_run(session=session, run=workflow_run_response)
             cleanup_run(workflow_run_response.run_id)  # type: ignore
             cleanup_member_runs(workflow_run_response.run_id)  # type: ignore
 
@@ -7383,7 +7701,7 @@ class Workflow:
 
                         self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
                         session.upsert_run(run=workflow_run_response)
-                        self.save_session(session=session)
+                        self._persist_session_and_run(session=session, run=workflow_run_response)
 
                         return
                     elif step_on_error == "skip":
@@ -7528,7 +7846,7 @@ class Workflow:
 
         self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
         session.upsert_run(run=workflow_run_response)
-        self.save_session(session=session)
+        self._persist_session_and_run(session=session, run=workflow_run_response)
 
         if self.telemetry:
             self._log_workflow_telemetry(session_id=session.session_id, run_id=workflow_run_response.run_id)
@@ -7706,7 +8024,7 @@ class Workflow:
                         _session = await self.aget_session(session_id=session_id)
                         if _session:
                             _session.upsert_run(run=run_response)
-                            await self.asave_session(session=_session)
+                            await self._apersist_session_and_run(session=_session, run=run_response)
                     if stream:
 
                         async def max_retry_generator() -> AsyncIterator[WorkflowRunOutputEvent]:
@@ -7757,7 +8075,7 @@ class Workflow:
                     session = await self.aget_session(session_id=session_id)
                     if session:
                         session.upsert_run(run=run_response)
-                        await self.asave_session(session=session)
+                        await self._apersist_session_and_run(session=session, run=run_response)
 
                 if stream:
 
@@ -7836,16 +8154,17 @@ class Workflow:
         if session is None:
             raise ValueError(f"Could not find session with id {session_id}")
 
-        # Update run status to running and persist immediately so that any
-        # reload (page refresh, another process) sees the run as RUNNING rather
-        # than the stale PAUSED state. This mirrors _arun_background_stream_ws.
-        run_response.status = RunStatus.running
+        # Persist immediately so any reload sees fresh state rather than stale
+        # PAUSED. Foreground continues execute now (RUNNING); background
+        # continues first wait for a concurrency slot (PENDING-means-queued -
+        # the slot holder transitions to RUNNING when execution actually starts).
+        run_response.status = RunStatus.pending if background else RunStatus.running
         run_response.error_requirements = None
         session.upsert_run(run=run_response)
         if self._has_async_db():
-            await self.asave_session(session=session)
+            await self._apersist_session_and_run(session=session, run=run_response)
         else:
-            self.save_session(session=session)
+            self._persist_session_and_run(session=session, run=run_response)
 
         # Create run context
         run_context = RunContext(
@@ -7955,7 +8274,6 @@ class Workflow:
                 run_context=run_context,
                 start_step_index=start_index,
                 stream_events=stream_events or False,
-                websocket_handler=websocket_handler,
                 **kwargs,
             )
         else:
@@ -8353,7 +8671,7 @@ class Workflow:
 
                         self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
                         session.upsert_run(run=workflow_run_response)
-                        await self.asave_session(session=session)
+                        await self._apersist_session_and_run(session=session, run=workflow_run_response)
 
                         return workflow_run_response
                     elif step_on_error == "skip":
@@ -8488,7 +8806,7 @@ class Workflow:
 
                 self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
                 session.upsert_run(run=workflow_run_response)
-                await self.asave_session(session=session)
+                await self._apersist_session_and_run(session=session, run=workflow_run_response)
                 await acleanup_run(workflow_run_response.run_id)  # type: ignore
                 await acleanup_member_runs(workflow_run_response.run_id)  # type: ignore
 
@@ -8505,7 +8823,6 @@ class Workflow:
         run_context: RunContext,
         start_step_index: int,
         stream_events: bool = False,
-        websocket_handler: Optional["WebSocketHandler"] = None,
         background_tasks: Optional[Any] = None,
         **kwargs: Any,
     ) -> AsyncIterator[WorkflowRunOutputEvent]:
@@ -8586,7 +8903,6 @@ class Workflow:
                             executor_type=executor_step_req.executor_type,
                         ),
                         workflow_run_response,
-                        websocket_handler=websocket_handler,
                     )
                     step_output = None
                     async for event in self._aroute_executor_requirements_stream(
@@ -8603,9 +8919,7 @@ class Workflow:
                             enriched_event = self._enrich_event_with_workflow_context(
                                 event, workflow_run_response, step_index=i, step=step
                             )
-                            yield self._handle_event(
-                                enriched_event, workflow_run_response, websocket_handler=websocket_handler
-                            )  # type: ignore
+                            yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
 
                     await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
@@ -8668,9 +8982,7 @@ class Workflow:
                                 if review_result.step_requirement
                                 else None,
                             )
-                            yield self._handle_event(
-                                review_event, workflow_run_response, websocket_handler=websocket_handler
-                            )
+                            yield self._handle_event(review_event, workflow_run_response)
                             await asave_paused_session(self, session, workflow_run_response)
                             return
 
@@ -8736,17 +9048,13 @@ class Workflow:
                             enriched_event = self._enrich_event_with_workflow_context(
                                 event, workflow_run_response, step_index=i, step=step
                             )
-                            yield self._handle_event(
-                                enriched_event, workflow_run_response, websocket_handler=websocket_handler
-                            )  # type: ignore
+                            yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
                         else:
                             enriched_event = self._enrich_event_with_workflow_context(
                                 event, workflow_run_response, step_index=i, step=step
                             )
                             if self.stream_executor_events or isinstance(event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES):
-                                yield self._handle_event(
-                                    enriched_event, workflow_run_response, websocket_handler=websocket_handler
-                                )  # type: ignore
+                                yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
 
                     if condition_step_output is None:
                         condition_step_output = StepOutput(
@@ -8789,7 +9097,7 @@ class Workflow:
                         reroute_pause = StepPauseResult(should_pause=True, step_requirement=reroute_req)
                     apply_pause_state(workflow_run_response, i, step_name, collected_step_outputs, reroute_pause)
                     paused_event = create_router_paused_event(workflow_run_response, step_name, i, reroute_pause)
-                    yield self._handle_event(paused_event, workflow_run_response, websocket_handler=websocket_handler)
+                    yield self._handle_event(paused_event, workflow_run_response)
                     await asave_paused_session(self, session, workflow_run_response)
                     return
 
@@ -8844,9 +9152,7 @@ class Workflow:
                                     enriched_event = self._enrich_event_with_workflow_context(
                                         event, workflow_run_response, step_index=i, step=step
                                     )
-                                    yield self._handle_event(
-                                        enriched_event, workflow_run_response, websocket_handler=websocket_handler
-                                    )  # type: ignore
+                                    yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
                                 else:
                                     enriched_event = self._enrich_event_with_workflow_context(
                                         event, workflow_run_response, step_index=i, step=step
@@ -8854,9 +9160,7 @@ class Workflow:
                                     if self.stream_executor_events or isinstance(
                                         event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES
                                     ):
-                                        yield self._handle_event(
-                                            enriched_event, workflow_run_response, websocket_handler=websocket_handler
-                                        )  # type: ignore
+                                        yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
                         finally:
                             # Restore original selector even if execution fails
                             step.selector = original_selector
@@ -8933,9 +9237,7 @@ class Workflow:
                                 if review_result.step_requirement
                                 else None,
                             )
-                            yield self._handle_event(
-                                review_event, workflow_run_response, websocket_handler=websocket_handler
-                            )
+                            yield self._handle_event(review_event, workflow_run_response)
                             save_paused_session(self, session, workflow_run_response)
                             return
 
@@ -8957,7 +9259,6 @@ class Workflow:
                             step_id=getattr(step, "step_id", None),
                         ),
                         workflow_run_response,
-                        websocket_handler=websocket_handler,
                     )
                 if i != hitl_resolved_index:
                     step_type = STEP_TYPE_MAPPING.get(type(step), StepType.STEP).value
@@ -8977,9 +9278,7 @@ class Workflow:
                             paused_event = create_step_paused_event(
                                 workflow_run_response, step, step_name, i, pause_result
                             )
-                        yield self._handle_event(
-                            paused_event, workflow_run_response, websocket_handler=websocket_handler
-                        )
+                        yield self._handle_event(paused_event, workflow_run_response)
 
                         await asave_paused_session(self, session, workflow_run_response)
                         return
@@ -9082,18 +9381,14 @@ class Workflow:
                             enriched_event = self._enrich_event_with_workflow_context(
                                 event, workflow_run_response, step_index=i, step=step
                             )
-                            yield self._handle_event(
-                                enriched_event, workflow_run_response, websocket_handler=websocket_handler
-                            )  # type: ignore
+                            yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
 
                         else:
                             enriched_event = self._enrich_event_with_workflow_context(
                                 event, workflow_run_response, step_index=i, step=step
                             )
                             if self.stream_executor_events or isinstance(event, _EXECUTOR_CANCEL_BYPASS_EVENT_TYPES):
-                                yield self._handle_event(
-                                    enriched_event, workflow_run_response, websocket_handler=websocket_handler
-                                )  # type: ignore
+                                yield self._handle_event(enriched_event, workflow_run_response)  # type: ignore
 
                     if draining_after_cancel:
                         raise RunCancelledException(f"Run {workflow_run_response.run_id} was cancelled")
@@ -9128,13 +9423,11 @@ class Workflow:
                             step_id=getattr(step, "step_id", None),
                             error=str(step_error_exception),
                         )
-                        yield self._handle_event(
-                            error_paused_event, workflow_run_response, websocket_handler=websocket_handler
-                        )
+                        yield self._handle_event(error_paused_event, workflow_run_response)
 
                         self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
                         session.upsert_run(run=workflow_run_response)
-                        await self.asave_session(session=session)
+                        await self._apersist_session_and_run(session=session, run=workflow_run_response)
 
                         return
                     elif step_on_error == "skip":
@@ -9174,9 +9467,7 @@ class Workflow:
                             if review_result.step_requirement
                             else None,
                         )
-                        yield self._handle_event(
-                            review_event, workflow_run_response, websocket_handler=websocket_handler
-                        )
+                        yield self._handle_event(review_event, workflow_run_response)
                         await asave_paused_session(self, session, workflow_run_response)
                         return
 
@@ -9215,7 +9506,7 @@ class Workflow:
                         step_id=getattr(step, "step_id", None),
                         output_review_message=getattr(req, "output_review_message", None),
                     )
-                    yield self._handle_event(review_event, workflow_run_response, websocket_handler=websocket_handler)
+                    yield self._handle_event(review_event, workflow_run_response)
                     await asave_paused_session(self, session, workflow_run_response)
                     return
 
@@ -9260,7 +9551,7 @@ class Workflow:
                 reason=str(e),
                 content=str(e),
             )
-            yield self._handle_event(cancelled_event, workflow_run_response, websocket_handler=websocket_handler)
+            yield self._handle_event(cancelled_event, workflow_run_response)
         except Exception as e:
             logger.exception("Workflow execution failed")
             workflow_run_response.status = RunStatus.error
@@ -9278,14 +9569,14 @@ class Workflow:
             step_executor_runs=workflow_run_response.step_executor_runs,
             metadata=workflow_run_response.metadata,
         )
-        yield self._handle_event(workflow_completed_event, workflow_run_response, websocket_handler=websocket_handler)
+        yield self._handle_event(workflow_completed_event, workflow_run_response)
 
         if workflow_run_response.metrics:
             workflow_run_response.metrics.stop_timer()
 
         self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
         session.upsert_run(run=workflow_run_response)
-        await self.asave_session(session=session)
+        await self._apersist_session_and_run(session=session, run=workflow_run_response)
         await acleanup_run(workflow_run_response.run_id)  # type: ignore
         await acleanup_member_runs(workflow_run_response.run_id)  # type: ignore
 
@@ -9305,14 +9596,44 @@ class Workflow:
     ) -> WorkflowRunOutput:
         """Continue a paused workflow in background with WebSocket streaming.
 
-        Mirrors _arun_background_stream_ws but for continue execution. Events are
-        broadcast via websocket_handler through _handle_event calls in
-        _acontinue_execute_stream, which also handles event buffering and
-        websocket manager broadcasting for reconnection support.
+        Mirrors _arun_background_stream_ws but for continue execution. The
+        execute-stream generator is transport-free: this producer publishes
+        every event via _apublish_stream_event (event-stream buffering for
+        reconnection + WebSocket delivery via the handler).
         """
 
         async def _execute_continue_background():
+            # Execution waits for a concurrency slot (background_run_slot); the
+            # run can be cancelled without consuming a slot while it waits.
+            from agno.os.event_streams import get_event_stream
+
+            _continue_event_stream = get_event_stream()
+            _continue_run_id = workflow_run_response.run_id or ""
+
+            # Re-register (idempotent): a cross-replica continue lands on a
+            # replica whose in-memory stream has never seen this run
             try:
+                await _continue_event_stream.register_run(_continue_run_id, RunStatus.pending)
+            except Exception:
+                log_warning(f"Failed to register workflow run {_continue_run_id} with event stream")
+
+            slot_cm = background_run_slot(run_id=workflow_run_response.run_id)
+            slot_held = False
+            try:
+                await slot_cm.__aenter__()
+                slot_held = True
+
+                # Transition to RUNNING now that a slot is held (PENDING while queued)
+                workflow_run_response.status = RunStatus.running
+                session.upsert_run(run=workflow_run_response)
+                if self._has_async_db():
+                    await self.asave_session(session=session)
+                else:
+                    self.save_session(session=session)
+                with contextlib.suppress(Exception):
+                    # Fail-open: coordination writes must not kill the run
+                    await _continue_event_stream.set_run_status(_continue_run_id, RunStatus.running)
+
                 async for _event in self._acontinue_execute_stream(
                     session=session,
                     execution_input=execution_input,
@@ -9320,11 +9641,11 @@ class Workflow:
                     run_context=run_context,
                     start_step_index=start_step_index,
                     stream_events=stream_events,
-                    websocket_handler=websocket_handler,
                     **kwargs,
                 ):
-                    # Events are broadcast via _handle_event -> websocket_handler
-                    pass
+                    if isinstance(_event, WorkflowRunOutput):
+                        continue
+                    await self._apublish_stream_event(_event, _continue_run_id, websocket_handler=websocket_handler)
 
                 log_debug(f"Background continue streaming completed with status: {workflow_run_response.status}")
 
@@ -9348,36 +9669,90 @@ class Workflow:
                         content=workflow_run_response.content,
                         metadata=workflow_run_response.metadata,
                     )
-                    self._handle_event(paused_event, workflow_run_response, websocket_handler=websocket_handler)
+                    self._handle_event(paused_event, workflow_run_response)
+                    await self._apublish_stream_event(
+                        paused_event, _continue_run_id, websocket_handler=websocket_handler
+                    )
 
-            except Exception as e:
-                logger.exception("Background continue streaming workflow execution failed")
-                workflow_run_response.status = RunStatus.error
-                workflow_run_response.content = f"Background continue streaming execution failed: {str(e)}"
+            except asyncio.CancelledError:
+                # Task-level shutdown (event loop stopping), not
+                # run-cancellation: best-effort persist so pollers are not
+                # left with a run stuck at RUNNING (parity with the primary WS
+                # producer). Setting the status before re-raising makes the
+                # finally's sentinel say CANCELLED - without it, complete_run's
+                # non-terminal coercion turned an interrupted continue into a
+                # FALSE COMPLETED.
+                from agno.run.concurrency import is_worker_managed
+
+                if is_worker_managed(getattr(workflow_run_response, "run_id", None) or ""):
+                    raise  # worker-claimed: the QueueWorker owns this terminal
+                with contextlib.suppress(Exception):
+                    if workflow_run_response.status != RunStatus.paused:
+                        # A leg that already RE-PAUSED parked a valid,
+                        # continuable HITL state - shutdown while draining
+                        # trailing events must not destroy it (the finally
+                        # re-parks the stream sentinel as PAUSED)
+                        workflow_run_response.status = RunStatus.cancelled
+                        session.upsert_run(run=workflow_run_response)
+                        if self._has_async_db():
+                            await self.asave_session(session=session)
+                        else:
+                            self.save_session(session=session)
+                raise
+            except RunCancelledException:
+                # Cancelled while waiting for a slot — execution never started, so
+                # persist CANCELLED and deregister the run here.
+                log_info(
+                    f"Background continue-run stream {workflow_run_response.run_id} cancelled while waiting for a slot"
+                )
+                workflow_run_response.status = RunStatus.cancelled
+                session.upsert_run(run=workflow_run_response)
                 if self._has_async_db():
                     await self.asave_session(session=session)
                 else:
                     self.save_session(session=session)
-            finally:
-                # Update event buffer with the final status (paused, completed, error,
-                # cancelled) so reconnecting clients take the correct replay path.
-                # Without this the buffer would still report 'running' for terminal runs.
                 if workflow_run_response.run_id:
-                    try:
-                        from agno.os.managers import event_buffer
+                    await acleanup_run(workflow_run_response.run_id)
+            except Exception as e:
+                logger.exception("Background continue streaming workflow execution failed")
+                workflow_run_response.status = RunStatus.error
+                workflow_run_response.content = f"Background continue streaming execution failed: {str(e)}"
+                # Only the run changed — persist just the run row (O(1))
+                if self._has_async_db():
+                    await self.asave_run(
+                        run=workflow_run_response,
+                        session_id=session.session_id,
+                        user_id=session.user_id,
+                    )
+                else:
+                    self.save_run(
+                        run=workflow_run_response,
+                        session_id=session.session_id,
+                        user_id=session.user_id,
+                    )
+            finally:
+                if slot_held:
+                    await slot_cm.__aexit__(None, None, None)
 
-                        event_buffer.set_run_completed(
-                            workflow_run_response.run_id,
-                            workflow_run_response.status or RunStatus.completed,
+                # Mark the final status (paused, completed, error, cancelled) in
+                # the event stream so reconnecting clients take the correct
+                # replay path (shielded to survive task cancellation).
+                try:
+                    await asyncio.shield(
+                        _continue_event_stream.complete_run(
+                            _continue_run_id, workflow_run_response.status or RunStatus.completed
                         )
-                    except Exception as e:
-                        log_debug(f"Failed to update event buffer status: {e}")
+                    )
+                except (Exception, asyncio.CancelledError):
+                    log_warning(f"Failed to mark workflow run {_continue_run_id} as completed in event stream")
 
         loop = asyncio.get_running_loop()
-        loop.create_task(
+        task = loop.create_task(
             _execute_continue_background(),
             name=f"workflow-continue-{workflow_run_response.run_id}",
         )
+        _workflow_background_tasks.add(task)
+        task.add_done_callback(_workflow_background_tasks.discard)
 
         # Return SAME object that will be updated by background execution
         return workflow_run_response
@@ -10695,7 +11070,8 @@ class Workflow:
                 name=step.name,
                 description=step.description,
                 selector=step.selector,
-                allow_multiple_selections=step.allow_multiple_selections,
+                # allow_multiple_selections lives on HumanReview now; passing
+                # human_review preserves it through the copy.
                 human_review=step.human_review,
             )
 

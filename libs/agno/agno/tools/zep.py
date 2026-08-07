@@ -322,7 +322,11 @@ class ZepAsyncTools(Toolkit):
             tools.append(self.search_memory)  # type: ignore
 
         super().__init__(
-            name="zep_tools", instructions=self.instructions, add_instructions=add_instructions, tools=tools, **kwargs
+            name="zep_async_tools",
+            instructions=self.instructions,
+            add_instructions=add_instructions,
+            tools=tools,
+            **kwargs,
         )
 
     async def initialize(self) -> bool:

@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, 
 from uuid import uuid4
 
 if TYPE_CHECKING:
+    from agno.run.status_persist import RunPersistOutcome
     from agno.tracing.schemas import Span, Trace
 
 from agno.db.base import AsyncBaseDb, ComponentType, SessionType
@@ -29,14 +30,42 @@ from agno.db.schemas.service_accounts import (
     resolve_service_account_sort_column,
     validate_service_account_update,
 )
-from agno.db.utils import deserialize_session, deserialize_sessions, json_serializer, learning_search_patterns
+from agno.db.utils import (
+    HISTORY_SKIP_STATUSES,
+    build_single_run_row,
+    deserialize_run,
+    deserialize_session,
+    deserialize_sessions,
+    filter_context_runs,
+    json_serializer,
+    learning_search_patterns,
+    merge_runs_table_with_legacy_blob,
+    validate_pagination,
+)
+from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
+from agno.run.team import TeamRunOutput
+from agno.run.workflow import WorkflowRunOutput
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import sanitize_postgres_string, sanitize_postgres_strings
 
 try:
-    from sqlalchemy import ForeignKey, Index, String, Table, UniqueConstraint, and_, case, distinct, func, or_, update
+    from sqlalchemy import (
+        BigInteger,
+        ForeignKey,
+        Index,
+        String,
+        Table,
+        UniqueConstraint,
+        and_,
+        case,
+        distinct,
+        func,
+        or_,
+        update,
+    )
+    from sqlalchemy import cast as sa_cast
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.dialects.postgresql import TIMESTAMP
     from sqlalchemy.exc import ProgrammingError
@@ -47,6 +76,23 @@ except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
 
 
+def _db_epoch() -> Any:
+    """Postgres transaction time as an integer epoch, for LEASE math.
+
+    Lease decisions must be anchored to ONE clock. With app-side time a
+    replica whose clock runs fast sees healthy leases as expired and sweeps
+    live runs - and now that the sweep steals the lock, the victim's own
+    completion is fenced out and its run is reported failed despite having
+    finished. NOW() is transaction-start time, identical for every replica
+    talking to the same database, so claim/heartbeat/sweep all agree.
+
+    Not applied to enqueue's available_at (computed by the accepting replica
+    before any transaction exists) or to queue_stats' age arithmetic; both
+    only shift scheduling/reporting by the skew, never ownership.
+    """
+    return sa_cast(func.floor(func.extract("epoch", func.now())), BigInteger)
+
+
 class AsyncPostgresDb(AsyncBaseDb):
     def __init__(
         self,
@@ -55,6 +101,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         db_engine: Optional[AsyncEngine] = None,
         db_schema: Optional[str] = None,
         session_table: Optional[str] = None,
+        runs_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
@@ -66,6 +113,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         learnings_table: Optional[str] = None,
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
+        job_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
         service_accounts_table: Optional[str] = None,
@@ -94,6 +142,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             db_engine (Optional[AsyncEngine]): The SQLAlchemy async database engine to use.
             db_schema (Optional[str]): The database schema to use.
             session_table (Optional[str]): Name of the table to store Agent, Team and Workflow sessions.
+            runs_table (Optional[str]): Name of the table to store the runs of each session.
             memory_table (Optional[str]): Name of the table to store memories.
             metrics_table (Optional[str]): Name of the table to store metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
@@ -105,6 +154,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             learnings_table (Optional[str]): Name of the table to store learnings.
             schedules_table (Optional[str]): Name of the table to store cron schedules.
             schedule_runs_table (Optional[str]): Name of the table to store schedule run history.
+            job_table (Optional[str]): Name of the table to store durable background run jobs.
             create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
                 Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
 
@@ -115,6 +165,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         super().__init__(
             id=id,
             session_table=session_table,
+            runs_table=runs_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
             eval_table=eval_table,
@@ -126,6 +177,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             learnings_table=learnings_table,
             schedules_table=schedules_table,
             schedule_runs_table=schedule_runs_table,
+            job_table=job_table,
             approvals_table=approvals_table,
             auth_tokens_table=auth_tokens_table,
             service_accounts_table=service_accounts_table,
@@ -182,6 +234,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         """Create all tables for the database."""
         tables_to_create = [
             (self.session_table_name, "sessions"),
+            (self.runs_table_name, "runs"),
             (self.memory_table_name, "memories"),
             (self.metrics_table_name, "metrics"),
             (self.eval_table_name, "evals"),
@@ -210,6 +263,15 @@ class AsyncPostgresDb(AsyncBaseDb):
         Returns:
             Table: SQLAlchemy Table object
         """
+        # Ensure sessions Table is registered on metadata so the runs FK can resolve.
+        if table_type == "runs":
+            fq_sessions = f"{self.db_schema}.{self.session_table_name}" if self.db_schema else self.session_table_name
+            if fq_sessions not in self.metadata.tables:
+                await self._get_or_create_table(
+                    table_name=self.session_table_name,
+                    table_type="sessions",
+                    create_table_if_not_found=True,
+                )
         try:
             # Pass table names and db_schema for foreign key resolution
             table_schema = get_table_schema_definition(
@@ -217,6 +279,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 traces_table_name=self.trace_table_name,
                 db_schema=self.db_schema,
                 schedules_table_name=self.schedules_table_name,
+                session_table_name=self.session_table_name,
             ).copy()
 
             columns: List[Column] = []
@@ -344,6 +407,14 @@ class AsyncPostgresDb(AsyncBaseDb):
             )
             return self.session_table
 
+        if table_type == "runs":
+            self.runs_table = await self._get_or_create_table(
+                table_name=self.runs_table_name,
+                table_type="runs",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.runs_table
+
         if table_type == "memories":
             self.memory_table = await self._get_or_create_table(
                 table_name=self.memory_table_name,
@@ -434,6 +505,14 @@ class AsyncPostgresDb(AsyncBaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.schedule_runs_table
+
+        if table_type == "jobs":
+            self.job_table = await self._get_or_create_table(
+                table_name=self.job_table_name,
+                table_type="jobs",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.job_table
 
         if table_type == "approvals":
             self.approvals_table = await self._get_or_create_table(
@@ -546,6 +625,384 @@ class AsyncPostgresDb(AsyncBaseDb):
             )
             await sess.execute(stmt)
 
+    async def cleanup_legacy_runs_column(self, force: bool = False) -> bool:
+        """Drop the legacy ``runs`` column from the sessions table.
+
+        The v3.0.0 migration intentionally leaves the legacy ``runs`` column on
+        the sessions table as a backup. Once you have verified the migration
+        and taken a backup, call this to reclaim the storage.
+
+        Args:
+            force: If True, drop the column even if some sessions still hold
+                non-null ``runs`` content (a sign that they were not migrated).
+                Defaults to False.
+
+        Returns:
+            True if the column was dropped, False if it did not exist.
+        """
+        async with self.async_session_factory() as sess, sess.begin():
+            column_exists = (
+                await sess.execute(
+                    text(
+                        "SELECT 1 FROM information_schema.columns "
+                        "WHERE table_schema = :schema AND table_name = :table AND column_name = 'runs'"
+                    ),
+                    {"schema": self.db_schema, "table": self.session_table_name},
+                )
+            ).scalar() is not None
+            if not column_exists:
+                log_info(f"{self.session_table_name}.runs column does not exist, nothing to clean up")
+                return False
+
+            if not force:
+                pending = (
+                    await sess.execute(
+                        text(
+                            f'SELECT COUNT(*) FROM {self.db_schema}."{self.session_table_name}" WHERE runs IS NOT NULL'
+                        )
+                    )
+                ).scalar() or 0
+                if pending > 0:
+                    raise RuntimeError(
+                        f"Refusing to drop {self.session_table_name}.runs: {pending} session(s) still have "
+                        "non-null `runs` content. Run MigrationManager(db).up() first, or pass force=True."
+                    )
+
+            log_info(f"Dropping legacy runs column from {self.session_table_name}")
+            await sess.execute(text(f'ALTER TABLE {self.db_schema}."{self.session_table_name}" DROP COLUMN runs'))
+            return True
+
+    # -- Run methods --
+    async def _get_session_runs_data(
+        self, sess, runs_table: Table, session_id: str, limit: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Get the raw run_data dicts for the given session, in insertion order.
+
+        When ``limit`` is set, only the most recent ``limit`` context-relevant runs
+        are fetched (indexed ``ORDER BY run_index DESC LIMIT``) and returned in
+        ascending (chronological) order. "Context-relevant" mirrors the pre-slice
+        filtering in ``get_messages``: member sub-runs (``parent_run_id`` set) and
+        terminal-skip statuses are excluded in SQL, so the DB-side last-N matches
+        the in-memory history window.
+        """
+        if limit is not None:
+            stmt = (
+                select(runs_table.c.run_data)
+                .where(runs_table.c.session_id == session_id)
+                .where(runs_table.c.parent_run_id.is_(None))
+                .where(or_(runs_table.c.status.is_(None), runs_table.c.status.notin_(HISTORY_SKIP_STATUSES)))
+                .order_by(
+                    runs_table.c.run_index.desc(),
+                    runs_table.c.created_at.desc(),
+                    runs_table.c.run_id.desc(),
+                )
+                .limit(limit)
+            )
+            result = await sess.execute(stmt)
+            rows = [row[0] for row in result.fetchall()]
+            rows.reverse()
+            return rows
+        stmt = (
+            select(runs_table.c.run_data)
+            .where(runs_table.c.session_id == session_id)
+            .order_by(
+                runs_table.c.run_index.asc(),
+                runs_table.c.created_at.asc(),
+                runs_table.c.run_id.asc(),
+            )
+        )
+        result = await sess.execute(stmt)
+        return [row[0] for row in result.fetchall()]
+
+    async def _get_sessions_runs_data(
+        self, sess, runs_table: Table, session_ids: List[str]
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Get the raw run_data dicts for the given sessions, grouped by session_id."""
+        if not session_ids:
+            return {}
+        stmt = (
+            select(runs_table.c.session_id, runs_table.c.run_data)
+            .where(runs_table.c.session_id.in_(session_ids))
+            .order_by(runs_table.c.run_index.asc(), runs_table.c.created_at.asc())
+        )
+        result = await sess.execute(stmt)
+        runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
+        for session_id, run_data in result.fetchall():
+            runs_by_session.setdefault(session_id, []).append(run_data)
+        return runs_by_session
+
+    async def get_run(
+        self, run_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]]]:
+        """Read a single run from the runs table.
+
+        Args:
+            run_id (str): The ID of the run to read.
+            deserialize (Optional[bool]): Whether to deserialize the run. Defaults to True.
+
+        Returns:
+            - When deserialize=True: RunOutput, TeamRunOutput or WorkflowRunOutput object
+            - When deserialize=False: Run row dictionary
+        """
+        try:
+            table = await self._get_table(table_type="runs")
+            if table is None:
+                return None
+
+            async with self.async_session_factory() as sess:
+                result = await sess.execute(select(table).where(table.c.run_id == run_id))
+                row = result.fetchone()
+                if row is None:
+                    return None
+
+                run_row = dict(row._mapping)
+
+            if not deserialize:
+                return run_row
+
+            return deserialize_run(run_row.get("run_type"), run_row["run_data"])
+
+        except Exception as e:
+            log_error(f"Exception reading from runs table: {str(e)}")
+            return None
+
+    async def upsert_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> None:
+        """Upsert a single run to the runs table (O(1) operation).
+
+        This is optimized for updating existing runs (e.g., status changes in HITL
+        or background mode) without re-upserting all runs in the session.
+
+        For new runs, the run_index should be provided or will be read from run_data.
+        For updates to existing runs, run_index is preserved from the original insert.
+
+        Args:
+            run: The run object or dictionary to upsert.
+            session_id: The session ID this run belongs to.
+            user_id: Optional user ID to associate with the run.
+            run_index: Optional run index for new runs. If not provided for new runs,
+                will attempt to read from run_data.
+
+        Raises:
+            ValueError: If the run has no run_id.
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            runs_table = await self._get_table(table_type="runs", create_table_if_not_found=True)
+            if runs_table is None:
+                return
+
+            row = build_single_run_row(
+                run=run,
+                session_id=session_id,
+                user_id=user_id,
+                run_index=run_index,
+            )
+            row["run_data"] = sanitize_postgres_strings(row["run_data"])
+
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    # Backfill a monotonic run_index when the run arrives without one
+                    # (e.g. a background/continue save that couldn't resolve its position).
+                    # A NULL index has no position and breaks ORDER BY run_index. ON CONFLICT
+                    # preserves the existing index, so this only sets it on a genuine insert.
+                    if row.get("run_index") is None:
+                        # Serialize same-session backfills: under READ COMMITTED two
+                        # concurrent max-reads can both see the same MAX and land
+                        # duplicate indexes. The advisory lock is transaction-scoped
+                        # (released at COMMIT/ROLLBACK) and keyed on session_id, so
+                        # only same-session backfilling inserts queue behind it.
+                        await sess.execute(
+                            text("SELECT pg_advisory_xact_lock(hashtext('agno_run_index'), hashtext(:sid))"),
+                            {"sid": session_id},
+                        )
+                        current_max = (
+                            await sess.execute(
+                                select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
+                            )
+                        ).scalar()
+                        row["run_index"] = (current_max + 1) if current_max is not None else 0
+
+                    stmt = postgresql.insert(runs_table).values(**row)
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["run_id"],
+                        set_=dict(
+                            status=stmt.excluded.status,
+                            run_data=stmt.excluded.run_data,
+                            user_id=stmt.excluded.user_id,
+                            parent_run_id=stmt.excluded.parent_run_id,
+                            updated_at=stmt.excluded.updated_at,
+                            # Preserve a non-null run_index; only fill it in for a legacy row
+                            # that was stored as NULL (COALESCE keeps the existing value if set).
+                            run_index=func.coalesce(runs_table.c.run_index, stmt.excluded.run_index),
+                        ),
+                    )
+                    await sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Exception upserting run to runs table: {str(e)}")
+            raise e
+
+    async def get_runs(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[RunStatus] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
+        """Get all runs matching the given filters.
+
+        Args:
+            session_id (Optional[str]): The ID of the session to filter by.
+            user_id (Optional[str]): The ID of the user to filter by.
+            agent_id (Optional[str]): The ID of the agent to filter by.
+            team_id (Optional[str]): The ID of the team to filter by.
+            workflow_id (Optional[str]): The ID of the workflow to filter by.
+            status (Optional[RunStatus]): The run status to filter by.
+            limit (Optional[int]): The maximum number of runs to return.
+            page (Optional[int]): The page number to return.
+            sort_by (Optional[str]): The field to sort by. Defaults to run_index when filtering by session.
+            sort_order (Optional[str]): The sort order.
+            deserialize (Optional[bool]): Whether to deserialize the runs. Defaults to True.
+
+        Returns:
+            - When deserialize=True: List of run output objects
+            - When deserialize=False: Tuple of (run row dictionaries, total count)
+        """
+        validate_pagination(limit, page)
+        try:
+            table = await self._get_table(table_type="runs")
+            if table is None:
+                return [] if deserialize else ([], 0)
+
+            async with self.async_session_factory() as sess:
+                stmt = select(table)
+                if session_id is not None:
+                    stmt = stmt.where(table.c.session_id == session_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                if workflow_id is not None:
+                    stmt = stmt.where(table.c.workflow_id == workflow_id)
+                if status is not None:
+                    status_value = status.value if isinstance(status, RunStatus) else status
+                    stmt = stmt.where(table.c.status == status_value)
+
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                total_count = await sess.scalar(count_stmt) or 0
+
+                if sort_by is not None:
+                    stmt = apply_sorting(stmt, table, sort_by, sort_order)
+                else:
+                    stmt = stmt.order_by(table.c.run_index.asc(), table.c.created_at.asc())
+
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                result = await sess.execute(stmt)
+                run_rows = [dict(record._mapping) for record in result.fetchall()]
+
+            if not deserialize:
+                return run_rows, total_count
+
+            return [deserialize_run(row.get("run_type"), row["run_data"]) for row in run_rows]
+
+        except Exception as e:
+            log_error(f"Exception reading from runs table: {str(e)}")
+            return [] if deserialize else ([], 0)
+
+    async def _ascrub_run_ids_from_legacy_blob(self, run_ids: List[str]) -> None:
+        """Async variant of the legacy-blob scrub. See postgres.py for rationale."""
+        if not run_ids:
+            return
+        try:
+            sessions_table = await self._get_table(table_type="sessions")
+            if sessions_table is None or "runs" not in sessions_table.c:
+                return
+            stmt = text(
+                f"""
+                UPDATE {sessions_table.name}
+                SET runs = COALESCE(
+                    (SELECT jsonb_agg(elem)
+                     FROM jsonb_array_elements(runs) elem
+                     WHERE elem->>'run_id' <> ALL(:ids)),
+                    '[]'::jsonb
+                )
+                WHERE runs IS NOT NULL
+                  AND jsonb_typeof(runs) = 'array'
+                  AND EXISTS (
+                      SELECT 1 FROM jsonb_array_elements(runs) elem
+                      WHERE elem->>'run_id' = ANY(:ids)
+                  )
+                """
+            )
+            async with self.async_session_factory() as sess, sess.begin():
+                await sess.execute(stmt, {"ids": list(run_ids)})
+        except Exception:
+            log_debug("legacy-runs scrub failed; the primary delete still succeeded", exc_info=True)
+
+    async def delete_run(self, run_id: str) -> bool:
+        """Delete a single run from the runs table.
+
+        Args:
+            run_id (str): The ID of the run to delete.
+
+        Returns:
+            bool: True if the run was deleted, False otherwise.
+        """
+        try:
+            table = await self._get_table(table_type="runs")
+            if table is None:
+                return False
+
+            async with self.async_session_factory() as sess, sess.begin():
+                result = await sess.execute(table.delete().where(table.c.run_id == run_id))
+                deleted = result.rowcount > 0  # type: ignore
+
+            await self._ascrub_run_ids_from_legacy_blob([run_id])
+            return deleted
+
+        except Exception as e:
+            log_error(f"Error deleting run: {str(e)}")
+            return False
+
+    async def delete_runs(self, run_ids: List[str]) -> None:
+        """Delete all given runs from the runs table.
+
+        Args:
+            run_ids (List[str]): The IDs of the runs to delete.
+        """
+        try:
+            table = await self._get_table(table_type="runs")
+            if table is None:
+                return
+
+            async with self.async_session_factory() as sess, sess.begin():
+                result = await sess.execute(table.delete().where(table.c.run_id.in_(run_ids)))
+
+            await self._ascrub_run_ids_from_legacy_blob(list(run_ids))
+            log_debug(f"Successfully deleted {result.rowcount} runs")  # type: ignore
+
+        except Exception as e:
+            log_error(f"Error deleting runs: {str(e)}")
+
     # -- Session methods --
     async def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         """
@@ -565,6 +1022,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             table = await self._get_table(table_type="sessions")
             if table is None:
                 return False
+            runs_table = await self._get_table(table_type="runs")
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
@@ -576,9 +1034,12 @@ class AsyncPostgresDb(AsyncBaseDb):
                     log_debug(f"No session found to delete with session_id: {session_id} in table {table.name}")
                     return False
 
-                else:
-                    log_debug(f"Successfully deleted session with session_id: {session_id} in table {table.name}")
-                    return True
+                # Also delete the runs belonging to the session
+                if runs_table is not None:
+                    await sess.execute(runs_table.delete().where(runs_table.c.session_id == session_id))
+
+                log_debug(f"Successfully deleted session with session_id: {session_id} in table {table.name}")
+                return True
 
         except Exception as e:
             log_error(f"Error deleting session: {str(e)}")
@@ -599,12 +1060,20 @@ class AsyncPostgresDb(AsyncBaseDb):
             table = await self._get_table(table_type="sessions")
             if table is None:
                 return
+            runs_table = await self._get_table(table_type="runs")
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id.in_(session_ids))
                 if user_id is not None:
                     delete_stmt = delete_stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(delete_stmt)
+
+                # Also delete the runs belonging to the sessions
+                if runs_table is not None:
+                    runs_delete_stmt = runs_table.delete().where(runs_table.c.session_id.in_(session_ids))
+                    if user_id is not None:
+                        runs_delete_stmt = runs_delete_stmt.where(runs_table.c.user_id == user_id)
+                    await sess.execute(runs_delete_stmt)
 
             log_debug(f"Successfully deleted {result.rowcount} sessions")  # type: ignore
 
@@ -617,6 +1086,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Read a session from the database.
@@ -626,6 +1096,11 @@ class AsyncPostgresDb(AsyncBaseDb):
             user_id (Optional[str]): User ID to filter by. Defaults to None.
             session_type (Optional[SessionType]): Type of session to read. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            runs_limit (Optional[int]): If set, attach only the most recent ``runs_limit``
+                runs instead of the full history. For a fully-migrated session this is an
+                indexed ``ORDER BY run_index DESC LIMIT`` query; for a session that still
+                carries a legacy ``runs`` blob it falls back to a full load + merge, then
+                slices, so no history is ever lost.
 
         Returns:
             Union[Session, Dict[str, Any], None]:
@@ -639,6 +1114,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             table = await self._get_table(table_type="sessions")
             if table is None:
                 return None
+            runs_table = await self._get_table(table_type="runs")
 
             async with self.async_session_factory() as sess:
                 stmt = select(table).where(table.c.session_id == session_id)
@@ -652,6 +1128,31 @@ class AsyncPostgresDb(AsyncBaseDb):
                     return None
 
                 session = dict(row._mapping)
+
+                # Attach the runs stored in the runs table, merged with any runs still
+                # sitting in the legacy `runs` column (so partially-migrated sessions
+                # don't silently lose history).
+                legacy_runs = session.get("runs")
+                if runs_table is not None and runs_limit is not None and not legacy_runs:
+                    # Fully migrated: push "most recent N" down to the DB (indexed).
+                    session["runs"] = await self._get_session_runs_data(
+                        sess=sess, runs_table=runs_table, session_id=session_id, limit=runs_limit
+                    )
+                elif runs_table is not None:
+                    # Full load + merge. Also the un-migrated fallback: the legacy blob
+                    # holds the whole history in one column, so "last N" can't be pushed
+                    # to SQL — load all, merge, then filter+slice to match the migrated path.
+                    runs_data = await self._get_session_runs_data(
+                        sess=sess, runs_table=runs_table, session_id=session_id
+                    )
+                    merged = merge_runs_table_with_legacy_blob(runs_data, legacy_runs)
+                    if runs_limit is not None:
+                        merged = filter_context_runs(merged)[-runs_limit:]
+                    session["runs"] = merged
+                elif runs_limit is not None:
+                    # No runs table yet (fully un-migrated): filter+slice the legacy blob.
+                    merged = merge_runs_table_with_legacy_blob([], legacy_runs)
+                    session["runs"] = filter_context_runs(merged)[-runs_limit:]
 
             if not deserialize:
                 return session
@@ -675,9 +1176,15 @@ class AsyncPostgresDb(AsyncBaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """
         Get all sessions in the given table. Can filter by user_id and entity_id.
+
+        Pass ``include_runs=False`` to skip attaching each session's run history —
+        a large, usually-unnecessary read for list views. The runs are untouched
+        in storage; a single ``get_session`` still returns them. Defaults to True
+        to preserve existing behavior.
 
         Args:
             user_id (Optional[str]): The ID of the user to filter by.
@@ -699,10 +1206,12 @@ class AsyncPostgresDb(AsyncBaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="sessions")
             if table is None:
                 return [] if deserialize else ([], 0)
+            runs_table = await self._get_table(table_type="runs")
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
@@ -753,6 +1262,21 @@ class AsyncPostgresDb(AsyncBaseDb):
                     return [], 0
 
                 session = [dict(record._mapping) for record in records]
+
+                # Attach the runs stored in the runs table. If a session has no rows in the
+                # runs table, fall back to its legacy `runs` column content, if any.
+                if include_runs and runs_table is not None:
+                    runs_by_session = await self._get_sessions_runs_data(
+                        sess=sess, runs_table=runs_table, session_ids=[s["session_id"] for s in session]
+                    )
+                    for s in session:
+                        runs_data = runs_by_session.get(s["session_id"], [])
+                        s["runs"] = merge_runs_table_with_legacy_blob(runs_data, s.get("runs"))
+                elif not include_runs:
+                    # List views don't need run history; leave it unattached (storage untouched).
+                    for s in session:
+                        s["runs"] = None
+
                 if not deserialize:
                     return session, total_count
 
@@ -792,6 +1316,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             table = await self._get_table(table_type="sessions")
             if table is None:
                 return None
+            runs_table = await self._get_table(table_type="runs")
 
             async with self.async_session_factory() as sess, sess.begin():
                 # Sanitize session_name to remove null bytes
@@ -820,9 +1345,19 @@ class AsyncPostgresDb(AsyncBaseDb):
                 if not row:
                     return None
 
+                session = dict(row._mapping)
+
+                # Attach the runs stored in the runs table, merged with any runs still
+                # sitting in the legacy `runs` column (so partially-migrated sessions
+                # don't silently lose history).
+                if runs_table is not None:
+                    runs_data = await self._get_session_runs_data(
+                        sess=sess, runs_table=runs_table, session_id=session_id
+                    )
+                    session["runs"] = merge_runs_table_with_legacy_blob(runs_data, session.get("runs"))
+
             log_debug(f"Renamed session with id '{session_id}' to '{session_name}'")
 
-            session = dict(row._mapping)
             if not deserialize:
                 return session
 
@@ -836,7 +1371,10 @@ class AsyncPostgresDb(AsyncBaseDb):
         self, session: Session, deserialize: Optional[bool] = True
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
-        Insert or update a session in the database.
+        Insert or update the session row.
+
+        Runs are persisted independently via ``upsert_run()`` — this method does
+        not touch the ``agno_runs`` table.
 
         Args:
             session (Session): The session data to upsert.
@@ -854,7 +1392,8 @@ class AsyncPostgresDb(AsyncBaseDb):
             table = await self._get_table(table_type="sessions", create_table_if_not_found=True)
             if table is None:
                 return None
-            session_dict = session.to_dict()
+
+            session_dict = session.to_dict(include_runs=False)
             # Sanitize JSON/dict fields to remove null bytes from nested strings
             if session_dict.get("agent_data"):
                 session_dict["agent_data"] = sanitize_postgres_strings(session_dict["agent_data"])
@@ -868,134 +1407,74 @@ class AsyncPostgresDb(AsyncBaseDb):
                 session_dict["summary"] = sanitize_postgres_strings(session_dict["summary"])
             if session_dict.get("metadata"):
                 session_dict["metadata"] = sanitize_postgres_strings(session_dict["metadata"])
-            if session_dict.get("runs"):
-                session_dict["runs"] = sanitize_postgres_strings(session_dict["runs"])
 
             if isinstance(session, AgentSession):
-                async with self.async_session_factory() as sess, sess.begin():
-                    stmt = postgresql.insert(table).values(
-                        session_id=session_dict.get("session_id"),
-                        session_type=SessionType.AGENT.value,
-                        agent_id=session_dict.get("agent_id"),
-                        user_id=session_dict.get("user_id"),
-                        runs=session_dict.get("runs"),
-                        agent_data=session_dict.get("agent_data"),
-                        session_data=session_dict.get("session_data"),
-                        summary=session_dict.get("summary"),
-                        metadata=session_dict.get("metadata"),
-                        created_at=session_dict.get("created_at"),
-                        updated_at=session_dict.get("created_at"),
-                    )
-                    stmt = stmt.on_conflict_do_update(  # type: ignore
-                        index_elements=["session_id"],
-                        set_=dict(
-                            agent_id=session_dict.get("agent_id"),
-                            user_id=session_dict.get("user_id"),
-                            agent_data=session_dict.get("agent_data"),
-                            session_data=session_dict.get("session_data"),
-                            summary=session_dict.get("summary"),
-                            metadata=session_dict.get("metadata"),
-                            runs=session_dict.get("runs"),
-                            updated_at=int(time.time()),
-                        ),
-                        where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
-                    ).returning(table)
-                    result = await sess.execute(stmt)
-                    row = result.fetchone()
-                    if row is None:
-                        return None
-                    session_dict = dict(row._mapping)
-
-                    log_debug(f"Upserted agent session with id '{session_dict.get('session_id')}'")
-
-                    if not deserialize:
-                        return session_dict
-                    return AgentSession.from_dict(session_dict)
-
+                values = dict(
+                    session_type=SessionType.AGENT.value,
+                    agent_id=session_dict.get("agent_id"),
+                    user_id=session_dict.get("user_id"),
+                    agent_data=session_dict.get("agent_data"),
+                    session_data=session_dict.get("session_data"),
+                    summary=session_dict.get("summary"),
+                    metadata=session_dict.get("metadata"),
+                )
             elif isinstance(session, TeamSession):
-                async with self.async_session_factory() as sess, sess.begin():
-                    stmt = postgresql.insert(table).values(
-                        session_id=session_dict.get("session_id"),
-                        session_type=SessionType.TEAM.value,
-                        team_id=session_dict.get("team_id"),
-                        user_id=session_dict.get("user_id"),
-                        runs=session_dict.get("runs"),
-                        team_data=session_dict.get("team_data"),
-                        session_data=session_dict.get("session_data"),
-                        summary=session_dict.get("summary"),
-                        metadata=session_dict.get("metadata"),
-                        created_at=session_dict.get("created_at"),
-                        updated_at=session_dict.get("created_at"),
-                    )
-                    stmt = stmt.on_conflict_do_update(  # type: ignore
-                        index_elements=["session_id"],
-                        set_=dict(
-                            team_id=session_dict.get("team_id"),
-                            user_id=session_dict.get("user_id"),
-                            team_data=session_dict.get("team_data"),
-                            session_data=session_dict.get("session_data"),
-                            summary=session_dict.get("summary"),
-                            metadata=session_dict.get("metadata"),
-                            runs=session_dict.get("runs"),
-                            updated_at=int(time.time()),
-                        ),
-                        where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
-                    ).returning(table)
-                    result = await sess.execute(stmt)
-                    row = result.fetchone()
-                    if row is None:
-                        return None
-                    session_dict = dict(row._mapping)
-
-                    log_debug(f"Upserted team session with id '{session_dict.get('session_id')}'")
-
-                    if not deserialize:
-                        return session_dict
-                    return TeamSession.from_dict(session_dict)
-
+                values = dict(
+                    session_type=SessionType.TEAM.value,
+                    team_id=session_dict.get("team_id"),
+                    user_id=session_dict.get("user_id"),
+                    team_data=session_dict.get("team_data"),
+                    session_data=session_dict.get("session_data"),
+                    summary=session_dict.get("summary"),
+                    metadata=session_dict.get("metadata"),
+                )
             elif isinstance(session, WorkflowSession):
-                async with self.async_session_factory() as sess, sess.begin():
-                    stmt = postgresql.insert(table).values(
-                        session_id=session_dict.get("session_id"),
-                        session_type=SessionType.WORKFLOW.value,
-                        workflow_id=session_dict.get("workflow_id"),
-                        user_id=session_dict.get("user_id"),
-                        runs=session_dict.get("runs"),
-                        workflow_data=session_dict.get("workflow_data"),
-                        session_data=session_dict.get("session_data"),
-                        summary=session_dict.get("summary"),
-                        metadata=session_dict.get("metadata"),
-                        created_at=session_dict.get("created_at"),
-                        updated_at=session_dict.get("created_at"),
-                    )
-                    stmt = stmt.on_conflict_do_update(  # type: ignore
-                        index_elements=["session_id"],
-                        set_=dict(
-                            workflow_id=session_dict.get("workflow_id"),
-                            user_id=session_dict.get("user_id"),
-                            workflow_data=session_dict.get("workflow_data"),
-                            session_data=session_dict.get("session_data"),
-                            summary=session_dict.get("summary"),
-                            metadata=session_dict.get("metadata"),
-                            runs=session_dict.get("runs"),
-                            updated_at=int(time.time()),
-                        ),
-                        where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
-                    ).returning(table)
-                    result = await sess.execute(stmt)
-                    row = result.fetchone()
-                    if row is None:
-                        return None
-                    session_dict = dict(row._mapping)
-
-                    log_debug(f"Upserted workflow session with id '{session_dict.get('session_id')}'")
-
-                    if not deserialize:
-                        return session_dict
-                    return WorkflowSession.from_dict(session_dict)
-
+                values = dict(
+                    session_type=SessionType.WORKFLOW.value,
+                    workflow_id=session_dict.get("workflow_id"),
+                    user_id=session_dict.get("user_id"),
+                    workflow_data=session_dict.get("workflow_data"),
+                    session_data=session_dict.get("session_data"),
+                    summary=session_dict.get("summary"),
+                    metadata=session_dict.get("metadata"),
+                )
             else:
                 raise ValueError(f"Invalid session type: {session.session_type}")
+
+            update_values = {k: v for k, v in values.items() if k != "session_type"}
+            # The legacy `runs` column is intentionally left untouched here. Runs now
+            # live in the runs table; the legacy column stays as a frozen backup and is
+            # only reclaimed by the explicit cleanup_legacy_runs_column() helper. Nulling
+            # it on write would lose history for sessions not yet migrated to the runs table.
+
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = postgresql.insert(table).values(
+                    session_id=session_dict.get("session_id"),
+                    created_at=session_dict.get("created_at"),
+                    updated_at=session_dict.get("created_at"),
+                    **values,
+                )
+                stmt = stmt.on_conflict_do_update(  # type: ignore
+                    index_elements=["session_id"],
+                    set_=dict(updated_at=int(time.time()), **update_values),
+                    where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
+                ).returning(table)
+                result = await sess.execute(stmt)
+                row = result.fetchone()
+                if row is None:
+                    return None
+                session_dict = dict(row._mapping)
+
+            log_debug(f"Upserted session with id '{session_dict.get('session_id')}'")
+
+            if not deserialize:
+                session_dict["runs"] = [run if isinstance(run, dict) else run.to_dict() for run in session.runs or []]
+                return session_dict
+
+            session_dict.pop("runs", None)
+            upserted_session = deserialize_session(None, session_dict)
+            upserted_session.runs = session.runs  # type: ignore[union-attr]
+            return upserted_session
 
         except Exception as e:
             log_error(f"Exception upserting into sessions table: {str(e)}")
@@ -1196,6 +1675,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="memories")
             if table is None:
@@ -1370,6 +1850,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="culture")
             if table is None:
@@ -1526,6 +2007,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             total_count: 1,
         )
         """
+        validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="memories")
             if table is None:
@@ -1676,14 +2158,20 @@ class AsyncPostgresDb(AsyncBaseDb):
             table = await self._get_table(table_type="sessions")
             if table is None:
                 return []
+            runs_table = await self._get_table(table_type="runs")
 
-            stmt = select(
+            columns = [
+                table.c.session_id,
                 table.c.user_id,
                 table.c.session_data,
-                table.c.runs,
                 table.c.created_at,
                 table.c.session_type,
-            )
+            ]
+            # Include the legacy runs column if it still exists, to count not yet migrated runs
+            if "runs" in table.c:
+                columns.append(table.c.runs)
+
+            stmt = select(*columns)
 
             if start_timestamp is not None:
                 stmt = stmt.where(table.c.created_at >= start_timestamp)
@@ -1693,8 +2181,30 @@ class AsyncPostgresDb(AsyncBaseDb):
             async with self.async_session_factory() as sess:
                 result = await sess.execute(stmt)
                 records = result.fetchall()
+                sessions = [dict(record._mapping) for record in records]
 
-                return [dict(record._mapping) for record in records]
+                # Attach lightweight run info (model and provider) from the runs table
+                if runs_table is not None and sessions:
+                    session_ids = [s["session_id"] for s in sessions]
+                    runs_stmt = select(
+                        runs_table.c.session_id,
+                        runs_table.c.run_data["model"].astext.label("model"),
+                        runs_table.c.run_data["model_provider"].astext.label("model_provider"),
+                    ).where(runs_table.c.session_id.in_(session_ids))
+
+                    runs_result = await sess.execute(runs_stmt)
+                    runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
+                    for session_id, model, model_provider in runs_result.fetchall():
+                        runs_by_session.setdefault(session_id, []).append(
+                            {"model": model, "model_provider": model_provider}
+                        )
+
+                    for s in sessions:
+                        runs_data = runs_by_session.get(s["session_id"], [])
+                        if runs_data or not s.get("runs"):
+                            s["runs"] = runs_data
+
+                return sessions
 
         except Exception as e:
             log_error(f"Exception reading from sessions table: {str(e)}")
@@ -1937,6 +2447,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         if table is None:
             return [], 0
 
+        validate_pagination(limit, page)
         try:
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
@@ -2231,6 +2742,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="evals")
             if table is None:
@@ -3587,6 +4099,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
+        validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="learnings")
             if table is None:
@@ -3979,6 +4492,760 @@ class AsyncPostgresDb(AsyncBaseDb):
         except Exception as e:
             log_debug(f"Error getting schedule runs: {e}")
             return [], 0
+
+    # -- Job queue methods --
+    #
+    # Durable background job queue: one row per accepted run. Claim/lease with
+    # SKIP LOCKED (modeled on claim_due_schedule), stale-lock reclaim gated on
+    # the attempt budget, and terminal writes fenced on (locked_by, attempt) so
+    # a zombie executor that finishes after reclaim has its write discarded.
+
+    async def update_run_in_session(
+        self,
+        session_id: str,
+        run_id: str,
+        fields: Dict[str, Any],
+        expected_attempt: Optional[int] = None,
+        user_id: Optional[str] = None,
+        content_if_absent: Optional[str] = None,
+    ) -> "RunPersistOutcome":
+        """Atomically patch fields of ONE run - ported to the denormalized
+        runs table (v3.0). Same signature and typed-outcome contract as the
+        session-JSON original; the implementation is now a single row-locked
+        UPDATE on agno_runs instead of a session-blob rewrite, which is the
+        shape the P1 fencing design always wanted.
+
+        Attempt fencing: when ``expected_attempt`` is given, the write is
+        rejected if the stored run carries a NEWER ``queue_attempt`` (a
+        reclaimed job's later attempt owns the row). Terminal guard: a
+        completed/cancelled run is never rewritten to a different status.
+        The indexed ``status`` column is kept in sync with run_data.
+        Exceptions PROPAGATE - a DB failure must never read as a
+        fallback-permitting outcome.
+        """
+        from agno.db.utils import canonical_run_status
+        from agno.run.status_persist import RunPersistOutcome
+
+        if fields.get("status") is not None:
+            # Callers pass mixed conventions ("completed", RunStatus, "RUNNING");
+            # the indexed column and run_data must store the canonical uppercase
+            # RunStatus.value or case-sensitive readers miss the row
+            fields = {**fields, "status": canonical_run_status(fields["status"])}
+        try:
+            runs_table = await self._get_table(table_type="runs")
+            if runs_table is None:
+                return RunPersistOutcome.MISSING
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    row = (
+                        await sess.execute(
+                            select(runs_table.c.run_data, runs_table.c.status)
+                            .where(runs_table.c.run_id == run_id)
+                            .where(runs_table.c.session_id == session_id)
+                            .where((runs_table.c.user_id == user_id) | (runs_table.c.user_id.is_(None)))
+                            .with_for_update()
+                        )
+                    ).fetchone()
+                    if row is None or row[0] is None:
+                        return RunPersistOutcome.MISSING
+                    run = dict(row[0])
+                    stored_attempt = run.get("queue_attempt")
+                    if (
+                        expected_attempt is not None
+                        and stored_attempt is not None
+                        and stored_attempt > expected_attempt
+                    ):
+                        return RunPersistOutcome.STALE_ATTEMPT  # zombie writer fenced out
+                    stored_status = str(run.get("status") or row[1] or "").lower()
+                    incoming_status = str(fields.get("status") or "").lower()
+                    if (
+                        stored_status in ("completed", "cancelled")
+                        and incoming_status
+                        and incoming_status != stored_status
+                    ):
+                        return RunPersistOutcome.TERMINAL_REFUSED  # terminal row wins
+                    run.update(fields)
+                    if content_if_absent is not None and not run.get("content"):
+                        run["content"] = content_if_absent
+                    if expected_attempt is not None:
+                        run["queue_attempt"] = expected_attempt
+                    values: Dict[str, Any] = {
+                        "run_data": sanitize_postgres_strings(run),
+                        "updated_at": int(time.time()),
+                    }
+                    if fields.get("status") is not None:
+                        values["status"] = fields["status"]
+                    await sess.execute(update(runs_table).where(runs_table.c.run_id == run_id).values(**values))
+                    return RunPersistOutcome.UPDATED
+        except Exception as e:
+            log_warning(f"Error updating run in runs table: {e}")
+            raise
+
+    async def append_run_to_session_if_absent(
+        self,
+        session_id: str,
+        run_dict: Dict[str, Any],
+        user_id: Optional[str] = None,
+    ) -> Optional[bool]:
+        """Atomically insert a run only if absent - ported to the
+        denormalized runs table (v3.0): INSERT ... ON CONFLICT (run_id)
+        DO NOTHING, mirroring upsert_run's row shape and run_index backfill.
+
+        Returns True (inserted), False (already present - a concurrent
+        writer won, its row wins), None (the SESSION row does not exist yet:
+        the FK rejects the insert, and the caller creates the session via
+        insert_session_if_absent and retries - the identical contract the
+        session-JSON original exposed for a missing session row).
+        """
+        from sqlalchemy.exc import IntegrityError
+
+        from agno.db.utils import build_single_run_row
+
+        try:
+            runs_table = await self._get_table(table_type="runs", create_table_if_not_found=True)
+            if runs_table is None:
+                return None
+            row = build_single_run_row(run=run_dict, session_id=session_id, user_id=user_id, run_index=None)
+            row["run_data"] = sanitize_postgres_strings(row["run_data"])
+            try:
+                async with self.async_session_factory() as sess:
+                    async with sess.begin():
+                        if row.get("run_index") is None:
+                            # Same-session backfill serialization - see upsert_run
+                            await sess.execute(
+                                text("SELECT pg_advisory_xact_lock(hashtext('agno_run_index'), hashtext(:sid))"),
+                                {"sid": session_id},
+                            )
+                            current_max = (
+                                await sess.execute(
+                                    select(func.max(runs_table.c.run_index)).where(
+                                        runs_table.c.session_id == session_id
+                                    )
+                                )
+                            ).scalar()
+                            row["run_index"] = (current_max + 1) if current_max is not None else 0
+                        stmt = (
+                            postgresql.insert(runs_table)
+                            .values(**row)
+                            .on_conflict_do_nothing(index_elements=["run_id"])
+                            .returning(runs_table.c.run_id)
+                        )
+                        inserted = (await sess.execute(stmt)).fetchone()
+                        return inserted is not None
+            except IntegrityError:
+                # FK violation: no session row yet - caller creates it and retries
+                return None
+        except Exception as e:
+            log_warning(f"Error appending run to runs table (caller falls back): {e}")
+            return None
+
+    async def insert_session_if_absent(self, session: Session) -> Optional[bool]:
+        """Insert the session row only when no row with this session_id exists
+        (INSERT ... ON CONFLICT DO NOTHING).
+
+        The missing half of the atomic queued-run prepare: when the session
+        does not exist yet, append_run_to_session_if_absent has no row to
+        lock, and the legacy create-and-save fallback re-opened the unlocked
+        read-check-save window (a worker completing the run inside it was
+        clobbered back to PENDING). Creating the row this way instead makes
+        the append primitive always applicable - no whole-session save
+        remains on the prepare path.
+
+        Returns True (inserted), False (a row already existed - the
+        concurrent writer's row is authoritative), None (error - the caller
+        falls back to the legacy path).
+        """
+        try:
+            table = await self._get_table(table_type="sessions", create_table_if_not_found=True)
+            if table is None:
+                return None
+            session_dict = session.to_dict()
+            for data_field in ("agent_data", "team_data", "workflow_data", "session_data", "summary", "metadata"):
+                if session_dict.get(data_field):
+                    session_dict[data_field] = sanitize_postgres_strings(session_dict[data_field])
+            values: Dict[str, Any] = dict(
+                session_id=session_dict.get("session_id"),
+                user_id=session_dict.get("user_id"),
+                session_data=session_dict.get("session_data"),
+                summary=session_dict.get("summary"),
+                metadata=session_dict.get("metadata"),
+                created_at=session_dict.get("created_at"),
+                updated_at=session_dict.get("created_at"),
+            )
+            if isinstance(session, AgentSession):
+                values.update(
+                    session_type=SessionType.AGENT.value,
+                    agent_id=session_dict.get("agent_id"),
+                    agent_data=session_dict.get("agent_data"),
+                )
+            elif isinstance(session, TeamSession):
+                values.update(
+                    session_type=SessionType.TEAM.value,
+                    team_id=session_dict.get("team_id"),
+                    team_data=session_dict.get("team_data"),
+                )
+            elif isinstance(session, WorkflowSession):
+                values.update(
+                    session_type=SessionType.WORKFLOW.value,
+                    workflow_id=session_dict.get("workflow_id"),
+                    workflow_data=session_dict.get("workflow_data"),
+                )
+            else:
+                return None
+            async with self.async_session_factory() as sess, sess.begin():
+                # RETURNING yields a row only when the insert landed; rowcount
+                # is unreliable here (psycopg3 reports -1 for this statement)
+                stmt = (
+                    postgresql.insert(table)
+                    .values(**values)
+                    .on_conflict_do_nothing(index_elements=["session_id"])
+                    .returning(table.c.session_id)
+                )
+                result = await sess.execute(stmt)
+                return result.fetchone() is not None
+        except Exception as e:
+            log_warning(f"Error inserting session if absent (caller falls back): {e}")
+            return None
+
+    async def enqueue_job(self, job: Dict[str, Any], max_depth: int = 0) -> Dict[str, Any]:
+        """Insert an accepted run job.
+
+        Returns {"accepted": bool, "reason": None | "queue_full" | "duplicate",
+        "job": row}. On an idempotency-key conflict the existing row is
+        returned with reason "duplicate" (client resubmit dedup). The depth
+        gate is best-effort (count + insert, not serialized) per the queue's
+        portability contract.
+        """
+        from sqlalchemy.exc import IntegrityError
+
+        table = await self._get_table(table_type="jobs", create_table_if_not_found=True)
+        if table is None:
+            raise RuntimeError("Failed to get or create job queue table")
+        # Empty-string keys are "no key": the falsy pre-check would skip dedup
+        # while the partial-unique index still covered '', turning the second
+        # empty-header submit into an IntegrityError -> 500
+        if not job.get("idempotency_key"):
+            job = {**job, "idempotency_key": None}
+        try:
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    # Idempotency FIRST: resubmitting an already-accepted job
+                    # must return the existing run even when the queue is full
+                    if job.get("idempotency_key"):
+                        result = await sess.execute(
+                            select(table).where(
+                                table.c.idempotency_key == job["idempotency_key"],
+                                table.c.user_id.is_not_distinct_from(job.get("user_id")),
+                            )
+                        )
+                        row = result.fetchone()
+                        if row is not None:
+                            return {"accepted": False, "reason": "duplicate", "job": dict(row._mapping)}
+                    if max_depth and max_depth > 0:
+                        count_stmt = select(func.count()).select_from(table).where(table.c.status == "queued")
+                        queued = (await sess.execute(count_stmt)).scalar() or 0
+                        if queued >= max_depth:
+                            return {"accepted": False, "reason": "queue_full", "job": None}
+                    await sess.execute(table.insert().values(**job))
+            return {"accepted": True, "reason": None, "job": job}
+        except IntegrityError:
+            # Without an idempotency key this is a primary-key collision - a
+            # programming error, never a client dedup. Swallowing it as
+            # "duplicate" would 202 a run that was never enqueued.
+            if not job.get("idempotency_key"):
+                raise
+            # Race on the partial-unique idempotency index: return the winner
+            async with self.async_session_factory() as sess:
+                result = await sess.execute(
+                    select(table).where(
+                        table.c.idempotency_key == job["idempotency_key"],
+                        table.c.user_id.is_not_distinct_from(job.get("user_id")),
+                    )
+                )
+                row = result.fetchone()
+                if row is not None:
+                    return {"accepted": False, "reason": "duplicate", "job": dict(row._mapping)}
+            raise
+
+    async def claim_job(
+        self, worker_id: str, lock_grace_seconds: int = 60, deployment_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Atomically claim the oldest executable job for this worker.
+
+        Executable: queued, or running with a stale lock while the attempt
+        budget is not exhausted (crash reclaim). Claiming increments attempt,
+        which doubles as the fencing generation. Deployment affinity filters
+        BOTH branches (a reclaim executes too): NULL rides anywhere, stamped
+        jobs only on matching workers; deployment_id=None degenerates to
+        claiming only unstamped jobs.
+        """
+        try:
+            table = await self._get_table(table_type="jobs")
+            if table is None:
+                return None
+            now = _db_epoch()
+            stale = now - lock_grace_seconds
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    subq = (
+                        select(table.c.id)
+                        .where(
+                            table.c.available_at <= now,
+                            or_(table.c.deployment_id.is_(None), table.c.deployment_id == deployment_id),
+                            or_(
+                                table.c.status == "queued",
+                                and_(
+                                    table.c.status == "running",
+                                    table.c.locked_at <= stale,
+                                    table.c.attempt < table.c.max_attempts,
+                                ),
+                            ),
+                        )
+                        .order_by(table.c.created_at.asc())
+                        .limit(1)
+                        .with_for_update(skip_locked=True)
+                        .scalar_subquery()
+                    )
+                    stmt = (
+                        update(table)
+                        .where(table.c.id == subq)
+                        .values(
+                            status="running",
+                            locked_by=worker_id,
+                            locked_at=now,
+                            attempt=table.c.attempt + 1,
+                            updated_at=now,
+                        )
+                        .returning(*table.c)
+                    )
+                    row = (await sess.execute(stmt)).fetchone()
+                    return dict(row._mapping) if row is not None else None
+        except Exception as e:
+            log_error(f"Job queue store: claim failed for worker {worker_id} (deployment={deployment_id}): {e}")
+            return None
+
+    async def heartbeat_jobs(self, worker_id: str, job_ids: List[str]) -> int:
+        """Refresh locked_at for this worker's in-flight jobs (keeps the lock
+        grace small without long runs being reclaimed while alive)."""
+        if not job_ids:
+            return 0
+        try:
+            table = await self._get_table(table_type="jobs")
+            if table is None:
+                return 0
+            now = _db_epoch()
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    result = await sess.execute(
+                        update(table)
+                        .where(
+                            table.c.id.in_(job_ids),
+                            table.c.locked_by == worker_id,
+                            table.c.status == "running",
+                        )
+                        .values(locked_at=now)
+                    )
+                    return result.rowcount or 0  # type: ignore[attr-defined]
+        except Exception as e:
+            log_error(
+                f"Job queue store: heartbeat failed for worker {worker_id} ({len(job_ids)} jobs, e.g. {job_ids[0]}): {e}"
+            )
+            return 0
+
+    async def complete_job(
+        self, job_id: str, worker_id: str, attempt: int, status: str, error: Optional[str] = None
+    ) -> bool:
+        """Fenced terminal transition: only the claim holder of this attempt
+        may complete the job. A zombie's late write is silently discarded."""
+        try:
+            table = await self._get_table(table_type="jobs")
+            if table is None:
+                return False
+            now = _db_epoch()
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    result = await sess.execute(
+                        update(table)
+                        .where(
+                            table.c.id == job_id,
+                            table.c.locked_by == worker_id,
+                            table.c.attempt == attempt,
+                            table.c.status == "running",
+                        )
+                        .values(
+                            status=status,
+                            error=error,
+                            locked_by=None,
+                            locked_at=None,
+                            completed_at=now,
+                            updated_at=now,
+                        )
+                    )
+                    return (result.rowcount or 0) > 0  # type: ignore[attr-defined]
+        except Exception as e:
+            log_error(
+                f"Job queue store: settle failed for job {job_id} (worker={worker_id}, attempt={attempt}, status={status!r}): {e}"
+            )
+            return False
+
+    async def retry_or_fail_job(
+        self, job_id: str, worker_id: str, attempt: int, error: str, retry_delay_seconds: int = 30
+    ) -> Optional[str]:
+        """Fenced failure handling: requeue with backoff while the attempt
+        budget lasts, else fail terminally. Returns the resulting status
+        ("queued" | "failed") or None if the fence rejected the write."""
+        try:
+            table = await self._get_table(table_type="jobs")
+            if table is None:
+                return None
+            now = _db_epoch()
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    fence = (
+                        select(table)
+                        .where(
+                            table.c.id == job_id,
+                            table.c.locked_by == worker_id,
+                            table.c.attempt == attempt,
+                            table.c.status == "running",
+                        )
+                        .with_for_update()
+                    )
+                    row = (await sess.execute(fence)).fetchone()
+                    if row is None:
+                        return None
+                    job = dict(row._mapping)
+                    if job["attempt"] < job["max_attempts"]:
+                        new_status = "queued"
+                        values: Dict[str, Any] = {
+                            "status": new_status,
+                            "error": error,
+                            "locked_by": None,
+                            "locked_at": None,
+                            "available_at": now + retry_delay_seconds,
+                            "updated_at": now,
+                        }
+                    else:
+                        new_status = "failed"
+                        values = {
+                            "status": new_status,
+                            "error": error,
+                            "locked_by": None,
+                            "locked_at": None,
+                            "completed_at": now,
+                            "updated_at": now,
+                        }
+                    await sess.execute(update(table).where(table.c.id == job_id).values(**values))
+                    return new_status
+        except Exception as e:
+            log_error(
+                f"Job queue store: retry-or-fail failed for job {job_id} (worker={worker_id}, attempt={attempt}): {e}"
+            )
+            return None
+
+    async def settle_paused_job(self, job_id: str, status: str, error: Optional[str] = None) -> bool:
+        """Terminalize a PAUSED ticket whose continue ran INLINE, outside the
+        queue (see InMemoryQueueStore.settle_paused_job). Single conditional
+        UPDATE on status='paused'; a queued/claimed continuation owns the
+        ticket and is never clobbered."""
+        if status not in ("completed", "cancelled", "failed"):
+            return False
+        try:
+            table = await self._get_table(table_type="jobs")
+            if table is None:
+                return False
+            now = _db_epoch()
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    result = await sess.execute(
+                        update(table)
+                        .where(table.c.id == job_id, table.c.status == "paused")
+                        .values(
+                            status=status,
+                            error=error,
+                            locked_by=None,
+                            locked_at=None,
+                            completed_at=now,
+                            updated_at=now,
+                        )
+                    )
+                    return (result.rowcount or 0) > 0  # type: ignore[attr-defined]
+        except Exception as e:
+            log_error(f"Job queue store: paused-settle failed for job {job_id} (status={status!r}): {e}")
+            return False
+
+    async def cancel_job(self, job_id: str) -> bool:
+        """Tombstone cancellation: only jobs still waiting can be cancelled
+        here (contract: 'this job will not execute'). Claimed jobs fall
+        through to the running-run cancellation path. Paused tickets count as
+        waiting - nothing is executing them, and without this a cancelled
+        paused run stayed a paused ticket forever, resurrectable by a later
+        continue."""
+        try:
+            table = await self._get_table(table_type="jobs")
+            if table is None:
+                return False
+            now = _db_epoch()
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    result = await sess.execute(
+                        update(table)
+                        .where(table.c.id == job_id, table.c.status.in_(["queued", "paused"]))
+                        .values(status="cancelled", completed_at=now, updated_at=now)
+                    )
+                    return (result.rowcount or 0) > 0  # type: ignore[attr-defined]
+        except Exception as e:
+            log_error(f"Job queue store: cancel failed for job {job_id}: {e}")
+            return False
+
+    async def sweep_exhausted_jobs(self, lock_grace_seconds: int = 60, limit: int = 20) -> List[Dict[str, Any]]:
+        """Return stale running jobs whose attempt budget is exhausted.
+
+        These are NOT claimable (attempt >= max_attempts): the worker persists
+        a terminal error on the run row first, then calls
+        fail_swept_job — ordering + idempotence instead of cross-store
+        atomicity."""
+        try:
+            table = await self._get_table(table_type="jobs")
+            if table is None:
+                return []
+            stale = _db_epoch() - lock_grace_seconds
+            async with self.async_session_factory() as sess:
+                result = await sess.execute(
+                    select(table)
+                    .where(
+                        table.c.status == "running",
+                        table.c.locked_at <= stale,
+                        table.c.attempt >= table.c.max_attempts,
+                    )
+                    .order_by(table.c.locked_at.asc())
+                    .limit(limit)
+                )
+                return [dict(row._mapping) for row in result.fetchall()]
+        except Exception as e:
+            log_warning(f"Job queue store: sweep scan failed (lock_grace={lock_grace_seconds}s): {e}")
+            return []
+
+    async def acquire_sweep(self, job_id: str, worker_id: str, lock_grace_seconds: int = 60) -> bool:
+        """Take ownership of a stale, budget-exhausted running job BEFORE any
+        run-row write (conditional UPDATE = the CAS). A live heartbeat
+        between the sweep's select and this acquisition wins here, with the
+        run row still untouched. Refreshing locked_at doubles as the retry
+        backoff for a failing terminalization."""
+        try:
+            table = await self._get_table(table_type="jobs")
+            if table is None:
+                return False
+            now = _db_epoch()
+            stale = now - lock_grace_seconds
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    result = await sess.execute(
+                        update(table)
+                        .where(
+                            table.c.id == job_id,
+                            table.c.status == "running",
+                            table.c.locked_at <= stale,
+                            table.c.attempt >= table.c.max_attempts,
+                        )
+                        .values(locked_by=worker_id, locked_at=now, updated_at=now)
+                    )
+                    return (result.rowcount or 0) > 0  # type: ignore[attr-defined]
+        except Exception as e:
+            log_error(f"Job queue store: sweep-lock acquisition failed for job {job_id} (worker={worker_id}): {e}")
+            return False
+
+    async def fail_swept_job(self, job_id: str, worker_id: str, error: str = "worker lost") -> bool:
+        """Ownership-keyed terminal write: only the sweeper holding the lock
+        (via acquire_sweep) may fail the job. Replaces the old staleness
+        recheck - after acquire_sweep refreshed locked_at, staleness can no
+        longer serve as the fence."""
+        try:
+            table = await self._get_table(table_type="jobs")
+            if table is None:
+                return False
+            now = _db_epoch()
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    result = await sess.execute(
+                        update(table)
+                        .where(
+                            table.c.id == job_id,
+                            table.c.status == "running",
+                            table.c.locked_by == worker_id,
+                        )
+                        .values(
+                            status="failed",
+                            error=error,
+                            locked_by=None,
+                            locked_at=None,
+                            completed_at=now,
+                            updated_at=now,
+                        )
+                    )
+                    return (result.rowcount or 0) > 0  # type: ignore[attr-defined]
+        except Exception as e:
+            log_error(f"Job queue store: swept-job terminalization failed for job {job_id} (worker={worker_id}): {e}")
+            return False
+
+    async def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="jobs")
+            if table is None:
+                return None
+            async with self.async_session_factory() as sess:
+                row = (await sess.execute(select(table).where(table.c.id == job_id))).fetchone()
+                return dict(row._mapping) if row is not None else None
+        except Exception as e:
+            log_warning(f"Job queue store: get_job failed for job {job_id}: {e}")
+            return None
+
+    async def count_queued_jobs(self) -> int:
+        try:
+            table = await self._get_table(table_type="jobs")
+            if table is None:
+                return 0
+            async with self.async_session_factory() as sess:
+                result = await sess.execute(select(func.count()).select_from(table).where(table.c.status == "queued"))
+                return result.scalar() or 0
+        except Exception as e:
+            log_warning(f"Job queue store: queued-count failed: {e}")
+            return 0
+
+    async def list_jobs(self, status: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        try:
+            table = await self._get_table(table_type="jobs")
+            if table is None:
+                return []
+            stmt = select(table)
+            if status is not None:
+                stmt = stmt.where(table.c.status == status)
+            stmt = stmt.order_by(table.c.created_at.desc()).limit(limit)
+            async with self.async_session_factory() as sess:
+                result = await sess.execute(stmt)
+                return [dict(row._mapping) for row in result.fetchall()]
+        except Exception as e:
+            log_warning(f"Job queue store: list_jobs failed (status={status!r}): {e}")
+            return []
+
+    async def requeue_job(self, job_id: str) -> bool:
+        """Operator requeue for a terminally failed/cancelled job: grants
+        exactly one more execution by raising max_attempts to attempt + 1."""
+        try:
+            table = await self._get_table(table_type="jobs")
+            if table is None:
+                return False
+            now = _db_epoch()
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    result = await sess.execute(
+                        update(table)
+                        .where(table.c.id == job_id, table.c.status.in_(["failed", "cancelled"]))
+                        .values(
+                            status="queued",
+                            max_attempts=table.c.attempt + 1,
+                            available_at=now,
+                            locked_by=None,
+                            locked_at=None,
+                            completed_at=None,
+                            updated_at=now,
+                        )
+                    )
+                    return (result.rowcount or 0) > 0  # type: ignore[attr-defined]
+        except Exception as e:
+            log_error(f"Job queue store: requeue failed for job {job_id}: {e}")
+            return False
+
+    async def continue_job(self, job_id: str, continue_payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Continuation CAS: flip the EXISTING paused ticket back to queued,
+        mirroring requeue_job's transition (row-locked read + conditional
+        update in one transaction). No new rows, ever - id == run_id is
+        load-bearing. Submit-time payload fields are kept; payload["continue"]
+        is REPLACED WHOLESALE with this continue's inputs (never accumulated
+        across pause cycles). Budget grant: max_attempts = attempt + 1 -
+        exactly one more execution, regardless of the configured retry budget.
+
+        Returns {"outcome": "queued" | "attach" | "conflict", "job": row}:
+        queued = CAS won; attach = ticket already queued/running (double-click
+        idempotency - the caller attaches, this click's inputs are discarded);
+        conflict = terminal ticket or no ticket (job is the row or None).
+
+        Exceptions propagate (like enqueue_job, unlike the ops-surface
+        requeue_job): this CAS is the durable acceptance of the continue, and
+        a DB failure must surface as a 500, never masquerade as "conflict".
+        """
+        table = await self._get_table(table_type="jobs")
+        if table is None:
+            raise RuntimeError("Job queue table not found")
+        now = _db_epoch()
+        async with self.async_session_factory() as sess:
+            async with sess.begin():
+                row = (await sess.execute(select(table).where(table.c.id == job_id).with_for_update())).fetchone()
+                if row is None:
+                    return {"outcome": "conflict", "job": None}
+                job = dict(row._mapping)
+                if job["status"] in ("completed", "failed", "cancelled"):
+                    return {"outcome": "conflict", "job": job}
+                if job["status"] in ("queued", "running"):
+                    return {"outcome": "attach", "job": job}
+                payload = dict(job.get("payload") or {})
+                payload["continue"] = dict(continue_payload)
+                values: Dict[str, Any] = {
+                    "status": "queued",
+                    "payload": payload,
+                    "max_attempts": job["attempt"] + 1,
+                    "available_at": now,
+                    "locked_by": None,
+                    "locked_at": None,
+                    "completed_at": None,
+                    "updated_at": now,
+                }
+                await sess.execute(update(table).where(table.c.id == job_id).values(**values))
+                job.update(values)
+                return {"outcome": "queued", "job": job}
+
+    async def queue_stats(self) -> Dict[str, Any]:
+        try:
+            table = await self._get_table(table_type="jobs")
+            if table is None:
+                return {"counts": {}, "oldest_queued_age_seconds": None}
+            now = int(time.time())
+            async with self.async_session_factory() as sess:
+                counts_result = await sess.execute(select(table.c.status, func.count()).group_by(table.c.status))
+                counts = {row[0]: row[1] for row in counts_result.fetchall()}
+                oldest_result = await sess.execute(
+                    select(func.min(table.c.created_at)).where(table.c.status == "queued")
+                )
+                oldest_created = oldest_result.scalar()
+                oldest_age = (now - oldest_created) if oldest_created is not None else None
+                return {"counts": counts, "oldest_queued_age_seconds": oldest_age}
+        except Exception as e:
+            log_warning(f"Job queue store: stats failed: {e}")
+            return {"counts": {}, "oldest_queued_age_seconds": None}
+
+    async def cleanup_jobs(self, older_than_seconds: int = 86400) -> int:
+        """Delete terminal jobs whose completed_at is older than the retention
+        window. Returns the number of rows removed. Paused tickets are
+        deliberately EXEMPT: they must outlive arbitrary human latency to stay
+        continuable; cancelling the run is the remedy for abandoned ones."""
+        try:
+            table = await self._get_table(table_type="jobs")
+            if table is None:
+                return 0
+            cutoff = int(time.time()) - older_than_seconds
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    result = await sess.execute(
+                        table.delete().where(
+                            table.c.status.in_(["completed", "failed", "cancelled"]),
+                            table.c.completed_at.is_not(None),
+                            table.c.completed_at <= cutoff,
+                        )
+                    )
+                    return result.rowcount or 0  # type: ignore[attr-defined]
+        except Exception as e:
+            log_warning(f"Job queue store: retention cleanup failed: {e}")
+            return 0
 
     # -- Approval methods --
 

@@ -156,10 +156,10 @@ workflow = Workflow(
                 standard_package,  # Steps container (2 steps)
                 premium_package,  # Steps container (4 steps)
             ],
-            allow_multiple_selections=False,  # Pick ONE package
             human_review=HumanReview(
                 requires_user_input=True,
                 user_input_message="Select a processing package:",
+                allow_multiple_selections=False,  # Pick ONE package
             ),
         ),
         Step(name="finalize", executor=finalize),
