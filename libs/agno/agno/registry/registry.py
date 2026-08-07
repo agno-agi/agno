@@ -55,6 +55,12 @@ class Registry:
     # Names claimed by two distinct knowledge instances: lenient resolution
     # keeps the first, strict resolution refuses the ambiguity.
     _ambiguous_knowledge_names: Set[str] = field(default_factory=set, init=False, repr=False)
+    # Knowledge a framework sync mirrored in for name resolution, as opposed to
+    # the user registering it. Kept on the registry, not on the AgentOS that
+    # mirrored, because a registry can be shared: any AgentOS asking must see
+    # every mirror, or one OS's component-private knowledge would look
+    # user-registered to another.
+    _mirrored_knowledge: List[Any] = field(default_factory=list, init=False, repr=False)
     memory_managers: List[Any] = field(default_factory=list)
     session_summary_managers: List[Any] = field(default_factory=list)
     # Code-defined agents and teams (for workflow rehydration)
@@ -471,12 +477,19 @@ class Registry:
             return
         self.functions.append(func)
 
-    def add_knowledge(self, knowledge: Any) -> None:
+    def add_knowledge(self, knowledge: Any, mirrored: bool = False) -> None:
         """Add a knowledge instance unless one with the same name is already present.
 
         Knowledge resolves by name at rehydration, so only named instances are
         registrable. The first instance under a name wins; a distinct
         same-named instance is reported, since it would be shadowed.
+
+        ``mirrored`` marks an instance a framework sync added for name
+        resolution rather than the user registering it; mirrored knowledge is
+        not a knowledge-route source on any AgentOS sharing this registry. An
+        explicit (non-mirrored) add of an instance that is already present
+        promotes it to user provenance: the user registering it by hand is the
+        grant a mirror is not.
         """
         name = getattr(knowledge, "name", None)
         if knowledge is None or name is None:
@@ -490,8 +503,16 @@ class Registry:
                     "keeping the first for lenient loads. Strict loads refuse the ambiguity: "
                     "give the instances distinct names."
                 )
+            elif not mirrored:
+                self._mirrored_knowledge = [kb for kb in self._mirrored_knowledge if kb is not knowledge]
             return
         self.knowledge.append(knowledge)
+        if mirrored:
+            self._mirrored_knowledge.append(knowledge)
+
+    def knowledge_is_mirrored(self, knowledge: Any) -> bool:
+        """Whether ``knowledge`` is in the registry only because a sync mirrored it."""
+        return any(knowledge is kb for kb in self._mirrored_knowledge)
 
     def add_schema(self, schema: Any) -> None:
         """Add an input/output schema class unless one with the same name is already present.

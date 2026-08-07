@@ -401,13 +401,14 @@ class AgentOS:
         self.lifespan = lifespan
 
         self.registry = registry
-        # Knowledge the OS itself mirrors into the registry (component-owned
+        # Knowledge mirrored into the registry by a sync (component-owned
         # instances collected for name resolution) is not a knowledge-route
         # source; anything else on the registry list the user put there -- at
         # construction or later via add_knowledge -- and feeds the routes on
-        # every (re)sync. Provenance is maintained at mirror time rather than
-        # snapshotted here, so late user additions stay distinguishable.
-        self._os_mirrored_knowledge: List[Any] = []
+        # every (re)sync. Provenance lives on the Registry itself (marked at
+        # mirror time, never snapshotted), because a registry can be shared
+        # between AgentOS instances: another OS's mirror must not look
+        # user-registered here.
 
         # RBAC
         self.authorization = authorization
@@ -861,28 +862,10 @@ class AgentOS:
         if self.registry is None:
             self.registry = Registry()
 
-        knowledge_before_mirror = list(self.registry.knowledge)
         for kb in self.knowledge_instances or []:
-            self.registry.add_knowledge(kb)
+            self.registry.add_knowledge(kb, mirrored=True)
         for kb in self.knowledge or []:
-            self.registry.add_knowledge(kb)
-        self._record_mirrored_knowledge(knowledge_before_mirror)
-
-    def _record_mirrored_knowledge(self, before: List[Any]) -> None:
-        """Record registry knowledge the OS itself just appended.
-
-        An instance that was on the registry before the mirror ran keeps its
-        user provenance: ``add_knowledge`` deduplicates, so the OS's add was a
-        no-op for it and it must stay a knowledge-route source.
-        """
-        if self.registry is None:
-            return
-        for kb in self.registry.knowledge:
-            if any(kb is prior_kb for prior_kb in before):
-                continue
-            if any(kb is mirrored_kb for mirrored_kb in self._os_mirrored_knowledge):
-                continue
-            self._os_mirrored_knowledge.append(kb)
+            self.registry.add_knowledge(kb, mirrored=True)
 
     def _populate_registry_managers(self) -> None:
         """Add memory and session summary managers from agents/teams to the registry.
@@ -961,12 +944,10 @@ class AgentOS:
         if self.registry is None:
             self.registry = Registry()
 
-        knowledge_before_mirror = list(self.registry.knowledge)
         try:
             collect_components_from_os(self._agents, self._teams, self._workflows, self.registry)
         except Exception as e:
             log_debug(f"Registry auto-population skipped: {e}")
-        self._record_mirrored_knowledge(knowledge_before_mirror)
 
     def _setup_tracing(self) -> None:
         """Set up OpenTelemetry tracing for this AgentOS.
@@ -1766,12 +1747,15 @@ class AgentOS:
 
         if self.registry is not None:
             for knowledge_base in self.registry.knowledge or []:
-                # Only user-declared registry knowledge feeds the routes. The
-                # OS mirrors member- and step-owned knowledge into the registry
-                # for name resolution; that is not a grant of route-level
-                # exposure. Everything it did not mirror the user registered,
-                # whether at construction or after (resync picks it up).
-                if any(knowledge_base is mirrored_kb for mirrored_kb in self._os_mirrored_knowledge):
+                # Only user-declared registry knowledge feeds the routes.
+                # Syncs mirror member- and step-owned knowledge into the
+                # registry for name resolution; that is not a grant of
+                # route-level exposure -- and the registry, not this OS, keeps
+                # the provenance, so a mirror by another AgentOS sharing the
+                # registry is excluded here too. Everything not mirrored the
+                # user registered, whether at construction or after (resync
+                # picks it up).
+                if self.registry.knowledge_is_mirrored(knowledge_base):
                     continue
                 _add_knowledge_if_not_duplicate(knowledge_base)
 

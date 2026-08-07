@@ -1613,7 +1613,7 @@ def _collect_components_from_knowledge(knowledge: Any, registry: Registry) -> No
     """
     if knowledge is None:
         return
-    registry.add_knowledge(knowledge)
+    registry.add_knowledge(knowledge, mirrored=True)
     registry.add_vector_db(getattr(knowledge, "vector_db", None))
     registry.add_db(getattr(knowledge, "contents_db", None))
 

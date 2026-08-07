@@ -659,3 +659,55 @@ class TestResyncLateRegistryKnowledge:
         assert os.registry is not None
         assert os.registry.get_knowledge("member-private-kb") is member_kb
         assert all(getattr(k, "name", None) != "member-private-kb" for k in os.knowledge_instances)
+
+
+class TestSharedRegistryKnowledgeProvenance:
+    """Mirror provenance lives on the Registry, so two AgentOS instances
+    sharing one registry cannot leak each other's component-owned knowledge."""
+
+    def test_another_os_mirror_is_not_exposed_by_this_os(self, tmp_path):
+        from fastapi.testclient import TestClient
+
+        registry = Registry()
+        os1 = AgentOS(agents=[Agent(id="sr-a1", name="A", telemetry=False)], registry=registry, telemetry=False)
+        app1 = os1.get_app()
+
+        member_kb = Knowledge(
+            name="member-private-kb",
+            contents_db=SqliteDb(id="member-db-id", db_file=str(tmp_path / "member.db")),
+            vector_db=MagicMock(),
+        )
+        member = Agent(id="sr-member", name="Member", knowledge=member_kb, telemetry=False)
+        team = Team(id="sr-team", name="Team", members=[member], telemetry=False)
+        os2 = AgentOS(teams=[team], registry=registry, telemetry=False)
+        os2.get_app()
+
+        # os2's sync mirrored the member kb into the SHARED registry.
+        assert registry.get_knowledge("member-private-kb") is member_kb
+
+        os1.resync(app1)
+
+        assert all(getattr(k, "name", None) != "member-private-kb" for k in os1.knowledge_instances)
+        client = TestClient(app1, raise_server_exceptions=False)
+        assert client.get("/knowledge/content", params={"db_id": "member-db-id"}).status_code == 404
+        config_names = [item["name"] for item in client.get("/config").json()["knowledge"]["knowledge_instances"]]
+        assert "member-private-kb" not in config_names
+
+    def test_explicit_registration_of_a_mirrored_instance_promotes_it(self, tmp_path):
+        registry = Registry()
+        member_kb = Knowledge(
+            name="member-private-kb",
+            contents_db=SqliteDb(id="member-db-id", db_file=str(tmp_path / "member.db")),
+            vector_db=MagicMock(),
+        )
+        member = Agent(id="pr-member", name="Member", knowledge=member_kb, telemetry=False)
+        team = Team(id="pr-team", name="Team", members=[member], telemetry=False)
+        os1 = AgentOS(teams=[team], registry=registry, telemetry=False)
+        app1 = os1.get_app()
+        assert all(getattr(k, "name", None) != "member-private-kb" for k in os1.knowledge_instances)
+
+        # The user registering the instance by hand is the grant a mirror is not.
+        registry.add_knowledge(member_kb)
+        os1.resync(app1)
+
+        assert any(getattr(k, "name", None) == "member-private-kb" for k in os1.knowledge_instances)
