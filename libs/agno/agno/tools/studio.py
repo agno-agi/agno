@@ -2180,13 +2180,33 @@ class StudioTools(Toolkit):
         publish_component; otherwise it is published immediately as the new
         current version.
         """
+        carry = self._unreconstructed_declarations(getattr(component, "id", None))
         if self.enable_versions:
-            version = self._upsert_draft(component)
+            version = self._upsert_draft(component, carry)
             return {"draft_version": version, "stage": "draft"}
-        version = _persist_only(component, self.db)
+        version = _persist_only(component, self.db, carry=carry)
         return {"version": version, "stage": "published"}
 
-    def _upsert_draft(self, component: Component) -> Optional[int]:
+    def _unreconstructed_declarations(self, component_id: Optional[str]) -> Dict[str, Any]:
+        """What the stored config declares that a rebuild cannot carry back.
+
+        An edit works on a rebuilt component, so anything from_dict does not
+        restore is already absent by the time the edit runs. Resaving would
+        delete it -- and silently lift the dispatch refusal it causes -- for an
+        edit that never mentioned it."""
+        if component_id is None or self.db is None:
+            return {}
+        try:
+            stored = self._runner_tools._load_config_from_db(
+                component_id, version=self._edit_base_version(component_id)
+            )
+        except Exception:
+            return {}
+        if not isinstance(stored, dict):
+            return {}
+        return {key: stored[key] for key in _UNRECONSTRUCTED_KEYS if stored.get(key) is not None}
+
+    def _upsert_draft(self, component: Component, carry: Optional[Dict[str, Any]] = None) -> Optional[int]:
         """Save a component as a draft. Updates the latest draft in place, else creates one.
 
         The component row's name/description/metadata are NOT updated here --
@@ -2213,7 +2233,7 @@ class StudioTools(Toolkit):
         result = self.db.upsert_config(
             component_id=component_id,
             version=self._latest_draft_version(component_id),
-            config=_component_to_dict(component),
+            config=_component_to_dict(component, carry),
             stage="draft",
         )
         return result.get("version")
@@ -2258,7 +2278,12 @@ def _summarize_tools(tools: Any) -> List[str]:
     return names
 
 
-def _persist_only(component: Component, db: Optional["BaseDb"], stage: str = "published") -> Optional[int]:
+def _persist_only(
+    component: Component,
+    db: Optional["BaseDb"],
+    stage: str = "published",
+    carry: Optional[Dict[str, Any]] = None,
+) -> Optional[int]:
     """Save a component WITHOUT cascading to members or step agents.
 
     Agno's built-in ``component.save()`` recursively persists every member of
@@ -2286,7 +2311,7 @@ def _persist_only(component: Component, db: Optional["BaseDb"], stage: str = "pu
     )
     result = db.upsert_config(
         component_id=component_id,
-        config=_component_to_dict(component),
+        config=_component_to_dict(component, carry),
         stage=stage,
     )
     return result.get("version")
@@ -2339,7 +2364,14 @@ def _component_type(component: Component) -> Any:
     raise TypeError(f"Unsupported component type: {type(component).__name__}")
 
 
-def _component_to_dict(component: Component) -> Dict[str, Any]:
+# Serialized by to_dict and never read back by from_dict (#9452), so a rebuild
+# drops them. An edit that resaves a rebuild would therefore delete a
+# declaration it never touched -- and quietly lift the dispatch refusal that
+# declaration causes -- so edits carry them forward verbatim.
+_UNRECONSTRUCTED_KEYS = ("reasoning_model", "parser_model", "output_model")
+
+
+def _component_to_dict(component: Component, carry: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     from agno.agent.agent import Agent
     from agno.team.team import Team
     from agno.workflow.workflow import Workflow
@@ -2347,14 +2379,20 @@ def _component_to_dict(component: Component) -> Dict[str, Any]:
     if isinstance(component, Agent):
         from agno.agent._storage import to_dict as agent_to_dict
 
-        return agent_to_dict(component)
-    if isinstance(component, Team):
+        config = agent_to_dict(component)
+    elif isinstance(component, Team):
         from agno.team._storage import to_dict as team_to_dict
 
-        return team_to_dict(component)
-    if isinstance(component, Workflow):
-        return component.to_dict()
-    raise TypeError(f"Unsupported component type: {type(component).__name__}")
+        config = team_to_dict(component)
+    elif isinstance(component, Workflow):
+        config = component.to_dict()
+    else:
+        raise TypeError(f"Unsupported component type: {type(component).__name__}")
+    for key, value in (carry or {}).items():
+        # Only what the rebuild lost: a value the component still carries is
+        # the edited one and wins.
+        config.setdefault(key, value)
+    return config
 
 
 # Backward-compatible alias. The toolkit was originally released as ``StudioTool``

@@ -2089,6 +2089,86 @@ class TestDispatchCheckInvariants:
         # report, and saying so beats an empty list.
         assert "error" in _loads(StudioRunnerTools(registry=Registry(name="R")).list_agents())
 
+    def test_an_edit_does_not_delete_what_the_rebuild_could_not_restore(self, db, registry):
+        """An edit works on a rebuilt component, so anything from_dict cannot
+        restore is already gone by the time the edit runs. Resaving would
+        delete a declaration the edit never mentioned -- and quietly lift the
+        refusal that declaration causes."""
+        from agno.agent import Agent
+
+        Agent(
+            id="rich",
+            name="Rich",
+            model=OpenAIResponses(id="gpt-5.4"),
+            reasoning_model=OpenAIResponses(id="o3-deep"),
+        ).save(db=db)
+
+        runner = StudioRunnerTools(registry=registry, db=db)
+        assert "reasoning_model" in _loads(runner.run_agent("rich", "hi"))["error"]
+
+        studio = StudioTools(registry=registry, db=db)
+        assert "error" not in _loads(studio.edit_agent("rich", description="an unrelated change"))
+
+        stored = db.get_config(component_id="rich") or {}
+        assert (stored.get("config") or {}).get("reasoning_model") is not None
+        assert "reasoning_model" in _loads(runner.run_agent("rich", "hi"))["error"]
+
+    def test_a_name_cannot_reach_a_component_its_id_shadows(self, db, registry):
+        """An exact id resolves to the code component and the listing shows
+        only that one, so letting the display name reach the stored component
+        behind it makes one id mean two things depending on spelling -- and
+        runs something that was never discoverable."""
+        from agno.agent import Agent
+
+        studio = StudioTools(registry=registry, db=db)
+        studio.create_agent(name="Database Target", instructions="i", model_id="gpt-5.4")
+        runner = StudioRunnerTools(
+            registry=registry,
+            db=db,
+            agents_list=[Agent(id="database-target", name="Code Target", model=OpenAIResponses(id="gpt-5.4"))],
+        )
+
+        assert "names the stored agent" in _loads(runner.run_agent("Database Target", "hi"))["error"]
+        # The id runs the component the listing advertises...
+        assert runner._agent_for_run("database-target").name == "Code Target"
+        # ...and reads still reach the stored one, which is how it gets fixed.
+        assert runner._find_agent("Database Target").name == "Database Target"
+
+        # An unshadowed name is untouched.
+        studio.create_agent(name="Solo", instructions="i", model_id="gpt-5.4")
+        assert runner._agent_for_run("Solo") is not None
+
+    def test_total_counts_a_shadowed_row_beyond_the_page(self, db, registry):
+        """The overlap is counted against the whole table: a shadowed row past
+        the cap is still one component, and counting only the returned page
+        inflated the total."""
+        from agno.agent import Agent
+
+        studio = StudioTools(registry=registry, db=db)
+        studio.create_agent(name="shadowed", instructions="i", model_id="gpt-5.4")
+        for index in range(4):
+            studio.create_agent(name=f"other{index}", instructions="i", model_id="gpt-5.4")
+
+        runner = StudioRunnerTools(
+            registry=registry,
+            db=db,
+            list_limit=2,
+            agents_list=[Agent(id="shadowed", name="code-shadowed", model=OpenAIResponses(id="gpt-5.4"))],
+        )
+        listing = _loads(runner.list_agents())
+        assert listing["total"] == 5
+
+    def test_a_component_without_a_db_does_not_claim_to_declare_one(self, db, registry, caplog):
+        model_config = {"name": "OpenAIResponses", "id": "gpt-5.4", "provider": "OpenAI"}
+        db.upsert_component(component_id="plain", component_type="agent", name="plain")
+        db.upsert_config(
+            component_id="plain", config={"id": "plain", "name": "plain", "model": model_config}, stage="published"
+        )
+
+        with caplog.at_level("WARNING"):
+            assert StudioRunnerTools(registry=registry, db=db)._agent_for_run("plain") is not None
+        assert not any("declares a db" in record.message for record in caplog.records)
+
     def test_a_shadowed_id_is_one_component_not_two(self, db, registry):
         """A code component shadows the stored one it shares an id with at
         dispatch, so the pair is one component to run rather than two to

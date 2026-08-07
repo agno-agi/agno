@@ -27,6 +27,10 @@ the loser's allowlist becomes unreachable. ``name=`` names the toolkit, not its
 functions, so it does not disambiguate them.
 
 Semantics:
+    * Everything runnable is discoverable: list_* report the components in the
+      platform database plus the code-defined ones this runner admits, and a
+      display name never reaches a stored component whose id a code-defined
+      one holds -- one id means one component, however it was spelled.
     * Runs execute as the current user: the wielding component's run_context is
       injected and its user_id passed through, so per-user state (memory,
       learning) lands on the human who asked, never on a service default.
@@ -364,7 +368,11 @@ class StudioRunnerTools(Toolkit):
         if named_agents:
             return named_agents[0]
         resolved = self._resolve_db_id_by_name_or_slug("agent", agent_id)
-        return self._load_agent_from_db(resolved, for_dispatch=for_dispatch) if resolved is not None else None
+        if resolved is None:
+            return None
+        if for_dispatch:
+            self._refuse_if_shadowed("agent", resolved, agent_id)
+        return self._load_agent_from_db(resolved, for_dispatch=for_dispatch)
 
     def _find_team(self, team_id: str, for_dispatch: bool = False) -> Optional["Team"]:
         team = self._find_team_by_exact_id(team_id, for_dispatch=for_dispatch)
@@ -387,7 +395,11 @@ class StudioRunnerTools(Toolkit):
         if named_teams:
             return named_teams[0]
         resolved = self._resolve_db_id_by_name_or_slug("team", team_id)
-        return self._load_team_from_db(resolved, for_dispatch=for_dispatch) if resolved is not None else None
+        if resolved is None:
+            return None
+        if for_dispatch:
+            self._refuse_if_shadowed("team", resolved, team_id)
+        return self._load_team_from_db(resolved, for_dispatch=for_dispatch)
 
     def _find_workflow(self, workflow_id: str, for_dispatch: bool = False) -> Optional["Workflow"]:
         wf = self._find_workflow_by_exact_id(workflow_id, for_dispatch=for_dispatch)
@@ -414,7 +426,11 @@ class StudioRunnerTools(Toolkit):
         if named_workflows:
             return named_workflows[0]
         resolved = self._resolve_db_id_by_name_or_slug("workflow", workflow_id)
-        return self._load_workflow_from_db(resolved, for_dispatch=for_dispatch) if resolved is not None else None
+        if resolved is None:
+            return None
+        if for_dispatch:
+            self._refuse_if_shadowed("workflow", resolved, workflow_id)
+        return self._load_workflow_from_db(resolved, for_dispatch=for_dispatch)
 
     # run_* execute code-defined components on a fresh copy, so per-run
     # mutation never bleeds across callers. DB-loaded components are
@@ -721,6 +737,27 @@ class StudioRunnerTools(Toolkit):
             if nested is not None:
                 return nested
         return None
+
+    def _refuse_if_shadowed(self, component_type: str, resolved_id: str, requested: str) -> None:
+        """Refuse a name that resolves to a stored component a code one shadows.
+
+        An exact id resolves to the code-defined component, and the listing
+        shows only that one, so letting the display name reach the stored
+        component behind it makes the same id mean two things depending on how
+        it was spelled -- and runs something that was never discoverable.
+        Refusing says which id is taken; substituting would answer a different
+        question than the caller asked.
+
+        Dispatch only. Reads and edits still resolve the stored component by
+        name, which is how it gets fixed."""
+        shadowing = {row["id"] for row in self._admitted_code_components(component_type)}
+        if resolved_id not in shadowing:
+            return
+        raise ComponentNotDispatchableError(
+            f"'{requested}' names the stored {component_type} '{resolved_id}', but a code-defined "
+            f"{component_type} holds that id and is what '{resolved_id}' runs. Give one of them a distinct id, "
+            "or run the code-defined one by its id."
+        )
 
     def _refuse_if_only_reachable_with_include_all(self, component_type: str, identifier: str) -> None:
         """Turn "not found" into the real reason when the identifier does name a
@@ -1558,11 +1595,12 @@ class StudioRunnerTools(Toolkit):
                 # _require_matching_db after this block: it cannot be raised
                 # from inside this try, where the handler below would report
                 # the refusal as a rebuild failure.
-                logger.warning(
-                    "StudioRunnerTools: agent '%s' declares a db that could not be reconstructed; "
-                    "it falls back to the catalog db.",
-                    agent_id,
-                )
+                if isinstance(config.get("db"), dict):
+                    logger.warning(
+                        "StudioRunnerTools: agent '%s' declares a db that could not be reconstructed; "
+                        "it falls back to the catalog db.",
+                        agent_id,
+                    )
                 agent.db = self.db
         except Exception:
             logger.warning("StudioRunnerTools: Agent.from_dict failed for %s", agent_id, exc_info=True)
@@ -1599,11 +1637,12 @@ class StudioRunnerTools(Toolkit):
                 # _require_matching_db after this block: it cannot be raised
                 # from inside this try, where the handler below would report
                 # the refusal as a rebuild failure.
-                logger.warning(
-                    "StudioRunnerTools: team '%s' declares a db that could not be reconstructed; "
-                    "it falls back to the catalog db.",
-                    team_id,
-                )
+                if isinstance(config.get("db"), dict):
+                    logger.warning(
+                        "StudioRunnerTools: team '%s' declares a db that could not be reconstructed; "
+                        "it falls back to the catalog db.",
+                        team_id,
+                    )
                 team.db = self.db
         except Exception:
             logger.warning("StudioRunnerTools: Team.from_dict failed for %s", team_id, exc_info=True)
@@ -1642,11 +1681,12 @@ class StudioRunnerTools(Toolkit):
                 # _require_matching_db after this block: it cannot be raised
                 # from inside this try, where the handler below would report
                 # the refusal as a rebuild failure.
-                logger.warning(
-                    "StudioRunnerTools: workflow '%s' declares a db that could not be reconstructed; "
-                    "it falls back to the catalog db.",
-                    workflow_id,
-                )
+                if isinstance(config.get("db"), dict):
+                    logger.warning(
+                        "StudioRunnerTools: workflow '%s' declares a db that could not be reconstructed; "
+                        "it falls back to the catalog db.",
+                        workflow_id,
+                    )
                 wf.db = self.db
         except Exception:
             logger.warning("StudioRunnerTools: Workflow.from_dict failed for %s", workflow_id, exc_info=True)
@@ -1726,8 +1766,9 @@ class StudioRunnerTools(Toolkit):
 
         Returns:
             str: JSON object with 'agents' (each {id, name, description}), 'count'
-                (returned) and 'total' (in the database; total > count means the
-                list is capped -- components beyond the cap still run by exact id).
+                (returned) and 'total' (every component this runner can run;
+                total > count means the list is capped -- components beyond the
+                cap still run by exact id).
         """
         return self._list_payload("agent", "agents")
 
@@ -1740,8 +1781,9 @@ class StudioRunnerTools(Toolkit):
 
         Returns:
             str: JSON object with 'teams' (each {id, name, description}), 'count'
-                (returned) and 'total' (in the database; total > count means the
-                list is capped -- components beyond the cap still run by exact id).
+                (returned) and 'total' (every component this runner can run;
+                total > count means the list is capped -- components beyond the
+                cap still run by exact id).
         """
         return self._list_payload("team", "teams")
 
@@ -1754,8 +1796,9 @@ class StudioRunnerTools(Toolkit):
 
         Returns:
             str: JSON object with 'workflows' (each {id, name, description}), 'count'
-                (returned) and 'total' (in the database; total > count means the
-                list is capped -- components beyond the cap still run by exact id).
+                (returned) and 'total' (every component this runner can run;
+                total > count means the list is capped -- components beyond the
+                cap still run by exact id).
         """
         return self._list_payload("workflow", "workflows")
 
@@ -1774,7 +1817,10 @@ class StudioRunnerTools(Toolkit):
             # runs and cannot be found leaves it no way to reach it. Code
             # components come first, which is the order dispatch resolves in.
             seen_ids = {entry["id"] for entry in admitted}
-            shadowed = sum(1 for entry in items if entry.get("id") in seen_ids)
+            # Against the whole table, not this page: a shadowed row beyond the
+            # cap is still one component, and counting only what was returned
+            # inflated the total.
+            shadowed = sum(1 for component_id in seen_ids if self._db_component_exists(component_type, component_id))
             items = admitted + [entry for entry in items if entry.get("id") not in seen_ids]
             # A code component shadows the stored one it shares an id with, so
             # the pair is one component to run, not two to count.
