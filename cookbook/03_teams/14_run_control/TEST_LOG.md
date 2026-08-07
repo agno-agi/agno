@@ -136,3 +136,12 @@ DEBUG *
 
 ---
 
+### configure_with_settings.py
+
+**Status:** PASS
+
+**Description:** Builds a team with settings dataclasses and verifies the flat attributes are set.
+
+**Result:** Completed successfully. Flat attributes set as expected and team responded.
+
+---

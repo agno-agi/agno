@@ -158,6 +158,15 @@
 
 ---
 
+### configure_with_settings.py
+
+**Status:** PASS
+**Tier:** untagged
+**Description:** Demonstrates settings dataclasses. Ran successfully and produced expected output.
+**Result:** Completed successfully in 4s.
+
+---
+
 ### metrics.py
 
 **Status:** PASS

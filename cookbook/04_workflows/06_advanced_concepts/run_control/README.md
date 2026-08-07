@@ -5,6 +5,7 @@ Runnable workflow examples under: cookbook/04_workflows/06_advanced_concepts/run
 
 ## Files
 - cancel_run.py: Demonstrates cancel run.
+- configure_with_settings.py: Configure a workflow with settings dataclasses.
 - deep_copy.py: Demonstrates deep copy.
 - event_storage.py: Demonstrates event storage.
 - executor_events.py: Demonstrates executor events.

@@ -17,6 +17,7 @@ Advanced examples covering caching, compression, concurrency, events, retries, d
 - `cancel_run.py` - Cancel a running agent.
 - `compression_events.py` - Events during context compression.
 - `concurrent_execution.py` - Run multiple agents concurrently.
+- `configure_with_settings.py` - Configure an agent with settings dataclasses.
 - `custom_cancellation_manager.py` - Custom cancellation logic.
 - `custom_logging.py` - Custom logging configuration.
 - `debug.py` - Enable debug mode for verbose output.
