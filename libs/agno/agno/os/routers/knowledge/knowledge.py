@@ -465,22 +465,22 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             reader_id=reader_id if reader_id and reader_id.strip() else None,
         )
 
-        # Pre-check ownership: 404 if the row exists but is owned by someone
-        # else. apatch_content reaches into the row by id without an owner
-        # filter (existing behaviour), so the gate has to be at the route.
+        # Pre-check ownership so the caller gets a 404 for someone else's row and
+        # a 403 for shared content, rather than the silent no-op the scoped
+        # ``apatch_content`` below would otherwise return.
         scoped_user_id = get_scoped_user_id(request)
         existing = await knowledge.aget_content_by_id(content_id=content_id, user_id=scoped_user_id)
         if existing is None:
             raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
+        # Non-admins can read shared (unowned) content but not modify it.
+        if scoped_user_id is not None and existing.user_id is None:
+            raise HTTPException(status_code=403, detail="Cannot modify shared content")
 
         content = Content(
             id=content_id,
             name=update_data.name,
             description=update_data.description,
             metadata=update_data.metadata,
-            # Preserve ownership across the patch — Knowledge._build_knowledge_row
-            # writes ``user_id`` straight from Content, so reasserting the owner
-            # here prevents an accidental NULL-out of a previously owned row.
             user_id=existing.user_id,
         )
 
@@ -494,9 +494,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         updated_content_dict = None
         try:
             if knowledge.contents_db is not None and isinstance(knowledge.contents_db, AsyncBaseDb):
-                updated_content_dict = await knowledge.apatch_content(content)
+                updated_content_dict = await knowledge.apatch_content(content, user_id=scoped_user_id)
             else:
-                updated_content_dict = knowledge.patch_content(content)
+                updated_content_dict = knowledge.patch_content(content, user_id=scoped_user_id)
         except Exception as e:
             log_error(f"Error updating content: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error updating content: {str(e)}")
@@ -700,6 +700,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             existing = await knowledge.aget_content_by_id(content_id=content_id, user_id=scoped_user_id)
             if existing is None:
                 raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
+            # Non-admins can read shared (unowned) content but not delete it.
+            if scoped_user_id is not None and existing.user_id is None:
+                raise HTTPException(status_code=403, detail="Cannot delete shared content")
             await knowledge.aremove_content_by_id(content_id=content_id, user_id=scoped_user_id)
 
         return ContentResponseSchema(
@@ -731,12 +734,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await knowledge.delete_all_content(headers=headers)
 
-        # Bulk delete is scoped to the caller's rows + shared rows. An admin
-        # bulk-delete clears EVERYTHING (no scoping). A non-admin's bulk
-        # delete also clears shared rows — that's deliberate at the DB layer
-        # but may be tighter than what we want here. Route-level policy
-        # (e.g. "only admin can delete shared") is a follow-up; for now this
-        # matches the existing read/list semantics for symmetry.
+        # An admin bulk-delete clears EVERYTHING (no scoping). A non-admin's
+        # clears only their own rows: shared (unowned) content is readable but
+        # not deletable, same rule the single-item routes enforce with a 403.
         scoped_user_id = get_scoped_user_id(request)
         await knowledge.aremove_all_content(user_id=scoped_user_id)
         return "success"

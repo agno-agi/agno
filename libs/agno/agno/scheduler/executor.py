@@ -2,21 +2,18 @@
 
 import asyncio
 import json
-import re
 import time
 from typing import Any, Dict, List, Optional, Union
+from urllib.parse import quote
 from uuid import uuid4
 
-from agno.db.schemas.scheduler import Schedule
+from agno.db.schemas.scheduler import RUN_ENDPOINT_RE, SCHEDULE_OWNER_HEADER, Schedule
 from agno.utils.log import log_error, log_info, log_warning
 
 try:
     import httpx
 except ImportError:
     httpx = None  # type: ignore[assignment]
-
-# Regex to detect run endpoints and capture resource type + ID
-_RUN_ENDPOINT_RE = re.compile(r"^/(agents|teams|workflows)/([^/]+)/runs/?$")
 
 # Terminal run statuses (RunStatus enum values from agno.run.base)
 _TERMINAL_STATUSES = {"COMPLETED", "CANCELLED", "ERROR", "PAUSED"}
@@ -259,12 +256,20 @@ class ScheduleExecutor:
         timeout_seconds = schedule.timeout_seconds or self.timeout
         url = f"{self.base_url}{endpoint}"
 
-        match = _RUN_ENDPOINT_RE.match(endpoint)
+        match = RUN_ENDPOINT_RE.match(endpoint)
         is_run_endpoint = match is not None and method == "POST"
 
         headers: Dict[str, str] = {
             "Authorization": f"Bearer {self.internal_service_token}",
         }
+        # The internal token identifies the executor, not a user. Carry the
+        # owner so the route scopes the call to them: a schedule can name any
+        # endpoint, so an owned schedule must not reach another user's data.
+        if schedule.user_id is not None:
+            # Percent-encoded: a header value must be latin-1 while an owner id
+            # can be any unicode, and encoding also keeps a padded id distinct
+            # from a bare one once the hop strips surrounding whitespace.
+            headers[SCHEDULE_OWNER_HEADER] = quote(schedule.user_id, safe="")
 
         client = await self._get_client()
 
@@ -273,12 +278,15 @@ class ScheduleExecutor:
             form_payload["stream"] = "false"
             form_payload["background"] = "true"
 
-            # Impersonate the schedule owner so the run + downstream session /
-            # traces / metrics are attributed to them, not to the internal
-            # ``__scheduler__`` service identity. The agent run route only
-            # trusts this form-field user_id when the caller authenticates as
-            # the internal service (see ``agents/router.py``).
-            if schedule.user_id and "user_id" not in form_payload:
+            # The schedule owner is authoritative: drop any user_id carried in
+            # the user-controlled payload so a crafted schedule can't run as
+            # another user, then attribute the run + downstream session /
+            # traces / metrics to the owner (or leave it unowned when the
+            # schedule has no owner). The agent run route only trusts this
+            # form-field user_id when the caller authenticates as the internal
+            # service (see ``agents/router.py``).
+            form_payload.pop("user_id", None)
+            if schedule.user_id is not None:
                 form_payload["user_id"] = schedule.user_id
 
             resource_type = match.group(1)

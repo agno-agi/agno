@@ -1,4 +1,4 @@
-"""Tests for Knowledge._build_content_hash() method, verifying hash includes name and description."""
+"""Tests for Knowledge._build_content_hash() method, verifying hash includes name, description and owner."""
 
 from typing import Optional
 
@@ -761,3 +761,70 @@ def test_document_content_hash_includes_metadata():
     hash2 = knowledge._build_document_content_hash(doc, content2)
 
     assert hash1 != hash2
+
+
+def test_owner_produces_different_hash_for_the_same_file():
+    """The id derived from this hash is the row key, so two owners must not collide."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+
+    alice = Content(name="report.txt", user_id="alice", file_data=FileData(filename="report.txt", content=b"a"))
+    bob = Content(name="report.txt", user_id="bob", file_data=FileData(filename="report.txt", content=b"b"))
+
+    assert knowledge._build_content_hash(alice) != knowledge._build_content_hash(bob)
+
+
+def test_unowned_content_hash_backward_compatible():
+    """Content with no owner (isolation off, admin uploads, legacy rows) hashes as before."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+
+    unowned = Content(url="https://example.com/doc.pdf", name="Doc")
+    same_unowned = Content(url="https://example.com/doc.pdf", name="Doc")
+    owned = Content(url="https://example.com/doc.pdf", name="Doc", user_id="alice")
+
+    assert knowledge._build_content_hash(unowned) == knowledge._build_content_hash(same_unowned)
+    assert knowledge._build_content_hash(owned) != knowledge._build_content_hash(unowned)
+
+
+def test_same_owner_same_content_produces_same_hash():
+    """Re-uploading still lands on the owner's own row rather than a new one."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+
+    first = Content(name="notes", user_id="alice", path="notes.md")
+    second = Content(name="notes", user_id="alice", path="notes.md")
+
+    assert knowledge._build_content_hash(first) == knowledge._build_content_hash(second)
+
+
+def test_empty_string_owner_is_a_real_owner():
+    """The guard is ``is not None``, so ``""`` leads the hash like any other
+    owner instead of collapsing onto the unowned row."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+
+    empty_owner = Content(url="https://example.com/doc.pdf", name="Doc", user_id="")
+    unowned = Content(url="https://example.com/doc.pdf", name="Doc")
+
+    assert knowledge._build_content_hash(empty_owner) != knowledge._build_content_hash(unowned)
+
+
+def test_owner_produces_different_document_hash_for_the_same_page():
+    """``_should_skip`` dedups on the per-source id, so a second owner's crawl
+    of one page must not look like one that is already indexed."""
+    knowledge = Knowledge(vector_db=MockVectorDb())
+    doc = Document(content="Page content", meta_data={"url": "https://example.com/page"})
+
+    alice = Content(url="https://example.com", name="Site", user_id="alice")
+    bob = Content(url="https://example.com", name="Site", user_id="bob")
+
+    assert knowledge._build_document_content_hash(doc, alice) != knowledge._build_document_content_hash(doc, bob)
+
+
+def test_empty_string_owner_is_a_real_owner_for_document_hashes():
+    knowledge = Knowledge(vector_db=MockVectorDb())
+    doc = Document(content="Page content", meta_data={"url": "https://example.com/page"})
+
+    empty_owner = Content(url="https://example.com", name="Site", user_id="")
+    unowned = Content(url="https://example.com", name="Site")
+
+    assert knowledge._build_document_content_hash(doc, empty_owner) != knowledge._build_document_content_hash(
+        doc, unowned
+    )

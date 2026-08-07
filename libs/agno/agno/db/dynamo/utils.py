@@ -2,7 +2,6 @@ import json
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Callable, Dict, List, Optional, Union
-from uuid import uuid4
 
 from agno.db.base import SessionType
 from agno.db.schemas.culture import CulturalKnowledge
@@ -151,6 +150,7 @@ def deserialize_knowledge_row(item: Dict[str, Any]) -> KnowledgeRow:
         access_count=data.get("access_count"),
         status=data.get("status"),
         status_message=data.get("status_message"),
+        user_id=data.get("user_id"),
         created_at=data.get("created_at"),
         updated_at=data.get("updated_at"),
     )
@@ -419,7 +419,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[d
                     key = f"{model_id}:{model_provider}"
                     bucket["model_counts"][key] = bucket["model_counts"].get(key, 0) + 1
 
-            session_metrics = session.get("session_data", {}).get("session_metrics", {}) or {}
+            session_metrics = (session.get("session_data") or {}).get("session_metrics", {}) or {}
             for field in bucket["token_metrics"]:
                 bucket["token_metrics"][field] += session_metrics.get(field, 0)
 

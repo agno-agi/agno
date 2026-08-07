@@ -1611,19 +1611,19 @@ class SurrealDb(BaseDb):
         Args:
             id (str): The ID of the knowledge row to delete.
             user_id (Optional[str]): Owner-scoping filter. When set, only
-                deletes if the row is owned by ``user_id`` OR is unowned.
+                deletes if the row is owned by ``user_id``. Unowned rows are
+                shared content and are not the caller's to delete.
         """
         table = self._get_table("knowledge")
         if user_id is None:
             self.client.delete(RecordID(table, id))
             return
-        # Read-then-delete to enforce ownership. Race-free in practice:
-        # ownership doesn't change concurrently in any code path we ship.
-        row = self.get_knowledge_content(id, user_id=user_id)
-        if row is None:
-            log_debug(f"Skipping delete of knowledge content {id}: not visible to {user_id}")
-            return
-        self.client.delete(RecordID(table, id))
+        res = self.client.query(
+            f"DELETE FROM {table} WHERE id = $record AND user_id = $user_id RETURN BEFORE",
+            {"record": RecordID(table, id), "user_id": user_id},
+        )
+        if not (isinstance(res, list) and len(res) > 0):
+            log_debug(f"Skipping delete of knowledge content {id}: not owned by {user_id}")
 
     def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
@@ -2505,4 +2505,3 @@ class SurrealDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for SurrealDb")
-

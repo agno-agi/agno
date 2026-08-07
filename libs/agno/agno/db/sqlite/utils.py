@@ -315,7 +315,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[d
             session_data = session.get("session_data") or {}
             if isinstance(session_data, str):
                 session_data = json.loads(session_data)
-            session_metrics = session_data.get("session_metrics", {})
+            session_metrics = session_data.get("session_metrics") or {}
             for field in bucket["token_metrics"]:
                 bucket["token_metrics"][field] += session_metrics.get(field, 0)
 

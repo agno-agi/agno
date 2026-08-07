@@ -158,8 +158,7 @@ def bulk_upsert_metrics(session: Session, table: Table, metrics_records: list[di
         update_dict = {
             col.name: record.get(col.name)
             for col in table.columns
-            if col.name not in ["id", "date", "created_at", "aggregation_period", "user_id"]
-            and col.name in record
+            if col.name not in ["id", "date", "created_at", "aggregation_period", "user_id"] and col.name in record
         }
 
         stmt = stmt.on_duplicate_key_update(**update_dict)
@@ -211,8 +210,7 @@ async def abulk_upsert_metrics(session: AsyncSession, table: Table, metrics_reco
         update_dict = {
             col.name: record.get(col.name)
             for col in table.columns
-            if col.name not in ["id", "date", "created_at", "aggregation_period", "user_id"]
-            and col.name in record
+            if col.name not in ["id", "date", "created_at", "aggregation_period", "user_id"] and col.name in record
         }
 
         stmt = stmt.on_duplicate_key_update(**update_dict)
@@ -300,7 +298,7 @@ def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[d
                     key = f"{model_id}:{model_provider}"
                     bucket["model_counts"][key] = bucket["model_counts"].get(key, 0) + 1
 
-            session_metrics = session.get("session_data", {}).get("session_metrics", {}) or {}
+            session_metrics = (session.get("session_data") or {}).get("session_metrics", {}) or {}
             for field in bucket["token_metrics"]:
                 bucket["token_metrics"][field] += session_metrics.get(field, 0)
 

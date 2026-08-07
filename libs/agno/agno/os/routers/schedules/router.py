@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from agno.db.schemas.scheduler import RUN_ENDPOINT_RE
 from agno.os.middleware.user_scope import get_scoped_user_id
 from agno.os.routers.schedules.schema import (
     ScheduleCreate,
@@ -16,6 +17,7 @@ from agno.os.routers.schedules.schema import (
     ScheduleUpdate,
 )
 from agno.os.schema import PaginatedResponse, PaginationInfo
+from agno.os.scopes import AgentOSScope, has_required_scopes
 from agno.utils.log import log_info
 
 # Valid DB method names that _db_call can invoke
@@ -49,6 +51,46 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _require_endpoint_permission(request: Request, endpoint: str, method: str) -> None:
+        """Require the caller's own permission for the endpoint a schedule targets.
+
+        The executor fires a schedule with the internal service token, which
+        carries full scopes. Without this check a caller holding only
+        ``schedules:write`` could drive a component it may not drive itself.
+        A run endpoint needs the matching ``<type>:run`` scope; any other route
+        is an arbitrary first-party call, so it is admin-only. ``method`` is part
+        of the target because the executor only treats POST as a run.
+        """
+        from agno.os.auth import build_insufficient_permissions_detail
+
+        # Only check authorization if it's enabled
+        if not getattr(request.state, "authorization_enabled", False):
+            return
+
+        caller_scopes = getattr(request.state, "scopes", [])
+        admin_scope_raw = getattr(request.state, "admin_scope", None) or getattr(request.app.state, "admin_scope", None)
+        admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
+
+        match = RUN_ENDPOINT_RE.match(endpoint) if method.upper() == "POST" else None
+        if match is None:
+            admin = admin_scope or AgentOSScope.ADMIN.value
+            if not has_required_scopes(list(caller_scopes), [admin], admin_scope=admin_scope):
+                raise HTTPException(
+                    status_code=403, detail="Only admins can schedule an endpoint that is not a run endpoint"
+                )
+            return
+
+        resource_type, resource_id = match.group(1), match.group(2)
+        required_scope = f"{resource_type}:run"
+        if not has_required_scopes(
+            list(caller_scopes),
+            [required_scope],
+            resource_type=resource_type,
+            resource_id=resource_id,
+            admin_scope=admin_scope,
+        ):
+            raise HTTPException(status_code=403, detail=build_insufficient_permissions_detail([required_scope]))
 
     def _check_scheduler_deps() -> None:
         """Raise 503 if croniter/pytz are not installed."""
@@ -113,6 +155,7 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
             raise HTTPException(status_code=422, detail=f"Invalid cron expression: {body.cron_expr}")
         if not validate_timezone(body.timezone):
             raise HTTPException(status_code=422, detail=f"Invalid timezone: {body.timezone}")
+        _require_endpoint_permission(request, body.endpoint, body.method)
 
         # When isolation is on, owner the schedule to the caller. Name-uniqueness
         # check is scoped too — different users can share a schedule name.
@@ -120,6 +163,15 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         # owner column, so even admin-created schedules carry the creator's id.
         scoped_user_id = get_scoped_user_id(request)
         creator_user_id = scoped_user_id or getattr(request.state, "user_id", None)
+        # The executor's own identity is not a real owner. Stamping it would
+        # attribute every fired run to it, and leaving the schedule unowned would
+        # give it the executor's unscoped reach, so refuse instead. Service
+        # accounts and MCP-OAuth clients are server-assigned identities that own
+        # their own sessions and memories, so they may own a schedule too.
+        from agno.os.auth import INTERNAL_SCHEDULER_USER_ID
+
+        if creator_user_id == INTERNAL_SCHEDULER_USER_ID:
+            raise HTTPException(status_code=403, detail="The scheduler executor may not own a schedule")
 
         # Check name uniqueness within the caller's scope
         existing = await _db_call("get_schedule_by_name", body.name, user_id=scoped_user_id)
@@ -182,6 +234,15 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         if not updates:
             return existing
 
+        # Re-check the scope when the target changes, so an existing schedule
+        # can't be repointed at a component the caller may not run.
+        if "endpoint" in updates or "method" in updates:
+            _require_endpoint_permission(
+                request,
+                updates.get("endpoint", existing["endpoint"]),
+                updates.get("method", existing.get("method") or "POST"),
+            )
+
         # Validate cron/timezone if changing
         cron_changed = "cron_expr" in updates or "timezone" in updates
         if cron_changed:
@@ -233,6 +294,10 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
         if existing is None:
             raise HTTPException(status_code=404, detail="Schedule not found")
 
+        # Re-arming a schedule puts its endpoint back on the poller, so it needs
+        # the same permission as creating it. Disabling never needs the check.
+        _require_endpoint_permission(request, existing["endpoint"], existing.get("method") or "POST")
+
         _check_scheduler_deps()
         from agno.scheduler.cron import compute_next_run
 
@@ -274,6 +339,11 @@ def get_schedule_router(os_db: Any, settings: Any) -> APIRouter:
 
         if not existing.get("enabled", True):
             raise HTTPException(status_code=409, detail="Schedule is disabled")
+
+        # Firing a stored schedule runs its endpoint under the internal service
+        # token, so the caller needs the same permission creating it would have
+        # required -- otherwise ``schedules:write`` alone reaches any target.
+        _require_endpoint_permission(request, existing["endpoint"], existing.get("method") or "POST")
 
         executor = getattr(request.app.state, "scheduler_executor", None)
         if executor is not None:

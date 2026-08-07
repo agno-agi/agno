@@ -114,6 +114,12 @@ class TeamSession:
 
         for i, existing_run in enumerate(self.runs or []):
             if existing_run.run_id == run_response.run_id:
+                # queue_attempt is sticky: the generation stamp lives on the
+                # stored row (written by the queue worker's fenced patch), and
+                # a whole-run save from execution - which never knows its
+                # attempt - must not erase it
+                if getattr(run_response, "queue_attempt", None) is None:
+                    run_response.queue_attempt = getattr(existing_run, "queue_attempt", None)
                 self.runs[i] = run_response
                 break
         else:
