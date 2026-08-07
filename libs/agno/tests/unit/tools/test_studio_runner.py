@@ -1963,6 +1963,25 @@ class TestDispatchCheckInvariants:
 
         assert "Report" in _loads(StudioRunnerTools(registry=registry, db=db).run_team("outer", "hi"))["error"]
 
+    def test_a_tool_is_refused_for_what_it_lost_not_for_being_declared(self, db):
+        # Not every serialized tool needs the registry: a provider-native tool
+        # and an external_execution one carry themselves. Refusing because the
+        # config declares tools at all would refuse those for what their
+        # neighbours need, so the refusal has to come from comparing what came
+        # back against what was declared -- and to name it.
+        model_config = {"id": "gpt-5.4", "provider": "OpenAI"}
+        db.upsert_component(component_id="armed", component_type="agent", name="armed")
+        db.upsert_config(
+            component_id="armed",
+            stage="published",
+            config={"id": "armed", "name": "armed", "model": model_config, "tools": [{"name": "calculator"}]},
+        )
+
+        error = _loads(StudioRunnerTools(db=db).run_agent("armed", "hi"))["error"]
+        # The honest check names what was lost; the blanket pre-guard could only
+        # say the config mentioned tools.
+        assert "calculator" in error or "1 of 1" in error
+
     def test_no_reference_walk_reads_the_callers_own_data(self):
         # A step carries free-form user JSON beside its own fields. A walk over
         # every value reads a key named agent_id there as a graph reference.

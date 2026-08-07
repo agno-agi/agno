@@ -44,12 +44,12 @@ Semantics:
         - what a callable members/tools/steps factory returns, since it is
           built per run and cached while cache_callables is on. Dispatch warns
           when it meets one.
-        - a tool or member that declines to be copied (no deep_copy, or a
-          __deepcopy__ returning self). The copier keeps the original, the
-          same way _shared_member treats a member that cannot be copied as
-          shared by design, so a toolkit holding per-call state of its own is
-          shared between callers. Give such a class a real deep_copy if its
-          state must not cross runs.
+        - a tool whose ``__deepcopy__`` returns self or raises. An ordinary
+          toolkit is deep-copied like any other object and is NOT shared; it is
+          only these two that the field-level fallback keeps by reference, so a
+          toolkit holding per-call state that way is shared between callers.
+          Returning self is a deliberate choice; raising is not, and that half
+          is a swallowed failure (#9445).
     * A PAUSED result carries the unresolved requirements plus the
       run_id/session_id a continue call must address (the same shape the
       AgentOS MCP plane returns) -- human-in-the-loop pauses are relayed.
@@ -872,8 +872,13 @@ class StudioRunnerTools(Toolkit):
             return
         _seen.add(key)
         needs: List[str] = []
-        if config.get("tools"):
-            needs.append("tools")
+        # Tools are deliberately NOT pre-guarded on "the config declares some".
+        # Not every serialized tool needs the registry -- a provider-native tool
+        # and an external_execution one carry themselves -- and refusing on the
+        # declaration would refuse those for what their neighbours need.
+        # _require_faithful_rebuild answers the real question afterwards, by
+        # comparing what came back against what was declared, so a tool that
+        # genuinely could not be rebuilt is still refused and named.
         if config.get("knowledge"):
             needs.append("knowledge")
         if isinstance(config.get("input_schema"), str) or isinstance(config.get("output_schema"), str):
