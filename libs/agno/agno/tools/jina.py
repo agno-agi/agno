@@ -53,8 +53,10 @@ class JinaReaderTools(Toolkit):
         """Reads a URL and returns the truncated content using Jina Reader API."""
         full_url = f"{self.config.base_url}{url}"
         try:
-            request_kwargs = {"timeout": self.config.timeout} if self.config.timeout is not None else {}
-            response = httpx.get(full_url, headers=self._get_headers(), **request_kwargs)
+            if self.config.timeout is None:
+                response = httpx.get(full_url, headers=self._get_headers())
+            else:
+                response = httpx.get(full_url, headers=self._get_headers(), timeout=self.config.timeout)
             response.raise_for_status()
             content = response.json()
             return self._truncate_content(str(content))
@@ -72,8 +74,10 @@ class JinaReaderTools(Toolkit):
 
         body = {"q": query}
         try:
-            request_kwargs = {"timeout": self.config.timeout} if self.config.timeout is not None else {}
-            response = httpx.post(full_url, headers=headers, json=body, **request_kwargs)
+            if self.config.timeout is None:
+                response = httpx.post(full_url, headers=headers, json=body)
+            else:
+                response = httpx.post(full_url, headers=headers, json=body, timeout=self.config.timeout)
             response.raise_for_status()
             content = response.json()
             return self._truncate_content(str(content))
