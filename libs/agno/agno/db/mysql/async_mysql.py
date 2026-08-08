@@ -1177,7 +1177,6 @@ class AsyncMySQLDb(AsyncBaseDb):
                     agent_data=session_dict.get("agent_data"),
                     session_data=session_dict.get("session_data"),
                     summary=session_dict.get("summary"),
-                    compaction=session_dict.get("compaction"),
                     metadata=session_dict.get("metadata"),
                 )
             elif isinstance(session, TeamSession):
@@ -1188,7 +1187,6 @@ class AsyncMySQLDb(AsyncBaseDb):
                     team_data=session_dict.get("team_data"),
                     session_data=session_dict.get("session_data"),
                     summary=session_dict.get("summary"),
-                    compaction=session_dict.get("compaction"),
                     metadata=session_dict.get("metadata"),
                 )
             elif isinstance(session, WorkflowSession):
@@ -1199,7 +1197,6 @@ class AsyncMySQLDb(AsyncBaseDb):
                     workflow_data=session_dict.get("workflow_data"),
                     session_data=session_dict.get("session_data"),
                     summary=session_dict.get("summary"),
-                    compaction=session_dict.get("compaction"),
                     metadata=session_dict.get("metadata"),
                 )
             else:
@@ -1317,7 +1314,6 @@ class AsyncMySQLDb(AsyncBaseDb):
                                 "agent_data": session_dict.get("agent_data"),
                                 "session_data": session_dict.get("session_data"),
                                 "summary": session_dict.get("summary"),
-                                "compaction": session_dict.get("compaction"),
                                 "metadata": session_dict.get("metadata"),
                                 "created_at": session_dict.get("created_at"),
                                 "updated_at": updated_at,
@@ -1332,7 +1328,6 @@ class AsyncMySQLDb(AsyncBaseDb):
                             agent_data=stmt.inserted.agent_data,
                             session_data=stmt.inserted.session_data,
                             summary=stmt.inserted.summary,
-                            compaction=stmt.inserted.compaction,
                             metadata=stmt.inserted.metadata,
                             updated_at=stmt.inserted.updated_at,
                         )
@@ -1370,7 +1365,6 @@ class AsyncMySQLDb(AsyncBaseDb):
                                 "team_data": session_dict.get("team_data"),
                                 "session_data": session_dict.get("session_data"),
                                 "summary": session_dict.get("summary"),
-                                "compaction": session_dict.get("compaction"),
                                 "metadata": session_dict.get("metadata"),
                                 "created_at": session_dict.get("created_at"),
                                 "updated_at": updated_at,
@@ -1385,7 +1379,6 @@ class AsyncMySQLDb(AsyncBaseDb):
                             team_data=stmt.inserted.team_data,
                             session_data=stmt.inserted.session_data,
                             summary=stmt.inserted.summary,
-                            compaction=stmt.inserted.compaction,
                             metadata=stmt.inserted.metadata,
                             updated_at=stmt.inserted.updated_at,
                         )
@@ -1423,7 +1416,6 @@ class AsyncMySQLDb(AsyncBaseDb):
                                 "workflow_data": session_dict.get("workflow_data"),
                                 "session_data": session_dict.get("session_data"),
                                 "summary": session_dict.get("summary"),
-                                "compaction": session_dict.get("compaction"),
                                 "metadata": session_dict.get("metadata"),
                                 "created_at": session_dict.get("created_at"),
                                 "updated_at": updated_at,
@@ -1436,7 +1428,6 @@ class AsyncMySQLDb(AsyncBaseDb):
                             workflow_id=stmt.inserted.workflow_id,
                             user_id=stmt.inserted.user_id,
                             workflow_data=stmt.inserted.workflow_data,
-                            compaction=stmt.inserted.compaction,
                             session_data=stmt.inserted.session_data,
                             summary=stmt.inserted.summary,
                             metadata=stmt.inserted.metadata,

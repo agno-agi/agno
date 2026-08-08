@@ -888,7 +888,6 @@ class RedisDb(BaseDb):
                     "workflow_data": session_dict.get("workflow_data"),
                     "session_data": session_dict.get("session_data"),
                     "summary": session_dict.get("summary"),
-                    "compaction": session_dict.get("compaction"),
                     "metadata": session_dict.get("metadata"),
                     "created_at": session_dict.get("created_at") or int(time.time()),
                     "updated_at": int(time.time()),
@@ -907,7 +906,6 @@ class RedisDb(BaseDb):
                     "workflow_data": None,
                     "session_data": session_dict.get("session_data"),
                     "summary": session_dict.get("summary"),
-                    "compaction": session_dict.get("compaction"),
                     "metadata": session_dict.get("metadata"),
                     "created_at": session_dict.get("created_at") or int(time.time()),
                     "updated_at": int(time.time()),
@@ -921,8 +919,6 @@ class RedisDb(BaseDb):
                     "user_id": session_dict.get("user_id"),
                     "workflow_data": session_dict.get("workflow_data"),
                     "session_data": session_dict.get("session_data"),
-                    "summary": session_dict.get("summary"),
-                    "compaction": session_dict.get("compaction"),
                     "metadata": session_dict.get("metadata"),
                     "created_at": session_dict.get("created_at") or int(time.time()),
                     "updated_at": int(time.time()),
@@ -930,6 +926,7 @@ class RedisDb(BaseDb):
                     "team_id": None,
                     "agent_data": None,
                     "team_data": None,
+                    "summary": None,
                 }
                 index_fields = ["user_id", "workflow_id", "session_type"]
             else:

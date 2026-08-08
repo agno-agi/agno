@@ -1329,7 +1329,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                     agent_data=serialized_session.get("agent_data"),
                     session_data=serialized_session.get("session_data"),
                     summary=serialized_session.get("summary"),
-                    compaction=serialized_session.get("compaction"),
                     metadata=serialized_session.get("metadata"),
                 )
             elif isinstance(session, TeamSession):
@@ -1340,7 +1339,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                     team_data=serialized_session.get("team_data"),
                     session_data=serialized_session.get("session_data"),
                     summary=serialized_session.get("summary"),
-                    compaction=serialized_session.get("compaction"),
                     metadata=serialized_session.get("metadata"),
                 )
             else:
@@ -1351,7 +1349,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                     workflow_data=serialized_session.get("workflow_data"),
                     session_data=serialized_session.get("session_data"),
                     summary=serialized_session.get("summary"),
-                    compaction=serialized_session.get("compaction"),
                     metadata=serialized_session.get("metadata"),
                 )
 
