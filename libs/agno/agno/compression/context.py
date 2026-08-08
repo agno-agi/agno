@@ -66,10 +66,10 @@ SUMMARY_PREFIX = dedent("""\
 
 @dataclass
 class CompactionState:
-    """Tracks context compaction state for a session."""
+    """Tracks context compaction state for a run."""
 
-    summary: str = ""
-    compacted_message_ids: Set[str] = field(default_factory=set)
+    summary: str = ""  # cumulative summary of compacted messages
+    compacted_message_ids: Set[str] = field(default_factory=set)  # filtered when building model context
     compacted_count: int = 0
     total_compactions: int = 0
     total_tokens_saved: int = 0
@@ -120,15 +120,17 @@ class CompactionResult:
 class ContextCompactionManager:
     """Compacts conversation history to fit within context limits."""
 
-    model: Optional[Model] = None
-    message_limit: Optional[int] = None
-    token_limit: Optional[int] = None
-    keep_recent: int = 10
-    instructions: Optional[str] = None
+    model: Optional[Model] = None  # model used for summarization
+    message_limit: Optional[int] = None  # trigger compaction at N messages
+    token_limit: Optional[int] = None  # trigger compaction at N tokens
+    keep_recent: int = 10  # messages to keep intact (not summarized)
+    preserve_user_budget: int = 20_000  # token budget for preserving user messages from older section
+    instructions: Optional[str] = None  # custom summarization prompt
 
     def __post_init__(self) -> None:
         if self.model is not None:
             self.model = get_model(self.model)
+        # Default to message-based limit if neither specified
         if self.message_limit is None and self.token_limit is None:
             self.message_limit = 50
 
@@ -188,7 +190,9 @@ class ContextCompactionManager:
 
         # 3. Summarize old messages (merges with existing summary if available)
         existing_summary = run_response.compaction.summary if run_response and run_response.compaction else None
-        log_debug(f"[COMPACTION] Existing summary: {existing_summary[:100] if existing_summary else 'None'}...")
+        log_debug(f"[COMPACTION] Existing summary ({len(existing_summary) if existing_summary else 0} chars)")
+        if existing_summary:
+            log_debug(f"[COMPACTION] --- EXISTING SUMMARY START ---\n{existing_summary}\n[COMPACTION] --- EXISTING SUMMARY END ---")
         log_debug(f"[COMPACTION] Summarizing {len(old_messages)} old messages...")
         new_summary = self._summarize(old_messages, existing_summary, run_metrics)
 
@@ -196,7 +200,8 @@ class ContextCompactionManager:
             log_debug("[COMPACTION] Summarization failed, returning original messages")
             return CompactionResult(compacted_messages=messages)
 
-        log_debug(f"[COMPACTION] New summary ({len(new_summary)} chars): {new_summary[:100]}...")
+        log_debug(f"[COMPACTION] New summary ({len(new_summary)} chars)")
+        log_debug(f"[COMPACTION] --- NEW SUMMARY START ---\n{new_summary}\n[COMPACTION] --- NEW SUMMARY END ---")
 
         # 4. Build compacted compacted_messages: system + new summary + preserved user + recent
         summary_msg = Message(role="user", content=SUMMARY_PREFIX + new_summary, from_history=True)
@@ -252,17 +257,21 @@ class ContextCompactionManager:
         return old_messages, preserved_user, recent_messages
 
     def _extract_user_messages(self, messages: List[Message]) -> Tuple[List[Message], Set[int]]:
-        """Extract recent user messages up to token budget."""
-        budget = max(100, (self.message_limit or 50) * 20)
+        """Extract recent user messages up to token budget.
+
+        Preserves user intent by keeping recent user messages verbatim (not summarized).
+        When budget exceeded, oldest user messages get summarized instead.
+        """
         preserved: List[Message] = []
         indices: Set[int] = set()
         used = 0
 
+        # Walk backward (newest first), keep user messages until budget exhausted
         for i in range(len(messages) - 1, -1, -1):
             msg = messages[i]
             if msg.role == "user":
-                tokens = self.model.count_tokens([msg]) if self.model else len(str(msg.content or "")) // 4
-                if used + tokens <= budget:
+                tokens = self.model.count_tokens([msg])
+                if used + tokens <= self.preserve_user_budget:
                     preserved.insert(0, msg)
                     indices.add(i)
                     used += tokens
@@ -392,6 +401,9 @@ class ContextCompactionManager:
 
         # 3. Summarize old messages (merges with existing summary if available)
         existing_summary = run_response.compaction.summary if run_response and run_response.compaction else None
+        log_debug(f"[COMPACTION] Existing summary ({len(existing_summary) if existing_summary else 0} chars)")
+        if existing_summary:
+            log_debug(f"[COMPACTION] --- EXISTING SUMMARY START ---\n{existing_summary}\n[COMPACTION] --- EXISTING SUMMARY END ---")
         log_debug(f"[COMPACTION] Async summarizing {len(old_messages)} messages...")
         new_summary = await self._asummarize(old_messages, existing_summary, run_metrics)
 
@@ -399,7 +411,8 @@ class ContextCompactionManager:
             log_debug("[COMPACTION] Async summarization failed")
             return CompactionResult(compacted_messages=messages)
 
-        log_debug(f"[COMPACTION] Async summary ({len(new_summary)} chars): {new_summary[:100]}...")
+        log_debug(f"[COMPACTION] New summary ({len(new_summary)} chars)")
+        log_debug(f"[COMPACTION] --- NEW SUMMARY START ---\n{new_summary}\n[COMPACTION] --- NEW SUMMARY END ---")
 
         # 4. Build compacted compacted_messages: system + new summary + preserved user + recent
         summary_msg = Message(role="user", content=SUMMARY_PREFIX + new_summary, from_history=True)
