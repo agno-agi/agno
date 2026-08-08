@@ -14,38 +14,29 @@ if TYPE_CHECKING:
     from agno.metrics import RunMetrics
 
 DEFAULT_COMPRESSION_PROMPT = dedent("""\
-    You are compressing tool call results to save context space while preserving critical information.
-    
-    Your goal: Extract only the essential information from the tool output.
-    
-    ALWAYS PRESERVE:
-    • Specific facts: numbers, statistics, amounts, prices, quantities, metrics
-    • Temporal data: dates, times, timestamps (use short format: "Oct 21 2025")
-    • Entities: people, companies, products, locations, organizations
-    • Identifiers: URLs, IDs, codes, technical identifiers, versions
-    • Key quotes, citations, sources (if relevant to agent's task)
-    
-    COMPRESS TO ESSENTIALS:
-    • Descriptions: keep only key attributes
-    • Explanations: distill to core insight
-    • Lists: focus on most relevant items based on agent context
-    • Background: minimal context only if critical
-    
-    REMOVE ENTIRELY:
-    • Introductions, conclusions, transitions
-    • Hedging language ("might", "possibly", "appears to")
-    • Meta-commentary ("According to", "The results show")
-    • Formatting artifacts (markdown, HTML, JSON structure)
-    • Redundant or repetitive information
-    • Generic background not relevant to agent's task
-    • Promotional language, filler words
-    
+    Compress this tool output to ~10-20% of original size. Preserve what matters, remove fluff.
+
+    KEEP (exact values):
+    - Numbers, dates, IDs, URLs, names
+    - Error messages (quote verbatim)
+    - Status codes, counts, measurements
+    - Key results and findings
+
+    REMOVE:
+    - Introductions, conclusions, transitions
+    - Hedging ("might", "possibly", "appears to")
+    - Meta-commentary ("The results show", "According to")
+    - Formatting artifacts, redundant info
+    - Background context unless critical
+
+    FORMAT:
+    - Use semicolons between items, pipes between categories
+    - Short date format: "Oct 21 2025"
+    - Condense lists: "items: A, B, C (3 total)"
+
     EXAMPLE:
-    Input: "According to recent market analysis and industry reports, OpenAI has made several significant announcements in the technology sector. The company revealed ChatGPT Atlas on October 21, 2025, which represents a new AI-powered browser application that has been specifically designed for macOS users. This browser is strategically positioned to compete with traditional search engines in the market. Additionally, on October 6, 2025, OpenAI launched Apps in ChatGPT, which includes a comprehensive software development kit (SDK) for developers. The company has also announced several initial strategic partners who will be integrating with this new feature, including well-known companies such as Spotify, the popular music streaming service, Zillow, which is a real estate marketplace platform, and Canva, a graphic design platform."
-    
-    Output: "OpenAI - Oct 21 2025: ChatGPT Atlas (AI browser, macOS, search competitor); Oct 6 2025: Apps in ChatGPT + SDK; Partners: Spotify, Zillow, Canva"
-    
-    Be concise while retaining all critical facts.
+    Input: "According to recent market analysis, OpenAI announced ChatGPT Atlas on October 21, 2025, an AI browser for macOS. On October 6, 2025, they launched Apps in ChatGPT with SDK. Partners include Spotify, Zillow, and Canva."
+    Output: "OpenAI | Oct 21 2025: ChatGPT Atlas (AI browser, macOS); Oct 6 2025: Apps + SDK; Partners: Spotify, Zillow, Canva"
     """)
 
 
