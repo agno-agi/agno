@@ -853,9 +853,9 @@ class Model(ABC):
                 # Compaction hook: may return updated compacted view for next iteration
                 if compaction_callback is not None:
                     try:
-                        new_compacted = compaction_callback()
-                        if new_compacted is not None:
-                            compacted_messages = new_compacted
+                        after_compaction_messages = compaction_callback()
+                        if after_compaction_messages is not None:
+                            compacted_messages = after_compaction_messages
                     except Exception as e:
                         log_error(f"compaction_callback failed: {e}")
 
@@ -1097,9 +1097,9 @@ class Model(ABC):
                 # Compaction hook: may return updated compacted view for next iteration
                 if compaction_callback is not None:
                     try:
-                        new_compacted = await compaction_callback()
-                        if new_compacted is not None:
-                            compacted_messages = new_compacted
+                        after_compaction_messages = await compaction_callback()
+                        if after_compaction_messages is not None:
+                            compacted_messages = after_compaction_messages
                     except Exception as e:
                         log_error(f"compaction_callback failed: {e}")
 
@@ -1627,9 +1627,9 @@ class Model(ABC):
                 # Compaction hook: may return updated compacted view for next iteration
                 if compaction_callback is not None:
                     try:
-                        new_compacted = compaction_callback()
-                        if new_compacted is not None:
-                            compacted_messages = new_compacted
+                        after_compaction_messages = compaction_callback()
+                        if after_compaction_messages is not None:
+                            compacted_messages = after_compaction_messages
                     except Exception as e:
                         log_error(f"compaction_callback failed: {e}")
 
@@ -1930,9 +1930,9 @@ class Model(ABC):
                 # Compaction hook: may return updated compacted view for next iteration
                 if compaction_callback is not None:
                     try:
-                        new_compacted = await compaction_callback()
-                        if new_compacted is not None:
-                            compacted_messages = new_compacted
+                        after_compaction_messages = await compaction_callback()
+                        if after_compaction_messages is not None:
+                            compacted_messages = after_compaction_messages
                     except Exception as e:
                         log_error(f"compaction_callback failed: {e}")
 

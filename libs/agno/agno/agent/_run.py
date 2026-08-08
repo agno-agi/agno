@@ -5986,10 +5986,10 @@ def persist_run_in_session(
         storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context, isolate_inflight=True)
 
     # Add scrubbed RunOutput to Agent Session
-    # Note: run_response.compaction is already set by the compaction manager during the run
-    if storage_copy.compaction:
+    # Note: run_response.compaction_state is already set by the compaction manager during the run
+    if storage_copy.compaction_state:
         log_debug(
-            f"[PERSIST-SYNC] Saving run with compaction: total={storage_copy.compaction.total_compactions}, ids={len(storage_copy.compaction.compacted_message_ids)}"
+            f"[PERSIST-SYNC] Saving run with compaction: total={storage_copy.compaction_state.total_compactions}, ids={len(storage_copy.compaction_state.compacted_message_ids)}"
         )
     else:
         log_debug("[PERSIST-SYNC] Saving run without compaction")
@@ -6030,10 +6030,10 @@ async def apersist_run_in_session(
     if storage_copy is None:
         storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context, isolate_inflight=True)
 
-    # Note: run_response.compaction is already set by the compaction manager during the run
-    if storage_copy.compaction:
+    # Note: run_response.compaction_state is already set by the compaction manager during the run
+    if storage_copy.compaction_state:
         log_debug(
-            f"[PERSIST-ASYNC] Saving run with compaction: total={storage_copy.compaction.total_compactions}, ids={len(storage_copy.compaction.compacted_message_ids)}"
+            f"[PERSIST-ASYNC] Saving run with compaction: total={storage_copy.compaction_state.total_compactions}, ids={len(storage_copy.compaction_state.compacted_message_ids)}"
         )
     else:
         log_debug("[PERSIST-ASYNC] Saving run without compaction")

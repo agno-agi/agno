@@ -1,7 +1,10 @@
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from time import time
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union
+
+if TYPE_CHECKING:
+    from agno.compression.context import CompactionState
 
 from pydantic import BaseModel
 
@@ -781,6 +784,10 @@ class TeamRunOutput:
     additional_input: Optional[List[Message]] = None
     reasoning_steps: Optional[List[ReasoningStep]] = None
     reasoning_messages: Optional[List[Message]] = None
+
+    # Point-in-time compaction state for continue_run time travel
+    compaction_state: Optional["CompactionState"] = None
+
     created_at: int = field(default_factory=lambda: int(time()))
 
     events: Optional[List[Union[RunOutputEvent, TeamRunOutputEvent]]] = None
