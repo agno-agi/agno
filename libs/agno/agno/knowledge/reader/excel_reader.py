@@ -10,6 +10,7 @@ from agno.knowledge.reader.base import Reader
 from agno.knowledge.reader.utils import (
     convert_xls_cell_value,
     excel_rows_to_documents,
+    excel_rows_to_row_documents,
     get_workbook_name,
     infer_file_extension,
 )
@@ -30,6 +31,33 @@ class ExcelReader(Reader):
             chunking_strategy = RowChunking()
         super().__init__(chunking_strategy=chunking_strategy, **kwargs)
         self.sheets = sheets
+
+    def _uses_streaming_row_chunking(self) -> bool:
+        """True when rows should be emitted directly without a full-sheet Document.
+
+        Default Excel ingestion uses :class:`RowChunking`. Building one giant
+        sheet-level Document first forces the full worksheet into memory (OOM
+        risk for large .xlsx files). Stream row Documents instead when that
+        strategy is active and chunking is enabled.
+        """
+        return bool(self.chunk and isinstance(self.chunking_strategy, RowChunking))
+
+    def _sheets_to_documents(
+        self,
+        workbook_name: str,
+        sheets: List[Tuple[str, int, Iterable[Sequence[Any]]]],
+    ) -> List[Document]:
+        """Convert sheet row iterators to documents, streaming for RowChunking."""
+        if self._uses_streaming_row_chunking():
+            strategy = self.chunking_strategy
+            assert isinstance(strategy, RowChunking)
+            return excel_rows_to_row_documents(
+                workbook_name=workbook_name,
+                sheets=sheets,
+                skip_header=strategy.skip_header,
+                clean_rows=strategy.clean_rows,
+            )
+        return excel_rows_to_documents(workbook_name=workbook_name, sheets=sheets)
 
     @classmethod
     def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
@@ -109,7 +137,7 @@ class ExcelReader(Reader):
 
                 sheets.append((worksheet.title, sheet_index + 1, worksheet.iter_rows(values_only=True)))
 
-            return excel_rows_to_documents(workbook_name=workbook_name, sheets=sheets)
+            return self._sheets_to_documents(workbook_name, sheets)
         finally:
             workbook.close()
 
@@ -151,14 +179,14 @@ class ExcelReader(Reader):
 
             sheets.append((sheet.name, sheet_index + 1, _iter_sheet_rows()))
 
-        return excel_rows_to_documents(workbook_name=workbook_name, sheets=sheets)
+        return self._sheets_to_documents(workbook_name, sheets)
 
     def read(
         self,
         file: Union[Path, IO[Any]],
         name: Optional[str] = None,
     ) -> List[Document]:
-        """Read an Excel file and return documents (one per sheet)."""
+        """Read an Excel file and return documents (one per sheet, or one per row when row-chunking)."""
         try:
             file_extension = infer_file_extension(file, name)
             workbook_name = get_workbook_name(file, name)
@@ -176,7 +204,8 @@ class ExcelReader(Reader):
             else:
                 raise ValueError(f"Unsupported file extension: '{file_extension}'. Expected .xlsx or .xls")
 
-            if self.chunk:
+            # RowChunking path already emits row-level Documents while iterating.
+            if self.chunk and not self._uses_streaming_row_chunking():
                 chunked_documents = []
                 for document in documents:
                     chunked_documents.extend(self.chunk_document(document))
@@ -214,7 +243,8 @@ class ExcelReader(Reader):
             else:
                 raise ValueError(f"Unsupported file extension: '{file_extension}'. Expected .xlsx or .xls")
 
-            if self.chunk:
+            # RowChunking path already emits row-level Documents while iterating.
+            if self.chunk and not self._uses_streaming_row_chunking():
                 documents = await self.chunk_documents_async(documents)
 
             return documents
