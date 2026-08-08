@@ -5,6 +5,8 @@ from uuid import uuid4
 from fastapi import HTTPException
 from typing_extensions import AsyncIterator, List, Union
 
+from agno.run.team import CompactionCompletedEvent as TeamCompactionCompletedEvent
+from agno.run.team import CompactionStartedEvent as TeamCompactionStartedEvent
 from agno.run.team import MemoryUpdateCompletedEvent as TeamMemoryUpdateCompletedEvent
 from agno.run.team import MemoryUpdateStartedEvent as TeamMemoryUpdateStartedEvent
 from agno.run.team import ReasoningCompletedEvent as TeamReasoningCompletedEvent
@@ -65,6 +67,8 @@ except ImportError as e:
 
 from agno.media import Audio, File, Image, Video
 from agno.run.agent import (
+    CompactionCompletedEvent,
+    CompactionStartedEvent,
     MemoryUpdateCompletedEvent,
     MemoryUpdateStartedEvent,
     ReasoningCompletedEvent,
@@ -474,6 +478,34 @@ async def stream_a2a_response(
                 status=TaskStatus(state=TaskState.working),
                 final=False,
                 metadata={"agno_event_type": "memory_update_completed"},
+            )
+            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
+            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
+
+        # Send compaction events
+        elif isinstance(event, (CompactionStartedEvent, TeamCompactionStartedEvent)):
+            status_event = TaskStatusUpdateEvent(
+                task_id=task_id,
+                context_id=context_id,
+                status=TaskStatus(state=TaskState.working),
+                final=False,
+                metadata={"agno_event_type": "compaction_started"},
+            )
+            response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
+            yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
+
+        elif isinstance(event, (CompactionCompletedEvent, TeamCompactionCompletedEvent)):
+            metadata: Dict[str, Any] = {"agno_event_type": "compaction_completed"}
+            if hasattr(event, "tokens_saved"):
+                metadata["tokens_saved"] = event.tokens_saved
+            if hasattr(event, "messages_compacted"):
+                metadata["messages_compacted"] = event.messages_compacted
+            status_event = TaskStatusUpdateEvent(
+                task_id=task_id,
+                context_id=context_id,
+                status=TaskStatus(state=TaskState.working),
+                final=False,
+                metadata=metadata,
             )
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
             yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"

@@ -280,6 +280,13 @@ def print_response(
 
                     # Compression stats are now on run_response.metrics (not available during streaming)
 
+                    # Add compaction stats
+                    if team.context_compaction_manager is not None and team.context_compaction_manager.stats:
+                        stats = team.context_compaction_manager.stats
+                        if stats.get("messages_compacted", 0) > 0:
+                            tool_calls_text += f"\n\ncompacted: {stats.get('messages_compacted', 0)} msgs | Saved: {stats.get('tokens_saved', 0):,} tokens"
+                        team.context_compaction_manager.stats.clear()
+
                     team_tool_calls_panel = create_panel(
                         content=tool_calls_text,
                         title="Team Tool Calls",
@@ -653,6 +660,12 @@ def print_response_stream(
 
                     # Compression stats are now on run_response.metrics (not available during streaming)
 
+                    # Add compaction stats
+                    if team.context_compaction_manager is not None and team.context_compaction_manager.stats:
+                        stats = team.context_compaction_manager.stats
+                        if stats.get("messages_compacted", 0) > 0:
+                            tool_calls_text += f"\n\ncompacted: {stats.get('messages_compacted', 0)} msgs | Saved: {stats.get('tokens_saved', 0):,} tokens"
+
                     team_tool_calls_panel = create_panel(
                         content=tool_calls_text,
                         title="Team Tool Calls",
@@ -890,6 +903,12 @@ def print_response_stream(
                     orig = stats.get("original_size", 1)
                     if stats.get("tool_results_compressed", 0) > 0:
                         tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+
+                # Add compaction stats
+                if team.context_compaction_manager is not None and team.context_compaction_manager.stats:
+                    stats = team.context_compaction_manager.stats
+                    if stats.get("messages_compacted", 0) > 0:
+                        tool_calls_text += f"\n\ncompacted: {stats.get('messages_compacted', 0)} msgs | Saved: {stats.get('tokens_saved', 0):,} tokens"
 
                 team_tool_calls_panel = create_panel(
                     content=tool_calls_text,
@@ -1572,6 +1591,12 @@ async def aprint_response_stream(
 
                     # Compression stats are now on run_response.metrics (not available during streaming)
 
+                    # Add compaction stats
+                    if team.context_compaction_manager is not None and team.context_compaction_manager.stats:
+                        stats = team.context_compaction_manager.stats
+                        if stats.get("messages_compacted", 0) > 0:
+                            tool_calls_text += f"\n\ncompacted: {stats.get('messages_compacted', 0)} msgs | Saved: {stats.get('tokens_saved', 0):,} tokens"
+
                     team_tool_calls_panel = create_panel(
                         content=tool_calls_text,
                         title="Team Tool Calls",
@@ -1827,6 +1852,12 @@ async def aprint_response_stream(
                     orig = stats.get("original_size", 1)
                     if stats.get("tool_results_compressed", 0) > 0:
                         tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+
+                # Add compaction stats
+                if team.context_compaction_manager is not None and team.context_compaction_manager.stats:
+                    stats = team.context_compaction_manager.stats
+                    if stats.get("messages_compacted", 0) > 0:
+                        tool_calls_text += f"\n\ncompacted: {stats.get('messages_compacted', 0)} msgs | Saved: {stats.get('tokens_saved', 0):,} tokens"
 
                 team_tool_calls_panel = create_panel(
                     content=tool_calls_text,
