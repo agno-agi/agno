@@ -361,6 +361,7 @@ def _determine_tools_for_model(
             last_index=_source_toolkit_last_index,
             members=_source_toolkit_members,
             async_mode=async_mode,
+            complete_keys=_toolkit_complete_keys,
         )
 
     # Get output_schema from run_context

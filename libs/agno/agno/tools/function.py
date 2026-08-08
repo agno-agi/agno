@@ -264,6 +264,11 @@ class Function(BaseModel):
     # to_dict: it is persisted via the storage layer's "toolkit" key and never
     # sent to models.
     owning_toolkit: Optional[str] = None
+    # True when this function was persisted as part of a whole Toolkit (not a
+    # hand-picked subset). Used to keep toolkit instructions stable if the live
+    # toolkit later gains/loses members. Excluded from to_dict; storage uses the
+    # "toolkit_complete" key.
+    toolkit_complete: Optional[bool] = None
     # Live Toolkit this function was flattened from during registry
     # rehydration. It restores toolkit-level behavior without persisting the
     # Toolkit or its instructions in component configs.
