@@ -2642,3 +2642,69 @@ def test_model_copy_deep_isolates_user_input_schema():
 
     copied.user_input_schema[0].value = "run-scoped answer"
     assert func.user_input_schema[0].value is None
+
+
+# =============================================================================
+# Framework return annotation tests
+# =============================================================================
+
+
+def test_framework_return_annotation_does_not_break_execution():
+    """A tool whose return annotation is a framework type (-> Agent) must not
+    have the annotation treated as an injectable parameter."""
+    from agno.agent.agent import Agent
+
+    def spawn_agent(name: str) -> Agent:
+        """Spawn an agent with the given name."""
+        return Agent(name=name)
+
+    func = Function.from_callable(spawn_agent)
+    assert "return" not in func.parameters.get("properties", {})
+
+    func = Function(name="spawn_agent", entrypoint=spawn_agent)
+    func.process_entrypoint()
+    assert "return" not in func.parameters.get("properties", {})
+
+    func._agent = Agent(name="parent")
+    result = FunctionCall(function=func, arguments={"name": "helper"}).execute()
+
+    assert result.status == "success", f"Expected success, got: {result.error}"
+    assert isinstance(result.result, Agent)
+
+
+@pytest.mark.asyncio
+async def test_framework_return_annotation_does_not_break_execution_async():
+    """Async variant: -> Team return annotation with a bound team."""
+    from agno.team.team import Team
+
+    async def spawn_team(name: str) -> Team:
+        """Spawn a team with the given name."""
+        return Team(name=name, members=[])
+
+    func = Function(name="spawn_team", entrypoint=spawn_team)
+    func.process_entrypoint()
+    assert "return" not in func.parameters.get("properties", {})
+
+    func._team = Team(name="parent-team", members=[])
+    result = await FunctionCall(function=func, arguments={"name": "helper"}).aexecute()
+
+    assert result.status == "success", f"Expected success, got: {result.error}"
+    assert isinstance(result.result, Team)
+
+
+def test_framework_return_annotation_keeps_argument_validation():
+    """A framework RETURN type must not disable validate_call: only framework
+    parameter types opt a tool out of Pydantic argument coercion."""
+    from agno.agent.agent import Agent
+
+    def spawn(count: int) -> Agent:
+        """Spawn an agent numbered by count."""
+        return Agent(name=f"agent-{count}")
+
+    func = Function(name="spawn", entrypoint=spawn)
+    func.process_entrypoint()
+
+    # String input is coerced to int by the validate_call wrapper
+    result = FunctionCall(function=func, arguments={"count": "3"}).execute()
+    assert result.status == "success", f"Expected success, got: {result.error}"
+    assert result.result.name == "agent-3"
