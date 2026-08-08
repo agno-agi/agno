@@ -13,10 +13,10 @@ class PubmedTools(Toolkit):
         self,
         email: str = "your_email@example.com",
         max_results: Optional[int] = None,
-        timeout: int = 30,
         results_expanded: bool = False,
         enable_search_pubmed: bool = True,
         all: bool = False,
+        timeout: int = 30,
         **kwargs,
     ):
         self.max_results: Optional[int] = max_results
