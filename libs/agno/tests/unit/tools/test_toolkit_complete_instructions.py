@@ -4,6 +4,7 @@ from agno.agent import Agent
 from agno.agent._tools import parse_tools
 from agno.models.openai import OpenAIChat
 from agno.registry import Registry
+from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 
 
@@ -45,3 +46,41 @@ def test_saved_toolkit_instructions_survive_toolkit_growth():
 
     files.register(delete_file)
     assert "Always read a file before you write it." in load_and_collect()
+
+
+def test_toolkit_complete_round_trips_through_agent_storage():
+    """Serialize stamps toolkit_complete; hydrate restores it on regenerated tools."""
+
+    def read_file(path: str) -> str:
+        """Read a file."""
+        return path
+
+    def write_file(path: str, body: str) -> str:
+        """Write a file."""
+        return path
+
+    files = Toolkit(
+        name="files",
+        tools=[read_file, write_file],
+        instructions="Always read a file before you write it.",
+        add_instructions=True,
+    )
+    model = OpenAIChat(id="gpt-4o-mini")
+    registry = Registry(tools=[files], models=[model])
+    agent = Agent(id="toolkit-complete-agent", model=model, tools=[files])
+
+    config = agent.to_dict()
+    tools_by_name = {t["name"]: t for t in config["tools"]}
+    assert tools_by_name["read_file"]["toolkit_complete"] is True
+    assert tools_by_name["write_file"]["toolkit_complete"] is True
+
+    loaded = Agent.from_dict(config, registry=registry)
+    assert loaded.tools is not None
+    for tool in loaded.tools:
+        assert isinstance(tool, Function)
+        assert tool.toolkit_complete is True
+
+    # Load -> save must re-stamp the key so a later session still sees it.
+    resaved = loaded.to_dict()
+    for tool_dict in resaved["tools"]:
+        assert tool_dict.get("toolkit_complete") is True
