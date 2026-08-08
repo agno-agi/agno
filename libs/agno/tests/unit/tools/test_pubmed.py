@@ -74,3 +74,14 @@ def test_search_pubmed_passes_configured_timeout(mock_httpx_get):
 
     assert mock_httpx_get.call_args_list[0][1]["timeout"] == 12
     assert mock_httpx_get.call_args_list[1][1]["timeout"] == 12
+
+
+def test_constructor_preserves_existing_positional_arguments():
+    """Test adding timeout does not shift existing positional constructor arguments."""
+    tools = PubmedTools("user@example.com", 3, True, False, False)
+
+    assert tools.email == "user@example.com"
+    assert tools.max_results == 3
+    assert tools.results_expanded is True
+    assert tools.tools == []
+    assert tools.timeout == 30
