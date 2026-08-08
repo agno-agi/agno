@@ -20,6 +20,7 @@ SESSION_TABLE_SCHEMA = {
     "workflow_data": {"type": JSON, "nullable": True},
     "metadata": {"type": JSON, "nullable": True},
     "summary": {"type": JSON, "nullable": True},
+    "compaction": {"type": JSON, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
 }

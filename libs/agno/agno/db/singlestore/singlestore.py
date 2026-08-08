@@ -1237,6 +1237,7 @@ class SingleStoreDb(BaseDb):
                     agent_data=session_dict.get("agent_data"),
                     session_data=session_dict.get("session_data"),
                     summary=session_dict.get("summary"),
+                    compaction=session_dict.get("compaction"),
                     metadata=session_dict.get("metadata"),
                 )
             elif isinstance(session, TeamSession):
@@ -1247,6 +1248,7 @@ class SingleStoreDb(BaseDb):
                     team_data=session_dict.get("team_data"),
                     session_data=session_dict.get("session_data"),
                     summary=session_dict.get("summary"),
+                    compaction=session_dict.get("compaction"),
                     metadata=session_dict.get("metadata"),
                 )
             elif isinstance(session, WorkflowSession):
@@ -1257,6 +1259,7 @@ class SingleStoreDb(BaseDb):
                     workflow_data=session_dict.get("workflow_data"),
                     session_data=session_dict.get("session_data"),
                     summary=session_dict.get("summary"),
+                    compaction=session_dict.get("compaction"),
                     metadata=session_dict.get("metadata"),
                 )
             else:
@@ -1370,6 +1373,7 @@ class SingleStoreDb(BaseDb):
                                 "agent_data": session_dict.get("agent_data"),
                                 "session_data": session_dict.get("session_data"),
                                 "summary": session_dict.get("summary"),
+                                "compaction": session_dict.get("compaction"),
                                 "metadata": session_dict.get("metadata"),
                                 "created_at": session_dict.get("created_at"),
                                 "updated_at": updated_at,
@@ -1384,6 +1388,7 @@ class SingleStoreDb(BaseDb):
                             agent_data=stmt.inserted.agent_data,
                             session_data=stmt.inserted.session_data,
                             summary=stmt.inserted.summary,
+                            compaction=stmt.inserted.compaction,
                             metadata=stmt.inserted.metadata,
                             updated_at=stmt.inserted.updated_at,
                         )
@@ -1420,6 +1425,7 @@ class SingleStoreDb(BaseDb):
                                 "team_data": session_dict.get("team_data"),
                                 "session_data": session_dict.get("session_data"),
                                 "summary": session_dict.get("summary"),
+                                "compaction": session_dict.get("compaction"),
                                 "metadata": session_dict.get("metadata"),
                                 "created_at": session_dict.get("created_at"),
                                 "updated_at": updated_at,
@@ -1434,6 +1440,7 @@ class SingleStoreDb(BaseDb):
                             team_data=stmt.inserted.team_data,
                             session_data=stmt.inserted.session_data,
                             summary=stmt.inserted.summary,
+                            compaction=stmt.inserted.compaction,
                             metadata=stmt.inserted.metadata,
                             updated_at=stmt.inserted.updated_at,
                         )
@@ -1470,6 +1477,7 @@ class SingleStoreDb(BaseDb):
                                 "workflow_data": session_dict.get("workflow_data"),
                                 "session_data": session_dict.get("session_data"),
                                 "summary": session_dict.get("summary"),
+                                "compaction": session_dict.get("compaction"),
                                 "metadata": session_dict.get("metadata"),
                                 "created_at": session_dict.get("created_at"),
                                 "updated_at": updated_at,
@@ -1484,6 +1492,7 @@ class SingleStoreDb(BaseDb):
                             workflow_data=stmt.inserted.workflow_data,
                             session_data=stmt.inserted.session_data,
                             summary=stmt.inserted.summary,
+                            compaction=stmt.inserted.compaction,
                             metadata=stmt.inserted.metadata,
                             updated_at=stmt.inserted.updated_at,
                         )
