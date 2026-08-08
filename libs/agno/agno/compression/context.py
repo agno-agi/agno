@@ -17,7 +17,6 @@ if TYPE_CHECKING:
 
 from agno.metrics import ModelType, accumulate_model_metrics
 
-
 DEFAULT_COMPACTION_PROMPT = dedent("""\
     You are summarizing a conversation history to preserve context while reducing token usage.
 
@@ -126,6 +125,7 @@ class ContextCompactionManager:
     keep_recent: int = 10  # messages to keep intact (not summarized)
     preserve_user_budget: int = 20_000  # token budget for preserving user messages from older section
     instructions: Optional[str] = None  # custom summarization prompt
+    stats: Dict[str, Any] = field(default_factory=dict)  # runtime stats for display
 
     def __post_init__(self) -> None:
         if self.model is not None:
@@ -192,7 +192,9 @@ class ContextCompactionManager:
         existing_summary = run_response.compaction.summary if run_response and run_response.compaction else None
         log_debug(f"[COMPACTION] Existing summary ({len(existing_summary) if existing_summary else 0} chars)")
         if existing_summary:
-            log_debug(f"[COMPACTION] --- EXISTING SUMMARY START ---\n{existing_summary}\n[COMPACTION] --- EXISTING SUMMARY END ---")
+            log_debug(
+                f"[COMPACTION] --- EXISTING SUMMARY START ---\n{existing_summary}\n[COMPACTION] --- EXISTING SUMMARY END ---"
+            )
         log_debug(f"[COMPACTION] Summarizing {len(old_messages)} old messages...")
         new_summary = self._summarize(old_messages, existing_summary, run_metrics)
 
@@ -232,6 +234,10 @@ class ContextCompactionManager:
                 f"[COMPACTION] run_response.compaction updated: total={run_response.compaction.total_compactions}, ids={len(run_response.compaction.compacted_message_ids)}"
             )
 
+        # Update stats for display
+        self.stats["messages_compacted"] = self.stats.get("messages_compacted", 0) + len(old_messages)
+        self.stats["tokens_saved"] = self.stats.get("tokens_saved", 0) + tokens_saved
+
         log_debug(f"[COMPACTION] Returning {len(compacted_messages)} compacted messages (sync)")
         return CompactionResult(compacted_messages=compacted_messages, summary=new_summary)
 
@@ -245,7 +251,7 @@ class ContextCompactionManager:
         keep_count = min(self.keep_recent, len(messages))
         split_idx = safe_truncation_index(messages, len(messages) - keep_count)
         recent_messages = messages[split_idx:]  # kept intact
-        older = messages[:split_idx]            # candidates for summarization
+        older = messages[:split_idx]  # candidates for summarization
 
         if not older:
             return [], [], recent_messages
@@ -404,7 +410,9 @@ class ContextCompactionManager:
         existing_summary = run_response.compaction.summary if run_response and run_response.compaction else None
         log_debug(f"[COMPACTION] Existing summary ({len(existing_summary) if existing_summary else 0} chars)")
         if existing_summary:
-            log_debug(f"[COMPACTION] --- EXISTING SUMMARY START ---\n{existing_summary}\n[COMPACTION] --- EXISTING SUMMARY END ---")
+            log_debug(
+                f"[COMPACTION] --- EXISTING SUMMARY START ---\n{existing_summary}\n[COMPACTION] --- EXISTING SUMMARY END ---"
+            )
         log_debug(f"[COMPACTION] Async summarizing {len(old_messages)} messages...")
         new_summary = await self._asummarize(old_messages, existing_summary, run_metrics)
 
@@ -434,7 +442,9 @@ class ContextCompactionManager:
         if self.token_limit and await self.model.acount_tokens(compacted_messages) > self.token_limit:
             await self._acompress_tool_results(recent_messages, run_metrics)
             compacted_messages = system_msgs + [summary_msg] + preserved_user + recent_messages
-            log_info(f"[COMPACTION] Compressed tool results, now {await self.model.acount_tokens(compacted_messages)} tokens")
+            log_info(
+                f"[COMPACTION] Compressed tool results, now {await self.model.acount_tokens(compacted_messages)} tokens"
+            )
 
         # 6. Update run compaction state
         log_debug("[COMPACTION] Updating run compaction state (async)...")
@@ -443,6 +453,10 @@ class ContextCompactionManager:
             log_debug(
                 f"[COMPACTION] Async compaction updated: total={run_response.compaction.total_compactions}, ids={len(run_response.compaction.compacted_message_ids)}"
             )
+
+        # Update stats for display
+        self.stats["messages_compacted"] = self.stats.get("messages_compacted", 0) + len(old_messages)
+        self.stats["tokens_saved"] = self.stats.get("tokens_saved", 0) + tokens_saved
 
         log_debug(f"[COMPACTION] Returning {len(compacted_messages)} compacted messages (async)")
         return CompactionResult(compacted_messages=compacted_messages, summary=new_summary)

@@ -193,6 +193,7 @@ def print_response_stream(
                 show_full_reasoning=show_full_reasoning,
                 accumulated_tool_calls=accumulated_tool_calls,
                 compression_manager=agent.compression_manager,
+                context_compaction_manager=agent.context_compaction_manager,
             )
             panels.extend(additional_panels)
             if panels:
@@ -398,6 +399,7 @@ async def aprint_response_stream(
                 show_full_reasoning=show_full_reasoning,
                 accumulated_tool_calls=accumulated_tool_calls,
                 compression_manager=agent.compression_manager,
+                context_compaction_manager=agent.context_compaction_manager,
             )
             panels.extend(additional_panels)
             if panels:
@@ -444,6 +446,7 @@ def build_panels_stream(
     show_full_reasoning: bool = False,
     accumulated_tool_calls: Optional[List] = None,
     compression_manager: Optional[Any] = None,
+    context_compaction_manager: Optional[Any] = None,
 ):
     panels = []
 
@@ -493,6 +496,12 @@ def build_panels_stream(
             orig = stats.get("original_size", 1)
             if stats.get("tool_results_compressed", 0) > 0:
                 tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+
+        # Add compaction stats if available
+        if context_compaction_manager is not None and context_compaction_manager.stats:
+            stats = context_compaction_manager.stats
+            if stats.get("messages_compacted", 0) > 0:
+                tool_calls_text += f"\n\ncompacted: {stats.get('messages_compacted', 0)} msgs | Saved: {stats.get('tokens_saved', 0):,} tokens"
 
         tool_calls_panel = create_panel(
             content=tool_calls_text,
