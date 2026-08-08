@@ -269,7 +269,8 @@ class ContextCompactionManager:
         # Walk backward (newest first), keep user messages until budget exhausted
         for i in range(len(messages) - 1, -1, -1):
             msg = messages[i]
-            if msg.role == "user":
+            # Skip summary messages (from_history=True) — they get replaced, not preserved
+            if msg.role == "user" and not msg.from_history:
                 tokens = self.model.count_tokens([msg])
                 if used + tokens <= self.preserve_user_budget:
                     preserved.insert(0, msg)
