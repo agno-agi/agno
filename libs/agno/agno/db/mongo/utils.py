@@ -1,5 +1,6 @@
 """Utility functions for the MongoDB database class."""
 
+import inspect
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -20,35 +21,74 @@ except ImportError:
 def create_collection_indexes(collection: Collection, collection_type: str) -> None:
     """Create all required indexes for a collection"""
     try:
+        legacy_schedule_indexes: List[str] = []
+        if collection_type == "schedules":
+            # v2.9 replaces the legacy global unique name index with separate
+            # generic and actor-scoped Studio namespaces. Keep the legacy
+            # authority until both replacements have been created.
+            for existing in collection.list_indexes():
+                if (
+                    existing.get("name") != "uq_generic_name"
+                    and existing.get("unique") is True
+                    and dict(existing.get("key", {})) == {"name": 1}
+                ):
+                    legacy_schedule_indexes.append(existing["name"])
         indexes = get_collection_indexes(collection_type)
         for index_spec in indexes:
             key = index_spec["key"]
-            unique = index_spec.get("unique", False)
+            options = {option: value for option, value in index_spec.items() if option != "key"}
 
             if isinstance(key, list):
-                collection.create_index(key, unique=unique)
+                collection.create_index(key, **options)
             else:
-                collection.create_index([(key, 1)], unique=unique)
+                collection.create_index([(key, 1)], **options)
+        for index_name in legacy_schedule_indexes:
+            collection.drop_index(index_name)
 
     except Exception as e:
         log_warning(f"Error creating indexes for {collection_type} collection: {str(e)}")
+        # Schedule adapters advertise actor-scoped name isolation only after
+        # these indexes exist.  Continuing without them would turn a failed
+        # migration into a silent cross-actor uniqueness regression.
+        if collection_type == "schedules":
+            raise
 
 
 async def create_collection_indexes_async(collection: Any, collection_type: str) -> None:
     """Create all required indexes for a collection (async version for Motor)"""
     try:
+        legacy_schedule_indexes: List[str] = []
+        if collection_type == "schedules":
+            cursor = collection.list_indexes()
+            if inspect.isawaitable(cursor):
+                cursor = await cursor
+            if hasattr(cursor, "to_list"):
+                existing_indexes = await cursor.to_list(length=None)
+            else:
+                existing_indexes = [existing async for existing in cursor]
+            for existing in existing_indexes:
+                if (
+                    existing.get("name") != "uq_generic_name"
+                    and existing.get("unique") is True
+                    and dict(existing.get("key", {})) == {"name": 1}
+                ):
+                    legacy_schedule_indexes.append(existing["name"])
         indexes = get_collection_indexes(collection_type)
         for index_spec in indexes:
             key = index_spec["key"]
-            unique = index_spec.get("unique", False)
+            options = {option: value for option, value in index_spec.items() if option != "key"}
 
             if isinstance(key, list):
-                await collection.create_index(key, unique=unique)
+                await collection.create_index(key, **options)
             else:
-                await collection.create_index([(key, 1)], unique=unique)
+                await collection.create_index([(key, 1)], **options)
+        for index_name in legacy_schedule_indexes:
+            await collection.drop_index(index_name)
 
     except Exception as e:
         log_warning(f"Error creating indexes for {collection_type} collection: {str(e)}")
+        if collection_type == "schedules":
+            raise
 
 
 def apply_sorting(

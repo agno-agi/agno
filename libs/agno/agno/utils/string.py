@@ -304,6 +304,10 @@ def generate_id_from_name(name: Optional[str] = None) -> str:
         name (str): The name string to generate the ID from.
     """
     if name:
+        # This exact transformation is a persisted identity contract. Agents,
+        # teams, workflows, Studio, and the Components API have historically
+        # derived IDs with it, so tightening the slug shape here would silently
+        # point an existing name at a different catalog row.
         return name.lower().replace(" ", "-").replace("_", "-")
     else:
         from agno.utils.names import generate_human_readable_id

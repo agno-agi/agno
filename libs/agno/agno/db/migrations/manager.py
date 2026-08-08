@@ -16,6 +16,7 @@ class MigrationManager:
         ("v2_3_0", packaging_version.parse("2.3.0")),
         ("v2_5_0", packaging_version.parse("2.5.0")),
         ("v2_5_6", packaging_version.parse("2.5.6")),
+        ("v2_9_0", packaging_version.parse("2.9.0")),
     ]
 
     def __init__(self, db: Union[AsyncBaseDb, BaseDb]):
@@ -51,6 +52,7 @@ class MigrationManager:
             "knowledge": "knowledge_table_name",
             "culture": "culture_table_name",
             "approvals": "approvals_table_name",
+            "schedules": "schedules_table_name",
         }
 
         # Select tables to migrate
@@ -122,8 +124,11 @@ class MigrationManager:
                 return await migration_module.async_up(self.db, table_type, table_name)
             else:
                 return migration_module.up(self.db, table_type, table_name)
-        except Exception as e:
-            log_error(f"Error running migration to version {version}: {str(e)}")
+        except Exception:
+            # Backend exception strings can contain connection URLs, credentials,
+            # or query parameters. The original exception is re-raised for the
+            # caller without duplicating those details into application logs.
+            log_error(f"Migration to version {version} failed")
             raise
 
     async def down(self, target_version: str, table_type: Optional[str] = None, force: bool = False):
@@ -144,6 +149,7 @@ class MigrationManager:
             "knowledge": "knowledge_table_name",
             "culture": "culture_table_name",
             "approvals": "approvals_table_name",
+            "schedules": "schedules_table_name",
         }
 
         # Select tables to migrate
@@ -200,6 +206,6 @@ class MigrationManager:
                 return await migration_module.async_down(self.db, table_type, table_name)
             else:
                 return migration_module.down(self.db, table_type, table_name)
-        except Exception as e:
-            log_error(f"Error running migration to version {version}: {str(e)}")
+        except Exception:
+            log_error(f"Migration rollback from version {version} failed")
             raise
