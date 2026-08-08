@@ -157,7 +157,7 @@ def test_read_url_successful(mock_httpx_get, sample_read_url_response):
 
     # Verify the call
     expected_url = f"{tools.config.base_url}https://example.com"
-    mock_httpx_get.assert_called_once_with(expected_url, headers=tools._get_headers(), timeout=None)
+    mock_httpx_get.assert_called_once_with(expected_url, headers=tools._get_headers())
 
     # Verify result contains the response data
     assert str(sample_read_url_response) in result
@@ -242,9 +242,7 @@ def test_search_query_successful(mock_httpx_post, sample_search_query_response):
         expected_headers["X-Respond-With"] = "no-content"  # to avoid returning full content in search results
 
     expected_body = {"q": "test query"}
-    mock_httpx_post.assert_called_once_with(
-        str(tools.config.search_url), headers=expected_headers, json=expected_body, timeout=None
-    )
+    mock_httpx_post.assert_called_once_with(str(tools.config.search_url), headers=expected_headers, json=expected_body)
 
     # Verify result contains the response data
     assert str(sample_search_query_response) in result
