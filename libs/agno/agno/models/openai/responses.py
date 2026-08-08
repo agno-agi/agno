@@ -587,6 +587,7 @@ class OpenAIResponses(Model):
         messages: List[Message],
         compress_tool_results: bool = False,
         tools: Optional[List[Union[Function, Dict[str, Any]]]] = None,
+        skip_response_chaining: bool = False,
     ) -> List[Union[Dict[str, Any], ResponseReasoningItem]]:
         """
         Format a message into the format expected by OpenAI.
@@ -611,7 +612,7 @@ class OpenAIResponses(Model):
         messages_to_format = messages
         previous_response_id: Optional[str] = None
 
-        if self._using_reasoning_model() and self.store is not False:
+        if self._using_reasoning_model() and self.store is not False and not skip_response_chaining:
             # Detect whether we're chaining via previous_response_id. If so, we should NOT
             # re-send prior function_call items; the Responses API already has the state and
             # expects only the corresponding function_call_output items.
@@ -721,7 +722,10 @@ class OpenAIResponses(Model):
         output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
         try:
-            formatted_input = self._format_messages(messages, compress_tool_results=True, tools=tools)
+            # skip_response_chaining=True to count ALL messages, not just those after the last response_id
+            formatted_input = self._format_messages(
+                messages, compress_tool_results=True, tools=tools, skip_response_chaining=True
+            )
             formatted_tools = self._format_tool_params(messages, tools) if tools is not None else None
 
             response = self.get_client().responses.input_tokens.count(
@@ -743,7 +747,10 @@ class OpenAIResponses(Model):
     ) -> int:
         """Async version of count_tokens using the async client."""
         try:
-            formatted_input = self._format_messages(messages, compress_tool_results=True, tools=tools)
+            # skip_response_chaining=True to count ALL messages, not just those after the last response_id
+            formatted_input = self._format_messages(
+                messages, compress_tool_results=True, tools=tools, skip_response_chaining=True
+            )
             formatted_tools = self._format_tool_params(messages, tools) if tools else None
 
             response = await self.get_async_client().responses.input_tokens.count(
