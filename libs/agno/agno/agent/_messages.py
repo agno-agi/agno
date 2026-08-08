@@ -17,7 +17,6 @@ from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
-    from agno.compression.context import CompactionState
 
 from agno.agent._utils import convert_dependencies_to_string, convert_documents_to_string
 from agno.filters import FilterExpr
@@ -1653,9 +1652,9 @@ def get_continue_run_messages(
     agent: Agent,
     input: List[Message],
     session: Optional[AgentSession] = None,
+    run_response: Optional[RunOutput] = None,
     add_history_to_context: Optional[bool] = None,
     run_context: Optional[RunContext] = None,
-    compaction: Optional["CompactionState"] = None,
 ) -> RunMessages:
     """This function returns a RunMessages object with the following attributes:
         - system_message: The system message for this run
@@ -1704,6 +1703,14 @@ def get_continue_run_messages(
     # 2. Add history messages if not already present in input
     if add_history_to_context and session is not None and not input_has_history:
         from copy import deepcopy
+
+        # Get compaction state for point-in-time filtering (time-travel for continue_run)
+        compaction = None
+        if run_response is not None and session is not None:
+            compaction = run_response.compaction
+            if compaction is None:
+                lookup_id = run_response.forked_from_run_id or run_response.run_id
+                compaction = session.get_compaction_for_run_id(lookup_id)
 
         # Inject compaction summary before history (replaces compacted messages)
         if compaction is not None:

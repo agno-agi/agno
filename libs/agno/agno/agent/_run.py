@@ -3663,22 +3663,14 @@ def continue_run_dispatch(
 
     log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
-    # Get compaction state for time-travel (point-in-time snapshot)
-    # First try run's own compaction (from deepcopy during fork or stored from previous run)
-    # If None, scan backward from the run's position to find applicable state
-    compaction = run_response.compaction
-    if compaction is None:
-        lookup_id = run_response.forked_from_run_id or run_response.run_id
-        compaction = agent_session.get_compaction_for_run_id(lookup_id)
-
     # Prepare run messages
     run_messages = get_continue_run_messages(
         agent,
         input=input_messages,
         session=agent_session,
+        run_response=run_response,
         add_history_to_context=agent.add_history_to_context,
         run_context=run_context,
-        compaction=compaction,
     )
 
     # Reset the run state
@@ -4930,19 +4922,13 @@ async def _acontinue_run(
                     async_mode=True,
                 )
 
-                # 6. Get compaction state for time-travel
-                compaction = run_response.compaction
-                if compaction is None:
-                    lookup_id = run_response.forked_from_run_id or run_response.run_id
-                    compaction = agent_session.get_compaction_for_run_id(lookup_id)
-
-                # 7. Prepare run messages
+                # 6. Prepare run messages
                 run_messages = get_continue_run_messages(
                     agent,
                     input=input_messages,
                     session=agent_session,
+                    run_response=run_response,
                     add_history_to_context=agent.add_history_to_context,
-                    compaction=compaction,
                 )
 
                 # Reset the run state
@@ -5422,19 +5408,13 @@ async def _acontinue_run_stream(
                     async_mode=True,
                 )
 
-                # 6. Get compaction state for time-travel
-                compaction = run_response.compaction
-                if compaction is None:
-                    lookup_id = run_response.forked_from_run_id or run_response.run_id
-                    compaction = agent_session.get_compaction_for_run_id(lookup_id)
-
-                # 7. Prepare run messages
+                # 6. Prepare run messages
                 run_messages = get_continue_run_messages(
                     agent,
                     input=input_messages,
                     session=agent_session,
+                    run_response=run_response,
                     add_history_to_context=agent.add_history_to_context,
-                    compaction=compaction,
                 )
 
                 # Reset the run state
