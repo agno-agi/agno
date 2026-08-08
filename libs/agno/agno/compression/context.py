@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
 from textwrap import dedent
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
-from uuid import uuid4
 
 from agno.models.base import Model
 from agno.models.message import Message
@@ -15,8 +13,9 @@ from agno.utils.message import safe_truncation_index
 
 if TYPE_CHECKING:
     from agno.metrics import RunMetrics
-    from agno.models.response import ModelResponse
     from agno.run.agent import RunOutput
+
+from agno.metrics import ModelType, accumulate_model_metrics
 
 
 DEFAULT_COMPACTION_PROMPT = dedent("""\
@@ -79,7 +78,6 @@ class CompactionState:
     def get_summary_message(self) -> Message:
         """Create the summary message to inject into conversation."""
         return Message(
-            id=str(uuid4()),
             role="user",
             content=SUMMARY_PREFIX + self.summary,
             from_history=True,
@@ -276,21 +274,27 @@ class ContextCompactionManager:
     def _build_summarization_prompt(
         self, old_messages: List[Message], existing_summary: Optional[str]
     ) -> List[Message]:
-        """Build the prompt messages for summarization."""
+        """Build the prompt messages for the summarization LLM call.
+
+        Structure: [system] + [existing summary if any] + [old messages] + [instruction]
+
+        When existing_summary is provided (incremental compaction), the LLM merges
+        the previous summary with new messages rather than starting fresh.
+        """
+        # 1. System prompt with summarization instructions
         system_prompt = self.instructions or DEFAULT_COMPACTION_PROMPT
         prompt: List[Message] = [Message(role="system", content=system_prompt)]
+
+        # 2. Include previous summary for incremental compaction
         if existing_summary:
             prompt.append(Message(role="user", content=f"Previous summary to update:\n{existing_summary}"))
+
+        # 3. Messages to summarize
         prompt.extend(old_messages)
+
+        # 4. Final instruction to trigger summary generation
         prompt.append(Message(role="user", content="Now provide a concise summary of the conversation above."))
         return prompt
-
-    def _record_metrics(self, response: "ModelResponse", run_metrics: Optional["RunMetrics"]) -> None:
-        """Record compression model metrics if run_metrics provided."""
-        if run_metrics is not None and self.model is not None:
-            from agno.metrics import ModelType, accumulate_model_metrics
-
-            accumulate_model_metrics(response, self.model, ModelType.COMPRESSION_MODEL, run_metrics)
 
     def _summarize(
         self,
@@ -305,7 +309,8 @@ class ContextCompactionManager:
         prompt = self._build_summarization_prompt(old_messages, existing_summary)
         try:
             response = self.model.response(messages=prompt)
-            self._record_metrics(response, run_metrics)
+            if run_metrics is not None:
+                accumulate_model_metrics(response, self.model, ModelType.COMPRESSION_MODEL, run_metrics)
             return response.content
         except Exception as e:
             log_error(f"Compaction LLM call failed: {e}")
@@ -346,7 +351,13 @@ class ContextCompactionManager:
 
     async def ashould_compact(self, messages: List[Message]) -> bool:
         """Async version of should_compact()."""
-        return await asyncio.to_thread(self.should_compact, messages)
+        if self.token_limit is not None and self.model is not None:
+            token_count = await self.model.acount_tokens(messages)
+            if token_count >= self.token_limit:
+                return True
+        if self.message_limit is not None and len(messages) >= self.message_limit:
+            return True
+        return False
 
     async def acompact(
         self,
@@ -435,7 +446,8 @@ class ContextCompactionManager:
         prompt = self._build_summarization_prompt(old_messages, existing_summary)
         try:
             response = await self.model.aresponse(messages=prompt)
-            self._record_metrics(response, run_metrics)
+            if run_metrics is not None:
+                accumulate_model_metrics(response, self.model, ModelType.COMPRESSION_MODEL, run_metrics)
             return response.content
         except Exception as e:
             log_error(f"Compaction LLM call failed: {e}")

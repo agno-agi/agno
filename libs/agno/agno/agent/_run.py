@@ -6407,7 +6407,7 @@ def build_after_tool_results_callback(
     session: AgentSession,
     run_messages: RunMessages,
     run_context: Optional[RunContext] = None,
-) -> Optional[Any]:
+) -> Optional[Callable[["ModelResponse"], None]]:
     """Build the sync ``after_tool_results`` callback for ``checkpoint="tool-batch"``.
 
     Returns ``None`` when checkpointing is not enabled — the caller passes the
@@ -6433,7 +6433,7 @@ def abuild_after_tool_results_callback(
     session: AgentSession,
     run_messages: RunMessages,
     run_context: Optional[RunContext] = None,
-) -> Optional[Any]:
+) -> Optional[Callable[["ModelResponse"], Awaitable[None]]]:
     """Async variant of :func:`build_after_tool_results_callback`."""
     if agent.checkpoint != "tool-batch":
         return None
