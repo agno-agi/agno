@@ -56,3 +56,21 @@ def test_search_pubmed_defaults_to_ten(mock_httpx_get):
     tools.search_pubmed("test query")
 
     assert get_retmax_sent(mock_httpx_get) == 10
+
+
+def test_search_pubmed_passes_default_timeout(mock_httpx_get):
+    """Test that both PubMed requests receive the default HTTP timeout."""
+    tools = PubmedTools()
+    tools.search_pubmed("test query")
+
+    assert mock_httpx_get.call_args_list[0][1]["timeout"] == 30
+    assert mock_httpx_get.call_args_list[1][1]["timeout"] == 30
+
+
+def test_search_pubmed_passes_configured_timeout(mock_httpx_get):
+    """Test that both PubMed requests receive the configured HTTP timeout."""
+    tools = PubmedTools(timeout=12)
+    tools.search_pubmed("test query")
+
+    assert mock_httpx_get.call_args_list[0][1]["timeout"] == 12
+    assert mock_httpx_get.call_args_list[1][1]["timeout"] == 12
