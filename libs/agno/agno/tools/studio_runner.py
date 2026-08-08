@@ -1287,9 +1287,9 @@ class StudioRunnerTools(Toolkit):
         runner does not refuse it -- the shape is supported and the caching is
         deliberate -- but it says so rather than implying a guarantee it cannot
         make."""
-        from agno.utils.callables import is_callable_factory
         from agno.tools.function import Function
         from agno.tools.toolkit import Toolkit
+        from agno.utils.callables import is_callable_factory
 
         for node in [component] + self._descendants(component):
             for attribute in ("members", "tools", "steps"):
