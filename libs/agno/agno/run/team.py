@@ -171,6 +171,9 @@ class TeamRunEvent(str, Enum):
     compression_started = "TeamCompressionStarted"
     compression_completed = "TeamCompressionCompleted"
 
+    compaction_started = "TeamCompactionStarted"
+    compaction_completed = "TeamCompactionCompleted"
+
     followups_started = "TeamFollowupsStarted"
     followups_completed = "TeamFollowupsCompleted"
 
@@ -511,6 +514,26 @@ class CompressionCompletedEvent(BaseTeamRunEvent):
 
 
 @dataclass
+class CompactionStartedEvent(BaseTeamRunEvent):
+    """Event sent when context compaction is about to start"""
+
+    event: str = TeamRunEvent.compaction_started.value
+    messages_before: int = 0
+    messages_to_compact: int = 0
+
+
+@dataclass
+class CompactionCompletedEvent(BaseTeamRunEvent):
+    """Event sent when context compaction has completed"""
+
+    event: str = TeamRunEvent.compaction_completed.value
+    messages_after: int = 0
+    messages_compacted: int = 0
+    tokens_saved: int = 0
+    summary_preview: Optional[str] = None
+
+
+@dataclass
 class FollowupsStartedEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.followups_started.value
 
@@ -670,6 +693,8 @@ TeamRunOutputEvent = Union[
     ModelRequestCompletedEvent,
     CompressionStartedEvent,
     CompressionCompletedEvent,
+    CompactionStartedEvent,
+    CompactionCompletedEvent,
     FollowupsStartedEvent,
     FollowupsCompletedEvent,
     TaskIterationStartedEvent,
@@ -714,6 +739,8 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.model_request_completed.value: ModelRequestCompletedEvent,
     TeamRunEvent.compression_started.value: CompressionStartedEvent,
     TeamRunEvent.compression_completed.value: CompressionCompletedEvent,
+    TeamRunEvent.compaction_started.value: CompactionStartedEvent,
+    TeamRunEvent.compaction_completed.value: CompactionCompletedEvent,
     TeamRunEvent.followups_started.value: FollowupsStartedEvent,
     TeamRunEvent.followups_completed.value: FollowupsCompletedEvent,
     TeamRunEvent.task_iteration_started.value: TaskIterationStartedEvent,

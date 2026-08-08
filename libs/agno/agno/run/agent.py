@@ -188,6 +188,9 @@ class RunEvent(str, Enum):
     compression_started = "CompressionStarted"
     compression_completed = "CompressionCompleted"
 
+    compaction_started = "CompactionStarted"
+    compaction_completed = "CompactionCompleted"
+
     followups_started = "FollowupsStarted"
     followups_completed = "FollowupsCompleted"
 
@@ -500,6 +503,26 @@ class CompressionCompletedEvent(BaseAgentRunEvent):
 
 
 @dataclass
+class CompactionStartedEvent(BaseAgentRunEvent):
+    """Event sent when context compaction is about to start"""
+
+    event: str = RunEvent.compaction_started.value
+    messages_before: int = 0
+    messages_to_compact: int = 0
+
+
+@dataclass
+class CompactionCompletedEvent(BaseAgentRunEvent):
+    """Event sent when context compaction has completed"""
+
+    event: str = RunEvent.compaction_completed.value
+    messages_after: int = 0
+    messages_compacted: int = 0
+    tokens_saved: int = 0
+    summary_preview: Optional[str] = None
+
+
+@dataclass
 class FollowupsStartedEvent(BaseAgentRunEvent):
     event: str = RunEvent.followups_started.value
 
@@ -555,6 +578,8 @@ RunOutputEvent = Union[
     ModelRequestCompletedEvent,
     CompressionStartedEvent,
     CompressionCompletedEvent,
+    CompactionStartedEvent,
+    CompactionCompletedEvent,
     FollowupsStartedEvent,
     FollowupsCompletedEvent,
     CustomEvent,
@@ -595,6 +620,8 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.model_request_completed.value: ModelRequestCompletedEvent,
     RunEvent.compression_started.value: CompressionStartedEvent,
     RunEvent.compression_completed.value: CompressionCompletedEvent,
+    RunEvent.compaction_started.value: CompactionStartedEvent,
+    RunEvent.compaction_completed.value: CompactionCompletedEvent,
     RunEvent.followups_started.value: FollowupsStartedEvent,
     RunEvent.followups_completed.value: FollowupsCompletedEvent,
     RunEvent.custom_event.value: CustomEvent,
