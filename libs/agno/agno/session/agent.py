@@ -41,8 +41,6 @@ class AgentSession:
     runs: Optional[List[Union[RunOutput, TeamRunOutput]]] = None
     # Summary of the session
     summary: Optional["SessionSummary"] = None
-    # Context compaction state
-    compaction: Optional["CompactionState"] = None
 
     # The unix timestamp when this session was created
     created_at: Optional[int] = None
@@ -62,7 +60,6 @@ class AgentSession:
         else:
             session_dict.pop("runs", None)
         session_dict["summary"] = self.summary.to_dict() if self.summary else None
-        session_dict["compaction"] = self.compaction.to_dict() if self.compaction else None
 
         return session_dict
 
@@ -85,12 +82,6 @@ class AgentSession:
         if summary is not None and isinstance(summary, dict):
             summary = SessionSummary.from_dict(summary)
 
-        compaction = data.get("compaction")
-        if compaction is not None and isinstance(compaction, dict):
-            from agno.compression.context import CompactionState
-
-            compaction = CompactionState.from_dict(compaction)
-
         metadata = data.get("metadata")
 
         return cls(
@@ -106,7 +97,6 @@ class AgentSession:
             updated_at=data.get("updated_at"),
             runs=serialized_runs,
             summary=summary,
-            compaction=compaction,
         )
 
     def upsert_run(self, run: RunOutput):
@@ -194,11 +184,9 @@ class AgentSession:
             A list of Messages belonging to the session.
         """
         # Build compacted IDs set if filtering is enabled
-        # Use passed compaction state (point-in-time correct) or fall back to session for backwards compat
         compacted_ids: set = set()
-        compaction_state = compaction or self.compaction
-        if skip_compacted_messages and compaction_state:
-            compacted_ids = compaction_state.compacted_message_ids
+        if skip_compacted_messages and compaction:
+            compacted_ids = compaction.compacted_message_ids
 
         def _should_skip_message(
             message: Message,
