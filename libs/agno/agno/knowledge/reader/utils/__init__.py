@@ -1,6 +1,7 @@
 from agno.knowledge.reader.utils.spreadsheet import (
     convert_xls_cell_value,
     excel_rows_to_documents,
+    excel_rows_to_row_documents,
     get_workbook_name,
     infer_file_extension,
     row_to_csv_line,
@@ -10,6 +11,7 @@ from agno.knowledge.reader.utils.spreadsheet import (
 __all__ = [
     "convert_xls_cell_value",
     "excel_rows_to_documents",
+    "excel_rows_to_row_documents",
     "get_workbook_name",
     "infer_file_extension",
     "row_to_csv_line",
