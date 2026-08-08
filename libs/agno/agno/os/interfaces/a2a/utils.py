@@ -495,7 +495,7 @@ async def stream_a2a_response(
             yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
 
         elif isinstance(event, (CompactionCompletedEvent, TeamCompactionCompletedEvent)):
-            metadata: Dict[str, Any] = {"agno_event_type": "compaction_completed"}
+            metadata = {"agno_event_type": "compaction_completed"}
             if hasattr(event, "tokens_saved"):
                 metadata["tokens_saved"] = event.tokens_saved
             if hasattr(event, "messages_compacted"):
