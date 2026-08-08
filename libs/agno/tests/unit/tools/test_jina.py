@@ -157,9 +157,25 @@ def test_read_url_successful(mock_httpx_get, sample_read_url_response):
 
     # Verify the call
     expected_url = f"{tools.config.base_url}https://example.com"
-    mock_httpx_get.assert_called_once_with(expected_url, headers=tools._get_headers())
+    mock_httpx_get.assert_called_once_with(expected_url, headers=tools._get_headers(), timeout=None)
 
     # Verify result contains the response data
+    assert str(sample_read_url_response) in result
+
+
+@patch("agno.tools.jina.httpx.get")
+def test_read_url_passes_configured_timeout(mock_httpx_get, sample_read_url_response):
+    """Test read_url passes the configured timeout to the HTTP client"""
+    mock_response = MagicMock()
+    mock_response.raise_for_status.return_value = None
+    mock_response.json.return_value = sample_read_url_response
+    mock_httpx_get.return_value = mock_response
+
+    tools = JinaReaderTools(api_key="test_key", timeout=12)
+    result = tools.read_url("https://example.com")
+
+    expected_url = f"{tools.config.base_url}https://example.com"
+    mock_httpx_get.assert_called_once_with(expected_url, headers=tools._get_headers(), timeout=12)
     assert str(sample_read_url_response) in result
 
 
@@ -226,9 +242,30 @@ def test_search_query_successful(mock_httpx_post, sample_search_query_response):
         expected_headers["X-Respond-With"] = "no-content"  # to avoid returning full content in search results
 
     expected_body = {"q": "test query"}
-    mock_httpx_post.assert_called_once_with(str(tools.config.search_url), headers=expected_headers, json=expected_body)
+    mock_httpx_post.assert_called_once_with(
+        str(tools.config.search_url), headers=expected_headers, json=expected_body, timeout=None
+    )
 
     # Verify result contains the response data
+    assert str(sample_search_query_response) in result
+
+
+@patch("agno.tools.jina.httpx.post")
+def test_search_query_passes_configured_timeout(mock_httpx_post, sample_search_query_response):
+    """Test search_query passes the configured timeout to the HTTP client"""
+    mock_response = MagicMock()
+    mock_response.raise_for_status.return_value = None
+    mock_response.json.return_value = sample_search_query_response
+    mock_httpx_post.return_value = mock_response
+
+    tools = JinaReaderTools(api_key="test_key", enable_search_query=True, timeout=12)
+    result = tools.search_query("test query")
+
+    expected_headers = tools._get_headers()
+    expected_body = {"q": "test query"}
+    mock_httpx_post.assert_called_once_with(
+        str(tools.config.search_url), headers=expected_headers, json=expected_body, timeout=12
+    )
     assert str(sample_search_query_response) in result
 
 
