@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
 from textwrap import dedent
@@ -14,6 +15,7 @@ from agno.utils.message import safe_truncation_index
 
 if TYPE_CHECKING:
     from agno.metrics import RunMetrics
+    from agno.models.response import ModelResponse
     from agno.run.agent import RunOutput
 
 
@@ -68,7 +70,6 @@ class CompactionState:
     """Tracks context compaction state for a session."""
 
     summary: str = ""
-    summary_message_id: str = field(default_factory=lambda: str(uuid4()))
     compacted_message_ids: Set[str] = field(default_factory=set)
     compacted_count: int = 0
     total_compactions: int = 0
@@ -76,12 +77,9 @@ class CompactionState:
     updated_at: Optional[datetime] = None
 
     def get_summary_message(self) -> Message:
-        """Create the summary message to inject into conversation.
-
-        Uses a consistent ID so old summaries can be filtered out when loading history.
-        """
+        """Create the summary message to inject into conversation."""
         return Message(
-            id=self.summary_message_id,
+            id=str(uuid4()),
             role="user",
             content=SUMMARY_PREFIX + self.summary,
             from_history=True,
@@ -90,7 +88,6 @@ class CompactionState:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "summary": self.summary,
-            "summary_message_id": self.summary_message_id,
             "compacted_message_ids": list(self.compacted_message_ids),
             "compacted_count": self.compacted_count,
             "total_compactions": self.total_compactions,
@@ -105,7 +102,6 @@ class CompactionState:
             updated_at = datetime.fromisoformat(updated_at)
         return cls(
             summary=data.get("summary", ""),
-            summary_message_id=data.get("summary_message_id") or str(uuid4()),
             compacted_message_ids=set(data.get("compacted_message_ids", [])),
             compacted_count=data.get("compacted_count", 0),
             total_compactions=data.get("total_compactions", 0),
@@ -227,7 +223,7 @@ class ContextCompactionManager:
 
         # 6. Update run compaction state
         log_debug("[COMPACTION] Updating run compaction state (sync)...")
-        self._update_run_compaction(run_response, old_messages, new_summary, tokens_saved)
+        self._update_compaction_state(run_response, old_messages, new_summary, tokens_saved)
         if run_response and run_response.compaction:
             log_debug(
                 f"[COMPACTION] run_response.compaction updated: total={run_response.compaction.total_compactions}, ids={len(run_response.compaction.compacted_message_ids)}"
@@ -241,11 +237,12 @@ class ContextCompactionManager:
         if not messages:
             return [], [], []
 
-        # Keep last N messages as recent (tool-pair safe)
+        # 1. Compute split point: keep last N messages as "recent" (sent to model as-is)
+        # 2. Snap DOWN to avoid breaking tool-call pairs (assistant + tool result must stay together)
         keep_count = min(self.keep_recent, len(messages))
         split_idx = safe_truncation_index(messages, len(messages) - keep_count)
-        recent_messages = messages[split_idx:]
-        older = messages[:split_idx]
+        recent_messages = messages[split_idx:]  # kept intact
+        older = messages[:split_idx]            # candidates for summarization
 
         if not older:
             return [], [], recent_messages
@@ -276,6 +273,25 @@ class ContextCompactionManager:
 
         return preserved, indices
 
+    def _build_summarization_prompt(
+        self, old_messages: List[Message], existing_summary: Optional[str]
+    ) -> List[Message]:
+        """Build the prompt messages for summarization."""
+        system_prompt = self.instructions or DEFAULT_COMPACTION_PROMPT
+        prompt: List[Message] = [Message(role="system", content=system_prompt)]
+        if existing_summary:
+            prompt.append(Message(role="user", content=f"Previous summary to update:\n{existing_summary}"))
+        prompt.extend(old_messages)
+        prompt.append(Message(role="user", content="Now provide a concise summary of the conversation above."))
+        return prompt
+
+    def _record_metrics(self, response: "ModelResponse", run_metrics: Optional["RunMetrics"]) -> None:
+        """Record compression model metrics if run_metrics provided."""
+        if run_metrics is not None and self.model is not None:
+            from agno.metrics import ModelType, accumulate_model_metrics
+
+            accumulate_model_metrics(response, self.model, ModelType.COMPRESSION_MODEL, run_metrics)
+
     def _summarize(
         self,
         old_messages: List[Message],
@@ -286,23 +302,10 @@ class ContextCompactionManager:
         if self.model is None:
             return None
 
-        system_prompt = self.instructions or DEFAULT_COMPACTION_PROMPT
-
-        # Build prompt: system + existing summary (if any) + old messages + instruction
-        prompt_messages: List[Message] = [Message(role="system", content=system_prompt)]
-        if existing_summary:
-            prompt_messages.append(Message(role="user", content=f"Previous summary to update:\n{existing_summary}"))
-        prompt_messages.extend(old_messages)
-        prompt_messages.append(Message(role="user", content="Now provide a concise summary of the conversation above."))
-
+        prompt = self._build_summarization_prompt(old_messages, existing_summary)
         try:
-            response = self.model.response(messages=prompt_messages)
-
-            if run_metrics is not None:
-                from agno.metrics import ModelType, accumulate_model_metrics
-
-                accumulate_model_metrics(response, self.model, ModelType.COMPRESSION_MODEL, run_metrics)
-
+            response = self.model.response(messages=prompt)
+            self._record_metrics(response, run_metrics)
             return response.content
         except Exception as e:
             log_error(f"Compaction LLM call failed: {e}")
@@ -315,7 +318,7 @@ class ContextCompactionManager:
         cm = CompressionManager(model=self.model)
         cm.compress(messages, run_metrics)
 
-    def _update_run_compaction(
+    def _update_compaction_state(
         self,
         run_response: Optional["RunOutput"],
         old_messages: List[Message],
@@ -327,18 +330,13 @@ class ContextCompactionManager:
             return
 
         prev = run_response.compaction
-        # Reuse existing summary_message_id or generate new one
-        summary_id = prev.summary_message_id if prev else str(uuid4())
 
-        # Collect IDs of compacted messages + the summary message ID
-        # (so old summaries get filtered when loading history)
+        # Collect IDs of compacted messages (so they get filtered when loading history)
         new_ids = {msg.id for msg in old_messages if msg.id}
-        new_ids.add(summary_id)
         all_ids = new_ids.union(prev.compacted_message_ids if prev else set())
 
         run_response.compaction = CompactionState(
             summary=new_summary,
-            summary_message_id=summary_id,
             compacted_message_ids=all_ids,
             compacted_count=(prev.compacted_count if prev else 0) + len(old_messages),
             total_compactions=(prev.total_compactions if prev else 0) + 1,
@@ -348,17 +346,7 @@ class ContextCompactionManager:
 
     async def ashould_compact(self, messages: List[Message]) -> bool:
         """Async version of should_compact()."""
-        log_debug(f"[COMPACTION] ashould_compact check: {len(messages)} messages, limit={self.message_limit}")
-        if self.token_limit is not None and self.model is not None:
-            token_count = await self.model.acount_tokens(messages)
-            log_debug(f"[COMPACTION] Async token count: {token_count}, limit: {self.token_limit}")
-            if token_count >= self.token_limit:
-                return True
-        if self.message_limit is not None:
-            if len(messages) >= self.message_limit:
-                log_debug(f"[COMPACTION] Async threshold exceeded: {len(messages)} >= {self.message_limit}")
-                return True
-        return False
+        return await asyncio.to_thread(self.should_compact, messages)
 
     async def acompact(
         self,
@@ -407,11 +395,11 @@ class ContextCompactionManager:
         compacted_messages = system_msgs + [summary_msg] + preserved_user + recent_messages
 
         # Calculate token metrics
-        tokens_before = self.model.count_tokens(messages) if self.model else 0
-        tokens_after = self.model.count_tokens(compacted_messages) if self.model else 0
+        tokens_before = await self.model.acount_tokens(messages) if self.model else 0
+        tokens_after = await self.model.acount_tokens(compacted_messages) if self.model else 0
         tokens_saved = tokens_before - tokens_after
         ratio = tokens_after / tokens_before if tokens_before > 0 else 1.0
-        summary_tokens = self.model.count_tokens([summary_msg]) if self.model else 0
+        summary_tokens = await self.model.acount_tokens([summary_msg]) if self.model else 0
 
         log_info(
             f"[COMPACTION] {len(messages)} -> {len(compacted_messages)} msgs | {tokens_before} -> {tokens_after} tokens | ratio={ratio:.2f} | saved={tokens_saved} | summary={summary_tokens} tok"
@@ -421,13 +409,11 @@ class ContextCompactionManager:
         if self.token_limit and await self.model.acount_tokens(compacted_messages) > self.token_limit:
             await self._acompress_tool_results(recent_messages, run_metrics)
             compacted_messages = system_msgs + [summary_msg] + preserved_user + recent_messages
-            log_info(
-                f"[COMPACTION] Compressed tool results, now {await self.model.acount_tokens(compacted_messages)} tokens"
-            )
+            log_info(f"[COMPACTION] Compressed tool results, now {await self.model.acount_tokens(compacted_messages)} tokens")
 
         # 6. Update run compaction state
         log_debug("[COMPACTION] Updating run compaction state (async)...")
-        self._update_run_compaction(run_response, old_messages, new_summary, tokens_saved)
+        self._update_compaction_state(run_response, old_messages, new_summary, tokens_saved)
         if run_response and run_response.compaction:
             log_debug(
                 f"[COMPACTION] Async compaction updated: total={run_response.compaction.total_compactions}, ids={len(run_response.compaction.compacted_message_ids)}"
@@ -446,23 +432,10 @@ class ContextCompactionManager:
         if self.model is None:
             return None
 
-        system_prompt = self.instructions or DEFAULT_COMPACTION_PROMPT
-
-        # Build prompt: system + existing summary (if any) + old messages + instruction
-        prompt_messages: List[Message] = [Message(role="system", content=system_prompt)]
-        if existing_summary:
-            prompt_messages.append(Message(role="user", content=f"Previous summary to update:\n{existing_summary}"))
-        prompt_messages.extend(old_messages)
-        prompt_messages.append(Message(role="user", content="Now provide a concise summary of the conversation above."))
-
+        prompt = self._build_summarization_prompt(old_messages, existing_summary)
         try:
-            response = await self.model.aresponse(messages=prompt_messages)
-
-            if run_metrics is not None:
-                from agno.metrics import ModelType, accumulate_model_metrics
-
-                accumulate_model_metrics(response, self.model, ModelType.COMPRESSION_MODEL, run_metrics)
-
+            response = await self.model.aresponse(messages=prompt)
+            self._record_metrics(response, run_metrics)
             return response.content
         except Exception as e:
             log_error(f"Compaction LLM call failed: {e}")

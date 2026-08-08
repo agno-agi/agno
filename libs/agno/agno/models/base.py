@@ -645,7 +645,7 @@ class Model(ABC):
         tools: Optional[Sequence[Union[Function, Dict[str, Any]]]] = None,
         output_schema: Optional[Union[Dict, Type[BaseModel]]] = None,
     ) -> int:
-        return self.count_tokens(messages, tools, output_schema=output_schema)
+        return await asyncio.to_thread(self.count_tokens, messages, tools, output_schema)
 
     def response(
         self,

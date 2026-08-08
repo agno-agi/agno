@@ -6334,21 +6334,20 @@ def build_compaction_callback(
     run_messages: RunMessages,
     run_response: RunOutput,
 ) -> Optional[Callable[[], Optional[List[Message]]]]:
-    """Build the sync compaction callback.
+    """Build the sync mid-loop compaction callback.
 
-    Returns ``None`` when compaction is not enabled.
+    Returns ``None`` when context compaction is not enabled.
 
-    The returned callback checks if context threshold is exceeded and compacts
-    if needed, returning the compacted messages list or None. base.py rebinds
-    its local variable from the return value — this fixes the mid-loop bug where
-    first compaction fires but base.py's local ``compacted_messages`` stays None.
+    Called by the model loop after each tool batch to check if context exceeds
+    the threshold. If compaction triggers, returns the new shorter message list;
+    the model loop rebinds its local variable from the return value.
     """
     compaction_manager = agent.context_compaction_manager
     if compaction_manager is None:
         return None
 
     def _callback() -> Optional[List[Message]]:
-        # Staggered compression: compact the smaller list if it exists
+        # Compact the smaller list if pre-loop compaction already ran
         messages_to_compact = (
             run_messages.compacted_messages if run_messages.compacted_messages else run_messages.messages
         )
@@ -6408,10 +6407,15 @@ def build_after_tool_results_callback(
     session: AgentSession,
     run_messages: RunMessages,
     run_context: Optional[RunContext] = None,
-) -> Optional[Callable[[ModelResponse], None]]:
-    """Build the sync ``after_tool_results`` callback for checkpointing only.
+) -> Optional[Any]:
+    """Build the sync ``after_tool_results`` callback for ``checkpoint="tool-batch"``.
 
-    Returns ``None`` when checkpointing is not enabled (checkpoint != "tool-batch").
+    Returns ``None`` when checkpointing is not enabled — the caller passes the
+    result directly to the model's ``after_tool_results=`` kwarg, and the
+    zero-cost path is taken when the callback is None.
+
+    The returned callback receives the current ``ModelResponse``, syncs
+    ``run_response`` with the in-flight messages/tools, and writes a checkpoint.
     """
     if agent.checkpoint != "tool-batch":
         return None
@@ -6429,8 +6433,8 @@ def abuild_after_tool_results_callback(
     session: AgentSession,
     run_messages: RunMessages,
     run_context: Optional[RunContext] = None,
-) -> Optional[Callable[[ModelResponse], Awaitable[None]]]:
-    """Async variant of :func:`build_after_tool_results_callback` for checkpointing only."""
+) -> Optional[Any]:
+    """Async variant of :func:`build_after_tool_results_callback`."""
     if agent.checkpoint != "tool-batch":
         return None
 
