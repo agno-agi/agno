@@ -13,6 +13,7 @@ class PubmedTools(Toolkit):
         self,
         email: str = "your_email@example.com",
         max_results: Optional[int] = None,
+        timeout: int = 30,
         results_expanded: bool = False,
         enable_search_pubmed: bool = True,
         all: bool = False,
@@ -20,6 +21,7 @@ class PubmedTools(Toolkit):
     ):
         self.max_results: Optional[int] = max_results
         self.email: str = email
+        self.timeout: int = timeout
         self.results_expanded: bool = results_expanded
 
         tools: List[Any] = []
@@ -37,14 +39,14 @@ class PubmedTools(Toolkit):
             "email": email,
             "usehistory": "y",
         }
-        response = httpx.get(url, params=params)  # type: ignore
+        response = httpx.get(url, params=params, timeout=self.timeout)  # type: ignore
         root = ElementTree.fromstring(response.content)
         return [id_elem.text for id_elem in root.findall(".//Id") if id_elem.text is not None]
 
     def fetch_details(self, pubmed_ids: List[str]) -> ElementTree.Element:
         url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
         params = {"db": "pubmed", "id": ",".join(pubmed_ids), "retmode": "xml"}
-        response = httpx.get(url, params=params)
+        response = httpx.get(url, params=params, timeout=self.timeout)
         return ElementTree.fromstring(response.content)
 
     def parse_details(self, xml_root: ElementTree.Element) -> List[Dict[str, Any]]:
