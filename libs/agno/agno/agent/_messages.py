@@ -1319,7 +1319,7 @@ def get_run_messages(
             skip_roles=[skip_role] if skip_role else None,
             agent_id=agent.id if agent.team_id is not None else None,
             skip_compacted_messages=True,
-            compaction=compaction,
+            compacted_message_ids=compaction.compacted_message_ids if compaction else None,
         )
 
         if len(history) > 0:
@@ -1543,7 +1543,7 @@ async def aget_run_messages(
             skip_roles=[skip_role] if skip_role else None,
             agent_id=agent.id if agent.team_id is not None else None,
             skip_compacted_messages=True,
-            compaction=compaction,
+            compacted_message_ids=compaction.compacted_message_ids if compaction else None,
         )
 
         if len(history) > 0:
@@ -1722,7 +1722,7 @@ def get_continue_run_messages(
             skip_roles=[skip_role] if skip_role else None,
             agent_id=agent.id if agent.team_id is not None else None,
             skip_compacted_messages=True,
-            compaction=compaction,
+            compacted_message_ids=compaction.compacted_message_ids if compaction else None,
         )
 
         if len(history) > 0:

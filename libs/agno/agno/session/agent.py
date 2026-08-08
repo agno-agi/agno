@@ -165,7 +165,7 @@ class AgentSession:
         skip_statuses: Optional[List[RunStatus]] = None,
         skip_history_messages: bool = True,
         skip_compacted_messages: bool = False,
-        compaction: Optional["CompactionState"] = None,
+        compacted_message_ids: Optional[set] = None,
     ) -> List[Message]:
         """Returns the messages belonging to the session that fit the given criteria.
 
@@ -178,15 +178,15 @@ class AgentSession:
             skip_statuses: Skip messages with these statuses.
             skip_history_messages: Skip messages that were tagged as history in previous runs.
             skip_compacted_messages: Skip messages that were compacted into a summary (for model context).
-            compaction: The compaction state to use for filtering (passed explicitly for point-in-time correctness).
+            compacted_message_ids: Set of message IDs to skip (used for filtering compacted messages).
 
         Returns:
             A list of Messages belonging to the session.
         """
         # Build compacted IDs set if filtering is enabled
         compacted_ids: set = set()
-        if skip_compacted_messages and compaction:
-            compacted_ids = compaction.compacted_message_ids
+        if skip_compacted_messages and compacted_message_ids:
+            compacted_ids = compacted_message_ids
 
         def _should_skip_message(
             message: Message,
