@@ -316,8 +316,9 @@ class ContextCompactionManager:
         if existing_summary:
             prompt.append(Message(role="user", content=f"Previous summary to update:\n{existing_summary}"))
 
-        # 3. Messages to summarize
-        prompt.extend(old_messages)
+        # 3. Messages to summarize (strip provider_data to avoid model chaining)
+        for msg in old_messages:
+            prompt.append(Message(role=msg.role, content=msg.content or ""))
 
         # 4. Final instruction to trigger summary generation
         prompt.append(Message(role="user", content="Now provide a concise summary of the conversation above."))
