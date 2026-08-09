@@ -118,6 +118,85 @@ class TaskMarketTools(Toolkit):
             return self._error("TaskMarket CLI returned invalid JSON")
         return json.dumps(payload)
 
+    async def _terminate_and_wait(self, process: asyncio.subprocess.Process) -> None:
+        try:
+            if process.returncode is None:
+                process.terminate()
+        except ProcessLookupError:
+            pass
+        try:
+            await asyncio.wait_for(process.wait(), timeout=1)
+        except asyncio.TimeoutError:
+            await self._kill_and_wait(process)
+
+    async def _kill_and_wait(self, process: asyncio.subprocess.Process) -> None:
+        try:
+            if process.returncode is None:
+                process.kill()
+        except ProcessLookupError:
+            pass
+        await process.wait()
+
+    async def _cleanup_cancelled_process(self, process: asyncio.subprocess.Process) -> None:
+        cleanup = asyncio.create_task(self._terminate_and_wait(process))
+        while not cleanup.done():
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                continue
+        await cleanup
+
+    async def _await_process_creation(
+        self, process_creation: asyncio.Task[asyncio.subprocess.Process]
+    ) -> asyncio.subprocess.Process:
+        while not process_creation.done():
+            try:
+                await asyncio.shield(process_creation)
+            except asyncio.CancelledError:
+                continue
+        return await process_creation
+
+    async def _arun(self, args: list[str]) -> str:
+        process_creation = asyncio.create_task(
+            asyncio.create_subprocess_exec(
+                self.cli_path,
+                *args,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        )
+        try:
+            process = await asyncio.shield(process_creation)
+        except asyncio.CancelledError:
+            try:
+                process = await self._await_process_creation(process_creation)
+            except OSError:
+                raise asyncio.CancelledError from None
+            await self._cleanup_cancelled_process(process)
+            raise
+        except OSError:
+            return self._error("TaskMarket CLI could not be executed")
+
+        try:
+            stdout, _ = await asyncio.wait_for(process.communicate(), timeout=self.timeout)
+        except asyncio.TimeoutError:
+            await self._kill_and_wait(process)
+            return self._error("TaskMarket CLI command timed out")
+        except asyncio.CancelledError:
+            await self._cleanup_cancelled_process(process)
+            raise
+        except OSError:
+            return self._error("TaskMarket CLI could not be executed")
+
+        if process.returncode != 0:
+            return self._error("TaskMarket CLI command failed", returncode=process.returncode)
+
+        try:
+            payload = json.loads(stdout.decode())
+        except (UnicodeDecodeError, json.JSONDecodeError, TypeError):
+            return self._error("TaskMarket CLI returned invalid JSON")
+        return json.dumps(payload)
+
     def list_tasks(
         self,
         status: str = "open",
@@ -187,7 +266,7 @@ class TaskMarketTools(Toolkit):
         """Asynchronously get one TaskMarket task."""
         return await asyncio.to_thread(self.get_task, task_id)
 
-    def create_task(
+    def _create_task_args(
         self,
         description: str,
         reward_usdc: str | float | Decimal,
@@ -196,8 +275,7 @@ class TaskMarketTools(Toolkit):
         tags: str | None = None,
         task_visibility: str = "public",
         submission_visibility: str = "public",
-    ) -> str:
-        """Create a funded TaskMarket task after opt-in, cap checks, and Agno confirmation."""
+    ) -> list[str] | str:
         if not self.allow_write or self.max_reward_usdc is None:
             return self._error("task creation is disabled")
         if not description.strip():
@@ -238,6 +316,30 @@ class TaskMarketTools(Toolkit):
         ]
         if tags is not None:
             args.extend(["--tags", tags])
+        return args
+
+    def create_task(
+        self,
+        description: str,
+        reward_usdc: str | float | Decimal,
+        duration_hours: int,
+        mode: str = "bounty",
+        tags: str | None = None,
+        task_visibility: str = "public",
+        submission_visibility: str = "public",
+    ) -> str:
+        """Create a funded TaskMarket task after opt-in, cap checks, and Agno confirmation."""
+        args = self._create_task_args(
+            description=description,
+            reward_usdc=reward_usdc,
+            duration_hours=duration_hours,
+            mode=mode,
+            tags=tags,
+            task_visibility=task_visibility,
+            submission_visibility=submission_visibility,
+        )
+        if isinstance(args, str):
+            return args
         return self._run(args)
 
     async def acreate_task(
@@ -251,8 +353,7 @@ class TaskMarketTools(Toolkit):
         submission_visibility: str = "public",
     ) -> str:
         """Asynchronously create a TaskMarket task with the same safeguards."""
-        return await asyncio.to_thread(
-            self.create_task,
+        args = self._create_task_args(
             description=description,
             reward_usdc=reward_usdc,
             duration_hours=duration_hours,
@@ -261,3 +362,6 @@ class TaskMarketTools(Toolkit):
             task_visibility=task_visibility,
             submission_visibility=submission_visibility,
         )
+        if isinstance(args, str):
+            return args
+        return await self._arun(args)

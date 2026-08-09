@@ -195,6 +195,95 @@ def test_create_uses_fixed_cli_options(successful_run):
     )
 
 
+def test_async_create_uses_safe_argument_vector():
+    class FakeProcess:
+        returncode = 0
+
+        async def communicate(self):
+            return b'{"ok":true,"data":{"taskId":"task-1"}}', b""
+
+        async def wait(self):
+            return self.returncode
+
+    process = FakeProcess()
+    with patch("agno.tools.taskmarket.asyncio.create_subprocess_exec", autospec=True) as create_process:
+        create_process.return_value = process
+        result = json.loads(
+            asyncio.run(
+                TaskMarketTools(allow_write=True, max_reward_usdc=5).acreate_task(
+                    description="Create a task safely", reward_usdc="2.5", duration_hours=24, tags="python,agno"
+                )
+            )
+        )
+
+    assert result == {"ok": True, "data": {"taskId": "task-1"}}
+    create_process.assert_awaited_once_with(
+        "taskmarket",
+        "task",
+        "create",
+        "--description",
+        "Create a task safely",
+        "--reward",
+        "2.5",
+        "--duration",
+        "24",
+        "--mode",
+        "bounty",
+        "--task-visibility",
+        "public",
+        "--submission-visibility",
+        "public",
+        "--tags",
+        "python,agno",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+
+def test_async_create_cancellation_terminates_and_waits_for_subprocess():
+    communicate_started = asyncio.Event()
+    allow_communicate_to_finish = asyncio.Event()
+
+    class FakeProcess:
+        returncode = None
+
+        def __init__(self):
+            self.terminated = False
+            self.waited = False
+
+        async def communicate(self):
+            communicate_started.set()
+            await allow_communicate_to_finish.wait()
+            return b"", b""
+
+        def terminate(self):
+            self.terminated = True
+            self.returncode = -15
+
+        async def wait(self):
+            self.waited = True
+            return self.returncode
+
+    process = FakeProcess()
+
+    async def run_and_cancel():
+        with patch("agno.tools.taskmarket.asyncio.create_subprocess_exec", autospec=True, return_value=process):
+            task = asyncio.create_task(
+                TaskMarketTools(allow_write=True, max_reward_usdc=5).acreate_task(
+                    description="Create a funded task", reward_usdc="2.5", duration_hours=24
+                )
+            )
+            await communicate_started.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+    asyncio.run(run_and_cancel())
+
+    assert process.terminated is True
+    assert process.waited is True
+
+
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [
