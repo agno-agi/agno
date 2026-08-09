@@ -863,8 +863,12 @@ class TeamRunOutput:
                 "references",
                 "requirements",
                 "followups",
+                "compaction_state",
             ]
         }
+        if self.compaction_state is not None:
+            _dict["compaction_state"] = self.compaction_state.to_dict()
+
         if self.events is not None:
             _dict["events"] = [e.to_dict() for e in self.events]
 
@@ -1027,6 +1031,13 @@ class TeamRunOutput:
         citations = data.pop("citations", None)
         citations = Citations.model_validate(citations) if citations else None
 
+        compaction_data = data.pop("compaction_state", None)
+        compaction_state = None
+        if compaction_data:
+            from agno.compression.context import CompactionState
+
+            compaction_state = CompactionState.from_dict(compaction_data)
+
         # Filter data to only include fields that are actually defined in the TeamRunOutput dataclass
         from dataclasses import fields
 
@@ -1051,6 +1062,7 @@ class TeamRunOutput:
             tools=tools,
             requirements=requirements,
             events=events,
+            compaction_state=compaction_state,
             **filtered_data,
         )
 

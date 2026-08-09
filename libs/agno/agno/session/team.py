@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional, Tuple, Union
 
 from pydantic import BaseModel
 
@@ -12,6 +12,9 @@ from agno.run.base import HISTORY_SKIP_STATUSES
 from agno.run.team import TeamRunOutput
 from agno.session.summary import SessionSummary
 from agno.utils.log import log_debug, log_warning
+
+if TYPE_CHECKING:
+    from agno.compression.context import CompactionState
 
 
 @dataclass
@@ -100,6 +103,35 @@ class TeamSession:
                 return run
         return None
 
+    def get_compaction_state(self, run_id: Optional[str] = None) -> Optional["CompactionState"]:
+        """Get compaction state, optionally at a specific run's point in time.
+
+        Args:
+            run_id: If provided, get compaction as of this run. If None, get latest.
+
+        Returns:
+            CompactionState if found, None otherwise.
+        """
+        # Only top-level team runs carry the team's own compaction state; member runs
+        # (parent_run_id set) have their own state and must not leak into it
+        runs = [r for r in (self.runs or []) if r.parent_run_id is None]
+        if not runs:
+            return None
+
+        if run_id:
+            target_idx = next((i for i, r in enumerate(runs) if r.run_id == run_id), None)
+            if target_idx is None:
+                return None
+            start_idx = target_idx
+        else:
+            start_idx = len(runs) - 1
+
+        for i in range(start_idx, -1, -1):
+            compaction_state = getattr(runs[i], "compaction_state", None)
+            if compaction_state is not None:
+                return compaction_state
+        return None
+
     def upsert_run(self, run_response: Union[TeamRunOutput, RunOutput]):
         """Adds a RunOutput, together with some calculated data, to the runs list."""
         messages = run_response.messages
@@ -137,6 +169,7 @@ class TeamSession:
         skip_statuses: Optional[List[RunStatus]] = None,
         skip_history_messages: bool = True,
         skip_member_messages: bool = True,
+        compacted_message_ids: Optional[set] = None,
     ) -> List[Message]:
         """Returns the messages belonging to the session that fit the given criteria.
 
@@ -149,10 +182,12 @@ class TeamSession:
             skip_statuses: Skip messages with these statuses.
             skip_history_messages: Skip messages that were tagged as history in previous runs.
             skip_member_messages: Skip messages created by members of the team.
+            compacted_message_ids: Set of message IDs to skip (compacted into summary).
 
         Returns:
             A list of Messages belonging to the session.
         """
+        compacted_ids: set = compacted_message_ids or set()
 
         def _should_skip_message(
             message: Message, skip_roles: Optional[List[str]] = None, skip_history_messages: bool = True
@@ -165,6 +200,11 @@ class TeamSession:
             # Skip messages with specified role
             if skip_roles and message.role in skip_roles:
                 return True
+
+            # Skip compacted messages (their content is in the summary)
+            if compacted_ids and message.id and message.id in compacted_ids:
+                return True
+
             return False
 
         if (member_ids is not None or team_id is not None) and skip_member_messages:

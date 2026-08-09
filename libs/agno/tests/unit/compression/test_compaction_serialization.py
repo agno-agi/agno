@@ -3,6 +3,7 @@ from datetime import datetime
 
 from agno.compression.context import CompactionState
 from agno.run.agent import RunOutput
+from agno.run.team import TeamRunOutput
 
 
 def test_run_output_with_compaction_state_to_dict():
@@ -141,3 +142,34 @@ def test_run_output_json_full_round_trip():
     assert restored.compaction_state.compacted_message_ids == {"msg-alpha", "msg-beta"}
     assert restored.compaction_state.total_compactions == 7
     assert restored.compaction_state.total_tokens_saved == 50000
+
+
+def test_team_run_output_compaction_roundtrip():
+    now = datetime(2024, 8, 1, 10, 0, 0)
+    original_compaction = CompactionState(
+        summary="Team round trip summary with details",
+        compacted_message_ids={"t-msg-1", "t-msg-2", "t-msg-3"},
+        compacted_count=3,
+        total_compactions=4,
+        total_tokens_saved=15000,
+        updated_at=now,
+    )
+    original = TeamRunOutput(
+        run_id="team-run-roundtrip",
+        team_id="team-roundtrip",
+        team_name="Roundtrip Team",
+        session_id="session-roundtrip",
+        compaction_state=original_compaction,
+    )
+
+    restored = TeamRunOutput.from_dict(original.to_dict())
+
+    assert restored.compaction_state is not None
+    assert restored.compaction_state.summary == original_compaction.summary
+    assert restored.compaction_state.compacted_message_ids == original_compaction.compacted_message_ids
+    assert isinstance(restored.compaction_state.compacted_message_ids, set)
+    assert restored.compaction_state.compacted_count == original_compaction.compacted_count
+    assert restored.compaction_state.total_compactions == original_compaction.total_compactions
+    assert restored.compaction_state.total_tokens_saved == original_compaction.total_tokens_saved
+    assert restored.compaction_state.updated_at == original_compaction.updated_at
+    assert isinstance(restored.compaction_state.updated_at, datetime)
