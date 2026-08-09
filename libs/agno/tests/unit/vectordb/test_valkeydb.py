@@ -291,6 +291,21 @@ def test_filter_query_escapes_tag_values_without_changing_stored_metadata(valkey
     assert db._build_filter_expression({"category": "north america"}) == r"@category:{north\ america}"
 
 
+def test_scoped_doc_id_keeps_delimiter_values_distinct(valkey_db):
+    db = valkey_db[0]
+
+    first = db._scoped_doc_id("doc_a", "u")
+    second = db._scoped_doc_id("doc", "a_u")
+
+    assert first != second
+
+
+def test_unscoped_doc_id_keeps_legacy_value(valkey_db):
+    db = valkey_db[0]
+
+    assert db._scoped_doc_id("doc_a", None) == "doc_a"
+
+
 def test_embedding_dimension_mismatch_raises(valkey_db):
     db = valkey_db[0]
     doc = Document(content="Doc A", name="doc_a", embedding=[0.1] * 4)

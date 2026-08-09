@@ -296,7 +296,10 @@ class ValkeyDB(VectorDb):
         """
         if user_id is None:
             return base_id
-        return hash_string_sha256(f"{base_id}_{user_id}")
+        # Length-prefix each part so delimiters in either value cannot make two
+        # distinct (base_id, user_id) pairs produce the same preimage.
+        key = "|".join(f"{len(part)}:{part}" for part in (base_id, user_id))
+        return hash_string_sha256(key)
 
     def _parse_hash(self, doc: Document, user_id: Optional[str] = None) -> Dict[str, Any]:
         """Create a dict serializable into a Valkey HASH structure.
