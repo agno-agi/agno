@@ -135,6 +135,26 @@ def test_create_enforces_cap_before_cli_execution():
     run.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    ("reward", "message"),
+    [
+        ("0.0000001", "reward_usdc must have at most 6 decimal places"),
+        ("1e-1000000", "reward_usdc must have at most 6 decimal places"),
+        ("1000000001", "reward_usdc is too large"),
+    ],
+)
+def test_create_rejects_unrepresentable_usdc_before_formatting(reward, message):
+    with patch("agno.tools.taskmarket.subprocess.run") as run:
+        result = json.loads(
+            TaskMarketTools(allow_write=True, max_reward_usdc="1000000000").create_task(
+                description="Implement a focused integration", reward_usdc=reward, duration_hours=24
+            )
+        )
+
+    assert result == {"ok": False, "error": message}
+    run.assert_not_called()
+
+
 def test_create_uses_fixed_cli_options(successful_run):
     tools = TaskMarketTools(allow_write=True, max_reward_usdc=5)
 

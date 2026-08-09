@@ -25,6 +25,7 @@ _ALLOWED_STATUSES = {
 _ALLOWED_MODES = {"bounty", "claim", "pitch", "benchmark", "auction"}
 _ALLOWED_VISIBILITIES = {"public", "unlisted", "private"}
 _ALLOWED_SUBMISSION_VISIBILITIES = {"public", "reveal_all", "winner_only", "never"}
+_USDC_QUANTUM = Decimal("0.000001")
 
 
 class TaskMarketTools(Toolkit):
@@ -83,6 +84,11 @@ class TaskMarketTools(Toolkit):
             raise ValueError(f"{name} must be a valid number")
         if not number.is_finite() or number <= 0:
             raise ValueError(f"{name} must be greater than zero")
+        exponent = number.as_tuple().exponent
+        if isinstance(exponent, int) and exponent < -6:
+            raise ValueError(f"{name} must have at most 6 decimal places")
+        if number > Decimal(1000000000):
+            raise ValueError(f"{name} is too large")
         return number
 
     @staticmethod
@@ -220,7 +226,7 @@ class TaskMarketTools(Toolkit):
             "--description",
             description,
             "--reward",
-            format(reward, "f"),
+            format(reward.quantize(_USDC_QUANTUM).normalize(), "f"),
             "--duration",
             str(duration_hours),
             "--mode",
