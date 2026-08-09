@@ -519,10 +519,13 @@ class TestLazyMetricsRefresh:
         rows, _ = db.get_metrics()
         assert rows[0]["agent_sessions_count"] == 1
 
-        # Expiring the throttle picks the new session up
+        # Expiring the throttle picks the new session up. Metrics are stored one
+        # row per (user, date), so the second user's session lands in its own row
+        # instead of raising the first one.
         db._metrics_refreshed_at = 0.0
         rows, _ = db.get_metrics()
-        assert rows[0]["agent_sessions_count"] == 2
+        assert len(rows) == 2
+        assert sum(row["agent_sessions_count"] for row in rows) == 2
 
     def test_explicit_calculate_stamps_the_throttle(self, db):
         self._seed_session(db)

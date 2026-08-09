@@ -8,170 +8,92 @@ single-tenant deployment surface.
 
 from datetime import date
 
-import pytest
-
 from agno.db.sqlite.utils import calculate_date_metrics
+
+TARGET_DATE = date(2026, 1, 1)
 
 
 def _agent_session(user_id, runs_count=1, input_tokens=10):
     """Build a fake agent session row as the DB layer would emit it."""
-    runs = [{"model": "gpt-4", "model_provider": "OpenAI"} for _ in range(runs_count)]
     return {
         "user_id": user_id,
-        "runs": runs,
-        "session_data": {
-            "session_metrics": {"input_tokens": input_tokens, "total_tokens": input_tokens},
-        },
+        "runs": [{"model": "gpt-4", "model_provider": "OpenAI"} for _ in range(runs_count)],
+        "session_data": {"session_metrics": {"input_tokens": input_tokens, "total_tokens": input_tokens}},
     }
 
 
+def _by_user(*agent_sessions):
+    records = calculate_date_metrics(TARGET_DATE, {"agent": list(agent_sessions), "team": [], "workflow": []})
+    return {r["user_id"]: r for r in records}
+
+
 class TestPerUserBucketing:
-    """Each distinct user_id gets its own metrics row."""
-
     def test_two_users_produce_two_buckets(self):
-        sessions_data = {
-            "agent": [_agent_session("alice"), _agent_session("bob")],
-            "team": [],
-            "workflow": [],
-        }
-        records = calculate_date_metrics(date(2026, 1, 1), sessions_data)
-
-        assert len(records) == 2
-        users_seen = {r["user_id"] for r in records}
-        assert users_seen == {"alice", "bob"}
+        assert set(_by_user(_agent_session("alice"), _agent_session("bob"))) == {"alice", "bob"}
 
     def test_same_user_multiple_sessions_aggregate(self):
-        sessions_data = {
-            "agent": [
-                _agent_session("alice", runs_count=1, input_tokens=10),
-                _agent_session("alice", runs_count=2, input_tokens=20),
-            ],
-            "team": [],
-            "workflow": [],
-        }
-        records = calculate_date_metrics(date(2026, 1, 1), sessions_data)
+        by_user = _by_user(
+            _agent_session("alice", runs_count=1, input_tokens=10),
+            _agent_session("alice", runs_count=2, input_tokens=20),
+        )
 
-        assert len(records) == 1
-        assert records[0]["user_id"] == "alice"
-        assert records[0]["agent_sessions_count"] == 2
-        assert records[0]["agent_runs_count"] == 3
-        assert records[0]["token_metrics"]["input_tokens"] == 30
+        assert set(by_user) == {"alice"}
+        assert by_user["alice"]["agent_sessions_count"] == 2
+        assert by_user["alice"]["agent_runs_count"] == 3
+        assert by_user["alice"]["token_metrics"]["input_tokens"] == 30
+
+    def test_per_user_bucket_reports_users_count_one(self):
+        assert _by_user(_agent_session("alice"), _agent_session("alice"))["alice"]["users_count"] == 1
 
 
 class TestEmptyStringSentinelBucket:
     """Sessions without a user_id roll up under user_id=''. This is the
     legacy / RBAC-off surface — looks identical to global metrics."""
 
-    def test_unowned_session_goes_to_empty_string_bucket(self):
-        sessions_data = {
-            "agent": [_agent_session(None), _agent_session(None)],
-            "team": [],
-            "workflow": [],
-        }
-        records = calculate_date_metrics(date(2026, 1, 1), sessions_data)
+    def test_unowned_sessions_share_the_empty_string_bucket(self):
+        by_user = _by_user(_agent_session(None), _agent_session(None))
 
-        assert len(records) == 1
-        assert records[0]["user_id"] == ""
-        assert records[0]["agent_sessions_count"] == 2
+        assert set(by_user) == {""}
+        assert by_user[""]["agent_sessions_count"] == 2
+        # The unowned bucket doesn't contribute to distinct-user accounting.
+        assert by_user[""]["users_count"] == 0
 
-    def test_unowned_bucket_reports_users_count_zero(self):
-        """The unowned bucket doesn't contribute to distinct-user accounting."""
-        sessions_data = {
-            "agent": [_agent_session(None), _agent_session(None)],
-            "team": [],
-            "workflow": [],
-        }
-        records = calculate_date_metrics(date(2026, 1, 1), sessions_data)
+    def test_an_owner_literally_named_empty_string_lands_in_the_sentinel_bucket(self):
+        """Pins a divergence: everywhere else in the isolation work ``""`` is a
+        real owner that scopes to itself, but metrics fold it into the unowned
+        sentinel and stop counting it as a user."""
+        by_user = _by_user(_agent_session(""), _agent_session(None))
 
-        assert records[0]["users_count"] == 0
-
-    def test_per_user_bucket_reports_users_count_one(self):
-        """Each per-user bucket represents exactly one user."""
-        sessions_data = {
-            "agent": [_agent_session("alice"), _agent_session("alice")],
-            "team": [],
-            "workflow": [],
-        }
-        records = calculate_date_metrics(date(2026, 1, 1), sessions_data)
-
-        assert records[0]["users_count"] == 1
+        assert set(by_user) == {""}
+        assert by_user[""]["agent_sessions_count"] == 2
+        assert by_user[""]["users_count"] == 0
 
 
 class TestMixedOwnership:
-    """A realistic mix: some sessions have owners, some don't."""
-
     def test_mixed_yields_owned_buckets_plus_unowned_bucket(self):
-        sessions_data = {
-            "agent": [
-                _agent_session("alice"),
-                _agent_session("bob"),
-                _agent_session(None),  # legacy / system
-            ],
-            "team": [],
-            "workflow": [],
-        }
-        records = calculate_date_metrics(date(2026, 1, 1), sessions_data)
+        by_user = _by_user(_agent_session("alice"), _agent_session("bob"), _agent_session(None))
 
-        assert len(records) == 3
-        by_user = {r["user_id"]: r for r in records}
-        assert by_user["alice"]["agent_sessions_count"] == 1
-        assert by_user["bob"]["agent_sessions_count"] == 1
-        assert by_user[""]["agent_sessions_count"] == 1
+        assert set(by_user) == {"alice", "bob", ""}
+        assert all(by_user[u]["agent_sessions_count"] == 1 for u in by_user)
 
     def test_token_metrics_isolated_per_bucket(self):
         """One user's high-token session must not bleed into another's bucket."""
-        sessions_data = {
-            "agent": [
-                _agent_session("alice", input_tokens=1000),
-                _agent_session("bob", input_tokens=50),
-            ],
-            "team": [],
-            "workflow": [],
-        }
-        records = calculate_date_metrics(date(2026, 1, 1), sessions_data)
+        by_user = _by_user(_agent_session("alice", input_tokens=1000), _agent_session("bob", input_tokens=50))
 
-        by_user = {r["user_id"]: r for r in records}
         assert by_user["alice"]["token_metrics"]["input_tokens"] == 1000
         assert by_user["bob"]["token_metrics"]["input_tokens"] == 50
 
-
-class TestEmptySessionsData:
     def test_no_sessions_returns_empty_list(self):
-        records = calculate_date_metrics(date(2026, 1, 1), {"agent": [], "team": [], "workflow": []})
-        assert records == []
+        assert calculate_date_metrics(TARGET_DATE, {"agent": [], "team": [], "workflow": []}) == []
 
 
 class TestRecordShape:
-    """Verify every record has the fields the upsert + downstream readers expect."""
+    def test_record_carries_the_fields_the_upsert_expects(self):
+        record = _by_user(_agent_session("alice", runs_count=3, input_tokens=100))["alice"]
 
-    @pytest.fixture
-    def single_user_record(self):
-        sessions_data = {
-            "agent": [_agent_session("alice", runs_count=3, input_tokens=100)],
-            "team": [],
-            "workflow": [],
-        }
-        records = calculate_date_metrics(date(2026, 1, 1), sessions_data)
-        return records[0]
-
-    def test_has_id(self, single_user_record):
-        assert "id" in single_user_record
-        assert isinstance(single_user_record["id"], str)
-
-    def test_has_aggregation_period(self, single_user_record):
-        assert single_user_record["aggregation_period"] == "daily"
-
-    def test_has_date(self, single_user_record):
-        assert single_user_record["date"] == date(2026, 1, 1)
-
-    def test_has_user_id(self, single_user_record):
-        assert single_user_record["user_id"] == "alice"
-
-    def test_has_completed_flag(self, single_user_record):
-        # 2026-01-01 is in the past relative to today (2026-06-04 per session ctx)
-        assert single_user_record["completed"] is True
-
-    def test_has_model_metrics(self, single_user_record):
-        assert single_user_record["model_metrics"] == [
-            {"model_id": "gpt-4", "model_provider": "OpenAI", "count": 3}
-        ]
+        assert isinstance(record["id"], str)
+        assert record["aggregation_period"] == "daily"
+        assert record["date"] == TARGET_DATE
+        assert record["user_id"] == "alice"
+        assert record["completed"] is True  # the target date is in the past
+        assert record["model_metrics"] == [{"model_id": "gpt-4", "model_provider": "OpenAI", "count": 3}]

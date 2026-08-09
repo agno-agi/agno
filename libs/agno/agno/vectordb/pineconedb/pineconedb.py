@@ -1,4 +1,5 @@
 import asyncio
+from hashlib import md5
 from typing import Any, Dict, List, Optional, Union
 
 try:
@@ -27,16 +28,8 @@ from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_warning, logger
-from agno.utils.string import hash_string_sha256
 from agno.vectordb.base import VectorDb
 from agno.vectordb.search import SearchType
-
-# Per-user RAG isolation. The owner is stored in a top-level ``user_id``
-# metadata field and reads/deletes are scoped with a metadata filter.
-# * Upserts with ``user_id`` stamp the field; ``user_id=None`` omits it (the SHARED bucket).
-# * Searches with ``user_id=X`` AND an own-OR-shared ``$or`` onto the caller's filter.
-# * Searches with ``user_id=None`` apply no scope (admin view, sees all).
-USER_ID_METADATA_KEY = "user_id"
 
 
 class PineconeDb(VectorDb):
@@ -74,7 +67,12 @@ class PineconeDb(VectorDb):
         kwargs (Optional[Dict[str, str]]): Additional keyword arguments.
     """
 
-    USER_ID_KEY = USER_ID_METADATA_KEY
+    # Per-user RAG isolation. The owner is stored in a top-level ``user_id``
+    # metadata field and reads/deletes are scoped with a metadata filter.
+    # * Upserts with ``user_id`` stamp the field; ``user_id=None`` omits it (the SHARED bucket).
+    # * Searches with ``user_id=X`` AND an own-OR-shared ``$or`` onto the caller's filter.
+    # * Searches with ``user_id=None`` apply no scope (admin view, sees all).
+    USER_ID_KEY: str = "user_id"
 
     def __init__(
         self,
@@ -302,7 +300,10 @@ class PineconeDb(VectorDb):
                 metadata[self.USER_ID_KEY] = user_id
 
             # Fold the owner into the id so two owners' identical content get distinct ids.
-            vector_id = document.id if user_id is None else hash_string_sha256(f"{document.id}_{user_id}")
+            # A document without an id falls back to a content digest, otherwise every
+            # such chunk would share one vector id and overwrite the others.
+            base_id = document.id or md5(document.content.encode()).hexdigest()
+            vector_id = self._record_id(base_id, user_id)
             data_to_upsert = {
                 "id": vector_id,
                 "values": document.embedding,
@@ -427,7 +428,10 @@ class PineconeDb(VectorDb):
                 metadata[self.USER_ID_KEY] = user_id
 
             # Fold the owner into the id so two owners' identical content get distinct ids.
-            vector_id = doc.id if user_id is None else hash_string_sha256(f"{doc.id}_{user_id}")
+            # A document without an id falls back to a content digest, otherwise every
+            # such chunk would share one vector id and overwrite the others.
+            base_id = doc.id or md5(doc.content.encode()).hexdigest()
+            vector_id = self._record_id(base_id, user_id)
             data_to_upsert = {
                 "id": vector_id,
                 "values": doc.embedding,
@@ -716,7 +720,9 @@ class PineconeDb(VectorDb):
         Args:
             content_hash (str): The content hash to check.
             user_id (Optional[str]): Scope the check to the owner's chunks. None checks the
-                shared bucket (no user_id field).
+                shared bucket (no user_id field) - this is the guard half of the upsert
+                dedup pair, so None addresses the shared bucket alone rather than every
+                owner, the same bucket _delete_by_content_hash clears for None.
 
         Returns:
             bool: True if documents with the content hash exist, False otherwise.
@@ -821,6 +827,18 @@ class PineconeDb(VectorDb):
         except Exception:
             logger.exception(f"Error updating metadata for content_id '{content_id}'")
             raise
+
+    def _record_id(self, base_id: str, user_id: Optional[str]) -> str:
+        """Fold the owner into the vector id so two owners' identical content get
+        distinct ids. The shared bucket (user_id=None) keeps the base id.
+
+        The base id is caller-controlled and variable length, so it is collapsed to a
+        fixed-length digest before the owner is folded in - otherwise the '_' boundary
+        moves and ('doc_1', 'alice') and ('doc', '1_alice') fold to the same vector id.
+        """
+        if user_id is None:
+            return base_id
+        return md5(f"{md5(base_id.encode()).hexdigest()}_{user_id}".encode()).hexdigest()
 
     def _user_scope_filter(self, user_id: Optional[str]) -> Optional[Dict[str, Any]]:
         """Own-OR-shared scope predicate; user_id=None returns None (no scope)."""

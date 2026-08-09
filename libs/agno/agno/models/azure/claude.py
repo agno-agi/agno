@@ -1,3 +1,7 @@
+# PEP 604 unions below are evaluated lazily under this import: without it,
+# `str | None` annotations break at import time on Python 3.9
+from __future__ import annotations
+
 from dataclasses import dataclass
 from os import getenv
 from typing import Any, Callable, Dict, Type, Union

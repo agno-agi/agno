@@ -1,13 +1,7 @@
 """MongoDB per-user RAG isolation contract.
 
-MongoDB stamps ``user_id`` as a top-level field on every chunk (NULL == the
-SHARED bucket) and scopes reads via a ``$vectorSearch.filter`` pre-filter that
-matches the caller's id OR NULL.
-
-Atlas ``$vectorSearch`` is not available on a plain server, so this suite
-patches ``MongoClient``/``AsyncMongoClient`` with an in-memory fake collection
-that stores what the adapter inserts and applies the scope filter the adapter
-builds — the adapter's real isolation logic runs unchanged.
+Owner lives in a top-level ``user_id`` field; NULL is the shared bucket. Atlas
+``$vectorSearch`` needs a cluster, so the client is patched with an in-memory fake.
 """
 
 from hashlib import md5
@@ -19,6 +13,8 @@ import pytest
 
 from agno.knowledge.document import Document
 from agno.vectordb.mongodb import MongoVectorDb
+
+from .conftest import DeterministicEmbedder
 
 TEST_DATABASE = "agno_iso_test"
 USER_ID_FIELD = "user_id"
@@ -215,28 +211,6 @@ class _AsyncFakeClient:
         return _AsyncFakeDatabase(self._databases.setdefault(name, _FakeDatabase()))
 
 
-class _DeterministicEmbedder:
-    """A tiny embedder that needs no network or API key."""
-
-    dimensions = 8
-    enable_batch = False
-
-    def _vec(self):
-        return [1.0] + [0.0] * (self.dimensions - 1)
-
-    def get_embedding(self, text):
-        return self._vec()
-
-    def get_embedding_and_usage(self, text):
-        return self._vec(), {"total_tokens": 1}
-
-    async def async_get_embedding(self, text):
-        return self._vec()
-
-    async def async_get_embedding_and_usage(self, text):
-        return self._vec(), {"total_tokens": 1}
-
-
 @pytest.fixture
 def mongo_db():
     """A MongoVectorDb whose sync + async clients are in-memory fakes."""
@@ -251,7 +225,7 @@ def mongo_db():
             collection_name="iso_test",
             db_url="mongodb://fake-host/",
             database=TEST_DATABASE,
-            embedder=_DeterministicEmbedder(),
+            embedder=DeterministicEmbedder(),
             wait_until_index_ready_in_seconds=0,
             wait_after_insert_in_seconds=0,
         )
@@ -312,8 +286,8 @@ class TestWriteStampsOwner:
 
 
 class TestOwnerFoldedId:
-    """Two owners with byte-identical content keep DISTINCT _id, so neither
-    ingest clobbers the other; a shared (None) write keeps the base content id."""
+    """Two owners with byte-identical content keep DISTINCT _id, so neither ingest clobbers the other; a shared
+    (None) write keeps the base content id."""
 
     def test_two_owners_identical_content_get_distinct_id(self, mongo_db):
         mongo_db.insert(content_hash="same", documents=[_doc("d", "identical text")], user_id="alice")
@@ -331,21 +305,21 @@ class TestOwnerFoldedId:
         assert doc["_id"] == base_id
 
 
-class TestVectorSearchScope:
-    """The load-bearing contract: a scoped search pre-filters to the caller's
-    own chunks OR the shared bucket (user_id null); admin (None) applies none."""
+class TestSearchScope:
+    """The load-bearing contract: a scoped search pre-filters to the caller's own chunks OR the shared bucket
+    (user_id null); admin (None) applies none."""
 
     @pytest.fixture
-    def populated(self, mongo_db):
+    def search_corpus(self, mongo_db):
         mongo_db.insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
         mongo_db.insert(content_hash="hb", documents=_bob_docs(), user_id="bob")
         mongo_db.insert(content_hash="hs", documents=_shared_docs(), user_id=None)
         return mongo_db
 
-    def test_scoped_search_builds_own_or_shared_filter(self, populated):
-        results = populated.search("salary", limit=10, user_id="alice")
+    def test_scoped_search_builds_own_or_shared_filter(self, search_corpus):
+        results = search_corpus.search("salary", limit=10, user_id="alice")
 
-        sent_filter = _vector_search_filter(populated._get_collection().last_pipeline)
+        sent_filter = _vector_search_filter(search_corpus._get_collection().last_pipeline)
         assert sent_filter == {"$or": [{USER_ID_FIELD: "alice"}, {USER_ID_FIELD: None}]}
 
         names = {d.name for d in results}
@@ -353,23 +327,23 @@ class TestVectorSearchScope:
         assert "company-holidays" in names  # shared bucket visible
         assert "bob-salary" not in names  # another owner never leaks
 
-    def test_bob_scope_excludes_alice(self, populated):
-        names = {d.name for d in populated.search("salary", limit=10, user_id="bob")}
+    def test_bob_scope_excludes_alice(self, search_corpus):
+        names = {d.name for d in search_corpus.search("salary", limit=10, user_id="bob")}
         assert "bob-salary" in names
         assert "company-holidays" in names
         assert "alice-salary" not in names
 
-    def test_admin_search_has_no_filter(self, populated):
-        names = {d.name for d in populated.search("salary", limit=10, user_id=None)}
+    def test_admin_search_has_no_filter(self, search_corpus):
+        names = {d.name for d in search_corpus.search("salary", limit=10, user_id=None)}
 
-        sent_filter = _vector_search_filter(populated._get_collection().last_pipeline)
+        sent_filter = _vector_search_filter(search_corpus._get_collection().last_pipeline)
         assert sent_filter == "NO_FILTER_KEY"  # no scope key -> admin sees all
         assert {"alice-salary", "bob-salary", "company-holidays"} <= names
 
 
-class TestScopedUpsertDedup:
-    """Owner-folded id means an upsert scopes to the writing owner's row: a
-    second owner's identical-content upsert cannot overwrite the first's."""
+class TestUpsertDedupScope:
+    """Owner-folded id means an upsert scopes to the writing owner's row: a second owner's identical-content upsert
+    cannot overwrite the first's."""
 
     def test_two_owners_identical_content_both_survive(self, mongo_db):
         mongo_db.upsert(content_hash="same", documents=[_doc("d", "identical text")], user_id="alice")
@@ -389,51 +363,55 @@ class TestScopedUpsertDedup:
         assert mongo_db.get_count() == 1  # same folded _id -> replaced, not duplicated
 
 
-class TestDeleteByContentIdIsolation:
+class TestDeleteScope:
     """delete_by_content_id must scope to the caller; unscoped wipes all owners."""
 
     @pytest.fixture
-    def populated(self, mongo_db):
+    def content_id_corpus(self, mongo_db):
         mongo_db.insert(content_hash="h-alice", documents=[_doc("alice-doc", "Alice secret", "doc-1")], user_id="alice")
         mongo_db.insert(content_hash="h-bob", documents=[_doc("bob-doc", "Bob secret", "doc-1")], user_id="bob")
         mongo_db.insert(content_hash="h-shared", documents=[_doc("shared-doc", "Org secret", "doc-1")], user_id=None)
         return mongo_db
 
-    def test_scoped_delete_only_removes_callers_chunks(self, populated):
-        assert populated.delete_by_content_id("doc-1", user_id="bob") is True
-        assert _owners(populated) == ["alice", None]
+    def test_scoped_delete_only_removes_callers_chunks(self, content_id_corpus):
+        assert content_id_corpus.delete_by_content_id("doc-1", user_id="bob") is True
+        assert _owners(content_id_corpus) == ["alice", None]
 
-    def test_scoped_delete_never_touches_shared(self, populated):
-        populated.delete_by_content_id("doc-1", user_id="alice")
-        owners = _owners(populated)
+    def test_scoped_delete_never_touches_shared(self, content_id_corpus):
+        content_id_corpus.delete_by_content_id("doc-1", user_id="alice")
+        owners = _owners(content_id_corpus)
         assert None in owners, "scoped delete wiped the shared bucket"
         assert "alice" not in owners
 
-    def test_scoped_delete_by_foreign_owner_is_a_noop(self, populated):
+    def test_scoped_delete_by_foreign_owner_is_a_noop(self, content_id_corpus):
         # carol owns nothing; her scoped delete removes no one else's chunks.
-        assert populated.delete_by_content_id("doc-1", user_id="carol") is True
-        assert len(_owners(populated)) == 3
+        assert content_id_corpus.delete_by_content_id("doc-1", user_id="carol") is True
+        assert len(_owners(content_id_corpus)) == 3
 
-    def test_unscoped_delete_wipes_everyone(self, populated):
-        assert populated.delete_by_content_id("doc-1", user_id=None) is True
-        assert populated.get_count() == 0
+    def test_unscoped_delete_wipes_everyone(self, content_id_corpus):
+        assert content_id_corpus.delete_by_content_id("doc-1", user_id=None) is True
+        assert content_id_corpus.get_count() == 0
 
 
-class TestContentHashExistsIsScoped:
-    """content_hash_exists is scoped so one owner's upload is not judged a
-    duplicate of another's identical content; None/omitted sees everything."""
+class TestContentHashExistsScope:
+    """content_hash_exists is scoped so one owner's upload is not judged a duplicate of another's identical content."""
 
     def test_hash_scoped_to_owner(self, mongo_db):
         mongo_db.insert(content_hash="hx", documents=_alice_docs(), user_id="alice")
         assert mongo_db.content_hash_exists("hx", user_id="alice") is True
         assert mongo_db.content_hash_exists("hx", user_id="bob") is False
-        # Admin / unscoped check still sees it.
+
+    def test_none_check_sees_the_shared_row(self, mongo_db):
+        mongo_db.insert(content_hash="hx", documents=_shared_docs(), user_id=None)
         assert mongo_db.content_hash_exists("hx") is True
 
+    def test_none_check_does_not_see_a_privately_owned_row(self, mongo_db):
+        mongo_db.insert(content_hash="hx", documents=_alice_docs(), user_id="alice")
+        assert mongo_db.content_hash_exists("hx") is False
 
-class TestUpdateMetadataPreservesOwner:
-    """update_metadata never lets a caller-supplied metadata write reassign the
-    top-level owner field."""
+
+class TestUpdateMetadataOwnership:
+    """update_metadata never lets a caller-supplied metadata write reassign the top-level owner field."""
 
     def test_owner_field_is_not_reassignable_via_metadata(self, mongo_db):
         mongo_db.insert(content_hash="ha", documents=[_doc("alice-doc", "Alice secret", "doc-1")], user_id="alice")
@@ -445,9 +423,10 @@ class TestUpdateMetadataPreservesOwner:
         assert doc["meta_data"]["team"] == "eng"  # legitimate metadata applied
 
 
-class TestAsyncVectorSearchIsolation:
+class TestAsyncIsolation:
     """Async write/read path stamps the owner and scopes reads identically."""
 
+    @pytest.mark.asyncio
     async def test_async_insert_stamps_owner_and_search_scopes(self, mongo_db):
         await mongo_db.async_insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
         await mongo_db.async_insert(content_hash="hb", documents=_bob_docs(), user_id="bob")
@@ -463,6 +442,7 @@ class TestAsyncVectorSearchIsolation:
         assert "company-holidays" in names
         assert "bob-salary" not in names
 
+    @pytest.mark.asyncio
     async def test_async_admin_search_has_no_filter(self, mongo_db):
         await mongo_db.async_insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
         await mongo_db.async_insert(content_hash="hb", documents=_bob_docs(), user_id="bob")

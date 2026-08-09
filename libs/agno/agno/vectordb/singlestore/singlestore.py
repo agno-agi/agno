@@ -140,6 +140,20 @@ class SingleStore(VectorDb):
             return stmt
         return stmt.where((self.table.c.user_id == user_id) | (self.table.c.user_id.is_(None)))
 
+    def _scoped_record_id(self, base_id: str, content_hash: str, user_id: Optional[str]) -> str:
+        """Fold the owner into the deterministic record id so two users upserting the
+        same content get distinct row ids. None keeps the stable base id.
+
+        ``base_id`` is caller-controlled and variable length, so it is collapsed with
+        ``content_hash`` into a fixed-length digest before the owner is folded in -
+        otherwise the '_' boundary moves and ('doc_1', 'alice') and ('doc', '1_alice')
+        collapse to the same row id, letting one owner overwrite the other's chunk.
+        """
+        record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+        if user_id is None:
+            return record_id
+        return md5(f"{record_id}_{user_id}".encode()).hexdigest()
+
     def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """
         Validating if the document exists or not
@@ -147,11 +161,16 @@ class SingleStore(VectorDb):
         Args:
             document (Document): Document to validate
             user_id (Optional[str]): When set, scope the check to the caller's own rows.
+                None scopes to the shared bucket (user_id IS NULL) alone rather than
+                every owner: this is the guard half of the upsert dedup pair, so it
+                addresses the same bucket _delete_by_content_hash clears for None.
         """
         with self.Session.begin() as sess:
             stmt = select(self.table.c.name).where(self.table.c.content_hash == content_hash)
             if user_id is not None:
                 stmt = stmt.where(self.table.c.user_id == user_id)
+            else:
+                stmt = stmt.where(self.table.c.user_id.is_(None))
             result = sess.execute(stmt).first()
             return result is not None
 
@@ -203,11 +222,7 @@ class SingleStore(VectorDb):
                 cleaned_content = document.content.replace("\x00", "\ufffd")
                 # Include content_hash in ID to ensure uniqueness across different content hashes
                 base_id = document.id or md5(cleaned_content.encode()).hexdigest()
-                # Fold the owner into the id so two users uploading the same content get distinct rows.
-                id_source = (
-                    f"{base_id}_{content_hash}_{user_id}" if user_id is not None else f"{base_id}_{content_hash}"
-                )
-                record_id = md5(id_source.encode()).hexdigest()
+                record_id = self._scoped_record_id(base_id, content_hash, user_id)
                 _id = record_id
 
                 meta_data_json = json.dumps(document.meta_data)
@@ -276,11 +291,7 @@ class SingleStore(VectorDb):
                 cleaned_content = document.content.replace("\x00", "\ufffd")
                 # Include content_hash in ID to ensure uniqueness across different content hashes
                 base_id = document.id or md5(cleaned_content.encode()).hexdigest()
-                # Fold the owner into the id so two users uploading the same content get distinct rows.
-                id_source = (
-                    f"{base_id}_{content_hash}_{user_id}" if user_id is not None else f"{base_id}_{content_hash}"
-                )
-                record_id = md5(id_source.encode()).hexdigest()
+                record_id = self._scoped_record_id(base_id, content_hash, user_id)
                 _id = record_id
 
                 meta_data_json = json.dumps(document.meta_data)
@@ -456,8 +467,62 @@ class SingleStore(VectorDb):
                 return int(result)
             return 0
 
+    def _index_exists(self, index_name: str) -> bool:
+        """
+        Check if an index with the given name exists on the table.
+
+        Args:
+            index_name (str): The name of the index to check.
+
+        Returns:
+            bool: True if the index exists, False otherwise.
+        """
+        try:
+            # Read through the engine connection the DDL uses, not the Session:
+            # this is schema introspection, not row work.
+            with self.db_engine.connect() as connection:
+                stmt = text(
+                    "SELECT 1 FROM information_schema.STATISTICS "
+                    "WHERE TABLE_SCHEMA = :schema AND TABLE_NAME = :table AND INDEX_NAME = :index LIMIT 1"
+                ).bindparams(schema=self.schema, table=self.collection, index=index_name)
+                return connection.execute(stmt).first() is not None
+        except Exception as e:
+            log_error(f"Error checking if index '{index_name}' exists: {str(e)}")
+            return False
+
     def optimize(self) -> None:
-        pass
+        """
+        Create the index the per-user scope predicate needs.
+
+        Every scoped search, scoped delete and scoped existence check filters on
+        ``user_id``, so without an index each one reads the whole table. The DDL
+        lives here rather than in the ``CREATE TABLE`` string so that a table
+        created before the column was indexed picks the index up on the next
+        call — ``create()`` skips a table that already exists, and it is the only
+        caller of this method for a new one.
+        """
+        index_name = f"idx_{self.collection}_user_id"
+        if self._index_exists(index_name):
+            log_debug(f"Index already exists: {index_name}")
+            return
+
+        # USING HASH: the scope predicate is ``user_id = caller OR user_id IS
+        # NULL`` — equality on both halves, which is what a hash index serves,
+        # and NULLs are indexed alongside the rest so the shared bucket seeks
+        # too. It is also the only secondary index a SingleStore columnstore
+        # table (the default table type) accepts: USING BTREE is rejected there
+        # and an unqualified index is stored as a hash one regardless.
+        try:
+            with self.db_engine.connect() as connection:
+                connection.execute(
+                    text(f"ALTER TABLE {self.schema}.{self.collection} ADD INDEX {index_name} (user_id) USING HASH")
+                )
+            log_info(f"Created index: {index_name}")
+        except Exception as e:
+            # A SingleStore build that rejects the syntax, or an operator who
+            # already indexed the column under another name, must not take down
+            # the caller — the queries still run, just unindexed.
+            log_warning(f"Could not create index {index_name}: {str(e)}")
 
     def delete(self) -> bool:
         """
@@ -598,11 +663,7 @@ class SingleStore(VectorDb):
                 cleaned_content = document.content.replace("\x00", "\ufffd")
                 # Include content_hash in ID to ensure uniqueness across different content hashes
                 base_id = document.id or md5(cleaned_content.encode()).hexdigest()
-                # Fold the owner into the id so two users uploading the same content get distinct rows.
-                id_source = (
-                    f"{base_id}_{content_hash}_{user_id}" if user_id is not None else f"{base_id}_{content_hash}"
-                )
-                record_id = md5(id_source.encode()).hexdigest()
+                record_id = self._scoped_record_id(base_id, content_hash, user_id)
                 _id = record_id
 
                 meta_data_json = json.dumps(document.meta_data)
@@ -695,11 +756,7 @@ class SingleStore(VectorDb):
                 cleaned_content = document.content.replace("\x00", "\ufffd")
                 # Include content_hash in ID to ensure uniqueness across different content hashes
                 base_id = document.id or md5(cleaned_content.encode()).hexdigest()
-                # Fold the owner into the id so two users uploading the same content get distinct rows.
-                id_source = (
-                    f"{base_id}_{content_hash}_{user_id}" if user_id is not None else f"{base_id}_{content_hash}"
-                )
-                record_id = md5(id_source.encode()).hexdigest()
+                record_id = self._scoped_record_id(base_id, content_hash, user_id)
                 _id = record_id
 
                 meta_data_json = json.dumps(document.meta_data)

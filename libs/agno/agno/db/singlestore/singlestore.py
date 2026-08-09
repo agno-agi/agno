@@ -695,10 +695,16 @@ class SingleStoreDb(BaseDb):
                 # A NULL index has no position and breaks ORDER BY run_index. ON DUPLICATE KEY
                 # preserves the existing index, so this only sets it on a genuine insert.
                 if row.get("run_index") is None:
-                    current_max = sess.execute(
-                        select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
-                    ).scalar()
-                    row["run_index"] = (current_max + 1) if current_max is not None else 0
+                    # Single-statement backfill: SingleStore has no user-level
+                    # locks (no GET_LOCK), so the MAX is computed inside the
+                    # INSERT via a materialized derived table (the MySQL
+                    # dialect rejects a direct same-table subquery). This
+                    # closes the two-statement read-then-insert window; truly
+                    # simultaneous same-session first-saves can still read the
+                    # same MAX under snapshot isolation - best effort without
+                    # engine support.
+                    prior_runs = select(runs_table.c.run_index).where(runs_table.c.session_id == session_id).subquery()
+                    row["run_index"] = select(func.coalesce(func.max(prior_runs.c.run_index) + 1, 0)).scalar_subquery()
 
                 stmt = mysql.insert(runs_table).values(**row)  # type: ignore
                 stmt = stmt.on_duplicate_key_update(
@@ -2206,8 +2212,8 @@ class SingleStoreDb(BaseDb):
         Args:
             id (str): The ID of the knowledge row to delete.
             user_id (Optional[str]): Owner-scoping filter. When set, only
-                deletes if the row is owned by ``user_id`` OR is unowned
-                (NULL).
+                deletes if the row is owned by ``user_id``. Unowned rows are
+                shared content and are not the caller's to delete.
         """
         try:
             table = self._get_table(table_type="knowledge")
@@ -2217,7 +2223,7 @@ class SingleStoreDb(BaseDb):
             with self.Session() as sess, sess.begin():
                 stmt = table.delete().where(table.c.id == id)
                 if user_id is not None:
-                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
+                    stmt = stmt.where(table.c.user_id == user_id)
                 sess.execute(stmt)
 
             log_debug(f"Deleted knowledge content with id '{id}'")
@@ -3437,4 +3443,3 @@ class SingleStoreDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for SingleStoreDb")
-

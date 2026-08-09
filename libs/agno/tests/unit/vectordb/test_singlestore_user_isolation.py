@@ -1,13 +1,7 @@
 """SingleStore per-user RAG isolation contract.
 
-The owner is a first-class ``user_id`` column (NULL = the shared bucket).
-Scoped searches match ``user_id = caller OR user_id IS NULL`` so admin-uploaded
-shared content stays discoverable; unscoped (admin) searches see everything.
-``delete_by_content_id`` scopes to the caller so one user cannot wipe another's
-chunks under a guessed content_id.
-
-The SQLAlchemy engine is mocked and the session is a capturing double, so the
-adapter's SQL is compiled and inspected without a running SingleStore.
+Owner lives in a nullable ``user_id`` column; NULL is the shared bucket. No SingleStore
+image is available, so the session is captured and the emitted SQL is the contract.
 """
 
 from hashlib import md5
@@ -21,37 +15,10 @@ from sqlalchemy.engine import Engine
 from agno.knowledge.document import Document
 from agno.vectordb.singlestore import SingleStore
 
+from .conftest import DeterministicEmbedder
+
 TEST_COLLECTION = "iso_test"
 TEST_SCHEMA = "iso_schema"
-
-
-class _DeterministicEmbedder:
-    """A tiny embedder that needs no network or API key."""
-
-    dimensions = 8
-    enable_batch = False
-
-    def get_embedding(self, text):
-        vector = [0.0] * self.dimensions
-        vector[abs(hash(text)) % self.dimensions] = 1.0
-        return vector
-
-    def get_embedding_and_usage(self, text):
-        return self.get_embedding(text), {"total_tokens": 1}
-
-    async def async_get_embedding(self, text):
-        return self.get_embedding(text)
-
-    async def async_get_embedding_and_usage(self, text):
-        return self.get_embedding(text), {"total_tokens": 1}
-
-    def embed(self, document, embedder=None):
-        document.embedding = self.get_embedding(document.content)
-        document.usage = {"total_tokens": 1}
-
-    async def async_embed(self, document, embedder=None):
-        document.embedding = self.get_embedding(document.content)
-        document.usage = {"total_tokens": 1}
 
 
 def _alice_docs() -> List[Document]:
@@ -70,13 +37,13 @@ def singlestore_db():
             collection=TEST_COLLECTION,
             schema=TEST_SCHEMA,
             db_engine=MagicMock(spec=Engine),
-            embedder=_DeterministicEmbedder(),
+            embedder=DeterministicEmbedder(),
         )
 
 
 class _CapturingSession:
-    """A ``Session.begin()`` context-manager double that records every executed
-    statement and returns a configurable result."""
+    """A ``Session.begin()`` context-manager double that records every executed statement and returns a configurable
+    result."""
 
     def __init__(self, first=None, scalar=None, fetchall=None, rowcount=1):
         self.captured: list = []
@@ -126,8 +93,7 @@ def _params(stmt) -> dict:
 
 
 class TestWriteStampsOwner:
-    """The owner is stored as a first-class ``user_id`` column, not buried in
-    meta_data. ``user_id=None`` persists NULL — the shared bucket."""
+    """The owner is stored as a first-class ``user_id`` column, not buried in meta_data."""
 
     def _insert_params(self, db, user_id):
         sess = _install_session(db)
@@ -142,9 +108,7 @@ class TestWriteStampsOwner:
 
 
 class TestOwnerFoldedId:
-    """Two owners uploading the SAME content must get DISTINCT row ids (the
-    owner is folded into the id). A shared (None) write keeps the un-folded
-    base id, so a shared re-ingest round-trips on the same row."""
+    """Two owners uploading the SAME content must get DISTINCT row ids (the owner is folded into the id)."""
 
     SAME = "The merger closes in Q3."
     HASH = "h"
@@ -160,8 +124,11 @@ class TestOwnerFoldedId:
         assert alice_id != bob_id
 
     def test_owner_fold_matches_expected_digest(self, singlestore_db):
+        """base_id is caller-controlled and variable length, so it is collapsed with the content hash into a fixed-
+        length digest before the owner is folded in."""
         base = md5(self.SAME.encode()).hexdigest()
-        expected = md5(f"{base}_{self.HASH}_alice".encode()).hexdigest()
+        record_id = md5(f"{base}_{self.HASH}".encode()).hexdigest()
+        expected = md5(f"{record_id}_alice".encode()).hexdigest()
         assert self._insert_id(singlestore_db, "alice") == expected
 
     def test_shared_write_keeps_unfolded_base_id(self, singlestore_db):
@@ -174,9 +141,8 @@ class TestOwnerFoldedId:
 
 
 class TestSearchScope:
-    """A scoped search's WHERE clause is ``user_id = :uid OR user_id IS NULL``
-    (own OR shared), with the caller bound in. Admin (``user_id=None``) adds no
-    user predicate."""
+    """A scoped search's WHERE clause is ``user_id = :uid OR user_id IS NULL`` (own OR shared), with the caller
+    bound in."""
 
     def _search_select(self, db, user_id):
         sess = _install_session(db)
@@ -198,6 +164,7 @@ class TestSearchScope:
     def test_admin_search_has_no_user_predicate(self, singlestore_db):
         assert "user_id" not in str(self._search_select(singlestore_db, None))
 
+    @pytest.mark.asyncio
     async def test_async_search_scopes_too(self, singlestore_db):
         sess = _install_session(singlestore_db)
         await singlestore_db.async_search("salary", limit=10, user_id="alice")
@@ -206,10 +173,9 @@ class TestSearchScope:
         assert "alice" in _params(stmt).values()
 
 
-class TestUpsertDedupScoping:
-    """The sync upsert dedup path keys on ``content_hash`` scoped by owner: it
-    checks/deletes only the writer's own bucket, so a second owner uploading
-    identical content can't evict the first owner's row."""
+class TestUpsertDedupScope:
+    """The sync upsert dedup path keys on ``content_hash`` scoped by owner: it checks/deletes only the writer's own
+    bucket, so a second owner uploading identical content can't evict the first owner's row."""
 
     def test_dedup_check_is_scoped_to_writing_owner(self, singlestore_db):
         singlestore_db.content_hash_exists = MagicMock(return_value=False)
@@ -241,10 +207,9 @@ class TestUpsertDedupScoping:
         assert "user_id IS NULL" in sql
         assert "user_id =" not in sql
 
+    @pytest.mark.asyncio
     async def test_async_upsert_dedup_is_scoped_to_writing_owner(self, singlestore_db):
-        """``async_upsert`` mirrors sync upsert's guard: because the table has no
-        unique key (ON DUPLICATE KEY UPDATE never fires), it checks/deletes the
-        writer's own bucket before inserting so re-upserting can't pile up dupes."""
+        """``async_upsert`` mirrors the sync guard: it clears the writer's own bucket before inserting."""
         singlestore_db.content_hash_exists = MagicMock(return_value=True)
         singlestore_db._delete_by_content_hash = MagicMock()
         _install_session(singlestore_db)
@@ -253,10 +218,9 @@ class TestUpsertDedupScoping:
         singlestore_db._delete_by_content_hash.assert_called_once_with("h1", user_id="bob")
 
 
-class TestDeleteByContentIdScoping:
-    """``delete_by_content_id(content_id, user_id=...)`` restricts to that owner
-    so Bob guessing Alice's content_id under his own scope can't touch her rows.
-    Admin (``None``) spans all owners (content_id only)."""
+class TestDeleteScope:
+    """``delete_by_content_id(content_id, user_id=...)`` restricts to that owner so Bob guessing Alice's content_id
+    under his own scope can't touch her rows."""
 
     def _delete_stmt(self, db, user_id):
         sess = _install_session(db, rowcount=1)
@@ -279,10 +243,9 @@ class TestDeleteByContentIdScoping:
         assert "user_id" not in str(self._delete_stmt(singlestore_db, None))
 
 
-class TestDeleteByContentHashScoping:
-    """``_delete_by_content_hash`` scoped to an owner deletes only that owner's
-    rows; ``None`` scopes to the SHARED bucket (user_id IS NULL), NOT every
-    owner — so a shared re-upsert never wipes a scoped owner's identical row."""
+class TestDedupScope:
+    """``_delete_by_content_hash`` scoped to an owner deletes only that owner's rows; ``None`` scopes to the SHARED
+    bucket (user_id IS NULL), NOT every owner — so a shared re-upsert never wipes a scoped owner's identical row."""
 
     def _delete_stmt(self, db, user_id):
         sess = _install_session(db, rowcount=1)
@@ -304,14 +267,16 @@ class TestDeleteByContentHashScoping:
         assert "user_id =" not in sql
 
 
-class TestAsyncWriteStampsOwner:
+class TestAsyncIsolation:
     """The async write path stamps the owner exactly like the sync path."""
 
+    @pytest.mark.asyncio
     async def test_async_insert_stamps_owner(self, singlestore_db):
         sess = _install_session(singlestore_db)
         await singlestore_db.async_insert(content_hash="ha", documents=_alice_docs(), user_id="alice")
         assert _params(_find_stmt(sess, "INSERT")).get("user_id") == "alice"
 
+    @pytest.mark.asyncio
     async def test_async_insert_none_is_null(self, singlestore_db):
         sess = _install_session(singlestore_db)
         await singlestore_db.async_insert(content_hash="hs", documents=_shared_docs(), user_id=None)

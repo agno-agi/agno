@@ -303,6 +303,20 @@ class LanceDb(VectorDb):
             tbl = self.connection.create_table(name=self.table_name, schema=schema, mode="overwrite", exist_ok=True)  # type: ignore
         return tbl  # type: ignore
 
+    def _scoped_doc_id(self, base_id: str, content_hash: str, user_id: Optional[str]) -> str:
+        """Fold the owner into the deterministic id so two users inserting the
+        same content get distinct ids. None keeps the stable base id.
+
+        ``base_id`` is caller-controlled and variable length, so it is collapsed with
+        ``content_hash`` into a fixed-length digest before the owner is folded in -
+        otherwise the '_' boundary moves and ('doc_1', 'alice') and ('doc', '1_alice')
+        collapse to the same id, letting one owner overwrite the other's chunk.
+        """
+        doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+        if user_id is None:
+            return doc_id
+        return md5(f"{doc_id}_{user_id}".encode()).hexdigest()
+
     def insert(
         self,
         content_hash: str,
@@ -342,7 +356,7 @@ class LanceDb(VectorDb):
             cleaned_content = document.content.replace("\x00", "\ufffd")
             # Include content_hash in ID to ensure uniqueness across different content hashes
             base_id = document.id or md5(cleaned_content.encode()).hexdigest()
-            doc_id = str(md5(f"{base_id}_{content_hash}".encode()).hexdigest())
+            doc_id = self._scoped_doc_id(base_id, content_hash, user_id)
             payload = {
                 "name": document.name,
                 "meta_data": document.meta_data,
@@ -461,8 +475,8 @@ class LanceDb(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
             user_id (Optional[str]): See ``insert``.
         """
-        if self.content_hash_exists(content_hash):
-            self._delete_by_content_hash(content_hash)
+        if self.content_hash_exists(content_hash, user_id=user_id):
+            self._delete_by_content_hash(content_hash, user_id=user_id)
         self.insert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
 
     async def async_upsert(
@@ -533,6 +547,18 @@ class LanceDb(VectorDb):
             return None
         escaped = user_id.replace("'", "''")
         return f"({self.USER_ID_COL} = '{escaped}' OR {self.USER_ID_COL} IS NULL)"
+
+    def _owner_where_clause(self, user_id: Optional[str]) -> str:
+        """Build the exact-owner ``WHERE`` clause used by writes.
+
+        Unlike ``_user_scope_where_clause`` there is no OR-NULL arm: a scoped
+        write must not reach the shared bucket, and ``None`` addresses the
+        shared bucket alone so a shared re-upsert never wipes a scoped owner.
+        """
+        if user_id is None:
+            return f"{self.USER_ID_COL} IS NULL"
+        escaped = user_id.replace("'", "''")
+        return f"{self.USER_ID_COL} = '{escaped}'"
 
     def search(
         self,
@@ -973,9 +999,7 @@ class LanceDb(VectorDb):
             select_cols = ["id", "payload", self.USER_ID_COL]
             search = self.table.search().select(select_cols).limit(total_count)
             if user_id is not None:
-                search = search.where(
-                    f"{self.USER_ID_COL} = '{user_id.replace(chr(39), chr(39) + chr(39))}'"
-                )
+                search = search.where(self._owner_where_clause(user_id))
             result = search.to_list()
 
             ids_to_delete = []
@@ -999,15 +1023,26 @@ class LanceDb(VectorDb):
             logger.exception(f"Error deleting rows by content_id '{content_id}'")
             return False
 
-    def _delete_by_content_hash(self, content_hash: str) -> bool:
-        """Delete content by content hash."""
+    def _delete_by_content_hash(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        """Delete content by content hash, scoped to ``user_id``.
+
+        Only the owner's own rows are considered; None scopes to the shared
+        (NULL) bucket so a shared re-upsert never wipes a scoped owner's
+        identical-content rows.
+        """
         if self.table is None:
             log_error("Table not initialized")
             return False
 
         try:
             total_count = self.table.count_rows()
-            result = self.table.search().select(["id", "payload"]).limit(total_count).to_list()
+            result = (
+                self.table.search()
+                .select(["id", "payload"])
+                .where(self._owner_where_clause(user_id))
+                .limit(total_count)
+                .to_list()
+            )
 
             ids_to_delete = []
             for row in result:
@@ -1030,15 +1065,27 @@ class LanceDb(VectorDb):
             logger.exception(f"Error deleting rows by content_hash '{content_hash}'")
             return False
 
-    def content_hash_exists(self, content_hash: str) -> bool:
-        """Check if documents with the given content hash exist."""
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        """Check if documents with the given content hash exist.
+
+        Scoped to the owner's own rows; None scopes to the shared (NULL) bucket
+        alone rather than any owner. This is the guard half of the upsert dedup
+        pair, so it addresses the same bucket ``_delete_by_content_hash`` clears
+        for None.
+        """
         if self.table is None:
             log_error("Table not initialized")
             return False
 
         try:
             total_count = self.table.count_rows()
-            result = self.table.search().select(["id", "payload"]).limit(total_count).to_list()
+            result = (
+                self.table.search()
+                .select(["id", "payload"])
+                .where(self._owner_where_clause(user_id))
+                .limit(total_count)
+                .to_list()
+            )
 
             for row in result:
                 payload = json.loads(row["payload"])
@@ -1071,10 +1118,7 @@ class LanceDb(VectorDb):
             # delete-and-reinsert dance below; without this the column would
             # come back NULL on every update_metadata call.
             results = (
-                self.table.search()
-                .select(["id", "payload", "vector", self.USER_ID_COL])
-                .limit(total_count)
-                .to_list()
+                self.table.search().select(["id", "payload", "vector", self.USER_ID_COL]).limit(total_count).to_list()
             )
 
             if not results:

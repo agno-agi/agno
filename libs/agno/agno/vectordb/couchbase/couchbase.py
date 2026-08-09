@@ -1,6 +1,7 @@
 import asyncio
 import time
 from datetime import timedelta
+from hashlib import md5
 from typing import Any, Dict, List, Optional, Union
 
 from agno.filters import FilterExpr
@@ -9,11 +10,6 @@ from agno.knowledge.embedder import Embedder
 from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
 from agno.vectordb.base import VectorDb
 
-try:
-    from hashlib import md5
-
-except ImportError:
-    raise ImportError("`hashlib` not installed. Please install using `pip install hashlib`")
 try:
     from acouchbase.bucket import AsyncBucket
     from acouchbase.cluster import AsyncCluster
@@ -326,6 +322,7 @@ class CouchbaseSearch(VectorDb):
             filters: Optional filters to apply to the documents
             user_id: Owner of the chunks for per-user isolation. None means shared.
         """
+        self._validate_user_id(user_id)
         log_debug(f"Inserting {len(documents)} documents")
 
         docs_to_insert: Dict[str, Any] = {}
@@ -432,6 +429,7 @@ class CouchbaseSearch(VectorDb):
             filters: Optional filters to apply to the documents
             user_id: Owner of the chunks for per-user isolation. None means shared.
         """
+        self._validate_user_id(user_id)
         logger.info(f"Upserting {len(documents)} documents")
 
         # Scope the dedupe-delete to the caller's own chunks (see _upsert).
@@ -512,6 +510,7 @@ class CouchbaseSearch(VectorDb):
         user_id scopes results to the caller's own chunks plus the shared
         bucket; None applies no scope.
         """
+        self._validate_user_id(user_id)
         if isinstance(filters, List):
             log_warning("Filter Expressions are not yet supported in Couchbase. No filters will be applied.")
             filters = None
@@ -628,6 +627,22 @@ class CouchbaseSearch(VectorDb):
         except Exception:
             return False
 
+    def _validate_user_id(self, user_id: Optional[str]) -> None:
+        """Reject a user_id the sentinel-based contract cannot tell apart from shared.
+
+        The shared bucket is a value stored in the document, not the absence of one, so a
+        caller whose real id is that value addresses the shared bucket outright: their
+        uploads publish org-wide, they read every other owner's shared content as their
+        own, and a scoped delete of theirs clears out of the shared bucket - which the
+        strict-delete contract says is nobody's to remove but an admin's. Refuse the
+        collision rather than store it; use None for shared/unscoped access.
+        """
+        if user_id == self.SHARED_USER_ID:
+            raise ValueError(
+                f"user_id must not be '{self.SHARED_USER_ID}' - that value is reserved to mark content "
+                "shared with every user"
+            )
+
     def prepare_doc(self, content_hash: str, document: Document, user_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Prepare a document for insertion into Couchbase.
@@ -715,16 +730,19 @@ class CouchbaseSearch(VectorDb):
     def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Check if a document exists in the bucket based on its content hash.
 
-        With user_id set the check is scoped to the caller's own chunks; None is the
-        unscoped existence gate matching any owner.
+        The owner is bound exactly (real id, or the shared sentinel for None). This is
+        the guard half of the upsert dedup pair, so None addresses the shared bucket
+        alone rather than every owner - the same bucket _delete_by_content_hash clears
+        for None.
         """
+        self._validate_user_id(user_id)
         try:
             # Use N1QL query to check if document with given content_hash exists
-            named_parameters: Dict[str, Any] = {"content_hash": content_hash}
-            where_clause = "content_hash = $content_hash"
-            if user_id is not None:
-                where_clause += f" AND {self.USER_ID_FIELD} = $user_id"
-                named_parameters["user_id"] = user_id
+            named_parameters: Dict[str, Any] = {
+                "content_hash": content_hash,
+                "user_id": user_id if user_id is not None else self.SHARED_USER_ID,
+            }
+            where_clause = f"content_hash = $content_hash AND {self.USER_ID_FIELD} = $user_id"
             query = f"SELECT content_hash FROM {self.bucket_name}.{self.scope_name}.{self.collection_name} WHERE {where_clause} LIMIT 1"
             result = self.scope.query(
                 query,
@@ -958,6 +976,7 @@ class CouchbaseSearch(VectorDb):
         filters: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
     ) -> None:
+        self._validate_user_id(user_id)
         logger.info(f"[async] Inserting {len(documents)} documents")
 
         async_collection_instance = await self.get_async_collection()
@@ -1057,6 +1076,7 @@ class CouchbaseSearch(VectorDb):
         user_id: Optional[str] = None,
     ) -> None:
         """Upsert documents asynchronously."""
+        self._validate_user_id(user_id)
         # Scope the dedupe-delete to the caller's own chunks (see _upsert).
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
@@ -1172,6 +1192,7 @@ class CouchbaseSearch(VectorDb):
 
         None applies no scope.
         """
+        self._validate_user_id(user_id)
         if isinstance(filters, List):
             log_warning("Filter Expressions are not yet supported in Couchbase. No filters will be applied.")
             filters = None
@@ -1435,6 +1456,7 @@ class CouchbaseSearch(VectorDb):
         Returns:
             bool: True if documents were deleted, False otherwise
         """
+        self._validate_user_id(user_id)
         try:
             log_debug(f"Couchbase VectorDB : Deleting documents with content_id {content_id}")
 

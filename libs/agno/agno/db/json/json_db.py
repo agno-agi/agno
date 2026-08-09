@@ -1295,8 +1295,6 @@ class JsonDb(BaseDb):
             raise e
 
     # -- Knowledge methods --
-
-    # -- Knowledge methods --
     # File-backed storage filters in Python: a row is visible if its
     # ``user_id`` matches the caller OR is unset (None / missing).
 
@@ -1313,7 +1311,8 @@ class JsonDb(BaseDb):
         Args:
             id (str): The ID of the knowledge row to delete.
             user_id (Optional[str]): Owner-scoping filter. When set, only
-                deletes if the row is owned by ``user_id`` OR is unowned.
+                deletes if the row is owned by ``user_id``. Unowned rows are
+                shared content and are not the caller's to delete.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -1323,7 +1322,7 @@ class JsonDb(BaseDb):
             knowledge_items = [
                 item
                 for item in knowledge_items
-                if not (item.get("id") == id and self._knowledge_item_is_visible(item, user_id))
+                if not (item.get("id") == id and (user_id is None or item.get("user_id") == user_id))
             ]
             self._write_json_file(self.knowledge_table_name, knowledge_items)
 
@@ -1391,9 +1390,7 @@ class JsonDb(BaseDb):
 
             # Owner scoping: drop rows the caller isn't allowed to see.
             if user_id is not None:
-                knowledge_items = [
-                    item for item in knowledge_items if self._knowledge_item_is_visible(item, user_id)
-                ]
+                knowledge_items = [item for item in knowledge_items if self._knowledge_item_is_visible(item, user_id)]
 
             total_count = len(knowledge_items)
 
@@ -2256,4 +2253,3 @@ class JsonDb(BaseDb):
         limit: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         raise NotImplementedError("Learning methods not yet implemented for JsonDb")
-

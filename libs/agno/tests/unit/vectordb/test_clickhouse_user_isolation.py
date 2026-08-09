@@ -1,14 +1,7 @@
 """ClickHouse per-user RAG isolation contract.
 
-The owner lives in a dedicated ``user_id`` String column. Inserts stamp the
-caller's id (``user_id=None`` -> the shared sentinel ``""``), scoped searches
-return the caller's rows plus the shared bucket, and ``user_id=None`` at read
-time is the admin view that sees everything.
-
-The clickhouse clients are mocked so no server is touched. We capture the
-values the adapter feeds the driver — the ``user_id`` column value on
-``client.insert``, and the SQL text + bound ``parameters`` on
-``client.command`` / ``client.query`` — and assert on those directly.
+Owner lives in a dedicated ``user_id`` String column; ``""`` is the shared bucket. The
+clickhouse clients are mocked, so the captured SQL and bound parameters are the contract.
 """
 
 from hashlib import md5
@@ -20,6 +13,8 @@ from agno.knowledge.document import Document
 from agno.vectordb.clickhouse import Clickhouse
 from agno.vectordb.clickhouse.clickhousedb import SHARED_OWNER
 from agno.vectordb.search import SearchType
+
+from .conftest import DeterministicEmbedder
 
 # The column order the adapter writes; indices are resolved from the captured
 # ``column_names`` so a column reorder can't make the assertions read the
@@ -38,39 +33,10 @@ INSERT_COLUMNS = [
 ]
 
 
-class _DeterministicEmbedder:
-    """A tiny embedder that needs no network or API key."""
-
-    dimensions = 8
-    enable_batch = False
-
-    def get_embedding(self, text):
-        vector = [0.0] * self.dimensions
-        vector[abs(hash(text)) % self.dimensions] = 1.0
-        return vector
-
-    def get_embedding_and_usage(self, text):
-        return self.get_embedding(text), {"total_tokens": 1}
-
-    async def async_get_embedding(self, text):
-        return self.get_embedding(text)
-
-    async def async_get_embedding_and_usage(self, text):
-        return self.get_embedding(text), {"total_tokens": 1}
-
-    def embed(self, document, *args, **kwargs):
-        document.embedding = self.get_embedding(document.content)
-        document.usage = {"total_tokens": 1}
-
-    async def async_embed(self, document, *args, **kwargs):
-        document.embedding = self.get_embedding(document.content)
-        document.usage = {"total_tokens": 1}
-
-
 def _doc(name: str, content: str, content_id: str = None) -> Document:
     doc = Document(name=name, content=content)
     doc.content_id = content_id if content_id is not None else name
-    doc.embedding = _DeterministicEmbedder().get_embedding(content)
+    doc.embedding = DeterministicEmbedder().get_embedding(content)
     return doc
 
 
@@ -83,32 +49,20 @@ def _empty_result():
 
 
 @pytest.fixture
-def mock_client():
-    """Create a mock Clickhouse client."""
+def clickhouse_db():
+    """A Clickhouse whose clients are mocked - reach them via ``.client`` / ``.async_client``."""
     client = MagicMock()
     client.query.return_value = _empty_result()
-    return client
-
-
-@pytest.fixture
-def mock_async_client():
-    """Create a mock Clickhouse async client."""
     async_client = AsyncMock()
     async_client.command.return_value = None
     async_client.query.return_value = _empty_result()
-    return async_client
-
-
-@pytest.fixture
-def clickhouse_db(mock_client, mock_async_client):
-    """Create a Clickhouse instance with mocked clients."""
     return Clickhouse(
         table_name="iso_tbl",
         host="localhost",
         database_name="iso_db",
-        embedder=_DeterministicEmbedder(),
-        client=mock_client,
-        asyncclient=mock_async_client,
+        embedder=DeterministicEmbedder(),
+        client=client,
+        asyncclient=async_client,
     )
 
 
@@ -133,16 +87,13 @@ def _id_of(client) -> str:
 class TestSchema:
     """Pin the sentinel and the supported search type."""
 
-    def test_shared_owner_sentinel_is_empty_string(self):
-        assert SHARED_OWNER == ""
-
     def test_get_supported_search_types(self, clickhouse_db):
         assert clickhouse_db.get_supported_search_types() == [SearchType.vector]
 
 
-class TestInsertStampsOwner:
-    """On insert the caller's id lands in the ``user_id`` column; ``None`` (and
-    an omitted arg) collapse to the shared sentinel ``""``."""
+class TestWriteStampsOwner:
+    """On insert the caller's id lands in the ``user_id`` column; ``None`` (and an omitted arg) collapse to the
+    shared sentinel ``""``."""
 
     def test_explicit_user_id_stamped_into_column(self, clickhouse_db):
         clickhouse_db.insert(content_hash="h1", documents=[_doc("alice", "alice content")], user_id="alice")
@@ -163,10 +114,9 @@ class TestInsertStampsOwner:
         assert len(row) == len(INSERT_COLUMNS)
 
 
-class TestIdFolding:
-    """The owner is folded into the row id so two owners' copies of identical
-    content occupy distinct ids and can't overwrite one another; the shared
-    (``None``) row keeps the plain content-hash id."""
+class TestOwnerFoldedId:
+    """The owner is folded into the row id so two owners' copies of identical content occupy distinct ids and can't
+    overwrite one another; the shared (``None``) row keeps the plain content-hash id."""
 
     def test_two_owners_identical_content_get_distinct_ids(self, clickhouse_db):
         clickhouse_db.insert(content_hash="h", documents=[_doc("alice", "same text")], user_id="alice")
@@ -191,9 +141,8 @@ class TestIdFolding:
 
 
 class TestSearchScope:
-    """A scoped search restricts to ``user_id = {bound} OR user_id = ''`` with
-    the owner passed as a bound parameter (never string-interpolated). Admin
-    (``user_id=None``) builds no scope and binds no owner."""
+    """A scoped search restricts to ``user_id = {bound} OR user_id = ''`` with the owner passed as a bound parameter
+    (never string-interpolated)."""
 
     def _search_call(self, client):
         call = client.query.call_args
@@ -213,6 +162,7 @@ class TestSearchScope:
         assert "WHERE" not in sql
         assert "user_id" not in params
 
+    @pytest.mark.asyncio
     async def test_async_scoped_search_where_is_own_or_shared(self, clickhouse_db):
         await clickhouse_db.async_search("salary", limit=10, user_id="alice")
         sql, params = self._search_call(clickhouse_db.async_client)
@@ -220,6 +170,7 @@ class TestSearchScope:
         assert params["user_id"] == "alice"
         assert "alice" not in sql
 
+    @pytest.mark.asyncio
     async def test_async_admin_search_has_no_scope(self, clickhouse_db):
         await clickhouse_db.async_search("salary", limit=10, user_id=None)
         sql, params = self._search_call(clickhouse_db.async_client)
@@ -236,9 +187,8 @@ def _delete_command(client, needle="content_id"):
     raise AssertionError(f"no DELETE command matching {needle!r} was issued")
 
 
-class TestDeleteByContentIdScope:
-    """``delete_by_content_id`` scopes to the caller's rows; ``None`` spans all
-    owners. The owner is bound, never interpolated."""
+class TestDeleteScope:
+    """``delete_by_content_id`` scopes to the caller's rows; ``None`` spans all owners."""
 
     def test_scoped_delete_ands_owner(self, clickhouse_db):
         clickhouse_db.delete_by_content_id("doc-1", user_id="bob")
@@ -258,10 +208,7 @@ class TestDeleteByContentIdScope:
 
 
 class TestUpsertDedupScope:
-    """``upsert`` dedups within the caller's bucket only: the pre-insert dedup
-    delete is scoped to the writing owner, and a shared (``None``) re-ingest
-    scopes to the shared bucket ``''`` so it can't evict an owned identical row.
-    """
+    """``upsert`` dedups within the writing owner's bucket only, so a shared re-ingest cannot evict an owned row."""
 
     def test_scoped_dedup_delete_targets_owner(self, clickhouse_db):
         # Force the dedup path: pretend the owner already has this content_hash.
@@ -293,6 +240,7 @@ class TestUpsertDedupScope:
         assert params["user_id"] == "alice"
         assert "alice" not in sql
 
+    @pytest.mark.asyncio
     async def test_async_shared_dedup_delete_targets_shared_bucket(self, clickhouse_db):
         clickhouse_db.content_hash_exists = MagicMock(return_value=True)
         await clickhouse_db.async_upsert(content_hash="h", documents=[_doc("shared", "text")], user_id=None)
@@ -302,8 +250,8 @@ class TestUpsertDedupScope:
 
 
 class TestContentHashExistsScope:
-    """The dedup existence check keys on ``content_hash`` scoped by owner;
-    ``None`` checks only the shared bucket, never every owner's rows."""
+    """The dedup existence check keys on ``content_hash`` scoped by owner; ``None`` checks only the shared bucket,
+    never every owner's rows."""
 
     def _call(self, client):
         for call in reversed(client.query.call_args_list):
@@ -323,17 +271,20 @@ class TestContentHashExistsScope:
         assert params["user_id"] == SHARED_OWNER
 
 
-class TestAsyncInsertStampsOwner:
+class TestAsyncIsolation:
     """The async write path stamps the owner exactly like the sync path."""
 
+    @pytest.mark.asyncio
     async def test_async_explicit_user_id_stamped(self, clickhouse_db):
         await clickhouse_db.async_insert(content_hash="h1", documents=[_doc("alice", "alice content")], user_id="alice")
         assert _owner_of(clickhouse_db.async_client) == "alice"
 
+    @pytest.mark.asyncio
     async def test_async_none_user_id_is_shared(self, clickhouse_db):
         await clickhouse_db.async_insert(content_hash="h1", documents=[_doc("shared", "shared content")], user_id=None)
         assert _owner_of(clickhouse_db.async_client) == SHARED_OWNER
 
+    @pytest.mark.asyncio
     async def test_async_two_owners_get_distinct_ids(self, clickhouse_db):
         await clickhouse_db.async_insert(content_hash="h", documents=[_doc("alice", "same text")], user_id="alice")
         alice_id = _id_of(clickhouse_db.async_client)
@@ -341,3 +292,48 @@ class TestAsyncInsertStampsOwner:
         await clickhouse_db.async_insert(content_hash="h", documents=[_doc("bob", "same text")], user_id="bob")
         bob_id = _id_of(clickhouse_db.async_client)
         assert alice_id != bob_id
+
+
+class TestSentinelImpersonation:
+    """``""`` is the shared owner, so a caller who passes it reads and writes the bucket every tenant shares. Each
+    entry point has to reject it itself - a guard on one method is not a guard on the backend."""
+
+    @pytest.mark.parametrize(
+        "call",
+        [
+            lambda db: db.insert("h", [_doc("alice", "alice content")], user_id=""),
+            lambda db: db.upsert("h", [_doc("alice", "alice content")], user_id=""),
+            lambda db: db.search("salary", limit=10, user_id=""),
+            lambda db: db.content_hash_exists("h", user_id=""),
+            lambda db: db.delete_by_content_id("cid", user_id=""),
+            lambda db: db._delete_by_content_hash("h", user_id=""),
+        ],
+        ids=["insert", "upsert", "search", "content_hash_exists", "delete_by_content_id", "_delete_by_content_hash"],
+    )
+    def test_every_scoped_entry_point_rejects(self, clickhouse_db, call):
+        with pytest.raises(ValueError, match="user_id must not be an empty string"):
+            call(clickhouse_db)
+
+        clickhouse_db.client.insert.assert_not_called()
+        clickhouse_db.client.command.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "call",
+        [
+            lambda db: db.async_insert("h", [_doc("alice", "alice content")], user_id=""),
+            lambda db: db.async_upsert("h", [_doc("alice", "alice content")], user_id=""),
+            lambda db: db.async_search("salary", limit=10, user_id=""),
+        ],
+        ids=["async_insert", "async_upsert", "async_search"],
+    )
+    async def test_every_async_entry_point_rejects(self, clickhouse_db, call):
+        with pytest.raises(ValueError, match="user_id must not be an empty string"):
+            await call(clickhouse_db)
+
+        clickhouse_db.async_client.insert.assert_not_called()
+
+    def test_none_is_not_rejected(self, clickhouse_db):
+        """``None`` is the supported way to reach the shared bucket - only the literal sentinel is refused."""
+        clickhouse_db.insert(content_hash="h", documents=[_doc("shared", "shared content")], user_id=None)
+        assert _owner_of(clickhouse_db.client) == SHARED_OWNER

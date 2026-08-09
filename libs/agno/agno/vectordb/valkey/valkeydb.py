@@ -272,31 +272,46 @@ class ValkeyDB(VectorDb):
         sentinel would let a caller impersonate the shared bucket, a stored
         match-all tag would break the match-all query, braces can never be
         matched by a scope clause, wildcards match other owners' tags even
-        when escaped, and an empty string is an owner tag no scope clause can
-        ever match.
+        when escaped, surrounding whitespace is trimmed at index time so
+        ' alice' indexes as the tag 'alice' and is read by that owner, and an
+        empty string is an owner tag no scope clause can ever match.
+
+        The TAG union character '|' is not rejected: ``_escape_tag_value``
+        escapes it at every interpolation site, and OIDC subject claims
+        ('auth0|...', 'google-oauth2|...') are legitimate owner ids.
         """
         if user_id is None:
             return
         if user_id == "":
-            raise ValueError("user_id must not be an empty string; use None for unscoped access")
+            raise ValueError("user_id must not be an empty string")
         if self.USER_ID_SEPARATOR in user_id:
             raise ValueError("user_id must not contain the reserved separator character (0x1f)")
         if user_id == self.SHARED_OWNER_TAG:
-            raise ValueError(f"user_id must not equal the reserved shared-owner tag '{self.SHARED_OWNER_TAG}'")
+            raise ValueError(
+                f"user_id must not be '{self.SHARED_OWNER_TAG}' - that value is reserved to mark content "
+                "shared with every user"
+            )
         if user_id == self.MATCH_ALL_TAG:
             raise ValueError(f"user_id must not equal the reserved match-all tag '{self.MATCH_ALL_TAG}'")
         if "{" in user_id or "}" in user_id:
             raise ValueError("user_id must not contain brace characters ('{' or '}')")
         if "*" in user_id or "?" in user_id:
             raise ValueError("user_id must not contain wildcard characters ('*' or '?')")
+        if user_id != user_id.strip():
+            raise ValueError("user_id must not have leading or trailing whitespace")
 
     def _scoped_doc_id(self, base_id: str, user_id: Optional[str]) -> str:
         """Fold the owner into the deterministic id so two users uploading the
         same content get distinct keys. The shared bucket keeps the legacy id.
+
+        The base id is caller-controlled and variable length, so it is collapsed
+        to a fixed-length digest before the owner is folded in - otherwise the
+        '_' boundary moves and ('doc_1', 'alice') and ('doc', '1_alice') fold to
+        the same key, letting one owner overwrite the other's chunk.
         """
         if user_id is None:
             return base_id
-        return hash_string_sha256(f"{base_id}_{user_id}")
+        return hash_string_sha256(f"{hash_string_sha256(base_id)}_{user_id}")
 
     def _parse_hash(self, doc: Document, user_id: Optional[str] = None) -> Dict[str, Any]:
         """Create a dict serializable into a Valkey HASH structure.
@@ -458,11 +473,22 @@ class ValkeyDB(VectorDb):
             log_error(f"Error checking if ID exists: {str(e)}")
             return False
 
-    def content_hash_exists(self, content_hash: str) -> bool:
-        """Check if a document with the given content hash exists."""
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        """Check if a document with the given content hash exists.
+
+        user_id set  -> only the caller's own chunks count, so another owner's
+        identical upload is not judged a duplicate. None -> the shared bucket
+        alone (the sentinel owner tag), never every owner.
+
+        This is the guard half of the upsert dedupe pair, so it matches exactly
+        the bucket ``_dedupe_query`` clears and never an owned chunk: otherwise a
+        shared publish is judged a duplicate on the strength of one tenant's
+        private copy and the shared bucket never receives it.
+        """
         try:
+            self._validate_user_id(user_id)
             client = self._get_client()
-            query = f"@content_hash:{{{_escape_tag_value(content_hash)}}}"
+            query = self._dedupe_query(content_hash, user_id)
             options = FtSearchOptions(
                 limit=FtSearchLimit(0, 0),
             )
@@ -865,7 +891,7 @@ class ValkeyDB(VectorDb):
         """Delete documents by content ID.
 
         user_id set  -> delete only the caller's own chunks (must NOT touch
-        the shared bucket). None -> delete across all owners (legacy/admin).
+        the shared bucket). None -> the admin view, deleting across every owner.
         """
         self._validate_user_id(user_id)
         try:
@@ -932,14 +958,14 @@ class ValkeyDB(VectorDb):
         return []
 
     def _delete_by_tag_filter(self, tag_field: str, tag_value: str) -> bool:
-        """Delete all documents matching a tag filter in a single batch call."""
-        keys = self._find_keys_by_tag(tag_field, tag_value)
-        if not keys:
-            return False
-        client = self._get_client()
-        deleted = client.delete(cast(List[Union[str, bytes, bytearray, memoryview]], keys))
-        log_debug(f"Deleted {deleted} documents with {tag_field}='{tag_value}'")
-        return deleted is not None and int(deleted) > 0
+        """Delete all documents matching a tag filter.
+
+        Deletes through ``_delete_by_query`` so the matches are paged to
+        exhaustion: a single FT.SEARCH page would leave every match past the
+        page behind while still reporting the delete succeeded, and those
+        survivors keep their owner tag and stay visible to every scoped reader.
+        """
+        return self._delete_by_query(f"@{tag_field}:{{{_escape_tag_value(tag_value)}}}")
 
     def _delete_by_query(self, query: str) -> bool:
         """Delete all documents matching an FT.SEARCH query.

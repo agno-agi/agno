@@ -1,138 +1,137 @@
 """
-Per-User Knowledge Isolation with Milvus
-========================================
+Per-User Isolation: Milvus
+==========================
 Each user gets a private view of one shared knowledge base. Documents
 uploaded with a user_id are visible only to that user; documents uploaded
 without one are shared with everyone.
 
-Milvus stores the owner in a nullable user_id scalar field and pushes
-user_id == X or user_id is null into the search expression.
+Milvus stores the owner in a non-nullable user_id scalar field; shared chunks
+carry a __shared__ sentinel and scoped reads match caller OR sentinel.
 
 - Search as Alice: her chunks plus shared content, never Bob's
 - Search as Bob: his chunks plus shared content, never Alice's
 - Search with user_id=None: admin view, sees everything
 
-Note: Milvus Lite (local-file uri) does not return dynamic scalar fields
-on this read path, so retrieved content comes back empty and the demo
-verifies isolation by result counts. A full Milvus server also returns
-populated content with the same code.
+This needs a real Milvus server. Milvus Lite (the local-file uri) drops the
+scalar fields on the search read path, so retrieved content comes back empty
+and the content checks below cannot run against it.
 
-Requirements: pip install "pymilvus[milvus-lite]" (embedded) and OPENAI_API_KEY
-Run: python cookbook/07_knowledge/04_advanced/07_per_user_isolation/milvus_db.py
+Requirements:
+- curl -sfL https://raw.githubusercontent.com/milvus-io/milvus/master/scripts/standalone_embed.sh -o standalone_embed.sh
+- bash standalone_embed.sh start
+- uv pip install pymilvus
+- OPENAI_API_KEY
 """
 
 import asyncio
-from pathlib import Path
+from typing import List
 
-from agno.agent import Agent
+from agno.knowledge.document import Document
 from agno.knowledge.knowledge import Knowledge
-from agno.models.openai import OpenAIResponses
 from agno.vectordb.milvus import Milvus
 
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 
-def _write_temp_doc(name: str, body: str) -> str:
-    """Write a tiny text file we can ingest. Returns the absolute path."""
-    p = Path(f"/tmp/{name}")
-    p.write_text(body)
-    return str(p)
+ALICE_SALARY = "Alice's salary is $180,000. Reviewed annually in March."
+BOB_SALARY = "Bob's salary is $215,000. Reviewed annually in June."
+HOLIDAYS = "The company is closed on January 1, July 4, and December 25."
+
+MILVUS_URI = "http://localhost:19530"
+COLLECTION_NAME = "per_user_isolation_demo"
 
 
-async def main() -> None:
-    # Milvus Lite does not implement the async index-creation path, so
-    # create the collection with the sync client.
-    vector_db = Milvus(
-        collection="per_user_isolation_demo",
-        uri="/tmp/milvus_per_user_isolation.db",
-    )
+def show(label: str, results: List[Document]) -> None:
+    """Print one search result set."""
+    print(f"{label} -> {len(results)} results")
+    for d in results:
+        print(f"  - {d.content[:80]}")
+    print()
+
+
+# ---------------------------------------------------------------------------
+# Create Knowledge Base
+# ---------------------------------------------------------------------------
+
+vector_db = Milvus(collection=COLLECTION_NAME, uri=MILVUS_URI)
+
+# Start clean: a collection created before the user_id field was declared keeps
+# its old schema, and there scoped reads never match shared chunks.
+if vector_db.exists():
     vector_db.drop()
-    vector_db.create()
+vector_db.create()
 
-    knowledge = Knowledge(
-        name="per_user_demo",
-        description="Per-user RAG isolation demo (Milvus)",
-        vector_db=vector_db,
-    )
+knowledge = Knowledge(
+    name="per_user_demo",
+    description="Per-user RAG isolation demo (Milvus)",
+    vector_db=vector_db,
+)
 
-    # Alice and Bob upload private docs; the last upload has no user_id,
-    # which makes it shared / org-wide content.
-    await knowledge.ainsert(
-        path=_write_temp_doc(
-            "alice_salary.txt",
-            "Alice's salary is $180,000. Reviewed annually in March.",
-        ),
-        name="alice_salary",
-        user_id="alice",
-    )
-
-    await knowledge.ainsert(
-        path=_write_temp_doc(
-            "bob_salary.txt",
-            "Bob's salary is $215,000. Reviewed annually in June.",
-        ),
-        name="bob_salary",
-        user_id="bob",
-    )
-
-    await knowledge.ainsert(
-        path=_write_temp_doc(
-            "company_holidays.txt",
-            "The company is closed on January 1, July 4, and December 25.",
-        ),
-        name="company_holidays",
-    )
-
-    print("\n=== Direct asearch tests ===\n")
-
-    admin_view = await knowledge.asearch(query="salary", user_id=None)
-    print(f"Admin (user_id=None) -> {len(admin_view)} results (whole corpus)")
-
-    alice_view = await knowledge.asearch(query="salary", user_id="alice")
-    print(f"Alice (scoped)        -> {len(alice_view)} results (own + shared)")
-
-    bob_view = await knowledge.asearch(query="salary", user_id="bob")
-    print(f"Bob (scoped)          -> {len(bob_view)} results (own + shared)")
-
-    # Count-based checks (see the Milvus Lite note in the module docstring):
-    # each scoped view drops exactly the other user's private chunk.
-    assert alice_view, "expected Alice's own results, got none"
-    assert len(admin_view) == 3, (
-        f"Admin should see the whole corpus, got {len(admin_view)}"
-    )
-    assert len(alice_view) == len(admin_view) - 1, (
-        "Isolation broken: Alice's scoped view should drop exactly Bob's chunk"
-    )
-    assert len(bob_view) == len(admin_view) - 1, (
-        "Isolation broken: Bob's scoped view should drop exactly Alice's chunk"
-    )
-    print("  isolation holds: neither user's scope includes the other's chunk")
-
-    bob_holidays = await knowledge.asearch(
-        query="When is the company closed?", user_id="bob"
-    )
-    print(f"\nBob asks about holidays -> {len(bob_holidays)} results")
-    assert bob_holidays, "Bob should still see the shared holidays doc"
-
-    print("\n=== Agent-mediated test ===\n")
-
-    # The agent's user_id flows into run_context and scopes its retrieval.
-    alice_agent = Agent(
-        name="Alice's Assistant",
-        model=OpenAIResponses(id="gpt-5.5"),
-        knowledge=knowledge,
-        user_id="alice",
-        instructions=[
-            "Answer questions using ONLY the knowledge you can retrieve.",
-            "If you don't know, say so - do not invent salary figures.",
-        ],
-        markdown=True,
-    )
-
-    response = await alice_agent.arun("What is Bob's salary?")
-    print("Alice's agent on 'What is Bob's salary?':")
-    print(response.content)
-
-    print("\nDone.")
+# ---------------------------------------------------------------------------
+# Run Demo
+# ---------------------------------------------------------------------------
 
 
 if __name__ == "__main__":
+
+    async def main() -> None:
+        # Alice and Bob upload private docs; the last upload has no user_id,
+        # which makes it shared / org-wide content.
+        await knowledge.ainsert(
+            name="alice_salary",
+            text_content=ALICE_SALARY,
+            user_id="alice",
+        )
+        await knowledge.ainsert(
+            name="bob_salary",
+            text_content=BOB_SALARY,
+            user_id="bob",
+        )
+        await knowledge.ainsert(
+            name="company_holidays",
+            text_content=HOLIDAYS,
+        )
+
+        print("\n" + "=" * 60)
+        print("SCOPED SEARCH: three callers, one corpus")
+        print("=" * 60 + "\n")
+
+        alice_view = await knowledge.asearch(query="salary", user_id="alice")
+        show("Alice (user_id='alice')", alice_view)
+        alice_text = " ".join(d.content for d in alice_view)
+        assert "180,000" in alice_text, "Alice cannot retrieve her own document"
+        assert "January 1" in alice_text, (
+            "Shared content is unreachable from Alice's scoped view"
+        )
+        assert "215,000" not in alice_text, (
+            "Isolation broken: Alice's scoped view leaked Bob's salary"
+        )
+
+        bob_view = await knowledge.asearch(query="salary", user_id="bob")
+        show("Bob (user_id='bob')", bob_view)
+        bob_text = " ".join(d.content for d in bob_view)
+        assert "215,000" in bob_text, "Bob cannot retrieve his own document"
+        assert "January 1" in bob_text, (
+            "Shared content is unreachable from Bob's scoped view"
+        )
+        assert "180,000" not in bob_text, (
+            "Isolation broken: Bob's scoped view leaked Alice's salary"
+        )
+
+        admin_view = await knowledge.asearch(query="salary", user_id=None)
+        show("Admin (user_id=None)", admin_view)
+        admin_text = " ".join(d.content for d in admin_view)
+        for expected in ("180,000", "215,000", "January 1"):
+            assert expected in admin_text, (
+                f"Admin view is missing {expected}, it has to see every owner"
+            )
+        assert all(d.content in admin_text for d in alice_view), (
+            "Admin view has to be a superset of a scoped user's view"
+        )
+        print("Alice and Bob each see their own chunk plus the shared one.")
+        print("Admin sees the whole corpus.")
+
+        print("\nDone.")
+
     asyncio.run(main())

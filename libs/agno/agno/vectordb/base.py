@@ -57,27 +57,31 @@ class VectorDb(ABC):
     def id_exists(self, id: str) -> bool:
         raise NotImplementedError
 
-    @abstractmethod
-    def content_hash_exists(self, content_hash: str) -> bool:
-        raise NotImplementedError
+    # user_id identifies the OWNER of the chunks. Backends translate it into their
+    # native primitive: pgvector writes a column, Chroma routes to a per-user
+    # collection, Pinecone uses a namespace. What None means is per operation, not per
+    # class: a search widens to every owner, a write lands in the shared bucket, a
+    # delete narrows. Backends that don't yet implement isolation must still accept the
+    # parameter as a no-op so the Knowledge wrapper can pass it uniformly.
 
-    # ---- ``user_id`` semantics for per-user RAG isolation ----
-    #
-    # ``user_id`` is a first-class parameter on every insert / upsert /
-    # search method below. It identifies the OWNER of the chunks. Backends
-    # translate it into their native primitive: pgvector writes a column,
-    # Chroma routes to a per-user collection, Pinecone uses a namespace,
-    # etc.
-    #
-    # ``None`` means "shared / org-wide / unscoped" — chunks become
-    # visible to every caller, and searches with ``user_id=None`` see
-    # everything (admin / RBAC-off view).
-    #
-    # Backends that don't yet implement isolation must still accept the
-    # parameter (no-op) so the Knowledge wrapper can pass it uniformly.
-    # When you wire up a new backend, write a smoke test that proves the
-    # native primitive actually isolates (alice's search doesn't surface
-    # bob's chunks) before claiming support.
+    @abstractmethod
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        """Check whether the given content hash was already ingested for an owner.
+
+        This is the guard half of the dedup pair: a True is followed by a delete of the
+        same content hash under the same user_id, so the guard must match exactly the
+        rows that delete would clear - never more. A guard that matched every owner
+        would let one caller's private copy report "already exists" for a shared
+        publish, skip the write, and leave the shared bucket empty.
+
+        Args:
+            content_hash (str): The content hash to look for
+            user_id (Optional[str]): The owner to check. None checks the shared bucket
+
+        Returns:
+            bool: True if that owner already holds the content hash
+        """
+        raise NotImplementedError
 
     @abstractmethod
     def insert(
@@ -87,6 +91,15 @@ class VectorDb(ABC):
         filters: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
     ) -> None:
+        """Insert the given documents.
+
+        Args:
+            content_hash (str): The content hash the documents were chunked from
+            documents (List[Document]): The documents to insert
+            filters (Optional[Dict[str, Any]]): Metadata to stamp on every chunk
+            user_id (Optional[str]): The owner of the chunks. None writes the shared
+                bucket, which every scoped reader can see
+        """
         raise NotImplementedError
 
     @abstractmethod
@@ -195,14 +208,16 @@ class VectorDb(ABC):
 
     @abstractmethod
     def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
-        """Delete all chunks with the given ``content_id``.
+        """Delete all chunks with the given content ID.
 
-        ``user_id`` scopes the delete to the owner's bucket — preventing
-        cross-user delete races where one caller could wipe another's
-        chunks by guessing their content_id. ``None`` deletes across all
-        owners (legacy behaviour; safe only for unscoped deployments).
-        Backends that don't yet implement per-user isolation accept the
-        parameter as a no-op for forward-compatibility.
+        Args:
+            content_id (str): The content ID to delete
+            user_id (Optional[str]): Scope the delete to that owner's chunks alone -
+                shared chunks survive, and one caller cannot wipe another's by guessing
+                their content_id. None is the admin view and deletes across every owner
+
+        Returns:
+            bool: True if chunks were deleted, False otherwise
         """
         raise NotImplementedError
 

@@ -284,9 +284,45 @@ def test_delete_content_by_id(test_app, mock_knowledge, mock_content_row):
 
     # Verify knowledge.aremove_content_by_id was called. ``user_id=None`` because
     # the test app has no auth wired, so ``get_scoped_user_id`` returns None.
-    mock_knowledge.aremove_content_by_id.assert_called_once_with(
-        content_id=mock_content_row.id, user_id=None
-    )
+    mock_knowledge.aremove_content_by_id.assert_called_once_with(content_id=mock_content_row.id, user_id=None)
+
+
+def test_edit_shared_content_is_forbidden(test_app, mock_knowledge, mock_content_row):
+    """A scoped caller may read shared (unowned) content but not modify it."""
+    mock_content_row.user_id = None
+    mock_knowledge.aget_content_by_id.return_value = mock_content_row
+
+    with patch("agno.os.routers.knowledge.knowledge.get_scoped_user_id", return_value="alice"):
+        response = test_app.patch(f"/knowledge/content/{mock_content_row.id}", data={"name": "Renamed"})
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Cannot modify shared content"
+    mock_knowledge.patch_content.assert_not_called()
+
+
+def test_delete_shared_content_is_forbidden(test_app, mock_knowledge, mock_content_row):
+    """The vector rows go with the metadata row, so the guard has to precede both."""
+    mock_content_row.user_id = None
+    mock_knowledge.aget_content_by_id.return_value = mock_content_row
+
+    with patch("agno.os.routers.knowledge.knowledge.get_scoped_user_id", return_value="alice"):
+        response = test_app.delete(f"/knowledge/content/{mock_content_row.id}")
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Cannot delete shared content"
+    mock_knowledge.aremove_content_by_id.assert_not_called()
+
+
+def test_delete_own_content_is_allowed_when_scoped(test_app, mock_knowledge, mock_content_row):
+    """The guard must not over-block: an owner still deletes their own content."""
+    mock_content_row.user_id = "alice"
+    mock_knowledge.aget_content_by_id.return_value = mock_content_row
+
+    with patch("agno.os.routers.knowledge.knowledge.get_scoped_user_id", return_value="alice"):
+        response = test_app.delete(f"/knowledge/content/{mock_content_row.id}")
+
+    assert response.status_code == 200
+    mock_knowledge.aremove_content_by_id.assert_called_once_with(content_id=mock_content_row.id, user_id="alice")
 
 
 def test_delete_all_content(test_app, mock_knowledge):
@@ -459,7 +495,7 @@ def test_search_knowledge_basic(test_app, mock_knowledge):
 
     # Verify knowledge.asearch was called correctly
     mock_knowledge.asearch.assert_called_once_with(
-        query="Jordan Mitchell skills", max_results=None, filters=None, search_type=None
+        query="Jordan Mitchell skills", max_results=None, filters=None, search_type=None, user_id=None
     )
 
 
@@ -483,7 +519,7 @@ def test_search_knowledge_with_search_type(test_app, mock_knowledge):
 
     # Verify knowledge.asearch was called with search_type
     mock_knowledge.asearch.assert_called_once_with(
-        query="test query", max_results=None, filters=None, search_type="vector"
+        query="test query", max_results=None, filters=None, search_type="vector", user_id=None
     )
 
 
@@ -508,7 +544,9 @@ def test_search_knowledge_with_db_id(test_app, mock_knowledge):
     assert data["meta"]["total_count"] == 1
 
     # Note: db_id affects which knowledge instance is selected, not the search call itself
-    mock_knowledge.asearch.assert_called_once_with(query="test", max_results=None, filters=None, search_type=None)
+    mock_knowledge.asearch.assert_called_once_with(
+        query="test", max_results=None, filters=None, search_type=None, user_id=None
+    )
 
 
 def test_search_knowledge_no_results(test_app, mock_knowledge):
@@ -590,7 +628,7 @@ def test_search_knowledge_with_all_parameters(test_app, mock_knowledge):
     assert doc["size"] == 100
 
     mock_knowledge.asearch.assert_called_once_with(
-        query="full test", max_results=None, filters=None, search_type="hybrid"
+        query="full test", max_results=None, filters=None, search_type="hybrid", user_id=None
     )
 
 
