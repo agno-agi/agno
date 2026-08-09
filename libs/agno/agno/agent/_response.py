@@ -1058,6 +1058,16 @@ def handle_model_response_stream(
 ) -> Iterator[RunOutputEvent]:
     agent.model = cast(Model, agent.model)
 
+    # Pre-loop compaction: compress history BEFORE first model call
+    if agent.context_compaction_manager is not None:
+        compaction_result = agent.context_compaction_manager.compact(
+            run_messages.messages,
+            run_response=run_response,
+            run_metrics=run_response.metrics,
+        )
+        if compaction_result.summary:
+            run_messages.compacted_messages = compaction_result.compacted_messages
+
     reasoning_state = {
         "reasoning_started": False,
         "reasoning_time_taken": 0.0,
@@ -1073,7 +1083,7 @@ def handle_model_response_stream(
         log_debug("Response model set, model response is not streamed.")
         stream_model_response = False
 
-    from agno.agent._run import build_after_tool_results_callback
+    from agno.agent._run import build_after_tool_results_callback, build_compaction_callback
 
     for model_response_event in call_model_stream_with_fallback(
         agent.model,
@@ -1087,6 +1097,11 @@ def handle_model_response_stream(
         run_response=run_response,
         send_media_to_model=agent.send_media_to_model,
         compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+        compaction_callback=build_compaction_callback(
+            agent,
+            run_messages=run_messages,
+            run_response=run_response,
+        ),
         after_tool_results=build_after_tool_results_callback(
             agent,
             run_response=run_response,
@@ -1094,6 +1109,7 @@ def handle_model_response_stream(
             run_messages=run_messages,
             run_context=run_context,
         ),
+        compacted_messages=run_messages.compacted_messages,
     ):
         # Handle LLM request events and compression events from ModelResponse
         if isinstance(model_response_event, ModelResponse):
@@ -1218,6 +1234,16 @@ async def ahandle_model_response_stream(
 ) -> AsyncIterator[RunOutputEvent]:
     agent.model = cast(Model, agent.model)
 
+    # Pre-loop compaction: compress history BEFORE first model call
+    if agent.context_compaction_manager is not None:
+        compaction_result = await agent.context_compaction_manager.acompact(
+            run_messages.messages,
+            run_response=run_response,
+            run_metrics=run_response.metrics,
+        )
+        if compaction_result.summary:
+            run_messages.compacted_messages = compaction_result.compacted_messages
+
     reasoning_state = {
         "reasoning_started": False,
         "reasoning_time_taken": 0.0,
@@ -1233,7 +1259,7 @@ async def ahandle_model_response_stream(
         log_debug("Response model set, model response is not streamed.")
         stream_model_response = False
 
-    from agno.agent._run import abuild_after_tool_results_callback
+    from agno.agent._run import abuild_after_tool_results_callback, abuild_compaction_callback
 
     model_response_stream = acall_model_stream_with_fallback(
         agent.model,
@@ -1247,6 +1273,11 @@ async def ahandle_model_response_stream(
         run_response=run_response,
         send_media_to_model=agent.send_media_to_model,
         compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+        compaction_callback=await abuild_compaction_callback(
+            agent,
+            run_messages=run_messages,
+            run_response=run_response,
+        ),
         after_tool_results=abuild_after_tool_results_callback(
             agent,
             run_response=run_response,
@@ -1254,6 +1285,7 @@ async def ahandle_model_response_stream(
             run_messages=run_messages,
             run_context=run_context,
         ),
+        compacted_messages=run_messages.compacted_messages,
     )  # type: ignore
 
     async for model_response_event in model_response_stream:  # type: ignore

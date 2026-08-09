@@ -1289,6 +1289,24 @@ def get_run_messages(
     if add_history_to_context:
         from copy import deepcopy
 
+        # Find applicable compaction state from previous runs
+        log_debug("[MESSAGES] Looking for compaction state from previous runs...")
+        compaction_state = session.get_compaction_state()
+
+        # Inject compaction summary before history (replaces compacted messages)
+        if compaction_state:
+            log_debug(
+                f"[MESSAGES] Found compaction: total={compaction_state.total_compactions}, ids={len(compaction_state.compacted_message_ids)}"
+            )
+            log_debug(
+                f"[MESSAGES] Injecting summary: {compaction_state.summary[:100] if compaction_state.summary else 'None'}..."
+            )
+            run_messages.messages.append(compaction_state.get_summary_message())
+            # Seed run_response.compaction_state for mid-loop compaction to build on
+            run_response.compaction_state = deepcopy(compaction_state)
+        else:
+            log_debug("[MESSAGES] No prior compaction found")
+
         # Only skip messages from history when system_message_role is NOT a standard conversation role.
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered
         # to preserve conversation continuity.
@@ -1301,6 +1319,7 @@ def get_run_messages(
             limit=agent.num_history_messages,
             skip_roles=[skip_role] if skip_role else None,
             agent_id=agent.id if agent.team_id is not None else None,
+            compacted_message_ids=compaction_state.compacted_message_ids if compaction_state else None,
         )
 
         if len(history) > 0:
@@ -1315,7 +1334,7 @@ def get_run_messages(
             if agent.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
 
-            log_debug(f"Adding {len(history_copy)} messages from history")
+            log_debug(f"[MESSAGES] Adding {len(history_copy)} messages from history (filtered from {len(history)})")
 
             run_messages.messages += history_copy
 
@@ -1495,6 +1514,24 @@ async def aget_run_messages(
     if add_history_to_context:
         from copy import deepcopy
 
+        # Find applicable compaction state from previous runs
+        log_debug("[MESSAGES] Looking for compaction state from previous runs...")
+        compaction_state = session.get_compaction_state()
+
+        # Inject compaction summary before history (replaces compacted messages)
+        if compaction_state:
+            log_debug(
+                f"[MESSAGES] Found compaction: total={compaction_state.total_compactions}, ids={len(compaction_state.compacted_message_ids)}"
+            )
+            log_debug(
+                f"[MESSAGES] Injecting summary: {compaction_state.summary[:100] if compaction_state.summary else 'None'}..."
+            )
+            run_messages.messages.append(compaction_state.get_summary_message())
+            # Seed run_response.compaction_state for mid-loop compaction to build on
+            run_response.compaction_state = deepcopy(compaction_state)
+        else:
+            log_debug("[MESSAGES] No prior compaction found")
+
         # Only skip messages from history when system_message_role is NOT a standard conversation role.
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered
         # to preserve conversation continuity.
@@ -1507,6 +1544,7 @@ async def aget_run_messages(
             limit=agent.num_history_messages,
             skip_roles=[skip_role] if skip_role else None,
             agent_id=agent.id if agent.team_id is not None else None,
+            compacted_message_ids=compaction_state.compacted_message_ids if compaction_state else None,
         )
 
         if len(history) > 0:
@@ -1521,7 +1559,7 @@ async def aget_run_messages(
             if agent.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
 
-            log_debug(f"Adding {len(history_copy)} messages from history")
+            log_debug(f"[MESSAGES] Adding {len(history_copy)} messages from history (filtered from {len(history)})")
 
             run_messages.messages += history_copy
 
@@ -1616,6 +1654,7 @@ def get_continue_run_messages(
     agent: Agent,
     input: List[Message],
     session: Optional[AgentSession] = None,
+    run_response: Optional[RunOutput] = None,
     add_history_to_context: Optional[bool] = None,
     run_context: Optional[RunContext] = None,
 ) -> RunMessages:
@@ -1667,6 +1706,21 @@ def get_continue_run_messages(
     if add_history_to_context and session is not None and not input_has_history:
         from copy import deepcopy
 
+        # Get compaction state for point-in-time filtering (time-travel for continue_run)
+        compaction_state = None
+        if run_response is not None and session is not None:
+            compaction_state = run_response.compaction_state
+            if compaction_state is None:
+                lookup_id = run_response.forked_from_run_id or run_response.run_id
+                compaction_state = session.get_compaction_state(run_id=lookup_id)
+                # Seed run_response so mid-loop compaction can merge with prior state
+                if compaction_state is not None:
+                    run_response.compaction_state = deepcopy(compaction_state)
+
+        # Inject compaction summary before history (replaces compacted messages)
+        if compaction_state is not None:
+            run_messages.messages.append(compaction_state.get_summary_message())
+
         # Only skip messages from history when system_message_role is NOT a standard conversation role.
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered
         # to preserve conversation continuity.
@@ -1679,6 +1733,7 @@ def get_continue_run_messages(
             limit=agent.num_history_messages,
             skip_roles=[skip_role] if skip_role else None,
             agent_id=agent.id if agent.team_id is not None else None,
+            compacted_message_ids=compaction_state.compacted_message_ids if compaction_state else None,
         )
 
         if len(history) > 0:
@@ -1693,7 +1748,7 @@ def get_continue_run_messages(
             if agent.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
 
-            log_debug(f"Adding {len(history_copy)} messages from history")
+            log_debug(f"[MESSAGES] Adding {len(history_copy)} messages from history (filtered from {len(history)})")
             run_messages.messages += history_copy
 
     # 3. Add the remaining input messages (skip the system message to avoid duplication)
