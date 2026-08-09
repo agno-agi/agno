@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from textwrap import dedent
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
 
 from agno.models.base import Model
 from agno.models.message import Message
@@ -14,6 +14,7 @@ from agno.utils.message import safe_truncation_index
 if TYPE_CHECKING:
     from agno.metrics import RunMetrics
     from agno.run.agent import RunOutput
+    from agno.run.team import TeamRunOutput
 
 from agno.metrics import ModelType, accumulate_model_metrics
 
@@ -173,7 +174,7 @@ class ContextCompactionManager:
     def compact(
         self,
         messages: List[Message],
-        run_response: Optional["RunOutput"] = None,
+        run_response: Optional[Union["RunOutput", "TeamRunOutput"]] = None,
         run_metrics: Optional["RunMetrics"] = None,
     ) -> CompactionResult:
         """Compact messages if threshold exceeded.
@@ -357,7 +358,7 @@ class ContextCompactionManager:
 
     def _update_compaction_state(
         self,
-        run_response: Optional["RunOutput"],
+        run_response: Optional[Union["RunOutput", "TeamRunOutput"]],
         old_messages: List[Message],
         new_summary: str,
         tokens_saved: int = 0,
@@ -394,7 +395,7 @@ class ContextCompactionManager:
     async def acompact(
         self,
         messages: List[Message],
-        run_response: Optional["RunOutput"] = None,
+        run_response: Optional[Union["RunOutput", "TeamRunOutput"]] = None,
         run_metrics: Optional["RunMetrics"] = None,
     ) -> CompactionResult:
         """Async version of compact()."""
