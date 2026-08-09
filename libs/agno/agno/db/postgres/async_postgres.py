@@ -834,6 +834,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                         set_=dict(
                             status=stmt.excluded.status,
                             run_data=stmt.excluded.run_data,
+                            compaction_summary=stmt.excluded.compaction_summary,
                             user_id=stmt.excluded.user_id,
                             parent_run_id=stmt.excluded.parent_run_id,
                             updated_at=stmt.excluded.updated_at,

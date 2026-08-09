@@ -657,6 +657,8 @@ class RunOutput:
 
     # Point-in-time compaction state for continue_run time travel
     compaction_state: Optional["CompactionState"] = None
+    # Top-level summary for SQL-searchable queries (denormalized from compaction_state)
+    compaction_summary: Optional[str] = None
 
     created_at: int = field(default_factory=lambda: int(time()))
 

@@ -100,6 +100,11 @@ class Agent:
     search_past_sessions: Optional[bool] = False
     num_past_sessions_to_search: Optional[int] = None
     num_past_session_runs_in_search: Optional[int] = None
+
+    # Enable planning tools for long-running sessions (goals, tasks, context search)
+    enable_planning_tools: bool = False
+    # Auto-inject planning state card at run start (requires enable_planning_tools)
+    add_planning_state_to_context: bool = False
     # If True, the agent creates/updates session summaries at the end of runs
     enable_session_summaries: bool = False
     # If True, the agent adds session summaries to the context
@@ -402,6 +407,8 @@ class Agent:
         search_past_sessions: Optional[bool] = False,
         num_past_sessions_to_search: Optional[int] = None,
         num_past_session_runs_in_search: Optional[int] = None,
+        enable_planning_tools: bool = False,
+        add_planning_state_to_context: bool = False,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: bool = False,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
@@ -524,6 +531,8 @@ class Agent:
         self.search_past_sessions = search_past_sessions
         self.num_past_sessions_to_search = num_past_sessions_to_search
         self.num_past_session_runs_in_search = num_past_session_runs_in_search
+        self.enable_planning_tools = enable_planning_tools
+        self.add_planning_state_to_context = add_planning_state_to_context
 
         self.dependencies = dependencies
         self.add_dependencies_to_context = add_dependencies_to_context

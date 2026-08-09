@@ -56,6 +56,8 @@ def _get_run_table_schema(session_table_name: str = "agno_sessions") -> dict[str
         "status": {"type": String, "nullable": True, "index": True},
         "run_index": {"type": BigInteger, "nullable": True},
         "run_data": {"type": JSONB, "nullable": False},
+        # Top-level summary from context compaction for SQL-searchable queries
+        "compaction_summary": {"type": Text, "nullable": True},
         "created_at": {"type": BigInteger, "nullable": False, "index": True},
         "updated_at": {"type": BigInteger, "nullable": True},
         # Composite index so "most recent N runs of a session"

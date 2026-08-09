@@ -192,6 +192,20 @@ def get_tools(
             )
         )
 
+    if agent.enable_planning_tools:
+        from agno.tools.planning import PlanningTools
+
+        # Planning tools work standalone (no DB required)
+        planning_toolkit = PlanningTools()
+        agent_tools.extend(planning_toolkit.get_functions().values())
+
+        # Session recall tools require DB for searching compacted history
+        if agent.db is not None:
+            from agno.tools.session_recall import SessionRecallTools
+
+            recall_toolkit = SessionRecallTools(db=agent.db)
+            agent_tools.extend(recall_toolkit.get_functions().values())
+
     # Add tools for accessing knowledge
     # Single unified path through get_relevant_docs_from_knowledge(),
     # which checks knowledge_retriever first, then falls back to knowledge.search().
@@ -324,6 +338,20 @@ async def aget_tools(
                 entrypoint=_default_tools.make_update_session_state_entrypoint(agent),
             )
         )
+
+    if agent.enable_planning_tools:
+        from agno.tools.planning import PlanningTools
+
+        # Planning tools work standalone (no DB required)
+        planning_toolkit = PlanningTools()
+        agent_tools.extend(planning_toolkit.get_functions().values())
+
+        # Session recall tools require DB for searching compacted history
+        if agent.db is not None:
+            from agno.tools.session_recall import SessionRecallTools
+
+            recall_toolkit = SessionRecallTools(db=agent.db)
+            agent_tools.extend(recall_toolkit.get_functions().values())
 
     # Add tools for accessing knowledge
     # Single unified path through aget_relevant_docs_from_knowledge(),

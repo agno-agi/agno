@@ -284,6 +284,10 @@ def build_single_run_row(
     if effective_run_index is None:
         effective_run_index = run_data.get("run_index")
 
+    # Extract compaction summary for top-level column (SQL-searchable)
+    compaction_state = run_data.get("compaction_state")
+    compaction_summary = compaction_state.get("summary") if compaction_state else None
+
     return {
         "run_id": run_id,
         "session_id": session_id,
@@ -296,6 +300,7 @@ def build_single_run_row(
         "status": run_data.get("status"),
         "run_index": effective_run_index,
         "run_data": run_data,
+        "compaction_summary": compaction_summary,
         "created_at": run_data.get("created_at") or current_time,
         "updated_at": current_time,
     }

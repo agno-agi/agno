@@ -1008,6 +1008,7 @@ class PostgresDb(BaseDb):
                     set_=dict(
                         status=stmt.excluded.status,
                         run_data=stmt.excluded.run_data,
+                        compaction_summary=stmt.excluded.compaction_summary,
                         user_id=stmt.excluded.user_id,
                         parent_run_id=stmt.excluded.parent_run_id,
                         updated_at=stmt.excluded.updated_at,
@@ -1101,6 +1102,218 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_error(f"Exception reading from runs table: {str(e)}")
             raise e
+
+    def search_runs_by_summary(
+        self,
+        query: str,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """Search runs by compaction_summary using ILIKE.
+
+        Args:
+            query: Search term (will be wrapped in %...% for ILIKE)
+            session_id: Optional session filter
+            user_id: Optional user filter
+            agent_id: Optional agent filter
+            limit: Max results to return
+
+        Returns:
+            List of dicts with run_id, session_id, compaction_summary, created_at
+        """
+        try:
+            table = self._get_table(table_type="runs")
+            if table is None:
+                return []
+
+            with self.Session() as sess:
+                stmt = select(
+                    table.c.run_id,
+                    table.c.session_id,
+                    table.c.compaction_summary,
+                    table.c.created_at,
+                ).where(table.c.compaction_summary.ilike(f"%{query}%"))
+
+                if session_id is not None:
+                    stmt = stmt.where(table.c.session_id == session_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+
+                stmt = stmt.order_by(table.c.created_at.desc()).limit(limit)
+                records = sess.execute(stmt).fetchall()
+
+                return [dict(record._mapping) for record in records]
+
+        except Exception as e:
+            log_error(f"Exception searching runs by summary: {str(e)}")
+            return []
+
+    def search_runs_by_content(
+        self,
+        query: str,
+        session_id: Optional[str] = None,
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """Search runs by input/output content using JSONB ILIKE.
+
+        Searches both run_data->input->input_content and run_data->content.
+
+        Args:
+            query: Search term
+            session_id: Optional session filter
+            limit: Max results to return
+
+        Returns:
+            List of dicts with run_id, input_preview, content_preview, created_at
+        """
+        try:
+            table = self._get_table(table_type="runs")
+            if table is None:
+                return []
+
+            with self.Session() as sess:
+                # Search in input_content and content
+                input_col = table.c.run_data["input"]["input_content"].astext
+                content_col = table.c.run_data["content"].astext
+
+                stmt = select(
+                    table.c.run_id,
+                    table.c.session_id,
+                    input_col.label("input_content"),
+                    content_col.label("content"),
+                    table.c.created_at,
+                ).where((input_col.ilike(f"%{query}%")) | (content_col.ilike(f"%{query}%")))
+
+                if session_id is not None:
+                    stmt = stmt.where(table.c.session_id == session_id)
+
+                stmt = stmt.order_by(table.c.created_at.desc()).limit(limit)
+                records = sess.execute(stmt).fetchall()
+
+                results = []
+                for record in records:
+                    row = dict(record._mapping)
+                    # Truncate for preview
+                    if row.get("input_content"):
+                        row["input_preview"] = row["input_content"][:200]
+                    if row.get("content"):
+                        row["content_preview"] = row["content"][:200]
+                    results.append(row)
+
+                return results
+
+        except Exception as e:
+            log_error(f"Exception searching runs by content: {str(e)}")
+            return []
+
+    def find_runs_by_tool(
+        self,
+        tool_name: str,
+        session_id: Optional[str] = None,
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """Find runs that used a specific tool.
+
+        Args:
+            tool_name: Name of the tool to find
+            session_id: Optional session filter
+            limit: Max results to return
+
+        Returns:
+            List of dicts with run_id, tool executions, created_at
+        """
+        try:
+            table = self._get_table(table_type="runs")
+            if table is None:
+                return []
+
+            with self.Session() as sess:
+                # Use jsonb_array_elements to search tools array
+                from sqlalchemy import text
+
+                # Build the query with EXISTS subquery
+                tools_col = table.c.run_data["tools"]
+
+                stmt = select(
+                    table.c.run_id,
+                    table.c.session_id,
+                    tools_col.label("tools"),
+                    table.c.created_at,
+                ).where(
+                    text(
+                        "EXISTS (SELECT 1 FROM jsonb_array_elements(run_data->'tools') AS t "
+                        f"WHERE t->>'tool_name' = '{tool_name}')"
+                    )
+                )
+
+                if session_id is not None:
+                    stmt = stmt.where(table.c.session_id == session_id)
+
+                stmt = stmt.order_by(table.c.created_at.desc()).limit(limit)
+                records = sess.execute(stmt).fetchall()
+
+                results = []
+                for record in records:
+                    row = dict(record._mapping)
+                    # Extract just the matching tool calls
+                    tools = row.get("tools") or []
+                    row["matching_tools"] = [t for t in tools if t.get("tool_name") == tool_name]
+                    results.append(row)
+
+                return results
+
+        except Exception as e:
+            log_error(f"Exception finding runs by tool: {str(e)}")
+            return []
+
+    def get_compaction_checkpoints(
+        self,
+        session_id: str,
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """Get runs where compaction occurred (have compaction_state).
+
+        Args:
+            session_id: Session to search
+            limit: Max results to return
+
+        Returns:
+            List of dicts with run_id, summary, compacted_count, created_at
+        """
+        try:
+            table = self._get_table(table_type="runs")
+            if table is None:
+                return []
+
+            with self.Session() as sess:
+                compaction_state = table.c.run_data["compaction_state"]
+
+                stmt = (
+                    select(
+                        table.c.run_id,
+                        compaction_state["summary"].astext.label("summary"),
+                        compaction_state["compacted_count"].label("compacted_count"),
+                        compaction_state["total_compactions"].label("total_compactions"),
+                        compaction_state["total_tokens_saved"].label("tokens_saved"),
+                        table.c.created_at,
+                    )
+                    .where(table.c.session_id == session_id)
+                    .where(compaction_state["summary"].astext.isnot(None))
+                    .where(compaction_state["summary"].astext != "")
+                )
+
+                stmt = stmt.order_by(table.c.created_at.desc()).limit(limit)
+                records = sess.execute(stmt).fetchall()
+
+                return [dict(record._mapping) for record in records]
+
+        except Exception as e:
+            log_error(f"Exception getting compaction checkpoints: {str(e)}")
+            return []
 
     def _scrub_run_ids_from_legacy_blob(self, run_ids: List[str]) -> None:
         """Remove ``run_ids`` from every session row's legacy ``runs`` JSON column.

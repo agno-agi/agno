@@ -481,6 +481,14 @@ def get_system_message(
     if add_session_state_to_context and session_state is not None:
         system_message_content += f"\n<session_state>\n{session_state}\n</session_state>\n\n"
 
+    # 3.3.18 Add planning state card if enabled
+    if agent.add_planning_state_to_context and agent.enable_planning_tools and session_state is not None:
+        from agno.tools.planning import get_planning_state_card
+
+        planning_card = get_planning_state_card(session_state)
+        if planning_card:
+            system_message_content += f"\n<planning_state>\n{planning_card}\n</planning_state>\n\n"
+
     # Return the system message
     return (
         Message(role=agent.system_message_role, content=system_message_content.strip())  # type: ignore
@@ -847,6 +855,14 @@ async def aget_system_message(
     # 3.3.17 Add the session state to the system message
     if add_session_state_to_context and session_state is not None:
         system_message_content += get_formatted_session_state_for_system_message(agent, session_state)
+
+    # 3.3.18 Add planning state card if enabled
+    if agent.add_planning_state_to_context and agent.enable_planning_tools and session_state is not None:
+        from agno.tools.planning import get_planning_state_card
+
+        planning_card = get_planning_state_card(session_state)
+        if planning_card:
+            system_message_content += f"\n<planning_state>\n{planning_card}\n</planning_state>\n\n"
 
     # Return the system message
     return (
