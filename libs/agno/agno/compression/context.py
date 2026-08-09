@@ -19,36 +19,31 @@ if TYPE_CHECKING:
 from agno.metrics import ModelType, accumulate_model_metrics
 
 DEFAULT_COMPACTION_PROMPT = dedent("""\
-    You are creating a context checkpoint for an AI agent to continue work seamlessly.
+    You are creating a context checkpoint so another AI can continue this conversation seamlessly.
 
     OUTPUT STRUCTURE (use these exact headings):
 
-    ## Active Task
-    Copy the user's most recent request or goal verbatim.
+    ## Current Goal
+    The user's most recent request or objective. Quote key phrases verbatim.
 
-    ## Completed Actions
-    Format each as: N. ACTION target - outcome [tool: name]
-    Example: "1. READ agent.py - Agent dataclass, 40+ config fields, delegates to _run.py [read_file]"
+    ## Completed Work
+    What has been done so far. Format: "ACTION - outcome"
+    Example: "Searched database - found 3 matching records"
 
-    ## Key Findings
-    - Concrete facts: file paths, function names, class structures, values discovered
-    - Decisions made and their rationale
+    ## Key Information
+    - Facts discovered: names, numbers, dates, identifiers
+    - Decisions made and why
     - User preferences or corrections stated
-    - Architecture/patterns identified
-
-    ## Pending / Blocked
-    - Unresolved tasks or next steps
-    - Exact error messages if any (quote verbatim)
-
-    ## Critical Context
-    - Identifiers: IDs, versions, timestamps, URLs
     - Constraints or requirements mentioned
-    - Configuration values (no secrets)
+
+    ## Next Steps
+    - Pending tasks or unresolved items
+    - Blockers or errors encountered (quote error messages exactly)
 
     RULES:
-    - No narrative preamble ("The conversation covered...", "We discussed...")
-    - Preserve exact identifiers, paths, numbers, error strings
-    - Use terse bullets, verbs first
+    - No preamble ("The conversation covered...", "Here is a summary...")
+    - Preserve exact values: IDs, URLs, names, error messages
+    - Use terse bullets, action verbs
     - Maximum 2000 tokens
     """)
 
@@ -322,8 +317,9 @@ class ContextCompactionManager:
         if existing_summary:
             prompt.append(Message(role="user", content=f"Previous summary to update:\n{existing_summary}"))
 
-        # 3. Messages to summarize
-        prompt.extend(old_messages)
+        # 3. Messages to summarize (strip provider_data to avoid model chaining)
+        for msg in old_messages:
+            prompt.append(Message(role=msg.role, content=msg.content or ""))
 
         # 4. Final instruction to trigger summary generation
         prompt.append(Message(role="user", content="Now provide a concise summary of the conversation above."))
