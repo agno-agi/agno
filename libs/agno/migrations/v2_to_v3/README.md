@@ -12,22 +12,25 @@ There are three kinds of migration, one script each:
 | Script | Backends | What it does |
 | --- | --- | --- |
 | `migrate_sql_vectordbs.py` | pgvector, singlestore | Add the `user_id` **column** to existing tables. |
-| `migrate_field_vectordbs.py` | milvus, weaviate, lancedb, clickhouse | Add the `user_id` **field/column/property** to existing stores (+ optional Qdrant owner assignment). |
-| `migrate_sentinel_vectordbs.py` | redis, couchbase, cassandra | **Backfill** `user_id = "__shared__"` onto existing vectors. |
+| `migrate_field_vectordbs.py` | milvus, weaviate, lancedb, clickhouse, surrealdb | Add the `user_id` **field/column/property** to existing stores (+ optional Qdrant owner assignment). |
+| `migrate_sentinel_vectordbs.py` | redis, valkey, couchbase, cassandra | **Backfill** `user_id = "__shared__"` onto existing vectors. |
 
 Two things drive whether a backend needs work:
 
 - **Schema** — backends that declare `user_id` in a fixed schema (SQL column, a
-  Milvus/Weaviate field, a LanceDB column) only create it when the store is first
-  created. An **existing** store has no such field, and the scoped search filter
-  references it, so the query **fails with a schema error** until the field is
-  added. (Confirmed live: LanceDB `No field named user_id`; ClickHouse `Unknown
-  identifier user_id`; Milvus hybrid-search error.)
+  Milvus/Weaviate field, a LanceDB column, a SurrealDB `SCHEMAFUL` field) only
+  create it when the store is first created. An **existing** store has no such
+  field, and until it is added the scoped filter either **fails with a schema
+  error** (LanceDB `No field named user_id`; ClickHouse `Unknown identifier
+  user_id`; Milvus hybrid search) or, on SurrealDB, **silently drops** any new
+  owner-write (writes to an undeclared field on a `SCHEMAFUL` table are discarded),
+  breaking isolation for new uploads. All are confirmed live.
 - **"Shared" representation** — `NULL` / absent / `''` are auto-matched as shared,
   so existing rows stay visible once the field exists. But `"__shared__"` (a
-  literal sentinel used by redis/couchbase/cassandra) is **not** auto-matched: an
-  existing vector with no `user_id` matches neither side of the filter and becomes
-  **invisible** until backfilled. Those three are the mandatory data backfills.
+  literal sentinel used by redis/valkey/couchbase/cassandra) is **not**
+  auto-matched: an existing vector with no `user_id` matches neither side of the
+  filter and becomes **invisible** until backfilled. Those are the mandatory data
+  backfills.
 
 ---
 
@@ -37,18 +40,42 @@ Two things drive whether a backend needs work:
 | --- | --- | --- | --- | --- |
 | **pgvector** | SQL column | `NULL` | visible once column exists | **schema** — `ALTER TABLE ADD COLUMN user_id` |
 | **singlestore** | SQL column | `NULL` | visible once column exists | **schema** — `ALTER TABLE ADD COLUMN user_id` |
-| **milvus** | schema field | `NULL` | hybrid search fails until field exists | **schema** — `add_collection_field` |
+| **milvus** | schema field | `NULL` | hybrid search fails until field exists | **schema** — `add_collection_field` (Milvus 2.6+; see note) |
 | **weaviate** | class property | `NULL` | search fails until property exists | **schema** — `config.add_property` |
 | **lancedb** | Arrow column | `NULL` | scoped search fails until column exists | **schema** — `add_columns` |
 | **clickhouse** | `String DEFAULT ''` column | `''` | scoped query fails until column exists | **schema** — `ALTER TABLE ADD COLUMN` |
+| **surrealdb** | `SCHEMAFUL` field | `NONE` | visible; new owner-writes silently dropped until field exists | **schema** — `DEFINE FIELD IF NOT EXISTS` |
 | **redis** | hash TAG field | `"__shared__"` | **invisible** until backfilled | **data backfill** |
+| **valkey** | hash TAG field | `"__shared__"` | **invisible** until backfilled | **data backfill** |
 | **couchbase** | document field | `"__shared__"` | **invisible** until backfilled | **data backfill** (N1QL UPDATE) |
 | **cassandra** | `metadata_s` map | `"__shared__"` | **invisible** until backfilled | **data backfill** (CQL map update) |
 | **qdrant** | payload field (schemaless) | absent | visible | **none** (optional owner assignment) |
 | **upstash** | metadata key (schemaless) | absent | visible | **none** |
+| **mongodb** | document field (schemaless) | `null` / absent | visible | **none** |
+| **pineconedb** | metadata field (schemaless) | absent | visible | **none** |
+| **chromadb** | collection-per-user | base collection | visible | **none** |
+| **opensearch** | dynamic-mapping field | absent | visible | **none** |
 | **lightrag** | — (external graph) | — | — | **not possible** |
 | **llamaindex** | — (external retriever) | — | — | **not possible** |
 | **langchaindb** | — (external vectorstore) | — | — | **not possible** |
+
+> **Milvus note:** adding a field to an existing collection requires **Milvus
+> 2.6+** (`AddCollectionField`). On Milvus 2.5.x and earlier the server has no such
+> API — the migration raises a clear error, and the only option there is to
+> recreate the collection with the new schema and re-ingest the data.
+
+> **opensearch note:** OpenSearch mappings are dynamic — a scoped read uses
+> `must_not exists` on `user_id`, which matches existing (field-absent) documents,
+> and new owner-writes auto-create the mapping. So existing data stays visible with
+> no migration. (Isolation for OpenSearch is added by PR #9424.)
+
+### chromadb — a note on the collection-per-user model
+
+ChromaDB isolates by **physical collection**, not a `user_id` field: a user's
+chunks go to `{collection}__{user_id}` and a scoped search reads the caller's
+collection **plus** the base collection. Existing (pre-v3) data lives in the base
+collection, which every scoped search always reads — so it stays visible as
+shared with **no migration**.
 
 ### Backends where migration is **not possible**
 

@@ -37,6 +37,15 @@ redis_config: Dict[str, Any] = {
 }
 # -----------------------------------------
 
+# ------------ Setup for Valkey ------------
+# Valkey is Redis-compatible; provide a valkey/redis URL or a client.
+valkey_config: Dict[str, Any] = {
+    # "valkey_url": "redis://localhost:6379",
+    # "valkey_client": None,
+    # "index_names": ["my_index"],
+}
+# ------------------------------------------
+
 # ------------ Setup for Couchbase ------------
 couchbase_config: Dict[str, Any] = {
     # "connection_string": "couchbase://localhost",
@@ -105,6 +114,52 @@ def migrate_redis_index(index_name: str) -> None:
 
     except Exception as e:
         log_error(f"Error backfilling Redis index {index_name}: {e}")
+        raise
+
+
+def migrate_valkey_index(index_name: str) -> None:
+    """Stamp the shared sentinel onto every Valkey vector lacking a ``user_id``.
+
+    Valkey is Redis-compatible: each vector is a hash under ``{index_name}:{id}``
+    with ``user_id`` as a TAG field. Existing (pre-v3) hashes have no such field.
+
+    Args:
+        index_name: The ValkeyDb ``index_name`` whose vectors should be backfilled.
+    """
+    try:
+        from agno.vectordb.valkey.valkeydb import ValkeyDB
+
+        log_info(f"Starting shared-sentinel backfill for Valkey index: {index_name}")
+
+        valkey_url = valkey_config.get("valkey_url")
+        client = valkey_config.get("valkey_client")
+        if client is None and valkey_url is None:
+            log_warning("Valkey: provide `valkey_url` or `valkey_client` in valkey_config. Skipping.")
+            return
+        if client is None:
+            from redis import Redis
+
+            client = Redis.from_url(valkey_url)
+
+        field = ValkeyDB.USER_ID_FIELD
+        sentinel = ValkeyDB.SHARED_OWNER_TAG
+
+        patched = 0
+        scanned = 0
+        for key in client.scan_iter(match=f"{index_name}:*", count=1000):
+            scanned += 1
+            existing = client.hget(key, field)
+            if existing in (None, b"", ""):
+                client.hset(key, field, sentinel)
+                patched += 1
+
+        log_info(
+            f"Valkey index '{index_name}': scanned {scanned} vectors, "
+            f"backfilled {patched} with user_id='{sentinel}'."
+        )
+
+    except Exception as e:
+        log_error(f"Error backfilling Valkey index {index_name}: {e}")
         raise
 
 
@@ -234,6 +289,10 @@ def run() -> None:
         if redis_config.get("index_names"):
             for name in redis_config["index_names"]:
                 migrate_redis_index(name)
+
+        if valkey_config.get("index_names"):
+            for name in valkey_config["index_names"]:
+                migrate_valkey_index(name)
 
         if couchbase_config.get("collection_name"):
             migrate_couchbase()

@@ -69,6 +69,14 @@ clickhouse_config: Dict[str, Any] = {
 }
 # ------------------------------------
 
+# ------------ SurrealDB ------------
+# Provide a live SurrealDB client (already connected to the right ns/db).
+surrealdb_config: Dict[str, Any] = {
+    # "client": None,   # a connected surrealdb client
+    # "collections": ["my_collection"],
+}
+# -----------------------------------
+
 # ------------ OPTIONAL: assign owner for Qdrant points ------------
 # Qdrant needs NO schema migration (payload is schemaless, absent = shared).
 # This only moves specific existing shared points into a user's private bucket.
@@ -89,6 +97,12 @@ def migrate_milvus_collection(collection: str) -> None:
     Matches the adapter's declaration: VARCHAR(256), nullable. Existing entities
     read as NULL = shared. Required so hybrid search can filter on ``user_id``.
 
+u    NOTE: adding a field to an existing collection requires **Milvus 2.6+**
+    (``AddCollectionField``). On Milvus 2.5.x and earlier the server has no such
+    API — the only option there is to recreate the collection with the new schema
+    and re-ingest the data. This function detects the unsupported case and raises a
+    clear error rather than a raw gRPC failure.
+
     Args:
         collection: The Milvus collection name.
     """
@@ -108,13 +122,22 @@ def migrate_milvus_collection(collection: str) -> None:
             return
 
         log_info(f"Adding {Milvus.USER_ID_KEY} field to Milvus collection '{collection}'")
-        client.add_collection_field(
-            collection_name=collection,
-            field_name=Milvus.USER_ID_KEY,
-            data_type=DataType.VARCHAR,
-            max_length=256,
-            nullable=True,
-        )
+        try:
+            client.add_collection_field(
+                collection_name=collection,
+                field_name=Milvus.USER_ID_KEY,
+                data_type=DataType.VARCHAR,
+                max_length=256,
+                nullable=True,
+            )
+        except Exception as add_err:
+            if "AddCollectionField" in str(add_err) or "UNIMPLEMENTED" in str(add_err):
+                raise RuntimeError(
+                    f"Milvus server does not support adding a field to an existing collection "
+                    f"(requires Milvus 2.6+). Recreate collection '{collection}' with the new "
+                    f"schema and re-ingest instead."
+                ) from add_err
+            raise
         log_info(f"Successfully migrated Milvus collection '{collection}'")
 
     except Exception as e:
@@ -230,6 +253,32 @@ def migrate_clickhouse_table(table_name: str) -> None:
         raise
 
 
+def migrate_surrealdb_collection(collection: str) -> None:
+    """Declare the ``user_id`` field on an existing SurrealDB collection.
+
+    SurrealDB collections are ``SCHEMAFUL``, so the scoped filter (``user_id = X OR
+    user_id = NONE``) fails on an existing table that lacks the field. This runs the
+    idempotent ``DEFINE FIELD IF NOT EXISTS`` — matching the adapter's own schema —
+    so existing records read as NONE = shared.
+
+    Args:
+        collection: The SurrealDB table (collection) name.
+    """
+    try:
+        client = surrealdb_config.get("client")
+        if client is None:
+            log_warning("SurrealDB: provide a connected `client` in surrealdb_config. Skipping.")
+            return
+
+        log_info(f"Declaring user_id field on SurrealDB collection '{collection}'")
+        client.query(f"DEFINE FIELD IF NOT EXISTS user_id ON {collection} TYPE option<string>;")
+        log_info(f"Successfully migrated SurrealDB collection '{collection}'")
+
+    except Exception as e:
+        log_error(f"Error migrating SurrealDB collection {collection}: {e}")
+        raise
+
+
 def assign_qdrant_owner(collection: str, point_ids: List[str], user_id: str) -> None:
     """Set ``user_id`` on specific existing Qdrant points (optional ownership move).
 
@@ -267,6 +316,8 @@ def run() -> None:
             migrate_lancedb_table(name)
         for name in clickhouse_config.get("table_names", []):
             migrate_clickhouse_table(name)
+        for name in surrealdb_config.get("collections", []):
+            migrate_surrealdb_collection(name)
 
         if qdrant_config.get("collection") and qdrant_config.get("assignments"):
             for a in qdrant_config["assignments"]:

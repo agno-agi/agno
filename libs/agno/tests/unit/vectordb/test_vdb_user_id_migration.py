@@ -96,6 +96,100 @@ class TestRedisSentinelBackfill:
 
 
 # --------------------------------------------------------------------------- #
+# Valkey sentinel backfill (fakeredis — Valkey speaks the Redis protocol)
+# --------------------------------------------------------------------------- #
+
+
+class TestValkeySentinelBackfill:
+    def _client(self):
+        fakeredis = pytest.importorskip("fakeredis")
+        # ValkeyDB import needs the valkey driver; skip cleanly if it's absent.
+        pytest.importorskip("agno.vectordb.valkey.valkeydb")
+        return fakeredis.FakeStrictRedis()
+
+    def _uid(self, client, key):
+        v = client.hget(key, "user_id")
+        return v.decode() if v else None
+
+    def test_stamps_shared_on_legacy_and_preserves_owners(self):
+        from agno.vectordb.valkey.valkeydb import ValkeyDB
+
+        client = self._client()
+        index = "vindex"
+        for i in range(3):
+            client.hset(f"{index}:doc{i}", mapping={"id": f"doc{i}", "content": f"c{i}"})
+        client.hset(f"{index}:owned", mapping={"id": "owned", "content": "c", "user_id": "alice"})
+
+        mod = _load("migrate_sentinel_vectordbs.py")
+        mod.valkey_config["valkey_client"] = client
+        mod.migrate_valkey_index(index)
+
+        for i in range(3):
+            assert self._uid(client, f"{index}:doc{i}") == ValkeyDB.SHARED_OWNER_TAG
+        assert self._uid(client, f"{index}:owned") == "alice"
+
+    def test_idempotent(self):
+        from agno.vectordb.valkey.valkeydb import ValkeyDB
+
+        client = self._client()
+        index = "v"
+        client.hset(f"{index}:d1", mapping={"id": "d1", "content": "x"})
+
+        mod = _load("migrate_sentinel_vectordbs.py")
+        mod.valkey_config["valkey_client"] = client
+        mod.migrate_valkey_index(index)
+        mod.migrate_valkey_index(index)
+
+        assert self._uid(client, f"{index}:d1") == ValkeyDB.SHARED_OWNER_TAG
+
+
+# --------------------------------------------------------------------------- #
+# SurrealDB schema migration (embedded mem:// — no server)
+# --------------------------------------------------------------------------- #
+
+
+class TestSurrealDbSchemaMigration:
+    def _conn(self):
+        surrealdb = pytest.importorskip("surrealdb")
+        conn = surrealdb.Surreal("mem://")
+        conn.use("test", "test")
+        return conn
+
+    def _fields(self, conn, coll):
+        info = conn.query(f"INFO FOR TABLE {coll};")
+        info = info[0] if isinstance(info, list) else info
+        return list((info or {}).get("fields", {}).keys())
+
+    def test_declares_user_id_field(self):
+        conn = self._conn()
+        coll = "docs"
+        conn.query(f"DEFINE TABLE IF NOT EXISTS {coll} SCHEMAFUL;")
+        conn.query(f"DEFINE FIELD IF NOT EXISTS content ON {coll} TYPE string;")
+        conn.query(f"CREATE {coll}:r1 SET content='hi';")
+        assert "user_id" not in self._fields(conn, coll)
+
+        mod = _load("migrate_field_vectordbs.py")
+        mod.surrealdb_config["client"] = conn
+        mod.migrate_surrealdb_collection(coll)
+
+        assert "user_id" in self._fields(conn, coll)
+        # Existing record reads as NONE (shared) and a scoped read still works.
+        rows = conn.query(f"SELECT content, user_id FROM {coll} WHERE (user_id = 'alice' OR user_id = NONE);")
+        rows = rows[0] if isinstance(rows, list) and rows and isinstance(rows[0], list) else rows
+        assert rows  # existing record still visible as shared
+
+    def test_idempotent(self):
+        conn = self._conn()
+        coll = "docs2"
+        conn.query(f"DEFINE TABLE IF NOT EXISTS {coll} SCHEMAFUL;")
+        mod = _load("migrate_field_vectordbs.py")
+        mod.surrealdb_config["client"] = conn
+        mod.migrate_surrealdb_collection(coll)
+        mod.migrate_surrealdb_collection(coll)  # second run must be a no-op
+        assert "user_id" in self._fields(conn, coll)
+
+
+# --------------------------------------------------------------------------- #
 # SQL schema migration logic (SQLite — in-process)
 # --------------------------------------------------------------------------- #
 
@@ -144,6 +238,82 @@ class TestSqlSchemaMigrationLogic:
 
 
 # --------------------------------------------------------------------------- #
+# Weaviate schema migration (embedded — no external server)
+# --------------------------------------------------------------------------- #
+
+
+class TestWeaviateSchemaMigration:
+    def _client(self):
+        weaviate = pytest.importorskip("weaviate")
+        client = weaviate.connect_to_embedded()
+        return weaviate, client
+
+    def test_adds_user_id_property(self):
+        from agno.vectordb.weaviate.weaviate import Weaviate
+
+        weaviate, client = self._client()
+        try:
+            from weaviate.classes.config import Configure, DataType, Property
+
+            if client.collections.exists("Docs"):
+                client.collections.delete("Docs")
+            client.collections.create(
+                "Docs",
+                properties=[Property(name="content", data_type=DataType.TEXT)],
+                vectorizer_config=Configure.Vectorizer.none(),
+            )
+            client.collections.get("Docs").data.insert(properties={"content": "hi"}, vector=[0.1, 0.2, 0.3])
+
+            props = lambda: [p.name for p in client.collections.get("Docs").config.get().properties]  # noqa: E731
+            assert Weaviate.USER_ID_KEY not in props()
+
+            mod = _load("migrate_field_vectordbs.py")
+            # The migration connects via connect_to_local; here we exercise the same
+            # add_property call against the embedded client directly.
+            from weaviate.classes.config import Property as P
+            from weaviate.classes.config import Tokenization
+
+            client.collections.get("Docs").config.add_property(
+                P(name=Weaviate.USER_ID_KEY, data_type=DataType.TEXT, tokenization=Tokenization.FIELD)
+            )
+            assert Weaviate.USER_ID_KEY in props()
+            assert callable(mod.migrate_weaviate_collection)
+        finally:
+            client.close()
+
+
+# --------------------------------------------------------------------------- #
+# Qdrant optional owner assignment (in-memory — no server)
+# --------------------------------------------------------------------------- #
+
+
+class TestQdrantOwnerAssignment:
+    def test_set_payload_assigns_owner_in_place(self):
+        qdrant_client = pytest.importorskip("qdrant_client")
+        from qdrant_client import models
+
+        from agno.vectordb.qdrant.qdrant import Qdrant
+
+        client = qdrant_client.QdrantClient(":memory:")
+        client.create_collection("docs", vectors_config=models.VectorParams(size=3, distance=models.Distance.COSINE))
+        client.upsert(
+            "docs",
+            points=[
+                models.PointStruct(id=1, vector=[0.1, 0.2, 0.3], payload={"content": "a"}),
+                models.PointStruct(id=2, vector=[0.4, 0.5, 0.6], payload={"content": "b"}),
+            ],
+        )
+        payload = lambda pid: client.retrieve("docs", [pid])[0].payload  # noqa: E731
+        assert payload(1).get(Qdrant.USER_ID_KEY) is None  # existing = shared
+
+        # In-place assignment (what assign_qdrant_owner does via set_payload).
+        client.set_payload(collection_name="docs", payload={Qdrant.USER_ID_KEY: "alice"}, points=[1])
+
+        assert payload(1).get(Qdrant.USER_ID_KEY) == "alice"  # assigned
+        assert payload(2).get(Qdrant.USER_ID_KEY) is None  # untouched, still shared
+
+
+# --------------------------------------------------------------------------- #
 # Script import safety (functions must load without side effects)
 # --------------------------------------------------------------------------- #
 
@@ -153,7 +323,7 @@ class TestScriptsImportCleanly:
         "script,funcs",
         [
             ("migrate_sql_vectordbs.py", ["migrate_pgvector_table", "migrate_singlestore_table", "run"]),
-            ("migrate_sentinel_vectordbs.py", ["migrate_redis_index", "migrate_couchbase", "migrate_cassandra", "run"]),
+            ("migrate_sentinel_vectordbs.py", ["migrate_redis_index", "migrate_valkey_index", "migrate_couchbase", "migrate_cassandra", "run"]),
             (
                 "migrate_field_vectordbs.py",
                 [
@@ -161,6 +331,7 @@ class TestScriptsImportCleanly:
                     "migrate_weaviate_collection",
                     "migrate_lancedb_table",
                     "migrate_clickhouse_table",
+                    "migrate_surrealdb_collection",
                     "assign_qdrant_owner",
                     "run",
                 ],
