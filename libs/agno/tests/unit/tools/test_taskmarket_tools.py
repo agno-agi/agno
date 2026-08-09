@@ -201,3 +201,43 @@ def test_async_variants_are_registered_and_do_not_block(successful_run):
 
     assert result["ok"] is True
     assert set(tools.async_functions) == {"list_tasks", "get_task"}
+
+
+def test_registered_async_read_functions_have_usable_parameter_schemas():
+    tools = TaskMarketTools()
+
+    list_tasks = tools.async_functions["list_tasks"]
+    get_task = tools.async_functions["get_task"]
+    list_tasks.process_entrypoint()
+    get_task.process_entrypoint()
+
+    assert set(list_tasks.parameters["properties"]) == {
+        "status",
+        "mode",
+        "tags",
+        "reward_min",
+        "reward_max",
+        "deadline_hours",
+        "limit",
+        "cursor",
+    }
+    assert list_tasks.parameters["required"] == []
+    assert set(get_task.parameters["properties"]) == {"task_id"}
+    assert get_task.parameters["required"] == ["task_id"]
+
+
+def test_registered_async_write_function_has_usable_parameter_schema():
+    tools = TaskMarketTools(allow_write=True, max_reward_usdc=5)
+    create_task = tools.async_functions["create_task"]
+    create_task.process_entrypoint()
+
+    assert set(create_task.parameters["properties"]) == {
+        "description",
+        "reward_usdc",
+        "duration_hours",
+        "mode",
+        "tags",
+        "task_visibility",
+        "submission_visibility",
+    }
+    assert create_task.parameters["required"] == ["description", "reward_usdc", "duration_hours"]

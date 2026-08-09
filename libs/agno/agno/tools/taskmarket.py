@@ -147,9 +147,29 @@ class TaskMarketTools(Toolkit):
             args.extend(["--cursor", cursor])
         return self._run(args)
 
-    async def alist_tasks(self, **kwargs: Any) -> str:
+    async def alist_tasks(
+        self,
+        status: str = "open",
+        mode: str | None = None,
+        tags: str | None = None,
+        reward_min: float | None = None,
+        reward_max: float | None = None,
+        deadline_hours: float | None = None,
+        limit: int = 20,
+        cursor: str | None = None,
+    ) -> str:
         """Asynchronously list TaskMarket opportunities."""
-        return await asyncio.to_thread(self.list_tasks, **kwargs)
+        return await asyncio.to_thread(
+            self.list_tasks,
+            status=status,
+            mode=mode,
+            tags=tags,
+            reward_min=reward_min,
+            reward_max=reward_max,
+            deadline_hours=deadline_hours,
+            limit=limit,
+            cursor=cursor,
+        )
 
     def get_task(self, task_id: str) -> str:
         """Get the current state and available actions for one TaskMarket task."""
@@ -214,6 +234,24 @@ class TaskMarketTools(Toolkit):
             args.extend(["--tags", tags])
         return self._run(args)
 
-    async def acreate_task(self, **kwargs: Any) -> str:
+    async def acreate_task(
+        self,
+        description: str,
+        reward_usdc: str | float | Decimal,
+        duration_hours: int,
+        mode: str = "bounty",
+        tags: str | None = None,
+        task_visibility: str = "public",
+        submission_visibility: str = "public",
+    ) -> str:
         """Asynchronously create a TaskMarket task with the same safeguards."""
-        return await asyncio.to_thread(self.create_task, **kwargs)
+        return await asyncio.to_thread(
+            self.create_task,
+            description=description,
+            reward_usdc=reward_usdc,
+            duration_hours=duration_hours,
+            mode=mode,
+            tags=tags,
+            task_visibility=task_visibility,
+            submission_visibility=submission_visibility,
+        )
