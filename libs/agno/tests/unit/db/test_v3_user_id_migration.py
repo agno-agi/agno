@@ -175,7 +175,7 @@ def test_other_table_types_are_untouched():
     from agno.db.migrations.versions import v3_0_0
 
     db, _ = _new_db()
-    for table_type in ("memories", "metrics", "knowledge", "culture", "approvals"):
+    for table_type in ("memories", "metrics", "culture", "approvals"):
         assert v3_0_0.up(db, table_type, EVAL_TABLE) is False
         assert v3_0_0.down(db, table_type, EVAL_TABLE) is False
 
@@ -315,3 +315,125 @@ def test_failed_revert_leaves_the_index_in_place():
 
     assert "user_id" in _columns(db_file)
     assert EVAL_INDEX in _indexes(db_file), "the index must be restored when the column drop fails"
+
+
+# ---------------------------------------------------------------------------
+# schedules / schedule_runs / knowledge
+# ---------------------------------------------------------------------------
+
+SCHEDULES_TABLE = "agno_schedules"
+SCHEDULE_RUNS_TABLE = "agno_schedule_runs"
+KNOWLEDGE_TABLE = "agno_knowledge"
+SCHEDULES_COMPOSITE_INDEX = f"idx_{SCHEDULES_TABLE}_user_id_enabled_next_run_at"
+
+
+def _new_db_with(table_types: list[str]):
+    db_file = os.path.join(tempfile.mkdtemp(), "test.db")
+    db = SqliteDb(db_file=db_file)
+    for table_type in table_types:
+        db._get_table(table_type=table_type, create_table_if_not_found=True)
+    return db, db_file
+
+
+def _table_columns(db_file: str, table: str) -> set[str]:
+    conn = sqlite3.connect(db_file)
+    try:
+        return {c[1] for c in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    finally:
+        conn.close()
+
+
+def _table_indexes(db_file: str, table: str) -> set[str]:
+    conn = sqlite3.connect(db_file)
+    try:
+        return {i[1] for i in conn.execute(f"PRAGMA index_list({table})").fetchall()}
+    finally:
+        conn.close()
+
+
+def _strip_user_id(db_file: str, table: str, indexes: list[str]) -> None:
+    """Mimic a pre-v3 table: drop the user_id indexes and column, rewind the version."""
+    conn = sqlite3.connect(db_file)
+    try:
+        for index in indexes:
+            conn.execute(f"DROP INDEX IF EXISTS {index}")
+        conn.execute(f"ALTER TABLE {table} DROP COLUMN user_id")
+        conn.execute("UPDATE agno_schema_versions SET version='2.5.6' WHERE table_name=?", (table,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_schedules_migration_restores_column_and_composite_index():
+    """Both schedule tables gain user_id, and schedules gets its composite index back."""
+    db, db_file = _new_db_with(["schedules", "schedule_runs"])
+    _strip_user_id(db_file, SCHEDULES_TABLE, [f"idx_{SCHEDULES_TABLE}_user_id", SCHEDULES_COMPOSITE_INDEX])
+    _strip_user_id(db_file, SCHEDULE_RUNS_TABLE, [f"idx_{SCHEDULE_RUNS_TABLE}_user_id"])
+    assert "user_id" not in _table_columns(db_file, SCHEDULES_TABLE)
+    assert "user_id" not in _table_columns(db_file, SCHEDULE_RUNS_TABLE)
+
+    asyncio.run(MigrationManager(db).up(table_type="schedules"))
+    asyncio.run(MigrationManager(db).up(table_type="schedule_runs"))
+
+    assert "user_id" in _table_columns(db_file, SCHEDULES_TABLE)
+    assert f"idx_{SCHEDULES_TABLE}_user_id" in _table_indexes(db_file, SCHEDULES_TABLE)
+    # A migrated table matches a fresh one: the (user_id, enabled, next_run_at)
+    # composite the listing path relies on is created too.
+    assert SCHEDULES_COMPOSITE_INDEX in _table_indexes(db_file, SCHEDULES_TABLE)
+    assert "user_id" in _table_columns(db_file, SCHEDULE_RUNS_TABLE)
+    assert f"idx_{SCHEDULE_RUNS_TABLE}_user_id" in _table_indexes(db_file, SCHEDULE_RUNS_TABLE)
+    assert db.get_latest_schema_version(SCHEDULES_TABLE) == "3.0.0"
+    assert db.get_latest_schema_version(SCHEDULE_RUNS_TABLE) == "3.0.0"
+
+
+def test_schedules_revert_drops_composite_before_column():
+    """SQLite refuses DROP COLUMN while a multi-column index covers it — the
+    revert must drop the composite first or fail."""
+    db, db_file = _new_db_with(["schedules"])
+    assert SCHEDULES_COMPOSITE_INDEX in _table_indexes(db_file, SCHEDULES_TABLE)
+
+    asyncio.run(MigrationManager(db).down(target_version="2.5.6", table_type="schedules"))
+
+    assert "user_id" not in _table_columns(db_file, SCHEDULES_TABLE)
+    assert SCHEDULES_COMPOSITE_INDEX not in _table_indexes(db_file, SCHEDULES_TABLE)
+    assert f"idx_{SCHEDULES_TABLE}_user_id" not in _table_indexes(db_file, SCHEDULES_TABLE)
+
+
+def test_schedules_up_after_down_restores_everything():
+    db, db_file = _new_db_with(["schedules"])
+    asyncio.run(MigrationManager(db).down(target_version="2.5.6", table_type="schedules"))
+    assert "user_id" not in _table_columns(db_file, SCHEDULES_TABLE)
+
+    asyncio.run(MigrationManager(db).up(table_type="schedules"))
+
+    assert "user_id" in _table_columns(db_file, SCHEDULES_TABLE)
+    assert SCHEDULES_COMPOSITE_INDEX in _table_indexes(db_file, SCHEDULES_TABLE)
+
+
+def test_knowledge_migration_adds_user_id():
+    db, db_file = _new_db_with(["knowledge"])
+    knowledge_composite = f"idx_{KNOWLEDGE_TABLE}_user_id_linked_to"
+    _strip_user_id(db_file, KNOWLEDGE_TABLE, [f"idx_{KNOWLEDGE_TABLE}_user_id", knowledge_composite])
+    assert "user_id" not in _table_columns(db_file, KNOWLEDGE_TABLE)
+
+    asyncio.run(MigrationManager(db).up(table_type="knowledge"))
+
+    assert "user_id" in _table_columns(db_file, KNOWLEDGE_TABLE)
+    assert f"idx_{KNOWLEDGE_TABLE}_user_id" in _table_indexes(db_file, KNOWLEDGE_TABLE)
+    # linked_to still exists on this table, so the (user_id, linked_to)
+    # composite comes back too.
+    assert knowledge_composite in _table_indexes(db_file, KNOWLEDGE_TABLE)
+    assert db.get_latest_schema_version(KNOWLEDGE_TABLE) == "3.0.0"
+
+
+def test_schedules_migration_is_idempotent():
+    db, db_file = _new_db_with(["schedules"])
+    _strip_user_id(db_file, SCHEDULES_TABLE, [f"idx_{SCHEDULES_TABLE}_user_id", SCHEDULES_COMPOSITE_INDEX])
+
+    asyncio.run(MigrationManager(db).up(table_type="schedules"))
+    before_cols = _table_columns(db_file, SCHEDULES_TABLE)
+    before_idx = _table_indexes(db_file, SCHEDULES_TABLE)
+    asyncio.run(MigrationManager(db).up(table_type="schedules", force=True))
+
+    assert _table_columns(db_file, SCHEDULES_TABLE) == before_cols
+    assert _table_indexes(db_file, SCHEDULES_TABLE) == before_idx

@@ -50,7 +50,10 @@ BATCH_SIZE = 50
 # Table types that get a user_id column and index, so AgentOS can scope them per user.
 # Extend this tuple to isolate another table; the per-backend functions need no change,
 # and backends whose schema does not declare the column skip it.
-USER_ID_TABLE_TYPES = ("evals", "components")
+# - knowledge: declared on Postgres, SQLite, MySQL and SingleStore
+# - schedules / schedule_runs: declared on Postgres and SQLite (the only adapters
+#   with schedule schemas)
+USER_ID_TABLE_TYPES = ("evals", "components", "knowledge", "schedules", "schedule_runs")
 
 
 def up(db: BaseDb, table_type: str, table_name: str) -> bool:
@@ -2163,6 +2166,38 @@ def _user_id_column_ddl(db, table_type: str) -> Optional[str]:
     return column_type().compile(dialect=db.db_engine.dialect)
 
 
+def _user_id_composite_indexes(db, table_type: str, table_name: str) -> List[tuple]:
+    """Schema-declared composite indexes that include user_id, as (name, columns).
+
+    These cannot predate the column, so the migration creates them too — a
+    migrated table stays identical to one created fresh from the schema (the
+    schedules listing path, for one, relies on its (user_id, enabled,
+    next_run_at) index). The names follow the adapters' composite-index
+    convention: ``idx_{table}_{columns joined with _}``.
+    """
+    db_type = type(db).__name__
+
+    schemas: Any
+    if db_type in ("PostgresDb", "AsyncPostgresDb"):
+        from agno.db.postgres import schemas
+    elif db_type in ("MySQLDb", "AsyncMySQLDb"):
+        from agno.db.mysql import schemas
+    elif db_type == "SingleStoreDb":
+        from agno.db.singlestore import schemas
+    else:
+        from agno.db.sqlite import schemas
+
+    try:
+        composites = schemas.get_table_schema_definition(table_type).get("__composite_indexes__", [])
+    except (ValueError, KeyError):
+        return []
+    return [
+        (f"idx_{table_name}_{'_'.join(idx['columns'])}", list(idx["columns"]))
+        for idx in composites
+        if "user_id" in idx["columns"]
+    ]
+
+
 def _migrate_postgres_user_id(db: BaseDb, table_type: str, table_name: str) -> bool:
     """Add the user_id column to the given table for PostgreSQL."""
     db_schema = db.db_schema or "ai"  # type: ignore
@@ -2199,6 +2234,20 @@ def _migrate_postgres_user_id(db: BaseDb, table_type: str, table_name: str) -> b
             log_info(f"-- Adding index {index_name} on {table_name}")
             sess.execute(text(f"CREATE INDEX {quote_db_identifier(db_type, index_name)} ON {full_table} (user_id)"))
             applied = True
+
+        for comp_name, comp_cols in _user_id_composite_indexes(db, table_type, table_name):
+            # A composite can reference other v3-only columns (e.g. linked_to)
+            # that a legacy table doesn't have yet — skip until they exist.
+            if not all(c == "user_id" or _column_exists(sess, db_schema, table_name, c, db_type) for c in comp_cols):
+                continue
+            if not _index_exists(sess, db_schema, table_name, comp_name, db_type):
+                log_info(f"-- Adding index {comp_name} on {table_name}")
+                sess.execute(
+                    text(
+                        f"CREATE INDEX {quote_db_identifier(db_type, comp_name)} ON {full_table} ({', '.join(comp_cols)})"
+                    )
+                )
+                applied = True
 
         return applied
 
@@ -2241,6 +2290,25 @@ async def _migrate_async_postgres_user_id(db: AsyncBaseDb, table_type: str, tabl
                 text(f"CREATE INDEX {quote_db_identifier(db_type, index_name)} ON {full_table} (user_id)")
             )
             applied = True
+
+        for comp_name, comp_cols in _user_id_composite_indexes(db, table_type, table_name):
+            # A composite can reference other v3-only columns (e.g. linked_to)
+            # that a legacy table doesn't have yet — skip until they exist.
+            cols_present = True
+            for c in comp_cols:
+                if c != "user_id" and not await _async_column_exists(sess, db_schema, table_name, c, db_type):
+                    cols_present = False
+                    break
+            if not cols_present:
+                continue
+            if not await _async_index_exists(sess, db_schema, table_name, comp_name, db_type):
+                log_info(f"-- Adding index {comp_name} on {table_name}")
+                await sess.execute(
+                    text(
+                        f"CREATE INDEX {quote_db_identifier(db_type, comp_name)} ON {full_table} ({', '.join(comp_cols)})"
+                    )
+                )
+                applied = True
 
         return applied
 
@@ -2359,10 +2427,26 @@ def _migrate_sqlite_user_id(db: BaseDb, table_type: str, table_name: str) -> boo
             applied = True
 
         indexes = sess.execute(text(f"PRAGMA index_list({quoted_table})")).fetchall()
-        if index_name not in {idx[1] for idx in indexes}:
+        existing_indexes = {idx[1] for idx in indexes}
+        if index_name not in existing_indexes:
             log_info(f"-- Adding index {index_name} on {table_name}")
             sess.execute(text(f"CREATE INDEX {quote_db_identifier(db_type, index_name)} ON {quoted_table} (user_id)"))
             applied = True
+
+        table_columns = {col[1] for col in columns_info} | {"user_id"}
+        for comp_name, comp_cols in _user_id_composite_indexes(db, table_type, table_name):
+            # A composite can reference other v3-only columns (e.g. linked_to)
+            # that a legacy table doesn't have yet — skip until they exist.
+            if not all(c in table_columns for c in comp_cols):
+                continue
+            if comp_name not in existing_indexes:
+                log_info(f"-- Adding index {comp_name} on {table_name}")
+                sess.execute(
+                    text(
+                        f"CREATE INDEX {quote_db_identifier(db_type, comp_name)} ON {quoted_table} ({', '.join(comp_cols)})"
+                    )
+                )
+                applied = True
 
         return applied
 
@@ -2394,12 +2478,29 @@ async def _migrate_async_sqlite_user_id(db: AsyncBaseDb, table_type: str, table_
             applied = True
 
         result = await sess.execute(text(f"PRAGMA index_list({quoted_table})"))
-        if index_name not in {idx[1] for idx in result.fetchall()}:
+        existing_indexes = {idx[1] for idx in result.fetchall()}
+        if index_name not in existing_indexes:
             log_info(f"-- Adding index {index_name} on {table_name}")
             await sess.execute(
                 text(f"CREATE INDEX {quote_db_identifier(db_type, index_name)} ON {quoted_table} (user_id)")
             )
             applied = True
+
+        result = await sess.execute(text(f"PRAGMA table_info({quoted_table})"))
+        table_columns = {col[1] for col in result.fetchall()} | {"user_id"}
+        for comp_name, comp_cols in _user_id_composite_indexes(db, table_type, table_name):
+            # A composite can reference other v3-only columns (e.g. linked_to)
+            # that a legacy table doesn't have yet — skip until they exist.
+            if not all(c in table_columns for c in comp_cols):
+                continue
+            if comp_name not in existing_indexes:
+                log_info(f"-- Adding index {comp_name} on {table_name}")
+                await sess.execute(
+                    text(
+                        f"CREATE INDEX {quote_db_identifier(db_type, comp_name)} ON {quoted_table} ({', '.join(comp_cols)})"
+                    )
+                )
+                applied = True
 
         return applied
 
@@ -2612,7 +2713,15 @@ def _revert_sqlite_user_id(db: BaseDb, table_type: str, table_name: str) -> bool
 
         dropped_index = False
         indexes = sess.execute(text(f"PRAGMA index_list({quoted_table})")).fetchall()
-        if index_name in {idx[1] for idx in indexes}:
+        existing_indexes = {idx[1] for idx in indexes}
+        # Composite indexes referencing user_id must go before the column:
+        # SQLite refuses to drop a column a multi-column index still covers.
+        for comp_name, _comp_cols in _user_id_composite_indexes(db, table_type, table_name):
+            if comp_name in existing_indexes:
+                log_info(f"-- Dropping index {comp_name} from {table_name}")
+                sess.execute(text(f"DROP INDEX {quote_db_identifier(db_type, comp_name)}"))
+                applied = True
+        if index_name in existing_indexes:
             log_info(f"-- Dropping index {index_name} from {table_name}")
             sess.execute(text(f"DROP INDEX {quote_db_identifier(db_type, index_name)}"))
             dropped_index = True
@@ -2663,8 +2772,16 @@ async def _revert_async_sqlite_user_id(db: AsyncBaseDb, table_type: str, table_n
         applied = False
 
         result = await sess.execute(text(f"PRAGMA index_list({quoted_table})"))
+        existing_indexes = {idx[1] for idx in result.fetchall()}
         dropped_index = False
-        if index_name in {idx[1] for idx in result.fetchall()}:
+        # Composite indexes referencing user_id must go before the column:
+        # SQLite refuses to drop a column a multi-column index still covers.
+        for comp_name, _comp_cols in _user_id_composite_indexes(db, table_type, table_name):
+            if comp_name in existing_indexes:
+                log_info(f"-- Dropping index {comp_name} from {table_name}")
+                await sess.execute(text(f"DROP INDEX {quote_db_identifier(db_type, comp_name)}"))
+                applied = True
+        if index_name in existing_indexes:
             log_info(f"-- Dropping index {index_name} from {table_name}")
             await sess.execute(text(f"DROP INDEX {quote_db_identifier(db_type, index_name)}"))
             dropped_index = True
