@@ -5003,7 +5003,7 @@ class AsyncPostgresDb(AsyncBaseDb):
 
         These are NOT claimable (attempt >= max_attempts): the worker persists
         a terminal error on the run row first, then calls
-        fail_swept_job — ordering + idempotence instead of cross-store
+        settle_swept_job — ordering + idempotence instead of cross-store
         atomicity."""
         try:
             table = await self._get_table(table_type="jobs")
@@ -5055,11 +5055,12 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_error(f"Job queue store: sweep-lock acquisition failed for job {job_id} (worker={worker_id}): {e}")
             return False
 
-    async def fail_swept_job(self, job_id: str, worker_id: str, error: str = "worker lost") -> bool:
-        """Ownership-keyed terminal write: only the sweeper holding the lock
-        (via acquire_sweep) may fail the job. Replaces the old staleness
-        recheck - after acquire_sweep refreshed locked_at, staleness can no
-        longer serve as the fence."""
+    async def settle_swept_job(self, job_id: str, worker_id: str, status: str, error: Optional[str] = None) -> bool:
+        """Ownership-keyed settle for the sweeper - see the in-memory store's
+        docstring: the sweep reconciles the ticket with what the run row
+        says (completed/cancelled/paused/failed), never blind-fails it."""
+        if status not in ("completed", "cancelled", "paused", "failed"):
+            return False
         try:
             table = await self._get_table(table_type="jobs")
             if table is None:
@@ -5075,7 +5076,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                             table.c.locked_by == worker_id,
                         )
                         .values(
-                            status="failed",
+                            status=status,
                             error=error,
                             locked_by=None,
                             locked_at=None,
@@ -5085,10 +5086,24 @@ class AsyncPostgresDb(AsyncBaseDb):
                     )
                     return (result.rowcount or 0) > 0  # type: ignore[attr-defined]
         except Exception as e:
-            log_error(f"Job queue store: swept-job terminalization failed for job {job_id} (worker={worker_id}): {e}")
+            log_error(f"Job queue store: swept-job settle failed for job {job_id} (worker={worker_id}): {e}")
             return False
 
-    async def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+    async def get_job(self, job_id: str, strict: bool = False) -> Optional[Dict[str, Any]]:
+        """Look up a ticket. Lenient by default: failures log and read as
+        None, which the many fail-open readers (poll fallback, stats)
+        rely on. strict=True makes failures PROPAGATE so None means
+        exactly "no such ticket" - fail-closed consumers (the
+        continue-ownership gate) must not read a store outage as "no
+        ticket"; that inference reopens the cross-door double-execution
+        race the gate exists to close."""
+        if strict:
+            table = await self._get_table(table_type="jobs")
+            if table is None:
+                raise RuntimeError(f"Job queue store: jobs table unavailable for strict lookup of {job_id}")
+            async with self.async_session_factory() as sess:
+                row = (await sess.execute(select(table).where(table.c.id == job_id))).fetchone()
+                return dict(row._mapping) if row is not None else None
         try:
             table = await self._get_table(table_type="jobs")
             if table is None:
