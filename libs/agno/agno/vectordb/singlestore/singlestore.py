@@ -694,6 +694,9 @@ class SingleStore(VectorDb):
         filters: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
     ) -> None:
+        # A scoped insert on an unmigrated (pre-v3) table must raise the clear
+        # migration error before any embedding work is paid for (mirrors insert).
+        self._require_owner_column(user_id)
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
             # Use batch embedding when enabled and supported
             try:
@@ -748,7 +751,7 @@ class SingleStore(VectorDb):
                 # Convert embedding list to SingleStore VECTOR format
                 embeddings = f"[{','.join(map(str, document.embedding))}]" if document.embedding else None
 
-                stmt = mysql.insert(self.table).values(
+                record: Dict[str, Any] = dict(
                     id=_id,
                     name=document.name,
                     meta_data=meta_data_json,
@@ -757,8 +760,13 @@ class SingleStore(VectorDb):
                     usage=usage_json,
                     content_hash=content_hash,
                     content_id=document.content_id,
-                    user_id=user_id,
                 )
+                # Only mention the owner column when the live table has it \u2014
+                # a pre-v3 table stores the row unowned, exactly like main.
+                if self._user_id_column_exists():
+                    record["user_id"] = user_id
+
+                stmt = mysql.insert(self.table).values(**record)
                 sess.execute(stmt)
                 counter += 1
                 log_debug(f"Inserted document: {document.name} ({document.meta_data})")
@@ -843,30 +851,24 @@ class SingleStore(VectorDb):
 
                 # Convert embedding list to SingleStore VECTOR format
                 embeddings = f"[{','.join(map(str, document.embedding))}]" if document.embedding else None
-                stmt = (
-                    mysql.insert(self.table)
-                    .values(
-                        id=_id,
-                        name=document.name,
-                        meta_data=meta_data_json,
-                        content=cleaned_content,
-                        embedding=embeddings,
-                        usage=usage_json,
-                        content_hash=content_hash,
-                        content_id=document.content_id,
-                        user_id=user_id,
-                    )
-                    .on_duplicate_key_update(
-                        name=document.name,
-                        meta_data=meta_data_json,
-                        content=cleaned_content,
-                        embedding=embeddings,
-                        usage=usage_json,
-                        content_hash=content_hash,
-                        content_id=document.content_id,
-                        user_id=user_id,
-                    )
+
+                record: Dict[str, Any] = dict(
+                    id=_id,
+                    name=document.name,
+                    meta_data=meta_data_json,
+                    content=cleaned_content,
+                    embedding=embeddings,
+                    usage=usage_json,
+                    content_hash=content_hash,
+                    content_id=document.content_id,
                 )
+                # Only mention the owner column when the live table has it —
+                # a pre-v3 table stores the row unowned, exactly like main.
+                if self._user_id_column_exists():
+                    record["user_id"] = user_id
+                update_record = {k: v for k, v in record.items() if k != "id"}
+
+                stmt = mysql.insert(self.table).values(**record).on_duplicate_key_update(**update_record)
                 sess.execute(stmt)
                 counter += 1
                 log_debug(f"Upserted document: {document.name} ({document.meta_data})")
@@ -940,8 +942,11 @@ class SingleStore(VectorDb):
 
         try:
             with self.Session.begin() as sess:
-                # Find documents with the given content_id
-                stmt = select(self.table).where(self.table.c.content_id == content_id)
+                # Find documents with the given content_id. Select only the two
+                # columns this loop reads — ``select(self.table)`` would name
+                # every declared column, including ``user_id``, which a pre-v3
+                # table doesn't have.
+                stmt = select(self.table.c.id, self.table.c.meta_data).where(self.table.c.content_id == content_id)
                 result = sess.execute(stmt)  # type: ignore
 
                 updated_count = 0
