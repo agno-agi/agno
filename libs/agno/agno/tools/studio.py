@@ -2175,6 +2175,8 @@ class StudioTools(Toolkit):
         from agno.team.team import Team, get_team_by_id
 
         child_id = getattr(child, "id", None)
+        if not isinstance(child_id, str):
+            raise ValueError(f"{noun} has no id and cannot be stored as a reference.")
         is_team = isinstance(child, Team)
         expected_type = ComponentType.TEAM if is_team else ComponentType.AGENT
         candidates = self._iter_teams() if is_team else self._iter_agents()
@@ -2485,7 +2487,10 @@ class StudioTools(Toolkit):
             return
         base = self._runner_tools._load_config_from_db(component_id, version=self._edit_base_version(component_id))
         if not isinstance(base, dict):
-            return
+            raise ValueError(
+                f"Cannot edit '{component_id}': its stored config could not be read, so an edit would drop "
+                "whatever the rebuild does not carry back."
+            )
         # The db reference and untouched composition subtrees are
         # base-authoritative: no edit surface changes them, the runtime object
         # cannot improve on them, and re-serializing them churns identity
@@ -2599,6 +2604,7 @@ class StudioTools(Toolkit):
                     for link in step.get_links(position=position):
                         child_id = link.get("child_component_id")
                         link_kind = link.get("link_kind")
+                        candidates: List[Any]
                         if link_kind == "step_team":
                             candidates = code_teams
                             child_type = "team"
