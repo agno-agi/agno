@@ -211,9 +211,6 @@ class TestInlineDoorGate:
         from agno.os.job_queue import araise_if_ticket_owns_continue
 
         class SwallowingStore:
-            async def get_job(self, job_id):
-                return None  # the outage is hidden, exactly like PostgresDb.get_job
-
             async def get_job(self, job_id, strict=False):
                 if strict:
                     raise RuntimeError("store down")
