@@ -278,6 +278,20 @@ class TestDiscovery:
         assert len(shared_entries) == 1
         assert shared_entries[0]["source"] == "code"
 
+    def test_list_agents_keeps_db_component_whose_id_equals_a_code_name(self, registry, db):
+        # A code agent id="code-1" is *named* "support"; a distinct DB agent has id "support".
+        # get_/run_/edit_ all resolve "support" to the DB component (exact id wins), so the
+        # listing must not hide it behind the code agent's name.
+        seed = StudioTools(registry=registry, db=db)
+        seed.create_agent(name="support", instructions="i", model_id="gpt-5.4")  # DB id "support"
+
+        code_agent = Agent(id="code-1", name="support", model=OpenAIResponses(id="gpt-5.4"))
+        studio = StudioTools(registry=registry, db=db, agents_list=[code_agent])
+        out = _loads(studio.list_agents())
+        ids = {a["id"] for a in out["agents"]}
+        assert "code-1" in ids
+        assert "support" in ids  # DB component stays discoverable, not shadowed by the code name
+
     def test_list_teams_includes_db_components(self, registry, db):
         tool = StudioTools(registry=registry, db=db, teams=True)
         tool.create_agent(name="a1", instructions="i", model_id="gpt-5.4")
@@ -1450,7 +1464,7 @@ class TestTypeGuards:
         tool.create_agent(name="member", instructions="i", model_id="gpt-5.4")
         tool.create_team(name="squad", instructions="i", member_ids=["member"], model_id="gpt-5.4")
 
-        out = _loads(tool.run_agent("squad", message="hi"))
+        out = _loads(_tool(tool, "run_agent")("squad", message="hi"))
         assert "error" in out
 
     def test_get_team_rejects_agent_id(self, registry, db):
@@ -1577,24 +1591,30 @@ class _StubAgent:
     id = "stub"
     name = "Stub"
 
-    def run(self, message):
+    def run(self, message, stream=None, user_id=None, session_id=None):
         return _StubRunOutput()
 
-    async def arun(self, message):
+    async def arun(self, message, stream=None, user_id=None, session_id=None):
         return _StubRunOutput()
+
+    def deep_copy(self):
+        # A distinct instance that shares state, the shape _fresh_copy accepts.
+        clone = object.__new__(type(self))
+        clone.__dict__ = self.__dict__
+        return clone
 
 
 class TestRunSerialization:
     def test_run_agent_serializes_non_json_content(self, registry, db):
         tool = StudioTools(registry=registry, db=db, agents_list=[_StubAgent()])
-        out = _loads(tool.run_agent("stub", "hi"))
+        out = _loads(_tool(tool, "run_agent")("stub", "hi"))
         assert "error" not in out
         assert out["content"].startswith("2026-01-01")
 
     @pytest.mark.asyncio
     async def test_arun_agent_serializes_non_json_content(self, registry, db):
         tool = StudioTools(registry=registry, db=db, agents_list=[_StubAgent()])
-        out = _loads(await tool.arun_agent("stub", "hi"))
+        out = _loads(await tool.async_functions["run_agent"].entrypoint("stub", "hi"))
         assert "error" not in out
         assert out["content"].startswith("2026-01-01")
 
