@@ -316,6 +316,30 @@ def test_get_skill_instructions_success(mock_loader: MockSkillLoader) -> None:
     assert "available_references" in result
 
 
+def test_get_skill_instructions_preserves_non_ascii_characters(sample_skill: Skill) -> None:
+    """Test that skill instructions preserve Chinese and other non-ASCII characters."""
+    skill_with_chinese = Skill(
+        name="chinese-skill",
+        description="中文技能描述",
+        instructions="# 中文指令\n\n请按照以下步骤操作：\n1. 第一步\n2. 第二步\n3. 完成",
+        source_path="/path/to/chinese-skill",
+        scripts=["脚本.py"],
+        references=["参考文档.md"],
+    )
+    loader = MockSkillLoader([skill_with_chinese])
+    skills = Skills(loaders=[loader])
+    result_json = skills._get_skill_instructions("chinese-skill")
+    result = json.loads(result_json)
+
+    assert result["skill_name"] == "chinese-skill"
+    assert result["instructions"] == "# 中文指令\n\n请按照以下步骤操作：\n1. 第一步\n2. 第二步\n3. 完成"
+    assert result["description"] == "中文技能描述"
+    # Verify raw JSON string contains actual Chinese chars, not \uXXXX escapes
+    assert "中文指令" in result_json
+    assert "中文技能描述" in result_json
+    assert "\\u" not in result_json  # No ASCII escaping
+
+
 def test_get_skill_instructions_not_found(mock_loader: MockSkillLoader) -> None:
     """Test retrieval of non-existent skill instructions."""
     skills = Skills(loaders=[mock_loader])
