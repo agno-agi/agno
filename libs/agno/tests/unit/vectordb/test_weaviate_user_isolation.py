@@ -85,13 +85,17 @@ def mock_async_weaviate_client():
 @pytest.fixture
 def weaviate_db(mock_weaviate_client, mock_async_weaviate_client):
     """Create a Weaviate instance with mocked sync and async clients."""
-    return Weaviate(
+    db = Weaviate(
         collection=TEST_COLLECTION,
         local=True,
         embedder=DeterministicEmbedder(),
         client=mock_weaviate_client,
         search_type=SearchType.vector,
     )
+    # The mocked client cannot answer the live-schema probe, and these tests
+    # model a migrated (v3) collection — prime the owner-property gate.
+    db._owner_property_exists = True
+    return db
 
 
 def _alice_docs():
