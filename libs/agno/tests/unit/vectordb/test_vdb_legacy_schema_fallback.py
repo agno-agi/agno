@@ -332,9 +332,38 @@ def test_drop_resets_the_owner_schema_cache(backend, tmp_path, monkeypatch):
     # attempt a TCP connect.
     if backend == "redis":
         db.index = MagicMock()
+    if backend == "valkey":
+        # drop() also sweeps keys via a scan loop that never terminates on a
+        # MagicMock cursor — not what this test is about.
+        monkeypatch.setattr(db, "_delete_all_keys", lambda: None)
     monkeypatch.setattr(db, "exists", lambda: True, raising=False)
     monkeypatch.setattr(db, "table_exists", lambda: True, raising=False)
 
     db.drop()
 
     assert getattr(db, cache_attr) is None, "drop() must invalidate the cached schema answer"
+
+
+def test_lancedb_gate_recovers_from_migration_by_another_process(legacy_lance):
+    """The migration script runs in its own process while the app holds a
+    pinned LanceTable handle. The gate's re-inspect must checkout_latest()
+    before re-reading the schema — a plain re-read returns the stale pinned
+    version forever, and the user who just migrated would keep getting the
+    migration error until restart."""
+    import lancedb
+
+    db = legacy_lance
+
+    # Cache the legacy answer on the app's handle.
+    with pytest.raises(ValueError, match="migration"):
+        db.search("x", limit=1, user_id="alice")
+
+    # Migrate through a completely separate handle (a different process).
+    other_handle = lancedb.connect(str(db.uri)).open_table("legacy")
+    other_handle.add_columns({"user_id": "CAST(NULL AS STRING)"})
+    assert "user_id" not in db.table.schema.names, "app handle must still be pinned to the stale version"
+
+    # The very next scoped op on the app's handle must recover, not re-raise.
+    db.upsert("cdcd8888", [_doc("al-1", "alice-doc", "alice private budget", "cid-al")], user_id="alice")
+    results = db.search("budget", limit=5, user_id="alice")
+    assert any("alice private" in d.content for d in results)

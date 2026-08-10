@@ -353,8 +353,18 @@ class LanceDb(VectorDb):
         if user_id is None:
             return False
         # The cached answer may predate a migration run while this process is
-        # alive — re-inspect once before refusing.
+        # alive — re-inspect once before refusing. LanceTable pins its dataset
+        # version, so a plain re-read of ``self.table.schema`` returns the
+        # same stale version forever; refresh the handle first or a user who
+        # just ran the migration keeps hitting this error until restart.
         self._owner_column_exists = None
+        try:
+            if self.table is not None:
+                self.table.checkout_latest()
+        except Exception:
+            # Older clients / cloud handles may not support checkout — the
+            # re-inspect then sees whatever the handle sees.
+            pass
         if self._user_id_column_exists():
             return True
         raise ValueError(
