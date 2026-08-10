@@ -14,7 +14,7 @@ from agno.skills.skill import Skill
 from agno.utils.path_safety import safe_join_relative_path
 
 
-def materialize_skill_contents(skill: Skill, root: Path) -> None:
+def create_skill_files(skill: Skill, root: Path) -> None:
     """Write a content-carrying skill's files under ``root``, laid out like a skill folder.
 
     Scripts land in ``root/scripts`` and references in ``root/references``, so a script finds a

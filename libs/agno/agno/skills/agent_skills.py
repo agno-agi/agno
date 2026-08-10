@@ -10,7 +10,7 @@ from agno.skills.errors import SkillError, SkillValidationError
 from agno.skills.executor import LocalSkillExecutor, SkillExecutor
 from agno.skills.loaders.base import SkillLoader
 from agno.skills.skill import Skill
-from agno.skills.utils import materialize_skill_contents, read_file_safe
+from agno.skills.utils import create_skill_files, read_file_safe
 from agno.tools.function import Function
 from agno.utils.log import log_debug, log_warning
 from agno.utils.path_safety import safe_join_relative_path
@@ -211,18 +211,12 @@ class Skills:
         """
         return any(index not in self._loader_results for index in range(len(self.loaders)))
 
-    def get_persistable_skill_names(self) -> List[str]:
+    def get_skills_from_db(self) -> List[str]:
         """Get the skill names a stored agent or team saves to re-resolve this object.
 
-        Only skills a database loader produced, plus each database loader's configured
-        names. A saved name is resolved against the skills table on load, so a skill from
-        any other source cannot be saved: its name would resolve to whatever row happens
-        to share it, or to nothing, silently swapping the skill either way. Those are
-        skipped with a warning, the way an unresolvable knowledge reference is.
-
-        A failed database load leaves the mapping empty while the configured names still
-        say what to resolve, so a save during an outage preserves them instead of
-        deleting the stored reference.
+        Only DbSkills-produced skills are saved (other sources would resolve to the wrong
+        row or nothing; they are skipped with a warning), plus each database loader's
+        configured names, so a save during an outage preserves them instead of erasing.
 
         Returns:
             A list of skill names, loaded first, without duplicates.
@@ -616,7 +610,7 @@ class Skills:
             # skill, whose source_path LocalSkills has already resolved.
             skill_dir = Path(temp_dir).resolve()
             try:
-                materialize_skill_contents(skill, skill_dir)
+                create_skill_files(skill, skill_dir)
                 script_file = safe_join_relative_path(skill_dir / "scripts", script_path)
             except PathSecurityError:
                 return json.dumps(

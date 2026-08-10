@@ -629,7 +629,7 @@ def to_dict(team: "Team") -> Dict[str, Any]:
     # skills table on load, the way members are stored by id and re-resolved.
     # Saving freezes the current names: rows added later are not picked up on load.
     if team.skills is not None:
-        skill_names = team.skills.get_persistable_skill_names()
+        skill_names = team.skills.get_skills_from_db()
         if skill_names:
             config["skills"] = {"names": skill_names}
             # An executor cannot be serialized, so record only that a non-default one was

@@ -427,7 +427,7 @@ def test_only_database_backed_skills_are_persisted(tmp_path, sqlite_db, monkeypa
     warnings: List[str] = []
     monkeypatch.setattr("agno.skills.agent_skills.log_warning", warnings.append)
 
-    assert skills.get_persistable_skill_names() == ["db-skill"]
+    assert skills.get_skills_from_db() == ["db-skill"]
     assert len(warnings) == 1
     assert "greeter" in warnings[0]
 
@@ -439,7 +439,7 @@ def test_database_backed_skills_still_round_trip(sqlite_db) -> None:
 
     skills = Skills(loaders=[DbSkills(sqlite_db)])
 
-    assert sorted(skills.get_persistable_skill_names()) == ["alpha", "beta"]
+    assert sorted(skills.get_skills_from_db()) == ["alpha", "beta"]
 
 
 def test_a_failed_database_load_still_persists_its_configured_names(sqlite_db, monkeypatch) -> None:
@@ -452,7 +452,7 @@ def test_a_failed_database_load_still_persists_its_configured_names(sqlite_db, m
     monkeypatch.setattr(sqlite_db, "Session", boom)
     skills._refresh_loaders()
 
-    assert sorted(skills.get_persistable_skill_names()) == ["alpha", "beta"]
+    assert sorted(skills.get_skills_from_db()) == ["alpha", "beta"]
 
 
 def test_a_local_only_agent_persists_nothing(tmp_path, monkeypatch) -> None:
@@ -462,5 +462,5 @@ def test_a_local_only_agent_persists_nothing(tmp_path, monkeypatch) -> None:
     warnings: List[str] = []
     monkeypatch.setattr("agno.skills.agent_skills.log_warning", warnings.append)
 
-    assert skills.get_persistable_skill_names() == []
+    assert skills.get_skills_from_db() == []
     assert any("greeter" in w for w in warnings)
