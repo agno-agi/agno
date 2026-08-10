@@ -1251,3 +1251,39 @@ def test_model_copy_deep_isolates_user_input_schema():
 
     copied.user_input_schema[0].value = "run-scoped answer"
     assert func.user_input_schema[0].value is None
+
+
+def test_function_entrypoint_json_dumps_preserves_chinese():
+    """Test that json.dumps in tool entrypoints preserves Chinese characters.
+
+    This verifies that tools returning Chinese content via json.dumps
+    produce readable output for LLMs and logs, rather than \\uXXXX escapes.
+    """
+    import json
+
+    def chinese_tool(query: str) -> str:
+        """Search with Chinese results."""
+        return json.dumps({
+            "query": query,
+            "results": [
+                {"title": "中文标题", "content": "这是中文内容"},
+                {"title": "你好世界", "content": "包含中文字符"},
+            ]
+        }, ensure_ascii=False)
+
+    func = Function(
+        name="chinese_search",
+        description="Search that returns Chinese content",
+        entrypoint=chinese_tool,
+    )
+    func.process_entrypoint()
+
+    result = func.entrypoint(query="中文搜索")
+    parsed = json.loads(result)
+
+    assert parsed["results"][0]["title"] == "中文标题"
+    assert parsed["results"][0]["content"] == "这是中文内容"
+    assert parsed["results"][1]["title"] == "你好世界"
+    assert "中文标题" in result
+    assert "你好世界" in result
+    assert "\\u" not in result
