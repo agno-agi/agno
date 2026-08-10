@@ -448,7 +448,15 @@ class QueueWorker:
                 # Lost to a live heartbeat or another sweeper - and the run
                 # row was never touched, which is the point of acquiring first
                 continue
-            error = "Worker lost and attempt budget exhausted; run was not re-executed"
+            # The message is the operator surface (it lands on job.error and
+            # the polled run's content): it must answer the next question -
+            # "why did my durable run not re-execute?" - not just state facts
+            error = (
+                "Worker lost and attempt budget exhausted; run was not re-executed. "
+                "Crashed runs fail visibly instead of silently re-executing (at-most-once, "
+                "max_attempts=1 by default): set QueueConfig(max_attempts=2) or higher to allow "
+                "automatic re-execution, or grant one attempt via POST /queue/jobs/{id}/requeue."
+            )
             if not await self._persist_run_error(job, error):
                 # The run row could not be terminalized (component missing
                 # after a deploy, session store fault). Failing the ticket now
