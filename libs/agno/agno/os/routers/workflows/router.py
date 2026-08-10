@@ -23,7 +23,9 @@ from agno.factory import FactoryContextRequired
 from agno.os.auth import (
     get_auth_token_from_request,
     get_authentication_dependency,
+    require_approval_resolved,
     require_resource_access,
+    run_continuation_blocked_reason,
 )
 from agno.os.managers import event_buffer, websocket_manager
 from agno.os.middleware.user_scope import (
@@ -517,6 +519,21 @@ async def handle_workflow_continue_via_websocket(
                 )
             )
             return
+
+        # Mirror HTTP continue: nested executor approvals must be resolved first.
+        # WebSocketAuthContext has no scopes list; admins bypass via is_admin.
+        if ws_auth is not None and not ws_auth.is_admin:
+            for executor_run in getattr(existing_run, "step_executor_runs", None) or []:
+                executor_run_id = getattr(executor_run, "run_id", None)
+                reason = await run_continuation_blocked_reason(
+                    os.db,
+                    executor_run_id,
+                    authorization_enabled=bool(ws_auth.jwt_enabled),
+                    user_scopes=[],
+                )
+                if reason:
+                    await websocket.send_text(json.dumps({"event": "error", "error": reason}))
+                    return
 
         # Apply step requirements if provided
         if step_requirements_data:
@@ -1331,11 +1348,15 @@ def get_workflow_router(
             },
             400: {"description": "Invalid JSON in requirements field", "model": BadRequestResponse},
             404: {"description": "Workflow not found", "model": NotFoundResponse},
+            403: {"description": "Run has a pending admin approval and cannot be continued by the user yet."},
             409: {
                 "description": "Run is not paused. Only PAUSED runs can be continued.",
             },
         },
-        dependencies=[Depends(require_resource_access("workflows", "run", "workflow_id"))],
+        dependencies=[
+            Depends(require_resource_access("workflows", "run", "workflow_id")),
+            Depends(require_approval_resolved(os.db)),
+        ],
     )
     async def continue_workflow_run(
         workflow_id: str,
@@ -1413,6 +1434,20 @@ def get_workflow_router(
             )
             raise HTTPException(status_code=409, detail=detail)
 
+        # Approvals are stored under nested executor run_ids, not the workflow run_id.
+        # require_approval_resolved above covers the workflow id; also block when any
+        # paused executor still has a pending approval_type='required' record.
+        for executor_run in getattr(existing_run, "step_executor_runs", None) or []:
+            executor_run_id = getattr(executor_run, "run_id", None)
+            reason = await run_continuation_blocked_reason(
+                os.db,
+                executor_run_id,
+                authorization_enabled=getattr(request.state, "authorization_enabled", False),
+                user_scopes=getattr(request.state, "scopes", []) or [],
+            )
+            if reason:
+                raise HTTPException(status_code=403, detail=reason)
+
         # Convert step requirements dicts to StepRequirement objects
         from agno.workflow.types import StepRequirement
 
@@ -1455,6 +1490,11 @@ def get_workflow_router(
                 return run_response.to_dict()
             except InputCheckError as e:
                 raise HTTPException(status_code=400, detail=str(e))
+            except RuntimeError as e:
+                # Pending / missing admin approval from executor continue path.
+                if "approval" in str(e).lower():
+                    raise HTTPException(status_code=403, detail=str(e))
+                raise HTTPException(status_code=500, detail=f"Error continuing workflow run: {str(e)}")
             except Exception as e:
                 raise HTTPException(status_code=500, detail=f"Error continuing workflow run: {str(e)}")
 

@@ -494,3 +494,17 @@ async def test_aget_workflow_nonexistent_version_returns_404(versioned_workflow_
     async with httpx.AsyncClient(transport=ASGITransport(app=versioned_workflow_app), base_url="http://test") as client:
         response = await client.get("/workflows/versioned-wf", params={"version": 999})
         assert response.status_code == 404
+
+
+def test_continue_workflow_run_route_requires_approval_resolution_dependency(test_os_client):
+    """Workflow continue must share the agent/team admin-approval gate."""
+    from agno.os.utils import flatten_routes
+
+    route = next(
+        route
+        for route in flatten_routes(test_os_client.app.routes)
+        if getattr(route, "path", None) == "/workflows/{workflow_id}/runs/{run_id}/continue"
+    )
+
+    dependency_qualnames = [getattr(dep.call, "__qualname__", "") for dep in route.dependant.dependencies]
+    assert any("require_approval_resolved" in qualname for qualname in dependency_qualnames)
