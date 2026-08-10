@@ -461,7 +461,15 @@ class QueueWorker:
             # own recovery path.
             if await self._areconcile_swept_job(job):
                 continue
-            error = "Worker lost and attempt budget exhausted; run was not re-executed"
+            # The message is the operator surface (it lands on job.error and
+            # the polled run's content): it must answer the next question -
+            # "why did my durable run not re-execute?" - not just state facts
+            error = (
+                "Worker lost and attempt budget exhausted; run was not re-executed. "
+                "Crashed runs fail visibly instead of silently re-executing (at-most-once, "
+                "max_attempts=1 by default): set QueueConfig(max_attempts=2) or higher to allow "
+                "automatic re-execution, or grant one attempt via POST /queue/jobs/{id}/requeue."
+            )
             outcome = await self._persist_run_error_outcome(job, error)
             if outcome is None:
                 # The run row could not be terminalized (component missing
