@@ -3079,25 +3079,32 @@ class RedisDb(BaseDb):
     def count_queued_jobs(self) -> int:
         return int(self.redis_client.zcard(self._q_key("queued")))
 
-    def list_jobs(self, status: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
-        """Newest-first job listing. With a status filter, pages through the
-        FULL index in chunks until the limit is satisfied - a fixed window
-        would hide older matches behind newer non-matching jobs (e.g. failed
-        jobs older than a burst of completed ones)."""
+    def list_jobs(
+        self,
+        status: Optional[Union[str, List[str]]] = None,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: Optional[str] = "created_at",
+        sort_order: Optional[str] = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Paginated job listing: (page of jobs, total matching count).
+
+        status accepts one value or a list (match any). Loads the full index
+        and filters/sorts in Python, like the other Redis list APIs -
+        total_count and arbitrary sort fields need the whole set anyway, and
+        the index stays small by construction (bounded by max_queue_depth
+        plus the retention sweep)."""
+        statuses = [status] if isinstance(status, str) else status
         jobs: List[Dict[str, Any]] = []
-        chunk = max(limit * 4, 100)
-        offset = 0
-        while True:
-            raw_ids = self.redis_client.zrevrange(self._q_key("all"), offset, offset + chunk - 1)
-            if not raw_ids:
-                return jobs
-            for raw_id in raw_ids:
-                job = self._q_load_job(_q_to_str(raw_id))
-                if job is not None and (status is None or job["status"] == status):
-                    jobs.append(job)
-                    if len(jobs) >= limit:
-                        return jobs
-            offset += chunk
+        raw_ids = self.redis_client.zrevrange(self._q_key("all"), 0, -1)
+        for raw_id in raw_ids:
+            job = self._q_load_job(_q_to_str(raw_id))
+            if job is not None and (statuses is None or job["status"] in statuses):
+                jobs.append(job)
+        total_count = len(jobs)
+        jobs = apply_sorting(records=jobs, sort_by=sort_by, sort_order=sort_order)
+        start = max(page - 1, 0) * limit
+        return jobs[start : start + limit], total_count
 
     def requeue_job(self, job_id: str) -> bool:
         """Operator requeue for a terminally failed/cancelled job: grants

@@ -6462,21 +6462,32 @@ class PostgresDb(BaseDb):
             log_warning(f"Job queue store: queued-count failed: {e}")
             return 0
 
-    def list_jobs(self, status: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+    def list_jobs(
+        self,
+        status: Optional[Union[str, List[str]]] = None,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: Optional[str] = "created_at",
+        sort_order: Optional[str] = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = self._get_table(table_type="jobs")
             if table is None:
-                return []
+                return [], 0
             stmt = select(table)
             if status is not None:
-                stmt = stmt.where(table.c.status == status)
-            stmt = stmt.order_by(table.c.created_at.desc()).limit(limit)
+                statuses = [status] if isinstance(status, str) else list(status)
+                stmt = stmt.where(table.c.status.in_(statuses))
+            count_stmt = select(func.count()).select_from(stmt.alias())
+            stmt = apply_sorting(stmt, table, sort_by, sort_order)
+            stmt = stmt.limit(limit).offset(max(page - 1, 0) * limit)
             with self.Session() as sess:
+                total_count = sess.execute(count_stmt).scalar() or 0
                 result = sess.execute(stmt)
-                return [dict(row._mapping) for row in result.fetchall()]
+                return [dict(row._mapping) for row in result.fetchall()], total_count
         except Exception as e:
             log_warning(f"Job queue store: list_jobs failed (status={status!r}): {e}")
-            return []
+            return [], 0
 
     def requeue_job(self, job_id: str) -> bool:
         """Operator requeue for a terminally failed/cancelled job: grants

@@ -231,10 +231,33 @@ class TestOpsSurface:
         await store.enqueue_job(make_job("r2"))
         await store.claim_job("w1")
 
-        assert len(await store.list_jobs(status="queued")) == 1
+        queued_jobs, queued_total = await store.list_jobs(status="queued")
+        assert len(queued_jobs) == 1
+        assert queued_total == 1
+        both, both_total = await store.list_jobs(status=["queued", "running"])
+        assert both_total == 2 and len(both) == 2
         stats = await store.queue_stats()
         assert stats["counts"] == {"queued": 1, "running": 1}
         assert stats["oldest_queued_age_seconds"] is not None
+
+    @pytest.mark.asyncio
+    async def test_list_pagination_and_sorting(self, store):
+        for i in range(5):
+            await store.enqueue_job(make_job(f"r{i}", created_at=1000 + i))
+
+        page1, total = await store.list_jobs(limit=2, page=1)
+        assert total == 5
+        assert [j["id"] for j in page1] == ["r4", "r3"]
+        page3, _ = await store.list_jobs(limit=2, page=3)
+        assert [j["id"] for j in page3] == ["r0"]
+
+        asc, _ = await store.list_jobs(limit=5, page=1, sort_by="created_at", sort_order="asc")
+        assert [j["id"] for j in asc] == ["r0", "r1", "r2", "r3", "r4"]
+
+        # Unknown sort fields are silently ignored (the list-API convention)
+        jobs, total = await store.list_jobs(limit=5, page=1, sort_by="not_a_field")
+        assert total == 5
+        assert len(jobs) == 5
 
     @pytest.mark.asyncio
     async def test_requeue_grants_one_more_attempt(self, store):

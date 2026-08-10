@@ -12,7 +12,7 @@ DB-backed store in production. One instance per process.
 
 import asyncio
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 
 class InMemoryQueueStore:
@@ -226,11 +226,30 @@ class InMemoryQueueStore:
 
     # -- Operations surface (DLQ, requeue, stats, retention) ---------------
 
-    async def list_jobs(self, status: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+    async def list_jobs(
+        self,
+        status: Optional[Union[str, List[str]]] = None,
+        limit: int = 20,
+        page: int = 1,
+        sort_by: Optional[str] = "created_at",
+        sort_order: Optional[str] = "desc",
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """Paginated job listing: (page of jobs, total matching count).
+
+        status accepts one value or a list (match any). An unknown sort_by is
+        silently ignored (the list-API convention); None-valued sort fields
+        group together rather than erroring."""
+        statuses = [status] if isinstance(status, str) else status
         async with self._lock:
-            jobs = [dict(j) for j in self._jobs.values() if status is None or j["status"] == status]
-            jobs.sort(key=lambda j: j["created_at"], reverse=True)
-            return jobs[:limit]
+            jobs = [dict(j) for j in self._jobs.values() if statuses is None or j["status"] in statuses]
+        total_count = len(jobs)
+        if sort_by and jobs and sort_by in jobs[0]:
+            jobs.sort(
+                key=lambda j: (j.get(sort_by) is None, j.get(sort_by)),
+                reverse=(sort_order != "asc"),
+            )
+        start = max(page - 1, 0) * limit
+        return jobs[start : start + limit], total_count
 
     async def requeue_job(self, job_id: str) -> bool:
         """Operator requeue for a terminally failed/cancelled job: grants
