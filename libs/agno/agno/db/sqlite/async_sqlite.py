@@ -776,12 +776,17 @@ class AsyncSqliteDb(AsyncBaseDb):
                 # A NULL index has no position and breaks ORDER BY run_index. ON CONFLICT
                 # preserves the existing index, so this only sets it on a genuine insert.
                 if row.get("run_index") is None:
-                    current_max = (
-                        await sess.execute(
-                            select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
-                        )
-                    ).scalar()
-                    row["run_index"] = (current_max + 1) if current_max is not None else 0
+                    # Computed INSIDE the insert statement: SQLite holds the
+                    # database write lock for the whole statement, so two
+                    # concurrent backfills cannot read the same MAX (the old
+                    # two-statement read-then-insert could - a busy-waiting
+                    # second writer landed a duplicate index after the first
+                    # committed).
+                    row["run_index"] = (
+                        select(func.coalesce(func.max(runs_table.c.run_index) + 1, 0))
+                        .where(runs_table.c.session_id == session_id)
+                        .scalar_subquery()
+                    )
 
                 stmt = sqlite.insert(runs_table).values(**row)
                 stmt = stmt.on_conflict_do_update(

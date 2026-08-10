@@ -38,6 +38,11 @@ Enable flags:
       False overrides the auto-enable.
     * Versioning tools (list_versions, get_version, publish_component,
       set_current_version, delete_version) are exposed only when versions=True.
+    * Schedule tools (create_schedule, list_schedules, get_schedule,
+      get_schedule_runs, trigger_schedule, enable_schedule, disable_schedule,
+      delete_schedule) are exposed only when schedules=True. create_schedule is
+      Studio's own (component-aware targets); the management tools are shared
+      with SchedulerTools.
 
 Persistence:
     * Studio saves ONLY the component it creates/edits. It does NOT cascade to
@@ -59,11 +64,15 @@ if TYPE_CHECKING:
     from agno.db.base import BaseDb, ComponentType
     from agno.models.base import Model
     from agno.registry.registry import Registry
+    from agno.scheduler.manager import ScheduleManager
     from agno.team.team import Team
+    from agno.tools.scheduler import SchedulerTools
     from agno.workflow.workflow import Workflow
 
 Component = Union["Agent", "Team", "Workflow"]
 TeamMember = Union["Agent", "Team"]
+
+_SCHEDULE_TARGET_TYPES = ("agent", "team", "workflow")
 
 
 class StudioTools(Toolkit):
@@ -80,6 +89,9 @@ class StudioTools(Toolkit):
         teams_list: Same as ``agents_list`` but for teams.
         workflows_list: Same as ``agents_list`` but for workflows.
         default_model_id: Model id to use when a caller omits one.
+        default_num_history_runs: History depth for created agents and teams
+            when a caller omits ``num_history_runs``. None lets the
+            component's own default apply.
         agents: Expose agent operations. Defaults to True.
         teams: Expose team operations. Defaults to False (see module docstring
             for auto-enable rules).
@@ -88,6 +100,13 @@ class StudioTools(Toolkit):
             publish_component, set_current_version, delete_version). Defaults
             to False; without versioning, edits publish immediately instead of
             producing drafts.
+        schedules: Expose schedule tools: Studio's own create_schedule
+            (component-aware targets) plus the SchedulerTools management tools
+            (list_schedules, get_schedule, get_schedule_runs, trigger_schedule,
+            enable_schedule, disable_schedule, delete_schedule). Defaults to
+            False. Requires the optional scheduler dependencies (croniter and
+            pytz -- ``pip install agno[scheduler]``); when they are missing,
+            the first schedule tool call that needs them returns an error JSON.
     """
 
     def __init__(
@@ -98,10 +117,12 @@ class StudioTools(Toolkit):
         teams_list: Optional[List["Team"]] = None,
         workflows_list: Optional[List["Workflow"]] = None,
         default_model_id: Optional[str] = None,
+        default_num_history_runs: Optional[int] = None,
         agents: Optional[bool] = None,
         teams: Optional[bool] = None,
         workflows: Optional[bool] = None,
         versions: bool = False,
+        schedules: bool = False,
         **kwargs: Any,
     ):
         self.registry = registry
@@ -110,6 +131,7 @@ class StudioTools(Toolkit):
         self.teams_list = teams_list
         self.workflows_list = workflows_list
         self.default_model_id = default_model_id
+        self.default_num_history_runs = default_num_history_runs
 
         self.enable_agents, self.enable_teams, self.enable_workflows = _resolve_flags(
             agents=agents,
@@ -119,6 +141,14 @@ class StudioTools(Toolkit):
             has_teams_list=teams_list is not None,
         )
         self.enable_versions: bool = versions
+        self.enable_schedules: bool = schedules
+        # Schedule management is shared with SchedulerTools; Studio owns only
+        # create_schedule (component targets, internally built endpoint).
+        self._scheduler_tools: Optional["SchedulerTools"] = None
+        if self.enable_schedules:
+            from agno.tools.scheduler import SchedulerTools
+
+            self._scheduler_tools = SchedulerTools(db=self.db)
 
         tools: List[Callable] = [
             # Discovery -- always available regardless of flags.
@@ -174,6 +204,21 @@ class StudioTools(Toolkit):
                 ]
             )
 
+        # Schedules target an existing component by id; opt-in.
+        if self._scheduler_tools is not None:
+            tools.extend(
+                [
+                    self.create_schedule,
+                    self._scheduler_tools.list_schedules,
+                    self._scheduler_tools.get_schedule,
+                    self._scheduler_tools.get_schedule_runs,
+                    self._scheduler_tools.trigger_schedule,
+                    self._scheduler_tools.enable_schedule,
+                    self._scheduler_tools.disable_schedule,
+                    self._scheduler_tools.delete_schedule,
+                ]
+            )
+
         async_tools: List[tuple[Callable[..., Any], str]] = [
             (self.alist_models, "list_models"),
             (self.alist_tools, "list_tools"),
@@ -223,6 +268,19 @@ class StudioTools(Toolkit):
                     (self.adelete_version, "delete_version"),
                 ]
             )
+        if self._scheduler_tools is not None:
+            async_tools.extend(
+                [
+                    (self.acreate_schedule, "create_schedule"),
+                    (self._scheduler_tools.alist_schedules, "list_schedules"),
+                    (self._scheduler_tools.aget_schedule, "get_schedule"),
+                    (self._scheduler_tools.aget_schedule_runs, "get_schedule_runs"),
+                    (self._scheduler_tools.atrigger_schedule, "trigger_schedule"),
+                    (self._scheduler_tools.aenable_schedule, "enable_schedule"),
+                    (self._scheduler_tools.adisable_schedule, "disable_schedule"),
+                    (self._scheduler_tools.adelete_schedule, "delete_schedule"),
+                ]
+            )
 
         instruction_lines = [
             "Compose agents, teams, and workflows from registry primitives.",
@@ -230,6 +288,8 @@ class StudioTools(Toolkit):
             "are exact and case-sensitive -- do NOT guess.",
             "Create: create_agent/create_team/create_workflow. When the user mentions specific "
             "tools, you MUST include ALL of those names in tool_names; do not silently drop any.",
+            "Created agents and teams remember the session by default; pass "
+            "add_history_to_context=False only for stateless components.",
             "Edit: ALWAYS call get_agent/get_team/get_workflow first to read the current state, "
             "then call edit_agent/edit_team/edit_workflow with only the fields that change.",
         ]
@@ -251,6 +311,13 @@ class StudioTools(Toolkit):
             instruction_lines.append(
                 "Workflow rules: each step_spec is a dict with 'name' and exactly one of "
                 "'agent_id', 'team_id', or 'function_name'. Use function_name values from list_functions."
+            )
+        if self.enable_schedules:
+            instruction_lines.append(
+                "Schedules: create_schedule targets an existing component by target_type "
+                "('agent'/'team'/'workflow') + target_id (ids from list_agents/list_teams/list_workflows) "
+                "and requires a message. Cron is 5-field; timezone is an IANA name. trigger_schedule "
+                "queues an enabled schedule to run now via the platform poller."
             )
 
         # Toolkit instructions are only injected into the system message when
@@ -298,7 +365,12 @@ class StudioTools(Toolkit):
                 if tool.name == name:
                     matches.append(tool)
                 elif name in tool.functions:
-                    function_matches.append(tool.functions[name])
+                    member = tool.functions[name]
+                    # Stamp the attribution so a component saved with this bare
+                    # Function keeps its "toolkit" key (see Registry.rehydrate_function).
+                    if isinstance(tool.name, str) and tool.name:
+                        member.owning_toolkit = tool.name
+                    function_matches.append(member)
             elif isinstance(tool, Function):
                 if tool.name == name:
                     matches.append(tool)
@@ -747,6 +819,9 @@ class StudioTools(Toolkit):
                 "instructions": getattr(agent, "instructions", None),
                 "description": getattr(agent, "description", None),
                 "tools": self._normalize_tool_names(_summarize_tools(getattr(agent, "tools", None))),
+                "add_history_to_context": getattr(agent, "add_history_to_context", None),
+                "num_history_runs": getattr(agent, "num_history_runs", None),
+                "add_datetime_to_context": getattr(agent, "add_datetime_to_context", None),
             },
             default=str,
         )
@@ -771,6 +846,9 @@ class StudioTools(Toolkit):
                 "instructions": getattr(team, "instructions", None),
                 "description": getattr(team, "description", None),
                 "member_ids": [getattr(m, "id", None) for m in members] if not callable(members) else [],
+                "add_history_to_context": getattr(team, "add_history_to_context", None),
+                "num_history_runs": getattr(team, "num_history_runs", None),
+                "add_datetime_to_context": getattr(team, "add_datetime_to_context", None),
             },
             default=str,
         )
@@ -823,6 +901,9 @@ class StudioTools(Toolkit):
         tool_names: Optional[List[str]] = None,
         db_id: Optional[str] = None,
         description: Optional[str] = None,
+        add_history_to_context: bool = True,
+        num_history_runs: Optional[int] = None,
+        add_datetime_to_context: bool = True,
     ) -> str:
         """Create a new agent and persist it as a published component.
 
@@ -834,9 +915,18 @@ class StudioTools(Toolkit):
                 (see list_tools). Include EVERY tool the user mentioned.
             db_id (Optional[str]): Database id from the registry. Uses the default if omitted.
             description (Optional[str]): Optional human-readable description.
+            add_history_to_context (bool): Include prior turns of the session so the
+                agent remembers the conversation. Defaults to True; pass False for a
+                stateless agent.
+            num_history_runs (Optional[int]): How many prior runs to include when
+                history is on. Omit for the default.
+            add_datetime_to_context (bool): Add the current date and time to the
+                agent's context so it can date and time-reference reliably.
+                Defaults to True; pass False to omit.
 
         Returns:
-            str: JSON with {status, id, name, model_id, tools, db_version}.
+            str: JSON with {status, id, name, model_id, tools, add_history_to_context,
+            add_datetime_to_context, db_version}.
         """
         from agno.agent.agent import Agent
 
@@ -859,6 +949,9 @@ class StudioTools(Toolkit):
                 instructions=instructions,
                 db=db,
                 description=description,
+                add_history_to_context=add_history_to_context,
+                num_history_runs=num_history_runs if num_history_runs is not None else self.default_num_history_runs,
+                add_datetime_to_context=add_datetime_to_context,
             )
 
             version = _persist_only(agent, db)
@@ -870,6 +963,8 @@ class StudioTools(Toolkit):
                     "name": name,
                     "model_id": getattr(model, "id", None),
                     "tools": _summarize_tools(tools),
+                    "add_history_to_context": add_history_to_context,
+                    "add_datetime_to_context": add_datetime_to_context,
                     "db_version": version,
                 }
             )
@@ -885,6 +980,9 @@ class StudioTools(Toolkit):
         model_id: Optional[str] = None,
         db_id: Optional[str] = None,
         description: Optional[str] = None,
+        add_history_to_context: bool = True,
+        num_history_runs: Optional[int] = None,
+        add_datetime_to_context: bool = True,
     ) -> str:
         """Create a new team and persist it as a published component.
 
@@ -895,9 +993,18 @@ class StudioTools(Toolkit):
             model_id (Optional[str]): Model id for the team leader.
             db_id (Optional[str]): Database id from the registry.
             description (Optional[str]): Optional description.
+            add_history_to_context (bool): Include prior turns of the session so the
+                team remembers the conversation. Defaults to True; pass False for a
+                stateless team.
+            num_history_runs (Optional[int]): How many prior runs to include when
+                history is on. Omit for the default.
+            add_datetime_to_context (bool): Add the current date and time to the
+                team's context so it can date and time-reference reliably.
+                Defaults to True; pass False to omit.
 
         Returns:
-            str: JSON with {status, id, name, model_id, member_ids, db_version}.
+            str: JSON with {status, id, name, model_id, member_ids, add_history_to_context,
+            add_datetime_to_context, db_version}.
         """
         from agno.team.team import Team
 
@@ -925,6 +1032,9 @@ class StudioTools(Toolkit):
                 instructions=instructions,
                 db=db,
                 description=description,
+                add_history_to_context=add_history_to_context,
+                num_history_runs=num_history_runs if num_history_runs is not None else self.default_num_history_runs,
+                add_datetime_to_context=add_datetime_to_context,
             )
 
             version = _persist_only(team, db)
@@ -936,6 +1046,8 @@ class StudioTools(Toolkit):
                     "name": name,
                     "model_id": getattr(model, "id", None),
                     "member_ids": [getattr(m, "id", None) for m in members],
+                    "add_history_to_context": add_history_to_context,
+                    "add_datetime_to_context": add_datetime_to_context,
                     "db_version": version,
                 }
             )
@@ -1009,6 +1121,9 @@ class StudioTools(Toolkit):
         model_id: Optional[str] = None,
         tool_names: Optional[List[str]] = None,
         description: Optional[str] = None,
+        add_history_to_context: Optional[bool] = None,
+        num_history_runs: Optional[int] = None,
+        add_datetime_to_context: Optional[bool] = None,
     ) -> str:
         """Edit an agent.
 
@@ -1023,6 +1138,11 @@ class StudioTools(Toolkit):
             model_id (Optional[str]): New model id from the registry. Omit to keep.
             tool_names (Optional[List[str]]): New tool list (replaces existing). Omit to keep.
             description (Optional[str]): New description. Omit to keep.
+            add_history_to_context (Optional[bool]): Whether the agent sees prior turns
+                of the session. Omit to keep.
+            num_history_runs (Optional[int]): New history depth. Omit to keep.
+            add_datetime_to_context (Optional[bool]): Whether the agent sees the
+                current date and time. Omit to keep.
         """
         if self.db is None:
             return json.dumps({"error": "StudioTools has no db configured; cannot edit components."})
@@ -1050,6 +1170,15 @@ class StudioTools(Toolkit):
                 agent.model = model
             if tool_names is not None:
                 agent.tools = self._resolve_tools(tool_names) or None
+            if add_history_to_context is not None:
+                agent.add_history_to_context = add_history_to_context
+            if num_history_runs is not None:
+                agent.num_history_runs = num_history_runs
+                # Mirror Agent.__init__'s resolution: num_history_runs wins
+                # over num_history_messages.
+                agent.num_history_messages = None
+            if add_datetime_to_context is not None:
+                agent.add_datetime_to_context = add_datetime_to_context
 
             result = self._save_edit(agent)
             log_debug(f"StudioTools edited agent id={agent_id} result={result}")
@@ -1065,6 +1194,9 @@ class StudioTools(Toolkit):
         model_id: Optional[str] = None,
         member_ids: Optional[List[str]] = None,
         description: Optional[str] = None,
+        add_history_to_context: Optional[bool] = None,
+        num_history_runs: Optional[int] = None,
+        add_datetime_to_context: Optional[bool] = None,
     ) -> str:
         """Edit a team.
 
@@ -1079,6 +1211,11 @@ class StudioTools(Toolkit):
             model_id (Optional[str]): New model id. Omit to keep.
             member_ids (Optional[List[str]]): New member ids (replaces existing). Omit to keep.
             description (Optional[str]): New description. Omit to keep.
+            add_history_to_context (Optional[bool]): Whether the team sees prior turns
+                of the session. Omit to keep.
+            num_history_runs (Optional[int]): New history depth. Omit to keep.
+            add_datetime_to_context (Optional[bool]): Whether the team sees the
+                current date and time. Omit to keep.
         """
         if self.db is None:
             return json.dumps({"error": "StudioTools has no db configured; cannot edit components."})
@@ -1111,6 +1248,15 @@ class StudioTools(Toolkit):
                 if not members:
                     return json.dumps({"error": "A team must have at least one member"})
                 team.members = members
+            if add_history_to_context is not None:
+                team.add_history_to_context = add_history_to_context
+            if num_history_runs is not None:
+                team.num_history_runs = num_history_runs
+                # Mirror Team.__init__'s resolution: num_history_runs wins
+                # over num_history_messages.
+                team.num_history_messages = None
+            if add_datetime_to_context is not None:
+                team.add_datetime_to_context = add_datetime_to_context
 
             result = self._save_edit(team)
             log_debug(f"StudioTools edited team id={team_id} result={result}")
@@ -1423,6 +1569,79 @@ class StudioTools(Toolkit):
             return json.dumps({"error": str(e)})
 
     # ------------------------------------------------------------------
+    # Schedules (component-aware)
+    # ------------------------------------------------------------------
+
+    def create_schedule(
+        self,
+        name: str,
+        cron: str,
+        target_type: str,
+        target_id: str,
+        message: str,
+        timezone: str = "UTC",
+        description: Optional[str] = None,
+    ) -> str:
+        """Create (or update) a schedule that runs an existing component on a cron cadence.
+
+        Args:
+            name (str): Unique schedule name (e.g. "daily-news-digest"). Re-using an
+                existing name updates that schedule in place.
+            cron (str): 5-field cron expression (e.g. "0 9 * * *" for daily at 9am).
+            target_type (str): One of 'agent', 'team', or 'workflow'.
+            target_id (str): Id (or name) of an existing component -- use ids from
+                list_agents/list_teams/list_workflows.
+            message (str): The message sent to the component on every scheduled run.
+            timezone (str): IANA timezone name for the cron expression
+                (e.g. "America/New_York"). Defaults to "UTC".
+            description (Optional[str]): Human-readable description of the schedule.
+
+        Returns:
+            str: JSON with {status, id, name, cron, target_type, target_id, endpoint,
+                timezone, enabled, next_run_at}.
+        """
+        try:
+            component_id, target_error = self._resolve_schedule_target(target_type, target_id)
+            if target_error is not None:
+                return json.dumps({"error": target_error})
+            if not message or not message.strip():
+                return json.dumps(
+                    {
+                        "error": "message must be a non-empty string; it is the prompt "
+                        "sent to the component on every scheduled run."
+                    }
+                )
+            manager = self._get_schedule_manager()
+            schedule = manager.create(
+                name=name,
+                cron=cron,
+                endpoint=f"/{target_type}s/{component_id}/runs",
+                method="POST",
+                description=description,
+                payload={"message": message},
+                timezone=timezone,
+                if_exists="update",
+            )
+            log_debug(f"StudioTools created schedule name={name} target={target_type}:{component_id}")
+            return json.dumps(
+                {
+                    "status": "created",
+                    "id": schedule.id,
+                    "name": schedule.name,
+                    "cron": schedule.cron_expr,
+                    "target_type": target_type,
+                    "target_id": component_id,
+                    "endpoint": schedule.endpoint,
+                    "timezone": schedule.timezone,
+                    "enabled": schedule.enabled,
+                    "next_run_at": schedule.next_run_at,
+                }
+            )
+        except Exception as e:
+            logger.exception("Failed to create schedule")
+            return json.dumps({"error": str(e)})
+
+    # ------------------------------------------------------------------
     # Async tools
     # ------------------------------------------------------------------
 
@@ -1474,6 +1693,9 @@ class StudioTools(Toolkit):
         tool_names: Optional[List[str]] = None,
         db_id: Optional[str] = None,
         description: Optional[str] = None,
+        add_history_to_context: bool = True,
+        num_history_runs: Optional[int] = None,
+        add_datetime_to_context: bool = True,
     ) -> str:
         """Async variant of create_agent."""
         return await self._run_sync_tool(
@@ -1484,6 +1706,9 @@ class StudioTools(Toolkit):
             tool_names=tool_names,
             db_id=db_id,
             description=description,
+            add_history_to_context=add_history_to_context,
+            num_history_runs=num_history_runs,
+            add_datetime_to_context=add_datetime_to_context,
         )
 
     async def acreate_team(
@@ -1494,6 +1719,9 @@ class StudioTools(Toolkit):
         model_id: Optional[str] = None,
         db_id: Optional[str] = None,
         description: Optional[str] = None,
+        add_history_to_context: bool = True,
+        num_history_runs: Optional[int] = None,
+        add_datetime_to_context: bool = True,
     ) -> str:
         """Async variant of create_team."""
         return await self._run_sync_tool(
@@ -1504,6 +1732,9 @@ class StudioTools(Toolkit):
             model_id=model_id,
             db_id=db_id,
             description=description,
+            add_history_to_context=add_history_to_context,
+            num_history_runs=num_history_runs,
+            add_datetime_to_context=add_datetime_to_context,
         )
 
     async def acreate_workflow(
@@ -1529,6 +1760,9 @@ class StudioTools(Toolkit):
         model_id: Optional[str] = None,
         tool_names: Optional[List[str]] = None,
         description: Optional[str] = None,
+        add_history_to_context: Optional[bool] = None,
+        num_history_runs: Optional[int] = None,
+        add_datetime_to_context: Optional[bool] = None,
     ) -> str:
         """Async variant of edit_agent."""
         return await self._run_sync_tool(
@@ -1538,6 +1772,9 @@ class StudioTools(Toolkit):
             model_id=model_id,
             tool_names=tool_names,
             description=description,
+            add_history_to_context=add_history_to_context,
+            num_history_runs=num_history_runs,
+            add_datetime_to_context=add_datetime_to_context,
         )
 
     async def aedit_team(
@@ -1547,6 +1784,9 @@ class StudioTools(Toolkit):
         model_id: Optional[str] = None,
         member_ids: Optional[List[str]] = None,
         description: Optional[str] = None,
+        add_history_to_context: Optional[bool] = None,
+        num_history_runs: Optional[int] = None,
+        add_datetime_to_context: Optional[bool] = None,
     ) -> str:
         """Async variant of edit_team."""
         return await self._run_sync_tool(
@@ -1556,6 +1796,9 @@ class StudioTools(Toolkit):
             model_id=model_id,
             member_ids=member_ids,
             description=description,
+            add_history_to_context=add_history_to_context,
+            num_history_runs=num_history_runs,
+            add_datetime_to_context=add_datetime_to_context,
         )
 
     async def aedit_workflow(
@@ -1655,6 +1898,28 @@ class StudioTools(Toolkit):
             logger.exception("Failed to run workflow")
             return json.dumps({"error": str(e)})
 
+    async def acreate_schedule(
+        self,
+        name: str,
+        cron: str,
+        target_type: str,
+        target_id: str,
+        message: str,
+        timezone: str = "UTC",
+        description: Optional[str] = None,
+    ) -> str:
+        """Async variant of create_schedule."""
+        return await self._run_sync_tool(
+            self.create_schedule,
+            name,
+            cron,
+            target_type,
+            target_id,
+            message,
+            timezone=timezone,
+            description=description,
+        )
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -1677,6 +1942,37 @@ class StudioTools(Toolkit):
             candidate = f"{base}-{suffix}"
             suffix += 1
         return candidate
+
+    def _get_schedule_manager(self) -> "ScheduleManager":
+        """The shared SchedulerTools instance's manager."""
+        if self.db is None:
+            raise ValueError("StudioTools has no db configured; cannot manage schedules.")
+        if self._scheduler_tools is None:
+            raise ValueError("StudioTools was built with schedules=False; cannot manage schedules.")
+        return self._scheduler_tools.manager
+
+    def _resolve_schedule_target(self, target_type: str, target_id: str) -> tuple[Optional[str], Optional[str]]:
+        """Resolve a schedule target to a real component id.
+
+        Returns ``(component_id, error)``: exactly one side is set. Targets
+        resolve through the Studio lookup path (code-defined lists, then DB;
+        matched by id or name), so schedules always point at a component's
+        real id even when the caller passed its display name.
+        """
+        if target_type not in _SCHEDULE_TARGET_TYPES:
+            return None, f"Invalid target_type: {target_type}. Must be one of {list(_SCHEDULE_TARGET_TYPES)}."
+        finders: Dict[str, Callable[[str], Optional[Any]]] = {
+            "agent": self._find_agent,
+            "team": self._find_team,
+            "workflow": self._find_workflow,
+        }
+        component = finders[target_type](target_id)
+        if component is None:
+            return None, f"{target_type.capitalize()} not found: {target_id}"
+        component_id = getattr(component, "id", None)
+        if component_id is None:
+            return None, f"{target_type.capitalize()} has no id: {target_id}"
+        return component_id, None
 
     def _component_id_exists(self, component_id: str, db: "BaseDb") -> bool:
         for component in [*self._iter_agents(), *self._iter_teams(), *self._iter_workflows()]:

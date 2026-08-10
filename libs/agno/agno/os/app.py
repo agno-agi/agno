@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import warnings
 from contextlib import asynccontextmanager
 from functools import partial
@@ -19,6 +20,7 @@ from agno.agent import Agent, AgentFactory, RemoteAgent
 from agno.agent.protocol import AgentProtocol
 from agno.agents.base import BaseExternalAgent
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.job_queue import QueueConfig
 from agno.knowledge.knowledge import Knowledge
 from agno.os.config import (
     AgentOSConfig,
@@ -42,7 +44,9 @@ from agno.os.config import (
     TracesConfig,
     TracesDomainConfig,
 )
+from agno.os.event_streams import BaseEventStream, set_event_stream
 from agno.os.interfaces.base import BaseInterface
+from agno.os.job_queue import apply_queue_config, queue_lifespan
 from agno.os.router import get_base_router, get_info_router, get_websocket_router
 from agno.os.routers.agents import get_agent_router
 from agno.os.routers.approvals import get_approval_router
@@ -51,6 +55,7 @@ from agno.os.routers.database import get_database_router
 from agno.os.routers.evals import get_eval_router
 from agno.os.routers.health import get_health_router
 from agno.os.routers.home import get_home_router
+from agno.os.routers.job_queue import get_queue_router
 from agno.os.routers.knowledge import get_knowledge_router
 from agno.os.routers.learnings import get_learnings_router
 from agno.os.routers.memory import get_memory_router
@@ -127,7 +132,18 @@ async def _drain_cancel_persist_tasks(timeout: float = 30.0) -> None:
             return
         remaining = deadline - asyncio.get_running_loop().time()
         if remaining <= 0:
-            log_warning(f"Timed out draining {len(pending)} cancel-persist task(s) before database shutdown")
+            # Cancel stragglers NOW, while the pool is still open, so their
+            # CancelledError handlers can persist a terminal status. Without
+            # this they are cancelled at loop teardown - AFTER _close_databases
+            # - and their persists silently hit a closed pool.
+            log_warning(
+                f"Drain timeout: cancelling {len(pending)} background task(s) so terminal "
+                "statuses persist before database shutdown"
+            )
+            for task in pending:
+                task.cancel()
+            with contextlib.suppress(Exception):
+                await asyncio.wait(pending, timeout=5.0)
             return
         await asyncio.wait(pending, timeout=remaining)
 
@@ -255,6 +271,8 @@ class AgentOS:
         tracing: bool = False,
         auto_provision_dbs: bool = True,
         run_hooks_in_background: bool = False,
+        queue: Optional[QueueConfig] = None,
+        event_stream: Optional[BaseEventStream] = None,
         telemetry: bool = True,
         registry: Optional[Registry] = None,
         scheduler: bool = False,
@@ -310,6 +328,22 @@ class AgentOS:
             cors_allowed_origins: List of allowed CORS origins (will be merged with default Agno domains)
             tracing: If True, enables OpenTelemetry tracing for all agents and teams in the OS
             run_hooks_in_background: If True, run agent/team pre/post hooks as FastAPI background tasks (non-blocking)
+            queue: Configuration for the AgentOS job queue (QueueConfig). Background runs
+                execute through it today; it is not a message-broker integration.
+                background=True runs are accepted immediately as PENDING and execute under
+                queue.max_concurrency per replica (shared across agents, teams and workflows;
+                enforced per event loop, so process-wide in the standard deployment). Runs beyond
+                the cap wait in line and can still be cancelled while waiting. 0 or below disables
+                capping. Setting queue.redis (URL or RedisCoordination) additionally enables
+                BOTH cross-container transports for background runs, built from shared clients:
+                distributed cancellation (control in) and the Redis event stream (events out), so
+                cancel and /resume work from any replica. Process-global: last setter wins if
+                multiple AgentOS instances configure it, and None leaves the current process
+                settings untouched (concurrency falls back to the AGNO_BACKGROUND_MAX_CONCURRENCY
+                env var or the default of 32).
+            event_stream: Explicit event stream override (granular escape hatch). Takes
+                precedence over the stream queue.redis would configure. Defaults to the
+                in-memory stream when neither is set.
             telemetry: Whether to enable telemetry
             registry: Optional registry to use for the AgentOS
             scheduler: Whether to enable the cron scheduler
@@ -412,6 +446,22 @@ class AgentOS:
 
         # If True, run agent/team hooks as FastAPI background tasks
         self.run_hooks_in_background = run_hooks_in_background
+
+        # Queue configuration. None keeps the process defaults (env var or
+        # library default for the concurrency cap, in-memory transports).
+        # queue.redis wires the cross-container transports; the explicit
+        # event_stream parameter below is applied after and wins by ordering.
+        self.queue = queue
+
+        # Event stream FIRST: the coordination wiring below only fills in-memory
+        # defaults and warns on asymmetric transports - it must see the user's
+        # explicit stream, or the one split-Redis config it exists to catch
+        # (custom stream on Redis A, wired cancellation on Redis B) never warns.
+        if event_stream is not None:
+            set_event_stream(event_stream)
+
+        if queue is not None:
+            apply_queue_config(queue)
 
         # Scheduler configuration
         self._scheduler_enabled = scheduler
@@ -643,6 +693,15 @@ class AgentOS:
         self._add_router(app, get_team_router(self, settings=self.settings, registry=self.registry))
         self._add_router(app, get_workflow_router(self, settings=self.settings))
         self._add_router(app, get_websocket_router(self, settings=self.settings))
+
+        # Job queue operations surface (DLQ, requeue, stats) - only meaningful
+        # when the durable queue is enabled
+        if self.queue is not None and self.queue.durable:
+            self._add_router(app, get_queue_router(self, settings=self.settings))
+        else:
+            # Parity with every other switchable feature: answer 503 naming
+            # the switch instead of 404ing the whole surface
+            self._add_router(app, _get_disabled_feature_router("/queue", "Queue", "queue=QueueConfig(durable=True)"))
 
         # Add A2A interface if relevant
         has_a2a_interface = False
@@ -1052,6 +1111,10 @@ class AgentOS:
             if self._scheduler_enabled and self.db is not None:
                 lifespans.append(partial(scheduler_lifespan, agent_os=self))
 
+            # The durable job queue worker (after db so tables exist)
+            if self.queue is not None and self.queue.durable:
+                lifespans.append(partial(queue_lifespan, agent_os=self))
+
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
             lifespans.append(http_client_lifespan)
 
@@ -1091,6 +1154,10 @@ class AgentOS:
             # The scheduler lifespan (after db so tables exist)
             if self._scheduler_enabled and self.db is not None:
                 lifespans.append(partial(scheduler_lifespan, agent_os=self))
+
+            # The durable job queue worker (after db so tables exist)
+            if self.queue is not None and self.queue.durable:
+                lifespans.append(partial(queue_lifespan, agent_os=self))
 
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
             lifespans.append(http_client_lifespan)
