@@ -4453,12 +4453,14 @@ class SqliteDb(BaseDb):
         self,
         component_id: str,
         version: Optional[int] = None,
+        label: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Load a component with its full resolved graph.
 
         Args:
             component_id: The component ID.
             version: Specific version or None for current.
+            label: Optional label of the component.
 
         Returns:
             Dictionary with component, config, links, and resolved children.
