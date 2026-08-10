@@ -67,6 +67,7 @@ dev = [
   "agno[slack]",
   "agno[agui]",
   "agno[a2a]",
+  "agno[scheduler]",
 ]
 
 # AgentOS server bundle

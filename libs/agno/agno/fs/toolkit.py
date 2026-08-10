@@ -191,7 +191,9 @@ class FileSystemTools(Toolkit):
         async_tools = [(getattr(self, "a" + name), name) for name in registered]
 
         super().__init__(
-            name="filesystem",
+            # A registry resolves a persisted tool by its toolkit name, so two file
+            # toolkits in one registry need distinct names to rebind correctly.
+            name=kwargs.pop("name", "filesystem"),
             tools=sync_tools,
             async_tools=async_tools,
             instructions=instructions,
