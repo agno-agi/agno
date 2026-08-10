@@ -175,6 +175,14 @@ class SurrealDb(VectorDb):
         self.m = m
         self.search_ef = search_ef
 
+        # Whether this instance has run the (idempotent) DEFINE statements.
+        # Collections created before v3 lack the ``user_id``/``content_id``
+        # field DEFINEs, and the table is SCHEMAFUL: the server silently
+        # strips undefined fields on write, which would turn a scoped write
+        # into a shared one. Writes call ``_ensure_schema`` so the DEFINEs
+        # reach pre-v3 collections too, not only freshly created ones.
+        self._schema_ensured: bool = False
+
     @property
     def async_client(self) -> Union[AsyncWsSurrealConnection, AsyncHttpSurrealConnection]:
         """Check if the async client is initialized.
@@ -271,18 +279,47 @@ class SurrealDb(VectorDb):
         return f"{cls._escape_record_id_part(doc_id)}:{cls._escape_record_id_part(user_id)}"
 
     # Synchronous methods
-    def create(self) -> None:
-        """Create the vector collection and index."""
-        if not self.exists():
-            log_debug(f"Creating collection: {self.collection}")
-            query = self.CREATE_TABLE_QUERY.format(
+    def _ensure_schema(self) -> None:
+        """Run the DEFINE statements once for this instance.
+
+        Every statement is ``IF NOT EXISTS`` so this is idempotent — and it
+        must run even when the table already exists: a pre-v3 table lacks the
+        ``user_id``/``content_id`` DEFINEs and, being SCHEMAFUL, silently
+        strips those fields from writes until they are defined.
+        """
+        if self._schema_ensured:
+            return
+        log_debug(f"Ensuring schema for collection: {self.collection}")
+        self.client.query(
+            self.CREATE_TABLE_QUERY.format(
                 collection=self.collection,
                 distance=self.distance,
                 dimensions=self.dimensions,
                 efc=self.efc,
                 m=self.m,
             )
-            self.client.query(query)
+        )
+        self._schema_ensured = True
+
+    async def _async_ensure_schema(self) -> None:
+        """Async twin of ``_ensure_schema``."""
+        if self._schema_ensured:
+            return
+        log_debug(f"Ensuring schema for collection: {self.collection}")
+        await self.async_client.query(
+            self.CREATE_TABLE_QUERY.format(
+                collection=self.collection,
+                distance=self.distance,
+                dimensions=self.dimensions,
+                efc=self.efc,
+                m=self.m,
+            )
+        )
+        self._schema_ensured = True
+
+    def create(self) -> None:
+        """Create the vector collection and index."""
+        self._ensure_schema()
 
     def name_exists(self, name: str) -> bool:
         """Check if a document exists by its name.
@@ -359,6 +396,11 @@ class SurrealDb(VectorDb):
                 (default) writes to the shared bucket, visible to everyone.
 
         """
+        # A pre-v3 collection is SCHEMAFUL without the ``user_id`` DEFINE, so
+        # the server would silently strip the owner off every row — run the
+        # idempotent DEFINEs first. Knowledge only calls ``create()`` for
+        # collections that don't exist yet, so the write path has to do this.
+        self._ensure_schema()
         for doc in documents:
             doc.embed(embedder=self.embedder)
             meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
@@ -395,6 +437,9 @@ class SurrealDb(VectorDb):
                 (default) writes to the shared bucket, visible to everyone.
 
         """
+        # See the matching comment in ``insert`` — pre-v3 collections need the
+        # ``user_id`` DEFINE before any owned write can persist its owner.
+        self._ensure_schema()
         # UPSERT replaces by record id, so a document that SHRINKS between versions
         # leaves its dropped chunks behind, and a chunk with no id is created afresh
         # every time. Clear the caller's own chunks for this hash first.
@@ -680,16 +725,7 @@ class SurrealDb(VectorDb):
 
     async def async_create(self) -> None:
         """Create the vector collection and index asynchronously."""
-        log_debug(f"Creating collection: {self.collection}")
-        await self.async_client.query(
-            self.CREATE_TABLE_QUERY.format(
-                collection=self.collection,
-                distance=self.distance,
-                dimensions=self.dimensions,
-                efc=self.efc,
-                m=self.m,
-            ),
-        )
+        await self._async_ensure_schema()
 
     async def async_name_exists(self, name: str) -> bool:
         """Check if a document exists by its name asynchronously.
@@ -770,6 +806,8 @@ class SurrealDb(VectorDb):
                 (default) writes to the shared bucket, visible to everyone.
 
         """
+        # See the matching comment in ``insert``.
+        await self._async_ensure_schema()
         for doc in documents:
             doc.embed(embedder=self.embedder)
             meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
@@ -807,6 +845,8 @@ class SurrealDb(VectorDb):
                 (default) writes to the shared bucket, visible to everyone.
 
         """
+        # See the matching comment in ``insert``.
+        await self._async_ensure_schema()
         # See the matching comment in ``upsert``. The guard and its delete run on
         # the async client so an async-only connection still dedupes.
         if await self.async_content_hash_exists(content_hash, user_id=user_id):

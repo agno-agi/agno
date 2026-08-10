@@ -160,6 +160,9 @@ class PgVector(VectorDb):
 
         # Database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
+        # Whether the LIVE table has the ``user_id`` owner column. Tables
+        # created before v3 lack it; resolved lazily and cached.
+        self._owner_column_exists: Optional[bool] = None
         # Database table
         self.table: Table = self.get_table()
         log_debug(f"Initialized PgVector with table '{self.schema}.{self.table_name}'")
@@ -251,10 +254,52 @@ class PgVector(VectorDb):
                         log_warning(f"Could not create schema {self.schema}: {str(e)}")
             log_debug(f"Creating table: {self.table_name}")
             self.table.create(self.db_engine)
+            self._owner_column_exists = True
 
     async def async_create(self) -> None:
         """Create the table asynchronously by running in a thread."""
         await asyncio.to_thread(self.create)
+
+    def _user_id_column_exists(self) -> bool:
+        """Whether the live table has the ``user_id`` owner column.
+
+        Tables created before v3 predate per-user isolation and lack the
+        column until the v2 -> v3 migration adds it. The metadata object in
+        ``self.table`` always declares the column, so the live schema has to
+        be inspected. Cached after the first lookup.
+        """
+        if self._owner_column_exists is None:
+            try:
+                columns = inspect(self.db_engine).get_columns(self.table_name, schema=self.schema)
+                self._owner_column_exists = any(col["name"] == "user_id" for col in columns)
+            except Exception:
+                # No live table yet — it will be created with the column.
+                self._owner_column_exists = True
+        return self._owner_column_exists
+
+    def _require_owner_column(self, user_id: Optional[str]) -> bool:
+        """Gate every ``user_id``-column reference on the live schema.
+
+        Returns True when the column exists, False when it is missing and the
+        operation is unscoped — the caller then falls back to pre-v3 SQL that
+        never mentions the column. A scoped operation on an unmigrated table
+        raises instead of surfacing a driver error (or silently widening the
+        scope).
+        """
+        if self._user_id_column_exists():
+            return True
+        if user_id is None:
+            return False
+        # The cached answer may predate a migration run while this process is
+        # alive — re-inspect once before refusing.
+        self._owner_column_exists = None
+        if self._user_id_column_exists():
+            return True
+        raise ValueError(
+            f"user_id={user_id!r} was passed but table '{self.table.fullname}' predates per-user "
+            "isolation and has no 'user_id' column. Run the v2 -> v3 migration "
+            "(libs/agno/migrations/v2_to_v3/migrate_sql_vectordbs.py) or recreate the table."
+        )
 
     def _record_exists(self, column, value, scope_to_owner: bool = False, user_id: Optional[str] = None) -> bool:
         """
@@ -269,6 +314,9 @@ class PgVector(VectorDb):
         Returns:
             bool: True if the record exists, False otherwise.
         """
+        # Resolve the owner gate before the try: a scoped check on an
+        # unmigrated table must raise, not be swallowed into False.
+        scope_to_owner = scope_to_owner and self._require_owner_column(user_id)
         try:
             with self.Session() as sess, sess.begin():
                 stmt = select(1).where(column == value)
@@ -357,6 +405,7 @@ class PgVector(VectorDb):
                 isolation. Stored in the dedicated ``user_id`` column.
                 ``None`` means shared / unscoped.
         """
+        self._require_owner_column(user_id)
         try:
             with self.Session() as sess:
                 for i in range(0, len(documents), batch_size):
@@ -397,6 +446,7 @@ class PgVector(VectorDb):
         ``user_id`` is the explicit owner of these chunks for per-user RAG
         isolation; ``None`` means shared / unscoped. See ``insert``.
         """
+        self._require_owner_column(user_id)
         try:
             with self.Session() as sess:
                 for i in range(0, len(documents), batch_size):
@@ -430,8 +480,9 @@ class PgVector(VectorDb):
                                     "usage": doc.usage,
                                     "content_hash": content_hash,
                                     "content_id": doc.content_id,
-                                    "user_id": user_id,
                                 }
+                                if self._user_id_column_exists():
+                                    record["user_id"] = user_id
                                 batch_records.append(record)
                             except Exception as e:
                                 log_error(f"Error processing document '{doc.name}': {str(e)}")
@@ -474,6 +525,7 @@ class PgVector(VectorDb):
 
         ``user_id`` is the explicit owner; ``None`` means shared. See ``insert``.
         """
+        self._require_owner_column(user_id)
         try:
             if self.content_hash_exists(content_hash, user_id=user_id):
                 self._delete_by_content_hash(content_hash, user_id=user_id)
@@ -523,21 +575,23 @@ class PgVector(VectorDb):
 
                         # Upsert the batch of records
                         insert_stmt = postgresql.insert(self.table).values(batch_records)
+                        set_clause: Dict[str, Any] = {
+                            "name": insert_stmt.excluded.name,
+                            "meta_data": insert_stmt.excluded.meta_data,
+                            "filters": insert_stmt.excluded.filters,
+                            "content": insert_stmt.excluded.content,
+                            "embedding": insert_stmt.excluded.embedding,
+                            "usage": insert_stmt.excluded.usage,
+                            "content_hash": insert_stmt.excluded.content_hash,
+                            "content_id": insert_stmt.excluded.content_id,
+                        }
+                        if self._user_id_column_exists():
+                            # The owner is folded into the id, so a conflict is
+                            # always same-owner; this keeps the column in step.
+                            set_clause["user_id"] = insert_stmt.excluded.user_id
                         upsert_stmt = insert_stmt.on_conflict_do_update(
                             index_elements=["id"],
-                            set_={
-                                "name": insert_stmt.excluded.name,
-                                "meta_data": insert_stmt.excluded.meta_data,
-                                "filters": insert_stmt.excluded.filters,
-                                "content": insert_stmt.excluded.content,
-                                "embedding": insert_stmt.excluded.embedding,
-                                "usage": insert_stmt.excluded.usage,
-                                "content_hash": insert_stmt.excluded.content_hash,
-                                "content_id": insert_stmt.excluded.content_id,
-                                # The owner is folded into the id, so a conflict is
-                                # always same-owner; this keeps the column in step.
-                                "user_id": insert_stmt.excluded.user_id,
-                            },
+                            set_=set_clause,
                         )
                         sess.execute(upsert_stmt)
                         sess.commit()  # Commit batch independently
@@ -582,7 +636,7 @@ class PgVector(VectorDb):
         if filters:
             meta_data.update(filters)
 
-        return {
+        record = {
             "id": record_id,
             "name": doc.name,
             "meta_data": meta_data,
@@ -592,9 +646,14 @@ class PgVector(VectorDb):
             "usage": doc.usage,
             "content_hash": content_hash,
             "content_id": doc.content_id,
-            # Per-user RAG isolation owner. ``None`` = shared / unscoped.
-            "user_id": user_id,
         }
+        # Per-user RAG isolation owner. ``None`` = shared / unscoped. Omitted
+        # entirely on unmigrated (pre-v3) tables, whose INSERTs must not
+        # mention the column — the public write methods have already rejected
+        # scoped writes there.
+        if self._user_id_column_exists():
+            record["user_id"] = user_id
+        return record
 
     async def _async_embed_documents(self, batch_docs: List[Document]) -> None:
         """
@@ -694,6 +753,7 @@ class PgVector(VectorDb):
 
         ``user_id`` is the explicit owner; ``None`` means shared. See ``insert``.
         """
+        self._require_owner_column(user_id)
         try:
             if self.content_hash_exists(content_hash, user_id=user_id):
                 self._delete_by_content_hash(content_hash, user_id=user_id)
@@ -759,8 +819,9 @@ class PgVector(VectorDb):
                                     "usage": doc.usage,
                                     "content_hash": content_hash,
                                     "content_id": doc.content_id,
-                                    "user_id": user_id,
                                 }
+                                if self._user_id_column_exists():
+                                    record["user_id"] = user_id
                                 batch_records_dict[record_id] = record  # This deduplicates by ID
                             except Exception as e:
                                 log_error(f"Error processing document '{doc.name}': {str(e)}")
@@ -773,21 +834,23 @@ class PgVector(VectorDb):
 
                         # Upsert the batch of records
                         insert_stmt = postgresql.insert(self.table).values(batch_records)
+                        set_clause: Dict[str, Any] = {
+                            "name": insert_stmt.excluded.name,
+                            "meta_data": insert_stmt.excluded.meta_data,
+                            "filters": insert_stmt.excluded.filters,
+                            "content": insert_stmt.excluded.content,
+                            "embedding": insert_stmt.excluded.embedding,
+                            "usage": insert_stmt.excluded.usage,
+                            "content_hash": insert_stmt.excluded.content_hash,
+                            "content_id": insert_stmt.excluded.content_id,
+                        }
+                        if self._user_id_column_exists():
+                            # The owner is folded into the id, so a conflict is
+                            # always same-owner; this keeps the column in step.
+                            set_clause["user_id"] = insert_stmt.excluded.user_id
                         upsert_stmt = insert_stmt.on_conflict_do_update(
                             index_elements=["id"],
-                            set_={
-                                "name": insert_stmt.excluded.name,
-                                "meta_data": insert_stmt.excluded.meta_data,
-                                "filters": insert_stmt.excluded.filters,
-                                "content": insert_stmt.excluded.content,
-                                "embedding": insert_stmt.excluded.embedding,
-                                "usage": insert_stmt.excluded.usage,
-                                "content_hash": insert_stmt.excluded.content_hash,
-                                "content_id": insert_stmt.excluded.content_id,
-                                # The owner is folded into the id, so a conflict is
-                                # always same-owner; this keeps the column in step.
-                                "user_id": insert_stmt.excluded.user_id,
-                            },
+                            set_=set_clause,
                         )
                         sess.execute(upsert_stmt)
                         sess.commit()  # Commit batch independently
@@ -850,6 +913,9 @@ class PgVector(VectorDb):
         Returns:
             List[Document]: List of matching documents.
         """
+        # Raise here, outside the search helpers' catch-alls: a scoped search
+        # against an unmigrated table must fail loudly, not return [].
+        self._require_owner_column(user_id)
         if self.search_type == SearchType.vector:
             return self.vector_search(query=query, limit=limit, filters=filters, user_id=user_id)
         elif self.search_type == SearchType.keyword:
@@ -899,6 +965,10 @@ class PgVector(VectorDb):
         """
         if user_id is None:
             return stmt
+        # Defense in depth for direct helper calls that bypass ``search()``:
+        # raise the clear migration error instead of emitting SQL against a
+        # column the live table doesn't have.
+        self._require_owner_column(user_id)
         return stmt.where(or_(self.table.c.user_id == user_id, self.table.c.user_id.is_(None)))
 
     def vector_search(
@@ -1351,6 +1421,9 @@ class PgVector(VectorDb):
                 log_debug(f"Dropping table '{self.table.fullname}'.")
                 self.table.drop(self.db_engine)
                 log_info(f"Table '{self.table.fullname}' dropped successfully.")
+                # The next table under this name will be created with the
+                # owner column — re-resolve lazily.
+                self._owner_column_exists = None
             except Exception as e:
                 log_error(f"Error dropping table '{self.table.fullname}': {str(e)}")
                 raise
@@ -1667,6 +1740,9 @@ class PgVector(VectorDb):
         Without ``user_id``: deletes across all owners (legacy behaviour).
         Only safe for unscoped/admin tooling.
         """
+        # Outside the try: a scoped delete on an unmigrated table must raise,
+        # not be swallowed into False.
+        self._require_owner_column(user_id)
         try:
             with self.Session() as sess, sess.begin():
                 stmt = self.table.delete().where(self.table.c.content_id == content_id)
@@ -1691,13 +1767,18 @@ class PgVector(VectorDb):
                 the shared bucket (``user_id IS NULL``) so a shared re-upsert never
                 wipes a scoped owner's identical-content rows.
         """
+        # On an unmigrated (pre-v3) table every row is unowned, so the shared
+        # bucket is the whole table: no owner predicate, exactly like main.
+        # Scoped deletes raise (outside the try, so it isn't swallowed).
+        scope_to_owner = self._require_owner_column(user_id)
         try:
             with self.Session() as sess, sess.begin():
                 stmt = self.table.delete().where(self.table.c.content_hash == content_hash)
-                if user_id is not None:
-                    stmt = stmt.where(self.table.c.user_id == user_id)
-                else:
-                    stmt = stmt.where(self.table.c.user_id.is_(None))
+                if scope_to_owner:
+                    if user_id is not None:
+                        stmt = stmt.where(self.table.c.user_id == user_id)
+                    else:
+                        stmt = stmt.where(self.table.c.user_id.is_(None))
                 sess.execute(stmt)
                 sess.commit()
                 log_info(f"Deleted records with content hash '{content_hash}' from table '{self.table.fullname}'.")
