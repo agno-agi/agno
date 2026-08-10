@@ -125,7 +125,10 @@ class Skills:
 
     @property
     def _async_refresh_lock(self) -> asyncio.Lock:
-        """Lazily create an asyncio lock for serializing the async refresh."""
+        """Lazily create an asyncio lock for serializing the async refresh.
+
+        Lazy, not built in __init__: on Python 3.9 asyncio.Lock() binds the running
+        event loop at construction, and __init__ runs outside any loop."""
         if self._refresh_lock is None:
             self._refresh_lock = asyncio.Lock()
         return self._refresh_lock
