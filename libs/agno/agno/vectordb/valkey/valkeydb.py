@@ -200,10 +200,6 @@ class ValkeyDB(VectorDb):
         self._glide_client: Optional[GlideClient] = glide_client
         self._client_initialized: bool = glide_client is not None
 
-        # Whether the LIVE index schema has the owner tag field. Indices
-        # created before v3 lack it; resolved lazily and cached.
-        self._owner_field_exists: Optional[bool] = None
-
         log_debug(f"Initialized ValkeyDB with index '{self.index_name}'")
 
     def _get_client(self) -> GlideClient:
@@ -423,41 +419,6 @@ class ValkeyDB(VectorDb):
                     break
         return names
 
-    def _user_id_field_exists(self) -> bool:
-        """Cached: whether the LIVE index schema has the owner tag field."""
-        if self._owner_field_exists is None:
-            try:
-                self._owner_field_exists = self.USER_ID_FIELD in self._indexed_field_names()
-            except Exception:
-                # Can't inspect (no index yet) — it will be created with the field.
-                self._owner_field_exists = True
-        return self._owner_field_exists
-
-    def _require_owner_field(self, user_id: Optional[str]) -> bool:
-        """Gate every owner-tag reference on the live index schema.
-
-        Returns True when the field is indexed. Returns False when it is
-        missing and the operation is unscoped — the caller then emits pre-v3
-        queries with no owner clause. A scoped operation on a pre-v3 index
-        raises instead of matching nothing (the owner tag on an unindexed
-        field never matches, which downstream code would render as an empty
-        knowledge base).
-        """
-        if self._user_id_field_exists():
-            return True
-        if user_id is None:
-            return False
-        # The cached answer may predate an index rebuild — re-inspect once
-        # before refusing.
-        self._owner_field_exists = None
-        if self._user_id_field_exists():
-            return True
-        raise ValueError(
-            f"user_id={user_id!r} was passed but Valkey index '{self.index_name}' predates per-user "
-            f"isolation and has no '{self.USER_ID_FIELD}' field. Recreate the index "
-            "and run the v2 -> v3 migration (libs/agno/migrations/v2_to_v3/migrate_sentinel_vectordbs.py)."
-        )
-
     def create(self) -> None:
         """Create the Valkey index if it does not exist."""
         try:
@@ -532,18 +493,11 @@ class ValkeyDB(VectorDb):
         shared publish is judged a duplicate on the strength of one tenant's
         private copy and the shared bucket never receives it.
         """
-        # Both gates sit outside the try: an invalid user_id or a scoped check
-        # on a pre-v3 index must raise, not be swallowed into False.
+        # Outside the try: an invalid user_id must raise, not be swallowed into False.
         self._validate_user_id(user_id)
-        scope_to_owner = self._require_owner_field(user_id)
         try:
             client = self._get_client()
-            if scope_to_owner:
-                query = self._dedupe_query(content_hash, user_id)
-            else:
-                # Pre-v3 index: no owner field to match — the whole index is
-                # the shared bucket, exactly like main.
-                query = f"@content_hash:{{{_escape_tag_value(content_hash)}}}"
+            query = self._dedupe_query(content_hash, user_id)
             options = FtSearchOptions(
                 limit=FtSearchLimit(0, 0),
             )
@@ -563,11 +517,6 @@ class ValkeyDB(VectorDb):
     ) -> None:
         """Insert documents into the Valkey index."""
         self._validate_user_id(user_id)
-        # Scoped writes on a pre-v3 index raise: the owner tag would be stored
-        # but unindexed, so the owner could never find (or safely delete) the
-        # chunks. Unscoped writes proceed — the stored sentinel is harmless on
-        # an index that doesn't know the field, and self-heals after a rebuild.
-        self._require_owner_field(user_id)
         try:
             client = self._get_client()
             for doc in documents:
@@ -619,15 +568,10 @@ class ValkeyDB(VectorDb):
         caller's bucket), then insert new docs.
         """
         self._validate_user_id(user_id)
-        scope_to_owner = self._require_owner_field(user_id)
         try:
-            # Find and delete existing docs for this content_hash in the caller's
-            # bucket. On a pre-v3 index there is no owner field: dedupe by
-            # content_hash alone, exactly like main.
-            if scope_to_owner:
-                self._delete_by_query(self._dedupe_query(content_hash, user_id))
-            else:
-                self._delete_by_query(f"@content_hash:{{{_escape_tag_value(content_hash)}}}")
+            # Find and delete existing docs for this content_hash in the
+            # caller's bucket, then insert the new ones.
+            self._delete_by_query(self._dedupe_query(content_hash, user_id))
             # Insert new docs
             self.insert(content_hash, documents, filters, user_id=user_id)
         except Exception as e:
@@ -732,10 +676,8 @@ class ValkeyDB(VectorDb):
         """
         if self.search_type == SearchType.hybrid:
             raise ValueError("Hybrid search is currently unsupported for Valkey")
-        # Both gates sit outside the try: an invalid user_id or a scoped
-        # search on a pre-v3 index must raise, not be swallowed into [].
+        # Outside the try: an invalid user_id must raise, not be swallowed into [].
         self._validate_user_id(user_id)
-        self._require_owner_field(user_id)
         try:
             if filters and isinstance(filters, List):
                 filters = self._filter_exprs_to_dict(cast(List[FilterExpr], filters))
@@ -868,9 +810,6 @@ class ValkeyDB(VectorDb):
             # Also delete all keys with the prefix
             self._delete_all_keys()
             log_debug(f"Deleted Valkey index: {self.index_name}")
-            # The next index under this name is created with the owner field —
-            # re-resolve the cached schema answer lazily.
-            self._owner_field_exists = None
             return True
         except Exception as e:
             if "not found" in str(e).lower():
@@ -966,10 +905,6 @@ class ValkeyDB(VectorDb):
         the shared bucket). None -> the admin view, deleting across every owner.
         """
         self._validate_user_id(user_id)
-        # Outside the try: a scoped delete on a pre-v3 index must raise, not
-        # be swallowed into False. (The unscoped path never names the owner
-        # field, so it works on pre-v3 indices as-is.)
-        self._require_owner_field(user_id)
         try:
             if user_id is None:
                 return self._delete_by_tag_filter("content_id", content_id)

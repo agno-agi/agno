@@ -87,14 +87,6 @@ def _make_redis():
     return db, "_user_id_field_exists", db._require_owner_field
 
 
-def _make_valkey():
-    pytest.importorskip("glide_sync")
-    from agno.vectordb.valkey import ValkeyDB
-
-    db = ValkeyDB(index_name="t", glide_client=MagicMock(), embedder=StubEmbedder())
-    return db, "_user_id_field_exists", db._require_owner_field
-
-
 def _make_weaviate():
     pytest.importorskip("weaviate")
     from agno.vectordb.weaviate import Weaviate
@@ -109,7 +101,6 @@ BACKENDS = {
     "singlestore": _make_singlestore,
     "lancedb": _make_lancedb,
     "redis": _make_redis,
-    "valkey": _make_valkey,
     "weaviate": _make_weaviate,
 }
 
@@ -313,7 +304,7 @@ def test_surrealdb_create_after_drop_redefines_the_schema():
     assert client.query.call_count == define_calls + 2, "create() after drop() must re-run the DEFINEs"
 
 
-@pytest.mark.parametrize("backend", ["clickhouse", "redis", "valkey", "weaviate"])
+@pytest.mark.parametrize("backend", ["clickhouse", "redis", "weaviate"])
 def test_drop_resets_the_owner_schema_cache(backend, tmp_path, monkeypatch):
     """``drop()`` must clear the cached schema answer: the next store under the
     same name is created with the owner column/field, and a stale False would
@@ -323,7 +314,6 @@ def test_drop_resets_the_owner_schema_cache(backend, tmp_path, monkeypatch):
     cache_attr = {
         "clickhouse": "_owner_column_exists",
         "redis": "_owner_field_exists",
-        "valkey": "_owner_field_exists",
         "weaviate": "_owner_property_exists",
     }[backend]
     setattr(db, cache_attr, False)
