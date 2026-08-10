@@ -137,7 +137,7 @@ class AgentSession:
         """
         for run in reversed(self.runs or []):
             if getattr(run, "compaction", None) is not None:
-                return run.compaction
+                return run.compaction_state
         return None
 
     def get_compaction_for_run_id(self, run_id: str) -> Optional["CompactionState"]:
@@ -152,7 +152,7 @@ class AgentSession:
             return None
         for i in range(target_idx, -1, -1):
             if getattr(runs[i], "compaction", None) is not None:
-                return runs[i].compaction
+                return runs[i].compaction_state
         return None
 
     def get_messages(

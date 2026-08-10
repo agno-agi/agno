@@ -1300,8 +1300,8 @@ def get_run_messages(
             )
             log_debug(f"[MESSAGES] Injecting summary: {compaction.summary[:100] if compaction.summary else 'None'}...")
             run_messages.messages.append(compaction.get_summary_message())
-            # Seed run_response.compaction for mid-loop compaction to build on
-            run_response.compaction = deepcopy(compaction)
+            # Seed run_response.compaction_state for mid-loop compaction to build on
+            run_response.compaction_state = deepcopy(compaction)
         else:
             log_debug("[MESSAGES] No prior compaction found")
 
@@ -1524,8 +1524,8 @@ async def aget_run_messages(
             )
             log_debug(f"[MESSAGES] Injecting summary: {compaction.summary[:100] if compaction.summary else 'None'}...")
             run_messages.messages.append(compaction.get_summary_message())
-            # Seed run_response.compaction for mid-loop compaction to build on
-            run_response.compaction = deepcopy(compaction)
+            # Seed run_response.compaction_state for mid-loop compaction to build on
+            run_response.compaction_state = deepcopy(compaction)
         else:
             log_debug("[MESSAGES] No prior compaction found")
 
@@ -1707,7 +1707,7 @@ def get_continue_run_messages(
         # Get compaction state for point-in-time filtering (time-travel for continue_run)
         compaction = None
         if run_response is not None and session is not None:
-            compaction = run_response.compaction
+            compaction = run_response.compaction_state
             if compaction is None:
                 lookup_id = run_response.forked_from_run_id or run_response.run_id
                 compaction = session.get_compaction_for_run_id(lookup_id)

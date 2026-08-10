@@ -683,7 +683,7 @@ class RunOutput:
     session_state: Optional[Dict[str, Any]] = None
 
     # Point-in-time compaction state for continue_run time travel
-    compaction: Optional["CompactionState"] = None
+    compaction_state: Optional["CompactionState"] = None
 
     created_at: int = field(default_factory=lambda: int(time()))
 
@@ -772,7 +772,7 @@ class RunOutput:
                 "references",
                 "requirements",
                 "followups",
-                "compaction",
+                "compaction_state",
             ]
         }
 
@@ -867,8 +867,8 @@ class RunOutput:
         if self.input is not None:
             _dict["input"] = self.input.to_dict()
 
-        if self.compaction is not None:
-            _dict["compaction"] = self.compaction.to_dict()
+        if self.compaction_state is not None:
+            _dict["compaction_state"] = self.compaction_state.to_dict()
 
         return _dict
 
@@ -941,12 +941,12 @@ class RunOutput:
             metrics = RunMetrics.from_dict(metrics)
 
         # Handle compaction state deserialization
-        compaction_data = data.pop("compaction", None)
-        compaction = None
+        compaction_data = data.pop("compaction_state", None)
+        compaction_state = None
         if compaction_data and isinstance(compaction_data, dict):
             from agno.compression.context import CompactionState
 
-            compaction = CompactionState.from_dict(compaction_data)
+            compaction_state = CompactionState.from_dict(compaction_data)
 
         additional_input = data.pop("additional_input", None)
 
@@ -988,7 +988,7 @@ class RunOutput:
             reasoning_messages=reasoning_messages,
             references=references,
             requirements=requirements,
-            compaction=compaction,
+            compaction_state=compaction_state,
             **filtered_data,
         )
 

@@ -1007,7 +1007,7 @@ def _run_stream(
                                 store_events=agent.store_events,
                             )
                         run_messages.compacted_messages = compaction_result.compacted_messages
-                        tokens_saved = run_response.compaction.total_tokens_saved if run_response.compaction else 0
+                        tokens_saved = run_response.compaction_state.total_tokens_saved if run_response.compaction_state else 0
                         if stream_events:
                             yield handle_event(  # type: ignore
                                 create_compaction_completed_event(
@@ -2558,7 +2558,7 @@ async def _arun_stream(
                                 store_events=agent.store_events,
                             )
                         run_messages.compacted_messages = compaction_result.compacted_messages
-                        tokens_saved = run_response.compaction.total_tokens_saved if run_response.compaction else 0
+                        tokens_saved = run_response.compaction_state.total_tokens_saved if run_response.compaction_state else 0
                         if stream_events:
                             yield handle_event(  # type: ignore
                                 create_compaction_completed_event(
@@ -4107,7 +4107,7 @@ def _continue_run_stream(
                                 store_events=agent.store_events,
                             )
                         run_messages.compacted_messages = compaction_result.compacted_messages
-                        tokens_saved = run_response.compaction.total_tokens_saved if run_response.compaction else 0
+                        tokens_saved = run_response.compaction_state.total_tokens_saved if run_response.compaction_state else 0
                         if stream_events:
                             yield handle_event(  # type: ignore
                                 create_compaction_completed_event(
@@ -5587,7 +5587,7 @@ async def _acontinue_run_stream(
                                 store_events=agent.store_events,
                             )
                         run_messages.compacted_messages = compaction_result.compacted_messages
-                        tokens_saved = run_response.compaction.total_tokens_saved if run_response.compaction else 0
+                        tokens_saved = run_response.compaction_state.total_tokens_saved if run_response.compaction_state else 0
                         if stream_events:
                             yield handle_event(  # type: ignore
                                 create_compaction_completed_event(
@@ -6146,10 +6146,10 @@ def persist_run_in_session(
         storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context, isolate_inflight=True)
 
     # Add scrubbed RunOutput to Agent Session
-    # Note: run_response.compaction is already set by the compaction manager during the run
-    if storage_copy.compaction:
+    # Note: run_response.compaction_state is already set by the compaction manager during the run
+    if storage_copy.compaction_state:
         log_debug(
-            f"[PERSIST-SYNC] Saving run with compaction: total={storage_copy.compaction.total_compactions}, ids={len(storage_copy.compaction.compacted_message_ids)}"
+            f"[PERSIST-SYNC] Saving run with compaction: total={storage_copy.compaction_state.total_compactions}, ids={len(storage_copy.compaction_state.compacted_message_ids)}"
         )
     else:
         log_debug("[PERSIST-SYNC] Saving run without compaction")
@@ -6190,10 +6190,10 @@ async def apersist_run_in_session(
     if storage_copy is None:
         storage_copy = _scrub_and_propagate_session_state(agent, run_response, run_context, isolate_inflight=True)
 
-    # Note: run_response.compaction is already set by the compaction manager during the run
-    if storage_copy.compaction:
+    # Note: run_response.compaction_state is already set by the compaction manager during the run
+    if storage_copy.compaction_state:
         log_debug(
-            f"[PERSIST-ASYNC] Saving run with compaction: total={storage_copy.compaction.total_compactions}, ids={len(storage_copy.compaction.compacted_message_ids)}"
+            f"[PERSIST-ASYNC] Saving run with compaction: total={storage_copy.compaction_state.total_compactions}, ids={len(storage_copy.compaction_state.compacted_message_ids)}"
         )
     else:
         log_debug("[PERSIST-ASYNC] Saving run without compaction")

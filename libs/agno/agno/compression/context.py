@@ -189,7 +189,7 @@ class ContextCompactionManager:
             return CompactionResult(compacted_messages=messages)
 
         # 3. Summarize old messages (merges with existing summary if available)
-        existing_summary = run_response.compaction.summary if run_response and run_response.compaction else None
+        existing_summary = run_response.compaction_state.summary if run_response and run_response.compaction_state else None
         log_debug(f"[COMPACTION] Existing summary ({len(existing_summary) if existing_summary else 0} chars)")
         if existing_summary:
             log_debug(
@@ -229,9 +229,9 @@ class ContextCompactionManager:
         # 6. Update run compaction state
         log_debug("[COMPACTION] Updating run compaction state (sync)...")
         self._update_compaction_state(run_response, old_messages, new_summary, tokens_saved)
-        if run_response and run_response.compaction:
+        if run_response and run_response.compaction_state:
             log_debug(
-                f"[COMPACTION] run_response.compaction updated: total={run_response.compaction.total_compactions}, ids={len(run_response.compaction.compacted_message_ids)}"
+                f"[COMPACTION] run_response.compaction_state updated: total={run_response.compaction_state.total_compactions}, ids={len(run_response.compaction_state.compacted_message_ids)}"
             )
 
         # Update stats for display
@@ -346,17 +346,17 @@ class ContextCompactionManager:
         new_summary: str,
         tokens_saved: int = 0,
     ) -> None:
-        """Update run_response.compaction with new state."""
+        """Update run_response.compaction_state with new state."""
         if run_response is None:
             return
 
-        prev = run_response.compaction
+        prev = run_response.compaction_state
 
         # Collect IDs of compacted messages (so they get filtered when loading history)
         new_ids = {msg.id for msg in old_messages if msg.id}
         all_ids = new_ids.union(prev.compacted_message_ids if prev else set())
 
-        run_response.compaction = CompactionState(
+        run_response.compaction_state = CompactionState(
             summary=new_summary,
             compacted_message_ids=all_ids,
             compacted_count=(prev.compacted_count if prev else 0) + len(old_messages),
@@ -407,7 +407,7 @@ class ContextCompactionManager:
             return CompactionResult(compacted_messages=messages)
 
         # 3. Summarize old messages (merges with existing summary if available)
-        existing_summary = run_response.compaction.summary if run_response and run_response.compaction else None
+        existing_summary = run_response.compaction_state.summary if run_response and run_response.compaction_state else None
         log_debug(f"[COMPACTION] Existing summary ({len(existing_summary) if existing_summary else 0} chars)")
         if existing_summary:
             log_debug(
@@ -449,9 +449,9 @@ class ContextCompactionManager:
         # 6. Update run compaction state
         log_debug("[COMPACTION] Updating run compaction state (async)...")
         self._update_compaction_state(run_response, old_messages, new_summary, tokens_saved)
-        if run_response and run_response.compaction:
+        if run_response and run_response.compaction_state:
             log_debug(
-                f"[COMPACTION] Async compaction updated: total={run_response.compaction.total_compactions}, ids={len(run_response.compaction.compacted_message_ids)}"
+                f"[COMPACTION] Async compaction updated: total={run_response.compaction_state.total_compactions}, ids={len(run_response.compaction_state.compacted_message_ids)}"
             )
 
         # Update stats for display
