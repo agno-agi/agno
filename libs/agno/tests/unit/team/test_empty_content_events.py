@@ -1,4 +1,5 @@
 from agno.agent import Agent
+from agno.models.message import Citations
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.run.team import TeamRunEvent, TeamRunOutput
 from agno.session import TeamSession
@@ -43,3 +44,31 @@ def test_team_stream_skips_empty_model_content_and_preserves_accumulated_content
     assert empty_events == []
     assert full_model_response.content == "Hello"
     assert run_response.content == "Hello"
+
+
+def test_team_stream_preserves_metadata_on_empty_model_content():
+    team = Team(members=[Agent(name="Agent1")])
+    session = TeamSession(session_id="session_1")
+    run_response = TeamRunOutput(run_id="run_1", team_id="team_1", team_name="Team")
+    full_model_response = ModelResponse()
+    citations = Citations(raw={"source": "provider"})
+    provider_data = {"response_id": "response-1"}
+
+    events = list(
+        team._handle_model_response_chunk(
+            session=session,
+            run_response=run_response,
+            full_model_response=full_model_response,
+            model_response_event=ModelResponse(
+                event=ModelResponseEvent.assistant_response.value,
+                content="",
+                citations=citations,
+                provider_data=provider_data,
+            ),
+            stream_events=True,
+        )
+    )
+
+    assert events == []
+    assert run_response.citations == citations
+    assert run_response.model_provider_data == provider_data
