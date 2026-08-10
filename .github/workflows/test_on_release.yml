@@ -10,7 +10,6 @@ on:
       - "feat/extending-user-isolation"
       - "claude/agentos-request-queue-621b2a"
       - "feat/v3.0"
-      - "fix/vdb-user-id-v2"
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:
