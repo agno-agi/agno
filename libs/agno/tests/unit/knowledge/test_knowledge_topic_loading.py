@@ -31,7 +31,6 @@ def mock_reader():
 
 
 def test_load_from_topics_continues_after_skip(knowledge, mock_reader):
-
     skip_pattern = [True, False, False]
     skip_index = [0]
 

@@ -217,8 +217,31 @@ class SurrealDb(VectorDb):
         """
         if not filters:
             return ""
-        conditions = [f"meta_data.{key} = ${key}" for key in filters]
+        # Bind both halves. Interpolating the key builds the path out of caller
+        # data: a key carrying SurrealQL (``name OR true``) becomes part of the
+        # WHERE logic, and because OR binds looser than AND it disjoins the
+        # owner scope away - one crafted filter key returns every owner's rows.
+        # A key with a '.' is the accidental version of the same bug: it splits
+        # into an unbound variable whose NONE = NONE comparison is true for
+        # every row. ``delete_by_metadata`` binds keys for exactly this reason.
+        conditions = [f"meta_data[$filter_key_{i}] = $filter_value_{i}" for i in range(len(filters))]
         return "AND " + " AND ".join(conditions)
+
+    @staticmethod
+    def _build_filter_params(filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Bound parameters matching the placeholders ``_build_filter_condition`` emits.
+
+        Kept alongside the condition builder so the two never drift: the query
+        references ``$filter_key_i``/``$filter_value_i`` and nothing else, so a
+        caller's key can no longer reach the query text.
+        """
+        if not filters:
+            return {}
+        params: Dict[str, Any] = {}
+        for i, (key, value) in enumerate(filters.items()):
+            params[f"filter_key_{i}"] = key
+            params[f"filter_value_{i}"] = value
+        return params
 
     @staticmethod
     def _user_scope_condition(user_id: Optional[str]) -> str:
@@ -470,7 +493,7 @@ class SurrealDb(VectorDb):
         log_debug(f"Search query: {search_query}")
         search_params: Dict[str, Any] = {"query_embedding": query_embedding}
         if filters:
-            search_params.update(filters)
+            search_params.update(self._build_filter_params(filters))
         if user_id is not None:
             search_params["scope_user_id"] = user_id
         response: Any = self.client.query(search_query, search_params)
@@ -881,7 +904,7 @@ class SurrealDb(VectorDb):
         )
         search_params: Dict[str, Any] = {"query_embedding": query_embedding}
         if filters:
-            search_params.update(filters)
+            search_params.update(self._build_filter_params(filters))
         if user_id is not None:
             search_params["scope_user_id"] = user_id
         response: Any = await self.async_client.query(search_query, search_params)

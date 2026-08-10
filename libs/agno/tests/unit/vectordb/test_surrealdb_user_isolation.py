@@ -208,11 +208,14 @@ class TestSearchScope:
     def test_scoped_search_ands_scope_onto_caller_filter(self, surreal_db):
         surreal_db.search("salary", limit=10, filters={"topic": "hr"}, user_id="alice")
         sql, params = _last_query(surreal_db.client)
-        # Both the caller's own metadata filter AND the owner scope apply.
-        assert "meta_data.topic = $topic" in sql
+        # Both the caller's own metadata filter AND the owner scope apply. The
+        # filter key is bound, not spliced, so it cannot reach the query text.
+        assert "meta_data[$filter_key_0] = $filter_value_0" in sql
         assert self.OWN_OR_SHARED in sql
         assert params["scope_user_id"] == "alice"
-        assert params["topic"] == "hr"
+        assert params["filter_key_0"] == "topic"
+        assert params["filter_value_0"] == "hr"
+        assert "topic" not in sql
 
     def test_scope_condition_helper_matches(self):
         # Guards the exact predicate the two search methods share.
@@ -383,3 +386,69 @@ class TestAsyncIsolation:
         assert alice_rid == f"{shared_id}:alice"
         assert bob_rid == f"{shared_id}:bob"
         assert alice_rid != bob_rid
+
+
+class TestFilterKeyCannotEscapeTheOwnerScope:
+    """A caller's filter KEY must never reach the query text.
+
+    Interpolating the key builds the WHERE clause out of caller data. Because
+    SurrealQL's OR binds looser than AND, a key carrying ``OR true`` disjoins
+    the sibling owner scope away and the search returns every owner's rows -
+    verified against a live SurrealDB before the fix. A key containing '.' is
+    the accidental version: it splits into an unbound variable whose
+    ``NONE = NONE`` comparison is true for every row.
+
+    ``delete_by_metadata`` has always bound its keys for this reason; these
+    tests hold the search path to the same rule.
+    """
+
+    # Payloads that leaked (or errored) against a real server pre-fix.
+    INJECTION_KEYS = [
+        "name OR true",
+        "name OR user_id",
+        "name OR user_id != NONE",
+        "a.b",
+    ]
+
+    @pytest.mark.parametrize("evil_key", INJECTION_KEYS)
+    def test_injected_key_never_reaches_sql(self, surreal_db, evil_key):
+        surreal_db.search("salary", limit=10, filters={evil_key: "x"}, user_id="alice")
+        sql, params = _last_query(surreal_db.client)
+        assert evil_key not in sql, f"filter key {evil_key!r} was spliced into the query text"
+        assert "OR true" not in sql
+        assert params["filter_key_0"] == evil_key
+        # The owner scope survives intact alongside the bound filter.
+        assert TestSearchScope.OWN_OR_SHARED in sql
+        assert params["scope_user_id"] == "alice"
+
+    @pytest.mark.parametrize("evil_key", INJECTION_KEYS)
+    @pytest.mark.asyncio
+    async def test_injected_key_never_reaches_sql_async(self, async_surreal_db, evil_key):
+        await async_surreal_db.async_search("salary", limit=10, filters={evil_key: "x"}, user_id="alice")
+        sql, params = _last_query(async_surreal_db.async_client)
+        assert evil_key not in sql
+        assert "OR true" not in sql
+        assert params["filter_key_0"] == evil_key
+        assert TestSearchScope.OWN_OR_SHARED in sql
+        assert params["scope_user_id"] == "alice"
+
+    def test_multiple_filters_each_bound_separately(self, surreal_db):
+        surreal_db.search("q", limit=5, filters={"topic": "hr", "year": 2026}, user_id="alice")
+        sql, params = _last_query(surreal_db.client)
+        assert "meta_data[$filter_key_0] = $filter_value_0" in sql
+        assert "meta_data[$filter_key_1] = $filter_value_1" in sql
+        assert {params["filter_key_0"], params["filter_key_1"]} == {"topic", "year"}
+        assert {params["filter_value_0"], params["filter_value_1"]} == {"hr", 2026}
+
+    def test_condition_and_params_stay_in_step(self):
+        """The builders are a pair - every placeholder must have a bound value."""
+        filters = {"a": 1, "b OR true": 2}
+        condition = SurrealDb._build_filter_condition(filters)
+        params = SurrealDb._build_filter_params(filters)
+        for i in range(len(filters)):
+            assert f"$filter_key_{i}" in condition
+            assert f"$filter_value_{i}" in condition
+            assert f"filter_key_{i}" in params
+            assert f"filter_value_{i}" in params
+        assert SurrealDb._build_filter_condition(None) == ""
+        assert SurrealDb._build_filter_params(None) == {}
