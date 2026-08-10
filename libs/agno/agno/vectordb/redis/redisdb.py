@@ -769,6 +769,9 @@ class RedisDB(VectorDb):
         try:
             self.index.delete(drop=True)
             log_debug(f"Deleted Redis index: {self.index_name}")
+            # The next index under this name is created with the owner field —
+            # re-resolve the cached schema answer lazily.
+            self._owner_field_exists = None
             return True
         except Exception as e:
             log_error(f"Error dropping Redis index: {str(e)}")
@@ -780,6 +783,8 @@ class RedisDB(VectorDb):
             async_index = await self._get_async_index()
             await async_index.delete(drop=True)
             log_debug(f"Deleted Redis index: {self.index_name}")
+            # See ``drop`` — re-resolve the cached schema answer lazily.
+            self._owner_field_exists = None
         except Exception as e:
             log_error(f"Error dropping Redis index: {str(e)}")
             raise

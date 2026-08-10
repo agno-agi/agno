@@ -725,6 +725,9 @@ class Clickhouse(VectorDb):
                 "DROP TABLE {database_name:Identifier}.{table_name:Identifier}",
                 parameters=parameters,
             )
+            # The next table under this name is created with the owner column —
+            # re-resolve the cached schema answer lazily.
+            self._owner_column_exists = None
 
     async def async_drop(self) -> None:
         """Drop the table asynchronously."""

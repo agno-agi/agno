@@ -190,19 +190,28 @@ class Weaviate(VectorDb):
             await client.close()
 
     def _user_id_property_exists(self) -> bool:
-        """Whether the live collection has the ``user_id`` owner property.
+        """Whether the live collection can support per-user isolation.
 
-        Collections created before v3 predate per-user isolation and lack both the
-        property and null-state indexing, and ``create()`` only runs when the
-        collection is missing, so the live schema has to be inspected. Cached after
-        the first lookup; the cached answer is shared with the async paths.
+        Isolation needs BOTH create-time pieces: the ``user_id`` property AND
+        ``index_null_state=True`` — every shared-bucket filter runs
+        ``is_none(user_id)``, which Weaviate refuses without null-state
+        indexing ("Nullstate must be indexed to be filterable!"). Checking the
+        property alone would wave through a collection that had ``user_id``
+        bolted on later via ``add_property``: the gate would open and the
+        first ``is_none`` filter would then fail every ingest's dedup check.
+        ``index_null_state`` is immutable after creation, so such a collection
+        can only be recreated. Cached after the first lookup; the cached
+        answer is shared with the async paths.
         """
         if self._owner_property_exists is None:
             try:
                 config = self.get_client().collections.get(self.collection).config.get()
-                self._owner_property_exists = any(prop.name == self.USER_ID_KEY for prop in config.properties)
+                has_property = any(prop.name == self.USER_ID_KEY for prop in config.properties)
+                inverted_index = getattr(config, "inverted_index_config", None)
+                null_state_indexed = bool(getattr(inverted_index, "index_null_state", False))
+                self._owner_property_exists = has_property and null_state_indexed
             except Exception:
-                # No live collection yet — it will be created with the property.
+                # No live collection yet — it will be created with both.
                 self._owner_property_exists = True
         return self._owner_property_exists
 
@@ -225,9 +234,11 @@ class Weaviate(VectorDb):
         if self._user_id_property_exists():
             return True
         raise ValueError(
-            f"user_id={user_id!r} was passed but collection '{self.collection}' predates per-user "
-            "isolation and has no 'user_id' property. Run the v2 -> v3 migration "
-            "(libs/agno/migrations/v2_to_v3/migrate_field_vectordbs.py) or recreate the collection."
+            f"user_id={user_id!r} was passed but collection '{self.collection}' does not support "
+            "per-user isolation: it lacks the 'user_id' property and/or null-state indexing "
+            "(index_null_state=True, which the is_none shared-bucket filters require). "
+            "index_null_state can only be set at collection creation, so recreate the collection "
+            "and re-ingest — adding the property alone is not sufficient."
         )
 
     def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
@@ -898,6 +909,9 @@ class Weaviate(VectorDb):
         if self.exists():
             log_debug(f"Deleting collection '{self.collection}' from Weaviate.")
             self.get_client().collections.delete(self.collection)
+            # The next collection under this name is created with the owner
+            # property and null-state indexing — re-resolve the cache lazily.
+            self._owner_property_exists = None
 
     async def async_drop(self) -> None:
         """Delete the Weaviate collection asynchronously."""
@@ -906,6 +920,8 @@ class Weaviate(VectorDb):
             client = await self.get_async_client()
             try:
                 await client.collections.delete(self.collection)
+                # See ``drop`` — re-resolve the cache lazily.
+                self._owner_property_exists = None
             finally:
                 await client.close()
 

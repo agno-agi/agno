@@ -538,6 +538,9 @@ class SurrealDb(VectorDb):
         """Drop the vector collection."""
         log_debug(f"Dropping collection: {self.collection}")
         self.client.query(self.DROP_TABLE_QUERY.format(collection=self.collection))
+        # The table is gone — the next create()/write must re-run the DEFINEs,
+        # or the collection would silently stay missing after a drop+create.
+        self._schema_ensured = False
 
     def exists(self) -> bool:
         """Check if the vector collection exists.
@@ -943,6 +946,8 @@ class SurrealDb(VectorDb):
         """Drop the vector collection asynchronously."""
         log_debug(f"Dropping collection: {self.collection}")
         await self.async_client.query(self.DROP_TABLE_QUERY.format(collection=self.collection))
+        # See ``drop`` — the DEFINEs must re-run after a drop.
+        self._schema_ensured = False
 
     async def async_exists(self) -> bool:
         """Check if the vector collection exists asynchronously.

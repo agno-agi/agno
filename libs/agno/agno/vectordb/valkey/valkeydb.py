@@ -868,6 +868,9 @@ class ValkeyDB(VectorDb):
             # Also delete all keys with the prefix
             self._delete_all_keys()
             log_debug(f"Deleted Valkey index: {self.index_name}")
+            # The next index under this name is created with the owner field —
+            # re-resolve the cached schema answer lazily.
+            self._owner_field_exists = None
             return True
         except Exception as e:
             if "not found" in str(e).lower():

@@ -134,7 +134,9 @@ def test_scoped_on_legacy_store_raises_migration_error(backend, tmp_path, monkey
     db, probe_name, gate = _build(backend, tmp_path)
     monkeypatch.setattr(db, probe_name, lambda: False)
 
-    with pytest.raises(ValueError, match="migration"):
+    # Most backends point at the migration script; Weaviate says "recreate"
+    # (its index_null_state is create-time-only, so no script can heal it).
+    with pytest.raises(ValueError, match="migration|recreate"):
         gate("alice")
 
 
@@ -259,3 +261,80 @@ def test_lancedb_scoped_flows_recover_after_migration(legacy_lance):
     admin_view = db.search("budget", limit=10)
     admin_contents = " ".join(d.content for d in admin_view)
     assert "alice private" in admin_contents and "bob private" in admin_contents
+
+
+def test_weaviate_gate_requires_null_state_indexing_not_just_the_property():
+    """A collection with ``user_id`` bolted on later (``add_property``) but
+    without create-time ``index_null_state`` must NOT pass the gate: every
+    shared-bucket filter runs ``is_none(user_id)``, which Weaviate refuses
+    without null-state indexing — and that setting is immutable, so waving the
+    collection through would break every ingest's dedup check unrepairably.
+    """
+    pytest.importorskip("weaviate")
+    from types import SimpleNamespace
+
+    from agno.vectordb.weaviate import Weaviate
+
+    def _db_with(null_state: bool):
+        client = MagicMock()
+        client.is_connected.return_value = True
+        config = SimpleNamespace(
+            properties=[SimpleNamespace(name="user_id"), SimpleNamespace(name="content_hash")],
+            inverted_index_config=SimpleNamespace(index_null_state=null_state),
+        )
+        client.collections.get.return_value.config.get.return_value = config
+        return Weaviate(collection="T", client=client, embedder=StubEmbedder())
+
+    # Half-migrated (the add_property trap): property present, null-state off.
+    assert _db_with(null_state=False)._user_id_property_exists() is False
+
+    # Fully v3: both create-time pieces present.
+    assert _db_with(null_state=True)._user_id_property_exists() is True
+
+
+def test_surrealdb_create_after_drop_redefines_the_schema():
+    """``drop()`` must clear the once-per-instance schema flag: without that,
+    ``create()`` after a drop on the same object is a silent no-op and the
+    collection stays missing (uploads fail, searches return nothing)."""
+    pytest.importorskip("surrealdb")
+    from agno.vectordb.surrealdb import SurrealDb
+
+    client = MagicMock()
+    db = SurrealDb(client=client, collection="t", embedder=StubEmbedder())
+
+    db.create()
+    assert db._schema_ensured is True
+    define_calls = client.query.call_count
+
+    db.drop()
+    assert db._schema_ensured is False, "drop() must force the DEFINEs to re-run"
+
+    db.create()
+    assert client.query.call_count == define_calls + 2, "create() after drop() must re-run the DEFINEs"
+
+
+@pytest.mark.parametrize("backend", ["clickhouse", "redis", "valkey", "weaviate"])
+def test_drop_resets_the_owner_schema_cache(backend, tmp_path, monkeypatch):
+    """``drop()`` must clear the cached schema answer: the next store under the
+    same name is created with the owner column/field, and a stale False would
+    keep refusing scoped ops on it (pgvector/singlestore/lancedb already do
+    this)."""
+    db, probe_name, _gate = _build(backend, tmp_path)
+    cache_attr = {
+        "clickhouse": "_owner_column_exists",
+        "redis": "_owner_field_exists",
+        "valkey": "_owner_field_exists",
+        "weaviate": "_owner_property_exists",
+    }[backend]
+    setattr(db, cache_attr, False)
+    # Make the drop's own server calls succeed against the mocks. Redis builds
+    # a real SearchIndex from the URL — swap it for a mock so delete() doesn't
+    # attempt a TCP connect.
+    if backend == "redis":
+        db.index = MagicMock()
+    monkeypatch.setattr(db, "exists", lambda: True, raising=False)
+    monkeypatch.setattr(db, "table_exists", lambda: True, raising=False)
+
+    db.drop()
+
+    assert getattr(db, cache_attr) is None, "drop() must invalidate the cached schema answer"
