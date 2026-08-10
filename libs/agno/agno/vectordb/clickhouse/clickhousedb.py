@@ -316,6 +316,11 @@ class Clickhouse(VectorDb):
             return True
         if user_id is None:
             return False
+        # The cached answer may predate a migration run while this process is
+        # alive — re-inspect once before refusing.
+        self._owner_column_exists = None
+        if self._user_id_column_exists():
+            return True
         raise ValueError(
             f"user_id={user_id!r} was passed but table '{self.database_name}.{self.table_name}' predates per-user "
             "isolation and has no 'user_id' column. Run the v2 -> v3 migration "
@@ -587,6 +592,9 @@ class Clickhouse(VectorDb):
         user_id: Optional[str] = None,
     ) -> List[Document]:
         self._validate_user_id(user_id)
+        # A scoped search on an unmigrated table raises the clear migration
+        # error here instead of being swallowed into [] further down.
+        self._require_owner_column(user_id)
         if filters is not None:
             log_warning("Filters are not yet supported in Clickhouse. No filters will be applied.")
         query_embedding = self.embedder.get_embedding(query)
@@ -650,6 +658,8 @@ class Clickhouse(VectorDb):
     ) -> List[Document]:
         """Search for documents asynchronously."""
         self._validate_user_id(user_id)
+        # See ``search`` — scoped searches on unmigrated tables raise clearly.
+        self._require_owner_column(user_id)
         async_client = await self._ensure_async_client()
 
         if filters is not None:
@@ -875,6 +885,10 @@ class Clickhouse(VectorDb):
             bool: True if documents were deleted, False otherwise
         """
         self._validate_user_id(user_id)
+        # Outside the try: a scoped delete on an unmigrated table must raise,
+        # not be swallowed into False. (The unscoped path never names the
+        # owner column, so it works on pre-v3 tables as-is.)
+        self._require_owner_column(user_id)
         try:
             log_debug(f"ClickHouse VectorDB : Deleting documents with content_id {content_id}")
             parameters = self._get_base_parameters()
@@ -906,12 +920,19 @@ class Clickhouse(VectorDb):
                 _delete_by_content_hash clears for None.
         """
         self._validate_user_id(user_id)
+        # On an unmigrated (pre-v3) table there is no owner column: the whole
+        # table is the shared bucket, exactly like main. Scoped checks raise.
+        scope_to_owner = self._require_owner_column(user_id)
         parameters = self._get_base_parameters()
         parameters["content_hash"] = content_hash
-        parameters["user_id"] = user_id if user_id is not None else SHARED_OWNER
+
+        where_clause = "WHERE content_hash = {content_hash:String}"
+        if scope_to_owner:
+            parameters["user_id"] = user_id if user_id is not None else SHARED_OWNER
+            where_clause += " AND user_id = {user_id:String}"
 
         result = self.client.query(
-            "SELECT content_hash FROM {database_name:Identifier}.{table_name:Identifier} WHERE content_hash = {content_hash:String} AND user_id = {user_id:String}",
+            f"SELECT content_hash FROM {{database_name:Identifier}}.{{table_name:Identifier}} {where_clause}",
             parameters=parameters,
         )
         return len(result.result_rows) > 0 if result.result_rows else False
@@ -927,12 +948,17 @@ class Clickhouse(VectorDb):
                 owner's identical-content row. The value is bound, never interpolated.
         """
         self._validate_user_id(user_id)
+        # Outside the try — see ``content_hash_exists``; the fallback keeps the
+        # dedup pair matching the same rows on unmigrated tables.
+        scope_to_owner = self._require_owner_column(user_id)
         try:
             parameters = self._get_base_parameters()
             parameters["content_hash"] = content_hash
-            parameters["user_id"] = user_id if user_id is not None else SHARED_OWNER
 
-            where_clause = "WHERE content_hash = {content_hash:String} AND user_id = {user_id:String}"
+            where_clause = "WHERE content_hash = {content_hash:String}"
+            if scope_to_owner:
+                parameters["user_id"] = user_id if user_id is not None else SHARED_OWNER
+                where_clause += " AND user_id = {user_id:String}"
 
             self.client.command(
                 f"DELETE FROM {{database_name:Identifier}}.{{table_name:Identifier}} {where_clause}",

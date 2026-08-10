@@ -627,6 +627,10 @@ class SingleStore(VectorDb):
         """
         from sqlalchemy import delete
 
+        # Outside the try: a scoped delete on an unmigrated table must raise,
+        # not be swallowed into False. (The unscoped path never names the
+        # owner column, so it works on pre-v3 tables as-is.)
+        self._require_owner_column(user_id)
         try:
             with self.Session.begin() as sess:
                 stmt = delete(self.table).where(self.table.c.content_id == content_id)
@@ -772,6 +776,9 @@ class SingleStore(VectorDb):
             filters (Optional[Dict[str, Any]]): Optional filters for the upsert.
             user_id (Optional[str]): Explicit owner for per-user RAG isolation.
         """
+        # Raise early on a scoped upsert against an unmigrated table, before
+        # any embedding work is paid for (mirrors sync upsert).
+        self._require_owner_column(user_id)
         # The table has no unique key, so ON DUPLICATE KEY UPDATE never fires;
         # clear the caller's existing rows for this hash first (mirrors sync upsert)
         # so re-upserting the same content doesn't accumulate duplicate rows.
@@ -895,13 +902,18 @@ class SingleStore(VectorDb):
         """
         from sqlalchemy import delete
 
+        # Outside the try: a scoped delete on an unmigrated table must raise,
+        # not be swallowed into False. Unscoped falls back to no owner clause
+        # (the whole pre-v3 table is the shared bucket), matching the guard.
+        scope_to_owner = self._require_owner_column(user_id)
         try:
             with self.Session.begin() as sess:
                 stmt = delete(self.table).where(self.table.c.content_hash == content_hash)
-                if user_id is not None:
-                    stmt = stmt.where(self.table.c.user_id == user_id)
-                else:
-                    stmt = stmt.where(self.table.c.user_id.is_(None))
+                if scope_to_owner:
+                    if user_id is not None:
+                        stmt = stmt.where(self.table.c.user_id == user_id)
+                    else:
+                        stmt = stmt.where(self.table.c.user_id.is_(None))
                 result = sess.execute(stmt)  # type: ignore
                 log_info(
                     f"Deleted {result.rowcount} records with content_hash '{content_hash}' from table '{self.table.name}'."  # type: ignore
