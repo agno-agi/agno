@@ -198,23 +198,39 @@ def set_session_summary_manager(agent: Agent) -> None:
 
 
 def set_compression_manager(agent: Agent) -> None:
-    if agent.compress_tool_results and agent.compression_manager is None:
-        agent.compression_manager = CompressionManager(
-            model=agent.model,
-        )
+    """Initialize compression_manager, handling both tool compression and history compaction.
 
+    Unifies the old separate context_compaction_manager into the compression_manager.
+    If user sets context_compaction_manager directly, we wire it into compression_manager.
+    """
+    # If user set context_compaction_manager directly (deprecated), wire it into compression_manager
+    if agent.context_compaction_manager is not None:
+        if agent.compression_manager is None:
+            # Create compression_manager with history compaction from the standalone compactor
+            agent.compression_manager = CompressionManager(
+                model=agent.model,
+                compress_tool_results=agent.compress_tool_results,
+                compress_history=True,
+                history_message_limit=agent.context_compaction_manager.message_limit,
+                history_token_limit=agent.context_compaction_manager.token_limit,
+                history_keep_recent=agent.context_compaction_manager.keep_recent,
+                history_preserve_user_budget=agent.context_compaction_manager.preserve_user_budget,
+                history_instructions=agent.context_compaction_manager.instructions,
+            )
+        # Point the field to the unified manager's internal compactor
+        agent.context_compaction_manager = agent.compression_manager.context_compaction_manager
+
+    # Auto-create if compress_tool_results flag is set
+    if agent.compress_tool_results and agent.compression_manager is None:
+        agent.compression_manager = CompressionManager(model=agent.model)
+
+    # Ensure model is set
     if agent.compression_manager is not None and agent.compression_manager.model is None:
         agent.compression_manager.model = agent.model
 
-    # Check compression flag on the compression manager
+    # Sync flag
     if agent.compression_manager is not None and agent.compression_manager.compress_tool_results:
         agent.compress_tool_results = True
-
-
-def set_context_compaction_manager(agent: Agent) -> None:
-    """Ensure context_compaction_manager has a model if one is configured."""
-    if agent.context_compaction_manager is not None and agent.context_compaction_manager.model is None:
-        agent.context_compaction_manager.model = agent.model
 
 
 def _initialize_session_state(
@@ -287,10 +303,12 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
         set_culture_manager(agent)
     if agent.enable_session_summaries or agent.session_summary_manager is not None:
         set_session_summary_manager(agent)
-    if agent.compress_tool_results or agent.compression_manager is not None:
+    if (
+        agent.compress_tool_results
+        or agent.compression_manager is not None
+        or agent.context_compaction_manager is not None
+    ):
         set_compression_manager(agent)
-    if agent.context_compaction_manager is not None:
-        set_context_compaction_manager(agent)
     if agent.learning is not None and agent.learning is not False:
         set_learning_machine(agent)
 
