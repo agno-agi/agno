@@ -320,8 +320,8 @@ class TestSweepFamilyParity:
 
         await self._make_stale(store, "r1")
         assert await store.acquire_sweep("r1", "sweeper", lock_grace_seconds=60)
-        assert not await store.fail_swept_job("r1", "someone-else"), "fail is ownership-keyed"
-        assert await store.fail_swept_job("r1", "sweeper", error="worker lost")
+        assert not await store.settle_swept_job("r1", "someone-else", "failed"), "fail is ownership-keyed"
+        assert await store.settle_swept_job("r1", "sweeper", "failed", "worker lost")
         assert (await store.get_job("r1"))["status"] == "failed"
 
     @pytest.mark.asyncio
@@ -360,3 +360,44 @@ class TestContractTupleValidation:
 
         resolved = resolve_queue_store(QueueConfig(durable=True, db=InMemoryQueueStore()), default_db=None)
         assert isinstance(resolved, InMemoryQueueStore)
+
+
+class TestStrictLookupParity:
+    @pytest.mark.asyncio
+    async def test_get_job_strict_flag_reads_like_lenient(self, store):
+        """Every built-in store carries the failure-propagating lookup that
+        the continue-ownership gate prefers. Happy-path semantics are
+        identical to get_job (job dict, None for missing); only failure
+        behavior differs (propagate vs swallow), covered by the gate's own
+        outage tests."""
+        await store.enqueue_job(make_job("r1"))
+        assert (await store.get_job("r1", strict=True))["id"] == "r1"
+        assert await store.get_job("nope", strict=True) is None
+
+
+class TestSweepSettleParity:
+    """settle_swept_job: the sweeper's ownership-keyed reconcile write.
+    Same CAS shape (running + sweep-lock holder only), but the
+    target status matches the run row's actual settled state."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("target", ["completed", "cancelled", "paused", "failed"])
+    async def test_settle_ownership_and_target_statuses(self, store, target):
+        await store.enqueue_job(make_job("r1"))
+        await store.claim_job("w1")
+        assert await store.acquire_sweep("r1", "sweeper", 0), "grace=0 makes the fresh claim sweepable"
+        assert not await store.settle_swept_job("r1", "wrong-worker", target), "ownership CAS must refuse"
+        assert await store.settle_swept_job("r1", "sweeper", target)
+        job = await store.get_job("r1")
+        assert job["status"] == target and job.get("locked_by") is None
+        assert not await store.settle_swept_job("r1", "sweeper", target), "settled ticket is not re-settleable"
+
+    @pytest.mark.asyncio
+    async def test_invalid_status_refused_and_fail_wrapper_intact(self, store):
+        await store.enqueue_job(make_job("r1"))
+        await store.claim_job("w1")
+        assert await store.acquire_sweep("r1", "sweeper", 0)
+        assert not await store.settle_swept_job("r1", "sweeper", "exploded")
+        assert await store.settle_swept_job("r1", "sweeper", "failed", "worker lost")
+        job = await store.get_job("r1")
+        assert job["status"] == "failed" and job["error"] == "worker lost"
