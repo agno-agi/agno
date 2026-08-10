@@ -491,8 +491,10 @@ def test_from_dict_positional_second_arg_is_registry(tmp_path):
     config = Agent(name="test-agent", db=db, skills=Skills(loaders=[DbSkills(db)])).to_dict()
 
     agent = Agent.from_dict(config, Registry())
-    # No db was bound, so the skills reference is dropped — not resolved against the registry.
-    assert agent.skills is None
+    # The registry bound to the positional slot, not the db. The skills still resolve,
+    # but from the db the config carries — not from anything the registry supplied.
+    assert agent.skills is not None
+    assert agent.skills.get_skill_names() == ["release-notes"]
 
     with pytest.raises(TypeError):
         Agent.from_dict(config, Registry(), db)
@@ -631,3 +633,46 @@ def test_load_of_a_default_executor_agent_is_unchanged(tmp_path):
 
     assert loaded is not None
     assert type(loaded.skills.executor) is LocalSkillExecutor
+
+
+def test_from_dict_falls_back_to_the_config_db_when_none_is_passed(tmp_path):
+    """An agent saved with its own db re-resolves its skills without the caller passing one.
+
+    to_dict serializes the agent's db, and from_dict turns it back into a live instance
+    before the skills block runs, so the skills reference resolves off that. Without the
+    fallback the caller had to thread the same db in a second time or lose the skills.
+    """
+    db = _make_db(tmp_path)
+    _create_skill_row(db)
+    config = Agent(name="test-agent", db=db, skills=Skills(loaders=[DbSkills(db)])).to_dict()
+
+    loaded = Agent.from_dict(config)
+
+    assert loaded.skills is not None
+    assert loaded.skills.get_skill_names() == ["release-notes"]
+
+
+def test_an_explicitly_passed_db_still_wins_over_the_config_db(tmp_path):
+    """The explicit argument stays the override. Both databases hold the same skill
+    name, so which one answered is visible in the content that comes back."""
+    from agno.db.sqlite import SqliteDb
+
+    config_db = _make_db(tmp_path)
+    _create_skill_row(config_db)
+
+    explicit_db = SqliteDb(db_file=str(tmp_path / "explicit.db"))
+    explicit_db.create_skill(
+        {
+            "name": "release-notes",
+            "description": "Skill release-notes",
+            "instructions": "Instructions from the explicit database.",
+        }
+    )
+
+    config = Agent(name="test-agent", db=config_db, skills=Skills(loaders=[DbSkills(config_db)])).to_dict()
+
+    loaded = Agent.from_dict(config, db=explicit_db)
+
+    assert loaded.skills is not None
+    instructions = json.loads(loaded.skills._get_skill_instructions("release-notes"))
+    assert instructions["instructions"] == "Instructions from the explicit database."

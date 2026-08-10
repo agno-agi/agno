@@ -1053,7 +1053,12 @@ def from_dict(
     # skills table, the way team members are stored by id and re-resolved.
     if "skills" in config and isinstance(config["skills"], dict):
         skill_names = config["skills"].get("names")
-        if skill_names and db is not None:
+        # The db block above already turned config["db"] into a live BaseDb (or dropped
+        # the key), so an agent saved with its own db resolves its skills without the
+        # caller threading one in. An explicit db still wins, and is the only source
+        # when the agent had no db of its own to serialize.
+        skills_db = db if db is not None else config.get("db")
+        if skill_names and skills_db is not None:
             from agno.skills import DbSkills, Skills
             from agno.skills.errors import SkillError
 
@@ -1066,7 +1071,7 @@ def from_dict(
                     "Pass skill_executor= to load it; loading without one would run skill scripts "
                     "on the host."
                 )
-            config["skills"] = Skills(loaders=[DbSkills(db, names=skill_names)], executor=skill_executor)
+            config["skills"] = Skills(loaders=[DbSkills(skills_db, names=skill_names)], executor=skill_executor)
         else:
             if skill_names:
                 log_warning(f"No db provided, skills {skill_names} will not be resolved.")
