@@ -1287,14 +1287,12 @@ def get_agent_router(
                 component_id=agent_id,
             )
 
-        # No router-level status gate: unified /continue (main's a7314ee79d,
-        # checkpointing + unified continue) handles EVERY run state in the
-        # core dispatch - COMPLETED forks as a follow-up, RUNNING/ERROR
-        # resume, unresolved HITL raises its own honest error. The old
-        # paused-only 409 here blocked requests the core supports (and its
-        # "run is already continued" detail was simply false). Teams and
-        # workflows keep their paused-only gates - main has not unified
-        # those doors.
+        # No router-level status gate, deliberately: the continue dispatch
+        # handles EVERY run state itself - COMPLETED forks as a follow-up,
+        # RUNNING/ERROR resume, unresolved HITL raises its own precise
+        # error - so a paused-only check here can only block requests the
+        # core supports. Teams are equally ungated; workflows still refuse
+        # non-paused continues because their core requires PAUSED.
 
         # Convert tools dict to RunRequirement and ToolExecution objects if provided
         requirements = None

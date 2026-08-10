@@ -1,18 +1,18 @@
 """The agents /continue door accepts every run state (unified continue).
 
-main's a7314ee79d (checkpointing + unified /continue) moved run-state
-handling into the core dispatch - COMPLETED forks as a follow-up,
-RUNNING/ERROR resume - and deleted the router's paused-only 409 gate. The
-v3 lineage kept the stale gate, so continuing a persisted COMPLETED run
-409'd with "run is already continued" (false: nothing was continued)
-before the request ever reached the core that supports it. This broke
-cookbook/04_run_lifecycle/checkpoints.py on v3 while it passed on main.
+The continue dispatch handles run state itself - COMPLETED forks as a
+follow-up, RUNNING/ERROR resume, unresolved HITL raises its own precise
+error - so the router carries no paused-only gate. A stale router gate
+here once 409'd persisted COMPLETED runs with "run is already continued"
+(false: nothing was continued) before the request reached the dispatch
+that supports it, breaking cookbook/04_run_lifecycle/checkpoints.py.
 
 These tests pin the gate's absence at the endpoint level. The seeded agent
 has no model, so the continuation fails deeper in the machinery - the
-assertion is strictly "the router does not 409 on run state", mirroring
-how main behaves. Teams and workflows keep their paused-only doors (main
-has not unified those), pinned here too so the port stays faithful.
+assertion is strictly "the router does not 409 on run state". Teams are
+equally ungated (their dispatch has the same machinery); workflows keep
+their refusal because the workflow core requires PAUSED - both pinned
+below so neither door drifts.
 """
 
 import json
@@ -152,9 +152,10 @@ class TestTeamsContinueStaysUngated:
         assert resp.status_code != 409, f"teams continue must stay ungated (unified core): {resp.json()}"
 
 
-class TestOtherDoorsKeepMainParity:
-    """main has NOT unified the workflow continue - its paused-only
-    behavior must not change in this port."""
+class TestWorkflowDoorKeepsPausedGate:
+    """The workflow core hard-requires PAUSED to continue; the router's 409
+    is the clean front for that precondition and must stay until the core
+    itself learns other states."""
 
     @pytest.fixture()
     def full_harness(self, tmp_path):
