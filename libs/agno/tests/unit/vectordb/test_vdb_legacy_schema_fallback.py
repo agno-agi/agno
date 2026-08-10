@@ -367,3 +367,23 @@ def test_lancedb_gate_recovers_from_migration_by_another_process(legacy_lance):
     db.upsert("cdcd8888", [_doc("al-1", "alice-doc", "alice private budget", "cid-al")], user_id="alice")
     results = db.search("budget", limit=5, user_id="alice")
     assert any("alice private" in d.content for d in results)
+
+
+def test_qdrant_write_ensures_tenant_index_on_preexisting_collection():
+    """Knowledge only calls create() when the collection doesn't exist, so a
+    pre-v3 Qdrant collection would never get its tenant payload index from
+    create() alone — the write path must ensure it, exactly once per
+    instance."""
+    pytest.importorskip("qdrant_client")
+    from agno.knowledge.document import Document
+    from agno.vectordb.qdrant import Qdrant
+
+    db = Qdrant(collection="t", url="http://localhost:1", embedder=StubEmbedder())
+    db._client = MagicMock()  # pre-existing collection: create() is never called
+
+    doc = Document(id="d1", name="d", content="hello world", content_id="c1")
+    db.insert("hash-1", [doc])
+    assert db.client.create_payload_index.call_count == 1, "first write must ensure the tenant index"
+
+    db.insert("hash-2", [doc])
+    assert db.client.create_payload_index.call_count == 1, "ensure is once per instance"
