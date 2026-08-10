@@ -1,3 +1,5 @@
+import pytest
+
 from agno.agent import Agent
 from agno.models.message import Citations
 from agno.models.response import ModelResponse, ModelResponseEvent
@@ -45,6 +47,25 @@ def test_team_stream_skips_empty_model_content_and_preserves_accumulated_content
     assert full_model_response.content == "Hello"
     assert run_response.content == "Hello"
 
+    followup_events = list(
+        team._handle_model_response_chunk(
+            session=session,
+            run_response=run_response,
+            full_model_response=full_model_response,
+            model_response_event=ModelResponse(
+                event=ModelResponseEvent.assistant_response.value,
+                content=" world",
+            ),
+            stream_events=True,
+        )
+    )
+
+    assert len(followup_events) == 1
+    assert followup_events[0].event == TeamRunEvent.run_content.value
+    assert followup_events[0].content == " world"
+    assert full_model_response.content == "Hello world"
+    assert run_response.content == "Hello world"
+
 
 def test_team_stream_preserves_metadata_on_empty_model_content():
     team = Team(members=[Agent(name="Agent1")])
@@ -72,3 +93,28 @@ def test_team_stream_preserves_metadata_on_empty_model_content():
     assert events == []
     assert run_response.citations == citations
     assert run_response.model_provider_data == provider_data
+
+
+@pytest.mark.parametrize("empty_content", [False, 0, [], {}])
+def test_team_stream_skips_other_falsy_model_content(empty_content):
+    team = Team(members=[Agent(name="Agent1")])
+    session = TeamSession(session_id="session_1")
+    run_response = TeamRunOutput(run_id="run_1", team_id="team_1", team_name="Team")
+    full_model_response = ModelResponse()
+
+    events = list(
+        team._handle_model_response_chunk(
+            session=session,
+            run_response=run_response,
+            full_model_response=full_model_response,
+            model_response_event=ModelResponse(
+                event=ModelResponseEvent.assistant_response.value,
+                content=empty_content,
+            ),
+            stream_events=True,
+        )
+    )
+
+    assert events == []
+    assert full_model_response.content is None
+    assert run_response.content is None
