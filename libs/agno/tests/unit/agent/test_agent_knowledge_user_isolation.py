@@ -229,3 +229,121 @@ class TestLegacyKnowledgeStillWorks:
 
         assert legacy.calls == 1
         assert docs
+
+
+class ProtocolKnowledge:
+    """A ``KnowledgeProtocol``-shaped implementation: ``retrieve(query, **kwargs)``.
+
+    ``agno/knowledge/protocol.py`` documents retrieval with ``**kwargs`` rather
+    than named parameters, so a conforming class never declares ``user_id``
+    explicitly. Probing only for the literal name would drop the owner here -
+    and since ``None`` is the admin view, the drop widens retrieval to every
+    owner instead of raising.
+    """
+
+    def __init__(self) -> None:
+        self.max_results = 5
+        self.vector_db = None
+        self.seen_user_ids: List[Any] = []
+
+    def validate_filters(self, filters):
+        return filters or {}, []
+
+    async def avalidate_filters(self, filters):
+        return filters or {}, []
+
+    def retrieve(self, query: str, **kwargs) -> List[Document]:
+        self.seen_user_ids.append(kwargs.get("user_id", "<absent>"))
+        return [Document(content="chunk")]
+
+    async def aretrieve(self, query: str, **kwargs) -> List[Document]:
+        self.seen_user_ids.append(kwargs.get("user_id", "<absent>"))
+        return [Document(content="chunk")]
+
+
+class TestVariadicKnowledgeStillGetsOwner:
+    """``**kwargs`` retrieval must receive the owner, not silently fall back to admin."""
+
+    def test_sync_agent_forwards_owner_through_kwargs(self, run_context):
+        from agno.agent import _messages
+
+        kb = ProtocolKnowledge()
+        _messages.get_relevant_docs_from_knowledge(
+            SpyOwner(kb),  # type: ignore[arg-type]
+            query="what is my salary",
+            run_context=run_context,
+        )
+
+        assert kb.seen_user_ids == [ALICE], (
+            "A **kwargs Knowledge lost the owner, so retrieval ran unscoped "
+            "(user_id=None) and would return every owner's chunks."
+        )
+
+    @pytest.mark.asyncio
+    async def test_async_agent_forwards_owner_through_kwargs(self, run_context):
+        from agno.agent import _messages
+
+        kb = ProtocolKnowledge()
+        await _messages.aget_relevant_docs_from_knowledge(
+            SpyOwner(kb),  # type: ignore[arg-type]
+            query="what is my salary",
+            run_context=run_context,
+        )
+
+        assert kb.seen_user_ids == [ALICE]
+
+    def test_sync_team_forwards_owner_through_kwargs(self, run_context):
+        from agno.team import _default_tools as team_tools
+
+        kb = ProtocolKnowledge()
+        team_tools.get_relevant_docs_from_knowledge(
+            SpyOwner(kb),  # type: ignore[arg-type]
+            query="what is my salary",
+            run_context=run_context,
+        )
+
+        assert kb.seen_user_ids == [ALICE]
+
+    @pytest.mark.asyncio
+    async def test_async_team_forwards_owner_through_kwargs(self, run_context):
+        from agno.team import _default_tools as team_tools
+
+        kb = ProtocolKnowledge()
+        await team_tools.aget_relevant_docs_from_knowledge(
+            SpyOwner(kb),  # type: ignore[arg-type]
+            query="what is my salary",
+            run_context=run_context,
+        )
+
+        assert kb.seen_user_ids == [ALICE]
+
+
+class TestAcceptsUserIdHelper:
+    """The shared probe all four retrieval sites depend on."""
+
+    def test_explicit_user_id_parameter(self):
+        from agno.utils.knowledge import accepts_user_id
+
+        def fn(query, max_results=None, filters=None, user_id=None): ...
+
+        assert accepts_user_id(fn) is True
+
+    def test_var_keyword_parameter(self):
+        from agno.utils.knowledge import accepts_user_id
+
+        def fn(query, **kwargs): ...
+
+        assert accepts_user_id(fn) is True
+
+    def test_legacy_signature_without_either(self):
+        from agno.utils.knowledge import accepts_user_id
+
+        def fn(query, max_results=None, filters=None): ...
+
+        assert accepts_user_id(fn) is False
+
+    def test_uninspectable_callable_is_false(self):
+        """Builtins raise on signature() - fall back to the legacy contract."""
+        from agno.utils.knowledge import accepts_user_id
+
+        assert accepts_user_id(len) is False

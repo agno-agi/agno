@@ -34,3 +34,29 @@ def get_agentic_or_user_search_filters(
 
     log_info(f"Filters used by Agent: {search_filters}")
     return search_filters or {}
+
+
+def accepts_user_id(retrieve_fn: Any) -> bool:
+    """Whether ``retrieve_fn`` can receive the per-user isolation owner.
+
+    True when the callable declares a literal ``user_id`` parameter OR accepts
+    ``**kwargs``. The ``**kwargs`` case matters: ``KnowledgeProtocol`` documents
+    retrieval as ``retrieve(self, query, **kwargs)``, so a protocol-conforming
+    implementation never names ``user_id`` explicitly. Probing for the literal
+    name alone would drop the owner for every such class, and because ``None``
+    means "no owner filter" (the admin view), the drop is silent - retrieval
+    widens to every owner's chunks instead of raising.
+
+    Falls back to False when the signature can't be inspected (builtins and
+    C-extensions raise here), which keeps the legacy no-``user_id`` contract
+    working rather than crashing on an unexpected kwarg.
+    """
+    from inspect import Parameter, signature
+
+    try:
+        params = signature(retrieve_fn).parameters
+    except (TypeError, ValueError):
+        return False
+    if "user_id" in params:
+        return True
+    return any(p.kind == Parameter.VAR_KEYWORD for p in params.values())

@@ -1885,15 +1885,10 @@ def get_relevant_docs_from_knowledge(
             "max_results": num_documents,
             "filters": filters,
         }
-        from inspect import signature as _sig
+        from agno.utils.knowledge import accepts_user_id
 
-        try:
-            if "user_id" in _sig(retrieve_fn).parameters:
-                retrieve_kwargs["user_id"] = run_context.user_id if run_context is not None else None
-        except (TypeError, ValueError):
-            # Some callables (builtins, C-extensions) don't have inspectable
-            # signatures. Skip user_id rather than crash.
-            pass
+        if accepts_user_id(retrieve_fn):
+            retrieve_kwargs["user_id"] = run_context.user_id if run_context is not None else None
         relevant_docs: List[Document] = retrieve_fn(**retrieve_kwargs)
 
         if not relevant_docs or len(relevant_docs) == 0:
@@ -1990,17 +1985,14 @@ async def aget_relevant_docs_from_knowledge(
 
         # Probe the retrieve signatures and only pass user_id if the
         # underlying method accepts it (see sync variant for rationale).
-        from inspect import signature as _sig
+        from agno.utils.knowledge import accepts_user_id
 
         scope_user_id = run_context.user_id if run_context is not None else None
 
         def _maybe_with_user_id(fn: Any) -> Dict[str, Any]:
             base: Dict[str, Any] = {"query": query, "max_results": num_documents, "filters": filters}
-            try:
-                if "user_id" in _sig(fn).parameters:
-                    base["user_id"] = scope_user_id
-            except (TypeError, ValueError):
-                pass
+            if accepts_user_id(fn):
+                base["user_id"] = scope_user_id
             return base
 
         if callable(aretrieve_fn):
