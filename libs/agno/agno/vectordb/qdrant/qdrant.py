@@ -247,7 +247,10 @@ class Qdrant(VectorDb):
                 if self.search_type in [SearchType.keyword, SearchType.hybrid]
                 else None,
             )
-            self._ensure_user_id_payload_index_sync()
+        # Outside the exists() branch: collections created before v3 never got
+        # the tenant index, and without it scoped reads scan instead of pruning.
+        # The helper is idempotent and swallows "already exists".
+        self._ensure_user_id_payload_index_sync()
 
     def _ensure_user_id_payload_index_sync(self) -> None:
         """Create the tenant-style payload index on ``user_id``.
@@ -299,7 +302,8 @@ class Qdrant(VectorDb):
                 if self.search_type in [SearchType.keyword, SearchType.hybrid]
                 else None,
             )
-            await self._ensure_user_id_payload_index_async()
+        # See ``create`` — pre-v3 collections need the tenant index too.
+        await self._ensure_user_id_payload_index_async()
 
     async def _ensure_user_id_payload_index_async(self) -> None:
         """Async counterpart to ``_ensure_user_id_payload_index_sync``."""
