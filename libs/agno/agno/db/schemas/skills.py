@@ -1,8 +1,6 @@
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from agno.skills.errors import SkillValidationError
-from agno.skills.skill import Skill
 from agno.utils.dttm import now_epoch_s, to_epoch_s
 
 
@@ -84,41 +82,16 @@ class SkillRow:
         filtered = {k: v for k, v in data.items() if k in valid_keys}
         return cls(**filtered)
 
-    def to_skill(self) -> Skill:
-        """Build the content-carrying Skill this row stores.
+    def content_errors(self) -> List[str]:
+        """List what stops this row's content from becoming a Skill; empty means valid.
 
-        The content dicts pass through verbatim: {} is a valid content-carrying shape
-        (a skill with no files) and must not collapse to None, or Skill.__post_init__
-        rejects the result as neither path-backed nor content-carrying.
-
-        Raises SkillValidationError if any content entry is not str -> str: Skill's own
-        validation checks structure only, and non-string content would otherwise persist
-        and fail later when the skill's files are written to disk.
+        Non-string content would otherwise persist and only fail later, when the skill's
+        files are written to disk. Pure data check: turning the row into a Skill lives in
+        the loader (agno.skills.loaders.db), so this module never imports the SDK layer.
         """
-        errors = [
+        return [
             f"{field_name} entry {filename!r} must map a string filename to string content"
             for field_name, contents in (("scripts", self.scripts), ("references", self.references))
             for filename, text in contents.items()
             if not isinstance(filename, str) or not isinstance(text, str)
         ]
-        if errors:
-            raise SkillValidationError(f"Skill '{self.name}' has non-string content", errors=errors)
-        return Skill(
-            name=self.name,
-            description=self.description,
-            instructions=self.instructions,
-            scripts=list(self.scripts.keys()),
-            references=list(self.references.keys()),
-            metadata=self.metadata,
-            license=self.license,
-            compatibility=self.compatibility,
-            allowed_tools=self.allowed_tools,
-            # Always "db": everything built here is content-carrying and served from the
-            # table, which is the distinction source_type exists to make. Passing the
-            # column through instead reported "local" for a skill created through the API,
-            # so the field stopped meaning anything past the first hop. The row keeps its
-            # own value as a record of where the skill was authored.
-            source_type="db",
-            reference_contents=dict(self.references),
-            script_contents=dict(self.scripts),
-        )

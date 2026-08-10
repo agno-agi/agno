@@ -1,5 +1,6 @@
 from typing import TYPE_CHECKING, Any, ClassVar, Dict, List, Optional, Union
 
+from agno.db.schemas.skills import SkillRow
 from agno.skills.errors import SkillError, SkillValidationError
 from agno.skills.loaders.base import SkillLoader
 from agno.skills.skill import Skill
@@ -8,14 +9,47 @@ from agno.utils.log import log_debug, log_warning
 
 if TYPE_CHECKING:
     from agno.db.base import AsyncBaseDb, BaseDb
-    from agno.db.schemas.skills import SkillRow
+
+
+def skill_from_row(row: SkillRow) -> Skill:
+    """Build the content-carrying Skill a stored row describes.
+
+    The content dicts pass through verbatim: {} is a valid content-carrying shape
+    (a skill with no files) and must not collapse to None, or Skill.__post_init__
+    rejects the result as neither path-backed nor content-carrying.
+
+    Raises SkillValidationError if any content entry is not str -> str: Skill's own
+    validation checks structure only.
+    """
+    errors = row.content_errors()
+    if errors:
+        raise SkillValidationError(f"Skill '{row.name}' has non-string content", errors=errors)
+    return Skill(
+        name=row.name,
+        description=row.description,
+        instructions=row.instructions,
+        scripts=list(row.scripts.keys()),
+        references=list(row.references.keys()),
+        metadata=row.metadata,
+        license=row.license,
+        compatibility=row.compatibility,
+        allowed_tools=row.allowed_tools,
+        # Always "db": everything built here is content-carrying and served from the
+        # table, which is the distinction source_type exists to make. Passing the
+        # column through instead reported "local" for a skill created through the API,
+        # so the field stopped meaning anything past the first hop. The row keeps its
+        # own value as a record of where the skill was authored.
+        source_type="db",
+        reference_contents=dict(row.references),
+        script_contents=dict(row.scripts),
+    )
 
 
 class DbSkills(SkillLoader):
     """Loads skills from the database's skills table.
 
     The database-backed sibling of LocalSkills: rows are read in one batched query
-    and each becomes a content-carrying Skill via SkillRow.to_skill().
+    and each becomes a content-carrying Skill via skill_from_row().
 
     Args:
         db: Database with the skills methods. A sync backend serves both load()
@@ -80,10 +114,6 @@ class DbSkills(SkillLoader):
 
     def _build_skills(self, rows: List[Dict[str, Any]]) -> List[Skill]:
         """Turn stored rows into Skills, validating each and warning on missing names."""
-        # Imported at the point of use: agno.db.schemas.skills imports agno.skills, so a
-        # module-level import here would hit that module while it is still initializing.
-        from agno.db.schemas.skills import SkillRow
-
         skills: List[Skill] = []
         for row_data in rows:
             row = SkillRow.from_dict(row_data)
@@ -94,7 +124,7 @@ class DbSkills(SkillLoader):
                         f"Skill validation failed for '{row.name}'",
                         errors=errors,
                     )
-            skills.append(row.to_skill())
+            skills.append(skill_from_row(row))
 
         if self.names:
             for name in sorted(set(self.names) - {skill.name for skill in skills}):

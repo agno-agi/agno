@@ -48,7 +48,7 @@ from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
 from agno.run.workflow import WorkflowRunOutput
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
-from agno.skills.errors import SkillError
+from agno.skills.errors import SkillError, SkillValidationError
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import sanitize_postgres_string, sanitize_postgres_strings
 
@@ -5757,10 +5757,12 @@ class AsyncPostgresDb(AsyncBaseDb):
             data["version"] = 1
             data.setdefault("created_at", now)
             data.setdefault("updated_at", now)
-            # Parse the row back into a Skill so malformed content dicts fail before the
-            # insert. Row-shaped input cannot violate Skill's exactly-one-of shape.
+            # Reject malformed content dicts before the insert; the loader builds the
+            # Skill later, so bad content would otherwise only fail on load.
             row = SkillRow.from_dict(data)
-            row.to_skill()
+            content_errors = row.content_errors()
+            if content_errors:
+                raise SkillValidationError(f"Skill '{row.name}' has non-string content", errors=content_errors)
             async with self.async_session_factory() as sess:
                 async with sess.begin():
                     await sess.execute(table.insert().values(**row.to_dict()))
@@ -5771,7 +5773,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                 "(most likely the name is already taken)"
             ) from e
         except SkillError:
-            # to_skill()'s content-type validation; propagate untouched
+            # the content-type validation above; propagate untouched
             raise
         except Exception as e:
             log_error(f"Error creating skill: {str(e)}")
@@ -5788,7 +5790,10 @@ class AsyncPostgresDb(AsyncBaseDb):
             if current is None:
                 return None
             # Validate the row as it would be after the update, before writing anything
-            SkillRow.from_dict({**current, **kwargs}).to_skill()
+            updated_row = SkillRow.from_dict({**current, **kwargs})
+            content_errors = updated_row.content_errors()
+            if content_errors:
+                raise SkillValidationError(f"Skill '{updated_row.name}' has non-string content", errors=content_errors)
             # One atomic statement: the version check and the bump succeed or fail together.
             # A stale expected_version matches no row and overwrites nothing.
             values = {**kwargs, "updated_at": int(time.time()), "version": expected_version + 1}

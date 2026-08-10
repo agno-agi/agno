@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from agno.db.schemas.skills import SkillRow
 from agno.db.sqlite.schemas import SKILLS_TABLE_SCHEMA
 from agno.skills.errors import SkillError
+from agno.skills.loaders.db import skill_from_row
 from agno.skills.loaders.local import LocalSkills
 
 # ============================================================================
@@ -213,11 +214,11 @@ def test_skill_row_from_dict_ignores_unknown_keys(skill_data):
     assert not hasattr(row, "not_a_column")
 
 
-def test_to_skill_passes_empty_dicts_through_verbatim():
+def test_skill_from_row_passes_empty_dicts_through_verbatim():
     # {} is a valid content-carrying shape (a skill with no files). Collapsing it to
     # None would make the Skill look path-backed-without-a-path and fail validation.
     row = SkillRow(id="abc", name="minimal", description="d", instructions="i")
-    skill = row.to_skill()
+    skill = skill_from_row(row)
     assert skill.source_path is None
     assert skill.script_contents == {}
     assert skill.reference_contents == {}
@@ -225,9 +226,9 @@ def test_to_skill_passes_empty_dicts_through_verbatim():
     assert skill.references == []
 
 
-def test_to_skill_carries_content(skill_data):
+def test_skill_from_row_carries_content(skill_data):
     row = SkillRow.from_dict({**skill_data, "id": "abc"})
-    skill = row.to_skill()
+    skill = skill_from_row(row)
     assert skill.source_path is None
     assert skill.scripts == ["draft.sh"]
     assert skill.references == ["style.md"]
@@ -252,7 +253,7 @@ def test_path_backed_skill_round_trips_through_a_row(skill_folder):
     assert row.scripts == {"draft.sh": "#!/bin/sh\necho draft\n"}
     assert row.references == {"style.md": "Keep it short.\n"}
 
-    back = row.to_skill()
+    back = skill_from_row(row)
     assert back.source_path is None
     assert back.name == loaded.name
     assert back.description == loaded.description
@@ -288,7 +289,7 @@ def test_create_skill_duplicate_name_raises_skill_error(sqlite_db, skill_data):
 
 
 def test_create_skill_rejects_malformed_content_before_writing(sqlite_db, skill_data):
-    # A non-dict scripts value fails in to_skill() (.keys() on None); a missing
+    # A non-dict scripts value fails in the content check (.items() on None); a missing
     # required field would fail earlier as TypeError in SkillRow.__init__.
     with pytest.raises(AttributeError):
         sqlite_db.create_skill({**skill_data, "scripts": None})
@@ -336,12 +337,12 @@ def test_content_type_validation_allows_valid_shapes(sqlite_db, skill_data):
 
 def test_stored_row_reads_back_as_content_carrying_skill(sqlite_db, skill_folder):
     # The publish path: a real LocalSkills-loaded (path-backed) skill, written to the
-    # table, reads back through to_skill() as an equivalent content-carrying Skill.
+    # table, reads back through skill_from_row() as an equivalent content-carrying Skill.
     loaded = LocalSkills(str(skill_folder)).load()[0]
     sqlite_db.create_skill(_row_dict_from_path_backed_skill(loaded))
 
     stored = sqlite_db.get_skill("release-notes")
-    skill = SkillRow.from_dict(stored).to_skill()
+    skill = skill_from_row(SkillRow.from_dict(stored))
     assert skill.source_path is None
     assert skill.name == loaded.name
     assert skill.instructions == loaded.instructions
@@ -647,7 +648,7 @@ async def test_async_stored_row_reads_back_as_content_carrying_skill(async_sqlit
     await async_sqlite_db.create_skill(_row_dict_from_path_backed_skill(loaded))
 
     stored = await async_sqlite_db.get_skill("release-notes")
-    skill = SkillRow.from_dict(stored).to_skill()
+    skill = skill_from_row(SkillRow.from_dict(stored))
     assert skill.source_path is None
     assert skill.instructions == loaded.instructions
     assert skill.script_contents == {"draft.sh": "#!/bin/sh\necho draft\n"}
@@ -950,11 +951,11 @@ async def test_async_sqlite_outage_propagates(async_sqlite_db, skill_data, monke
         await async_sqlite_db.get_skills_with_content()
 
 
-def test_to_skill_reports_the_database_as_the_source(skill_data):
+def test_skill_from_row_reports_the_database_as_the_source(skill_data):
     """A skill read from the table is database-backed, whatever the row says it was.
 
     source_type marks the path-versus-content distinction (spec 3.1), and everything
-    to_skill builds is content-carrying. Passing the stored value through meant a skill
+    skill_from_row builds is content-carrying. Passing the stored value through meant a skill
     created through the API reported "local" and the field stopped meaning anything after
     the first hop. The column keeps its own value as a record of where the skill was
     authored; the loaded object reports where it is being served from.
@@ -962,14 +963,14 @@ def test_to_skill_reports_the_database_as_the_source(skill_data):
     row = SkillRow.from_dict({**skill_data, "id": "abc"})
     assert row.source_type == "local"  # the column default, untouched
 
-    assert row.to_skill().source_type == "db"
+    assert skill_from_row(row).source_type == "db"
 
 
-def test_to_skill_reports_db_whatever_the_row_stored(skill_data):
+def test_skill_from_row_reports_db_whatever_the_row_stored(skill_data):
     """Any stored provenance still loads as db: it is being served from the table."""
     for stored in ("local", "url", "db"):
         row = SkillRow.from_dict({**skill_data, "id": "abc", "source_type": stored})
-        assert row.to_skill().source_type == "db", f"stored={stored}"
+        assert skill_from_row(row).source_type == "db", f"stored={stored}"
 
 
 def test_loader_serves_skills_marked_as_database_backed(sqlite_db, skill_data):
@@ -983,3 +984,20 @@ def test_loader_serves_skills_marked_as_database_backed(sqlite_db, skill_data):
     assert [s.source_type for s in loaded] == ["db"]
     # The stored row is unchanged -- only the in-memory object reports db.
     assert sqlite_db.get_skill(skill_data["name"])["source_type"] == "local"
+
+
+def test_skill_row_module_does_not_import_the_sdk_layer():
+    """The dependency-direction pin: db/schemas is pure data, so it must not import
+    agno.skills. Row-to-Skill conversion lives in the loader instead."""
+    import ast
+    import inspect
+
+    import agno.db.schemas.skills as row_module
+
+    tree = ast.parse(inspect.getsource(row_module))
+    sdk_imports = [
+        node.module
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module is not None and node.module.startswith("agno.skills")
+    ]
+    assert sdk_imports == []
