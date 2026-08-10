@@ -1182,7 +1182,12 @@ def get_team_router(
             403: {"description": "Run has a pending admin approval and cannot be continued by the user yet."},
             404: {"description": "Team not found", "model": NotFoundResponse},
             409: {
-                "description": "Run is not paused (e.g. run is already running, continued, or errored). Only PAUSED runs can be continued.",
+                "description": (
+                    "Continuation conflict: a durable queue ticket owns this run's continuation "
+                    "(continue it with background=true), or a continuation is already queued or "
+                    "executing. Runs in any state can be continued - a COMPLETED run forks into "
+                    "a follow-up; RUNNING/ERROR runs resume."
+                ),
             },
         },
         dependencies=[
