@@ -18,6 +18,8 @@ Three scenarios:
    reporter's exact log line, WITH max_attempts=5.
 """
 
+import asyncio
+
 import pytest
 
 from agno.job_queue.store import InMemoryQueueStore
@@ -113,3 +115,97 @@ class TestReplicaKillWithBudget:
         assert job["attempt"] == 5, f"every attempt in the budget must burn, got {job['attempt']}"
         assert "attempt budget exhausted" in job["error"], job["error"]
         assert len(agent.calls) == 5, "each burned attempt DID start executing (fenced zombies)"
+
+
+class TestTailSurvivesRetryBoundary:
+    """The field report's second half: after a reclaim re-executes a run,
+    does an ALREADY-ATTACHED tail receive the retry's events? The worker
+    resets the crashed attempt's events but preserves the index counter for
+    exactly this reason - a viewer attached before the kill must see the
+    retry's output flow in, no reconnect required. (The reporter needed a
+    hard page reload; these pins prove the backend delivers, so that
+    symptom belongs to the frontend's reconnect/render layer.)"""
+
+    @pytest.mark.asyncio
+    async def test_in_memory_tail_receives_retry_events_across_reset(self):
+        from types import SimpleNamespace
+
+        from agno.os.event_streams.in_memory import InMemoryEventStream
+        from agno.os.managers import EventsBuffer, SSESubscriberManager
+        from agno.run.base import RunStatus
+
+        stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+        run_id = "r-tail"
+        await stream.register_run(run_id, RunStatus.running)
+        for i in range(3):
+            await stream.add_event(run_id, SimpleNamespace(event="chunk", content=f"a1-{i}", to_dict=lambda: {}))
+
+        received: list = []
+
+        async def consume():
+            async for idx, _sse in stream.tail(run_id, last_event_index=None):
+                received.append(idx)
+                if len(received) >= 6:
+                    return
+
+        task = asyncio.create_task(consume())
+        await asyncio.sleep(0.2)  # replay prefix drained, tail is live
+
+        await stream.reset_run_events(run_id)  # the reclaim's fresh-stream reset
+        for i in range(3):
+            await stream.add_event(run_id, SimpleNamespace(event="chunk", content=f"a2-{i}", to_dict=lambda: {}))
+
+        await asyncio.wait_for(task, timeout=3.0)
+        assert received == [0, 1, 2, 3, 4, 5], (
+            f"indices must stay monotonic across the retry boundary so attached tails keep flowing: {received}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_redis_tail_receives_retry_events_across_reset(self):
+        """The hard case: reset_run_events DELETEs the Redis stream key while
+        the tail blocks in XREAD on it - the blocked read must survive the
+        deletion and serve the recreated stream's entries."""
+        import socket
+        from types import SimpleNamespace
+
+        try:
+            with socket.create_connection(("localhost", 6379), timeout=2):
+                pass
+        except OSError:
+            pytest.skip("real Redis not available on localhost:6379")
+
+        import redis.asyncio as aioredis
+
+        from agno.os.event_streams.redis import RedisEventStream
+        from agno.run.base import RunStatus
+
+        client = aioredis.Redis()
+        stream = RedisEventStream(client, key_prefix="test:tailretry:", ttl_seconds=60)
+        run_id = "r-tail-redis"
+        await stream.cleanup_run(run_id)
+        try:
+            await stream.register_run(run_id, RunStatus.running)
+            for i in range(3):
+                await stream.add_event(run_id, SimpleNamespace(event="chunk", content=f"a1-{i}", to_dict=lambda: {}))
+
+            received: list = []
+
+            async def consume():
+                async for idx, _sse in stream.tail(run_id, last_event_index=None):
+                    received.append(idx)
+                    if len(received) >= 6:
+                        return
+
+            task = asyncio.create_task(consume())
+            await asyncio.sleep(0.5)
+
+            await stream.reset_run_events(run_id)
+            for i in range(3):
+                await stream.add_event(run_id, SimpleNamespace(event="chunk", content=f"a2-{i}", to_dict=lambda: {}))
+
+            await asyncio.wait_for(task, timeout=5.0)
+            assert received == [0, 1, 2, 3, 4, 5], received
+        finally:
+            await stream.cleanup_run(run_id)
+            await stream.aclose()
+            await client.aclose()
