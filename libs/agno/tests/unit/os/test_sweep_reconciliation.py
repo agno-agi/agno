@@ -152,8 +152,8 @@ class TestSweepReconciliation:
     @pytest.mark.asyncio
     async def test_paused_row_parks_ticket_and_touches_nothing_else(self, stream_harness):
         """A swept pause is SETTLED-for-the-leg: park the ticket, leave the
-        row and stream alone - and prove recovery is unobstructed by
-        driving a durable continue afterwards."""
+        row alone, keep the stream showing paused - and prove recovery is
+        unobstructed by driving a durable continue afterwards."""
         component = FakeComponent({"run_id": RUN_ID, "status": "PAUSED", "queue_attempt": 1})
         store = InMemoryQueueStore()
         await seed_stale_running(store)
@@ -166,6 +166,27 @@ class TestSweepReconciliation:
         assert await stream_harness.get_run_status(RUN_ID) == RunStatus.paused, "no ERROR sentinel on a pause"
         # The recovery path the failed ticket used to obstruct:
         assert (await store.continue_job(RUN_ID, {"kwargs": {}}))["outcome"] == "queued"
+
+    @pytest.mark.asyncio
+    async def test_paused_row_with_unsentineled_stream_gets_the_pause_repaired(self, stream_harness):
+        """The crash window between the row committing PAUSED and the
+        executor's finally writing the stream's paused sentinel: the stream
+        still says RUNNING, so attached tails would idle forever. The
+        reconcile must repair the stream view to paused, not assume the
+        sentinel already stands."""
+        component = FakeComponent({"run_id": RUN_ID, "status": "PAUSED", "queue_attempt": 1})
+        store = InMemoryQueueStore()
+        await seed_stale_running(store)
+        # The crash left the stream mid-leg: status RUNNING, no sentinel
+        await stream_harness.register_run(RUN_ID, RunStatus.running)
+
+        await sweep_once(component, store)
+
+        assert component.db.rows[RUN_ID]["status"] == "PAUSED"
+        assert (await store.get_job(RUN_ID))["status"] == "paused"
+        assert await stream_harness.get_run_status(RUN_ID) == RunStatus.paused, (
+            "tails must observe the pause - a RUNNING stream over a parked ticket idles forever"
+        )
 
     @pytest.mark.asyncio
     async def test_race_flip_between_preread_and_write_reconciles(self, stream_harness):

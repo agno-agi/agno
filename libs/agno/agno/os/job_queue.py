@@ -552,6 +552,20 @@ class QueueWorker:
                 )
             return settled
         if status_value == "PAUSED":
+            if (job.get("payload") or {}).get("stream"):
+                # The leg's own paused sentinel is written by the executor's
+                # finally block - which a crash can skip AFTER the row
+                # already committed PAUSED. Repair the stream view so
+                # attached tails observe the pause instead of idling against
+                # a RUNNING status forever. Writing over an already-standing
+                # sentinel is harmless: tails close on the last sentinel,
+                # and a continuation's reopen invalidates it either way.
+                with contextlib.suppress(Exception):
+                    from agno.os.event_streams import get_event_stream
+
+                    await asyncio.shield(
+                        get_event_stream().complete_run(job["id"], RunStatus.paused, generation=job.get("attempt"))
+                    )
             settled = await self.store.settle_swept_job(job["id"], self.worker_id, "paused")
             if settled:
                 log_warning(
