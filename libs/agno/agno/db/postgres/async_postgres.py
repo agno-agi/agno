@@ -5003,7 +5003,7 @@ class AsyncPostgresDb(AsyncBaseDb):
 
         These are NOT claimable (attempt >= max_attempts): the worker persists
         a terminal error on the run row first, then calls
-        fail_swept_job — ordering + idempotence instead of cross-store
+        settle_swept_job — ordering + idempotence instead of cross-store
         atomicity."""
         try:
             table = await self._get_table(table_type="jobs")
@@ -5089,26 +5089,21 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_error(f"Job queue store: swept-job settle failed for job {job_id} (worker={worker_id}): {e}")
             return False
 
-    async def fail_swept_job(self, job_id: str, worker_id: str, error: str = "worker lost") -> bool:
-        """Ownership-keyed terminal write: only the sweeper holding the lock
-        (via acquire_sweep) may fail the job. Thin wrapper over
-        settle_swept_job."""
-        return await self.settle_swept_job(job_id, worker_id, "failed", error)
-
-    async def get_job_strict(self, job_id: str) -> Optional[Dict[str, Any]]:
-        """Failure-propagating lookup: None means exactly "no such ticket".
-        Fail-closed consumers (the continue-ownership gate) must not read a
-        store outage as "no ticket" - get_job's lenient catch below does
-        exactly that, which is correct for its many fail-open readers and
-        wrong for the gate."""
-        table = await self._get_table(table_type="jobs")
-        if table is None:
-            raise RuntimeError(f"Job queue store: jobs table unavailable for strict lookup of {job_id}")
-        async with self.async_session_factory() as sess:
-            row = (await sess.execute(select(table).where(table.c.id == job_id))).fetchone()
-            return dict(row._mapping) if row is not None else None
-
-    async def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+    async def get_job(self, job_id: str, strict: bool = False) -> Optional[Dict[str, Any]]:
+        """Look up a ticket. Lenient by default: failures log and read as
+        None, which the many fail-open readers (poll fallback, stats)
+        rely on. strict=True makes failures PROPAGATE so None means
+        exactly "no such ticket" - fail-closed consumers (the
+        continue-ownership gate) must not read a store outage as "no
+        ticket"; that inference reopens the cross-door double-execution
+        race the gate exists to close."""
+        if strict:
+            table = await self._get_table(table_type="jobs")
+            if table is None:
+                raise RuntimeError(f"Job queue store: jobs table unavailable for strict lookup of {job_id}")
+            async with self.async_session_factory() as sess:
+                row = (await sess.execute(select(table).where(table.c.id == job_id))).fetchone()
+                return dict(row._mapping) if row is not None else None
         try:
             table = await self._get_table(table_type="jobs")
             if table is None:

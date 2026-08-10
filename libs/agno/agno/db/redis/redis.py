@@ -3072,19 +3072,10 @@ class RedisDb(BaseDb):
         except WatchError:
             return False
 
-    def fail_swept_job(self, job_id: str, worker_id: str, error: str = "worker lost") -> bool:
-        """Ownership-keyed terminal write: only the sweeper holding the lock
-        (via acquire_sweep) may fail the job. Thin wrapper over
-        settle_swept_job."""
-        return self.settle_swept_job(job_id, worker_id, "failed", error)
-
-    def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
-        return self._q_load_job(job_id)
-
-    def get_job_strict(self, job_id: str) -> Optional[Dict[str, Any]]:
-        """Failure-propagating lookup for fail-closed consumers (see the
-        in-memory store's docstring). The plain load already propagates
-        Redis errors; the explicit method makes the contract visible."""
+    def get_job(self, job_id: str, strict: bool = False) -> Optional[Dict[str, Any]]:
+        """Look up a ticket. strict=True demands failure-propagating
+        semantics for fail-closed consumers (see the in-memory store's
+        docstring); this load propagates Redis errors in both modes."""
         return self._q_load_job(job_id)
 
     def count_queued_jobs(self) -> int:

@@ -214,8 +214,10 @@ class TestInlineDoorGate:
             async def get_job(self, job_id):
                 return None  # the outage is hidden, exactly like PostgresDb.get_job
 
-            async def get_job_strict(self, job_id):
-                raise RuntimeError("store down")
+            async def get_job(self, job_id, strict=False):
+                if strict:
+                    raise RuntimeError("store down")
+                return None  # the outage is hidden, exactly like the lenient default
 
         worker = SimpleNamespace(store=SwallowingStore())
         with pytest.raises(HTTPException) as exc:
@@ -227,7 +229,7 @@ class TestInlineDoorGate:
     @pytest.mark.asyncio
     async def test_real_postgres_adapter_outage_fails_closed(self, monkeypatch):
         """Composition against the REAL production adapter: its lenient
-        get_job hid outages from the gate; get_job_strict must not."""
+        get_job hid outages from the gate; the strict flag must not."""
         from types import SimpleNamespace
         from unittest.mock import AsyncMock
 
@@ -245,7 +247,7 @@ class TestInlineDoorGate:
 
     @pytest.mark.asyncio
     async def test_store_without_strict_keeps_best_effort(self):
-        """Third-party stores without get_job_strict keep the documented
+        """Third-party stores whose get_job lacks the strict flag keep the
         best-effort behavior: a None lookup allows the inline door."""
         from types import SimpleNamespace
 

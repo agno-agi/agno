@@ -320,8 +320,8 @@ class TestSweepFamilyParity:
 
         await self._make_stale(store, "r1")
         assert await store.acquire_sweep("r1", "sweeper", lock_grace_seconds=60)
-        assert not await store.fail_swept_job("r1", "someone-else"), "fail is ownership-keyed"
-        assert await store.fail_swept_job("r1", "sweeper", error="worker lost")
+        assert not await store.settle_swept_job("r1", "someone-else", "failed"), "fail is ownership-keyed"
+        assert await store.settle_swept_job("r1", "sweeper", "failed", "worker lost")
         assert (await store.get_job("r1"))["status"] == "failed"
 
     @pytest.mark.asyncio
@@ -364,20 +364,20 @@ class TestContractTupleValidation:
 
 class TestStrictLookupParity:
     @pytest.mark.asyncio
-    async def test_get_job_strict_reads_like_get_job(self, store):
+    async def test_get_job_strict_flag_reads_like_lenient(self, store):
         """Every built-in store carries the failure-propagating lookup that
         the continue-ownership gate prefers. Happy-path semantics are
         identical to get_job (job dict, None for missing); only failure
         behavior differs (propagate vs swallow), covered by the gate's own
         outage tests."""
         await store.enqueue_job(make_job("r1"))
-        assert (await store.get_job_strict("r1"))["id"] == "r1"
-        assert await store.get_job_strict("nope") is None
+        assert (await store.get_job("r1", strict=True))["id"] == "r1"
+        assert await store.get_job("nope", strict=True) is None
 
 
 class TestSweepSettleParity:
     """settle_swept_job: the sweeper's ownership-keyed reconcile write.
-    Same CAS as fail_swept_job (running + sweep-lock holder only), but the
+    Same CAS shape (running + sweep-lock holder only), but the
     target status matches the run row's actual settled state."""
 
     @pytest.mark.asyncio
@@ -398,6 +398,6 @@ class TestSweepSettleParity:
         await store.claim_job("w1")
         assert await store.acquire_sweep("r1", "sweeper", 0)
         assert not await store.settle_swept_job("r1", "sweeper", "exploded")
-        assert await store.fail_swept_job("r1", "sweeper", "worker lost")
+        assert await store.settle_swept_job("r1", "sweeper", "failed", "worker lost")
         job = await store.get_job("r1")
         assert job["status"] == "failed" and job["error"] == "worker lost"

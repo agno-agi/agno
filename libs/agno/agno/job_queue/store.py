@@ -3,7 +3,7 @@
 Implements the same contract as the Postgres queue methods (enqueue_job,
 claim_job, heartbeat_jobs, complete_job, retry_or_fail_job,
 cancel_job, continue_job, sweep_exhausted_jobs, acquire_sweep,
-fail_swept_job, get_job, count_queued_jobs) against process memory.
+settle_swept_job, get_job, count_queued_jobs) against process memory.
 
 This is the contract-test fixture and the single-process dev fallback - it is
 NOT durable (a restart loses the queue) and is never a substitute for the
@@ -182,7 +182,7 @@ class InMemoryQueueStore:
         """Take ownership of a stale, budget-exhausted running job BEFORE any
         run-row write. The sweep must never touch a run row whose ticket it
         does not own: the old order wrote the row first and only then
-        discovered - via fail_swept_job's staleness recheck - that a live
+        discovered - via the swept-settle's staleness recheck - that a live
         heartbeat owned the ticket, after already defacing a healthy run's
         row. Refreshing locked_at here also doubles as the retry backoff for
         a failing terminalization: the job becomes re-sweepable once the
@@ -219,26 +219,17 @@ class InMemoryQueueStore:
             job.update(status=status, error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now)
             return True
 
-    async def fail_swept_job(self, job_id: str, worker_id: str, error: str = "worker lost") -> bool:
-        """Ownership-keyed terminal write: only the sweeper holding the lock
-        (via acquire_sweep) may fail the job. Replaces the old staleness
-        recheck - after acquire_sweep refreshed locked_at, staleness can no
-        longer serve as the fence. Thin wrapper over settle_swept_job."""
-        return await self.settle_swept_job(job_id, worker_id, "failed", error)
-
-    async def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+    async def get_job(self, job_id: str, strict: bool = False) -> Optional[Dict[str, Any]]:
+        """Look up a ticket. With strict=True, store failures PROPAGATE
+        instead of reading as None - None means exactly "no such ticket".
+        Fail-closed consumers (the continue-ownership gate) need the
+        distinction: during a store outage, "no ticket" must not be
+        inferred from "could not look" - that inference reopens the
+        cross-door double-execution race the gate exists to close.
+        In-memory cannot fail, so both modes behave identically."""
         async with self._lock:
             job = self._jobs.get(job_id)
             return dict(job) if job is not None else None
-
-    async def get_job_strict(self, job_id: str) -> Optional[Dict[str, Any]]:
-        """Like get_job, but store failures PROPAGATE instead of reading as
-        None. None means exactly "no such ticket". Fail-closed consumers
-        (the continue-ownership gate) need the distinction: during a store
-        outage, "no ticket" must not be inferred from "could not look" -
-        that inference reopens the cross-door double-execution race the
-        gate exists to close. In-memory cannot fail, so this is get_job."""
-        return await self.get_job(job_id)
 
     async def count_queued_jobs(self) -> int:
         async with self._lock:

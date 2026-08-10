@@ -6355,7 +6355,7 @@ class PostgresDb(BaseDb):
 
         These are NOT claimable (attempt >= max_attempts): the worker persists
         a terminal error on the run row first, then calls
-        fail_swept_job — ordering + idempotence instead of cross-store
+        settle_swept_job — ordering + idempotence instead of cross-store
         atomicity."""
         try:
             table = self._get_table(table_type="jobs")
@@ -6439,23 +6439,16 @@ class PostgresDb(BaseDb):
             log_error(f"Job queue store: swept-job settle failed for job {job_id} (worker={worker_id}): {e}")
             return False
 
-    def fail_swept_job(self, job_id: str, worker_id: str, error: str = "worker lost") -> bool:
-        """Ownership-keyed terminal write: only the sweeper holding the lock
-        (via acquire_sweep) may fail the job. Thin wrapper over
-        settle_swept_job."""
-        return self.settle_swept_job(job_id, worker_id, "failed", error)
-
-    def get_job_strict(self, job_id: str) -> Optional[Dict[str, Any]]:
-        """Failure-propagating lookup - sync twin of the async adapter's
-        get_job_strict; see that docstring."""
-        table = self._get_table(table_type="jobs")
-        if table is None:
-            raise RuntimeError(f"Job queue store: jobs table unavailable for strict lookup of {job_id}")
-        with self.Session() as sess:
-            row = sess.execute(select(table).where(table.c.id == job_id)).fetchone()
-            return dict(row._mapping) if row is not None else None
-
-    def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+    def get_job(self, job_id: str, strict: bool = False) -> Optional[Dict[str, Any]]:
+        """Look up a ticket - sync twin of the async adapter's get_job; see
+        that docstring for the strict/lenient contract."""
+        if strict:
+            table = self._get_table(table_type="jobs")
+            if table is None:
+                raise RuntimeError(f"Job queue store: jobs table unavailable for strict lookup of {job_id}")
+            with self.Session() as sess:
+                row = sess.execute(select(table).where(table.c.id == job_id)).fetchone()
+                return dict(row._mapping) if row is not None else None
         try:
             table = self._get_table(table_type="jobs")
             if table is None:

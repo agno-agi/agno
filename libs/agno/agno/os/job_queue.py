@@ -211,7 +211,7 @@ def resolve_queue_store(config: QueueConfig, default_db: Any) -> Any:
             "settle_paused_job",
             "sweep_exhausted_jobs",
             "acquire_sweep",
-            "fail_swept_job",
+            "settle_swept_job",
             "get_job",
             "count_queued_jobs",
         )
@@ -434,7 +434,7 @@ class QueueWorker:
     async def _sweep_exhausted(self) -> None:
         """Fail exhausted stale jobs visibly. Ownership FIRST: acquire the
         stale lock (CAS) before any run-row write - the old order stamped
-        ERROR on the run row and only then discovered, via fail_swept_job's
+        ERROR on the run row and only then discovered, via the swept-settle's
         staleness recheck, that a live heartbeat owned the ticket: a healthy
         run's row was already defaced by a sweeper that never owned it.
         Sequence: acquire -> fenced run-row persist -> stream terminal ->
@@ -500,14 +500,14 @@ class QueueWorker:
                 # ticket we swept. The row and stream belong to that newer
                 # writer - touch neither - but the ticket bookkeeping still
                 # settles, or it would sit sweep-locked and re-sweep forever
-                await self.store.fail_swept_job(job["id"], self.worker_id, error)
+                await self.store.settle_swept_job(job["id"], self.worker_id, "failed", error)
                 log_warning(
                     f"Job queue: swept job {job['id']} is owned by a newer attempt on the run row; "
                     "ticket failed without touching the row or stream"
                 )
                 continue
             await self._terminate_stream_view(job)
-            await self.store.fail_swept_job(job["id"], self.worker_id, error)
+            await self.store.settle_swept_job(job["id"], self.worker_id, "failed", error)
             log_warning(f"Job queue: swept job {job['id']} to failed ({error})")
 
     async def _areconcile_swept_job(self, job: Dict[str, Any]) -> bool:
@@ -1513,13 +1513,12 @@ async def araise_if_ticket_owns_continue(
         # store failures into None, and None here means "no ticket - allow
         # the inline door", which reopens the cross-door double-execution
         # race during exactly the outages this gate exists for. Third-party
-        # stores without the strict variant keep best-effort semantics.
-        store = queue_worker.store
-        strict = getattr(store, "get_job_strict", None)
-        if callable(strict):
-            job = await strict(run_id)
-        else:
-            job = await store.get_job(run_id)
+        # stores whose get_job lacks the strict flag keep best-effort
+        # semantics (the TypeError retry below).
+        try:
+            job = await queue_worker.store.get_job(run_id, strict=True)
+        except TypeError:
+            job = await queue_worker.store.get_job(run_id)
     except Exception:
         raise HTTPException(
             status_code=503,

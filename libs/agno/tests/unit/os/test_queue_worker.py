@@ -783,7 +783,7 @@ class TestSweepOwnership:
     async def test_lost_acquisition_never_touches_run_row(self):
         """The heartbeat-vs-sweep race, decided BEFORE any run-row write: the
         old order stamped ERROR on the row and only then lost the ticket race
-        via fail_swept_job's staleness recheck - a healthy run's row defaced
+        via the swept-settle's staleness recheck - a healthy run's row defaced
         by a sweeper that never owned it."""
         store, agent = InMemoryQueueStore(), FakeAgent()
         worker = make_worker(store, agent, make_config())
