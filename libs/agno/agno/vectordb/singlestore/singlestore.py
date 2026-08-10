@@ -166,6 +166,11 @@ class SingleStore(VectorDb):
             return True
         if user_id is None:
             return False
+        # The cached answer may predate a migration run while this process is
+        # alive — re-inspect once before refusing.
+        self._owner_column_exists = None
+        if self._user_id_column_exists():
+            return True
         raise ValueError(
             f"user_id={user_id!r} was passed but table '{self.table.fullname}' predates per-user "
             "isolation and has no 'user_id' column. Run the v2 -> v3 migration "
