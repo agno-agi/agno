@@ -527,6 +527,51 @@ async def acomplete_continue_stream(
     return final_status
 
 
+async def afinalize_continue_stream(
+    component: Any,
+    run_id: str,
+    session_id: Optional[str],
+    queue_worker: Any = None,
+    only_if_tracked: bool = False,
+    final_status: Any = None,
+) -> Optional[Any]:
+    """The inline continue's terminal-sync obligation as ONE unit that
+    survives client-disconnect cancellation: resolve the run's final status,
+    close the stream view (acomplete_continue_stream), settle a paused
+    ticket (asettle_paused_ticket).
+
+    A disconnecting client cancels the response task, and the first
+    unshielded await in this sequence used to leak that cancellation
+    (contextlib.suppress(Exception) does not catch CancelledError) -
+    abandoning the stream view as RUNNING with no producer (immortal on
+    Redis, whose TTL refresher had enrolled the run, so /resume tails spun
+    on keepalives forever) and skipping the ticket settle entirely. The
+    obligation now runs in its OWN task: the caller's cancellation
+    re-raises here, but the task completes on the loop regardless.
+    """
+    import asyncio
+
+    async def _obligation() -> Optional[Any]:
+        final = await acomplete_continue_stream(
+            component, run_id, session_id, only_if_tracked=only_if_tracked, final_status=final_status
+        )
+        if queue_worker is not None:
+            from agno.os.job_queue import asettle_paused_ticket
+
+            await asettle_paused_ticket(queue_worker, run_id, final)
+        return final
+
+    task = asyncio.ensure_future(_obligation())
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        # The obligation finishes in the background; retrieve its eventual
+        # result so it never warns, and let the cancellation propagate so
+        # the response task still ends as cancelled
+        task.add_done_callback(lambda t: t.cancelled() or t.exception())
+        raise
+
+
 def replayed_payload_to_sse(payload: Any, event_index: int, run_id: str) -> str:
     """Convert an event-stream replay payload to an SSE string.
 
