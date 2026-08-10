@@ -1,6 +1,6 @@
 """Tests for the legacy-schema (pre-v3) fallback across the vector DBs.
 
-The contract, agreed for v3 (see PR #9488):
+The contract, agreed for v3:
 - store missing the ``user_id`` column/field + ``user_id=None``  -> behave
   byte-for-byte like main (v2): no owner references anywhere.
 - store missing the column/field + a real ``user_id``            -> raise a
