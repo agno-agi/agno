@@ -47,7 +47,7 @@ def encrypt_dict(data: Dict[str, Any], key: Optional[str] = None) -> Dict[str, s
 
     fernet_key = _validate_fernet_key(secret)
     f = Fernet(fernet_key)
-    plaintext = json.dumps(data).encode("utf-8")
+    plaintext = json.dumps(data, ensure_ascii=False).encode("utf-8")
     ciphertext = f.encrypt(plaintext)
     return {"encrypted": ciphertext.decode("ascii")}
 

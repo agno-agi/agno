@@ -88,7 +88,9 @@ class RedmineTools(Toolkit):
         mapping = {resource.name.lower(): resource.id for resource in resources}
         resolved = mapping.get(name.lower())
         if resolved is None:
-            return None, json.dumps({"error": f"Unknown {label} '{name}'. Available: {sorted(mapping)}"})
+            return None, json.dumps(
+                {"error": f"Unknown {label} '{name}'. Available: {sorted(mapping)}"}, ensure_ascii=False
+            )
         return resolved, None
 
     def get_issue(self, issue_id: str, include_comments: bool = False) -> str:
@@ -124,10 +126,10 @@ class RedmineTools(Toolkit):
                     journal.notes for journal in issue.journals if getattr(journal, "notes", "")
                 ]
             log_debug(f"Issue details retrieved for {issue_id}")
-            return json.dumps(issue_details)
+            return json.dumps(issue_details, ensure_ascii=False)
         except Exception as e:
             log_error(f"Error retrieving issue {issue_id}")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def create_issue(
         self,
@@ -190,10 +192,10 @@ class RedmineTools(Toolkit):
             new_issue = self.redmine.issue.create(**fields)
             issue_url = f"{self.server_url}/issues/{new_issue.id}"
             log_debug(f"Issue created with id: {new_issue.id}")
-            return json.dumps({"id": new_issue.id, "url": issue_url})
+            return json.dumps({"id": new_issue.id, "url": issue_url}, ensure_ascii=False)
         except Exception as e:
             log_error(f"Error creating issue in project {project_id}")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def update_issue(
         self,
@@ -271,13 +273,13 @@ class RedmineTools(Toolkit):
             if due_date:
                 fields["due_date"] = due_date
             if not fields:
-                return json.dumps({"error": "No fields provided to update."})
+                return json.dumps({"error": "No fields provided to update."}, ensure_ascii=False)
             self.redmine.issue.update(self._to_int(issue_id), **fields)
             log_debug(f"Issue {issue_id} updated")
-            return json.dumps({"status": "success", "issue_id": issue_id})
+            return json.dumps({"status": "success", "issue_id": issue_id}, ensure_ascii=False)
         except Exception as e:
             log_error(f"Error updating issue {issue_id}")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def search_issues(
         self,
@@ -339,10 +341,10 @@ class RedmineTools(Toolkit):
                     }
                 )
             log_debug(f"Found {len(results)} issues")
-            return json.dumps(results)
+            return json.dumps(results, ensure_ascii=False)
         except Exception as e:
             log_error("Error searching issues")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def add_comment(self, issue_id: str, comment: str, private_notes: bool = False) -> str:
         """Add a comment to an issue.
@@ -356,14 +358,14 @@ class RedmineTools(Toolkit):
             str: A JSON string indicating success or containing an error message.
         """
         if not comment or not comment.strip():
-            return json.dumps({"error": "comment cannot be empty"})
+            return json.dumps({"error": "comment cannot be empty"}, ensure_ascii=False)
         try:
             self.redmine.issue.update(self._to_int(issue_id), notes=comment, private_notes=private_notes)
             log_debug(f"Comment added to issue {issue_id}")
-            return json.dumps({"status": "success", "issue_id": issue_id})
+            return json.dumps({"status": "success", "issue_id": issue_id}, ensure_ascii=False)
         except Exception as e:
             log_error(f"Error adding comment to issue {issue_id}")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def log_time(
         self,
@@ -386,7 +388,7 @@ class RedmineTools(Toolkit):
             str: A JSON string with the created time entry id, or an error message.
         """
         if hours <= 0:
-            return json.dumps({"error": "hours must be greater than 0"})
+            return json.dumps({"error": "hours must be greater than 0"}, ensure_ascii=False)
         try:
             fields: Dict[str, Any] = {"issue_id": self._to_int(issue_id), "hours": hours}
             activities = self.redmine.enumeration.filter(resource="time_entry_activities")
@@ -400,7 +402,8 @@ class RedmineTools(Toolkit):
                     {
                         "error": "activity is required (this Redmine instance defines no default activity). "
                         f"Available: {sorted(item.name.lower() for item in activities)}"
-                    }
+                    },
+                    ensure_ascii=False,
                 )
             if comment:
                 fields["comments"] = comment
@@ -408,10 +411,10 @@ class RedmineTools(Toolkit):
                 fields["spent_on"] = spent_on
             time_entry = self.redmine.time_entry.create(**fields)
             log_debug(f"Logged {hours}h on issue {issue_id}")
-            return json.dumps({"id": time_entry.id, "issue_id": issue_id, "hours": hours})
+            return json.dumps({"id": time_entry.id, "issue_id": issue_id, "hours": hours}, ensure_ascii=False)
         except Exception as e:
             log_error(f"Error logging time on issue {issue_id}")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def list_projects(self) -> str:
         """List the projects available on the Redmine server.
@@ -425,10 +428,10 @@ class RedmineTools(Toolkit):
                 for project in self.redmine.project.all()
             ]
             log_debug(f"Found {len(projects)} projects")
-            return json.dumps(projects)
+            return json.dumps(projects, ensure_ascii=False)
         except Exception as e:
             log_error("Error listing projects")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def list_users(self) -> str:
         """List the active users on the Redmine server.
@@ -445,10 +448,10 @@ class RedmineTools(Toolkit):
                 for user in self.redmine.user.all()
             ]
             log_debug(f"Found {len(users)} users")
-            return json.dumps(users)
+            return json.dumps(users, ensure_ascii=False)
         except Exception as e:
             log_error("Error listing users")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def list_project_members(self, project_id: str) -> str:
         """List the users who are members of a project.
@@ -468,10 +471,10 @@ class RedmineTools(Toolkit):
                 if user:
                     members.append({"id": user.id, "name": str(user)})
             log_debug(f"Found {len(members)} members in project {project_id}")
-            return json.dumps(members)
+            return json.dumps(members, ensure_ascii=False)
         except Exception as e:
             log_error(f"Error listing members of project {project_id}")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def list_versions(self, project_id: str) -> str:
         """List the versions (sprints/milestones) of a project.
@@ -490,7 +493,7 @@ class RedmineTools(Toolkit):
                 for version in self.redmine.version.filter(project_id=project_id)
             ]
             log_debug(f"Found {len(versions)} versions in project {project_id}")
-            return json.dumps(versions)
+            return json.dumps(versions, ensure_ascii=False)
         except Exception as e:
             log_error(f"Error listing versions of project {project_id}")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)

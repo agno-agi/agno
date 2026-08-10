@@ -118,10 +118,10 @@ class MemoryTools(Toolkit):
             }
             run_context.session_state["memory_operations"].append(operation_result)
 
-            return json.dumps([memory.to_dict() for memory in memories], indent=2)  # type: ignore
+            return json.dumps([memory.to_dict() for memory in memories], indent=2, ensure_ascii=False)  # type: ignore
         except Exception as e:
             log_error(f"Error getting memories: {str(e)}")
-            return json.dumps({"error": str(e)}, indent=2)
+            return json.dumps({"error": str(e)}, indent=2, ensure_ascii=False)
 
     def add_memory(
         self,
@@ -172,15 +172,21 @@ class MemoryTools(Toolkit):
             run_context.session_state["memory_operations"].append(operation_result)
 
             if created_memory:
-                return json.dumps({"success": True, "operation": "add_memory", "memory": memory_dict}, indent=2)
+                return json.dumps(
+                    {"success": True, "operation": "add_memory", "memory": memory_dict}, indent=2, ensure_ascii=False
+                )
             else:
                 return json.dumps(
-                    {"success": False, "operation": "add_memory", "error": "Failed to create memory"}, indent=2
+                    {"success": False, "operation": "add_memory", "error": "Failed to create memory"},
+                    indent=2,
+                    ensure_ascii=False,
                 )
 
         except Exception as e:
             log_error(f"Error adding memory: {str(e)}")
-            return json.dumps({"success": False, "operation": "add_memory", "error": str(e)}, indent=2)
+            return json.dumps(
+                {"success": False, "operation": "add_memory", "error": str(e)}, indent=2, ensure_ascii=False
+            )
 
     def update_memory(
         self,
@@ -208,6 +214,7 @@ class MemoryTools(Toolkit):
                 return json.dumps(
                     {"success": False, "operation": "update_memory", "error": f"Memory with ID {memory_id} not found"},
                     indent=2,
+                    ensure_ascii=False,
                 )
 
             # Update fields if provided
@@ -238,15 +245,21 @@ class MemoryTools(Toolkit):
             run_context.session_state["memory_operations"].append(operation_result)
 
             if updated_result:
-                return json.dumps({"success": True, "operation": "update_memory", "memory": memory_dict}, indent=2)
+                return json.dumps(
+                    {"success": True, "operation": "update_memory", "memory": memory_dict}, indent=2, ensure_ascii=False
+                )
             else:
                 return json.dumps(
-                    {"success": False, "operation": "update_memory", "error": "Failed to update memory"}, indent=2
+                    {"success": False, "operation": "update_memory", "error": "Failed to update memory"},
+                    indent=2,
+                    ensure_ascii=False,
                 )
 
         except Exception as e:
             log_error(f"Error updating memory: {str(e)}")
-            return json.dumps({"success": False, "operation": "update_memory", "error": str(e)}, indent=2)
+            return json.dumps(
+                {"success": False, "operation": "update_memory", "error": str(e)}, indent=2, ensure_ascii=False
+            )
 
     def delete_memory(
         self,
@@ -270,6 +283,7 @@ class MemoryTools(Toolkit):
                 return json.dumps(
                     {"success": False, "operation": "delete_memory", "error": f"Memory with ID {memory_id} not found"},
                     indent=2,
+                    ensure_ascii=False,
                 )
 
             # Delete from database
@@ -300,11 +314,14 @@ class MemoryTools(Toolkit):
                     "deleted_memory": memory_dict,
                 },
                 indent=2,
+                ensure_ascii=False,
             )
 
         except Exception as e:
             log_error(f"Error deleting memory: {str(e)}")
-            return json.dumps({"success": False, "operation": "delete_memory", "error": str(e)}, indent=2)
+            return json.dumps(
+                {"success": False, "operation": "delete_memory", "error": str(e)}, indent=2, ensure_ascii=False
+            )
 
     def analyze(self, run_context: RunContext, analysis: str) -> str:
         """Use this tool to evaluate whether the memory operations results are correct and sufficient.

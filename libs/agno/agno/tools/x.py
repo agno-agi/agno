@@ -81,10 +81,10 @@ class XTools(Toolkit):
             post_url = f"https://x.com/{user.username}/status/{post_id}"
 
             result = {"message": "Post successfully created!", "url": post_url}
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
         except tweepy.TweepyException as e:
             logger.exception("Error creating post")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def reply_to_post(self, post_id: str, text: str) -> str:
         """
@@ -105,10 +105,10 @@ class XTools(Toolkit):
             user = self.client.get_me().data
             reply_url = f"https://twitter.com/{user.username}/status/{reply_id}"
             result = {"message": "Reply successfully posted!", "url": reply_url}
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
         except tweepy.TweepyException as e:
             logger.exception("Error replying to post")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def send_dm(self, recipient: str, text: str) -> str:
         """
@@ -141,7 +141,7 @@ class XTools(Toolkit):
                 "recipient_id": recipient_id,
                 "recipient_username": recipient if not recipient.isdigit() else None,
             }
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
         except tweepy.TweepyException as e:
             logger.exception("Error from X while sending DM")
             error_message = str(e)
@@ -151,10 +151,10 @@ class XTools(Toolkit):
                 error_message = (
                     f"Unable to send message to '{recipient}'. The user may have restricted who can send them messages."
                 )
-            return json.dumps({"error": error_message}, indent=2)
+            return json.dumps({"error": error_message}, indent=2, ensure_ascii=False)
         except Exception as e:
             logger.exception("Unexpected error sending DM")
-            return json.dumps({"error": f"An unexpected error occurred: {str(e)}"}, indent=2)
+            return json.dumps({"error": f"An unexpected error occurred: {str(e)}"}, indent=2, ensure_ascii=False)
 
     def get_my_info(self) -> str:
         """
@@ -178,10 +178,10 @@ class XTools(Toolkit):
                 "following_count": user_info["public_metrics"]["following_count"],
                 "tweet_count": user_info["public_metrics"]["tweet_count"],
             }
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
         except tweepy.TweepyException as e:
             logger.exception("Error fetching user info")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_user_info(self, username: str) -> str:
         """
@@ -208,10 +208,10 @@ class XTools(Toolkit):
                 "following_count": user_info["public_metrics"]["following_count"],
                 "tweet_count": user_info["public_metrics"]["tweet_count"],
             }
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
         except tweepy.TweepyException as e:
             logger.exception("Error fetching user info")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_home_timeline(self, max_results: int = 10) -> str:
         """
@@ -242,10 +242,10 @@ class XTools(Toolkit):
                 )
             log_info(f"Successfully fetched {len(timeline)} tweets")
             result = {"home_timeline": timeline}
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
         except tweepy.TweepyException as e:
             logger.exception("Error fetching home timeline")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def search_posts(self, query: str, max_results: int = 10) -> str:
         """
@@ -325,11 +325,11 @@ class XTools(Toolkit):
             else:
                 log_info(f"No posts found for query: {query}")
                 result = {}
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         except tweepy.TweepyException as e:
             logger.exception("Error searching posts")
-            return json.dumps({"error": str(e), "query": query})
+            return json.dumps({"error": str(e), "query": query}, ensure_ascii=False)
         except Exception as e:
             logger.exception("Unexpected error searching posts")
-            return json.dumps({"error": f"An unexpected error occurred: {str(e)}", "query": query})
+            return json.dumps({"error": f"An unexpected error occurred: {str(e)}", "query": query}, ensure_ascii=False)

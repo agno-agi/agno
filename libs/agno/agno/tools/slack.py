@@ -532,10 +532,10 @@ class SlackTools(Toolkit):
         """
         try:
             response = self.client.chat_postMessage(channel=channel, text=text, mrkdwn=self.markdown)
-            return json.dumps(response.data)
+            return json.dumps(response.data, ensure_ascii=False)
         except SlackApiError as e:
             logger.exception("Error sending message")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def send_message_thread(self, channel: str, text: str, thread_ts: str) -> str:
         """Reply to a message thread in a Slack channel.
@@ -552,10 +552,10 @@ class SlackTools(Toolkit):
             response = self.client.chat_postMessage(
                 channel=channel, text=text, thread_ts=thread_ts, mrkdwn=self.markdown
             )
-            return json.dumps(response.data)
+            return json.dumps(response.data, ensure_ascii=False)
         except SlackApiError as e:
             logger.exception("Error sending message")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def list_channels(self, include_private: bool = False) -> str:
         """List all channels in the Slack workspace.
@@ -593,9 +593,9 @@ class SlackTools(Toolkit):
                 cursor = (response.get("response_metadata") or {}).get("next_cursor")
                 if not cursor:
                     break
-            return json.dumps(channels)
+            return json.dumps(channels, ensure_ascii=False)
         except SlackApiError as e:
-            return json.dumps(self._slack_error_payload(e, operation="conversations.list"))
+            return json.dumps(self._slack_error_payload(e, operation="conversations.list"), ensure_ascii=False)
 
     def get_channel_history(self, channel: str, limit: int = 100) -> str:
         """Get the message history of a Slack channel.
@@ -609,7 +609,7 @@ class SlackTools(Toolkit):
         """
         resolved, error = self._resolve_channel(channel)
         if error:
-            return json.dumps(error)
+            return json.dumps(error, ensure_ascii=False)
         assert resolved is not None
 
         try:
@@ -628,7 +628,7 @@ class SlackTools(Toolkit):
                     entry["thread_ts"] = thread_ts
                     entry["reply_count"] = msg.get("reply_count", 0)
                 messages.append(entry)
-            return json.dumps(messages)
+            return json.dumps(messages, ensure_ascii=False)
         except SlackApiError as e:
             return json.dumps(
                 self._slack_error_payload(
@@ -636,7 +636,8 @@ class SlackTools(Toolkit):
                     operation="conversations.history",
                     channel=channel,
                     hint="Invite the bot to the channel, or pass a channel ID the bot can read.",
-                )
+                ),
+                ensure_ascii=False,
             )
 
     def upload_file(
@@ -671,13 +672,14 @@ class SlackTools(Toolkit):
                 limit_mb = self.max_file_size / (1024 * 1024)
                 actual_mb = len(content_bytes) / (1024 * 1024)
                 return json.dumps(
-                    {"error": f"File {filename} ({actual_mb:.1f}MB) exceeds {limit_mb:.0f}MB upload limit"}
+                    {"error": f"File {filename} ({actual_mb:.1f}MB) exceeds {limit_mb:.0f}MB upload limit"},
+                    ensure_ascii=False,
                 )
 
             try:
                 file_name = sanitize_filename(filename)
             except PathSecurityError as e:
-                return json.dumps({"error": f"Invalid filename: {e}"})
+                return json.dumps({"error": f"Invalid filename: {e}"}, ensure_ascii=False)
 
             response = self.client.files_upload_v2(
                 channel=channel,
@@ -688,10 +690,10 @@ class SlackTools(Toolkit):
                 thread_ts=thread_ts,
             )
 
-            return json.dumps(dict(cast(Dict[str, Any], response.data)))
+            return json.dumps(dict(cast(Dict[str, Any], response.data)), ensure_ascii=False)
         except SlackApiError as e:
             logger.exception("Error uploading file")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def download_file(self, file_id: str, dest_path: Optional[str] = None) -> str:
         """Download a file from Slack by its file ID.
@@ -709,7 +711,7 @@ class SlackTools(Toolkit):
 
             url_private = file_info.get("url_private")
             if not url_private:
-                return json.dumps({"error": "File URL not available"})
+                return json.dumps({"error": "File URL not available"}, ensure_ascii=False)
 
             filename = file_info.get("name", f"file_{file_id}")
             file_size = file_info.get("size", 0)
@@ -718,7 +720,8 @@ class SlackTools(Toolkit):
                 limit_mb = self.max_file_size / (1024 * 1024)
                 actual_mb = file_size / (1024 * 1024)
                 return json.dumps(
-                    {"error": f"File {filename} ({actual_mb:.1f}MB) exceeds {limit_mb:.0f}MB download limit"}
+                    {"error": f"File {filename} ({actual_mb:.1f}MB) exceeds {limit_mb:.0f}MB download limit"},
+                    ensure_ascii=False,
                 )
 
             headers = {"Authorization": f"Bearer {self.token}"}
@@ -743,14 +746,14 @@ class SlackTools(Toolkit):
             else:
                 result["content_base64"] = base64.b64encode(content).decode("utf-8")
 
-            return json.dumps(result)
+            return json.dumps(result, ensure_ascii=False)
 
         except SlackApiError as e:
             logger.exception("Error downloading file")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
         except httpx.HTTPError as e:
             logger.exception("Error downloading file content")
-            return json.dumps({"error": f"HTTP error: {str(e)}"})
+            return json.dumps({"error": f"HTTP error: {str(e)}"}, ensure_ascii=False)
 
     def download_file_bytes(self, file_id: str) -> Optional[bytes]:
         """Download file content as raw bytes. For internal use by interfaces."""
@@ -804,10 +807,10 @@ class SlackTools(Toolkit):
                 }
                 for msg in matches
             ]
-            return json.dumps({"count": len(messages), "messages": messages})
+            return json.dumps({"count": len(messages), "messages": messages}, ensure_ascii=False)
         except SlackApiError as e:
             logger.exception("Error searching messages")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def search_workspace(
         self,
@@ -837,7 +840,8 @@ class SlackTools(Toolkit):
         action_token = (run_context.metadata or {}).get("action_token") if run_context else None
         if not action_token:
             return json.dumps(
-                {"error": "No action_token available. This tool only works when invoked through the Slack interface."}
+                {"error": "No action_token available. This tool only works when invoked through the Slack interface."},
+                ensure_ascii=False,
             )
 
         try:
@@ -856,12 +860,14 @@ class SlackTools(Toolkit):
             if not response.get("ok"):
                 error = response.get("error", "unknown_error")
                 log_error(f"assistant.search.context failed: {error}")
-                return json.dumps({"error": error})
+                return json.dumps({"error": error}, ensure_ascii=False)
 
-            return json.dumps(self._format_search_results(response.get("results", {}), include_context_messages))
+            return json.dumps(
+                self._format_search_results(response.get("results", {}), include_context_messages), ensure_ascii=False
+            )
         except SlackApiError as e:
             logger.exception("Error in search_workspace")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_thread(self, channel: str, thread_ts: str, limit: int = 20) -> str:
         """Get all messages in a thread by the parent message's timestamp.
@@ -876,7 +882,7 @@ class SlackTools(Toolkit):
         """
         resolved, error = self._resolve_channel(channel)
         if error:
-            return json.dumps(error)
+            return json.dumps(error, ensure_ascii=False)
         assert resolved is not None
 
         try:
@@ -899,7 +905,8 @@ class SlackTools(Toolkit):
                     "thread_ts": thread_ts,
                     "reply_count": len(messages) - 1,
                     "messages": messages,
-                }
+                },
+                ensure_ascii=False,
             )
         except SlackApiError as e:
             return json.dumps(
@@ -908,7 +915,8 @@ class SlackTools(Toolkit):
                     operation="conversations.replies",
                     channel=channel,
                     hint="Invite the bot to the channel, or pass a channel ID the bot can read.",
-                )
+                ),
+                ensure_ascii=False,
             )
 
     def list_users(self, limit: int = 100) -> str:
@@ -934,10 +942,10 @@ class SlackTools(Toolkit):
                 for member in members
                 if not member.get("deleted", False)
             ]
-            return json.dumps({"count": len(users), "users": users})
+            return json.dumps({"count": len(users), "users": users}, ensure_ascii=False)
         except SlackApiError as e:
             logger.exception("Error listing users")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_user_info(self, user_id: str) -> str:
         """Get detailed information about a Slack user by their user ID.
@@ -961,11 +969,12 @@ class SlackTools(Toolkit):
                     "title": profile.get("title", ""),
                     "tz": user.get("tz", ""),
                     "is_bot": user.get("is_bot", False),
-                }
+                },
+                ensure_ascii=False,
             )
         except SlackApiError as e:
             logger.exception("Error getting user info")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_channel_info(self, channel: str) -> str:
         """Get detailed information about a Slack channel by its ID or name.
@@ -978,7 +987,7 @@ class SlackTools(Toolkit):
         """
         resolved, error = self._resolve_channel(channel)
         if error:
-            return json.dumps(error)
+            return json.dumps(error, ensure_ascii=False)
         assert resolved is not None
 
         try:
@@ -997,7 +1006,8 @@ class SlackTools(Toolkit):
                     "is_archived": ch.get("is_archived", False),
                     "created": ch.get("created", 0),
                     "creator": ch.get("creator", ""),
-                }
+                },
+                ensure_ascii=False,
             )
         except SlackApiError as e:
             return json.dumps(
@@ -1006,5 +1016,6 @@ class SlackTools(Toolkit):
                     operation="conversations.info",
                     channel=channel,
                     hint="Invite the bot to the channel, or pass a channel ID the bot can read.",
-                )
+                ),
+                ensure_ascii=False,
             )

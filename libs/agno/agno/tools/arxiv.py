@@ -73,7 +73,7 @@ class ArxivTools(Toolkit):
                 articles.append(article)
             except Exception:
                 logger.exception("Error processing article")
-        return json.dumps(articles, indent=4)
+        return json.dumps(articles, indent=4, ensure_ascii=False)
 
     def read_arxiv_papers(self, id_list: List[str], pages_to_read: Optional[int] = None) -> str:
         """Use this function to read a list of arxiv papers and return the content.
@@ -124,4 +124,4 @@ class ArxivTools(Toolkit):
                 articles.append(article)
             except Exception:
                 logger.exception("Error processing article")
-        return json.dumps(articles, indent=4)
+        return json.dumps(articles, indent=4, ensure_ascii=False)

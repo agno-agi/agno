@@ -109,7 +109,7 @@ class KnowledgeTools(Toolkit):
             relevant_docs: List[Document] = self.knowledge.search(query=query)
             if len(relevant_docs) == 0:
                 return "No documents found"
-            return json.dumps([doc.to_dict() for doc in relevant_docs])
+            return json.dumps([doc.to_dict() for doc in relevant_docs], ensure_ascii=False)
         except Exception as e:
             log_error(f"Error searching knowledge base: {str(e)}")
             return f"Error searching knowledge base: {e}"

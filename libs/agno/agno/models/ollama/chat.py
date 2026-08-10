@@ -383,7 +383,7 @@ class Ollama(Model):
 
                 function_def = {
                     "name": tool_name,
-                    "arguments": (json.dumps(tool_args) if tool_args is not None else None),
+                    "arguments": (json.dumps(tool_args, ensure_ascii=False) if tool_args is not None else None),
                 }
                 model_response.tool_calls.append({"type": "function", "function": function_def})
 
@@ -423,7 +423,7 @@ class Ollama(Model):
                     tool_args = tc.get("arguments")
                     function_def = {
                         "name": tool_name,
-                        "arguments": json.dumps(tool_args) if tool_args is not None else None,
+                        "arguments": json.dumps(tool_args, ensure_ascii=False) if tool_args is not None else None,
                     }
                     model_response.tool_calls.append({"type": "function", "function": function_def})
 

@@ -291,7 +291,7 @@ class FileTools(Toolkit):
                 if self._is_excluded(file_path):
                     continue
                 files.append(rel_path)
-            return json.dumps(files, indent=4)
+            return json.dumps(files, indent=4, ensure_ascii=False)
         except Exception as e:
             log_error(f"Error reading files: {str(e)}")
             return f"Error reading files: {e}"
@@ -333,7 +333,7 @@ class FileTools(Toolkit):
                     "files": file_paths,
                 }
             log_debug(f"Found {len(file_paths)} files matching pattern {pattern}")
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         except Exception as e:
             error_msg = f"Error searching files with pattern '{pattern}': {e}"
@@ -416,7 +416,7 @@ class FileTools(Toolkit):
                 "files": matches,
             }
             log_debug(f"Found {len(matches)} files containing '{query}'")
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         except Exception as e:
             error_msg = f"Error searching content for '{query}': {e}"

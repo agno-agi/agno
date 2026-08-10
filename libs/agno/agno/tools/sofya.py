@@ -101,9 +101,9 @@ class SofyaTools(Toolkit):
             str: Search results as markdown or a JSON string.
         """
         if not self.api_key:
-            return json.dumps({"error": "Please provide a Sofya API key"})
+            return json.dumps({"error": "Please provide a Sofya API key"}, ensure_ascii=False)
         if not query or not query.strip():
-            return json.dumps({"error": "Please provide a query to search for"})
+            return json.dumps({"error": "Please provide a query to search for"}, ensure_ascii=False)
 
         payload = {
             "query": query.strip(),
@@ -116,7 +116,7 @@ class SofyaTools(Toolkit):
             data = self._post("search", payload)
         except Exception as e:
             log_error(f"Sofya search failed: {e}")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
         clean: Dict[str, Any] = {"query": query}
         if data.get("answer"):
@@ -132,7 +132,7 @@ class SofyaTools(Toolkit):
         ]
 
         if self.format == "json":
-            return json.dumps(clean)
+            return json.dumps(clean, ensure_ascii=False)
 
         markdown = f"# {query}\n\n"
         if "answer" in clean:
@@ -158,11 +158,11 @@ class SofyaTools(Toolkit):
             str: Extracted content as markdown, with one section per URL.
         """
         if not self.api_key:
-            return json.dumps({"error": "Please provide a Sofya API key"})
+            return json.dumps({"error": "Please provide a Sofya API key"}, ensure_ascii=False)
 
         url_list = [u.strip() for u in urls.split(",") if u.strip()]
         if not url_list:
-            return json.dumps({"error": "No valid URLs provided"})
+            return json.dumps({"error": "No valid URLs provided"}, ensure_ascii=False)
         if len(url_list) > FETCH_MAX_URLS:
             log_debug(f"Sofya fetch capped at {FETCH_MAX_URLS} URLs; dropping {len(url_list) - FETCH_MAX_URLS}")
             url_list = url_list[:FETCH_MAX_URLS]
@@ -171,7 +171,7 @@ class SofyaTools(Toolkit):
             data = self._post("fetch", {"urls": url_list})
         except Exception as e:
             log_error(f"Sofya extract failed: {e}")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
         results = data.get("results", [])
         if not results:
@@ -202,18 +202,18 @@ class SofyaTools(Toolkit):
             str: The research report as markdown, or a JSON string.
         """
         if not self.api_key:
-            return json.dumps({"error": "Please provide a Sofya API key"})
+            return json.dumps({"error": "Please provide a Sofya API key"}, ensure_ascii=False)
         if not query or not query.strip():
-            return json.dumps({"error": "Please provide a query to research"})
+            return json.dumps({"error": "Please provide a query to research"}, ensure_ascii=False)
 
         try:
             data = self._post("research", {"query": query.strip()})
         except Exception as e:
             log_error(f"Sofya research failed: {e}")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
         if self.format == "json":
-            return json.dumps(data)
+            return json.dumps(data, ensure_ascii=False)
 
         report = data.get("report", "")
         markdown = f"# {query}\n\n{report}\n\n"

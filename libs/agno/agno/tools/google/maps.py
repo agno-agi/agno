@@ -99,7 +99,7 @@ class GoogleMapTools(Toolkit):
 
                 places.append(place_info)
 
-            return json.dumps(places)
+            return json.dumps(places, ensure_ascii=False)
 
         except Exception as e:
             print(f"Error searching Google Maps: {str(e)}")

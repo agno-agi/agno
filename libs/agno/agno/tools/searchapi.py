@@ -109,7 +109,7 @@ class SearchApiTools(Toolkit):
             str: JSON string containing organic results, knowledge graph, and related questions.
         """
         if not query:
-            return json.dumps({"error": "Please provide a query to search for"})
+            return json.dumps({"error": "Please provide a query to search for"}, ensure_ascii=False)
 
         log_debug(f"Searching Google for: {query}")
 
@@ -126,7 +126,7 @@ class SearchApiTools(Toolkit):
         data = self._make_request(params)
 
         if "error" in data:
-            return json.dumps({"error": data["error"]})
+            return json.dumps({"error": data["error"]}, ensure_ascii=False)
 
         result = {
             "organic_results": [
@@ -146,7 +146,7 @@ class SearchApiTools(Toolkit):
             "search_information": data.get("search_information"),
         }
 
-        return json.dumps(result, indent=2)
+        return json.dumps(result, indent=2, ensure_ascii=False)
 
     def search_news(
         self,
@@ -168,7 +168,7 @@ class SearchApiTools(Toolkit):
             str: JSON string containing news articles with title, link, source, and date.
         """
         if not query:
-            return json.dumps({"error": "Please provide a query to search for"})
+            return json.dumps({"error": "Please provide a query to search for"}, ensure_ascii=False)
 
         log_debug(f"Searching Google News for: {query}")
 
@@ -185,7 +185,7 @@ class SearchApiTools(Toolkit):
         data = self._make_request(params)
 
         if "error" in data:
-            return json.dumps({"error": data["error"]})
+            return json.dumps({"error": data["error"]}, ensure_ascii=False)
 
         result = {
             "news_results": [
@@ -202,7 +202,7 @@ class SearchApiTools(Toolkit):
             ]
         }
 
-        return json.dumps(result, indent=2)
+        return json.dumps(result, indent=2, ensure_ascii=False)
 
     def search_images(
         self,
@@ -222,7 +222,7 @@ class SearchApiTools(Toolkit):
             str: JSON string containing image results with title, link, and thumbnail.
         """
         if not query:
-            return json.dumps({"error": "Please provide a query to search for"})
+            return json.dumps({"error": "Please provide a query to search for"}, ensure_ascii=False)
 
         log_debug(f"Searching Google Images for: {query}")
 
@@ -237,7 +237,7 @@ class SearchApiTools(Toolkit):
         data = self._make_request(params)
 
         if "error" in data:
-            return json.dumps({"error": data["error"]})
+            return json.dumps({"error": data["error"]}, ensure_ascii=False)
 
         result = {
             "image_results": [
@@ -253,7 +253,7 @@ class SearchApiTools(Toolkit):
             ]
         }
 
-        return json.dumps(result, indent=2)
+        return json.dumps(result, indent=2, ensure_ascii=False)
 
     def search_youtube(
         self,
@@ -274,7 +274,7 @@ class SearchApiTools(Toolkit):
                 published_time, description, and thumbnail.
         """
         if not query:
-            return json.dumps({"error": "Please provide a query to search for"})
+            return json.dumps({"error": "Please provide a query to search for"}, ensure_ascii=False)
 
         log_debug(f"Searching YouTube for: {query}")
 
@@ -286,7 +286,7 @@ class SearchApiTools(Toolkit):
         data = self._make_request(params)
 
         if "error" in data:
-            return json.dumps({"error": data["error"]})
+            return json.dumps({"error": data["error"]}, ensure_ascii=False)
 
         limit = num_results or self.num_results
         videos = data.get("videos", []) or []
@@ -312,4 +312,4 @@ class SearchApiTools(Toolkit):
             ]
         }
 
-        return json.dumps(result, indent=2)
+        return json.dumps(result, indent=2, ensure_ascii=False)

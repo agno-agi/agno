@@ -507,12 +507,12 @@ class LiteLLM(Model):
                         parsed = json.loads(args)
                         # If it's not a dict, convert to a JSON string of a dict
                         if not isinstance(parsed, dict):
-                            tc_copy["function"]["arguments"] = json.dumps({"value": parsed})
+                            tc_copy["function"]["arguments"] = json.dumps({"value": parsed}, ensure_ascii=False)
                         else:
                             tc_copy["function"]["arguments"] = args
                     except json.JSONDecodeError:
                         # If not valid JSON, make it a JSON dict
-                        tc_copy["function"]["arguments"] = json.dumps({"text": args})
+                        tc_copy["function"]["arguments"] = json.dumps({"text": args}, ensure_ascii=False)
 
             result.append(tc_copy)
 

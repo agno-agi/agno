@@ -136,7 +136,7 @@ class MLXTranscribeTools(Toolkit):
         """
         try:
             log_info(f"Reading files in : {self.base_dir}")
-            return json.dumps([str(file_name) for file_name in self.base_dir.iterdir()], indent=4)
+            return json.dumps([str(file_name) for file_name in self.base_dir.iterdir()], indent=4, ensure_ascii=False)
         except Exception as e:
             logger.exception("Error reading files")
             return f"Error reading files: {e}"

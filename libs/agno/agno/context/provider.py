@@ -269,26 +269,26 @@ class ContextProvider(ABC):
             try:
                 agent = await provider._aget_query_agent(run_context)
             except Exception as exc:
-                yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+                yield json.dumps({"error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False)
                 return
 
             if agent is None:
                 try:
                     answer = await provider.aquery(question, run_context=run_context)
                 except Exception as exc:
-                    yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+                    yield json.dumps({"error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False)
                     return
-                yield json.dumps(serialize_answer(answer))
+                yield json.dumps(serialize_answer(answer), ensure_ascii=False)
                 return
 
             try:
                 async for chunk in provider._stream_from_agent(agent, question, run_context):
                     if isinstance(chunk, Answer):
-                        yield json.dumps(serialize_answer(chunk))
+                        yield json.dumps(serialize_answer(chunk), ensure_ascii=False)
                     else:
                         yield chunk
             except Exception as exc:
-                yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+                yield json.dumps({"error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False)
 
         return _query
 
@@ -300,32 +300,32 @@ class ContextProvider(ABC):
             try:
                 agent = await provider._aget_update_agent(run_context)
             except NotImplementedError:
-                yield json.dumps({"error": f"{provider.name} is read-only"})
+                yield json.dumps({"error": f"{provider.name} is read-only"}, ensure_ascii=False)
                 return
             except Exception as exc:
-                yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+                yield json.dumps({"error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False)
                 return
 
             if agent is None:
                 try:
                     answer = await provider.aupdate(instruction, run_context=run_context)
                 except NotImplementedError:
-                    yield json.dumps({"error": f"{provider.name} is read-only"})
+                    yield json.dumps({"error": f"{provider.name} is read-only"}, ensure_ascii=False)
                     return
                 except Exception as exc:
-                    yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+                    yield json.dumps({"error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False)
                     return
-                yield json.dumps(serialize_answer(answer))
+                yield json.dumps(serialize_answer(answer), ensure_ascii=False)
                 return
 
             try:
                 async for chunk in provider._stream_from_agent(agent, instruction, run_context):
                     if isinstance(chunk, Answer):
-                        yield json.dumps(serialize_answer(chunk))
+                        yield json.dumps(serialize_answer(chunk), ensure_ascii=False)
                     else:
                         yield chunk
             except Exception as exc:
-                yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+                yield json.dumps({"error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False)
 
         return _update
 

@@ -60,12 +60,12 @@ class ExaBackend(ContextBackend):
                 JSON with `results: [{url, title, excerpt}, ...]`.
             """
             if not backend.api_key:
-                return json.dumps({"error": "EXA_API_KEY not configured"})
+                return json.dumps({"error": "EXA_API_KEY not configured"}, ensure_ascii=False)
             try:
                 out = await backend._get_client().search_and_contents(query, num_results=max_results, text=True)
             except Exception as exc:
                 log_error(f"web_search failed: {exc}")
-                return json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+                return json.dumps({"error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False)
             results = []
             for r in (getattr(out, "results", None) or [])[:max_results]:
                 results.append(
@@ -75,7 +75,7 @@ class ExaBackend(ContextBackend):
                         "excerpt": (getattr(r, "text", "") or "")[:500],
                     }
                 )
-            return json.dumps({"results": results})
+            return json.dumps({"results": results}, ensure_ascii=False)
 
         @tool(name="web_extract")
         async def web_extract(url: str) -> str:
@@ -88,16 +88,16 @@ class ExaBackend(ContextBackend):
                 JSON with `{url, content}` or `{error}`.
             """
             if not backend.api_key:
-                return json.dumps({"error": "EXA_API_KEY not configured"})
+                return json.dumps({"error": "EXA_API_KEY not configured"}, ensure_ascii=False)
             try:
                 out = await backend._get_client().get_contents([url], text=True)
             except Exception as exc:
                 log_error(f"web_extract failed for {url}: {exc}")
-                return json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+                return json.dumps({"error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False)
             results = getattr(out, "results", None) or []
             if not results:
-                return json.dumps({"url": url, "content": ""})
+                return json.dumps({"url": url, "content": ""}, ensure_ascii=False)
             body = getattr(results[0], "text", "") or ""
-            return json.dumps({"url": url, "content": body[:_MAX_EXTRACT_CHARS]})
+            return json.dumps({"url": url, "content": body[:_MAX_EXTRACT_CHARS]}, ensure_ascii=False)
 
         return [web_search, web_extract]

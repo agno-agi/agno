@@ -89,11 +89,11 @@ class NotionTools(Toolkit):
             )
 
             result = {"success": True, "page_id": new_page["id"], "url": new_page["url"], "title": title, "tag": tag}
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         except Exception as e:
             logger.exception(e)
-            return json.dumps({"success": False, "error": str(e)})
+            return json.dumps({"success": False, "error": str(e)}, ensure_ascii=False)
 
     def update_page(self, page_id: str, content: str) -> str:
         """Add content to an existing Notion page.
@@ -121,11 +121,11 @@ class NotionTools(Toolkit):
             )
 
             result = {"success": True, "page_id": page_id, "message": "Content added successfully"}
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         except Exception as e:
             logger.exception(e)
-            return json.dumps({"success": False, "error": str(e)})
+            return json.dumps({"success": False, "error": str(e)}, ensure_ascii=False)
 
     def search_pages(self, tag: str) -> str:
         """Search for pages in the database by tag.
@@ -163,7 +163,8 @@ class NotionTools(Toolkit):
                         "success": False,
                         "error": f"API request failed with status {response.status_code}",
                         "message": response.text,
-                    }
+                    },
+                    ensure_ascii=False,
                 )
 
             data = response.json()
@@ -191,7 +192,7 @@ class NotionTools(Toolkit):
                     continue
 
             result = {"success": True, "count": len(pages), "pages": pages}
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         except Exception as e:
             logger.exception(e)
@@ -200,5 +201,6 @@ class NotionTools(Toolkit):
                     "success": False,
                     "error": str(e),
                     "message": "Failed to search pages. Make sure the database is shared with the integration and has a 'Tag' property.",
-                }
+                },
+                ensure_ascii=False,
             )

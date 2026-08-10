@@ -97,20 +97,20 @@ class TodoistTools(Toolkit):
             )
             # Convert task to a dictionary and handle the Due object
             task_dict = self._task_to_dict(task)
-            return json.dumps(task_dict, default=str)
+            return json.dumps(task_dict, default=str, ensure_ascii=False)
         except Exception as e:
             logger.exception("Failed to create task")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_task(self, task_id: str) -> str:
         """Get a specific task by ID."""
         try:
             task = self.api.get_task(task_id)
             task_dict = self._task_to_dict(task)
-            return json.dumps(task_dict, default=str)
+            return json.dumps(task_dict, default=str, ensure_ascii=False)
         except Exception as e:
             logger.exception("Failed to get task")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def update_task(
         self,
@@ -170,29 +170,29 @@ class TodoistTools(Toolkit):
                 updates["section_id"] = section_id
 
             success = self.api.update_task(task_id=task_id, **updates)
-            return json.dumps({"success": success})
+            return json.dumps({"success": success}, ensure_ascii=False)
         except Exception as e:
             error_msg = str(e)
             log_error(f"Failed to update task: {error_msg}")
-            return json.dumps({"error": error_msg})
+            return json.dumps({"error": error_msg}, ensure_ascii=False)
 
     def close_task(self, task_id: str) -> str:
         """Mark a task as completed."""
         try:
             success = self.api.complete_task(task_id)
-            return json.dumps({"success": success})
+            return json.dumps({"success": success}, ensure_ascii=False)
         except Exception as e:
             logger.exception("Failed to close task")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def delete_task(self, task_id: str) -> str:
         """Delete a task."""
         try:
             success = self.api.delete_task(task_id)
-            return json.dumps({"success": success})
+            return json.dumps({"success": success}, ensure_ascii=False)
         except Exception as e:
             logger.exception("Failed to delete task")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_active_tasks(self) -> str:
         """Get all active (not completed) tasks."""
@@ -203,16 +203,16 @@ class TodoistTools(Toolkit):
             for task in tasks:
                 task_dict = self._task_to_dict(task)
                 tasks_list.append(task_dict)
-            return json.dumps(tasks_list, default=str)
+            return json.dumps(tasks_list, default=str, ensure_ascii=False)
         except Exception as e:
             logger.exception("Failed to get active tasks")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_projects(self) -> str:
         """Get all projects."""
         try:
             projects = self.api.get_projects()
-            return json.dumps([project.__dict__ for project in projects])
+            return json.dumps([project.__dict__ for project in projects], ensure_ascii=False)
         except Exception as e:
             logger.exception("Failed to get projects")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)

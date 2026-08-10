@@ -48,10 +48,10 @@ class WebexTools(Toolkit):
         """
         try:
             response = self.client.messages.create(roomId=room_id, text=text)
-            return json.dumps(response.json_data)
+            return json.dumps(response.json_data, ensure_ascii=False)
         except ApiError as e:
             logger.exception(f"Error sending message in room: {room_id}")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def list_rooms(self) -> str:
         """
@@ -72,7 +72,7 @@ class WebexTools(Toolkit):
                 for room in response
             ]
 
-            return json.dumps({"rooms": rooms_list}, indent=4)
+            return json.dumps({"rooms": rooms_list}, indent=4, ensure_ascii=False)
         except ApiError as e:
             logger.exception("Error listing rooms")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)

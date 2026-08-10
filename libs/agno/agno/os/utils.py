@@ -490,7 +490,7 @@ def get_session_name(session: Dict[str, Any]) -> str:
             return workflow_input
         elif isinstance(workflow_input, dict):
             try:
-                return json.dumps(workflow_input)
+                return json.dumps(workflow_input, ensure_ascii=False)
             except (TypeError, ValueError):
                 pass
         workflow_name = session.get("workflow_data", {}).get("name")
@@ -1947,14 +1947,14 @@ def stringify_input_content(input_content: Union[str, Dict[str, Any], List[Any],
     if isinstance(input_content, str):
         return input_content
     elif isinstance(input_content, Message):
-        return json.dumps(input_content.to_dict())
+        return json.dumps(input_content.to_dict(), ensure_ascii=False)
     elif isinstance(input_content, dict):
-        return json.dumps(input_content, indent=2, default=str)
+        return json.dumps(input_content, indent=2, default=str, ensure_ascii=False)
     elif isinstance(input_content, list):
         if input_content:
             # Handle live Message objects
             if isinstance(input_content[0], Message):
-                return json.dumps([m.to_dict() for m in input_content])
+                return json.dumps([m.to_dict() for m in input_content], ensure_ascii=False)
             # Handle serialized Message dicts
             elif isinstance(input_content[0], dict) and input_content[0].get("role") == "user":
                 return input_content[0].get("content", str(input_content))

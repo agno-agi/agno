@@ -154,7 +154,7 @@ class TavilyTools(Toolkit):
             clean_response["answer"] = response["answer"]
 
         clean_results = []
-        current_token_count = len(json.dumps(clean_response))
+        current_token_count = len(json.dumps(clean_response, ensure_ascii=False))
         for result in response.get("results", []):
             _result = {
                 "title": result["title"],
@@ -162,14 +162,14 @@ class TavilyTools(Toolkit):
                 "content": result["content"],
                 "score": result["score"],
             }
-            current_token_count += len(json.dumps(_result))
+            current_token_count += len(json.dumps(_result, ensure_ascii=False))
             if current_token_count > self.max_tokens:
                 break
             clean_results.append(_result)
         clean_response["results"] = clean_results
 
         if self.format == "json":
-            return json.dumps(clean_response) if clean_response else "No results found."
+            return json.dumps(clean_response, ensure_ascii=False) if clean_response else "No results found."
         elif self.format == "markdown":
             _markdown = ""
             _markdown += f"# {query}\n\n"
@@ -246,7 +246,7 @@ class TavilyTools(Toolkit):
                 return self._format_extract_text(results)
             else:
                 # Fallback to JSON if format is unrecognized
-                return json.dumps(results, indent=2)
+                return json.dumps(results, indent=2, ensure_ascii=False)
 
         except Exception as e:
             logger.exception("Error extracting content from URLs")

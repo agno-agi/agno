@@ -430,7 +430,9 @@ class HuggingFace(Model):
             model_response.tool_calls = [asdict(t) for t in response_message.tool_calls]
             for tool_call in model_response.tool_calls:
                 if isinstance(tool_call["function"]["arguments"], dict):
-                    tool_call["function"]["arguments"] = json.dumps(tool_call["function"]["arguments"])
+                    tool_call["function"]["arguments"] = json.dumps(
+                        tool_call["function"]["arguments"], ensure_ascii=False
+                    )
 
         try:
             if (

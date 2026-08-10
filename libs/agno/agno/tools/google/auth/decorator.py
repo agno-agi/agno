@@ -25,13 +25,17 @@ def google_authenticate(service_name: str):
                     self.creds = self._resolve_creds()
                 except Exception as e:
                     log_error(f"{service_name.title()} authentication failed: {e}")
-                    return json.dumps({"error": f"{service_name.title()} authentication failed: {e}"})
+                    return json.dumps(
+                        {"error": f"{service_name.title()} authentication failed: {e}"}, ensure_ascii=False
+                    )
             if not self._service:
                 try:
                     self._service = self._build_service(self.creds)
                 except Exception as e:
                     log_error(f"{service_name.title()} service initialization failed: {e}")
-                    return json.dumps({"error": f"{service_name.title()} service initialization failed: {e}"})
+                    return json.dumps(
+                        {"error": f"{service_name.title()} service initialization failed: {e}"}, ensure_ascii=False
+                    )
             return func(self, *args, **kwargs)
 
         return wrapper

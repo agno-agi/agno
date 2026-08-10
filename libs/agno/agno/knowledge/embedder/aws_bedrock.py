@@ -231,7 +231,7 @@ class AwsBedrockEmbedder(Embedder):
         if self.request_params:
             request_body.update(self.request_params)
 
-        return json.dumps(request_body)
+        return json.dumps(request_body, ensure_ascii=False)
 
     def _format_multimodal_request_body(
         self,
@@ -288,7 +288,7 @@ class AwsBedrockEmbedder(Embedder):
         if self.request_params:
             request_body.update(self.request_params)
 
-        return json.dumps(request_body)
+        return json.dumps(request_body, ensure_ascii=False)
 
     def _extract_embeddings(self, response_body: Dict[str, Any]) -> List[float]:
         """

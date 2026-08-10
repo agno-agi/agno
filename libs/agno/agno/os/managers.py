@@ -80,7 +80,9 @@ class WebSocketHandler:
             if run_id and "run_id" not in data:
                 data["run_id"] = run_id
 
-            await self.websocket.send_text(self.format_sse_event(json.dumps(data, default=json_serializer)))
+            await self.websocket.send_text(
+                self.format_sse_event(json.dumps(data, default=json_serializer, ensure_ascii=False))
+            )
 
         except RuntimeError as e:
             if "websocket.close" in str(e).lower() or "already completed" in str(e).lower():
@@ -127,7 +129,8 @@ class WebSocketManager:
                         else "Connected to AgentOS."
                     ),
                     "requires_auth": requires_auth,
-                }
+                },
+                ensure_ascii=False,
             )
         )
 
@@ -142,7 +145,8 @@ class WebSocketManager:
                 {
                     "event": "authenticated",
                     "message": "Authentication successful. You can now send commands.",
-                }
+                },
+                ensure_ascii=False,
             )
         )
 

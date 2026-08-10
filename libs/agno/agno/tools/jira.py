@@ -80,10 +80,10 @@ class JiraTools(Toolkit):
                 "description": issue.fields.description or "",
             }
             log_debug(f"Issue details retrieved for {issue_key}: {issue_details}")
-            return json.dumps(issue_details)
+            return json.dumps(issue_details, ensure_ascii=False)
         except Exception as e:
             logger.exception(f"Error retrieving issue {issue_key}")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def create_issue(self, project_key: str, summary: str, description: str, issuetype: str = "Task") -> str:
         """
@@ -105,10 +105,10 @@ class JiraTools(Toolkit):
             new_issue = self.jira.create_issue(fields=issue_dict)
             issue_url = f"{self.server_url}/browse/{new_issue.key}"
             log_debug(f"Issue created with key: {new_issue.key}")
-            return json.dumps({"key": new_issue.key, "url": issue_url})
+            return json.dumps({"key": new_issue.key, "url": issue_url}, ensure_ascii=False)
         except Exception as e:
             logger.exception(f"Error creating issue in project {project_key}")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def search_issues(self, jql_str: str, max_results: int = 50) -> str:
         """
@@ -131,10 +131,10 @@ class JiraTools(Toolkit):
                 }
                 results.append(issue_details)
             log_debug(f"Found {len(results)} issues for JQL '{jql_str}'")
-            return json.dumps(results)
+            return json.dumps(results, ensure_ascii=False)
         except Exception as e:
             logger.exception(f"Error searching issues with JQL '{jql_str}'")
-            return json.dumps([{"error": str(e)}])
+            return json.dumps([{"error": str(e)}], ensure_ascii=False)
 
     def add_comment(self, issue_key: str, comment: str) -> str:
         """
@@ -147,10 +147,10 @@ class JiraTools(Toolkit):
         try:
             self.jira.add_comment(issue_key, comment)
             log_debug(f"Comment added to issue {issue_key}")
-            return json.dumps({"status": "success", "issue_key": issue_key})
+            return json.dumps({"status": "success", "issue_key": issue_key}, ensure_ascii=False)
         except Exception as e:
             logger.exception(f"Error adding comment to issue {issue_key}")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def add_worklog(self, issue_key: str, time_spent: str, comment: Optional[str] = None) -> str:
         """
@@ -164,7 +164,9 @@ class JiraTools(Toolkit):
         try:
             self.jira.add_worklog(issue=issue_key, timeSpent=time_spent, comment=comment)
             log_debug(f"Worklog of '{time_spent}' added to issue {issue_key}")
-            return json.dumps({"status": "success", "issue_key": issue_key, "time_spent": time_spent})
+            return json.dumps(
+                {"status": "success", "issue_key": issue_key, "time_spent": time_spent}, ensure_ascii=False
+            )
         except Exception as e:
             logger.exception(f"Error adding worklog to issue {issue_key}")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)

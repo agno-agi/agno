@@ -288,7 +288,7 @@ class GoogleSlidesTools(GoogleToolkit):
         """
         try:
             if not title.strip():
-                return json.dumps({"error": "title cannot be empty."})
+                return json.dumps({"error": "title cannot be empty."}, ensure_ascii=False)
             result = self.slides_service.presentations().create(body={"title": title}).execute()
             pres_id = result["presentationId"]
             return json.dumps(
@@ -296,10 +296,11 @@ class GoogleSlidesTools(GoogleToolkit):
                     "presentation_id": pres_id,
                     "url": f"https://docs.google.com/presentation/d/{pres_id}",
                     "title": title,
-                }
+                },
+                ensure_ascii=False,
             )
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     @authenticate
     def get_presentation(self, presentation_id: str, fields: Optional[str] = None) -> str:
@@ -315,12 +316,12 @@ class GoogleSlidesTools(GoogleToolkit):
         """
         try:
             if not presentation_id.strip():
-                return json.dumps({"error": "presentation_id cannot be empty."})
+                return json.dumps({"error": "presentation_id cannot be empty."}, ensure_ascii=False)
 
             result = self.slides_service.presentations().get(presentationId=presentation_id, fields=fields).execute()
-            return json.dumps(result)
+            return json.dumps(result, ensure_ascii=False)
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     @authenticate
     def list_presentations(self, page_size: int = 20, page_token: Optional[str] = None) -> str:
@@ -336,7 +337,7 @@ class GoogleSlidesTools(GoogleToolkit):
         """
         try:
             if page_size <= 0:
-                return json.dumps({"error": "page_size must be a positive integer."})
+                return json.dumps({"error": "page_size must be a positive integer."}, ensure_ascii=False)
             effective_size = min(page_size, self.max_results)
             response = (
                 self.drive_service.files()
@@ -349,9 +350,11 @@ class GoogleSlidesTools(GoogleToolkit):
                 .execute()
             )
             files = response.get("files", [])
-            return json.dumps({"presentations": files, "nextPageToken": response.get("nextPageToken")})
+            return json.dumps(
+                {"presentations": files, "nextPageToken": response.get("nextPageToken")}, ensure_ascii=False
+            )
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     @authenticate
     def delete_presentation(self, presentation_id: str) -> str:
@@ -366,12 +369,12 @@ class GoogleSlidesTools(GoogleToolkit):
         """
         try:
             if not presentation_id.strip():
-                return json.dumps({"error": "presentation_id cannot be empty."})
+                return json.dumps({"error": "presentation_id cannot be empty."}, ensure_ascii=False)
 
             self.drive_service.files().delete(fileId=presentation_id).execute()
-            return json.dumps({"deleted": presentation_id})
+            return json.dumps({"deleted": presentation_id}, ensure_ascii=False)
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     @authenticate
     def add_slide(
@@ -401,10 +404,10 @@ class GoogleSlidesTools(GoogleToolkit):
         """
         try:
             if not presentation_id.strip():
-                return json.dumps({"error": "presentation_id cannot be empty."})
+                return json.dumps({"error": "presentation_id cannot be empty."}, ensure_ascii=False)
 
             if insertion_index is not None and insertion_index < 0:
-                return json.dumps({"error": "insertion_index must be >= 0."})
+                return json.dumps({"error": "insertion_index must be >= 0."}, ensure_ascii=False)
 
             valid_layouts = {
                 "BLANK",
@@ -421,7 +424,8 @@ class GoogleSlidesTools(GoogleToolkit):
             }
             if layout not in valid_layouts:
                 return json.dumps(
-                    {"error": f"Invalid layout '{layout}'. Must be one of: {', '.join(sorted(valid_layouts))}"}
+                    {"error": f"Invalid layout '{layout}'. Must be one of: {', '.join(sorted(valid_layouts))}"},
+                    ensure_ascii=False,
                 )
 
             slide_id = self._generate_id("slide")
@@ -498,10 +502,11 @@ class GoogleSlidesTools(GoogleToolkit):
                     "body": body,
                     "body_2": body_2,
                     "warnings": insert_errors if insert_errors else None,
-                }
+                },
+                ensure_ascii=False,
             )
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     @authenticate
     def delete_slide(self, presentation_id: str, slide_id: str) -> str:
@@ -517,14 +522,14 @@ class GoogleSlidesTools(GoogleToolkit):
         """
         try:
             if not presentation_id.strip():
-                return json.dumps({"error": "presentation_id cannot be empty."})
+                return json.dumps({"error": "presentation_id cannot be empty."}, ensure_ascii=False)
             if not slide_id.strip():
-                return json.dumps({"error": "object_id cannot be empty."})
+                return json.dumps({"error": "object_id cannot be empty."}, ensure_ascii=False)
 
             self._batch_update(presentation_id, [{"deleteObject": {"objectId": slide_id}}])
-            return json.dumps({"deleted_slide": slide_id})
+            return json.dumps({"deleted_slide": slide_id}, ensure_ascii=False)
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     @authenticate
     def duplicate_slide(self, presentation_id: str, slide_id: str) -> str:
@@ -540,14 +545,14 @@ class GoogleSlidesTools(GoogleToolkit):
         """
         try:
             if not presentation_id.strip():
-                return json.dumps({"error": "presentation_id cannot be empty."})
+                return json.dumps({"error": "presentation_id cannot be empty."}, ensure_ascii=False)
             if not slide_id.strip():
-                return json.dumps({"error": "object_id cannot be empty."})
+                return json.dumps({"error": "object_id cannot be empty."}, ensure_ascii=False)
 
             result = self._batch_update(presentation_id, [{"duplicateObject": {"objectId": slide_id}}])
-            return json.dumps(result)
+            return json.dumps(result, ensure_ascii=False)
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     @authenticate
     def move_slides(
@@ -569,12 +574,12 @@ class GoogleSlidesTools(GoogleToolkit):
         """
         try:
             if not presentation_id.strip():
-                return json.dumps({"error": "presentation_id cannot be empty."})
+                return json.dumps({"error": "presentation_id cannot be empty."}, ensure_ascii=False)
 
             if not slide_ids:
-                return json.dumps({"error": "slide_ids list cannot be empty."})
+                return json.dumps({"error": "slide_ids list cannot be empty."}, ensure_ascii=False)
             if insertion_index < 0:
-                return json.dumps({"error": "insertion_index must be >= 0."})
+                return json.dumps({"error": "insertion_index must be >= 0."}, ensure_ascii=False)
 
             self._batch_update(
                 presentation_id,
@@ -587,9 +592,9 @@ class GoogleSlidesTools(GoogleToolkit):
                     }
                 ],
             )
-            return json.dumps({"moved": slide_ids, "to_index": insertion_index})
+            return json.dumps({"moved": slide_ids, "to_index": insertion_index}, ensure_ascii=False)
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     @authenticate
     def add_text_box(
@@ -619,14 +624,14 @@ class GoogleSlidesTools(GoogleToolkit):
         """
         try:
             if not presentation_id.strip():
-                return json.dumps({"error": "presentation_id cannot be empty."})
+                return json.dumps({"error": "presentation_id cannot be empty."}, ensure_ascii=False)
             if not slide_id.strip():
-                return json.dumps({"error": "object_id cannot be empty."})
+                return json.dumps({"error": "object_id cannot be empty."}, ensure_ascii=False)
 
             if not text or not text.strip():
-                return json.dumps({"error": "text cannot be empty."})
+                return json.dumps({"error": "text cannot be empty."}, ensure_ascii=False)
             if width <= 0 or height <= 0:
-                return json.dumps({"error": "Width and height must be positive."})
+                return json.dumps({"error": "Width and height must be positive."}, ensure_ascii=False)
 
             box_id = self._generate_id("textbox")
             emu_x, emu_y = self._to_emu(x), self._to_emu(y)
@@ -656,9 +661,9 @@ class GoogleSlidesTools(GoogleToolkit):
                 {"insertText": {"objectId": box_id, "text": text, "insertionIndex": 0}},
             ]
             self._batch_update(presentation_id, requests)
-            return json.dumps({"text_box_id": box_id, "slide_id": slide_id})
+            return json.dumps({"text_box_id": box_id, "slide_id": slide_id}, ensure_ascii=False)
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     @authenticate
     def add_table(
@@ -684,15 +689,15 @@ class GoogleSlidesTools(GoogleToolkit):
         """
         try:
             if not presentation_id.strip():
-                return json.dumps({"error": "presentation_id cannot be empty."})
+                return json.dumps({"error": "presentation_id cannot be empty."}, ensure_ascii=False)
             if not slide_id.strip():
-                return json.dumps({"error": "object_id cannot be empty."})
+                return json.dumps({"error": "object_id cannot be empty."}, ensure_ascii=False)
 
             if rows <= 0 or columns <= 0:
-                return json.dumps({"error": "Rows and columns must be positive integers."})
+                return json.dumps({"error": "Rows and columns must be positive integers."}, ensure_ascii=False)
 
             if content and (len(content) > rows or any(len(r) > columns for r in content)):
-                return json.dumps({"error": "Content dimensions exceed table dimensions."})
+                return json.dumps({"error": "Content dimensions exceed table dimensions."}, ensure_ascii=False)
 
             table_id = self._generate_id("table")
             requests: List[Dict[str, Any]] = [
@@ -720,9 +725,9 @@ class GoogleSlidesTools(GoogleToolkit):
                                 }
                             )
             self._batch_update(presentation_id, requests)
-            return json.dumps({"table_id": table_id, "rows": rows, "columns": columns})
+            return json.dumps({"table_id": table_id, "rows": rows, "columns": columns}, ensure_ascii=False)
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     @authenticate
     def set_background_image(
@@ -744,16 +749,16 @@ class GoogleSlidesTools(GoogleToolkit):
         """
         try:
             if not presentation_id.strip():
-                return json.dumps({"error": "presentation_id cannot be empty."})
+                return json.dumps({"error": "presentation_id cannot be empty."}, ensure_ascii=False)
             if not slide_id.strip():
-                return json.dumps({"error": "object_id cannot be empty."})
+                return json.dumps({"error": "object_id cannot be empty."}, ensure_ascii=False)
 
             if not image_url or not image_url.strip():
-                return json.dumps({"error": "image_url cannot be empty."})
+                return json.dumps({"error": "image_url cannot be empty."}, ensure_ascii=False)
 
             parsed = urlparse(image_url)
             if parsed.scheme not in ("http", "https") or not parsed.netloc:
-                return json.dumps({"error": "image_url must be a valid http or https URL."})
+                return json.dumps({"error": "image_url must be a valid http or https URL."}, ensure_ascii=False)
 
             self._batch_update(
                 presentation_id,
@@ -769,9 +774,9 @@ class GoogleSlidesTools(GoogleToolkit):
                     }
                 ],
             )
-            return json.dumps({"background_set": True, "slide_id": slide_id})
+            return json.dumps({"background_set": True, "slide_id": slide_id}, ensure_ascii=False)
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     @authenticate
     def read_all_text(self, presentation_id: str) -> str:
@@ -786,7 +791,7 @@ class GoogleSlidesTools(GoogleToolkit):
         """
         try:
             if not presentation_id.strip():
-                return json.dumps({"error": "presentation_id cannot be empty."})
+                return json.dumps({"error": "presentation_id cannot be empty."}, ensure_ascii=False)
 
             fields = (
                 "slides(objectId,pageElements("
@@ -804,9 +809,9 @@ class GoogleSlidesTools(GoogleToolkit):
                 for el in slide.get("pageElements", []):
                     lines.extend(self._extract_text_recursive(el))
                 result[sid] = lines
-            return json.dumps(result)
+            return json.dumps(result, ensure_ascii=False)
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     @authenticate
     def get_slide_thumbnail(self, presentation_id: str, slide_id: str) -> str:
@@ -822,9 +827,9 @@ class GoogleSlidesTools(GoogleToolkit):
         """
         try:
             if not presentation_id.strip():
-                return json.dumps({"error": "presentation_id cannot be empty."})
+                return json.dumps({"error": "presentation_id cannot be empty."}, ensure_ascii=False)
             if not slide_id.strip():
-                return json.dumps({"error": "object_id cannot be empty."})
+                return json.dumps({"error": "object_id cannot be empty."}, ensure_ascii=False)
 
             response = (
                 self.slides_service.presentations()
@@ -834,10 +839,10 @@ class GoogleSlidesTools(GoogleToolkit):
             )
             url = response.get("contentUrl")
             if not url:
-                return json.dumps({"error": f"No thumbnail URL found for slide {slide_id}"})
-            return json.dumps({"thumbnail_url": url})
+                return json.dumps({"error": f"No thumbnail URL found for slide {slide_id}"}, ensure_ascii=False)
+            return json.dumps({"thumbnail_url": url}, ensure_ascii=False)
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     @authenticate
     def get_presentation_metadata(self, presentation_id: str) -> str:
@@ -852,7 +857,7 @@ class GoogleSlidesTools(GoogleToolkit):
         """
         try:
             if not presentation_id.strip():
-                return json.dumps({"error": "presentation_id cannot be empty."})
+                return json.dumps({"error": "presentation_id cannot be empty."}, ensure_ascii=False)
 
             result = (
                 self.slides_service.presentations()
@@ -906,10 +911,11 @@ class GoogleSlidesTools(GoogleToolkit):
                     "page_width_inches": round(width_emu / 914400, 2),
                     "page_height_inches": round(height_emu / 914400, 2),
                     "slides": slides_info,
-                }
+                },
+                ensure_ascii=False,
             )
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     @authenticate
     def get_page(self, presentation_id: str, page_object_id: str) -> str:
@@ -925,9 +931,9 @@ class GoogleSlidesTools(GoogleToolkit):
         """
         try:
             if not presentation_id.strip():
-                return json.dumps({"error": "presentation_id cannot be empty."})
+                return json.dumps({"error": "presentation_id cannot be empty."}, ensure_ascii=False)
             if not page_object_id.strip():
-                return json.dumps({"error": "object_id cannot be empty."})
+                return json.dumps({"error": "object_id cannot be empty."}, ensure_ascii=False)
 
             result = (
                 self.slides_service.presentations()
@@ -935,9 +941,9 @@ class GoogleSlidesTools(GoogleToolkit):
                 .get(presentationId=presentation_id, pageObjectId=page_object_id)
                 .execute()
             )
-            return json.dumps(result)
+            return json.dumps(result, ensure_ascii=False)
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     @authenticate
     def get_slide_text(self, presentation_id: str, page_object_id: str) -> str:
@@ -953,9 +959,9 @@ class GoogleSlidesTools(GoogleToolkit):
         """
         try:
             if not presentation_id.strip():
-                return json.dumps({"error": "presentation_id cannot be empty."})
+                return json.dumps({"error": "presentation_id cannot be empty."}, ensure_ascii=False)
             if not page_object_id.strip():
-                return json.dumps({"error": "object_id cannot be empty."})
+                return json.dumps({"error": "object_id cannot be empty."}, ensure_ascii=False)
 
             page = (
                 self.slides_service.presentations()
@@ -966,9 +972,9 @@ class GoogleSlidesTools(GoogleToolkit):
             lines = []
             for el in page.get("pageElements", []):
                 lines.extend(self._extract_text_recursive(el))
-            return json.dumps({"slide_id": page_object_id, "text": lines})
+            return json.dumps({"slide_id": page_object_id, "text": lines}, ensure_ascii=False)
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     @authenticate
     def insert_youtube_video(
@@ -998,14 +1004,14 @@ class GoogleSlidesTools(GoogleToolkit):
         """
         try:
             if not presentation_id.strip():
-                return json.dumps({"error": "presentation_id cannot be empty."})
+                return json.dumps({"error": "presentation_id cannot be empty."}, ensure_ascii=False)
             if not slide_id.strip():
-                return json.dumps({"error": "object_id cannot be empty."})
+                return json.dumps({"error": "object_id cannot be empty."}, ensure_ascii=False)
 
             if not video_id or not video_id.strip():
-                return json.dumps({"error": "video_id cannot be empty."})
+                return json.dumps({"error": "video_id cannot be empty."}, ensure_ascii=False)
             if width <= 0 or height <= 0:
-                return json.dumps({"error": "Width and height must be positive."})
+                return json.dumps({"error": "Width and height must be positive."}, ensure_ascii=False)
 
             emu_x, emu_y = self._to_emu(x), self._to_emu(y)
             emu_width, emu_height = self._to_emu(width), self._to_emu(height)
@@ -1021,9 +1027,12 @@ class GoogleSlidesTools(GoogleToolkit):
                 height=emu_height,
                 id_alias="video_yt",
             )
-            return json.dumps({"video_object_id": video_obj_id, "slide_id": slide_id, "youtube_video_id": video_id})
+            return json.dumps(
+                {"video_object_id": video_obj_id, "slide_id": slide_id, "youtube_video_id": video_id},
+                ensure_ascii=False,
+            )
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     @authenticate
     def insert_drive_video(
@@ -1053,14 +1062,14 @@ class GoogleSlidesTools(GoogleToolkit):
         """
         try:
             if not presentation_id.strip():
-                return json.dumps({"error": "presentation_id cannot be empty."})
+                return json.dumps({"error": "presentation_id cannot be empty."}, ensure_ascii=False)
             if not slide_id.strip():
-                return json.dumps({"error": "object_id cannot be empty."})
+                return json.dumps({"error": "object_id cannot be empty."}, ensure_ascii=False)
 
             if not file_id or not file_id.strip():
-                return json.dumps({"error": "file_id cannot be empty."})
+                return json.dumps({"error": "file_id cannot be empty."}, ensure_ascii=False)
             if width <= 0 or height <= 0:
-                return json.dumps({"error": "Width and height must be positive."})
+                return json.dumps({"error": "Width and height must be positive."}, ensure_ascii=False)
 
             emu_x, emu_y = self._to_emu(x), self._to_emu(y)
             emu_width, emu_height = self._to_emu(width), self._to_emu(height)
@@ -1076,6 +1085,8 @@ class GoogleSlidesTools(GoogleToolkit):
                 height=emu_height,
                 id_alias="video_drive",
             )
-            return json.dumps({"video_object_id": video_obj_id, "slide_id": slide_id, "drive_file_id": file_id})
+            return json.dumps(
+                {"video_object_id": video_obj_id, "slide_id": slide_id, "drive_file_id": file_id}, ensure_ascii=False
+            )
         except Exception as e:
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)

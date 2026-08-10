@@ -82,7 +82,7 @@ class BrightDataTools(Toolkit):
                 log_info(f"[Bright Data] Request: {payload['url']}")
 
             response = requests.post(
-                self.endpoint, headers=self.headers, data=json.dumps(payload), timeout=self.timeout
+                self.endpoint, headers=self.headers, data=json.dumps(payload, ensure_ascii=False), timeout=self.timeout
             )
 
             if response.status_code != 200:
@@ -149,7 +149,7 @@ class BrightDataTools(Toolkit):
             }
 
             response = requests.post(
-                self.endpoint, headers=self.headers, data=json.dumps(payload), timeout=self.timeout
+                self.endpoint, headers=self.headers, data=json.dumps(payload, ensure_ascii=False), timeout=self.timeout
             )
 
             if response.status_code != 200:
@@ -361,7 +361,7 @@ class BrightDataTools(Toolkit):
                         time.sleep(1)
                         continue
 
-                    return json.dumps(snapshot_data)
+                    return json.dumps(snapshot_data, ensure_ascii=False)
 
                 except Exception:
                     attempts += 1

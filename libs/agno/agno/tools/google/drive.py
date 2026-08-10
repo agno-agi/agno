@@ -468,7 +468,7 @@ class GoogleDriveTools(GoogleToolkit):
             str: JSON string containing matching files and metadata or error message
         """
         if max_results < 1:
-            return json.dumps({"error": "max_results must be greater than 0"})
+            return json.dumps({"error": "max_results must be greater than 0"}, ensure_ascii=False)
 
         try:
             service = cast(Resource, self.service)
@@ -507,13 +507,14 @@ class GoogleDriveTools(GoogleToolkit):
                     "count": len(files),
                     "nextPageToken": results.get("nextPageToken"),
                     "incompleteSearch": incomplete,
-                }
+                },
+                ensure_ascii=False,
             )
         except HttpError as e:
-            return json.dumps({"error": f"Google Drive API error: {e}"})
+            return json.dumps({"error": f"Google Drive API error: {e}"}, ensure_ascii=False)
         except Exception as e:
             log_error(f"Could not search Google Drive files: {str(e)}")
-            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"}, ensure_ascii=False)
 
     async def asearch_files(
         self,
@@ -556,7 +557,8 @@ class GoogleDriveTools(GoogleToolkit):
             elif mime_type.startswith(WorkspaceType.WORKSPACE_PREFIX):
                 # Drawings, Vids, etc. have no text export — get_media() would crash
                 return json.dumps(
-                    {"error": f"Cannot read {mime_type} as text. Use download_file instead.", "file": metadata}
+                    {"error": f"Cannot read {mime_type} as text. Use download_file instead.", "file": metadata},
+                    ensure_ascii=False,
                 )
             elif mime_type in OFFICE_MIME_TYPES:
                 file_size = int(metadata.get("size", 0))
@@ -568,7 +570,8 @@ class GoogleDriveTools(GoogleToolkit):
                                 f"({self.max_read_size}). Use download_file instead."
                             ),
                             "file": metadata,
-                        }
+                        },
+                        ensure_ascii=False,
                     )
                 request = service.files().get_media(fileId=file_id, supportsAllDrives=self.supports_all_drives)
                 content_bytes = self._download_bytes(request)
@@ -590,14 +593,16 @@ class GoogleDriveTools(GoogleToolkit):
                             "content": content,
                             "contentLength": len(content),
                             "extractedFrom": fmt,
-                        }
+                        },
+                        ensure_ascii=False,
                     )
                 except ImportError:
                     return json.dumps(
                         {
                             "error": f"Cannot read .{fmt} file: {pkg} not installed. Install with: pip install {pkg}",
                             "file": metadata,
-                        }
+                        },
+                        ensure_ascii=False,
                     )
             elif _is_binary_mime(mime_type):
                 file_ext = metadata.get("name", "").rsplit(".", 1)[-1].lower()
@@ -612,7 +617,8 @@ class GoogleDriveTools(GoogleToolkit):
                     {
                         "error": f"Cannot read binary file ({mime_type}) as text.{hint}",
                         "file": metadata,
-                    }
+                    },
+                    ensure_ascii=False,
                 )
             else:
                 export_mime = None
@@ -629,7 +635,8 @@ class GoogleDriveTools(GoogleToolkit):
                         {
                             "error": f"File is {file_size} bytes, exceeds max_read_size ({self.max_read_size}). Use download_file instead.",
                             "file": metadata,
-                        }
+                        },
+                        ensure_ascii=False,
                     )
                 request = service.files().get_media(fileId=file_id, supportsAllDrives=self.supports_all_drives)
                 content_bytes = self._download_bytes(request)
@@ -641,13 +648,14 @@ class GoogleDriveTools(GoogleToolkit):
                     "content": content,
                     "contentLength": len(content),
                     "exportMimeType": export_mime,
-                }
+                },
+                ensure_ascii=False,
             )
         except HttpError as e:
-            return json.dumps({"error": f"Google Drive API error: {e}"})
+            return json.dumps({"error": f"Google Drive API error: {e}"}, ensure_ascii=False)
         except Exception as e:
             log_error(f"Could not read Google Drive file {file_id}: {str(e)}")
-            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"}, ensure_ascii=False)
 
     async def aread_file(self, file_id: str = "") -> str:
         """
@@ -674,7 +682,7 @@ class GoogleDriveTools(GoogleToolkit):
         """
         path = Path(file_path)
         if not path.exists() or not path.is_file():
-            return json.dumps({"error": f"The file '{path}' does not exist or is not a file."})
+            return json.dumps({"error": f"The file '{path}' does not exist or is not a file."}, ensure_ascii=False)
 
         resolved_mime_type, _ = mimetypes.guess_type(path.as_posix())
         if resolved_mime_type is None:
@@ -691,12 +699,12 @@ class GoogleDriveTools(GoogleToolkit):
                 )
                 .execute()
             )
-            return json.dumps(uploaded_file)
+            return json.dumps(uploaded_file, ensure_ascii=False)
         except HttpError as e:
-            return json.dumps({"error": f"Google Drive API error: {e}"})
+            return json.dumps({"error": f"Google Drive API error: {e}"}, ensure_ascii=False)
         except Exception as e:
             log_error(f"Could not upload file '{path}': {str(e)}")
-            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"}, ensure_ascii=False)
 
     async def aupload_file(self, file_path: Union[str, Path] = "") -> str:
         """
@@ -729,7 +737,9 @@ class GoogleDriveTools(GoogleToolkit):
             try:
                 path = safe_join_filename(self.download_dir, metadata.get("name", file_id))
             except PathSecurityError as e:
-                return json.dumps({"error": f"Invalid file name from Google Drive: {e}", "file": metadata})
+                return json.dumps(
+                    {"error": f"Invalid file name from Google Drive: {e}", "file": metadata}, ensure_ascii=False
+                )
 
             # Resolve export target — user override > auto-detect > None for regular files
             if export_format:
@@ -739,7 +749,9 @@ class GoogleDriveTools(GoogleToolkit):
                 target_mime, ext = self.DOWNLOAD_EXPORT_TYPES[mime_type]
             elif mime_type.startswith(WorkspaceType.WORKSPACE_PREFIX):
                 # Future-proofing: catch new Workspace types Google may add
-                return json.dumps({"error": f"Unsupported Workspace file type for download: {mime_type}"})
+                return json.dumps(
+                    {"error": f"Unsupported Workspace file type for download: {mime_type}"}, ensure_ascii=False
+                )
             else:
                 target_mime = None
                 ext = ""
@@ -759,7 +771,8 @@ class GoogleDriveTools(GoogleToolkit):
                         "status": "exported",
                         "exportMimeType": target_mime,
                         "originalMimeType": mime_type,
-                    }
+                    },
+                    ensure_ascii=False,
                 )
 
             # Regular file — direct download
@@ -769,12 +782,12 @@ class GoogleDriveTools(GoogleToolkit):
                 done = False
                 while not done:
                     _, done = downloader.next_chunk()
-            return json.dumps({"fileId": file_id, "path": str(path), "status": "downloaded"})
+            return json.dumps({"fileId": file_id, "path": str(path), "status": "downloaded"}, ensure_ascii=False)
         except HttpError as e:
-            return json.dumps({"error": f"Google Drive API error: {e}"})
+            return json.dumps({"error": f"Google Drive API error: {e}"}, ensure_ascii=False)
         except Exception as e:
             log_error(f"Could not download file '{file_id}': {str(e)}")
-            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"})
+            return json.dumps({"error": f"Unexpected error: {type(e).__name__}: {e}"}, ensure_ascii=False)
 
     async def adownload_file(self, file_id: str = "", export_format: Optional[str] = None) -> str:
         """

@@ -69,7 +69,7 @@ class Manifest:
 
     def save(self, path: Path) -> None:
         path.write_text(
-            json.dumps({"entries": self.entries}, indent=2, sort_keys=True),
+            json.dumps({"entries": self.entries}, indent=2, sort_keys=True, ensure_ascii=False),
             encoding="utf-8",
         )
 

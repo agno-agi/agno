@@ -79,7 +79,7 @@ class OpenBBTools(Toolkit):
                         "ma_200d": row.get("ma_200d"),
                     }
                 )
-            return json.dumps(clean_results, indent=2, default=str)
+            return json.dumps(clean_results, indent=2, default=str, ensure_ascii=False)
         except Exception as e:
             return f"Error fetching current price for {symbol}: {e}"
 
@@ -100,7 +100,7 @@ class OpenBBTools(Toolkit):
             for row in result.to_dicts():
                 clean_results.append({"symbol": row.get("symbol"), "name": row.get("name")})
 
-        return json.dumps(clean_results, indent=2, default=str)
+        return json.dumps(clean_results, indent=2, default=str, ensure_ascii=False)
 
     def get_price_targets(self, symbol: str) -> str:
         """Use this function to get consensus price target and recommendations for a stock symbol or list of symbols.
@@ -115,7 +115,7 @@ class OpenBBTools(Toolkit):
         try:
             log_debug(f"Fetching price targets for {symbol}")
             result = self.obb.equity.estimates.consensus(symbol=symbol, provider=self.provider).to_polars()  # type: ignore
-            return json.dumps(result.to_dicts(), indent=2, default=str)
+            return json.dumps(result.to_dicts(), indent=2, default=str, ensure_ascii=False)
         except Exception as e:
             return f"Error fetching company news for {symbol}: {e}"
 
@@ -138,7 +138,7 @@ class OpenBBTools(Toolkit):
                 for row in result.to_dicts():
                     row.pop("images")
                     clean_results.append(row)
-            return json.dumps(clean_results[:num_stories], indent=2, default=str)
+            return json.dumps(clean_results[:num_stories], indent=2, default=str, ensure_ascii=False)
         except Exception as e:
             return f"Error fetching company news for {symbol}: {e}"
 
@@ -155,6 +155,6 @@ class OpenBBTools(Toolkit):
         try:
             log_debug(f"Fetching company profile for {symbol}")
             result = self.obb.equity.profile(symbol=symbol, provider=self.provider).to_polars()  # type: ignore
-            return json.dumps(result.to_dicts(), indent=2, default=str)
+            return json.dumps(result.to_dicts(), indent=2, default=str, ensure_ascii=False)
         except Exception as e:
             return f"Error fetching company profile for {symbol}: {e}"

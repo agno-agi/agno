@@ -131,9 +131,9 @@ class SmallestTools(Toolkit):
                             "languages": tags.get("language") or voice.get("languages"),
                         }
                     )
-                return json.dumps(result)
+                return json.dumps(result, ensure_ascii=False)
 
-            return json.dumps(voices)
+            return json.dumps(voices, ensure_ascii=False)
         except Exception as e:
             log_error(f"Failed to fetch voices: {str(e)}")
             return f"Error: {e}"

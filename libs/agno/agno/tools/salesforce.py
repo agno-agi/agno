@@ -138,10 +138,10 @@ class SalesforceTools(Toolkit):
             if total > self.max_records:
                 objects = objects[: self.max_records]
 
-            return json.dumps({"total": total, "returned": len(objects), "objects": objects})
+            return json.dumps({"total": total, "returned": len(objects), "objects": objects}, ensure_ascii=False)
         except Exception as e:
             logger.exception("Error listing Salesforce objects")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def describe_object(self, sobject: str) -> str:
         """
@@ -184,11 +184,12 @@ class SalesforceTools(Toolkit):
                     "totalFields": len(all_fields),
                     "returnedFields": len(fields),
                     "fields": fields,
-                }
+                },
+                ensure_ascii=False,
             )
         except Exception as e:
             logger.exception(f"Error describing Salesforce object {sobject}")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_record(self, sobject: str, record_id: str, fields: str = "") -> str:
         """
@@ -206,14 +207,14 @@ class SalesforceTools(Toolkit):
                 result = self.sf.query(soql)
                 records = result.get("records", [])
                 if not records:
-                    return json.dumps({"error": f"{sobject} record {record_id} not found."})
-                return json.dumps(records[0])
+                    return json.dumps({"error": f"{sobject} record {record_id} not found."}, ensure_ascii=False)
+                return json.dumps(records[0], ensure_ascii=False)
             else:
                 record = getattr(self.sf, sobject).get(record_id)
-                return json.dumps(record)
+                return json.dumps(record, ensure_ascii=False)
         except Exception as e:
             logger.exception(f"Error getting {sobject} record {record_id}")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def create_record(self, sobject: str, record_data: str) -> str:
         """
@@ -226,14 +227,16 @@ class SalesforceTools(Toolkit):
         try:
             data = json.loads(record_data) if isinstance(record_data, str) else record_data
         except json.JSONDecodeError as e:
-            return json.dumps({"error": f"Invalid JSON in record_data: {e}"})
+            return json.dumps({"error": f"Invalid JSON in record_data: {e}"}, ensure_ascii=False)
 
         try:
             result = getattr(self.sf, sobject).create(data)
-            return json.dumps({"id": result.get("id"), "success": result.get("success"), "sobject": sobject})
+            return json.dumps(
+                {"id": result.get("id"), "success": result.get("success"), "sobject": sobject}, ensure_ascii=False
+            )
         except Exception as e:
             logger.exception(f"Error creating {sobject} record")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def update_record(self, sobject: str, record_id: str, record_data: str) -> str:
         """
@@ -247,14 +250,14 @@ class SalesforceTools(Toolkit):
         try:
             data = json.loads(record_data) if isinstance(record_data, str) else record_data
         except json.JSONDecodeError as e:
-            return json.dumps({"error": f"Invalid JSON in record_data: {e}"})
+            return json.dumps({"error": f"Invalid JSON in record_data: {e}"}, ensure_ascii=False)
 
         try:
             getattr(self.sf, sobject).update(record_id, data)
-            return json.dumps({"status": "success", "id": record_id, "sobject": sobject})
+            return json.dumps({"status": "success", "id": record_id, "sobject": sobject}, ensure_ascii=False)
         except Exception as e:
             logger.exception(f"Error updating {sobject} record {record_id}")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def delete_record(self, sobject: str, record_id: str) -> str:
         """
@@ -266,10 +269,10 @@ class SalesforceTools(Toolkit):
         """
         try:
             getattr(self.sf, sobject).delete(record_id)
-            return json.dumps({"status": "success", "id": record_id, "sobject": sobject})
+            return json.dumps({"status": "success", "id": record_id, "sobject": sobject}, ensure_ascii=False)
         except Exception as e:
             logger.exception(f"Error deleting {sobject} record {record_id}")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def query(self, soql: str) -> str:
         """
@@ -287,11 +290,12 @@ class SalesforceTools(Toolkit):
                 records = records[: self.max_records]
 
             return json.dumps(
-                {"totalSize": total_size, "returned": len(records), "done": result.get("done"), "records": records}
+                {"totalSize": total_size, "returned": len(records), "done": result.get("done"), "records": records},
+                ensure_ascii=False,
             )
         except Exception as e:
             logger.exception("Error executing SOQL query")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def search(self, sosl: str) -> str:
         """
@@ -305,10 +309,10 @@ class SalesforceTools(Toolkit):
             records = result.get("searchRecords", []) if isinstance(result, dict) else []
             if len(records) > self.max_records:
                 result["searchRecords"] = records[: self.max_records]
-            return json.dumps(result)
+            return json.dumps(result, ensure_ascii=False)
         except Exception as e:
             logger.exception("Error executing SOSL search")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_report(self, report_id: str) -> str:
         """
@@ -320,8 +324,11 @@ class SalesforceTools(Toolkit):
         try:
             response = self.sf.restful(f"analytics/reports/{report_id}", method="GET")
             if not isinstance(response, dict):
-                return json.dumps({"error": "Unexpected report response format."})
-            return json.dumps({"reportMetadata": response.get("reportMetadata"), "factMap": response.get("factMap")})
+                return json.dumps({"error": "Unexpected report response format."}, ensure_ascii=False)
+            return json.dumps(
+                {"reportMetadata": response.get("reportMetadata"), "factMap": response.get("factMap")},
+                ensure_ascii=False,
+            )
         except Exception as e:
             logger.exception(f"Error running report {report_id}")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)

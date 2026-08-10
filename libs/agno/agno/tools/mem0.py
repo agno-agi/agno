@@ -105,7 +105,7 @@ class Mem0Tools(Toolkit):
         try:
             if isinstance(content, dict):
                 log_debug("Wrapping dict message into content string")
-                content = json.dumps(content)
+                content = json.dumps(content, ensure_ascii=False)
             elif not isinstance(content, str):
                 content = str(content)
             messages_list = [{"role": "user", "content": content}]
@@ -115,7 +115,7 @@ class Mem0Tools(Toolkit):
                 user_id=resolved_user_id,
                 infer=self.infer,
             )
-            return json.dumps(result)
+            return json.dumps(result, ensure_ascii=False)
         except Exception as e:
             log_error(f"Error adding memory: {str(e)}")
             return f"Error adding memory: {e}"
@@ -144,7 +144,7 @@ class Mem0Tools(Toolkit):
                 log_warning(f"Unexpected return type from mem0.search: {type(results)}. Returning empty list.")
                 search_results_list = []
 
-            return json.dumps(search_results_list)
+            return json.dumps(search_results_list, ensure_ascii=False)
         except ValueError as ve:
             log_error(str(ve))
             return str(ve)
@@ -170,7 +170,7 @@ class Mem0Tools(Toolkit):
             else:
                 log_warning(f"Unexpected return type from mem0.get_all: {type(results)}. Returning empty list.")
                 memories_list = []
-            return json.dumps(memories_list)
+            return json.dumps(memories_list, ensure_ascii=False)
         except ValueError as ve:
             log_error(str(ve))
             return str(ve)

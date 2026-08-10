@@ -1224,7 +1224,7 @@ class Gemini(Model):
                         "type": "function",
                         "function": {
                             "name": part.function_call.name,
-                            "arguments": json.dumps(part.function_call.args)
+                            "arguments": json.dumps(part.function_call.args, ensure_ascii=False)
                             if part.function_call.args is not None
                             else "",
                         },
@@ -1375,7 +1375,7 @@ class Gemini(Model):
                             "type": "function",
                             "function": {
                                 "name": part.function_call.name,
-                                "arguments": json.dumps(part.function_call.args)
+                                "arguments": json.dumps(part.function_call.args, ensure_ascii=False)
                                 if part.function_call.args is not None
                                 else "",
                             },

@@ -13,11 +13,11 @@ def serialize_input(
     if isinstance(input, str):
         return input
     elif isinstance(input, dict):
-        return json.dumps(input)
+        return json.dumps(input, ensure_ascii=False)
     elif isinstance(input, list):
         if any(isinstance(item, Message) for item in input):
-            return json.dumps([item.to_dict() for item in input])
+            return json.dumps([item.to_dict() for item in input], ensure_ascii=False)
         else:
-            return json.dumps(input)
+            return json.dumps(input, ensure_ascii=False)
     elif isinstance(input, BaseModel):
         return input.model_dump_json()

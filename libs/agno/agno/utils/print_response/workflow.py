@@ -96,7 +96,7 @@ def print_response(
             elif isinstance(input, (dict, list)):
                 import json
 
-                data_display = json.dumps(input, indent=2, default=str)
+                data_display = json.dumps(input, indent=2, default=str, ensure_ascii=False)
             else:
                 data_display = str(input)
             workflow_info += f"""\n\n**Structured Input:**\n```json\n{data_display}\n```"""
@@ -242,7 +242,7 @@ def print_response_stream(
             elif isinstance(input, (dict, list)):
                 import json
 
-                data_display = json.dumps(input, indent=2, default=str)
+                data_display = json.dumps(input, indent=2, default=str, ensure_ascii=False)
             else:
                 data_display = str(input)
             workflow_info += f"""\n\n**Structured Input:**\n```json\n{data_display}\n```"""
@@ -877,7 +877,7 @@ def format_step_content_for_display(step_output: StepOutput) -> str:
     elif isinstance(actual_content, (dict, list)):
         import json
 
-        return f"**Structured Output:**\n\n```json\n{json.dumps(actual_content, indent=2, default=str)}\n```"
+        return f"**Structured Output:**\n\n```json\n{json.dumps(actual_content, indent=2, default=str, ensure_ascii=False)}\n```"
     else:
         # Fallback to string conversion
         return str(actual_content)
@@ -938,7 +938,7 @@ async def aprint_response(
             elif isinstance(input, (dict, list)):
                 import json
 
-                data_display = json.dumps(input, indent=2, default=str)
+                data_display = json.dumps(input, indent=2, default=str, ensure_ascii=False)
             else:
                 data_display = str(input)
             workflow_info += f"""\n\n**Structured Input:**\n```json\n{data_display}\n```"""
@@ -1084,7 +1084,7 @@ async def aprint_response_stream(
             elif isinstance(input, (dict, list)):
                 import json
 
-                data_display = json.dumps(input, indent=2, default=str)
+                data_display = json.dumps(input, indent=2, default=str, ensure_ascii=False)
             else:
                 data_display = str(input)
             workflow_info += f"""\n\n**Structured Input:**\n```json\n{data_display}\n```"""

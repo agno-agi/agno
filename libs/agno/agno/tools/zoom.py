@@ -114,7 +114,7 @@ class ZoomTools(Toolkit):
         token = self.get_access_token()
         if not token:
             log_error("Unable to obtain access token.")
-            return json.dumps({"error": "Failed to obtain access token"})
+            return json.dumps({"error": "Failed to obtain access token"}, ensure_ascii=False)
 
         url = "https://api.zoom.us/v2/users/me/meetings"
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
@@ -149,10 +149,10 @@ class ZoomTools(Toolkit):
                 "join_url": meeting_info["join_url"],
             }
             log_info(f"Meeting scheduled successfully. ID: {meeting_info['id']}")
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
         except requests.RequestException as e:
             logger.exception("Error scheduling meeting")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_upcoming_meetings(self, user_id: str = "me") -> str:
         """
@@ -169,7 +169,7 @@ class ZoomTools(Toolkit):
         token = self.get_access_token()
         if not token:
             log_error("Unable to obtain access token.")
-            return json.dumps({"error": "Failed to obtain access token"})
+            return json.dumps({"error": "Failed to obtain access token"}, ensure_ascii=False)
 
         url = f"https://api.zoom.us/v2/users/{user_id}/meetings"
         headers = {"Authorization": f"Bearer {token}"}
@@ -182,10 +182,10 @@ class ZoomTools(Toolkit):
 
             result = {"message": "Upcoming meetings retrieved successfully", "meetings": meetings.get("meetings", [])}
             log_info(f"Retrieved {len(result['meetings'])} upcoming meetings")
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
         except requests.RequestException as e:
             logger.exception("Error fetching upcoming meetings")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def list_meetings(self, user_id: str = "me", type: str = "scheduled") -> str:
         """
@@ -208,7 +208,7 @@ class ZoomTools(Toolkit):
         token = self.get_access_token()
         if not token:
             log_error("Unable to obtain access token.")
-            return json.dumps({"error": "Failed to obtain access token"})
+            return json.dumps({"error": "Failed to obtain access token"}, ensure_ascii=False)
 
         url = f"https://api.zoom.us/v2/users/{user_id}/meetings"
         headers = {"Authorization": f"Bearer {token}"}
@@ -228,10 +228,10 @@ class ZoomTools(Toolkit):
                 "meetings": meetings.get("meetings", []),
             }
             log_info(f"Retrieved {len(result['meetings'])} meetings")
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
         except requests.RequestException as e:
             logger.exception("Error fetching meetings")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_meeting_recordings(
         self, meeting_id: str, include_download_token: bool = False, token_ttl: Optional[int] = None
@@ -252,7 +252,7 @@ class ZoomTools(Toolkit):
         token = self.get_access_token()
         if not token:
             log_error("Unable to obtain access token.")
-            return json.dumps({"error": "Failed to obtain access token"})
+            return json.dumps({"error": "Failed to obtain access token"}, ensure_ascii=False)
 
         url = f"https://api.zoom.us/v2/meetings/{meeting_id}/recordings"
         headers = {"Authorization": f"Bearer {token}"}
@@ -286,10 +286,10 @@ class ZoomTools(Toolkit):
             }
 
             log_info(f"Retrieved {result['recording_count']} recording files")
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
         except requests.RequestException as e:
             logger.exception("Error fetching meeting recordings")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def delete_meeting(self, meeting_id: str, schedule_for_reminder: bool = True) -> str:
         """
@@ -308,7 +308,7 @@ class ZoomTools(Toolkit):
         token = self.get_access_token()
         if not token:
             log_error("Unable to obtain access token.")
-            return json.dumps({"error": "Failed to obtain access token"})
+            return json.dumps({"error": "Failed to obtain access token"}, ensure_ascii=False)
 
         url = f"https://api.zoom.us/v2/meetings/{meeting_id}"
         headers = {"Authorization": f"Bearer {token}"}
@@ -325,10 +325,10 @@ class ZoomTools(Toolkit):
             else:
                 result = response.json()
 
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
         except requests.RequestException as e:
             logger.exception("Error deleting meeting")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_meeting(self, meeting_id: str) -> str:
         """
@@ -345,7 +345,7 @@ class ZoomTools(Toolkit):
         token = self.get_access_token()
         if not token:
             log_error("Unable to obtain access token.")
-            return json.dumps({"error": "Failed to obtain access token"})
+            return json.dumps({"error": "Failed to obtain access token"}, ensure_ascii=False)
 
         url = f"https://api.zoom.us/v2/meetings/{meeting_id}"
         headers = {"Authorization": f"Bearer {token}"}
@@ -369,10 +369,10 @@ class ZoomTools(Toolkit):
             }
 
             log_info(f"Retrieved details for meeting ID: {meeting_id}")
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
         except requests.RequestException as e:
             logger.exception("Error fetching meeting details")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def instructions(self) -> str:
         """

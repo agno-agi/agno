@@ -303,9 +303,9 @@ class ExaTools(Toolkit):
                 ],
             }
             if self.show_results:
-                log_info(json.dumps(result))
+                log_info(json.dumps(result, ensure_ascii=False))
 
-            return json.dumps(result, indent=4)
+            return json.dumps(result, indent=4, ensure_ascii=False)
 
         except TimeoutError as e:
             log_error(f"Answer generation timed out after {self.timeout} seconds: {str(e)}")
@@ -363,13 +363,13 @@ class ExaTools(Toolkit):
             if self.show_results:
                 log_info("Research completed successfully")
 
-            return json.dumps(result, indent=4)
+            return json.dumps(result, indent=4, ensure_ascii=False)
 
         except TimeoutError:
             error_msg = "Research task timed out"
             log_error(error_msg)
-            return json.dumps({"error": error_msg}, indent=4)
+            return json.dumps({"error": error_msg}, indent=4, ensure_ascii=False)
         except Exception as e:
             error_msg = f"Research failed: {str(e)}"
             log_error(error_msg)
-            return json.dumps({"error": error_msg}, indent=4)
+            return json.dumps({"error": error_msg}, indent=4, ensure_ascii=False)

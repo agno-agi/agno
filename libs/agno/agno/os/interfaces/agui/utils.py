@@ -21,9 +21,9 @@ def to_json_str(value: Optional[str]) -> str:
     # Handles: "{'a': 1}" → {"a": 1}, "True" → true, "None" → null
     try:
         obj = ast.literal_eval(value)
-        return json.dumps(obj)
+        return json.dumps(obj, ensure_ascii=False)
     except (ValueError, SyntaxError):
         pass
 
     # 3. Plain string — wrap as JSON string literal
-    return json.dumps(value)
+    return json.dumps(value, ensure_ascii=False)

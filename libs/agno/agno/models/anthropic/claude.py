@@ -1040,7 +1040,7 @@ class Claude(Model):
 
                     function_def = {"name": tool_name}
                     if tool_input:
-                        function_def["arguments"] = json.dumps(tool_input)
+                        function_def["arguments"] = json.dumps(tool_input, ensure_ascii=False)
 
                     model_response.extra = model_response.extra or {}
 
@@ -1143,7 +1143,7 @@ class Claude(Model):
 
                 function_def = {"name": tool_name}
                 if tool_input:
-                    function_def["arguments"] = json.dumps(tool_input)
+                    function_def["arguments"] = json.dumps(tool_input, ensure_ascii=False)
 
                 model_response.extra = model_response.extra or {}
 

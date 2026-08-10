@@ -167,7 +167,7 @@ class ModelsLabTools(Toolkit):
             return ToolResult(content="Please set the MODELS_LAB_API_KEY")
 
         try:
-            payload = json.dumps(self._create_payload(prompt))
+            payload = json.dumps(self._create_payload(prompt), ensure_ascii=False)
             headers = {"Content-Type": "application/json"}
 
             log_debug(f"Generating {self.file_type.value} for prompt: {prompt}")

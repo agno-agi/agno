@@ -88,6 +88,6 @@ class Newspaper4kTools(Toolkit):
             if self.article_length and "text" in article_data:
                 article_data["text"] = article_data["text"][: self.article_length]
 
-            return json.dumps(article_data, indent=2)
+            return json.dumps(article_data, indent=2, ensure_ascii=False)
         except Exception as e:
             return f"Error reading article from {url}: {e}"

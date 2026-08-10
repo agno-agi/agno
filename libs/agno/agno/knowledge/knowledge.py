@@ -2232,7 +2232,7 @@ class Knowledge(RemoteKnowledge):
         if content.description:
             hash_parts.append(content.description)
         if content.metadata:
-            hash_parts.append(json.dumps(content.metadata, sort_keys=True, default=str))
+            hash_parts.append(json.dumps(content.metadata, sort_keys=True, default=str, ensure_ascii=False))
 
         remote_identity = self._build_remote_content_identity(content.remote_content)
         if remote_identity:
@@ -2301,7 +2301,7 @@ class Knowledge(RemoteKnowledge):
         if content.description:
             hash_parts.append(content.description)
         if content.metadata:
-            hash_parts.append(json.dumps(content.metadata, sort_keys=True, default=str))
+            hash_parts.append(json.dumps(content.metadata, sort_keys=True, default=str, ensure_ascii=False))
 
         # Use document's own URL if available (set by WebsiteReader)
         doc_url = document.meta_data.get("url") if document.meta_data else None

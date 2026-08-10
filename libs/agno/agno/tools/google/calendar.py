@@ -223,7 +223,8 @@ class GoogleCalendarTools(GoogleToolkit):
                 start_date = start_dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
             except ValueError:
                 return json.dumps(
-                    {"error": f"Invalid date format: {start_date}. Use ISO format (YYYY-MM-DDTHH:MM:SS)."}
+                    {"error": f"Invalid date format: {start_date}. Use ISO format (YYYY-MM-DDTHH:MM:SS)."},
+                    ensure_ascii=False,
                 )
 
         try:
@@ -244,7 +245,9 @@ class GoogleCalendarTools(GoogleToolkit):
                         dt = dt.replace(tzinfo=datetime.timezone.utc)
                     params["timeMax"] = dt.isoformat()
                 except ValueError:
-                    return json.dumps({"error": f"Invalid end_date format: {end_date}. Use ISO format."})
+                    return json.dumps(
+                        {"error": f"Invalid end_date format: {end_date}. Use ISO format."}, ensure_ascii=False
+                    )
             if page_token:
                 params["pageToken"] = page_token
 
@@ -256,10 +259,10 @@ class GoogleCalendarTools(GoogleToolkit):
                 result["nextPageToken"] = events_result["nextPageToken"]
             if not events and not page_token:
                 result["message"] = "No upcoming events found."
-            return json.dumps(result)
+            return json.dumps(result, ensure_ascii=False)
         except HttpError as error:
             log_error(f"An error occurred: {error}")
-            return json.dumps({"error": f"An error occurred: {error}"})
+            return json.dumps({"error": f"An error occurred: {error}"}, ensure_ascii=False)
 
     @authenticate
     def create_event(
@@ -306,7 +309,9 @@ class GoogleCalendarTools(GoogleToolkit):
                 else:
                     end_time = end_dt.isoformat()
             except ValueError:
-                return json.dumps({"error": "Invalid datetime format. Use ISO format (YYYY-MM-DDTHH:MM:SS)."})
+                return json.dumps(
+                    {"error": "Invalid datetime format. Use ISO format (YYYY-MM-DDTHH:MM:SS)."}, ensure_ascii=False
+                )
 
             event: Dict[str, Any] = {
                 "summary": title,
@@ -339,10 +344,10 @@ class GoogleCalendarTools(GoogleToolkit):
                 .execute()
             )
             log_debug(f"Event created successfully in calendar {self.calendar_id}. Event ID: {event_result['id']}")
-            return json.dumps(event_result)
+            return json.dumps(event_result, ensure_ascii=False)
         except HttpError as error:
             log_error(f"An error occurred: {error}")
-            return json.dumps({"error": f"An error occurred: {error}"})
+            return json.dumps({"error": f"An error occurred: {error}"}, ensure_ascii=False)
 
     @authenticate
     def update_event(
@@ -398,7 +403,9 @@ class GoogleCalendarTools(GoogleToolkit):
                     if timezone:
                         event["start"]["timeZone"] = timezone
                 except ValueError:
-                    return json.dumps({"error": f"Invalid start datetime format: {start_date}. Use ISO format."})
+                    return json.dumps(
+                        {"error": f"Invalid start datetime format: {start_date}. Use ISO format."}, ensure_ascii=False
+                    )
 
             if end_date:
                 try:
@@ -411,7 +418,9 @@ class GoogleCalendarTools(GoogleToolkit):
                     if timezone:
                         event["end"]["timeZone"] = timezone
                 except ValueError:
-                    return json.dumps({"error": f"Invalid end datetime format: {end_date}. Use ISO format."})
+                    return json.dumps(
+                        {"error": f"Invalid end datetime format: {end_date}. Use ISO format."}, ensure_ascii=False
+                    )
 
             send_updates = "all" if notify_attendees and attendees else "none"
 
@@ -422,10 +431,10 @@ class GoogleCalendarTools(GoogleToolkit):
             )
 
             log_debug(f"Event {event_id} updated successfully.")
-            return json.dumps(updated_event)
+            return json.dumps(updated_event, ensure_ascii=False)
         except HttpError as error:
             log_error(f"An error occurred while updating event: {error}")
-            return json.dumps({"error": f"An error occurred: {error}"})
+            return json.dumps({"error": f"An error occurred: {error}"}, ensure_ascii=False)
 
     @authenticate
     def delete_event(self, event_id: str = "", notify_attendees: Optional[bool] = True) -> str:
@@ -444,10 +453,12 @@ class GoogleCalendarTools(GoogleToolkit):
             service = cast(Resource, self.service)
             service.events().delete(calendarId=self.calendar_id, eventId=event_id, sendUpdates=send_updates).execute()
             log_debug(f"Event {event_id} deleted successfully.")
-            return json.dumps({"success": True, "message": f"Event {event_id} deleted successfully."})
+            return json.dumps(
+                {"success": True, "message": f"Event {event_id} deleted successfully."}, ensure_ascii=False
+            )
         except HttpError as error:
             log_error(f"An error occurred while deleting event: {error}")
-            return json.dumps({"error": f"An error occurred: {error}"})
+            return json.dumps({"error": f"An error occurred: {error}"}, ensure_ascii=False)
 
     @authenticate
     def fetch_all_events(
@@ -519,11 +530,11 @@ class GoogleCalendarTools(GoogleToolkit):
             log_debug(f"Fetched {len(all_events)} events from calendar: {self.calendar_id}")
 
             if not all_events:
-                return json.dumps({"message": "No events found."})
-            return json.dumps(all_events)
+                return json.dumps({"message": "No events found."}, ensure_ascii=False)
+            return json.dumps(all_events, ensure_ascii=False)
         except HttpError as error:
             log_error(f"An error occurred while fetching events: {error}")
-            return json.dumps({"error": f"An error occurred: {error}"})
+            return json.dumps({"error": f"An error occurred: {error}"}, ensure_ascii=False)
 
     @authenticate
     def find_available_slots(
@@ -573,7 +584,7 @@ class GoogleCalendarTools(GoogleToolkit):
             events_data = json.loads(events_json)
 
             if isinstance(events_data, dict) and "error" in events_data:
-                return json.dumps({"error": events_data["error"]})
+                return json.dumps({"error": events_data["error"]}, ensure_ascii=False)
 
             events = events_data if isinstance(events_data, list) else events_data.get("items", [])
 
@@ -630,11 +641,11 @@ class GoogleCalendarTools(GoogleToolkit):
             }
 
             log_debug(f"Found {len(available_slots)} available slots")
-            return json.dumps(result)
+            return json.dumps(result, ensure_ascii=False)
 
         except Exception as e:
             log_error(f"An error occurred while finding available slots: {str(e)}")
-            return json.dumps({"error": f"An error occurred: {str(e)}"})
+            return json.dumps({"error": f"An error occurred: {str(e)}"}, ensure_ascii=False)
 
     def _get_working_hours(self) -> str:
         """Get working hours based on user's calendar settings and locale.
@@ -674,12 +685,13 @@ class GoogleCalendarTools(GoogleToolkit):
                     "locale": locale,
                     "week_start": week_start,
                     "hide_weekends": hide_weekends,
-                }
+                },
+                ensure_ascii=False,
             )
 
         except HttpError as error:
             log_error(f"An error occurred while getting working hours: {error}")
-            return json.dumps({"error": f"An error occurred: {error}"})
+            return json.dumps({"error": f"An error occurred: {error}"}, ensure_ascii=False)
 
     @authenticate
     def list_calendars(self, page_token: Optional[str] = None) -> str:
@@ -718,11 +730,11 @@ class GoogleCalendarTools(GoogleToolkit):
             }
             if calendar_list.get("nextPageToken"):
                 result["nextPageToken"] = calendar_list["nextPageToken"]
-            return json.dumps(result)
+            return json.dumps(result, ensure_ascii=False)
 
         except HttpError as error:
             log_error(f"An error occurred while listing calendars: {error}")
-            return json.dumps({"error": f"An error occurred: {error}"})
+            return json.dumps({"error": f"An error occurred: {error}"}, ensure_ascii=False)
 
     @authenticate
     def get_event(self, event_id: str = "") -> str:
@@ -738,10 +750,10 @@ class GoogleCalendarTools(GoogleToolkit):
         try:
             service = cast(Resource, self.service)
             event = service.events().get(calendarId=self.calendar_id, eventId=event_id).execute()
-            return json.dumps(event)
+            return json.dumps(event, ensure_ascii=False)
         except HttpError as error:
             log_error(f"An error occurred while getting event: {error}")
-            return json.dumps({"error": f"An error occurred: {error}"})
+            return json.dumps({"error": f"An error occurred: {error}"}, ensure_ascii=False)
 
     @authenticate
     def quick_add_event(self, text: str = "") -> str:
@@ -759,10 +771,10 @@ class GoogleCalendarTools(GoogleToolkit):
             service = cast(Resource, self.service)
             event = service.events().quickAdd(calendarId=self.calendar_id, text=text).execute()
             log_debug(f"Quick add event created: {event.get('id')}")
-            return json.dumps(event)
+            return json.dumps(event, ensure_ascii=False)
         except HttpError as error:
             log_error(f"An error occurred while quick-adding event: {error}")
-            return json.dumps({"error": f"An error occurred: {error}"})
+            return json.dumps({"error": f"An error occurred: {error}"}, ensure_ascii=False)
 
     @authenticate
     def check_availability(
@@ -798,7 +810,9 @@ class GoogleCalendarTools(GoogleToolkit):
                 if end_dt.tzinfo is None:
                     end_dt = end_dt.replace(tzinfo=datetime.timezone.utc)
             except ValueError:
-                return json.dumps({"error": "Invalid date format. Use ISO format (YYYY-MM-DDTHH:MM:SS)."})
+                return json.dumps(
+                    {"error": "Invalid date format. Use ISO format (YYYY-MM-DDTHH:MM:SS)."}, ensure_ascii=False
+                )
 
             body = {
                 "timeMin": start_dt.isoformat(),
@@ -831,11 +845,12 @@ class GoogleCalendarTools(GoogleToolkit):
                     "availability": availability,
                     "time_window": {"start": start_dt.isoformat(), "end": end_dt.isoformat()},
                     "timezone": timezone or "UTC",
-                }
+                },
+                ensure_ascii=False,
             )
         except HttpError as error:
             log_error(f"An error occurred while checking availability: {error}")
-            return json.dumps({"error": f"An error occurred: {error}"})
+            return json.dumps({"error": f"An error occurred: {error}"}, ensure_ascii=False)
 
     @authenticate
     def search_events(
@@ -904,10 +919,10 @@ class GoogleCalendarTools(GoogleToolkit):
                 result["message"] = f"No events found matching '{query}'."
 
             log_debug(f"Found {len(events)} events matching '{query}'")
-            return json.dumps(result)
+            return json.dumps(result, ensure_ascii=False)
         except HttpError as error:
             log_error(f"An error occurred while searching events: {error}")
-            return json.dumps({"error": f"An error occurred: {error}"})
+            return json.dumps({"error": f"An error occurred: {error}"}, ensure_ascii=False)
 
     @authenticate
     def move_event(
@@ -941,10 +956,10 @@ class GoogleCalendarTools(GoogleToolkit):
                 .execute()
             )
             log_debug(f"Event {event_id} moved to calendar {destination_calendar_id}")
-            return json.dumps(moved_event)
+            return json.dumps(moved_event, ensure_ascii=False)
         except HttpError as error:
             log_error(f"An error occurred while moving event: {error}")
-            return json.dumps({"error": f"An error occurred: {error}"})
+            return json.dumps({"error": f"An error occurred: {error}"}, ensure_ascii=False)
 
     @authenticate
     def get_event_attendees(self, event_id: str = "") -> str:
@@ -981,11 +996,12 @@ class GoogleCalendarTools(GoogleToolkit):
                     "event_summary": event.get("summary", ""),
                     "attendees": attendee_list,
                     "total": len(attendee_list),
-                }
+                },
+                ensure_ascii=False,
             )
         except HttpError as error:
             log_error(f"An error occurred while getting attendees: {error}")
-            return json.dumps({"error": f"An error occurred: {error}"})
+            return json.dumps({"error": f"An error occurred: {error}"}, ensure_ascii=False)
 
     @authenticate
     def respond_to_event(self, event_id: str = "", response: str = "") -> str:
@@ -1001,7 +1017,10 @@ class GoogleCalendarTools(GoogleToolkit):
         """
         valid_responses = {"accepted", "declined", "tentative"}
         if response not in valid_responses:
-            return json.dumps({"error": f"Invalid response '{response}'. Must be one of: {', '.join(valid_responses)}"})
+            return json.dumps(
+                {"error": f"Invalid response '{response}'. Must be one of: {', '.join(valid_responses)}"},
+                ensure_ascii=False,
+            )
 
         try:
             service = cast(Resource, self.service)
@@ -1038,7 +1057,7 @@ class GoogleCalendarTools(GoogleToolkit):
             )
 
             log_debug(f"Responded '{response}' to event {event_id}")
-            return json.dumps(updated_event)
+            return json.dumps(updated_event, ensure_ascii=False)
         except HttpError as error:
             log_error(f"An error occurred while responding to event: {error}")
-            return json.dumps({"error": f"An error occurred: {error}"})
+            return json.dumps({"error": f"An error occurred: {error}"}, ensure_ascii=False)

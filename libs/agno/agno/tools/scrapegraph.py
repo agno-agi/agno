@@ -113,7 +113,7 @@ class ScrapeGraphTools(Toolkit):
             if response.status != "success" or response.data is None:
                 return f"Error extracting from {url}: {response.error or 'unknown error'}"
             payload = response.data.json_data if response.data.json_data is not None else response.data.raw
-            return json.dumps(payload)
+            return json.dumps(payload, ensure_ascii=False)
         except Exception as error:
             return f"Error extracting from {url}: {type(error).__name__}: {error}"
 

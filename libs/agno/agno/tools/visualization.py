@@ -157,12 +157,13 @@ class VisualizationTools(Toolkit):
                     "file_path": file_path,
                     "data_points": len(normalized_data),
                     "status": "success",
-                }
+                },
+                ensure_ascii=False,
             )
 
         except Exception as e:
             logger.exception("Error creating bar chart")
-            return json.dumps({"chart_type": "bar_chart", "error": str(e), "status": "error"})
+            return json.dumps({"chart_type": "bar_chart", "error": str(e), "status": "error"}, ensure_ascii=False)
 
     def create_line_chart(
         self,
@@ -230,12 +231,13 @@ class VisualizationTools(Toolkit):
                     "file_path": file_path,
                     "data_points": len(normalized_data),
                     "status": "success",
-                }
+                },
+                ensure_ascii=False,
             )
 
         except Exception as e:
             logger.exception("Error creating line chart")
-            return json.dumps({"chart_type": "line_chart", "error": str(e), "status": "error"})
+            return json.dumps({"chart_type": "line_chart", "error": str(e), "status": "error"}, ensure_ascii=False)
 
     def create_pie_chart(
         self,
@@ -295,12 +297,13 @@ class VisualizationTools(Toolkit):
                     "file_path": file_path,
                     "data_points": len(normalized_data),
                     "status": "success",
-                }
+                },
+                ensure_ascii=False,
             )
 
         except Exception as e:
             logger.exception("Error creating pie chart")
-            return json.dumps({"chart_type": "pie_chart", "error": str(e), "status": "error"})
+            return json.dumps({"chart_type": "pie_chart", "error": str(e), "status": "error"}, ensure_ascii=False)
 
     def create_scatter_plot(
         self,
@@ -384,12 +387,13 @@ class VisualizationTools(Toolkit):
                     "file_path": file_path,
                     "data_points": len(x_data),
                     "status": "success",
-                }
+                },
+                ensure_ascii=False,
             )
 
         except Exception as e:
             logger.exception("Error creating scatter plot")
-            return json.dumps({"chart_type": "scatter_plot", "error": str(e), "status": "error"})
+            return json.dumps({"chart_type": "scatter_plot", "error": str(e), "status": "error"}, ensure_ascii=False)
 
     def create_histogram(
         self,
@@ -459,9 +463,10 @@ class VisualizationTools(Toolkit):
                     "data_points": len(numeric_data),
                     "bins": bins,
                     "status": "success",
-                }
+                },
+                ensure_ascii=False,
             )
 
         except Exception as e:
             logger.exception("Error creating histogram")
-            return json.dumps({"chart_type": "histogram", "error": str(e), "status": "error"})
+            return json.dumps({"chart_type": "histogram", "error": str(e), "status": "error"}, ensure_ascii=False)

@@ -71,7 +71,7 @@ class BraveSearchTools(Toolkit):
         final_search_lang = self.fixed_language if self.fixed_language is not None else search_lang
 
         if not query:
-            return json.dumps({"error": "Please provide a query to search for"})
+            return json.dumps({"error": "Please provide a query to search for"}, ensure_ascii=False)
 
         log_info(f"Searching Brave for: {query}")
 
@@ -103,4 +103,4 @@ class BraveSearchTools(Toolkit):
             filtered_results["web_results"] = web_results
             filtered_results["total_results"] = len(web_results)
 
-        return json.dumps(filtered_results, indent=2)
+        return json.dumps(filtered_results, indent=2, ensure_ascii=False)

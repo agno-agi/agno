@@ -125,9 +125,9 @@ class ShopifyTools(Toolkit):
         result = self._make_graphql_request(query)
 
         if "error" in result:
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
-        return json.dumps(result.get("shop", {}), indent=2)
+        return json.dumps(result.get("shop", {}), indent=2, ensure_ascii=False)
 
     def get_products(
         self,
@@ -190,7 +190,7 @@ class ShopifyTools(Toolkit):
         result = self._make_graphql_request(query)
 
         if "error" in result:
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         products = []
         for edge in result.get("products", {}).get("edges", []):
@@ -220,7 +220,7 @@ class ShopifyTools(Toolkit):
                 }
             )
 
-        return json.dumps(products, indent=2)
+        return json.dumps(products, indent=2, ensure_ascii=False)
 
     def get_orders(
         self,
@@ -309,7 +309,7 @@ class ShopifyTools(Toolkit):
         result = self._make_graphql_request(query)
 
         if "error" in result:
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         orders = []
         for edge in result.get("orders", {}).get("edges", []):
@@ -348,7 +348,7 @@ class ShopifyTools(Toolkit):
                 }
             )
 
-        return json.dumps(orders, indent=2)
+        return json.dumps(orders, indent=2, ensure_ascii=False)
 
     def get_top_selling_products(
         self,
@@ -413,7 +413,7 @@ class ShopifyTools(Toolkit):
         result = self._make_graphql_request(query)
 
         if "error" in result:
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         # Aggregate sales by product
         product_sales: Dict[str, Dict[str, Any]] = {}
@@ -451,7 +451,7 @@ class ShopifyTools(Toolkit):
             product["rank"] = i + 1
             product["total_revenue"] = round(product["total_revenue"], 2)
 
-        return json.dumps(sorted_products, indent=2)
+        return json.dumps(sorted_products, indent=2, ensure_ascii=False)
 
     def get_products_bought_together(
         self,
@@ -509,7 +509,7 @@ class ShopifyTools(Toolkit):
         result = self._make_graphql_request(query)
 
         if "error" in result:
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         # Count co-occurrences
         pair_counter: Counter = Counter()
@@ -548,7 +548,7 @@ class ShopifyTools(Toolkit):
             if count >= min_occurrences
         ]
 
-        return json.dumps(frequent_pairs, indent=2)
+        return json.dumps(frequent_pairs, indent=2, ensure_ascii=False)
 
     def get_sales_by_date_range(
         self,
@@ -594,7 +594,7 @@ class ShopifyTools(Toolkit):
         result = self._make_graphql_request(query)
 
         if "error" in result:
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         # Aggregate data
         total_revenue = 0.0
@@ -636,7 +636,7 @@ class ShopifyTools(Toolkit):
             "daily_breakdown": sorted_daily,
         }
 
-        return json.dumps(summary, indent=2)
+        return json.dumps(summary, indent=2, ensure_ascii=False)
 
     def get_order_analytics(
         self,
@@ -709,12 +709,12 @@ class ShopifyTools(Toolkit):
         result = self._make_graphql_request(query)
 
         if "error" in result:
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         orders = result.get("orders", {}).get("edges", [])
 
         if not orders:
-            return json.dumps({"message": "No orders found in the specified period"}, indent=2)
+            return json.dumps({"message": "No orders found in the specified period"}, indent=2, ensure_ascii=False)
 
         # Calculate metrics
         total_orders = len(orders)
@@ -771,7 +771,7 @@ class ShopifyTools(Toolkit):
             "fulfillment_status_breakdown": dict(fulfillment_status_counts),
         }
 
-        return json.dumps(analytics, indent=2)
+        return json.dumps(analytics, indent=2, ensure_ascii=False)
 
     def get_product_sales_breakdown(
         self,
@@ -840,7 +840,7 @@ class ShopifyTools(Toolkit):
         result = self._make_graphql_request(query)
 
         if "error" in result:
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         # Filter for specific product and aggregate
         product_title = None
@@ -896,7 +896,9 @@ class ShopifyTools(Toolkit):
                 order_count += 1
 
         if product_title is None:
-            return json.dumps({"error": "Product not found in any orders during this period"}, indent=2)
+            return json.dumps(
+                {"error": "Product not found in any orders during this period"}, indent=2, ensure_ascii=False
+            )
 
         # Format variants and daily data
         for v in variant_breakdown.values():
@@ -922,7 +924,7 @@ class ShopifyTools(Toolkit):
             "daily_sales": sorted_daily,
         }
 
-        return json.dumps(breakdown, indent=2)
+        return json.dumps(breakdown, indent=2, ensure_ascii=False)
 
     def get_customer_order_history(
         self,
@@ -983,12 +985,12 @@ class ShopifyTools(Toolkit):
         result = self._make_graphql_request(query)
 
         if "error" in result:
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         orders = result.get("orders", {}).get("edges", [])
 
         if not orders:
-            return json.dumps({"message": f"No orders found for {customer_email}"}, indent=2)
+            return json.dumps({"message": f"No orders found for {customer_email}"}, indent=2, ensure_ascii=False)
 
         # Get customer info from first order
         first_customer = orders[0]["node"].get("customer", {}) if orders else {}
@@ -1025,7 +1027,7 @@ class ShopifyTools(Toolkit):
             "orders": order_list,
         }
 
-        return json.dumps(response, indent=2)
+        return json.dumps(response, indent=2, ensure_ascii=False)
 
     def get_inventory_levels(
         self,
@@ -1070,7 +1072,7 @@ class ShopifyTools(Toolkit):
         result = self._make_graphql_request(query)
 
         if "error" in result:
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         products = []
         for edge in result.get("products", {}).get("edges", []):
@@ -1094,7 +1096,7 @@ class ShopifyTools(Toolkit):
                 }
             )
 
-        return json.dumps(products, indent=2)
+        return json.dumps(products, indent=2, ensure_ascii=False)
 
     def get_low_stock_products(
         self,
@@ -1139,7 +1141,7 @@ class ShopifyTools(Toolkit):
         result = self._make_graphql_request(query)
 
         if "error" in result:
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         low_stock = []
         for edge in result.get("products", {}).get("edges", []):
@@ -1171,7 +1173,7 @@ class ShopifyTools(Toolkit):
         # Sort by total inventory (lowest first)
         low_stock.sort(key=lambda x: x["total_inventory"])
 
-        return json.dumps(low_stock[:max_results], indent=2)
+        return json.dumps(low_stock[:max_results], indent=2, ensure_ascii=False)
 
     def get_sales_trends(
         self,
@@ -1262,7 +1264,7 @@ class ShopifyTools(Toolkit):
 
         current_data = fetch_period_data(current_start, current_end)
         if "error" in current_data:
-            return json.dumps(current_data, indent=2)
+            return json.dumps(current_data, indent=2, ensure_ascii=False)
 
         result = {
             "current_period": {
@@ -1304,7 +1306,7 @@ class ShopifyTools(Toolkit):
                     "orders_trend": "up" if orders_change > 0 else ("down" if orders_change < 0 else "flat"),
                 }
 
-        return json.dumps(result, indent=2)
+        return json.dumps(result, indent=2, ensure_ascii=False)
 
     def get_average_order_value(
         self,
@@ -1354,12 +1356,12 @@ class ShopifyTools(Toolkit):
         result = self._make_graphql_request(query)
 
         if "error" in result:
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         orders = result.get("orders", {}).get("edges", [])
 
         if not orders:
-            return json.dumps({"message": "No orders found in the specified period"}, indent=2)
+            return json.dumps({"message": "No orders found in the specified period"}, indent=2, ensure_ascii=False)
 
         # Group orders
         grouped: Dict[str, List[float]] = {}
@@ -1408,7 +1410,7 @@ class ShopifyTools(Toolkit):
             "breakdown": aov_data,
         }
 
-        return json.dumps(response, indent=2)
+        return json.dumps(response, indent=2, ensure_ascii=False)
 
     def get_repeat_customers(
         self,
@@ -1469,7 +1471,7 @@ class ShopifyTools(Toolkit):
         result = self._make_graphql_request(query)
 
         if "error" in result:
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         # Aggregate by customer
         customer_data: Dict[str, Dict[str, Any]] = {}
@@ -1516,4 +1518,4 @@ class ShopifyTools(Toolkit):
             "customers": repeat_customers[:limit],
         }
 
-        return json.dumps(response, indent=2)
+        return json.dumps(response, indent=2, ensure_ascii=False)

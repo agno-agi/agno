@@ -88,7 +88,7 @@ class SpiderTools(Toolkit):
                 options["num"] = max_results
             log_info(f"Fetching results from spider for query: {query} with max_results: {options['num']}")
             results = app.search(query, options)
-            return json.dumps(results)
+            return json.dumps(results, ensure_ascii=False)
         except Exception as e:
             logger.exception("Error fetching results from spider")
             return f"Error fetching results from spider: {e}"
@@ -99,7 +99,7 @@ class SpiderTools(Toolkit):
         try:
             options = {"return_format": "markdown", **self.optional_params}
             results = app.scrape_url(url, options)
-            return json.dumps(results)
+            return json.dumps(results, ensure_ascii=False)
         except Exception as e:
             logger.exception("Error fetching content from spider")
             return f"Error fetching content from spider: {e}"
@@ -113,7 +113,7 @@ class SpiderTools(Toolkit):
             if limit is not None:
                 options["limit"] = limit
             results = app.crawl_url(url, options)
-            return json.dumps(results)
+            return json.dumps(results, ensure_ascii=False)
         except Exception as e:
             logger.exception("Error fetching content from spider")
             return f"Error fetching content from spider: {e}"

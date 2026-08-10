@@ -82,7 +82,7 @@ class GitlabTools(Toolkit):
         return {"current_page": page, "per_page": per_page, "returned_items": returned_items}
 
     def _json_error(self, message: str) -> str:
-        return json.dumps({"error": message})
+        return json.dumps({"error": message}, ensure_ascii=False)
 
     def _build_headers(self) -> Dict[str, str]:
         if self.access_token:
@@ -105,11 +105,11 @@ class GitlabTools(Toolkit):
                 message = payload.get("message") or payload.get("error")
                 if message is not None:
                     if isinstance(message, (dict, list)):
-                        detail = json.dumps(message)
+                        detail = json.dumps(message, ensure_ascii=False)
                     else:
                         detail = str(message)
             elif isinstance(payload, list):
-                detail = json.dumps(payload)
+                detail = json.dumps(payload, ensure_ascii=False)
         except Exception:
             detail = None
 
@@ -221,7 +221,9 @@ class GitlabTools(Toolkit):
             log_debug(f"Listing GitLab projects with params: {params}")
             projects = self.client.projects.list(**params)
             data = [self._serialize_project(project) for project in projects]
-            return json.dumps({"data": data, "meta": self._build_meta(page, per_page, len(data))}, indent=2)
+            return json.dumps(
+                {"data": data, "meta": self._build_meta(page, per_page, len(data))}, indent=2, ensure_ascii=False
+            )
         except (GitlabAuthenticationError, GitlabError) as e:
             logger.exception("GitLab API error while listing projects")
             return self._json_error(str(e))
@@ -259,7 +261,9 @@ class GitlabTools(Toolkit):
             log_debug(f"Listing GitLab projects with params: {params}")
             projects = await self._aget("/projects", params=params)
             data = [self._serialize_project(project) for project in projects]
-            return json.dumps({"data": data, "meta": self._build_meta(page, per_page, len(data))}, indent=2)
+            return json.dumps(
+                {"data": data, "meta": self._build_meta(page, per_page, len(data))}, indent=2, ensure_ascii=False
+            )
         except httpx.HTTPStatusError as e:
             message = self._http_error_message(e.response)
             log_error(f"GitLab API error while listing projects: {message}: {str(e)}")
@@ -284,7 +288,7 @@ class GitlabTools(Toolkit):
         try:
             log_debug(f"Getting GitLab project: {project_id_or_path}")
             project = self._get_project(project_id_or_path)
-            return json.dumps(self._serialize_project(project), indent=2)
+            return json.dumps(self._serialize_project(project), indent=2, ensure_ascii=False)
         except (GitlabAuthenticationError, GitlabError) as e:
             logger.exception(f"GitLab API error while getting project {project_id_or_path}")
             return self._json_error(str(e))
@@ -306,7 +310,7 @@ class GitlabTools(Toolkit):
             project_ref = self._encode_project_ref(project_id_or_path)
             log_debug(f"Getting GitLab project: {project_id_or_path}")
             project = await self._aget(f"/projects/{project_ref}")
-            return json.dumps(self._serialize_project(project), indent=2)
+            return json.dumps(self._serialize_project(project), indent=2, ensure_ascii=False)
         except httpx.HTTPStatusError as e:
             message = self._http_error_message(e.response)
             log_error(f"GitLab API error while getting project {project_id_or_path}: {message}: {str(e)}")
@@ -357,7 +361,9 @@ class GitlabTools(Toolkit):
             log_debug(f"Listing merge requests for project {project_id_or_path} with params: {params}")
             merge_requests = project.mergerequests.list(**params)
             data = [self._serialize_merge_request(mr) for mr in merge_requests]
-            return json.dumps({"data": data, "meta": self._build_meta(page, per_page, len(data))}, indent=2)
+            return json.dumps(
+                {"data": data, "meta": self._build_meta(page, per_page, len(data))}, indent=2, ensure_ascii=False
+            )
         except (GitlabAuthenticationError, GitlabError) as e:
             logger.exception(f"GitLab API error while listing merge requests for project {project_id_or_path}")
             return self._json_error(str(e))
@@ -404,7 +410,9 @@ class GitlabTools(Toolkit):
             log_debug(f"Listing merge requests for project {project_id_or_path} with params: {params}")
             merge_requests = await self._aget(f"/projects/{project_ref}/merge_requests", params=params)
             data = [self._serialize_merge_request(mr) for mr in merge_requests]
-            return json.dumps({"data": data, "meta": self._build_meta(page, per_page, len(data))}, indent=2)
+            return json.dumps(
+                {"data": data, "meta": self._build_meta(page, per_page, len(data))}, indent=2, ensure_ascii=False
+            )
         except httpx.HTTPStatusError as e:
             message = self._http_error_message(e.response)
             log_error(
@@ -433,7 +441,7 @@ class GitlabTools(Toolkit):
             project = self._get_project(project_id_or_path)
             log_debug(f"Getting merge request {merge_request_iid} from project {project_id_or_path}")
             merge_request = project.mergerequests.get(merge_request_iid)
-            return json.dumps(self._serialize_merge_request(merge_request), indent=2)
+            return json.dumps(self._serialize_merge_request(merge_request), indent=2, ensure_ascii=False)
         except (GitlabAuthenticationError, GitlabError) as e:
             logger.exception(f"GitLab API error while getting merge request {merge_request_iid}")
             return self._json_error(str(e))
@@ -456,7 +464,7 @@ class GitlabTools(Toolkit):
             project_ref = self._encode_project_ref(project_id_or_path)
             log_debug(f"Getting merge request {merge_request_iid} from project {project_id_or_path}")
             merge_request = await self._aget(f"/projects/{project_ref}/merge_requests/{merge_request_iid}")
-            return json.dumps(self._serialize_merge_request(merge_request), indent=2)
+            return json.dumps(self._serialize_merge_request(merge_request), indent=2, ensure_ascii=False)
         except httpx.HTTPStatusError as e:
             message = self._http_error_message(e.response)
             log_error(f"GitLab API error while getting merge request {merge_request_iid}: {message}: {str(e)}")
@@ -511,7 +519,9 @@ class GitlabTools(Toolkit):
             log_debug(f"Listing issues for project {project_id_or_path} with params: {params}")
             issues = project.issues.list(**params)
             data = [self._serialize_issue(issue) for issue in issues]
-            return json.dumps({"data": data, "meta": self._build_meta(page, per_page, len(data))}, indent=2)
+            return json.dumps(
+                {"data": data, "meta": self._build_meta(page, per_page, len(data))}, indent=2, ensure_ascii=False
+            )
         except (GitlabAuthenticationError, GitlabError) as e:
             logger.exception(f"GitLab API error while listing issues for project {project_id_or_path}")
             return self._json_error(str(e))
@@ -562,7 +572,9 @@ class GitlabTools(Toolkit):
             log_debug(f"Listing issues for project {project_id_or_path} with params: {params}")
             issues = await self._aget(f"/projects/{project_ref}/issues", params=params)
             data = [self._serialize_issue(issue) for issue in issues]
-            return json.dumps({"data": data, "meta": self._build_meta(page, per_page, len(data))}, indent=2)
+            return json.dumps(
+                {"data": data, "meta": self._build_meta(page, per_page, len(data))}, indent=2, ensure_ascii=False
+            )
         except httpx.HTTPStatusError as e:
             message = self._http_error_message(e.response)
             log_error(f"GitLab API error while listing issues for project {project_id_or_path}: {message}: {str(e)}")

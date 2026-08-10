@@ -88,7 +88,7 @@ class FirecrawlTools(Toolkit):
             params["formats"] = self.formats
 
         scrape_result = self.app.scrape(url, **params)
-        return json.dumps(scrape_result.model_dump(), cls=CustomJSONEncoder)
+        return json.dumps(scrape_result.model_dump(), cls=CustomJSONEncoder, ensure_ascii=False)
 
     def crawl_website(self, url: str, limit: Optional[int] = None) -> str:
         """Use this function to Crawls a website using Firecrawl.
@@ -111,7 +111,7 @@ class FirecrawlTools(Toolkit):
         params["poll_interval"] = self.poll_interval
 
         crawl_result = self.app.crawl(url, **params)
-        return json.dumps(crawl_result.model_dump(), cls=CustomJSONEncoder)
+        return json.dumps(crawl_result.model_dump(), cls=CustomJSONEncoder, ensure_ascii=False)
 
     def map_website(self, url: str) -> str:
         """Use this function to Map a website using Firecrawl.
@@ -121,7 +121,7 @@ class FirecrawlTools(Toolkit):
 
         """
         map_result = self.app.map(url)
-        return json.dumps(map_result.model_dump(), cls=CustomJSONEncoder)
+        return json.dumps(map_result.model_dump(), cls=CustomJSONEncoder, ensure_ascii=False)
 
     def search_web(self, query: str, limit: Optional[int] = None):
         """Use this function to search for the web using Firecrawl.
@@ -145,8 +145,8 @@ class FirecrawlTools(Toolkit):
 
         if hasattr(search_result, "success"):
             if search_result.success:
-                return json.dumps(search_result.data, cls=CustomJSONEncoder)
+                return json.dumps(search_result.data, cls=CustomJSONEncoder, ensure_ascii=False)
             else:
                 return f"Error searching with the Firecrawl tool: {search_result.error}"
         else:
-            return json.dumps(search_result.model_dump(), cls=CustomJSONEncoder)
+            return json.dumps(search_result.model_dump(), cls=CustomJSONEncoder, ensure_ascii=False)

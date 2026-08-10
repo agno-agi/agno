@@ -268,7 +268,7 @@ def _search_past_sessions_function(
             str: JSON list of session previews with session_id, created_at, and runs (user/assistant pairs).
         """
         if team.db is None:
-            return json.dumps([])
+            return json.dumps([], ensure_ascii=False)
 
         team.db = cast(BaseDb, team.db)
         selected_sessions = team.db.get_sessions(
@@ -297,7 +297,7 @@ def _search_past_sessions_function(
             str: JSON list of session previews with session_id, created_at, and runs (user/assistant pairs).
         """
         if team.db is None:
-            return json.dumps([])
+            return json.dumps([], ensure_ascii=False)
 
         if _has_async_db(team):
             selected_sessions = await cast(AsyncBaseDb, team.db).get_sessions(  # type: ignore

@@ -156,7 +156,7 @@ class OxylabsTools(Toolkit):
             }
 
             log_info(f"Google search completed. Found {len(search_results)} results")
-            return json.dumps(response_data, indent=2)
+            return json.dumps(response_data, indent=2, ensure_ascii=False)
 
         except Exception as e:
             error_msg = f"Google search failed: {str(e)}"
@@ -253,7 +253,7 @@ class OxylabsTools(Toolkit):
             }
 
             log_info(f"Amazon product lookup completed for ASIN {asin}")
-            return json.dumps(response_data, indent=2)
+            return json.dumps(response_data, indent=2, ensure_ascii=False)
 
         except Exception as e:
             error_msg = f"Amazon product lookup failed: {str(e)}"
@@ -344,7 +344,7 @@ class OxylabsTools(Toolkit):
             }
 
             log_debug(f"Amazon search completed. Found {len(products)} products")
-            return json.dumps(response_data, indent=2)
+            return json.dumps(response_data, indent=2, ensure_ascii=False)
 
         except Exception as e:
             error_msg = f"Amazon search failed: {str(e)}"
@@ -444,7 +444,7 @@ class OxylabsTools(Toolkit):
             }
 
             log_debug(f"Website scraping completed for {url}")
-            return json.dumps(response_data, indent=2)
+            return json.dumps(response_data, indent=2, ensure_ascii=False)
 
         except Exception as e:
             error_msg = f"Website scraping failed: {str(e)}"
@@ -463,4 +463,4 @@ class OxylabsTools(Toolkit):
             str: JSON string with tool name, error message, and context.
         """
         error_data = {"tool": tool_name, "error": error_message, "context": context or {}}
-        return json.dumps(error_data, indent=2)
+        return json.dumps(error_data, indent=2, ensure_ascii=False)

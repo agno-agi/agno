@@ -1789,7 +1789,7 @@ class Workflow:
 
                     asyncio.create_task(
                         websocket_manager.broadcast_to_run(
-                            buffer_run_id, json.dumps(event_dict, default=json_serializer)
+                            buffer_run_id, json.dumps(event_dict, default=json_serializer, ensure_ascii=False)
                         )
                     )
             except Exception as e:

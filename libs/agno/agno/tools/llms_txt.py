@@ -61,7 +61,8 @@ class LLMsTxtTools(Toolkit):
                     for e in entries
                 ],
                 "total_pages": len(entries),
-            }
+            },
+            ensure_ascii=False,
         )
 
     # Tools

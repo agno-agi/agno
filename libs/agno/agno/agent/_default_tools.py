@@ -306,7 +306,7 @@ def get_chat_history_function(agent: Agent, session: AgentSession) -> Callable:
         all_chats = session.get_messages()
 
         if len(all_chats) == 0:
-            return json.dumps([])
+            return json.dumps([], ensure_ascii=False)
 
         for chat in all_chats:  # type: ignore
             history.append(chat.to_dict())  # type: ignore
@@ -338,7 +338,7 @@ def get_tool_call_history_function(agent: Agent, session: AgentSession) -> Calla
 
         tool_calls = session.get_tool_calls(num_calls=num_calls)
         if len(tool_calls) == 0:
-            return json.dumps([])
+            return json.dumps([], ensure_ascii=False)
         return json.dumps(tool_calls, ensure_ascii=False)
 
     return get_tool_call_history
@@ -478,7 +478,7 @@ def get_search_past_sessions_function(
         import json
 
         if agent.db is None:
-            return json.dumps([])
+            return json.dumps([], ensure_ascii=False)
 
         agent.db = cast(BaseDb, agent.db)
         selected_sessions = agent.db.get_sessions(
@@ -525,7 +525,7 @@ async def aget_search_past_sessions_function(
         import json
 
         if agent.db is None:
-            return json.dumps([])
+            return json.dumps([], ensure_ascii=False)
 
         if _init.has_async_db(agent):
             selected_sessions = await agent.db.get_sessions(  # type: ignore

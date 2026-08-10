@@ -55,7 +55,7 @@ def render_arg_value(value: Any) -> str:
     if isinstance(value, str):
         return value
     try:
-        return json.dumps(value, default=json_serializer)
+        return json.dumps(value, default=json_serializer, ensure_ascii=False)
     except (TypeError, ValueError):
         return str(value)
 
@@ -91,7 +91,9 @@ def _build_text_input(name: str, field_type: Any, initial_raw: Any) -> PlainText
     multiline = type_name in ("list", "dict")
     initial_value: Optional[str] = None
     if initial_raw is not None:
-        initial_value = initial_raw if isinstance(initial_raw, str) else json.dumps(initial_raw, default=str)
+        initial_value = (
+            initial_raw if isinstance(initial_raw, str) else json.dumps(initial_raw, default=str, ensure_ascii=False)
+        )
     return PlainTextInputElement(
         action_id=user_input_action_id(name),
         placeholder=PlainTextObject(text=f"Enter {name}"),

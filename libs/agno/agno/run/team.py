@@ -941,9 +941,9 @@ class TeamRunOutput:
             raise
 
         if indent is None:
-            return json.dumps(_dict, separators=separators)
+            return json.dumps(_dict, separators=separators, ensure_ascii=False)
         else:
-            return json.dumps(_dict, indent=indent, separators=separators)
+            return json.dumps(_dict, indent=indent, separators=separators, ensure_ascii=False)
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TeamRunOutput":
@@ -1053,7 +1053,7 @@ class TeamRunOutput:
             return self.content.model_dump_json(exclude_none=True, **kwargs)
         else:
             kwargs.setdefault("ensure_ascii", False)
-            return json.dumps(self.content, **kwargs)
+            return json.dumps(self.content, **kwargs, ensure_ascii=False)
 
     def add_member_run(self, run_response: Union["TeamRunOutput", RunOutput]) -> None:
         self.member_responses.append(run_response)

@@ -254,7 +254,9 @@ class AgentOSTools(Toolkit):
             _, window_total = self._sync_db().get_traces(limit=1, filter_expr=_created_after_expr(start_time))
             return _format_run_activity(groupings, window_total, days)
         except NotImplementedError as e:
-            return json.dumps({"error": f"Component-grouped trace stats are not supported by this database: {e}"})
+            return json.dumps(
+                {"error": f"Component-grouped trace stats are not supported by this database: {e}"}, ensure_ascii=False
+            )
         except Exception:
             logger.exception("Failed to get run activity")
             return _tool_error("Failed to get run activity")
@@ -283,7 +285,9 @@ class AgentOSTools(Toolkit):
             _, window_total = await self._async_db().get_traces(limit=1, filter_expr=_created_after_expr(start_time))
             return _format_run_activity(groupings, window_total, days)
         except NotImplementedError as e:
-            return json.dumps({"error": f"Component-grouped trace stats are not supported by this database: {e}"})
+            return json.dumps(
+                {"error": f"Component-grouped trace stats are not supported by this database: {e}"}, ensure_ascii=False
+            )
         except Exception:
             logger.exception("Failed to get run activity")
             return _tool_error("Failed to get run activity")
@@ -320,7 +324,7 @@ class AgentOSTools(Toolkit):
             )
             return _format_tool_activity(tools_most_used, tools_slowest, tools_total, model_calls, models_total, days)
         except NotImplementedError:
-            return json.dumps({"error": "Span statistics are not supported by this database"})
+            return json.dumps({"error": "Span statistics are not supported by this database"}, ensure_ascii=False)
         except Exception:
             logger.exception("Failed to get tool activity")
             return _tool_error("Failed to get tool activity")
@@ -353,7 +357,7 @@ class AgentOSTools(Toolkit):
             )
             return _format_tool_activity(tools_most_used, tools_slowest, tools_total, model_calls, models_total, days)
         except NotImplementedError:
-            return json.dumps({"error": "Span statistics are not supported by this database"})
+            return json.dumps({"error": "Span statistics are not supported by this database"}, ensure_ascii=False)
         except Exception:
             logger.exception("Failed to get tool activity")
             return _tool_error("Failed to get tool activity")
@@ -431,7 +435,7 @@ class AgentOSTools(Toolkit):
                 last_runs[schedule["id"]] = runs[0] if runs else None
             return _format_schedules(schedules, total, last_runs)
         except NotImplementedError:
-            return json.dumps({"error": "The scheduler is not supported by this database"})
+            return json.dumps({"error": "The scheduler is not supported by this database"}, ensure_ascii=False)
         except Exception:
             logger.exception("Failed to list schedules")
             return _tool_error("Failed to list schedules")
@@ -457,7 +461,7 @@ class AgentOSTools(Toolkit):
                 last_runs[schedule["id"]] = runs[0] if runs else None
             return _format_schedules(schedules, total, last_runs)
         except NotImplementedError:
-            return json.dumps({"error": "The scheduler is not supported by this database"})
+            return json.dumps({"error": "The scheduler is not supported by this database"}, ensure_ascii=False)
         except Exception:
             logger.exception("Failed to list schedules")
             return _tool_error("Failed to list schedules")
@@ -482,7 +486,7 @@ class AgentOSTools(Toolkit):
             runs, total = self._sync_db().get_schedule_runs(schedule_id, limit=_clamp(limit, 1, 100))
             return _format_schedule_history(schedule_id, runs, total)
         except NotImplementedError:
-            return json.dumps({"error": "The scheduler is not supported by this database"})
+            return json.dumps({"error": "The scheduler is not supported by this database"}, ensure_ascii=False)
         except Exception:
             logger.exception("Failed to get schedule history")
             return _tool_error("Failed to get schedule history")
@@ -507,7 +511,7 @@ class AgentOSTools(Toolkit):
             runs, total = await self._async_db().get_schedule_runs(schedule_id, limit=_clamp(limit, 1, 100))
             return _format_schedule_history(schedule_id, runs, total)
         except NotImplementedError:
-            return json.dumps({"error": "The scheduler is not supported by this database"})
+            return json.dumps({"error": "The scheduler is not supported by this database"}, ensure_ascii=False)
         except Exception:
             logger.exception("Failed to get schedule history")
             return _tool_error("Failed to get schedule history")
@@ -527,12 +531,12 @@ class AgentOSTools(Toolkit):
                 type, name, description and current version.
         """
         if self._db_is_async:
-            return json.dumps({"error": "Component listing is not supported by async databases"})
+            return json.dumps({"error": "Component listing is not supported by async databases"}, ensure_ascii=False)
         try:
             components, total = self._sync_db().list_components(limit=_clamp(limit, 1, 100))
             return _format_components(components, total)
         except NotImplementedError:
-            return json.dumps({"error": "Component listing is not supported by this database"})
+            return json.dumps({"error": "Component listing is not supported by this database"}, ensure_ascii=False)
         except Exception:
             logger.exception("Failed to list platform components")
             return _tool_error("Failed to list platform components")
@@ -548,7 +552,7 @@ class AgentOSTools(Toolkit):
                 type, name, description and current version.
         """
         if self._db_is_async:
-            return json.dumps({"error": "Component listing is not supported by async databases"})
+            return json.dumps({"error": "Component listing is not supported by async databases"}, ensure_ascii=False)
         return await _run_sync(self.list_platform_components, limit)
 
     # ------------------------------------------------------------------
@@ -571,7 +575,7 @@ class AgentOSTools(Toolkit):
             approvals, total = self._sync_db().get_approvals(status="pending", limit=_APPROVAL_LIMIT)
             return _format_pending_approvals(approvals, total)
         except NotImplementedError:
-            return json.dumps({"error": "Approvals are not supported by this database"})
+            return json.dumps({"error": "Approvals are not supported by this database"}, ensure_ascii=False)
         except Exception:
             logger.exception("Failed to list pending approvals")
             return _tool_error("Failed to list pending approvals")
@@ -592,7 +596,7 @@ class AgentOSTools(Toolkit):
             approvals, total = await self._async_db().get_approvals(status="pending", limit=_APPROVAL_LIMIT)
             return _format_pending_approvals(approvals, total)
         except NotImplementedError:
-            return json.dumps({"error": "Approvals are not supported by this database"})
+            return json.dumps({"error": "Approvals are not supported by this database"}, ensure_ascii=False)
         except Exception:
             logger.exception("Failed to list pending approvals")
             return _tool_error("Failed to list pending approvals")
@@ -654,7 +658,8 @@ def _async_db_error() -> str:
         {
             "error": "This toolkit is configured with an async database. Run the agent through the "
             "async execution path (arun / AgentOS server) so the async tool variants are used."
-        }
+        },
+        ensure_ascii=False,
     )
 
 
@@ -666,7 +671,7 @@ def _tool_error(context: str) -> str:
     text -- SQL fragments, table or column names -- must not reach whoever talks
     to the agent.
     """
-    return json.dumps({"error": f"{context}. The error has been logged."})
+    return json.dumps({"error": f"{context}. The error has been logged."}, ensure_ascii=False)
 
 
 def _clamp(value: int, low: int, high: int) -> int:
@@ -747,7 +752,7 @@ def _format_platform_metrics(rows: List[Any], days: int, start_date: date, end_d
     }
     if not daily:
         payload["notes"].append("no metrics recorded for this window; the platform may have had no sessions")
-    return json.dumps(payload, default=str)
+    return json.dumps(payload, default=str, ensure_ascii=False)
 
 
 def _created_after_expr(start_time: datetime) -> Dict[str, Any]:
@@ -775,7 +780,7 @@ def _format_run_activity(groupings: Dict[str, Tuple[List[Dict[str, Any]], int]],
         "component appears under each, so the tables may not sum to total_traces"
     )
     payload["notes"] = notes
-    return json.dumps(payload, default=str)
+    return json.dumps(payload, default=str, ensure_ascii=False)
 
 
 def _format_tool_activity(
@@ -801,7 +806,7 @@ def _format_tool_activity(
         "model_calls": model_calls,
         "notes": notes,
     }
-    return json.dumps(payload, default=str)
+    return json.dumps(payload, default=str, ensure_ascii=False)
 
 
 def _normalize_eval_run(record: Dict[str, Any]) -> Dict[str, Any]:
@@ -864,7 +869,7 @@ def _format_eval_history(rows: List[Any], total: int) -> str:
     payload: Dict[str, Any] = {"eval_runs": eval_runs, "count": len(eval_runs), "total": total}
     if total > len(eval_runs):
         payload["notes"] = [f"only the {len(eval_runs)} most recent of {total} eval runs are shown"]
-    return json.dumps(payload, default=str)
+    return json.dumps(payload, default=str, ensure_ascii=False)
 
 
 def _summarize_run_error(run: Dict[str, Any]) -> Optional[str]:
@@ -919,7 +924,7 @@ def _format_schedules(
     payload: Dict[str, Any] = {"schedules": rows, "count": len(rows), "total": total}
     if total > len(rows):
         payload["notes"] = [f"only {len(rows)} of {total} schedules are shown"]
-    return json.dumps(payload, default=str)
+    return json.dumps(payload, default=str, ensure_ascii=False)
 
 
 def _format_schedule_history(schedule_id: str, runs: List[Dict[str, Any]], total: int) -> str:
@@ -943,7 +948,7 @@ def _format_schedule_history(schedule_id: str, runs: List[Dict[str, Any]], total
             f"only the {len(runs)} most recent of {total} runs are shown",
             f"page_summary covers only these {len(runs)} runs; older runs may hold failures it does not reflect",
         ]
-    return json.dumps(payload, default=str)
+    return json.dumps(payload, default=str, ensure_ascii=False)
 
 
 def _format_components(components: List[Dict[str, Any]], total: int) -> str:
@@ -962,7 +967,7 @@ def _format_components(components: List[Dict[str, Any]], total: int) -> str:
     payload: Dict[str, Any] = {"components": rows, "count": len(rows), "total": total}
     if total > len(rows):
         payload["notes"] = [f"only {len(rows)} of {total} components are shown"]
-    return json.dumps(payload, default=str)
+    return json.dumps(payload, default=str, ensure_ascii=False)
 
 
 def _format_pending_approvals(approvals: List[Dict[str, Any]], total: int) -> str:
@@ -988,4 +993,4 @@ def _format_pending_approvals(approvals: List[Dict[str, Any]], total: int) -> st
     payload: Dict[str, Any] = {"approvals": rows, "count": len(rows), "total": total}
     if total > len(rows):
         payload["notes"] = [f"only {len(rows)} of {total} pending approvals are shown"]
-    return json.dumps(payload, default=str)
+    return json.dumps(payload, default=str, ensure_ascii=False)

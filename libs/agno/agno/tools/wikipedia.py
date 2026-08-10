@@ -52,7 +52,7 @@ class WikipediaTools(Toolkit):
         )
         log_debug(f"Searching knowledge: {topic}")
         relevant_docs: List[Document] = self.knowledge.search(query=topic)
-        return json.dumps([doc.to_dict() for doc in relevant_docs])
+        return json.dumps([doc.to_dict() for doc in relevant_docs], ensure_ascii=False)
 
     def search_wikipedia(self, query: str) -> str:
         """Searches Wikipedia for a query.
@@ -63,9 +63,9 @@ class WikipediaTools(Toolkit):
         log_info(f"Searching wikipedia for: {query}")
         try:
             content = wikipedia.summary(query, auto_suggest=self.auto_suggest)
-            return json.dumps(Document(name=query, content=content).to_dict())
+            return json.dumps(Document(name=query, content=content).to_dict(), ensure_ascii=False)
         except DisambiguationError as e:
-            return json.dumps({"disambiguation": query, "options": e.options})
+            return json.dumps({"disambiguation": query, "options": e.options}, ensure_ascii=False)
         except Exception as e:
             log_error(f"Error searching Wikipedia for '{query}': {e}")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)

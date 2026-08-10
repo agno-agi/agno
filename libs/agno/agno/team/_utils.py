@@ -89,7 +89,7 @@ def _convert_dependencies_to_string(team: Team, context: Dict[str, Any]) -> str:
         for key, value in context.items():
             try:
                 # Try to serialize each value individually
-                json.dumps({key: value}, default=str)
+                json.dumps({key: value}, default=str, ensure_ascii=False)
                 sanitized_context[key] = value
             except Exception as e:
                 log_error(f"Failed to serialize to JSON: {str(e)}")

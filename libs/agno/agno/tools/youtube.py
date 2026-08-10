@@ -104,7 +104,7 @@ class YouTubeTools(Toolkit):
                     "provider_url": video_data.get("provider_url"),
                     "thumbnail_url": video_data.get("thumbnail_url"),
                 }
-                return json.dumps(clean_data, indent=4)
+                return json.dumps(clean_data, indent=4, ensure_ascii=False)
         except Exception as e:
             return f"Error getting video data: {e}"
 

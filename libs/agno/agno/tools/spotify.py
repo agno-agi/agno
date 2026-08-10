@@ -103,7 +103,7 @@ class SpotifyTools(Toolkit):
         """
         log_debug("Fetching current Spotify user profile")
         result = self._make_request("me")
-        return json.dumps(result, indent=2)
+        return json.dumps(result, indent=2, ensure_ascii=False)
 
     def get_my_top_tracks(
         self,
@@ -134,7 +134,7 @@ class SpotifyTools(Toolkit):
         result = self._make_request("me/top/tracks", params=params)
 
         if "error" in result:
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         tracks = result.get("items", [])
         simplified_tracks = [
@@ -150,7 +150,7 @@ class SpotifyTools(Toolkit):
             for i, track in enumerate(tracks)
         ]
 
-        return json.dumps(simplified_tracks, indent=2)
+        return json.dumps(simplified_tracks, indent=2, ensure_ascii=False)
 
     def get_my_top_artists(
         self,
@@ -181,7 +181,7 @@ class SpotifyTools(Toolkit):
         result = self._make_request("me/top/artists", params=params)
 
         if "error" in result:
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         artists = result.get("items", [])
         simplified_artists = [
@@ -197,7 +197,7 @@ class SpotifyTools(Toolkit):
             for i, artist in enumerate(artists)
         ]
 
-        return json.dumps(simplified_artists, indent=2)
+        return json.dumps(simplified_artists, indent=2, ensure_ascii=False)
 
     def search_playlists(
         self,
@@ -227,7 +227,7 @@ class SpotifyTools(Toolkit):
         result = self._make_request("search", params=params)
 
         if "error" in result:
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         playlists = result.get("playlists", {}).get("items", [])
         simplified_playlists = [
@@ -244,7 +244,7 @@ class SpotifyTools(Toolkit):
             if playlist is not None
         ]
 
-        return json.dumps(simplified_playlists, indent=2)
+        return json.dumps(simplified_playlists, indent=2, ensure_ascii=False)
 
     def get_user_playlists(
         self,
@@ -270,7 +270,7 @@ class SpotifyTools(Toolkit):
         result = self._make_request("me/playlists", params=params)
 
         if "error" in result:
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         playlists = result.get("items", [])
         simplified_playlists = [
@@ -287,7 +287,7 @@ class SpotifyTools(Toolkit):
             if playlist is not None
         ]
 
-        return json.dumps(simplified_playlists, indent=2)
+        return json.dumps(simplified_playlists, indent=2, ensure_ascii=False)
 
     def search_artists(
         self,
@@ -316,7 +316,7 @@ class SpotifyTools(Toolkit):
         result = self._make_request("search", params=params)
 
         if "error" in result:
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         artists = result.get("artists", {}).get("items", [])
         simplified_artists = [
@@ -331,7 +331,7 @@ class SpotifyTools(Toolkit):
             for artist in artists
         ]
 
-        return json.dumps(simplified_artists, indent=2)
+        return json.dumps(simplified_artists, indent=2, ensure_ascii=False)
 
     def search_albums(
         self,
@@ -363,7 +363,7 @@ class SpotifyTools(Toolkit):
         result = self._make_request("search", params=params)
 
         if "error" in result:
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         albums = result.get("albums", {}).get("items", [])
         simplified_albums = [
@@ -379,7 +379,7 @@ class SpotifyTools(Toolkit):
             for album in albums
         ]
 
-        return json.dumps(simplified_albums, indent=2)
+        return json.dumps(simplified_albums, indent=2, ensure_ascii=False)
 
     def get_album_tracks(
         self,
@@ -404,7 +404,7 @@ class SpotifyTools(Toolkit):
         album_result = self._make_request(f"albums/{album_id}", params={"market": market or self.default_market})
 
         if "error" in album_result:
-            return json.dumps(album_result, indent=2)
+            return json.dumps(album_result, indent=2, ensure_ascii=False)
 
         tracks = album_result.get("tracks", {}).get("items", [])
         simplified_tracks = [
@@ -431,7 +431,7 @@ class SpotifyTools(Toolkit):
             "tracks": simplified_tracks,
         }
 
-        return json.dumps(response, indent=2)
+        return json.dumps(response, indent=2, ensure_ascii=False)
 
     def get_artist_top_tracks(
         self,
@@ -458,7 +458,7 @@ class SpotifyTools(Toolkit):
         result = self._make_request(f"artists/{artist_id}/top-tracks", params=params)
 
         if "error" in result:
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         tracks = result.get("tracks", [])
         simplified_tracks = [
@@ -474,7 +474,7 @@ class SpotifyTools(Toolkit):
             for track in tracks
         ]
 
-        return json.dumps(simplified_tracks, indent=2)
+        return json.dumps(simplified_tracks, indent=2, ensure_ascii=False)
 
     def get_track_recommendations(
         self,
@@ -535,12 +535,14 @@ class SpotifyTools(Toolkit):
 
         # Validate at least one seed
         if not any([seed_tracks, seed_artists, seed_genres]):
-            return json.dumps({"error": "At least one seed (tracks, artists, or genres) is required"}, indent=2)
+            return json.dumps(
+                {"error": "At least one seed (tracks, artists, or genres) is required"}, indent=2, ensure_ascii=False
+            )
 
         result = self._make_request("recommendations", params=params)
 
         if "error" in result:
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         tracks = result.get("tracks", [])
         simplified_tracks = [
@@ -556,7 +558,7 @@ class SpotifyTools(Toolkit):
             for track in tracks
         ]
 
-        return json.dumps(simplified_tracks, indent=2)
+        return json.dumps(simplified_tracks, indent=2, ensure_ascii=False)
 
     def play_track(
         self,
@@ -600,7 +602,7 @@ class SpotifyTools(Toolkit):
         )
 
         if result.get("success") or not result.get("error"):
-            return json.dumps({"success": True, "message": "Playback started"}, indent=2)
+            return json.dumps({"success": True, "message": "Playback started"}, indent=2, ensure_ascii=False)
 
         # Common error: no active device
         if result.get("error", {}).get("reason") == "NO_ACTIVE_DEVICE":
@@ -610,9 +612,10 @@ class SpotifyTools(Toolkit):
                     "reason": "NO_ACTIVE_DEVICE",
                 },
                 indent=2,
+                ensure_ascii=False,
             )
 
-        return json.dumps(result, indent=2)
+        return json.dumps(result, indent=2, ensure_ascii=False)
 
     def get_currently_playing(self) -> str:
         """Get information about the user's current playback state.
@@ -625,10 +628,10 @@ class SpotifyTools(Toolkit):
         result = self._make_request("me/player/currently-playing")
 
         if not result or result.get("success"):
-            return json.dumps({"message": "Nothing currently playing"}, indent=2)
+            return json.dumps({"message": "Nothing currently playing"}, indent=2, ensure_ascii=False)
 
         if "error" in result:
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         track = result.get("item", {})
         response = {
@@ -647,7 +650,7 @@ class SpotifyTools(Toolkit):
             "device": result.get("device", {}).get("name"),
         }
 
-        return json.dumps(response, indent=2)
+        return json.dumps(response, indent=2, ensure_ascii=False)
 
     def search_tracks(
         self,
@@ -680,7 +683,7 @@ class SpotifyTools(Toolkit):
         result = self._make_request("search", params=params)
 
         if "error" in result:
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         tracks = result.get("tracks", {}).get("items", [])
         simplified_tracks = [
@@ -696,7 +699,7 @@ class SpotifyTools(Toolkit):
             for track in tracks
         ]
 
-        return json.dumps(simplified_tracks, indent=2)
+        return json.dumps(simplified_tracks, indent=2, ensure_ascii=False)
 
     def create_playlist(
         self,
@@ -722,7 +725,7 @@ class SpotifyTools(Toolkit):
         # First get the current user's ID
         user_response = self._make_request("me")
         if "error" in user_response:
-            return json.dumps(user_response, indent=2)
+            return json.dumps(user_response, indent=2, ensure_ascii=False)
 
         user_id = user_response["id"]
 
@@ -736,7 +739,7 @@ class SpotifyTools(Toolkit):
         playlist = self._make_request(f"users/{user_id}/playlists", method="POST", body=body)
 
         if "error" in playlist:
-            return json.dumps(playlist, indent=2)
+            return json.dumps(playlist, indent=2, ensure_ascii=False)
 
         # Add tracks if provided
         if track_uris and len(track_uris) > 0:
@@ -760,7 +763,7 @@ class SpotifyTools(Toolkit):
             "tracks_added": playlist.get("tracks_added", 0),
         }
 
-        return json.dumps(result, indent=2)
+        return json.dumps(result, indent=2, ensure_ascii=False)
 
     def add_tracks_to_playlist(
         self,
@@ -795,9 +798,10 @@ class SpotifyTools(Toolkit):
                     "snapshot_id": result["snapshot_id"],
                 },
                 indent=2,
+                ensure_ascii=False,
             )
 
-        return json.dumps(result, indent=2)
+        return json.dumps(result, indent=2, ensure_ascii=False)
 
     def remove_tracks_from_playlist(
         self,
@@ -828,9 +832,10 @@ class SpotifyTools(Toolkit):
                     "snapshot_id": result["snapshot_id"],
                 },
                 indent=2,
+                ensure_ascii=False,
             )
 
-        return json.dumps(result, indent=2)
+        return json.dumps(result, indent=2, ensure_ascii=False)
 
     def get_playlist(
         self,
@@ -855,7 +860,7 @@ class SpotifyTools(Toolkit):
         result = self._make_request(f"playlists/{playlist_id}", params={"fields": fields})
 
         if "error" in result:
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         playlist_info = {
             "id": result["id"],
@@ -878,7 +883,7 @@ class SpotifyTools(Toolkit):
                 if item.get("track")
             ]
 
-        return json.dumps(playlist_info, indent=2)
+        return json.dumps(playlist_info, indent=2, ensure_ascii=False)
 
     def update_playlist_details(
         self,
@@ -909,11 +914,11 @@ class SpotifyTools(Toolkit):
             body["public"] = public
 
         if not body:
-            return json.dumps({"error": "No updates provided"}, indent=2)
+            return json.dumps({"error": "No updates provided"}, indent=2, ensure_ascii=False)
 
         result = self._make_request(f"playlists/{playlist_id}", method="PUT", body=body)
 
         if result.get("success") or "error" not in result:
-            return json.dumps({"success": True, "updated_fields": list(body.keys())}, indent=2)
+            return json.dumps({"success": True, "updated_fields": list(body.keys())}, indent=2, ensure_ascii=False)
 
-        return json.dumps(result, indent=2)
+        return json.dumps(result, indent=2, ensure_ascii=False)

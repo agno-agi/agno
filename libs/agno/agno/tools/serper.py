@@ -87,7 +87,7 @@ class SerperTools(Toolkit):
             if self.language:
                 params["hl"] = self.language
 
-            payload = json.dumps(params)
+            payload = json.dumps(params, ensure_ascii=False)
 
             log_debug(f"Making request to {url} with params: {params}")
             response = requests.request("POST", url, headers=headers, data=payload, timeout=self.timeout)
@@ -116,7 +116,7 @@ class SerperTools(Toolkit):
         """
         try:
             if not query:
-                return json.dumps({"error": "Please provide a query to search for"}, indent=2)
+                return json.dumps({"error": "Please provide a query to search for"}, indent=2, ensure_ascii=False)
 
             log_debug(f"Searching Google for: {query}")
 
@@ -132,11 +132,11 @@ class SerperTools(Toolkit):
                 return result["raw_response"]
             else:
                 log_error(f"Error searching Google for query {query}: {result['error']}")
-                return json.dumps({"error": result["error"]}, indent=2)
+                return json.dumps({"error": result["error"]}, indent=2, ensure_ascii=False)
 
         except Exception as e:
             log_error(f"Unexpected error searching Google for query {query}: {str(e)}")
-            return json.dumps({"error": f"An unexpected error occurred: {str(e)}"}, indent=2)
+            return json.dumps({"error": f"An unexpected error occurred: {str(e)}"}, indent=2, ensure_ascii=False)
 
     def search_news(
         self,
@@ -155,7 +155,7 @@ class SerperTools(Toolkit):
         """
         try:
             if not query:
-                return json.dumps({"error": "Please provide a query to search for news"}, indent=2)
+                return json.dumps({"error": "Please provide a query to search for news"}, indent=2, ensure_ascii=False)
 
             log_debug(f"Searching news for: {query}")
 
@@ -171,11 +171,11 @@ class SerperTools(Toolkit):
                 return result["raw_response"]
             else:
                 log_error(f"Error searching news for query {query}: {result['error']}")
-                return json.dumps({"error": result["error"]}, indent=2)
+                return json.dumps({"error": result["error"]}, indent=2, ensure_ascii=False)
 
         except Exception as e:
             log_error(f"Unexpected error searching news for query {query}: {str(e)}")
-            return json.dumps({"error": f"An unexpected error occurred: {str(e)}"}, indent=2)
+            return json.dumps({"error": f"An unexpected error occurred: {str(e)}"}, indent=2, ensure_ascii=False)
 
     def search_scholar(
         self,
@@ -194,7 +194,9 @@ class SerperTools(Toolkit):
         """
         try:
             if not query:
-                return json.dumps({"error": "Please provide a query to search for academic papers"}, indent=2)
+                return json.dumps(
+                    {"error": "Please provide a query to search for academic papers"}, indent=2, ensure_ascii=False
+                )
 
             log_debug(f"Searching scholar for: {query}")
 
@@ -210,11 +212,11 @@ class SerperTools(Toolkit):
                 return result["raw_response"]
             else:
                 log_error(f"Error searching scholar for query {query}: {result['error']}")
-                return json.dumps({"error": result["error"]}, indent=2)
+                return json.dumps({"error": result["error"]}, indent=2, ensure_ascii=False)
 
         except Exception as e:
             log_error(f"Unexpected error searching scholar for query {query}: {str(e)}")
-            return json.dumps({"error": f"An unexpected error occurred: {str(e)}"}, indent=2)
+            return json.dumps({"error": f"An unexpected error occurred: {str(e)}"}, indent=2, ensure_ascii=False)
 
     def scrape_webpage(
         self,
@@ -234,7 +236,7 @@ class SerperTools(Toolkit):
         try:
             if not url:
                 log_warning("No URL provided to scrape")
-                return json.dumps({"error": "Please provide a URL to scrape"}, indent=2)
+                return json.dumps({"error": "Please provide a URL to scrape"}, indent=2, ensure_ascii=False)
 
             log_debug(f"Scraping webpage: {url}")
 
@@ -250,8 +252,8 @@ class SerperTools(Toolkit):
                 return result["raw_response"]
             else:
                 log_error(f"Error scraping webpage {url}: {result['error']}")
-                return json.dumps({"error": result["error"]}, indent=2)
+                return json.dumps({"error": result["error"]}, indent=2, ensure_ascii=False)
 
         except Exception as e:
             log_error(f"Unexpected error scraping webpage {url}: {str(e)}")
-            return json.dumps({"error": f"An unexpected error occurred: {str(e)}"}, indent=2)
+            return json.dumps({"error": f"An unexpected error occurred: {str(e)}"}, indent=2, ensure_ascii=False)

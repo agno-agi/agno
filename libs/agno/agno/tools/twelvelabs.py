@@ -142,7 +142,9 @@ class TwelveLabsTools(Toolkit):
             vector = response.text_embedding.segments[0].float_
             if not vector:
                 return "No embedding returned"
-            return json.dumps({"model": self.embed_model, "dimensions": len(vector), "embedding": vector})
+            return json.dumps(
+                {"model": self.embed_model, "dimensions": len(vector), "embedding": vector}, ensure_ascii=False
+            )
         except Exception as e:
             log_error(f"Error embedding text: {e}")
             return f"Error embedding text: {e}"
@@ -222,7 +224,8 @@ class TwelveLabsTools(Toolkit):
                     "dimensions": dimensions,
                     "num_segments": len(segments),
                     "segments": segments,
-                }
+                },
+                ensure_ascii=False,
             )
         except Exception as e:
             log_error(f"Error embedding video {video_url}: {e}")

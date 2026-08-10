@@ -129,7 +129,7 @@ class RedditTools(Toolkit):
                 "created_utc": user.created_utc,
             }
 
-            return json.dumps(info)
+            return json.dumps(info, ensure_ascii=False)
 
         except Exception as e:
             return f"Error getting user info: {e}"
@@ -165,7 +165,7 @@ class RedditTools(Toolkit):
                 }
                 for post in posts
             ]
-            return json.dumps({"top_posts": top_posts})
+            return json.dumps({"top_posts": top_posts}, ensure_ascii=False)
         except Exception as e:
             return f"Error getting top posts: {e}"
 
@@ -197,7 +197,7 @@ class RedditTools(Toolkit):
                 "url": subreddit.url,
             }
 
-            return json.dumps(info)
+            return json.dumps(info, ensure_ascii=False)
 
         except Exception as e:
             return f"Error getting subreddit info: {e}"
@@ -211,7 +211,7 @@ class RedditTools(Toolkit):
             log_debug("Getting trending subreddits")
             popular_subreddits = self.reddit.subreddits.popular(limit=5)
             trending: List[str] = [subreddit.display_name for subreddit in popular_subreddits]
-            return json.dumps({"trending_subreddits": trending})
+            return json.dumps({"trending_subreddits": trending}, ensure_ascii=False)
         except Exception as e:
             return f"Error getting trending subreddits: {e}"
 
@@ -238,7 +238,7 @@ class RedditTools(Toolkit):
                 "over18": sub.over18,
                 "public_description": sub.public_description,
             }
-            return json.dumps({"subreddit_stats": stats})
+            return json.dumps({"subreddit_stats": stats}, ensure_ascii=False)
         except Exception as e:
             return f"Error getting subreddit stats: {e}"
 
@@ -306,7 +306,7 @@ class RedditTools(Toolkit):
                 "flair": submission.link_flair_text,
             }
 
-            return json.dumps({"post": post_info})
+            return json.dumps({"post": post_info}, ensure_ascii=False)
 
         except Exception as e:
             return f"Error creating post: {e}"
@@ -384,7 +384,7 @@ class RedditTools(Toolkit):
             }
 
             log_debug(f"Reply created successfully: {reply.permalink}")
-            return json.dumps({"reply": reply_info})
+            return json.dumps({"reply": reply_info}, ensure_ascii=False)
 
         except praw.exceptions.RedditAPIException as api_error:
             # Handle specific Reddit API errors
@@ -462,7 +462,7 @@ class RedditTools(Toolkit):
             }
 
             log_debug(f"Reply created successfully: {reply.permalink}")
-            return json.dumps({"reply": reply_info})
+            return json.dumps({"reply": reply_info}, ensure_ascii=False)
 
         except praw.exceptions.RedditAPIException as api_error:
             # Handle specific Reddit API errors

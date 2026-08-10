@@ -241,12 +241,12 @@ class WikiContextProvider(ContextProvider):
                         answer = Answer(results=answer.results, text=(answer.text or "") + note)
 
                 if answer is not None:
-                    yield json.dumps(serialize_answer(answer))
+                    yield json.dumps(serialize_answer(answer), ensure_ascii=False)
                 else:
-                    yield json.dumps({})
+                    yield json.dumps({}, ensure_ascii=False)
 
             except Exception as exc:
-                yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+                yield json.dumps({"error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False)
 
         return _update
 

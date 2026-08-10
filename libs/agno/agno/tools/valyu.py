@@ -106,7 +106,7 @@ class ValyuTools(Toolkit):
 
             parsed_results.append(result_dict)
 
-        return json.dumps(parsed_results, indent=2)
+        return json.dumps(parsed_results, indent=2, ensure_ascii=False)
 
     def _valyu_search(
         self,

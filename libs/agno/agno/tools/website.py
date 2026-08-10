@@ -51,4 +51,4 @@ class WebsiteTools(Toolkit):
 
         log_debug(f"Reading website: {url}")
         relevant_docs: List[Document] = website.read(url=url)
-        return json.dumps([doc.to_dict() for doc in relevant_docs])
+        return json.dumps([doc.to_dict() for doc in relevant_docs], ensure_ascii=False)
