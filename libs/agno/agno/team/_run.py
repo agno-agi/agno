@@ -6223,7 +6223,7 @@ async def _aroute_requirements_to_members(
             # the team run without the approved tool.
             raise r
         if isinstance(r, BaseException):
-            log_warning(f"Member continue_run failed: {r}")
+            raise r
         elif isinstance(r, str):
             member_results.append(r)
     return member_results

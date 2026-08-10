@@ -4,6 +4,8 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from agno.models.response import ToolExecution
 from agno.run import RunStatus
 from agno.run.requirement import RunRequirement
@@ -629,45 +631,7 @@ class TestUnresolvedTeamLevelRequirements:
 
 
 # ===========================================================================
-# 11. asyncio.gather error handling in _aroute_requirements_to_members
-# ===========================================================================
-
-
-class TestAsyncGatherErrorHandling:
-    """Verify that _aroute_requirements_to_members handles member failures gracefully."""
-
-    def test_gather_filters_exceptions(self):
-        """When asyncio.gather returns exceptions, they should be filtered out."""
-        # Simulate the post-gather filtering logic
-        results = ["[Agent A]: Success", Exception("Agent B failed"), None, "[Agent C]: Done"]
-
-        member_results = []
-        for r in results:
-            if isinstance(r, Exception):
-                pass  # logged as warning
-            elif r is not None:
-                member_results.append(r)
-
-        assert len(member_results) == 2
-        assert member_results[0] == "[Agent A]: Success"
-        assert member_results[1] == "[Agent C]: Done"
-
-    def test_all_exceptions_yields_empty_results(self):
-        """When all members fail, result list should be empty."""
-        results = [Exception("fail 1"), Exception("fail 2")]
-
-        member_results = []
-        for r in results:
-            if isinstance(r, Exception):
-                pass
-            elif r is not None:
-                member_results.append(r)
-
-        assert len(member_results) == 0
-
-
-# ===========================================================================
-# 12. _tool_result_requires_human_input
+# 11. _tool_result_requires_human_input
 # ===========================================================================
 
 
@@ -1170,6 +1134,27 @@ class TestRoutingForwardsRunContextToMembers:
         assert kwargs["dependencies"] == {"user_token": "Bearer abc"}
         assert kwargs["metadata"] == {"trace": "id"}
         assert kwargs["knowledge_filters"] == {"tag": "v"}
+
+    def test_async_routing_surfaces_member_failures(self):
+        from agno.team._run import _aroute_requirements_to_members
+
+        run_response, session, _ = self._make_run_response_with_member_req()
+        run_context = self._make_run_context()
+
+        member = MagicMock()
+        member.name = "Member 1"
+        member.acontinue_run = AsyncMock(side_effect=RuntimeError("member continue_run failed"))
+
+        team = MagicMock()
+
+        async def _exercise():
+            with patch("agno.team._tools._find_member_route_by_id", return_value=(0, member)):
+                with pytest.raises(RuntimeError, match="member continue_run failed"):
+                    await _aroute_requirements_to_members(
+                        team, run_response=run_response, session=session, run_context=run_context
+                    )
+
+        asyncio.run(_exercise())
 
     def test_async_streaming_routing_forwards_dependencies(self):
         from agno.team._run import _aroute_requirements_to_members_stream
