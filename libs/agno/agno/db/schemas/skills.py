@@ -1,13 +1,9 @@
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Dict, List, Optional
-from uuid import uuid4
 
 from agno.skills.errors import SkillValidationError
 from agno.skills.skill import Skill
-from agno.skills.utils import read_file_safe
 from agno.utils.dttm import now_epoch_s, to_epoch_s
-from agno.utils.path_safety import safe_join_relative_path
 
 
 @dataclass
@@ -97,7 +93,7 @@ class SkillRow:
 
         Raises SkillValidationError if any content entry is not str -> str: Skill's own
         validation checks structure only, and non-string content would otherwise persist
-        and fail later at script materialization.
+        and fail later when the skill's files are written to disk.
         """
         errors = [
             f"{field_name} entry {filename!r} must map a string filename to string content"
@@ -125,43 +121,4 @@ class SkillRow:
             source_type="db",
             reference_contents=dict(self.references),
             script_contents=dict(self.scripts),
-        )
-
-    @classmethod
-    def from_skill(
-        cls, skill: Skill, id: Optional[str] = None, version: int = 1, user_id: Optional[str] = None
-    ) -> "SkillRow":
-        """Build a row from a Skill.
-
-        A path-backed skill has its declared files read from disk, so the row always
-        carries full content. A content-carrying skill's dicts pass through verbatim.
-        user_id is row-level ownership supplied by the caller; Skill does not carry it.
-        """
-        if skill.source_path is not None:
-            root = Path(skill.source_path)
-            scripts = {
-                filename: read_file_safe(safe_join_relative_path(root / "scripts", filename))
-                for filename in skill.scripts
-            }
-            references = {
-                filename: read_file_safe(safe_join_relative_path(root / "references", filename))
-                for filename in skill.references
-            }
-        else:
-            scripts = dict(skill.script_contents or {})
-            references = dict(skill.reference_contents or {})
-        return cls(
-            id=id or str(uuid4()),
-            name=skill.name,
-            user_id=user_id,
-            description=skill.description,
-            instructions=skill.instructions,
-            source_type=skill.source_type,
-            scripts=scripts,
-            references=references,
-            metadata=skill.metadata,
-            license=skill.license,
-            compatibility=skill.compatibility,
-            allowed_tools=skill.allowed_tools,
-            version=version,
         )

@@ -1,6 +1,8 @@
 import os
 import tempfile
+from pathlib import Path
 from unittest.mock import MagicMock, Mock
+from uuid import uuid4
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -9,7 +11,6 @@ from agno.db.schemas.skills import SkillRow
 from agno.db.sqlite.schemas import SKILLS_TABLE_SCHEMA
 from agno.skills.errors import SkillError
 from agno.skills.loaders.local import LocalSkills
-from agno.skills.skill import Skill
 
 # ============================================================================
 # FIXTURES
@@ -72,6 +73,27 @@ def skill_folder(tmp_path):
     (folder / "scripts" / "draft.sh").write_text("#!/bin/sh\necho draft\n", encoding="utf-8")
     (folder / "references" / "style.md").write_text("Keep it short.\n", encoding="utf-8")
     return folder
+
+
+def _row_dict_from_path_backed_skill(skill, **overrides):
+    """Publish a path-backed skill: read its declared files and shape them as a row.
+
+    The library has no helper for this - a caller publishing a local skill reads the
+    files itself - so the tests that need a stored copy of a real on-disk skill do the
+    same here.
+    """
+    root = Path(skill.source_path)
+    row = {
+        "id": str(uuid4()),
+        "name": skill.name,
+        "description": skill.description,
+        "instructions": skill.instructions,
+        "source_type": skill.source_type,
+        "scripts": {f: (root / "scripts" / f).read_text(encoding="utf-8") for f in skill.scripts},
+        "references": {f: (root / "references" / f).read_text(encoding="utf-8") for f in skill.references},
+    }
+    row.update(overrides)
+    return row
 
 
 # ============================================================================
@@ -215,33 +237,18 @@ def test_to_skill_carries_content(skill_data):
     assert skill.allowed_tools == ["bash"]
 
 
-def test_from_skill_content_carrying():
-    skill = Skill(
-        name="s",
-        description="d",
-        instructions="i",
-        scripts=["a.sh"],
-        script_contents={"a.sh": "echo a"},
-        reference_contents={},
-    )
-    row = SkillRow.from_skill(skill)
-    assert row.scripts == {"a.sh": "echo a"}
-    assert row.references == {}
-    assert row.version == 1
-    assert row.id
-    # user_id is row-level ownership, never read from the Skill: default is shared
-    assert row.user_id is None
-    owned = SkillRow.from_skill(skill, user_id="user-a")
-    assert owned.user_id == "user-a"
+def test_path_backed_skill_round_trips_through_a_row(skill_folder):
+    """A path-backed skill's declared files survive a trip through the row shape.
 
-
-def test_from_skill_reads_path_backed_files_from_disk(skill_folder):
+    Previously covered via SkillRow.from_skill, which had no production caller and was
+    removed; the publish step is done here the way a caller would do it.
+    """
     skills = LocalSkills(str(skill_folder)).load()
     assert len(skills) == 1
     loaded = skills[0]
     assert loaded.source_path is not None
 
-    row = SkillRow.from_skill(loaded)
+    row = SkillRow.from_dict(_row_dict_from_path_backed_skill(loaded))
     assert row.scripts == {"draft.sh": "#!/bin/sh\necho draft\n"}
     assert row.references == {"style.md": "Keep it short.\n"}
 
@@ -331,7 +338,7 @@ def test_stored_row_reads_back_as_content_carrying_skill(sqlite_db, skill_folder
     # The publish path: a real LocalSkills-loaded (path-backed) skill, written to the
     # table, reads back through to_skill() as an equivalent content-carrying Skill.
     loaded = LocalSkills(str(skill_folder)).load()[0]
-    sqlite_db.create_skill(SkillRow.from_skill(loaded).to_dict())
+    sqlite_db.create_skill(_row_dict_from_path_backed_skill(loaded))
 
     stored = sqlite_db.get_skill("release-notes")
     skill = SkillRow.from_dict(stored).to_skill()
@@ -637,7 +644,7 @@ async def test_async_delete_skill(async_sqlite_db, skill_data):
 
 async def test_async_stored_row_reads_back_as_content_carrying_skill(async_sqlite_db, skill_folder):
     loaded = LocalSkills(str(skill_folder)).load()[0]
-    await async_sqlite_db.create_skill(SkillRow.from_skill(loaded).to_dict())
+    await async_sqlite_db.create_skill(_row_dict_from_path_backed_skill(loaded))
 
     stored = await async_sqlite_db.get_skill("release-notes")
     skill = SkillRow.from_dict(stored).to_skill()
