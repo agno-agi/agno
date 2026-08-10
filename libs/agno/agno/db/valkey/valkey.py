@@ -18,6 +18,7 @@ from agno.db.utils import (
     deserialize_sessions,
     filter_context_runs,
     merge_runs_table_with_legacy_blob,
+    metric_record_day,
 )
 from agno.db.valkey.utils import (
     apply_filters,
@@ -1794,13 +1795,16 @@ class ValkeyDb(BaseDb):
                 completed_metrics = [m for m in all_metrics if m.get("completed", False)]
                 if completed_metrics:
                     latest_completed = max(completed_metrics, key=lambda x: x.get("date", ""))
-                    return datetime.fromisoformat(latest_completed["date"]).date() + timedelta(days=1)
+                    latest_day = metric_record_day(latest_completed)
+                    if latest_day is not None:
+                        return latest_day + timedelta(days=1)
                 else:
                     # Find the earliest incomplete metric
                     incomplete_metrics = [m for m in all_metrics if not m.get("completed", False)]
                     if incomplete_metrics:
-                        earliest_incomplete = min(incomplete_metrics, key=lambda x: x.get("date", ""))
-                        return datetime.fromisoformat(earliest_incomplete["date"]).date()
+                        earliest_day = metric_record_day(min(incomplete_metrics, key=lambda x: x.get("date", "")))
+                        if earliest_day is not None:
+                            return earliest_day
 
             # No metrics records, find first session
             sessions_raw, _ = self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
@@ -1814,7 +1818,7 @@ class ValkeyDb(BaseDb):
             log_error(f"Error getting metrics starting date: {str(e)}")
             raise e
 
-    def calculate_metrics(self, user_isolation: bool = False) -> Optional[list[dict]]:
+    def calculate_metrics(self) -> Optional[list[dict]]:
         """Calculate metrics for all dates without complete metrics.
 
         Returns:
@@ -1865,9 +1869,7 @@ class ValkeyDb(BaseDb):
                 # calculate_date_metrics returns a LIST: one record per
                 # distinct user_id (plus the empty-string bucket for unowned
                 # sessions). Iterate and upsert each.
-                for metrics_record in calculate_date_metrics(
-                    date_to_process, sessions_for_date, user_isolation=user_isolation
-                ):
+                for metrics_record in calculate_date_metrics(date_to_process, sessions_for_date):
                     # Preserve created_at across re-runs.
                     existing_record = self._get_record("metrics", metrics_record["id"])
                     if existing_record:
@@ -1913,7 +1915,9 @@ class ValkeyDb(BaseDb):
             if starting_date is not None or ending_date is not None:
                 filtered_metrics = []
                 for metric in all_metrics:
-                    metric_date = datetime.fromisoformat(metric.get("date", "")).date()
+                    metric_date = metric_record_day(metric)
+                    if metric_date is None:
+                        continue
                     if starting_date is not None and metric_date < starting_date:
                         continue
                     if ending_date is not None and metric_date > ending_date:
@@ -1961,7 +1965,8 @@ class ValkeyDb(BaseDb):
         Args:
             id (str): The ID of the knowledge row to delete.
             user_id (Optional[str]): Owner-scoping filter. When set, only
-                deletes if the row is owned by ``user_id`` OR is unowned.
+                deletes if the row is owned by ``user_id``. Unowned rows are
+                shared content and are not the caller's to delete.
 
         Raises:
             Exception: If any error occurs while deleting the knowledge content.
@@ -1969,7 +1974,7 @@ class ValkeyDb(BaseDb):
         try:
             if user_id is not None:
                 existing = self._get_record("knowledge", id)
-                if existing is not None and not self._knowledge_doc_is_visible(existing, user_id):
+                if existing is None or existing.get("user_id") != user_id:
                     log_debug(f"Skipping delete of knowledge content {id}: not owned by {user_id}")
                     return
             self._delete_record("knowledge", id)
@@ -2145,6 +2150,17 @@ class ValkeyDb(BaseDb):
         if not eval_run_ids:
             return
 
+        if user_id is not None:
+            # Drop the ids that are not this owner's before the batch runs, so the
+            # pipeline below stays a single round trip.
+            eval_run_ids = [
+                eval_run_id
+                for eval_run_id in eval_run_ids
+                if (self._get_record("evals", eval_run_id) or {}).get("user_id") == user_id
+            ]
+            if not eval_run_ids:
+                return
+
         try:
             index_fields = ["agent_id", "team_id", "workflow_id", "model_id", "eval_type"]
 
@@ -2275,6 +2291,9 @@ class ValkeyDb(BaseDb):
                 if workflow_id is not None and run.get("workflow_id") != workflow_id:
                     continue
                 if model_id is not None and run.get("model_id") != model_id:
+                    continue
+
+                if user_id is not None and run.get("user_id") != user_id:
                     continue
 
                 # Eval type filter

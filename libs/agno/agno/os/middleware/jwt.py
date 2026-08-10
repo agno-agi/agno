@@ -12,7 +12,7 @@ from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from agno.os.auth import INTERNAL_SERVICE_SCOPES, build_insufficient_permissions_detail
+from agno.os.auth import INTERNAL_SCHEDULER_USER_ID, INTERNAL_SERVICE_SCOPES, build_insufficient_permissions_detail
 from agno.os.scopes import (
     AgentOSScope,
     check_route_scopes,
@@ -28,10 +28,6 @@ if TYPE_CHECKING:
     from jwt import PyJWK
 
     from agno.os.service_accounts import ServiceAccountVerifier
-
-# The user_id the internal scheduler token authenticates as. Reserved: a JWT must never
-# be allowed to claim it (see is_reserved_principal).
-INTERNAL_SCHEDULER_USER_ID = "__scheduler__"
 
 # Private request.state marker set only by this middleware once it has decided a request's
 # auth. The mount short-circuit reads THIS, not the public request.state.authenticated
@@ -972,7 +968,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 request, token, method, path, origin, cors_allowed_origins, call_next
             )
 
-        # Check for internal service token (used by scheduler executor)
+        # Check for internal service token (used by scheduler executor).
+        # See the matching block in ``agno.os.auth`` for the rationale on the
+        # ``INTERNAL_SCHEDULER_USER_ID`` sentinel.
         internal_token = getattr(request.app.state, "internal_service_token", None)
         if internal_token and hmac.compare_digest(token, internal_token):
             request.state.authenticated = True

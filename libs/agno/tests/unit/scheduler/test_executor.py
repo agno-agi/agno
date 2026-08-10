@@ -3,9 +3,11 @@
 import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import unquote
 
 import pytest
 
+from agno.db.schemas.scheduler import SCHEDULE_OWNER_HEADER, Schedule
 from agno.scheduler.executor import ScheduleExecutor, _to_form_value
 
 
@@ -326,3 +328,110 @@ class TestExecutorExecute:
         mock_db.update_schedule_run.assert_called()
         cancel_call = mock_db.update_schedule_run.call_args
         assert cancel_call[1]["status"] == "cancelled"
+
+
+class TestScheduleOwnerAttribution:
+    """The schedule owner -- not the payload, not the internal service -- decides
+    who a scheduled call runs as."""
+
+    @pytest.fixture
+    def executor(self):
+        return ScheduleExecutor(base_url="http://localhost:8000", internal_service_token="tok")
+
+    @staticmethod
+    def _schedule(**overrides):
+        defaults = {
+            "id": "sched-1",
+            "name": "nightly",
+            "cron_expr": "0 0 * * *",
+            "endpoint": "/agents/my-agent/runs",
+            "method": "POST",
+        }
+        defaults.update(overrides)
+        return Schedule(**defaults)
+
+    @staticmethod
+    async def _headers_sent(executor, schedule):
+        """Run _call_endpoint for a non-run endpoint and return the headers."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = "OK"
+
+        mock_client = AsyncMock()
+        mock_client.is_closed = False
+        mock_client.request = AsyncMock(return_value=mock_resp)
+        executor._client = mock_client
+
+        await executor._call_endpoint(schedule)
+        return mock_client.request.call_args.kwargs["headers"]
+
+    @pytest.mark.asyncio
+    async def test_payload_user_id_cannot_impersonate_the_owner(self, executor):
+        schedule = self._schedule(user_id="alice", payload={"message": "hi", "user_id": "victim"})
+        with patch.object(executor, "_background_run", new=AsyncMock(return_value={})) as bg:
+            await executor._call_endpoint(schedule)
+
+        assert bg.await_args.args[3]["user_id"] == "alice"
+
+    @pytest.mark.asyncio
+    async def test_unowned_schedule_sends_no_user_id(self, executor):
+        schedule = self._schedule(user_id=None, payload={"message": "hi", "user_id": "victim"})
+        with patch.object(executor, "_background_run", new=AsyncMock(return_value={})) as bg:
+            await executor._call_endpoint(schedule)
+
+        assert "user_id" not in bg.await_args.args[3]
+
+    @pytest.mark.asyncio
+    async def test_owner_header_is_sent_on_run_endpoints(self, executor):
+        schedule = self._schedule(user_id="alice", payload={"message": "hi"})
+        with patch.object(executor, "_background_run", new=AsyncMock(return_value={})) as bg:
+            await executor._call_endpoint(schedule)
+
+        assert bg.await_args.args[2][SCHEDULE_OWNER_HEADER] == "alice"
+
+    @pytest.mark.asyncio
+    async def test_owner_header_is_sent_on_non_run_endpoints(self, executor):
+        """A schedule can name any endpoint, so the owner has to ride along there too."""
+        schedule = self._schedule(user_id="alice", endpoint="/schedules/someone-elses", method="DELETE")
+        headers = await self._headers_sent(executor, schedule)
+
+        assert headers[SCHEDULE_OWNER_HEADER] == "alice"
+
+    @pytest.mark.asyncio
+    async def test_unowned_schedule_sends_no_owner_header(self, executor):
+        schedule = self._schedule(user_id=None, endpoint="/schedules/someone-elses", method="DELETE")
+        headers = await self._headers_sent(executor, schedule)
+
+        assert SCHEDULE_OWNER_HEADER not in headers
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("owner", ["alice smith", "user/1", "ünicode", " padded "])
+    async def test_owner_is_percent_encoded_for_the_hop(self, executor, owner):
+        """A header value has to be latin-1 and has to survive whitespace
+        stripping, so the executor encodes it; the reader unquotes it back."""
+        schedule = self._schedule(user_id=owner, endpoint="/config", method="GET")
+        headers = await self._headers_sent(executor, schedule)
+
+        raw = headers[SCHEDULE_OWNER_HEADER]
+        raw.encode("latin-1")  # would raise if the owner rode along un-encoded
+        assert unquote(raw) == owner
+
+    @pytest.mark.asyncio
+    async def test_empty_string_owner_is_forwarded_not_dropped(self, executor):
+        """The guard is ``is not None``, so an owner named ``""`` still rides
+        along -- it is an owner, not a second spelling of "unowned". The read
+        side refuses the blank identity with a 403 rather than widening the
+        call to every user."""
+        schedule = self._schedule(user_id="", endpoint="/config", method="GET")
+        headers = await self._headers_sent(executor, schedule)
+
+        assert headers[SCHEDULE_OWNER_HEADER] == ""
+
+    @pytest.mark.asyncio
+    async def test_empty_string_owner_reaches_the_run_payload(self, executor):
+        schedule = self._schedule(user_id="", payload={"message": "hi", "user_id": "victim"})
+        with patch.object(executor, "_background_run", new=AsyncMock(return_value={})) as bg:
+            await executor._call_endpoint(schedule)
+
+        assert bg.await_args.args[3]["user_id"] == ""
+        assert bg.await_args.args[2][SCHEDULE_OWNER_HEADER] == ""

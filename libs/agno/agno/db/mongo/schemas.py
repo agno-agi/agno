@@ -74,9 +74,17 @@ METRICS_COLLECTION_SCHEMA = [
     {"key": "id", "unique": True},
     {"key": "date"},
     {"key": "aggregation_period"},
+    # Owner of this metric bucket. Stored as an empty string for "no owner"
+    # so the compound unique key behaves predictably — Mongo treats multiple
+    # explicit-null values as distinct, which would break uniqueness on the
+    # per-user bucket. ``get_metrics`` maps ``""`` back to ``None`` on read.
+    {"key": "user_id"},
     {"key": "created_at"},
     {"key": "updated_at"},
-    {"key": [("date", 1), ("aggregation_period", 1)], "unique": True},
+    # Unique key expanded to include user_id after per-user aggregation
+    # landed. The old (date, aggregation_period) index would conflict on the
+    # second row written for any single date that has > 1 distinct user.
+    {"key": [("user_id", 1), ("date", 1), ("aggregation_period", 1)], "unique": True},
 ]
 
 CULTURAL_KNOWLEDGE_COLLECTION_SCHEMA = [
@@ -132,14 +140,22 @@ LEARNINGS_COLLECTION_SCHEMA = [
 
 SCHEDULES_COLLECTION_SCHEMA = [
     {"key": "id", "unique": True},
-    {"key": "name", "unique": True},
+    # ``name`` is scoped per owner — the router checks uniqueness with
+    # ``get_schedule_by_name(name, user_id=...)`` and returns 409. A global
+    # unique index would let user A's ``nightly`` block user B's ``nightly``
+    # with a raw DuplicateKeyError that bypasses the scoped 409. SQL adapters
+    # keep ``name`` as a plain index for the same reason.
+    {"key": "name"},
     {"key": "enabled"},
     {"key": "next_run_at"},
     {"key": "locked_by"},
     {"key": "locked_at"},
+    {"key": "user_id"},
     {"key": "created_at"},
     {"key": "updated_at"},
     {"key": [("enabled", 1), ("next_run_at", 1)]},
+    # Scoped list / claim queries filter on user_id first.
+    {"key": [("user_id", 1), ("enabled", 1), ("next_run_at", 1)]},
 ]
 
 SCHEDULE_RUNS_COLLECTION_SCHEMA = [
@@ -148,6 +164,9 @@ SCHEDULE_RUNS_COLLECTION_SCHEMA = [
     {"key": "status"},
     {"key": "triggered_at"},
     {"key": "completed_at"},
+    # Denormalised from the parent schedule so the runs router can scope
+    # per user without a join.
+    {"key": "user_id"},
     {"key": "created_at"},
 ]
 

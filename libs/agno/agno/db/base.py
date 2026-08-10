@@ -419,11 +419,16 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     # --- Metrics ---
+    # ``user_id`` filter scopes the per-user metrics bucket. ``None`` returns
+    # all buckets (admin view); a non-empty string returns just that user's
+    # bucket; passing the sentinel empty string returns the unowned bucket
+    # (sessions where no user_id was set — pre-RBAC / system runs).
     @abstractmethod
     def get_metrics(
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
         raise NotImplementedError
 
@@ -432,21 +437,38 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     # --- Knowledge ---
+    # ``user_id`` semantics:
+    # - ``None``: no scoping. Single-user / admin / RBAC-off behaviour — sees
+    #   every row including those owned by other users.
+    # - non-empty string: reads scope to "rows owned by this user OR shared
+    #   rows (user_id IS NULL)". This is what non-admin authenticated routes
+    #   pass. Deletes are stricter — see ``delete_knowledge_content``.
+    #
+    # The "shared bucket" semantics (NULL = visible to all) lets admins
+    # publish org-wide knowledge by leaving the owner unset, while per-user
+    # uploads stay private. Owner on writes is carried inside ``knowledge_row``.
+
     @abstractmethod
-    def delete_knowledge_content(self, id: str):
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): When set, only delete if the row is owned
+                by this user. Shared / NULL-owned rows are readable by every
+                scoped caller but deletable by none of them: removing shared
+                content is the unscoped (admin) path. When None, no ownership
+                check.
         """
         raise NotImplementedError
 
     @abstractmethod
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): Owner-scoping filter; see module note.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -461,6 +483,7 @@ class BaseDb(ABC):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -470,6 +493,7 @@ class BaseDb(ABC):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): Owner-scoping filter; see module note.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -485,6 +509,8 @@ class BaseDb(ABC):
 
         Args:
             knowledge_row (KnowledgeRow): The knowledge row to upsert.
+                ``knowledge_row.user_id`` carries the owner (``None`` for
+                shared / system uploads).
 
         Returns:
             Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
@@ -782,12 +808,14 @@ class BaseDb(ABC):
         self,
         component_id: str,
         component_type: Optional[ComponentType] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Get a component by ID.
 
         Args:
             component_id: The component ID.
             component_type: Optional filter by type (agent|team|workflow).
+            user_id: If set, only return the component if owned by this user.
 
         Returns:
             Component dictionary or None if not found.
@@ -802,6 +830,7 @@ class BaseDb(ABC):
         description: Optional[str] = None,
         current_version: Optional[int] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create or update a component.
 
@@ -812,6 +841,7 @@ class BaseDb(ABC):
             description: Optional description.
             current_version: Optional current version.
             metadata: Optional metadata dict.
+            user_id: Owner to set when creating; scopes the update to this user when set.
 
         Returns:
             Created/updated component dictionary.
@@ -825,12 +855,14 @@ class BaseDb(ABC):
         self,
         component_id: str,
         hard_delete: bool = False,
+        user_id: Optional[str] = None,
     ) -> bool:
         """Delete a component and all its configs/links.
 
         Args:
             component_id: The component ID.
             hard_delete: If True, permanently delete. Otherwise soft-delete.
+            user_id: If set, only delete the component if owned by this user.
 
         Returns:
             True if deleted, False if not found or already deleted.
@@ -844,6 +876,7 @@ class BaseDb(ABC):
         limit: int = 20,
         offset: int = 0,
         exclude_component_ids: Optional[Set[str]] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List components with pagination.
 
@@ -853,6 +886,7 @@ class BaseDb(ABC):
             limit: Maximum number of items to return.
             offset: Number of items to skip.
             exclude_component_ids: Component IDs to exclude from results.
+            user_id: If set, only list components owned by this user.
 
         Returns:
             Tuple of (list of component dicts, total count).
@@ -871,6 +905,7 @@ class BaseDb(ABC):
         stage: str = "draft",
         notes: Optional[str] = None,
         links: Optional[List[Dict[str, Any]]] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Create a component with its initial config atomically.
 
@@ -885,12 +920,13 @@ class BaseDb(ABC):
             stage: "draft" or "published".
             notes: Optional notes.
             links: Optional list of links. Each must have child_version set.
+            user_id: Owner to attribute the component to.
 
         Returns:
             Tuple of (component dict, config dict).
 
         Raises:
-            ValueError: If component already exists, invalid stage, or link missing child_version.
+            ValueError: If component ID is already taken, invalid stage, or link missing child_version.
         """
         raise NotImplementedError
 
@@ -1335,12 +1371,20 @@ class BaseDb(ABC):
 
     # --- Schedules (Optional) ---
     # These methods are optional. Override in subclasses to enable scheduler persistence.
-
-    def get_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+    #
+    # Notes on ``user_id`` for schedule methods:
+    # - User-facing reads/updates/deletes accept an optional ``user_id`` filter.
+    #   ``None`` means "no scoping" (preserves single-user / admin behaviour);
+    #   a string AND-s into the WHERE clause so non-admins only see their own.
+    # - Owner on writes is carried inside ``schedule_data`` / ``run_data``.
+    # - ``claim_due_schedule`` and ``release_schedule`` are EXECUTOR endpoints
+    #   and intentionally take no ``user_id`` — the poller has to fire schedules
+    #   across all users.
+    def get_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get a schedule by ID."""
         raise NotImplementedError
 
-    def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+    def get_schedule_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get a schedule by name."""
         raise NotImplementedError
 
@@ -1349,6 +1393,7 @@ class BaseDb(ABC):
         enabled: Optional[bool] = None,
         limit: int = 100,
         page: int = 1,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List schedules with optional filtering.
 
@@ -1358,36 +1403,40 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Create a new schedule."""
+        """Create a new schedule. ``schedule_data["user_id"]`` carries the owner
+        (``None`` for system-created schedules)."""
         raise NotImplementedError
 
-    def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    def update_schedule(
+        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
         """Update a schedule by ID."""
         raise NotImplementedError
 
-    def delete_schedule(self, schedule_id: str) -> bool:
+    def delete_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
         """Delete a schedule and its associated runs."""
         raise NotImplementedError
 
     def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
-        """Atomically claim a due schedule for execution."""
+        """Atomically claim a due schedule for execution. SYSTEM CONTEXT — no user scoping."""
         raise NotImplementedError
 
     def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
-        """Release a claimed schedule and optionally update next_run_at."""
+        """Release a claimed schedule and optionally update next_run_at. SYSTEM CONTEXT."""
         raise NotImplementedError
 
     # --- Schedule Runs (Optional) ---
 
     def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Create a schedule run record."""
+        """Create a schedule run record. ``run_data["user_id"]`` should be
+        denormalised from the parent schedule so the runs router can scope reads."""
         raise NotImplementedError
 
     def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
-        """Update a schedule run record."""
+        """Update a schedule run record. SYSTEM CONTEXT — executor writes."""
         raise NotImplementedError
 
-    def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+    def get_schedule_run(self, run_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get a schedule run by ID."""
         raise NotImplementedError
 
@@ -1396,6 +1445,7 @@ class BaseDb(ABC):
         schedule_id: str,
         limit: int = 20,
         page: int = 1,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List runs for a schedule.
 
@@ -1555,8 +1605,15 @@ class BaseDb(ABC):
         """Create a service account. Raises on failure (including duplicate active name)."""
         raise NotImplementedError
 
-    def get_service_account(self, service_account_id: str) -> Optional[Dict[str, Any]]:
-        """Get a service account by ID."""
+    def get_service_account(self, service_account_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get a service account by ID.
+
+        Args:
+            service_account_id (str): The ID of the service account.
+            user_id (Optional[str]): Owner-scoping filter. When set, only
+                returns the account if it is owned by ``user_id`` or is a
+                workspace-level account (no owner).
+        """
         raise NotImplementedError
 
     def get_service_account_by_token_hash(self, token_hash: str) -> Optional[Dict[str, Any]]:
@@ -1574,6 +1631,7 @@ class BaseDb(ABC):
         page: int = 1,
         sort_by: str = "created_at",
         sort_order: str = "desc",
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List service accounts.
 
@@ -1854,9 +1912,13 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     # --- Metrics ---
+    # See "user_id filter" note on the sync BaseDb.get_metrics above.
     @abstractmethod
     async def get_metrics(
-        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
         raise NotImplementedError
 
@@ -1865,25 +1927,15 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     # --- Knowledge ---
+    # See ``BaseDb`` knowledge methods for the ``user_id`` semantics.
     @abstractmethod
-    async def delete_knowledge_content(self, id: str):
-        """Delete a knowledge row from the database.
-
-        Args:
-            id (str): The ID of the knowledge row to delete.
-        """
+    async def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
+        """Delete a knowledge row from the database."""
         raise NotImplementedError
 
     @abstractmethod
-    async def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
-        """Get a knowledge row from the database.
-
-        Args:
-            id (str): The ID of the knowledge row to get.
-
-        Returns:
-            Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
-        """
+    async def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
+        """Get a knowledge row from the database."""
         raise NotImplementedError
 
     @abstractmethod
@@ -1894,34 +1946,14 @@ class AsyncBaseDb(ABC):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
-        """Get all knowledge contents from the database.
-
-        Args:
-            limit (Optional[int]): The maximum number of knowledge contents to return.
-            page (Optional[int]): The page number.
-            sort_by (Optional[str]): The column to sort by.
-            sort_order (Optional[str]): The order to sort by.
-            linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
-
-        Returns:
-            Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
+        """Get all knowledge contents from the database."""
         raise NotImplementedError
 
     @abstractmethod
     async def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
-        """Upsert knowledge content in the database.
-
-        Args:
-            knowledge_row (KnowledgeRow): The knowledge row to upsert.
-
-        Returns:
-            Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
-        """
+        """Upsert knowledge content in the database."""
         raise NotImplementedError
 
     # --- Evals ---
@@ -2478,13 +2510,13 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     # --- Schedules (Optional) ---
-    # These methods are optional. Override in subclasses to enable scheduler persistence.
+    # See "Notes on user_id" on the sync BaseDb above. Same semantics here.
 
-    async def get_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+    async def get_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get a schedule by ID."""
         raise NotImplementedError
 
-    async def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+    async def get_schedule_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get a schedule by name."""
         raise NotImplementedError
 
@@ -2493,6 +2525,7 @@ class AsyncBaseDb(ABC):
         enabled: Optional[bool] = None,
         limit: int = 100,
         page: int = 1,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List schedules with optional filtering.
 
@@ -2502,23 +2535,25 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     async def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Create a new schedule."""
+        """Create a new schedule. ``schedule_data["user_id"]`` carries the owner."""
         raise NotImplementedError
 
-    async def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    async def update_schedule(
+        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
         """Update a schedule by ID."""
         raise NotImplementedError
 
-    async def delete_schedule(self, schedule_id: str) -> bool:
+    async def delete_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
         """Delete a schedule and its associated runs."""
         raise NotImplementedError
 
     async def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
-        """Atomically claim a due schedule for execution."""
+        """Atomically claim a due schedule for execution. SYSTEM CONTEXT — no user scoping."""
         raise NotImplementedError
 
     async def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
-        """Release a claimed schedule and optionally update next_run_at."""
+        """Release a claimed schedule and optionally update next_run_at. SYSTEM CONTEXT."""
         raise NotImplementedError
 
     # --- Schedule Runs (Optional) ---
@@ -2528,10 +2563,10 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     async def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
-        """Update a schedule run record."""
+        """Update a schedule run record. SYSTEM CONTEXT — executor writes."""
         raise NotImplementedError
 
-    async def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+    async def get_schedule_run(self, run_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get a schedule run by ID."""
         raise NotImplementedError
 
@@ -2540,6 +2575,7 @@ class AsyncBaseDb(ABC):
         schedule_id: str,
         limit: int = 20,
         page: int = 1,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List runs for a schedule.
 
@@ -2624,8 +2660,17 @@ class AsyncBaseDb(ABC):
         """Create a service account. Raises on failure (including duplicate active name)."""
         raise NotImplementedError
 
-    async def get_service_account(self, service_account_id: str) -> Optional[Dict[str, Any]]:
-        """Get a service account by ID."""
+    async def get_service_account(
+        self, service_account_id: str, user_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Get a service account by ID.
+
+        Args:
+            service_account_id (str): The ID of the service account.
+            user_id (Optional[str]): Owner-scoping filter. When set, only
+                returns the account if it is owned by ``user_id`` or is a
+                workspace-level account (no owner).
+        """
         raise NotImplementedError
 
     async def get_service_account_by_token_hash(self, token_hash: str) -> Optional[Dict[str, Any]]:
@@ -2643,6 +2688,7 @@ class AsyncBaseDb(ABC):
         page: int = 1,
         sort_by: str = "created_at",
         sort_order: str = "desc",
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List service accounts.
 

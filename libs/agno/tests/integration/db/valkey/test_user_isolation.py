@@ -31,20 +31,9 @@ def _seed_sessions(valkey_db: ValkeyDb) -> None:
 
 
 class TestMetricsUserIsolation:
-    def test_default_mode_produces_single_bucket(self, valkey_db: ValkeyDb):
+    def test_buckets_per_user(self, valkey_db: ValkeyDb):
         _seed_sessions(valkey_db)
         results = valkey_db.calculate_metrics()
-
-        assert results is not None and len(results) == 1
-        record = results[0]
-        assert record["user_id"] == ""
-        assert record["agent_sessions_count"] == 4
-        assert record["users_count"] == 2
-        assert record["id"].endswith("__daily")
-
-    def test_user_isolation_buckets_per_user(self, valkey_db: ValkeyDb):
-        _seed_sessions(valkey_db)
-        results = valkey_db.calculate_metrics(user_isolation=True)
 
         assert results is not None
         by_user = {record["user_id"]: record for record in results}
@@ -54,11 +43,12 @@ class TestMetricsUserIsolation:
         assert by_user[""]["agent_sessions_count"] == 1
         assert by_user["user_a"]["users_count"] == 1
         assert by_user[""]["users_count"] == 0
+        assert by_user[""]["id"].endswith("__daily")
 
     def test_recalculation_updates_same_records(self, valkey_db: ValkeyDb):
         _seed_sessions(valkey_db)
-        first = valkey_db.calculate_metrics(user_isolation=True)
-        second = valkey_db.calculate_metrics(user_isolation=True)
+        first = valkey_db.calculate_metrics()
+        second = valkey_db.calculate_metrics()
 
         assert first is not None and second is not None
         assert sorted(record["id"] for record in first) == sorted(record["id"] for record in second)
@@ -67,7 +57,7 @@ class TestMetricsUserIsolation:
 
     def test_get_metrics_user_filter_and_sentinel_mapping(self, valkey_db: ValkeyDb):
         _seed_sessions(valkey_db)
-        valkey_db.calculate_metrics(user_isolation=True)
+        valkey_db.calculate_metrics()
 
         user_a_metrics, _ = valkey_db.get_metrics(user_id="user_a")
         assert len(user_a_metrics) == 1
