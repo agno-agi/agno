@@ -123,7 +123,7 @@ class ContextCompactionManager:
     message_limit: Optional[int] = None  # trigger compaction at N messages
     token_limit: Optional[int] = None  # trigger compaction at N tokens
     keep_recent: int = 10  # messages to keep intact (not summarized)
-    preserve_user_budget: int = 20_000  # token budget for preserving user messages from older section
+    preserve_user_budget: Optional[int] = None  # token budget for preserving user messages; derived from token_limit if not set
     instructions: Optional[str] = None  # custom summarization prompt
     stats: Dict[str, Any] = field(default_factory=dict)  # runtime stats for display
 
@@ -133,6 +133,12 @@ class ContextCompactionManager:
         # Default to message-based limit if neither specified
         if self.message_limit is None and self.token_limit is None:
             self.message_limit = 50
+        # Derive preserve_user_budget as 25% of token_limit if not explicitly set
+        if self.preserve_user_budget is None:
+            if self.token_limit is not None:
+                self.preserve_user_budget = int(self.token_limit * 0.25)
+            else:
+                self.preserve_user_budget = 20_000  # default fallback
 
     def should_compact(self, messages: List[Message]) -> bool:
         """Check if messages exceed compaction threshold."""

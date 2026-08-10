@@ -52,7 +52,7 @@ class TestSummaryDuplication:
             run_id="test-run",
             agent_id="test-agent",
             session_id="test-session",
-            compaction=existing_compaction,
+            compaction_state=existing_compaction,
         )
 
         # Build messages as _messages.py would do it:
