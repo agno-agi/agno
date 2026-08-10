@@ -12,7 +12,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from agno.db.postgres import AsyncPostgresDb
+pytest.importorskip("psycopg", reason="postgres extras required for the adapter under test")
+
+from agno.db.postgres import AsyncPostgresDb  # noqa: E402
 
 DEAD_URL = "postgresql+psycopg://ai:ai@localhost:59999/ai"
 
