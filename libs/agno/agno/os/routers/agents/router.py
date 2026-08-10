@@ -1141,6 +1141,14 @@ def get_agent_router(
             400: {"description": "Invalid JSON in tools field or invalid tool structure", "model": BadRequestResponse},
             403: {"description": "Run has a pending admin approval and cannot be continued by the user yet."},
             404: {"description": "Agent not found", "model": NotFoundResponse},
+            409: {
+                "description": (
+                    "Continuation conflict: a durable queue ticket owns this run's continuation "
+                    "(continue it with background=true), or a continuation is already queued or "
+                    "executing. Runs in any state can be continued - a COMPLETED run forks into "
+                    "a follow-up; RUNNING/ERROR runs resume."
+                ),
+            },
         },
         dependencies=[
             Depends(require_resource_access("agents", "run", "agent_id")),

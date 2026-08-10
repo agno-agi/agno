@@ -110,8 +110,50 @@ class TestAgentsContinueHasNoStatusGate:
             )
 
 
+class TestTeamsContinueStaysUngated:
+    """Teams got the unified-continue CORE (auto-fork on COMPLETED, mirror
+    of the agent dispatch) and their router never had a status gate - pin
+    that nobody 'fixes' teams by adding the gate agents just lost."""
+
+    @pytest.fixture()
+    def team_harness(self, tmp_path):
+        from agno.team import Team
+
+        db = SqliteDb(db_file=str(tmp_path / "t.db"))
+        team = Team(id="qa-team", name="QA Team", members=[], db=db)
+        app = AgentOS(teams=[team], telemetry=False).get_app()
+        return SimpleNamespace(db=db, client=TestClient(app, raise_server_exceptions=False))
+
+    def test_completed_team_run_continue_is_not_409ed(self, team_harness):
+        sessions_table = team_harness.db._get_table(table_type="sessions", create_table_if_not_found=True)
+        runs_table = team_harness.db._get_table(table_type="runs", create_table_if_not_found=True)
+        with team_harness.db.Session() as sess, sess.begin():
+            sess.execute(
+                sessions_table.insert().values(session_id="s-team", session_type="team", created_at=int(time.time()))
+            )
+            sess.execute(
+                runs_table.insert().values(
+                    run_id="r-team-done",
+                    session_id="s-team",
+                    run_type="team",
+                    team_id="qa-team",
+                    status="COMPLETED",
+                    run_index=0,
+                    run_data=json.dumps(
+                        {"run_id": "r-team-done", "session_id": "s-team", "team_id": "qa-team", "status": "COMPLETED"}
+                    ),
+                    created_at=int(time.time()),
+                )
+            )
+        resp = team_harness.client.post(
+            "/teams/qa-team/runs/r-team-done/continue",
+            data={"session_id": "s-team", "stream": "false", "background": "false"},
+        )
+        assert resp.status_code != 409, f"teams continue must stay ungated (unified core): {resp.json()}"
+
+
 class TestOtherDoorsKeepMainParity:
-    """main has NOT unified teams/workflows continues - their paused-only
+    """main has NOT unified the workflow continue - its paused-only
     behavior must not change in this port."""
 
     @pytest.fixture()
