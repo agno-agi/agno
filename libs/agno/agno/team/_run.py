@@ -8781,9 +8781,10 @@ async def _acontinue_run(
                             session=team_session,
                             run_context=run_context,
                         )
-                    except Exception:
+                    except (Exception, asyncio.CancelledError):
                         # Routing failed mid-flight; put the team-level requirements
-                        # back so the caller's run object stays complete for a retry.
+                        # back so the caller's run object stays complete for a retry,
+                        # including when the client disconnects during cancellation.
                         run_response.requirements = team_level_reqs + (run_response.requirements or [])
                         raise
                     # Merge: keep team-level reqs + any newly propagated member reqs (chained HITL)

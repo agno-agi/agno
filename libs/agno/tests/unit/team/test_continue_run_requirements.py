@@ -914,6 +914,58 @@ class TestContinueRunApprovalResolution:
 
         asyncio.run(_exercise())
 
+    def test_acontinue_run_restores_team_requirements_on_member_cancellation(self):
+        from agno.team._run import _acontinue_run
+
+        team = MagicMock()
+        team.retries = 0
+        team.events_to_skip = []
+        team.store_events = False
+        team.db = MagicMock()
+        team.model = MagicMock()
+
+        team_requirement = _make_requirement(requires_confirmation=True)
+        team_requirement.confirm()
+        member_requirement = _make_requirement(requires_confirmation=True)
+        member_requirement.confirm()
+        member_requirement.member_agent_id = "member-id-1"
+        member_requirement.member_run_id = "member-run-1"
+
+        run_response = TeamRunOutput(
+            run_id="run-1",
+            session_id="session-1",
+            requirements=[team_requirement, member_requirement],
+        )
+        team_session = MagicMock()
+        team_session.runs = [run_response]
+        run_context = MagicMock()
+
+        async def _exercise():
+            with (
+                patch("agno.team._run._asetup_session", new=AsyncMock(return_value=team_session)),
+                patch("agno.team._run.aregister_run", new=AsyncMock()),
+                patch("agno.team._run.acleanup_run", new=AsyncMock()),
+                patch("agno.team._init._disconnect_connectable_tools"),
+                patch("agno.team._init._disconnect_mcp_tools", new=AsyncMock()),
+                patch("agno.team._run._reclaim_own_requirements", side_effect=lambda _, reqs, __: reqs),
+                patch(
+                    "agno.team._run._aroute_requirements_to_members",
+                    new=AsyncMock(side_effect=asyncio.CancelledError()),
+                ),
+                patch("agno.team._run._persist_cancelled_team_run_in_background"),
+            ):
+                with pytest.raises(asyncio.CancelledError):
+                    await _acontinue_run(
+                        team,
+                        session_id="session-1",
+                        run_context=run_context,
+                        run_response=run_response,
+                    )
+
+        asyncio.run(_exercise())
+
+        assert run_response.requirements == [team_requirement, member_requirement]
+
     def test_acontinue_run_stream_uses_run_id_for_empty_requirements(self):
         from agno.team._run import _acontinue_run_stream
 
