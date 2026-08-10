@@ -146,7 +146,7 @@ class Searxng(Toolkit):
             resp = response.json()
             results = self.fixed_max_results or max_results
             resp["results"] = resp["results"][:results]
-            return json.dumps(resp)
+            return json.dumps(resp, ensure_ascii=False)
         except Exception as e:
             return f"Error fetching results from searxng: {e}"
 

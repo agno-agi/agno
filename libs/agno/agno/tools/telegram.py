@@ -127,9 +127,9 @@ class TelegramTools(Toolkit):
         log_debug(f"Sending telegram message: {message}")
         try:
             result = self.bot.send_message(self._chat_id, message)
-            return json.dumps({"status": "success", "message_id": result.message_id})
+            return json.dumps({"status": "success", "message_id": result.message_id}, ensure_ascii=False)
         except ApiTelegramException as e:
-            return json.dumps({"status": "error", "message": str(e)})
+            return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)
 
     def send_photo(self, photo: bytes, caption: Optional[str] = None) -> str:
         """Send a photo to a Telegram chat.
@@ -143,9 +143,9 @@ class TelegramTools(Toolkit):
         """
         try:
             result = self.bot.send_photo(self._chat_id, photo, caption=caption)
-            return json.dumps({"status": "success", "message_id": result.message_id})
+            return json.dumps({"status": "success", "message_id": result.message_id}, ensure_ascii=False)
         except ApiTelegramException as e:
-            return json.dumps({"status": "error", "message": str(e)})
+            return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)
 
     def send_document(self, document: bytes, filename: str, caption: Optional[str] = None) -> str:
         """Send a document to a Telegram chat.
@@ -160,9 +160,9 @@ class TelegramTools(Toolkit):
         """
         try:
             result = self.bot.send_document(self._chat_id, (filename, document), caption=caption)
-            return json.dumps({"status": "success", "message_id": result.message_id})
+            return json.dumps({"status": "success", "message_id": result.message_id}, ensure_ascii=False)
         except ApiTelegramException as e:
-            return json.dumps({"status": "error", "message": str(e)})
+            return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)
 
     def send_video(self, video: bytes, caption: Optional[str] = None) -> str:
         """Send a video to a Telegram chat.
@@ -176,9 +176,9 @@ class TelegramTools(Toolkit):
         """
         try:
             result = self.bot.send_video(self._chat_id, video, caption=caption)
-            return json.dumps({"status": "success", "message_id": result.message_id})
+            return json.dumps({"status": "success", "message_id": result.message_id}, ensure_ascii=False)
         except ApiTelegramException as e:
-            return json.dumps({"status": "error", "message": str(e)})
+            return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)
 
     def send_audio(self, audio: bytes, caption: Optional[str] = None, title: Optional[str] = None) -> str:
         """Send an audio file to a Telegram chat.
@@ -193,9 +193,9 @@ class TelegramTools(Toolkit):
         """
         try:
             result = self.bot.send_audio(self._chat_id, audio, caption=caption, title=title)
-            return json.dumps({"status": "success", "message_id": result.message_id})
+            return json.dumps({"status": "success", "message_id": result.message_id}, ensure_ascii=False)
         except ApiTelegramException as e:
-            return json.dumps({"status": "error", "message": str(e)})
+            return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)
 
     def send_animation(self, animation: bytes, caption: Optional[str] = None) -> str:
         """Send an animation (GIF) to a Telegram chat.
@@ -209,9 +209,9 @@ class TelegramTools(Toolkit):
         """
         try:
             result = self.bot.send_animation(self._chat_id, animation, caption=caption)
-            return json.dumps({"status": "success", "message_id": result.message_id})
+            return json.dumps({"status": "success", "message_id": result.message_id}, ensure_ascii=False)
         except ApiTelegramException as e:
-            return json.dumps({"status": "error", "message": str(e)})
+            return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)
 
     def send_sticker(self, sticker: bytes) -> str:
         """Send a sticker to a Telegram chat.
@@ -224,9 +224,9 @@ class TelegramTools(Toolkit):
         """
         try:
             result = self.bot.send_sticker(self._chat_id, sticker)
-            return json.dumps({"status": "success", "message_id": result.message_id})
+            return json.dumps({"status": "success", "message_id": result.message_id}, ensure_ascii=False)
         except ApiTelegramException as e:
-            return json.dumps({"status": "error", "message": str(e)})
+            return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)
 
     def edit_message(self, text: str, message_id: int) -> str:
         """Edit a previously sent message in a Telegram chat.
@@ -241,9 +241,9 @@ class TelegramTools(Toolkit):
         try:
             result = self.bot.edit_message_text(text, chat_id=self._chat_id, message_id=message_id)
             msg_id = result.message_id if hasattr(result, "message_id") else message_id
-            return json.dumps({"status": "success", "message_id": msg_id})
+            return json.dumps({"status": "success", "message_id": msg_id}, ensure_ascii=False)
         except ApiTelegramException as e:
-            return json.dumps({"status": "error", "message": str(e)})
+            return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)
 
     def delete_message(self, message_id: int) -> str:
         """Delete a message from a Telegram chat.
@@ -256,9 +256,9 @@ class TelegramTools(Toolkit):
         """
         try:
             self.bot.delete_message(self._chat_id, message_id)
-            return json.dumps({"status": "success", "deleted": True})
+            return json.dumps({"status": "success", "deleted": True}, ensure_ascii=False)
         except ApiTelegramException as e:
-            return json.dumps({"status": "error", "message": str(e)})
+            return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)
 
     def react_with_emoji(self, message_id: int, emoji: str) -> str:
         """React to a message with an emoji.
@@ -276,9 +276,9 @@ class TelegramTools(Toolkit):
                 message_id=message_id,
                 reaction=[ReactionTypeEmoji(emoji=emoji)],
             )
-            return json.dumps({"status": "success", "message_id": message_id, "emoji": emoji})
+            return json.dumps({"status": "success", "message_id": message_id, "emoji": emoji}, ensure_ascii=False)
         except ApiTelegramException as e:
-            return json.dumps({"status": "error", "message": str(e)})
+            return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)
 
     def pin_message(self, message_id: int, disable_notification: bool = False) -> str:
         """Pin a message in the chat.
@@ -292,9 +292,9 @@ class TelegramTools(Toolkit):
         """
         try:
             self.bot.pin_chat_message(self._chat_id, message_id, disable_notification=disable_notification)
-            return json.dumps({"status": "success", "pinned": True, "message_id": message_id})
+            return json.dumps({"status": "success", "pinned": True, "message_id": message_id}, ensure_ascii=False)
         except ApiTelegramException as e:
-            return json.dumps({"status": "error", "message": str(e)})
+            return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)
 
     def get_chat(self) -> str:
         """Get information about the current chat.
@@ -314,10 +314,11 @@ class TelegramTools(Toolkit):
                     "first_name": getattr(chat, "first_name", None),
                     "last_name": getattr(chat, "last_name", None),
                     "description": getattr(chat, "description", None),
-                }
+                },
+                ensure_ascii=False,
             )
         except ApiTelegramException as e:
-            return json.dumps({"status": "error", "message": str(e)})
+            return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)
 
     def get_file(self, file_id: str) -> str:
         """Download a file by its file_id. Returns path if save_downloads=True, else base64.
@@ -333,7 +334,7 @@ class TelegramTools(Toolkit):
         try:
             file_info = self.bot.get_file(file_id)
             if not file_info.file_path:
-                return json.dumps({"status": "error", "message": "File path not available"})
+                return json.dumps({"status": "error", "message": "File path not available"}, ensure_ascii=False)
             file_content = self.bot.download_file(file_info.file_path)
 
             result: dict[str, Any] = {
@@ -350,6 +351,6 @@ class TelegramTools(Toolkit):
             else:
                 result["content_base64"] = base64.b64encode(file_content).decode("utf-8")
 
-            return json.dumps(result)
+            return json.dumps(result, ensure_ascii=False)
         except ApiTelegramException as e:
-            return json.dumps({"status": "error", "message": str(e)})
+            return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)

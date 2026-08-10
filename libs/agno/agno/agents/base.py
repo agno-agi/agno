@@ -487,7 +487,7 @@ class BaseExternalAgent:
                     "type": "function",
                     "function": {
                         "name": tool.tool_name or "",
-                        "arguments": json.dumps(tool.tool_args or {}),
+                        "arguments": json.dumps(tool.tool_args or {}, ensure_ascii=False),
                     },
                 }
                 messages.append(

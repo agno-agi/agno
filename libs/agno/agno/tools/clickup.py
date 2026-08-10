@@ -131,13 +131,13 @@ class ClickUpTools(Toolkit):
         # Get space
         space = self._get_space(space_name)
         if "error" in space:
-            return json.dumps(space, indent=2)
+            return json.dumps(space, indent=2, ensure_ascii=False)
 
         # Get lists
         lists = self._make_request("GET", f"space/{space['id']}/list")
         lists_data = lists.get("lists", [])
         if not lists_data:
-            return json.dumps({"error": f"No lists found in space '{space_name}'"}, indent=2)
+            return json.dumps({"error": f"No lists found in space '{space_name}'"}, indent=2, ensure_ascii=False)
 
         # Get tasks from all lists
         all_tasks = []
@@ -147,7 +147,7 @@ class ClickUpTools(Toolkit):
                 task["list_name"] = list_info["name"]  # Add list name for context
             all_tasks.extend(tasks)
 
-        return json.dumps({"tasks": all_tasks}, indent=2)
+        return json.dumps({"tasks": all_tasks}, indent=2, ensure_ascii=False)
 
     def create_task(self, space_name: str, task_name: str, task_description: str) -> str:
         """Create a new task in a space.
@@ -163,14 +163,14 @@ class ClickUpTools(Toolkit):
         # Get space
         space = self._get_space(space_name)
         if "error" in space:
-            return json.dumps(space, indent=2)
+            return json.dumps(space, indent=2, ensure_ascii=False)
 
         # Get first list in space
         response = self._make_request("GET", f"space/{space['id']}/list")
         log_debug(f"Lists: {response}")
         lists_data = response.get("lists", [])
         if not lists_data:
-            return json.dumps({"error": f"No lists found in space '{space_name}'"}, indent=2)
+            return json.dumps({"error": f"No lists found in space '{space_name}'"}, indent=2, ensure_ascii=False)
 
         list_info = lists_data[0]  # Use first list
 
@@ -178,7 +178,7 @@ class ClickUpTools(Toolkit):
         data = {"name": task_name, "description": task_description}
 
         task = self._make_request("POST", f"list/{list_info['id']}/task", data=data)
-        return json.dumps(task, indent=2)
+        return json.dumps(task, indent=2, ensure_ascii=False)
 
     def list_spaces(self) -> str:
         """List all spaces in the workspace.
@@ -187,7 +187,7 @@ class ClickUpTools(Toolkit):
             str: JSON string containing list of spaces
         """
         spaces = self._make_request("GET", f"team/{self.master_space_id}/space")
-        return json.dumps(spaces, indent=2)
+        return json.dumps(spaces, indent=2, ensure_ascii=False)
 
     def list_lists(self, space_name: str) -> str:
         """List all lists in a space.
@@ -201,11 +201,11 @@ class ClickUpTools(Toolkit):
         # Get space
         space = self._get_space(space_name)
         if "error" in space:
-            return json.dumps(space, indent=2)
+            return json.dumps(space, indent=2, ensure_ascii=False)
 
         # Get lists
         lists = self._make_request("GET", f"space/{space['id']}/list")
-        return json.dumps(lists, indent=2)
+        return json.dumps(lists, indent=2, ensure_ascii=False)
 
     def get_task(self, task_id: str) -> str:
         """Get details of a specific task.
@@ -217,7 +217,7 @@ class ClickUpTools(Toolkit):
             str: JSON string containing task details
         """
         task = self._make_request("GET", f"task/{task_id}")
-        return json.dumps(task, indent=2)
+        return json.dumps(task, indent=2, ensure_ascii=False)
 
     def update_task(self, task_id: str, **kwargs) -> str:
         """Update a specific task.
@@ -230,7 +230,7 @@ class ClickUpTools(Toolkit):
             str: JSON string containing updated task details
         """
         task = self._make_request("PUT", f"task/{task_id}", data=kwargs)
-        return json.dumps(task, indent=2)
+        return json.dumps(task, indent=2, ensure_ascii=False)
 
     def delete_task(self, task_id: str) -> str:
         """Delete a specific task.
@@ -244,4 +244,4 @@ class ClickUpTools(Toolkit):
         result = self._make_request("DELETE", f"task/{task_id}")
         if "error" not in result:
             result = {"success": True, "message": f"Task {task_id} deleted successfully"}
-        return json.dumps(result, indent=2)
+        return json.dumps(result, indent=2, ensure_ascii=False)

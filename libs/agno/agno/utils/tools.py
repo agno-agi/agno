@@ -93,7 +93,7 @@ def get_function_call_for_tool_execution(
 
     _tool_call_id = tool_execution.tool_call_id
     _tool_call_function_name = tool_execution.tool_name or ""
-    _tool_call_function_arguments_str = json.dumps(tool_execution.tool_args)
+    _tool_call_function_arguments_str = json.dumps(tool_execution.tool_args, ensure_ascii=False)
     return get_function_call(
         name=_tool_call_function_name,
         arguments=_tool_call_function_arguments_str,

@@ -71,7 +71,7 @@ class SerpApiTools(Toolkit):
                 "related_questions": results.get("related_questions", ""),
             }
 
-            return json.dumps(filtered_results)
+            return json.dumps(filtered_results, ensure_ascii=False)
 
         except Exception as e:
             return f"Error searching for the query {query}: {e}"
@@ -110,7 +110,7 @@ class SerpApiTools(Toolkit):
                 "channel_results": results.get("channel_results", ""),
             }
 
-            return json.dumps(filtered_results)
+            return json.dumps(filtered_results, ensure_ascii=False)
 
         except Exception as e:
             return f"Error searching for the query {query}: {e}"

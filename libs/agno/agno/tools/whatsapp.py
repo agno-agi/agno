@@ -135,7 +135,7 @@ class WhatsAppTools(Toolkit):
         try:
             to = self._resolve_recipient(recipient)
             if not to:
-                return json.dumps({"error": "No recipient provided and no default recipient set"})
+                return json.dumps({"error": "No recipient provided and no default recipient set"}, ensure_ascii=False)
 
             data = {
                 "messaging_product": "whatsapp",
@@ -146,7 +146,7 @@ class WhatsAppTools(Toolkit):
             }
             response = self._send_message(data)
             message_id = response.get("messages", [{}])[0].get("id", "unknown")
-            return json.dumps({"ok": True, "message_id": message_id})
+            return json.dumps({"ok": True, "message_id": message_id}, ensure_ascii=False)
         except Exception:
             logger.exception("Error sending text message")
             raise
@@ -172,7 +172,7 @@ class WhatsAppTools(Toolkit):
         try:
             to = self._resolve_recipient(recipient)
             if not to:
-                return json.dumps({"error": "No recipient provided and no default recipient set"})
+                return json.dumps({"error": "No recipient provided and no default recipient set"}, ensure_ascii=False)
 
             template: Dict[str, Any] = {"name": template_name, "language": {"code": language_code}}
             if components:
@@ -186,7 +186,7 @@ class WhatsAppTools(Toolkit):
             }
             response = self._send_message(data)
             message_id = response.get("messages", [{}])[0].get("id", "unknown")
-            return json.dumps({"ok": True, "message_id": message_id})
+            return json.dumps({"ok": True, "message_id": message_id}, ensure_ascii=False)
         except Exception:
             logger.exception("Error sending template message")
             raise
@@ -214,10 +214,10 @@ class WhatsAppTools(Toolkit):
         try:
             to = self._resolve_recipient(recipient)
             if not to:
-                return json.dumps({"error": "No recipient provided and no default recipient set"})
+                return json.dumps({"error": "No recipient provided and no default recipient set"}, ensure_ascii=False)
 
             if not buttons or len(buttons) > 3:
-                return json.dumps({"error": "WhatsApp requires 1-3 reply buttons"})
+                return json.dumps({"error": "WhatsApp requires 1-3 reply buttons"}, ensure_ascii=False)
 
             action_buttons = [{"type": "reply", "reply": {"id": btn.id, "title": btn.title[:20]}} for btn in buttons]
 
@@ -239,7 +239,7 @@ class WhatsAppTools(Toolkit):
             }
             response = self._send_message(data)
             message_id = response.get("messages", [{}])[0].get("id", "unknown")
-            return json.dumps({"ok": True, "message_id": message_id})
+            return json.dumps({"ok": True, "message_id": message_id}, ensure_ascii=False)
         except Exception:
             logger.exception("Error sending reply buttons")
             raise
@@ -269,17 +269,18 @@ class WhatsAppTools(Toolkit):
         try:
             to = self._resolve_recipient(recipient)
             if not to:
-                return json.dumps({"error": "No recipient provided and no default recipient set"})
+                return json.dumps({"error": "No recipient provided and no default recipient set"}, ensure_ascii=False)
 
             if not sections or len(sections) > 10:
-                return json.dumps({"error": "WhatsApp requires 1-10 sections"})
+                return json.dumps({"error": "WhatsApp requires 1-10 sections"}, ensure_ascii=False)
 
             total_rows = sum(len(s.rows) for s in sections)
             if total_rows > 10:
                 return json.dumps(
                     {
                         "error": f"WhatsApp allows a maximum of 10 rows total across all sections (got {total_rows}). Reduce the number of rows."
-                    }
+                    },
+                    ensure_ascii=False,
                 )
 
             # Build payload with truncation without mutating caller's models
@@ -314,7 +315,7 @@ class WhatsAppTools(Toolkit):
             }
             response = self._send_message(data)
             message_id = response.get("messages", [{}])[0].get("id", "unknown")
-            return json.dumps({"ok": True, "message_id": message_id})
+            return json.dumps({"ok": True, "message_id": message_id}, ensure_ascii=False)
         except Exception:
             logger.exception("Error sending list message")
             raise
@@ -340,10 +341,10 @@ class WhatsAppTools(Toolkit):
         try:
             to = self._resolve_recipient(recipient)
             if not to:
-                return json.dumps({"error": "No recipient provided and no default recipient set"})
+                return json.dumps({"error": "No recipient provided and no default recipient set"}, ensure_ascii=False)
 
             if not image_url and not media_id:
-                return json.dumps({"error": "Either image_url or media_id must be provided"})
+                return json.dumps({"error": "Either image_url or media_id must be provided"}, ensure_ascii=False)
 
             image: Dict[str, Any] = {}
             if media_id:
@@ -361,7 +362,7 @@ class WhatsAppTools(Toolkit):
             }
             response = self._send_message(data)
             message_id = response.get("messages", [{}])[0].get("id", "unknown")
-            return json.dumps({"ok": True, "message_id": message_id})
+            return json.dumps({"ok": True, "message_id": message_id}, ensure_ascii=False)
         except Exception:
             logger.exception("Error sending image")
             raise
@@ -389,10 +390,10 @@ class WhatsAppTools(Toolkit):
         try:
             to = self._resolve_recipient(recipient)
             if not to:
-                return json.dumps({"error": "No recipient provided and no default recipient set"})
+                return json.dumps({"error": "No recipient provided and no default recipient set"}, ensure_ascii=False)
 
             if not document_url and not media_id:
-                return json.dumps({"error": "Either document_url or media_id must be provided"})
+                return json.dumps({"error": "Either document_url or media_id must be provided"}, ensure_ascii=False)
 
             document: Dict[str, Any] = {}
             if media_id:
@@ -412,7 +413,7 @@ class WhatsAppTools(Toolkit):
             }
             response = self._send_message(data)
             message_id = response.get("messages", [{}])[0].get("id", "unknown")
-            return json.dumps({"ok": True, "message_id": message_id})
+            return json.dumps({"ok": True, "message_id": message_id}, ensure_ascii=False)
         except Exception:
             logger.exception("Error sending document")
             raise
@@ -440,7 +441,7 @@ class WhatsAppTools(Toolkit):
         try:
             to = self._resolve_recipient(recipient)
             if not to:
-                return json.dumps({"error": "No recipient provided and no default recipient set"})
+                return json.dumps({"error": "No recipient provided and no default recipient set"}, ensure_ascii=False)
 
             location: Dict[str, Any] = {
                 "latitude": latitude,
@@ -459,7 +460,7 @@ class WhatsAppTools(Toolkit):
             }
             response = self._send_message(data)
             message_id = response.get("messages", [{}])[0].get("id", "unknown")
-            return json.dumps({"ok": True, "message_id": message_id})
+            return json.dumps({"ok": True, "message_id": message_id}, ensure_ascii=False)
         except Exception:
             logger.exception("Error sending location")
             raise
@@ -483,7 +484,7 @@ class WhatsAppTools(Toolkit):
         try:
             to = self._resolve_recipient(recipient)
             if not to:
-                return json.dumps({"error": "No recipient provided and no default recipient set"})
+                return json.dumps({"error": "No recipient provided and no default recipient set"}, ensure_ascii=False)
 
             data = {
                 "messaging_product": "whatsapp",
@@ -496,7 +497,7 @@ class WhatsAppTools(Toolkit):
             }
             response = self._send_message(data)
             resp_message_id = response.get("messages", [{}])[0].get("id", "unknown")
-            return json.dumps({"ok": True, "message_id": resp_message_id})
+            return json.dumps({"ok": True, "message_id": resp_message_id}, ensure_ascii=False)
         except Exception:
             logger.exception("Error sending reaction")
             raise

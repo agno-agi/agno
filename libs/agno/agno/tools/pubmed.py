@@ -183,6 +183,6 @@ class PubmedTools(Toolkit):
                     )
                 results.append(article_text)
 
-            return json.dumps(results)
+            return json.dumps(results, ensure_ascii=False)
         except Exception as e:
             return f"Could not fetch articles. Error: {e}"

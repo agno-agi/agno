@@ -209,7 +209,7 @@ class GoogleSheetsTools(GoogleToolkit):
 
         try:
             result = self.service.spreadsheets().values().get(spreadsheetId=sheet_id, range=sheet_range).execute()  # type: ignore
-            return json.dumps(result.get("values", []))
+            return json.dumps(result.get("values", []), ensure_ascii=False)
 
         except Exception as e:
             return f"Error reading Google Sheet: {e}"

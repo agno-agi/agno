@@ -209,7 +209,7 @@ class UnsplashTools(Toolkit):
                 "photos": [self._format_photo(photo) for photo in response.get("results", [])],
             }
 
-            return json.dumps(results, indent=2)
+            return json.dumps(results, indent=2, ensure_ascii=False)
 
         except Exception as e:
             return f"Error searching Unsplash: {e}"
@@ -258,7 +258,7 @@ class UnsplashTools(Toolkit):
             result["views"] = photo.get("views")
             result["downloads"] = photo.get("downloads")
 
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         except Exception as e:
             return f"Error getting photo: {e}"
@@ -303,7 +303,7 @@ class UnsplashTools(Toolkit):
             else:
                 photos = [self._format_photo(response)]
 
-            return json.dumps({"photos": photos}, indent=2)
+            return json.dumps({"photos": photos}, indent=2, ensure_ascii=False)
 
         except Exception as e:
             return f"Error getting random photo: {e}"
@@ -337,6 +337,7 @@ class UnsplashTools(Toolkit):
                     "download_url": response.get("url"),
                 },
                 indent=2,
+                ensure_ascii=False,
             )
 
         except Exception as e:

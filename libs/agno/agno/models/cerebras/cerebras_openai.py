@@ -108,7 +108,7 @@ class CerebrasOpenAI(OpenAILike):
                     "type": tool_call["type"],
                     "function": {
                         "name": tool_call["function"]["name"],
-                        "arguments": json.dumps(tool_call["function"]["arguments"])
+                        "arguments": json.dumps(tool_call["function"]["arguments"], ensure_ascii=False)
                         if isinstance(tool_call["function"]["arguments"], (dict, list))
                         else tool_call["function"]["arguments"],
                     },

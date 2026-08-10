@@ -70,7 +70,7 @@ class SQLTools(Toolkit):
             str: list of tables in the database.
         """
         if self.tables is not None:
-            return json.dumps(self.tables)
+            return json.dumps(self.tables, ensure_ascii=False)
 
         try:
             log_debug("listing tables in the database")
@@ -80,7 +80,7 @@ class SQLTools(Toolkit):
             else:
                 table_names = inspector.get_table_names()
             log_debug(f"table_names: {table_names}")
-            return json.dumps(table_names)
+            return json.dumps(table_names, ensure_ascii=False)
         except Exception as e:
             logger.exception("Error getting tables")
             return f"Error getting tables: {e}"
@@ -108,7 +108,8 @@ class SQLTools(Toolkit):
                         "default": column.get("default"),
                     }
                     for column in table_schema
-                ]
+                ],
+                ensure_ascii=False,
             )
         except Exception as e:
             logger.exception("Error getting table schema")
@@ -127,7 +128,7 @@ class SQLTools(Toolkit):
         """
 
         try:
-            return json.dumps(self.run_sql(sql=query, limit=limit), default=str)
+            return json.dumps(self.run_sql(sql=query, limit=limit), default=str, ensure_ascii=False)
         except Exception as e:
             logger.exception("Error running query")
             return f"Error running query: {e}"

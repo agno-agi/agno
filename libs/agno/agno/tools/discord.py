@@ -85,7 +85,7 @@ class DiscordTools(Toolkit):
         """
         try:
             response = self._make_request("GET", f"/channels/{channel_id}")
-            return json.dumps(response, indent=2)
+            return json.dumps(response, indent=2, ensure_ascii=False)
         except Exception as e:
             logger.exception("Error getting channel info")
             return f"Error getting channel info: {str(e)}"
@@ -102,7 +102,7 @@ class DiscordTools(Toolkit):
         """
         try:
             response = self._make_request("GET", f"/guilds/{guild_id}/channels")
-            return json.dumps(response, indent=2)
+            return json.dumps(response, indent=2, ensure_ascii=False)
         except Exception as e:
             logger.exception("Error listing channels")
             return f"Error listing channels: {str(e)}"
@@ -120,7 +120,7 @@ class DiscordTools(Toolkit):
         """
         try:
             response = self._make_request("GET", f"/channels/{channel_id}/messages?limit={limit}")
-            return json.dumps(response, indent=2)
+            return json.dumps(response, indent=2, ensure_ascii=False)
         except Exception as e:
             logger.exception("Error getting messages")
             return f"Error getting messages: {str(e)}"

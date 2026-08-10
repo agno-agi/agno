@@ -133,14 +133,14 @@ class SchedulerTools(Toolkit):
         """
         resolved_endpoint = endpoint or self.default_endpoint
         if not resolved_endpoint:
-            return json.dumps({"error": "No endpoint provided and no default_endpoint configured"})
+            return json.dumps({"error": "No endpoint provided and no default_endpoint configured"}, ensure_ascii=False)
 
         resolved_payload = self.default_payload
         if payload is not None:
             try:
                 resolved_payload = json.loads(payload)
             except json.JSONDecodeError:
-                return json.dumps({"error": "Invalid JSON in payload parameter"})
+                return json.dumps({"error": "Invalid JSON in payload parameter"}, ensure_ascii=False)
 
         # Run endpoints require a "message" field in the payload
         resolved_method = method or self.default_method
@@ -150,7 +150,8 @@ class SchedulerTools(Toolkit):
                     {
                         "error": "Schedules targeting run endpoints require a 'message' field in the payload. "
                         'Provide payload with at least: {"message": "your prompt here"}'
-                    }
+                    },
+                    ensure_ascii=False,
                 )
 
         try:
@@ -175,11 +176,12 @@ class SchedulerTools(Toolkit):
                     "timezone": schedule.timezone,
                     "enabled": schedule.enabled,
                     "description": schedule.description,
-                }
+                },
+                ensure_ascii=False,
             )
         except Exception as e:
             logger.exception("Failed to create schedule")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def list_schedules(self, enabled_only: bool = False) -> str:
         """List all existing schedules.
@@ -205,10 +207,10 @@ class SchedulerTools(Toolkit):
                 }
                 for s in schedules
             ]
-            return json.dumps({"schedules": result, "count": len(result)})
+            return json.dumps({"schedules": result, "count": len(result)}, ensure_ascii=False)
         except Exception as e:
             logger.exception("Failed to list schedules")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_schedule(self, schedule_id: str) -> str:
         """Get details of a specific schedule by its ID.
@@ -222,7 +224,7 @@ class SchedulerTools(Toolkit):
         try:
             schedule = self.manager.get(schedule_id)
             if schedule is None:
-                return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+                return json.dumps({"error": f"Schedule not found: {schedule_id}"}, ensure_ascii=False)
             return json.dumps(
                 {
                     "id": schedule.id,
@@ -234,11 +236,12 @@ class SchedulerTools(Toolkit):
                     "enabled": schedule.enabled,
                     "description": schedule.description,
                     "payload": schedule.payload,
-                }
+                },
+                ensure_ascii=False,
             )
         except Exception as e:
             logger.exception("Failed to get schedule")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def delete_schedule(self, schedule_id: str) -> str:
         """Delete a schedule by its ID. This permanently removes the schedule.
@@ -252,11 +255,13 @@ class SchedulerTools(Toolkit):
         try:
             deleted = self.manager.delete(schedule_id)
             if deleted:
-                return json.dumps({"status": "deleted", "id": schedule_id})
-            return json.dumps({"error": f"Schedule not found or could not be deleted: {schedule_id}"})
+                return json.dumps({"status": "deleted", "id": schedule_id}, ensure_ascii=False)
+            return json.dumps(
+                {"error": f"Schedule not found or could not be deleted: {schedule_id}"}, ensure_ascii=False
+            )
         except Exception as e:
             logger.exception("Failed to delete schedule")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def enable_schedule(self, schedule_id: str) -> str:
         """Enable a disabled schedule so it starts running again.
@@ -270,18 +275,19 @@ class SchedulerTools(Toolkit):
         try:
             schedule = self.manager.enable(schedule_id)
             if schedule is None:
-                return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+                return json.dumps({"error": f"Schedule not found: {schedule_id}"}, ensure_ascii=False)
             return json.dumps(
                 {
                     "status": "enabled",
                     "id": schedule.id,
                     "name": schedule.name,
                     "enabled": schedule.enabled,
-                }
+                },
+                ensure_ascii=False,
             )
         except Exception as e:
             logger.exception("Failed to enable schedule")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def disable_schedule(self, schedule_id: str) -> str:
         """Disable a schedule so it stops running. Can be re-enabled later.
@@ -295,18 +301,19 @@ class SchedulerTools(Toolkit):
         try:
             schedule = self.manager.disable(schedule_id)
             if schedule is None:
-                return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+                return json.dumps({"error": f"Schedule not found: {schedule_id}"}, ensure_ascii=False)
             return json.dumps(
                 {
                     "status": "disabled",
                     "id": schedule.id,
                     "name": schedule.name,
                     "enabled": schedule.enabled,
-                }
+                },
+                ensure_ascii=False,
             )
         except Exception as e:
             logger.exception("Failed to disable schedule")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def trigger_schedule(self, schedule_id: str) -> str:
         """Queue an enabled schedule to run now.
@@ -324,10 +331,11 @@ class SchedulerTools(Toolkit):
         try:
             schedule = self.manager.get(schedule_id)
             if schedule is None:
-                return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+                return json.dumps({"error": f"Schedule not found: {schedule_id}"}, ensure_ascii=False)
             if not schedule.enabled:
                 return json.dumps(
-                    {"error": f"Schedule is disabled: {schedule_id}. Call enable_schedule first, then trigger it."}
+                    {"error": f"Schedule is disabled: {schedule_id}. Call enable_schedule first, then trigger it."},
+                    ensure_ascii=False,
                 )
             self.manager.update(schedule_id, next_run_at=int(time.time()))
             return json.dumps(
@@ -335,11 +343,12 @@ class SchedulerTools(Toolkit):
                     "status": "triggered",
                     "id": schedule_id,
                     "note": "The scheduler poller will execute it within one poll interval.",
-                }
+                },
+                ensure_ascii=False,
             )
         except Exception as e:
             logger.exception("Failed to trigger schedule")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_schedule_runs(self, schedule_id: str, limit: int = 10) -> str:
         """Get the run history for a schedule.
@@ -363,10 +372,10 @@ class SchedulerTools(Toolkit):
                 }
                 for r in runs
             ]
-            return json.dumps({"runs": result, "count": len(result)})
+            return json.dumps({"runs": result, "count": len(result)}, ensure_ascii=False)
         except Exception as e:
             logger.exception("Failed to get schedule runs")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     # ------------------------------------------------------------------
     # Async tools
@@ -398,14 +407,14 @@ class SchedulerTools(Toolkit):
         """
         resolved_endpoint = endpoint or self.default_endpoint
         if not resolved_endpoint:
-            return json.dumps({"error": "No endpoint provided and no default_endpoint configured"})
+            return json.dumps({"error": "No endpoint provided and no default_endpoint configured"}, ensure_ascii=False)
 
         resolved_payload = self.default_payload
         if payload is not None:
             try:
                 resolved_payload = json.loads(payload)
             except json.JSONDecodeError:
-                return json.dumps({"error": "Invalid JSON in payload parameter"})
+                return json.dumps({"error": "Invalid JSON in payload parameter"}, ensure_ascii=False)
 
         # Run endpoints require a "message" field in the payload
         resolved_method = method or self.default_method
@@ -415,7 +424,8 @@ class SchedulerTools(Toolkit):
                     {
                         "error": "Schedules targeting run endpoints require a 'message' field in the payload. "
                         'Provide payload with at least: {"message": "your prompt here"}'
-                    }
+                    },
+                    ensure_ascii=False,
                 )
 
         try:
@@ -440,11 +450,12 @@ class SchedulerTools(Toolkit):
                     "timezone": schedule.timezone,
                     "enabled": schedule.enabled,
                     "description": schedule.description,
-                }
+                },
+                ensure_ascii=False,
             )
         except Exception as e:
             logger.exception("Failed to create schedule")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     async def alist_schedules(self, enabled_only: bool = False) -> str:
         """List all existing schedules.
@@ -470,10 +481,10 @@ class SchedulerTools(Toolkit):
                 }
                 for s in schedules
             ]
-            return json.dumps({"schedules": result, "count": len(result)})
+            return json.dumps({"schedules": result, "count": len(result)}, ensure_ascii=False)
         except Exception as e:
             logger.exception("Failed to list schedules")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     async def aget_schedule(self, schedule_id: str) -> str:
         """Get details of a specific schedule by its ID.
@@ -487,7 +498,7 @@ class SchedulerTools(Toolkit):
         try:
             schedule = await self.manager.aget(schedule_id)
             if schedule is None:
-                return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+                return json.dumps({"error": f"Schedule not found: {schedule_id}"}, ensure_ascii=False)
             return json.dumps(
                 {
                     "id": schedule.id,
@@ -499,11 +510,12 @@ class SchedulerTools(Toolkit):
                     "enabled": schedule.enabled,
                     "description": schedule.description,
                     "payload": schedule.payload,
-                }
+                },
+                ensure_ascii=False,
             )
         except Exception as e:
             logger.exception("Failed to get schedule")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     async def adelete_schedule(self, schedule_id: str) -> str:
         """Delete a schedule by its ID. This permanently removes the schedule.
@@ -517,11 +529,13 @@ class SchedulerTools(Toolkit):
         try:
             deleted = await self.manager.adelete(schedule_id)
             if deleted:
-                return json.dumps({"status": "deleted", "id": schedule_id})
-            return json.dumps({"error": f"Schedule not found or could not be deleted: {schedule_id}"})
+                return json.dumps({"status": "deleted", "id": schedule_id}, ensure_ascii=False)
+            return json.dumps(
+                {"error": f"Schedule not found or could not be deleted: {schedule_id}"}, ensure_ascii=False
+            )
         except Exception as e:
             logger.exception("Failed to delete schedule")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     async def aenable_schedule(self, schedule_id: str) -> str:
         """Enable a disabled schedule so it starts running again.
@@ -535,18 +549,19 @@ class SchedulerTools(Toolkit):
         try:
             schedule = await self.manager.aenable(schedule_id)
             if schedule is None:
-                return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+                return json.dumps({"error": f"Schedule not found: {schedule_id}"}, ensure_ascii=False)
             return json.dumps(
                 {
                     "status": "enabled",
                     "id": schedule.id,
                     "name": schedule.name,
                     "enabled": schedule.enabled,
-                }
+                },
+                ensure_ascii=False,
             )
         except Exception as e:
             logger.exception("Failed to enable schedule")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     async def adisable_schedule(self, schedule_id: str) -> str:
         """Disable a schedule so it stops running. Can be re-enabled later.
@@ -560,18 +575,19 @@ class SchedulerTools(Toolkit):
         try:
             schedule = await self.manager.adisable(schedule_id)
             if schedule is None:
-                return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+                return json.dumps({"error": f"Schedule not found: {schedule_id}"}, ensure_ascii=False)
             return json.dumps(
                 {
                     "status": "disabled",
                     "id": schedule.id,
                     "name": schedule.name,
                     "enabled": schedule.enabled,
-                }
+                },
+                ensure_ascii=False,
             )
         except Exception as e:
             logger.exception("Failed to disable schedule")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     async def atrigger_schedule(self, schedule_id: str) -> str:
         """Queue an enabled schedule to run now.
@@ -589,10 +605,11 @@ class SchedulerTools(Toolkit):
         try:
             schedule = await self.manager.aget(schedule_id)
             if schedule is None:
-                return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+                return json.dumps({"error": f"Schedule not found: {schedule_id}"}, ensure_ascii=False)
             if not schedule.enabled:
                 return json.dumps(
-                    {"error": f"Schedule is disabled: {schedule_id}. Call enable_schedule first, then trigger it."}
+                    {"error": f"Schedule is disabled: {schedule_id}. Call enable_schedule first, then trigger it."},
+                    ensure_ascii=False,
                 )
             await self.manager.aupdate(schedule_id, next_run_at=int(time.time()))
             return json.dumps(
@@ -600,11 +617,12 @@ class SchedulerTools(Toolkit):
                     "status": "triggered",
                     "id": schedule_id,
                     "note": "The scheduler poller will execute it within one poll interval.",
-                }
+                },
+                ensure_ascii=False,
             )
         except Exception as e:
             logger.exception("Failed to trigger schedule")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     async def aget_schedule_runs(self, schedule_id: str, limit: int = 10) -> str:
         """Get the run history for a schedule.
@@ -628,7 +646,7 @@ class SchedulerTools(Toolkit):
                 }
                 for r in runs
             ]
-            return json.dumps({"runs": result, "count": len(result)})
+            return json.dumps({"runs": result, "count": len(result)}, ensure_ascii=False)
         except Exception as e:
             logger.exception("Failed to get schedule runs")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)

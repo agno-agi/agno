@@ -37,7 +37,7 @@ class CalculatorTools(Toolkit):
         """
         result = a + b
         log_debug(f"Adding {a} and {b} to get {result}")
-        return json.dumps({"operation": "addition", "result": result})
+        return json.dumps({"operation": "addition", "result": result}, ensure_ascii=False)
 
     def subtract(self, a: float, b: float) -> str:
         """Subtract second number from first and return the result.
@@ -51,7 +51,7 @@ class CalculatorTools(Toolkit):
         """
         result = a - b
         log_debug(f"Subtracting {b} from {a} to get {result}")
-        return json.dumps({"operation": "subtraction", "result": result})
+        return json.dumps({"operation": "subtraction", "result": result}, ensure_ascii=False)
 
     def multiply(self, a: float, b: float) -> str:
         """Multiply two numbers and return the result.
@@ -65,7 +65,7 @@ class CalculatorTools(Toolkit):
         """
         result = a * b
         log_debug(f"Multiplying {a} and {b} to get {result}")
-        return json.dumps({"operation": "multiplication", "result": result})
+        return json.dumps({"operation": "multiplication", "result": result}, ensure_ascii=False)
 
     def divide(self, a: float, b: float) -> str:
         """Divide first number by second and return the result.
@@ -79,13 +79,13 @@ class CalculatorTools(Toolkit):
         """
         if b == 0:
             log_error("Attempt to divide by zero")
-            return json.dumps({"operation": "division", "error": "Division by zero is undefined"})
+            return json.dumps({"operation": "division", "error": "Division by zero is undefined"}, ensure_ascii=False)
         try:
             result = a / b
         except Exception as e:
-            return json.dumps({"operation": "division", "error": str(e), "result": "Error"})
+            return json.dumps({"operation": "division", "error": str(e), "result": "Error"}, ensure_ascii=False)
         log_debug(f"Dividing {a} by {b} to get {result}")
-        return json.dumps({"operation": "division", "result": result})
+        return json.dumps({"operation": "division", "result": result}, ensure_ascii=False)
 
     def exponentiate(self, a: float, b: float) -> str:
         """Raise first number to the power of the second number and return the result.
@@ -99,7 +99,7 @@ class CalculatorTools(Toolkit):
         """
         result = math.pow(a, b)
         log_debug(f"Raising {a} to the power of {b} to get {result}")
-        return json.dumps({"operation": "exponentiation", "result": result})
+        return json.dumps({"operation": "exponentiation", "result": result}, ensure_ascii=False)
 
     def factorial(self, n: int) -> str:
         """Calculate the factorial of a number and return the result.
@@ -112,10 +112,12 @@ class CalculatorTools(Toolkit):
         """
         if n < 0:
             log_error("Attempt to calculate factorial of a negative number")
-            return json.dumps({"operation": "factorial", "error": "Factorial of a negative number is undefined"})
+            return json.dumps(
+                {"operation": "factorial", "error": "Factorial of a negative number is undefined"}, ensure_ascii=False
+            )
         result = math.factorial(n)
         log_debug(f"Calculating factorial of {n} to get {result}")
-        return json.dumps({"operation": "factorial", "result": result})
+        return json.dumps({"operation": "factorial", "result": result}, ensure_ascii=False)
 
     def is_prime(self, n: int) -> str:
         """Check if a number is prime and return the result.
@@ -127,11 +129,11 @@ class CalculatorTools(Toolkit):
             str: JSON string of the result.
         """
         if n <= 1:
-            return json.dumps({"operation": "prime_check", "result": False})
+            return json.dumps({"operation": "prime_check", "result": False}, ensure_ascii=False)
         for i in range(2, int(math.sqrt(n)) + 1):
             if n % i == 0:
-                return json.dumps({"operation": "prime_check", "result": False})
-        return json.dumps({"operation": "prime_check", "result": True})
+                return json.dumps({"operation": "prime_check", "result": False}, ensure_ascii=False)
+        return json.dumps({"operation": "prime_check", "result": True}, ensure_ascii=False)
 
     def square_root(self, n: float) -> str:
         """Calculate the square root of a number and return the result.
@@ -144,8 +146,11 @@ class CalculatorTools(Toolkit):
         """
         if n < 0:
             log_error("Attempt to calculate square root of a negative number")
-            return json.dumps({"operation": "square_root", "error": "Square root of a negative number is undefined"})
+            return json.dumps(
+                {"operation": "square_root", "error": "Square root of a negative number is undefined"},
+                ensure_ascii=False,
+            )
 
         result = math.sqrt(n)
         log_debug(f"Calculating square root of {n} to get {result}")
-        return json.dumps({"operation": "square_root", "result": result})
+        return json.dumps({"operation": "square_root", "result": result}, ensure_ascii=False)

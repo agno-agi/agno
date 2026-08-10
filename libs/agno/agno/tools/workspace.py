@@ -558,6 +558,7 @@ class Workspace(Toolkit):
                     "files": files,
                 },
                 indent=2,
+                ensure_ascii=False,
             )
         except Exception as e:
             log_error(f"list_files failed: {e}")
@@ -624,7 +625,9 @@ class Workspace(Toolkit):
                                 "snippet": _extract_snippet(content, query),
                             }
                         )
-            return json.dumps({"query": query, "matches_found": len(matches), "files": matches}, indent=2)
+            return json.dumps(
+                {"query": query, "matches_found": len(matches), "files": matches}, indent=2, ensure_ascii=False
+            )
         except Exception as e:
             log_error(f"search_content failed: {e}")
             return f"Error searching content: {e}"

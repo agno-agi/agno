@@ -95,7 +95,7 @@ def _paused_requirements(run_output: AnyRunOutput) -> Optional[List[Dict[str, An
 
 def _json_safe(data: Dict[str, Any]) -> Dict[str, Any]:
     """Force a dict through JSON so enum/datetime leftovers cannot break the transport."""
-    return json.loads(json.dumps(data, default=json_serializer))
+    return json.loads(json.dumps(data, default=json_serializer, ensure_ascii=False))
 
 
 def trimmed_structured_content(run_output: AnyRunOutput) -> Dict[str, Any]:

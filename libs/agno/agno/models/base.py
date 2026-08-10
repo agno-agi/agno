@@ -475,7 +475,7 @@ class Model(ABC):
                 return obj.model_dump()
             raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
-        cache_str = json.dumps(cache_data, sort_keys=True, default=_cache_default)
+        cache_str = json.dumps(cache_data, sort_keys=True, default=_cache_default, ensure_ascii=False)
         return md5(cache_str.encode()).hexdigest()
 
     def _get_model_cache_file_path(self, cache_key: str) -> Path:

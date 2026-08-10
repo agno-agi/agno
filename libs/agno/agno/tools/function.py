@@ -801,7 +801,7 @@ class Function(BaseModel):
         if "files" in copy_entrypoint_args:
             del copy_entrypoint_args["files"]
         # Use json.dumps with sort_keys=True to ensure consistent ordering regardless of dict key order
-        args_str = json.dumps(copy_entrypoint_args, sort_keys=True, default=str)
+        args_str = json.dumps(copy_entrypoint_args, sort_keys=True, default=str, ensure_ascii=False)
 
         kwargs_str = str(sorted((call_args or {}).items()))
         key_str = f"{self.name}:{args_str}:{kwargs_str}"

@@ -65,7 +65,7 @@ class ParallelBackend(ContextBackend):
                 JSON with `results: [{url, title, excerpts: [...]}, ...]`.
             """
             if not backend.api_key:
-                return json.dumps({"error": "PARALLEL_API_KEY not configured"})
+                return json.dumps({"error": "PARALLEL_API_KEY not configured"}, ensure_ascii=False)
             try:
                 out = await backend._get_client().search(
                     search_queries=[objective],
@@ -74,7 +74,7 @@ class ParallelBackend(ContextBackend):
                 )
             except Exception as exc:
                 log_error(f"web_search failed: {exc}")
-                return json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+                return json.dumps({"error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False)
             results = []
             for r in (out.results or [])[:max_results]:
                 results.append(
@@ -84,7 +84,7 @@ class ParallelBackend(ContextBackend):
                         "excerpts": [e for e in (getattr(r, "excerpts", None) or [])][:5],
                     }
                 )
-            return json.dumps({"results": results})
+            return json.dumps({"results": results}, ensure_ascii=False)
 
         @tool(name="web_extract")
         async def web_extract(url: str) -> str:
@@ -97,7 +97,7 @@ class ParallelBackend(ContextBackend):
                 JSON with `{url, content}` or `{error}`.
             """
             if not backend.api_key:
-                return json.dumps({"error": "PARALLEL_API_KEY not configured"})
+                return json.dumps({"error": "PARALLEL_API_KEY not configured"}, ensure_ascii=False)
             try:
                 result = await backend._get_client().extract(
                     urls=[url],
@@ -105,10 +105,10 @@ class ParallelBackend(ContextBackend):
                 )
             except Exception as exc:
                 log_error(f"web_extract failed for {url}: {exc}")
-                return json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+                return json.dumps({"error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False)
             if not result or not result.results:
-                return json.dumps({"url": url, "content": ""})
+                return json.dumps({"url": url, "content": ""}, ensure_ascii=False)
             body = result.results[0].full_content or ""
-            return json.dumps({"url": url, "content": body[:_MAX_EXTRACT_CHARS]})
+            return json.dumps({"url": url, "content": body[:_MAX_EXTRACT_CHARS]}, ensure_ascii=False)
 
         return [web_search, web_extract]

@@ -76,7 +76,9 @@ class TrelloTools(Toolkit):
 
             card = target_list.add_card(name=card_title, desc=description)
 
-            return json.dumps({"id": card.id, "name": card.name, "url": card.url, "list": list_name})
+            return json.dumps(
+                {"id": card.id, "name": card.name, "url": card.url, "list": list_name}, ensure_ascii=False
+            )
 
         except Exception as e:
             return f"Error creating card: {e}"
@@ -102,7 +104,7 @@ class TrelloTools(Toolkit):
 
             lists_info = [{"id": lst.id, "name": lst.name, "cards_count": len(lst.list_cards())} for lst in lists]
 
-            return json.dumps({"lists": lists_info})
+            return json.dumps({"lists": lists_info}, ensure_ascii=False)
 
         except Exception as e:
             return f"Error getting board lists: {e}"
@@ -127,7 +129,7 @@ class TrelloTools(Toolkit):
             card = self.client.get_card(card_id)
             card.change_list(list_id)
 
-            return json.dumps({"success": True, "card_id": card_id, "new_list_id": list_id})
+            return json.dumps({"success": True, "card_id": card_id, "new_list_id": list_id}, ensure_ascii=False)
 
         except Exception as e:
             return f"Error moving card: {e}"
@@ -162,7 +164,7 @@ class TrelloTools(Toolkit):
                 for card in cards
             ]
 
-            return json.dumps({"cards": cards_info})
+            return json.dumps({"cards": cards_info}, ensure_ascii=False)
 
         except Exception as e:
             return f"Error getting cards: {e}"
@@ -191,7 +193,8 @@ class TrelloTools(Toolkit):
                     "id": board.id,
                     "name": board.name,
                     "url": board.url,
-                }
+                },
+                ensure_ascii=False,
             )
 
         except Exception as e:
@@ -224,7 +227,8 @@ class TrelloTools(Toolkit):
                     "name": new_list.name,
                     "pos": new_list.pos,
                     "board_id": board_id,
-                }
+                },
+                ensure_ascii=False,
             )
 
         except Exception as e:
@@ -267,7 +271,8 @@ class TrelloTools(Toolkit):
                     "filter_used": board_filter,
                     "total_boards": len(boards_list),
                     "boards": boards_list,
-                }
+                },
+                ensure_ascii=False,
             )
 
         except Exception as e:

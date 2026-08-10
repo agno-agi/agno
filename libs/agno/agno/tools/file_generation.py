@@ -237,7 +237,7 @@ class FileGenerationTools(Toolkit):
                     json_content = data  # Use the original string if it's valid JSON
                 except json.JSONDecodeError:
                     # If it's not valid JSON, treat as plain text and wrap it
-                    json_content = json.dumps({"content": data}, indent=2)
+                    json_content = json.dumps({"content": data}, indent=2, ensure_ascii=False)
             else:
                 json_content = json.dumps(data, indent=2, ensure_ascii=False)
 

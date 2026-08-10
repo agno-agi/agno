@@ -57,7 +57,7 @@ class CsvTools(Toolkit):
         Returns:
             str: List of available csv files
         """
-        return json.dumps([_csv.stem for _csv in self.csvs])
+        return json.dumps([_csv.stem for _csv in self.csvs], ensure_ascii=False)
 
     def read_csv_file(self, csv_name: str, row_limit: Optional[int] = None) -> str:
         """Use this function to read the contents of a csv file `name` without the extension.
@@ -85,7 +85,7 @@ class CsvTools(Toolkit):
                     csv_data = [row for row in reader][:_row_limit]
                 else:
                     csv_data = [row for row in reader]
-            return json.dumps(csv_data)
+            return json.dumps(csv_data, ensure_ascii=False)
         except Exception as e:
             logger.exception("Error reading csv")
             return f"Error reading csv: {e}"
@@ -111,7 +111,7 @@ class CsvTools(Toolkit):
                 reader = csv.DictReader(csvfile)
                 columns = reader.fieldnames
 
-            return json.dumps(columns)
+            return json.dumps(columns, ensure_ascii=False)
         except Exception as e:
             logger.exception("Error getting columns")
             return f"Error getting columns: {e}"

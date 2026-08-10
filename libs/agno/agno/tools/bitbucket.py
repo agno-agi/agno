@@ -106,10 +106,10 @@ class BitbucketTools(Toolkit):
 
             repo = self._make_request("GET", f"/repositories/{self.workspace}", params=params)
 
-            return json.dumps(repo, indent=2)
+            return json.dumps(repo, indent=2, ensure_ascii=False)
         except Exception as e:
             logger.exception(f"Error retrieving repository list for workspace {self.workspace}")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_repository_details(self) -> str:
         """
@@ -121,10 +121,10 @@ class BitbucketTools(Toolkit):
         """
         try:
             repo = self._make_request("GET", f"/repositories/{self.workspace}/{self.repo_slug}")
-            return json.dumps(repo, indent=2)
+            return json.dumps(repo, indent=2, ensure_ascii=False)
         except Exception as e:
             logger.exception(f"Error retrieving repository information for {self.repo_slug}")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def create_repository(
         self,
@@ -164,10 +164,10 @@ class BitbucketTools(Toolkit):
             if project:
                 payload["project"] = {"key": project}
             repo = self._make_request("POST", f"/repositories/{self.workspace}/{self.repo_slug}", data=payload)
-            return json.dumps(repo, indent=2)
+            return json.dumps(repo, indent=2, ensure_ascii=False)
         except Exception as e:
             logger.exception(f"Error creating repository {self.repo_slug} for {self.workspace}")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def list_repository_commits(self, count: int = 10) -> str:
         """
@@ -202,10 +202,10 @@ class BitbucketTools(Toolkit):
                 if isinstance(commits, dict):
                     commits["values"] = collected_commits[:count]
 
-            return json.dumps(commits, indent=2)
+            return json.dumps(commits, indent=2, ensure_ascii=False)
         except Exception as e:
             logger.exception(f"Error retrieving commits for {self.repo_slug}")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def list_all_pull_requests(self, state: str = "OPEN") -> str:
         """
@@ -228,10 +228,10 @@ class BitbucketTools(Toolkit):
                 "GET", f"/repositories/{self.workspace}/{self.repo_slug}/pullrequests", params=params
             )
 
-            return json.dumps(pull_requests, indent=2)
+            return json.dumps(pull_requests, indent=2, ensure_ascii=False)
         except Exception as e:
             logger.exception(f"Error retrieving pull requests for {self.repo_slug}")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_pull_request_details(self, pull_request_id: int) -> str:
         """
@@ -246,10 +246,10 @@ class BitbucketTools(Toolkit):
             pull_request = self._make_request(
                 "GET", f"/repositories/{self.workspace}/{self.repo_slug}/pullrequests/{pull_request_id}"
             )
-            return json.dumps(pull_request, indent=2)
+            return json.dumps(pull_request, indent=2, ensure_ascii=False)
         except Exception as e:
             logger.exception(f"Error retrieving pull requests for {self.repo_slug}")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_pull_request_changes(self, pull_request_id: int) -> str:
         """
@@ -266,11 +266,11 @@ class BitbucketTools(Toolkit):
                 "GET", f"/repositories/{self.workspace}/{self.repo_slug}/pullrequests/{pull_request_id}/diff"
             )
             if isinstance(diff, dict):
-                return json.dumps(diff, indent=2)
+                return json.dumps(diff, indent=2, ensure_ascii=False)
             return diff
         except Exception as e:
             logger.exception(f"Error retrieving changes for pull request {pull_request_id} in {self.repo_slug}")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def list_issues(self, count: int = 10) -> str:
         """
@@ -288,7 +288,7 @@ class BitbucketTools(Toolkit):
 
             issues = self._make_request("GET", f"/repositories/{self.workspace}/{self.repo_slug}/issues", params=params)
 
-            return json.dumps(issues, indent=2)
+            return json.dumps(issues, indent=2, ensure_ascii=False)
         except Exception as e:
             logger.exception(f"Error retrieving issues for {self.repo_slug}")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)

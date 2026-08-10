@@ -114,13 +114,13 @@ class CustomApiTools(Toolkit):
                 log_error(f"Request failed with status {response.status_code}: {response.text}")
                 result["error"] = "Request failed"
 
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         except requests.exceptions.RequestException as e:
             error_message = f"Request failed: {str(e)}"
             log_error(error_message)
-            return json.dumps({"error": error_message}, indent=2)
+            return json.dumps({"error": error_message}, indent=2, ensure_ascii=False)
         except Exception as e:
             error_message = f"Unexpected error: {str(e)}"
             log_error(error_message)
-            return json.dumps({"error": error_message}, indent=2)
+            return json.dumps({"error": error_message}, indent=2, ensure_ascii=False)

@@ -1077,7 +1077,7 @@ class WorkflowRunOutput:
             return self.content.model_dump_json(exclude_none=True, **kwargs)
         else:
             kwargs.setdefault("ensure_ascii", False)
-            return json.dumps(self.content, **kwargs)
+            return json.dumps(self.content, **kwargs, ensure_ascii=False)
 
     def has_completed(self) -> bool:
         """Check if the workflow run is completed (either successfully or with error)"""

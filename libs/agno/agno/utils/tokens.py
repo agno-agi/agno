@@ -394,7 +394,7 @@ def count_schema_tokens(
         else:
             return 0
 
-        schema_json = json.dumps(schema)
+        schema_json = json.dumps(schema, ensure_ascii=False)
         return count_text_tokens(schema_json, model_id)
     except Exception:
         return 0
@@ -577,7 +577,7 @@ def _count_message_tokens(message: Message, model_id: str = "gpt-4o") -> int:
                         temp_image = Image(url=url, detail=detail)
                         tokens += count_image_tokens(temp_image)
                     else:
-                        text_parts.append(json.dumps(item))
+                        text_parts.append(json.dumps(item, ensure_ascii=False))
         else:
             text_parts.append(str(content))
 

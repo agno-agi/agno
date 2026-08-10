@@ -754,7 +754,7 @@ class AwsBedrock(Model):
                                 "type": "function",
                                 "function": {
                                     "name": tool["toolUse"]["name"],
-                                    "arguments": json.dumps(tool["toolUse"]["input"]),
+                                    "arguments": json.dumps(tool["toolUse"]["input"], ensure_ascii=False),
                                 },
                             }
                         )

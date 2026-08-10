@@ -90,12 +90,12 @@ class ApifyTools(Toolkit):
                     run = self.client.run(run_id=run_id)
                     results = run.dataset().list_items(clean=True).items
 
-                    return json.dumps(results)
+                    return json.dumps(results, ensure_ascii=False)
 
                 except Exception as e:
                     error_msg = f"Error running Apify Actor {actor_id}: {str(e)}"
                     log_error(error_msg)
-                    return json.dumps([{"error": error_msg}])
+                    return json.dumps([{"error": error_msg}], ensure_ascii=False)
 
             docstring = f"{actor_description}\n\nArgs:\n"
 

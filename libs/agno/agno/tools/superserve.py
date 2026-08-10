@@ -306,7 +306,7 @@ class SuperserveTools(Toolkit):
     # ------------------------------------------------------------------
     @staticmethod
     def _error(message: str, error: Union[str, Exception]) -> str:
-        return json.dumps({"status": "error", "message": f"{message}: {str(error)}"})
+        return json.dumps({"status": "error", "message": f"{message}: {str(error)}"}, ensure_ascii=False)
 
     @staticmethod
     def _format_result(stdout: str, stderr: str, exit_code: int) -> str:
@@ -454,7 +454,8 @@ class SuperserveTools(Toolkit):
             sandbox = self._get_sandbox(agent)
             info = sandbox.get_info()
             return json.dumps(
-                {"id": info.id, "name": info.name, "status": info.status.value, "metadata": info.metadata}
+                {"id": info.id, "name": info.name, "status": info.status.value, "metadata": info.metadata},
+                ensure_ascii=False,
             )
         except Exception as e:
             return self._error("Error getting sandbox info", e)
@@ -467,7 +468,9 @@ class SuperserveTools(Toolkit):
         """
         try:
             sandboxes = Sandbox.list(api_key=self.api_key, base_url=self.base_url)
-            return json.dumps([{"id": s.id, "name": s.name, "status": s.status.value} for s in sandboxes])
+            return json.dumps(
+                [{"id": s.id, "name": s.name, "status": s.status.value} for s in sandboxes], ensure_ascii=False
+            )
         except Exception as e:
             return self._error("Error listing sandboxes", e)
 
@@ -677,7 +680,8 @@ class SuperserveTools(Toolkit):
             sandbox = await self._aget_sandbox(agent)
             info = await sandbox.get_info()
             return json.dumps(
-                {"id": info.id, "name": info.name, "status": info.status.value, "metadata": info.metadata}
+                {"id": info.id, "name": info.name, "status": info.status.value, "metadata": info.metadata},
+                ensure_ascii=False,
             )
         except Exception as e:
             return self._error("Error getting sandbox info", e)
@@ -686,7 +690,9 @@ class SuperserveTools(Toolkit):
         """Async variant of list_sandboxes."""
         try:
             sandboxes = await AsyncSandbox.list(api_key=self.api_key, base_url=self.base_url)
-            return json.dumps([{"id": s.id, "name": s.name, "status": s.status.value} for s in sandboxes])
+            return json.dumps(
+                [{"id": s.id, "name": s.name, "status": s.status.value} for s in sandboxes], ensure_ascii=False
+            )
         except Exception as e:
             return self._error("Error listing sandboxes", e)
 

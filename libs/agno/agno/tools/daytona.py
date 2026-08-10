@@ -266,7 +266,7 @@ class DaytonaTools(Toolkit):
             self.result = response.result
             return self.result
         except Exception as e:
-            return json.dumps({"status": "error", "message": f"Error executing code: {str(e)}"})
+            return json.dumps({"status": "error", "message": f"Error executing code: {str(e)}"}, ensure_ascii=False)
 
     def run_shell_command(self, agent: Union[Agent, Team], command: str) -> str:
         """Execute a shell command in the sandbox.
@@ -313,7 +313,7 @@ class DaytonaTools(Toolkit):
             response = current_sandbox.process.exec(command, cwd=cwd)
             return response.result
         except Exception as e:
-            return json.dumps({"status": "error", "message": f"Error executing command: {str(e)}"})
+            return json.dumps({"status": "error", "message": f"Error executing command: {str(e)}"}, ensure_ascii=False)
 
     def create_file(self, agent: Union[Agent, Team], file_path: str, content: str) -> str:
         """Create or update a file in the sandbox.
@@ -343,7 +343,10 @@ class DaytonaTools(Toolkit):
             if parent_dir and parent_dir != "/":
                 result = current_sandbox.process.exec(f"mkdir -p {shlex.quote(parent_dir)}")
                 if result.exit_code != 0:
-                    return json.dumps({"status": "error", "message": f"Failed to create directory: {result.result}"})
+                    return json.dumps(
+                        {"status": "error", "message": f"Failed to create directory: {result.result}"},
+                        ensure_ascii=False,
+                    )
 
             # Write the file using shell command
             # Use cat with heredoc for better handling of special characters
@@ -352,11 +355,13 @@ class DaytonaTools(Toolkit):
             result = current_sandbox.process.exec(command)
 
             if result.exit_code != 0:
-                return json.dumps({"status": "error", "message": f"Failed to create file: {result.result}"})
+                return json.dumps(
+                    {"status": "error", "message": f"Failed to create file: {result.result}"}, ensure_ascii=False
+                )
 
             return f"File created/updated: {path_str}"
         except Exception as e:
-            return json.dumps({"status": "error", "message": f"Error creating file: {str(e)}"})
+            return json.dumps({"status": "error", "message": f"Error creating file: {str(e)}"}, ensure_ascii=False)
 
     def read_file(self, agent: Union[Agent, Team], file_path: str) -> str:
         """Read a file from the sandbox.
@@ -383,11 +388,13 @@ class DaytonaTools(Toolkit):
             result = current_sandbox.process.exec(f"cat {shlex.quote(path_str)}")
 
             if result.exit_code != 0:
-                return json.dumps({"status": "error", "message": f"Error reading file: {result.result}"})
+                return json.dumps(
+                    {"status": "error", "message": f"Error reading file: {result.result}"}, ensure_ascii=False
+                )
 
             return result.result
         except Exception as e:
-            return json.dumps({"status": "error", "message": f"Error reading file: {str(e)}"})
+            return json.dumps({"status": "error", "message": f"Error reading file: {str(e)}"}, ensure_ascii=False)
 
     def list_files(self, agent: Union[Agent, Team], directory: Optional[str] = None) -> str:
         """List files in a directory.
@@ -416,11 +423,13 @@ class DaytonaTools(Toolkit):
             result = current_sandbox.process.exec(f"ls -la {shlex.quote(path_str)}")
 
             if result.exit_code != 0:
-                return json.dumps({"status": "error", "message": f"Error listing directory: {result.result}"})
+                return json.dumps(
+                    {"status": "error", "message": f"Error listing directory: {result.result}"}, ensure_ascii=False
+                )
 
             return f"Contents of {path_str}:\n{result.result}"
         except Exception as e:
-            return json.dumps({"status": "error", "message": f"Error listing files: {str(e)}"})
+            return json.dumps({"status": "error", "message": f"Error listing files: {str(e)}"}, ensure_ascii=False)
 
     def delete_file(self, agent: Union[Agent, Team], file_path: str) -> str:
         """Delete a file or directory from the sandbox.
@@ -456,11 +465,13 @@ class DaytonaTools(Toolkit):
                 result = current_sandbox.process.exec(f"rm -f {shlex.quote(path_str)}")
 
             if result.exit_code != 0:
-                return json.dumps({"status": "error", "message": f"Failed to delete: {result.result}"})
+                return json.dumps(
+                    {"status": "error", "message": f"Failed to delete: {result.result}"}, ensure_ascii=False
+                )
 
             return f"Deleted: {path_str}"
         except Exception as e:
-            return json.dumps({"status": "error", "message": f"Error deleting file: {str(e)}"})
+            return json.dumps({"status": "error", "message": f"Error deleting file: {str(e)}"}, ensure_ascii=False)
 
     def change_directory(self, agent: Union[Agent, Team], directory: str) -> str:
         """Change the current working directory.
@@ -474,4 +485,4 @@ class DaytonaTools(Toolkit):
         try:
             return self.run_shell_command(agent, f"cd {directory}")
         except Exception as e:
-            return json.dumps({"status": "error", "message": f"Error changing directory: {str(e)}"})
+            return json.dumps({"status": "error", "message": f"Error changing directory: {str(e)}"}, ensure_ascii=False)

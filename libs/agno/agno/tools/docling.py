@@ -392,7 +392,7 @@ class DoclingTools(Toolkit):
             "supported_input_parsers": all_supported,
             "active_allowed_parsers": active_formats,
         }
-        return json.dumps(payload, indent=2)
+        return json.dumps(payload, indent=2, ensure_ascii=False)
 
     def _convert_and_export(
         self,
@@ -435,7 +435,7 @@ class DoclingTools(Toolkit):
         if export_format == "html_split_page":
             return document.export_to_html(split_page_view=True)
         if export_format == "json":
-            return json.dumps(document.export_to_dict(), indent=2)
+            return json.dumps(document.export_to_dict(), indent=2, ensure_ascii=False)
         if export_format == "yaml":
             import yaml
 
@@ -644,7 +644,7 @@ class DoclingTools(Toolkit):
                     "max_chars": self.max_chars,
                     "content": content[: self.max_chars] + "...",
                 }
-                return json.dumps(truncated_payload, indent=2)
+                return json.dumps(truncated_payload, indent=2, ensure_ascii=False)
             if export_format == "yaml":
                 import yaml
 

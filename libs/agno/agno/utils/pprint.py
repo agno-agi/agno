@@ -50,7 +50,7 @@ def pprint_run_response(
                 log_warning(f"Failed to convert response to Markdown: {str(e)}")
         else:
             try:
-                single_response_content = JSON(json.dumps(run_response.content), indent=4)
+                single_response_content = JSON(json.dumps(run_response.content, ensure_ascii=False), indent=4)
             except Exception as e:
                 log_warning(f"Failed to convert response to string: {str(e)}")
 
@@ -133,7 +133,7 @@ async def apprint_run_response(
                 log_warning(f"Failed to convert response to Markdown: {str(e)}")
         else:
             try:
-                single_response_content = JSON(json.dumps(run_response.content), indent=4)
+                single_response_content = JSON(json.dumps(run_response.content, ensure_ascii=False), indent=4)
             except Exception as e:
                 log_warning(f"Failed to convert response to string: {str(e)}")
 

@@ -79,6 +79,6 @@ class ZendeskTools(Toolkit):
             response.raise_for_status()
             clean = re.compile("<.*?>")
             articles = [re.sub(clean, "", article["body"]) for article in response.json()["results"]]
-            return json.dumps(articles)
+            return json.dumps(articles, ensure_ascii=False)
         except requests.RequestException as e:
             raise ConnectionError(f"API request failed: {e}")

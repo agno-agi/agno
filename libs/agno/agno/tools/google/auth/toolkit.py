@@ -47,7 +47,9 @@ class GoogleAuth(Toolkit):
             if service in self._services:
                 scopes.update(self._services[service])
         if not scopes:
-            return json.dumps({"error": f"Unknown services. Available: {', '.join(self._services)}"})
+            return json.dumps(
+                {"error": f"Unknown services. Available: {', '.join(self._services)}"}, ensure_ascii=False
+            )
         params = {
             "client_id": self.client_id,
             "redirect_uri": self.redirect_uri,
@@ -58,4 +60,4 @@ class GoogleAuth(Toolkit):
             "include_granted_scopes": "true",
         }
         url = f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
-        return json.dumps({"message": f"Connect {', '.join(services)}", "url": url})
+        return json.dumps({"message": f"Connect {', '.join(services)}", "url": url}, ensure_ascii=False)

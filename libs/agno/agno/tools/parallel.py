@@ -135,7 +135,11 @@ class ParallelTools(Toolkit):
         """
         try:
             if not objective and not search_queries:
-                return json.dumps({"error": "Please provide at least one of: objective or search_queries"}, indent=2)
+                return json.dumps(
+                    {"error": "Please provide at least one of: objective or search_queries"},
+                    indent=2,
+                    ensure_ascii=False,
+                )
 
             final_max_results = max_results if max_results is not None else self.max_results
 
@@ -181,7 +185,7 @@ class ParallelTools(Toolkit):
             # Prefer SDK's model_dump() for complete response, fall back to manual formatting
             try:
                 if hasattr(search_result, "model_dump"):
-                    return json.dumps(search_result.model_dump(), cls=CustomJSONEncoder)
+                    return json.dumps(search_result.model_dump(), cls=CustomJSONEncoder, ensure_ascii=False)
             except Exception:
                 pass
             formatted_results: Dict[str, Any] = {
@@ -207,11 +211,11 @@ class ParallelTools(Toolkit):
             if hasattr(search_result, "usage"):
                 formatted_results["usage"] = search_result.usage
 
-            return json.dumps(formatted_results, cls=CustomJSONEncoder, indent=2)
+            return json.dumps(formatted_results, cls=CustomJSONEncoder, indent=2, ensure_ascii=False)
 
         except Exception as e:
             log_error(f"Error searching Parallel for objective '{objective}': {str(e)}")
-            return json.dumps({"error": f"Search failed: {str(e)}"}, indent=2)
+            return json.dumps({"error": f"Search failed: {str(e)}"}, indent=2, ensure_ascii=False)
 
     def parallel_extract(
         self,
@@ -237,7 +241,7 @@ class ParallelTools(Toolkit):
         """
         try:
             if not urls:
-                return json.dumps({"error": "Please provide at least one URL to extract"}, indent=2)
+                return json.dumps({"error": "Please provide at least one URL to extract"}, indent=2, ensure_ascii=False)
 
             extract_params: Dict[str, Any] = {"urls": urls}
 
@@ -277,7 +281,7 @@ class ParallelTools(Toolkit):
             # Prefer SDK's model_dump() for complete response, fall back to manual formatting
             try:
                 if hasattr(extract_result, "model_dump"):
-                    return json.dumps(extract_result.model_dump(), cls=CustomJSONEncoder)
+                    return json.dumps(extract_result.model_dump(), cls=CustomJSONEncoder, ensure_ascii=False)
             except Exception:
                 pass
 
@@ -314,11 +318,11 @@ class ParallelTools(Toolkit):
             if hasattr(extract_result, "usage"):
                 formatted_results["usage"] = extract_result.usage
 
-            return json.dumps(formatted_results, cls=CustomJSONEncoder, indent=2)
+            return json.dumps(formatted_results, cls=CustomJSONEncoder, indent=2, ensure_ascii=False)
 
         except Exception as e:
             log_error(f"Error extracting from Parallel: {str(e)}")
-            return json.dumps({"error": f"Extract failed: {str(e)}"}, indent=2)
+            return json.dumps({"error": f"Extract failed: {str(e)}"}, indent=2, ensure_ascii=False)
 
     # -------------------------------------------------------------------------
     # Task API — Deep research with structured output and citations
@@ -379,11 +383,12 @@ class ParallelTools(Toolkit):
                     "is_active": task_run.is_active,
                 },
                 indent=2,
+                ensure_ascii=False,
             )
 
         except Exception as e:
             log_error(f"Error creating task with query '{query[:100]}...': {str(e)}")
-            return json.dumps({"error": f"Create task failed: {str(e)}"}, indent=2)
+            return json.dumps({"error": f"Create task failed: {str(e)}"}, indent=2, ensure_ascii=False)
 
     def get_task_result(self, run_id: str) -> str:
         """
@@ -401,11 +406,11 @@ class ParallelTools(Toolkit):
             )
 
             output_data = self._format_task_output(run_id, task_result)
-            return json.dumps(output_data, cls=CustomJSONEncoder, indent=2)
+            return json.dumps(output_data, cls=CustomJSONEncoder, indent=2, ensure_ascii=False)
 
         except Exception as e:
             log_error(f"Error getting result for task {run_id}: {str(e)}")
-            return json.dumps({"error": f"Get result failed: {str(e)}"}, indent=2)
+            return json.dumps({"error": f"Get result failed: {str(e)}"}, indent=2, ensure_ascii=False)
 
     def get_task_status(self, run_id: str) -> str:
         """
@@ -431,11 +436,12 @@ class ParallelTools(Toolkit):
                 },
                 cls=CustomJSONEncoder,
                 indent=2,
+                ensure_ascii=False,
             )
 
         except Exception as e:
             log_error(f"Error getting status for task {run_id}: {str(e)}")
-            return json.dumps({"error": f"Get status failed: {str(e)}"}, indent=2)
+            return json.dumps({"error": f"Get status failed: {str(e)}"}, indent=2, ensure_ascii=False)
 
     # -------------------------------------------------------------------------
     # Monitor API — Track topics over time and get notified of changes
@@ -477,11 +483,12 @@ class ParallelTools(Toolkit):
                     "last_run_at": monitor.last_run_at,
                 },
                 indent=2,
+                ensure_ascii=False,
             )
 
         except Exception as e:
             log_error(f"Error creating monitor for query '{query}': {str(e)}")
-            return json.dumps({"error": f"Create monitor failed: {str(e)}"}, indent=2)
+            return json.dumps({"error": f"Create monitor failed: {str(e)}"}, indent=2, ensure_ascii=False)
 
     def get_monitor(self, monitor_id: str) -> str:
         """
@@ -508,11 +515,11 @@ class ParallelTools(Toolkit):
             if monitor.type == "event_stream" and hasattr(monitor.settings, "query"):
                 result["query"] = monitor.settings.query
 
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         except Exception as e:
             log_error(f"Error retrieving monitor {monitor_id}: {str(e)}")
-            return json.dumps({"error": f"Get monitor failed: {str(e)}"}, indent=2)
+            return json.dumps({"error": f"Get monitor failed: {str(e)}"}, indent=2, ensure_ascii=False)
 
     def update_monitor(
         self,
@@ -540,7 +547,9 @@ class ParallelTools(Toolkit):
                 update_params["settings"] = {"query": query}
 
             if not update_params:
-                return json.dumps({"error": "At least one of frequency or query must be provided"}, indent=2)
+                return json.dumps(
+                    {"error": "At least one of frequency or query must be provided"}, indent=2, ensure_ascii=False
+                )
 
             monitor = self.parallel_client.monitor.update(monitor_id, **update_params)
 
@@ -555,11 +564,11 @@ class ParallelTools(Toolkit):
             if monitor.type == "event_stream" and hasattr(monitor.settings, "query"):
                 result["query"] = monitor.settings.query
 
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
 
         except Exception as e:
             log_error(f"Error updating monitor {monitor_id}: {str(e)}")
-            return json.dumps({"error": f"Update monitor failed: {str(e)}"}, indent=2)
+            return json.dumps({"error": f"Update monitor failed: {str(e)}"}, indent=2, ensure_ascii=False)
 
     def list_monitors(
         self,
@@ -602,11 +611,13 @@ class ParallelTools(Toolkit):
                     monitor_info["query"] = m.settings.query
                 monitors.append(monitor_info)
 
-            return json.dumps({"monitors": monitors, "has_more": response.next_cursor is not None}, indent=2)
+            return json.dumps(
+                {"monitors": monitors, "has_more": response.next_cursor is not None}, indent=2, ensure_ascii=False
+            )
 
         except Exception as e:
             log_error(f"Error listing monitors: {str(e)}")
-            return json.dumps({"error": f"List monitors failed: {str(e)}"}, indent=2)
+            return json.dumps({"error": f"List monitors failed: {str(e)}"}, indent=2, ensure_ascii=False)
 
     def cancel_monitor(self, monitor_id: str) -> str:
         """
@@ -628,11 +639,12 @@ class ParallelTools(Toolkit):
                     "cancelled": True,
                 },
                 indent=2,
+                ensure_ascii=False,
             )
 
         except Exception as e:
             log_error(f"Error cancelling monitor {monitor_id}: {str(e)}")
-            return json.dumps({"error": f"Cancel monitor failed: {str(e)}"}, indent=2)
+            return json.dumps({"error": f"Cancel monitor failed: {str(e)}"}, indent=2, ensure_ascii=False)
 
     def get_monitor_events(
         self,
@@ -683,8 +695,10 @@ class ParallelTools(Toolkit):
                         ]
                 events.append(event_data)
 
-            return json.dumps({"events": events, "has_more": response.next_cursor is not None}, indent=2)
+            return json.dumps(
+                {"events": events, "has_more": response.next_cursor is not None}, indent=2, ensure_ascii=False
+            )
 
         except Exception as e:
             log_error(f"Error getting events for monitor {monitor_id}: {str(e)}")
-            return json.dumps({"error": f"Get events failed: {str(e)}"}, indent=2)
+            return json.dumps({"error": f"Get events failed: {str(e)}"}, indent=2, ensure_ascii=False)

@@ -341,10 +341,10 @@ class AntigravityTools(Toolkit):
                 return text
             # No model_output text block found. Surface the raw payload so the
             # calling model has something to work with rather than retrying blindly.
-            return json.dumps(data)
+            return json.dumps(data, ensure_ascii=False)
         except Exception as e:
             log_error(f"Antigravity run_antigravity_task failed: {e}")
-            return json.dumps({"status": "error", "message": str(e)})
+            return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)
 
     def run_custom_antigravity_agent(self, agent: Union[Agent, Team], custom_agent_name: str, task: str) -> str:
         """Invoke a named custom Antigravity agent (created via /agents) and return its response.
@@ -386,10 +386,10 @@ class AntigravityTools(Toolkit):
                 if data.get("id"):
                     state[prev_key] = data["id"]
 
-            return self._extract_final_text(data) or json.dumps(data)
+            return self._extract_final_text(data) or json.dumps(data, ensure_ascii=False)
         except Exception as e:
             log_error(f"Antigravity run_custom_antigravity_agent failed: {e}")
-            return json.dumps({"status": "error", "message": str(e)})
+            return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)
 
     def create_custom_antigravity_agent(
         self,
@@ -428,10 +428,10 @@ class AntigravityTools(Toolkit):
             elif sources:
                 body["base_environment"] = {"type": "remote", "sources": sources}
             data = self._post("/agents", body)
-            return json.dumps(data)
+            return json.dumps(data, ensure_ascii=False)
         except Exception as e:
             log_error(f"Antigravity create_custom_antigravity_agent failed: {e}")
-            return json.dumps({"status": "error", "message": str(e)})
+            return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)
 
     def update_custom_antigravity_agent(
         self,
@@ -456,44 +456,44 @@ class AntigravityTools(Toolkit):
             if description is not None:
                 body["description"] = description
             if not body:
-                return json.dumps({"status": "error", "message": "no fields to update"})
-            return json.dumps(self._patch(f"/agents/{name}", body))
+                return json.dumps({"status": "error", "message": "no fields to update"}, ensure_ascii=False)
+            return json.dumps(self._patch(f"/agents/{name}", body), ensure_ascii=False)
         except Exception as e:
             log_error(f"Antigravity update_custom_antigravity_agent failed: {e}")
-            return json.dumps({"status": "error", "message": str(e)})
+            return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)
 
     def get_custom_antigravity_agent(self, name: str) -> str:
         """Fetch a single custom Antigravity agent by name via GET /agents/{name}."""
         try:
-            return json.dumps(self._get(f"/agents/{name}"))
+            return json.dumps(self._get(f"/agents/{name}"), ensure_ascii=False)
         except Exception as e:
             log_error(f"Antigravity get_custom_antigravity_agent failed: {e}")
-            return json.dumps({"status": "error", "message": str(e)})
+            return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)
 
     def list_antigravity_agents(self) -> str:
         """List all custom Antigravity agents owned by the API key."""
         try:
-            return json.dumps(self._get("/agents"))
+            return json.dumps(self._get("/agents"), ensure_ascii=False)
         except Exception as e:
             log_error(f"Antigravity list_antigravity_agents failed: {e}")
-            return json.dumps({"status": "error", "message": str(e)})
+            return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)
 
     def list_antigravity_agent_versions(self, name: str) -> str:
         """List versions of a custom Antigravity agent via GET /agents/{name}/versions."""
         try:
-            return json.dumps(self._get(f"/agents/{name}/versions"))
+            return json.dumps(self._get(f"/agents/{name}/versions"), ensure_ascii=False)
         except Exception as e:
             log_error(f"Antigravity list_antigravity_agent_versions failed: {e}")
-            return json.dumps({"status": "error", "message": str(e)})
+            return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)
 
     def delete_antigravity_agent(self, name: str) -> str:
         """Delete a custom Antigravity agent by name."""
         try:
             self._delete(f"/agents/{name}")
-            return json.dumps({"status": "ok", "deleted": name})
+            return json.dumps({"status": "ok", "deleted": name}, ensure_ascii=False)
         except Exception as e:
             log_error(f"Antigravity delete_antigravity_agent failed: {e}")
-            return json.dumps({"status": "error", "message": str(e)})
+            return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)
 
     def download_antigravity_environment_snapshot(
         self, environment_id: str, output_path: str, agent: Optional[Union[Agent, Team]] = None
@@ -520,7 +520,8 @@ class AntigravityTools(Toolkit):
                 state = self._session_state(agent)
                 if not state or not state.get("antigravity_env_id"):
                     return json.dumps(
-                        {"status": "error", "message": "no cached env id; run a task first or pass an explicit id"}
+                        {"status": "error", "message": "no cached env id; run a task first or pass an explicit id"},
+                        ensure_ascii=False,
                     )
                 env_id = state["antigravity_env_id"]
 
@@ -536,7 +537,9 @@ class AntigravityTools(Toolkit):
                             fh.write(chunk)
                             written += len(chunk)
             log_debug(f"Antigravity: wrote snapshot ({written} bytes) for env {env_id} to {output_path}")
-            return json.dumps({"status": "ok", "path": output_path, "bytes": written, "environment_id": env_id})
+            return json.dumps(
+                {"status": "ok", "path": output_path, "bytes": written, "environment_id": env_id}, ensure_ascii=False
+            )
         except Exception as e:
             log_error(f"Antigravity download_antigravity_environment_snapshot failed: {e}")
-            return json.dumps({"status": "error", "message": str(e)})
+            return json.dumps({"status": "error", "message": str(e)}, ensure_ascii=False)

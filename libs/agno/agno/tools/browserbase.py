@@ -176,7 +176,7 @@ class BrowserbaseTools(Toolkit):
             if self._page:
                 self._page.goto(url, wait_until="networkidle")
             result = {"status": "complete", "title": self._page.title() if self._page else "", "url": url}
-            return json.dumps(result)
+            return json.dumps(result, ensure_ascii=False)
         except Exception as e:
             self._cleanup()
             raise e
@@ -196,7 +196,7 @@ class BrowserbaseTools(Toolkit):
             self._initialize_browser(connect_url)
             if self._page:
                 self._page.screenshot(path=path, full_page=full_page)
-            return json.dumps({"status": "success", "path": path})
+            return json.dumps({"status": "success", "path": path}, ensure_ascii=False)
         except Exception as e:
             self._cleanup()
             raise e
@@ -287,10 +287,13 @@ class BrowserbaseTools(Toolkit):
                 {
                     "status": "closed",
                     "message": "Browser resources cleaned up. Session will auto-close if not already closed.",
-                }
+                },
+                ensure_ascii=False,
             )
         except Exception as e:
-            return json.dumps({"status": "warning", "message": f"Cleanup completed with warning: {str(e)}"})
+            return json.dumps(
+                {"status": "warning", "message": f"Cleanup completed with warning: {str(e)}"}, ensure_ascii=False
+            )
 
     async def _ainitialize_browser(self, connect_url: Optional[str] = None):
         """
@@ -343,7 +346,7 @@ class BrowserbaseTools(Toolkit):
                 await self._async_page.goto(url, wait_until="networkidle")
             title = await self._async_page.title() if self._async_page else ""
             result = {"status": "complete", "title": title, "url": url}
-            return json.dumps(result)
+            return json.dumps(result, ensure_ascii=False)
         except Exception as e:
             await self._acleanup()
             raise e
@@ -363,7 +366,7 @@ class BrowserbaseTools(Toolkit):
             await self._ainitialize_browser(connect_url)
             if self._async_page:
                 await self._async_page.screenshot(path=path, full_page=full_page)
-            return json.dumps({"status": "success", "path": path})
+            return json.dumps({"status": "success", "path": path}, ensure_ascii=False)
         except Exception as e:
             await self._acleanup()
             raise e
@@ -412,7 +415,10 @@ class BrowserbaseTools(Toolkit):
                 {
                     "status": "closed",
                     "message": "Browser resources cleaned up. Session will auto-close if not already closed.",
-                }
+                },
+                ensure_ascii=False,
             )
         except Exception as e:
-            return json.dumps({"status": "warning", "message": f"Cleanup completed with warning: {str(e)}"})
+            return json.dumps(
+                {"status": "warning", "message": f"Cleanup completed with warning: {str(e)}"}, ensure_ascii=False
+            )

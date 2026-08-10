@@ -158,7 +158,7 @@ class WorkflowTools(Toolkit):
 
             run_context.session_state["workflow_results"].append(result.to_dict())
 
-            return json.dumps(result.to_dict(), indent=2)
+            return json.dumps(result.to_dict(), indent=2, ensure_ascii=False)
 
         except Exception as e:
             log_error(f"Error running workflow: {str(e)}")
@@ -198,7 +198,7 @@ class WorkflowTools(Toolkit):
 
             run_context.session_state["workflow_results"].append(result.to_dict())
 
-            return json.dumps(result.to_dict(), indent=2)
+            return json.dumps(result.to_dict(), indent=2, ensure_ascii=False)
 
         except Exception as e:
             log_error(f"Error running workflow: {str(e)}")

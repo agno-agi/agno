@@ -98,19 +98,19 @@ class ConfluenceTools(Toolkit):
             log_info(f"Retrieving page content from space '{space_name}'")
             key = self.get_space_key(space_name=space_name)
             if key == "No space found":
-                return json.dumps({"error": f"Space '{space_name}' not found"})
+                return json.dumps({"error": f"Space '{space_name}' not found"}, ensure_ascii=False)
 
             page = self.confluence.get_page_by_title(key, page_title, expand=expand)
             if page:
                 log_info(f"Successfully retrieved page '{page_title}' from space '{space_name}'")
-                return json.dumps(page)
+                return json.dumps(page, ensure_ascii=False)
 
             logger.warning(f"Page '{page_title}' not found in space '{space_name}'")
-            return json.dumps({"error": f"Page '{page_title}' not found in space '{space_name}'"})
+            return json.dumps({"error": f"Page '{page_title}' not found in space '{space_name}'"}, ensure_ascii=False)
 
         except Exception as e:
             logger.exception(f"Error retrieving page '{page_title}'")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_all_space_detail(self):
         """Retrieve details about all Confluence spaces.
@@ -184,14 +184,14 @@ class ConfluenceTools(Toolkit):
         space_key = self.get_space_key(space_name)
 
         if space_key == "No space found":
-            return json.dumps({"error": f"Space '{space_name}' not found"})
+            return json.dumps({"error": f"Space '{space_name}' not found"}, ensure_ascii=False)
 
         page_details = self.confluence.get_all_pages_from_space(
             space_key, status=None, expand=None, content_type="page"
         )
 
         if not page_details:
-            return json.dumps({"error": f"No pages found in space '{space_name}'"})
+            return json.dumps({"error": f"No pages found in space '{space_name}'"}, ensure_ascii=False)
 
         page_details = str([{"id": page["id"], "title": page["title"]} for page in page_details])
         return page_details
@@ -211,14 +211,14 @@ class ConfluenceTools(Toolkit):
         try:
             space_key = self.get_space_key(space_name=space_name)
             if space_key == "No space found":
-                return json.dumps({"error": f"Space '{space_name}' not found"})
+                return json.dumps({"error": f"Space '{space_name}' not found"}, ensure_ascii=False)
 
             page = self.confluence.create_page(space_key, title, body, parent_id=parent_id)
             log_info(f"Page created: {title} with ID {page['id']}")
-            return json.dumps({"id": page["id"], "title": title})
+            return json.dumps({"id": page["id"], "title": title}, ensure_ascii=False)
         except Exception as e:
             logger.exception(f"Error creating page '{title}'")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def update_page(self, page_id: str, title: str, body: str) -> str:
         """Update an existing Confluence page.
@@ -234,7 +234,7 @@ class ConfluenceTools(Toolkit):
         try:
             updated_page = self.confluence.update_page(page_id, title, body)
             log_info(f"Page updated: {title} with ID {updated_page['id']}")
-            return json.dumps({"status": "success", "id": updated_page["id"]})
+            return json.dumps({"status": "success", "id": updated_page["id"]}, ensure_ascii=False)
         except Exception as e:
             logger.exception(f"Error updating page '{title}'")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)

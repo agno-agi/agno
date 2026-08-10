@@ -81,10 +81,12 @@ class CartesiaTools(Toolkit):
                         log_error(f"Unexpected error processing voice. Voice data: {voice}: {str(e)}")
                         continue
 
-            return json.dumps(filtered_result, indent=4)
+            return json.dumps(filtered_result, indent=4, ensure_ascii=False)
         except Exception as e:
             log_error(f"Error listing voices from Cartesia: {str(e)}")
-            return json.dumps({"error": str(e), "detail": "Error occurred in list_voices function."})
+            return json.dumps(
+                {"error": str(e), "detail": "Error occurred in list_voices function."}, ensure_ascii=False
+            )
 
     def localize_voice(
         self,
@@ -119,13 +121,13 @@ class CartesiaTools(Toolkit):
             )
 
             if isinstance(result, dict):
-                return json.dumps(result, indent=4)
+                return json.dumps(result, indent=4, ensure_ascii=False)
             else:
                 return result.model_dump_json(indent=4)
 
         except Exception as e:
             log_error(f"Error localizing voice with Cartesia: {str(e)}")
-            return json.dumps({"error": str(e), "type": type(e).__name__})
+            return json.dumps({"error": str(e), "type": type(e).__name__}, ensure_ascii=False)
 
     def text_to_speech(
         self,

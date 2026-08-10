@@ -126,11 +126,11 @@ class GithubTools(Toolkit):
                 if len(repo_list) >= per_page:
                     break
 
-            return json.dumps(repo_list, indent=2)
+            return json.dumps(repo_list, indent=2, ensure_ascii=False)
 
         except GithubException as e:
             logger.exception("Error searching repositories")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def list_repositories(self) -> str:
         """List all repositories for the authenticated user.
@@ -142,10 +142,10 @@ class GithubTools(Toolkit):
         try:
             repos = self.g.get_user().get_repos()
             repo_names = [repo.full_name for repo in repos]
-            return json.dumps(repo_names, indent=2)
+            return json.dumps(repo_names, indent=2, ensure_ascii=False)
         except GithubException as e:
             logger.exception("Error listing repositories")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def create_repository(
         self,
@@ -194,10 +194,10 @@ class GithubTools(Toolkit):
                 "private": repo.private,
                 "description": repo.description,
             }
-            return json.dumps(repo_info, indent=2)
+            return json.dumps(repo_info, indent=2, ensure_ascii=False)
         except GithubException as e:
             logger.exception("Error creating repository")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_repository(self, repo_name: str) -> str:
         """Get details of a specific repository.
@@ -222,10 +222,10 @@ class GithubTools(Toolkit):
                 "license": repo.license.name if repo.license else None,
                 "default_branch": repo.default_branch,
             }
-            return json.dumps(repo_info, indent=2)
+            return json.dumps(repo_info, indent=2, ensure_ascii=False)
         except GithubException as e:
             logger.exception("Error getting repository")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_repository_languages(self, repo_name: str) -> str:
         """Get the languages used in a repository.
@@ -240,10 +240,10 @@ class GithubTools(Toolkit):
         try:
             repo = self.g.get_repo(repo_name)
             languages = repo.get_languages()
-            return json.dumps(languages, indent=2)
+            return json.dumps(languages, indent=2, ensure_ascii=False)
         except GithubException as e:
             logger.exception("Error getting repository languages")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_pull_request_count(
         self,
@@ -280,10 +280,10 @@ class GithubTools(Toolkit):
             else:
                 count = pulls.totalCount
 
-            return json.dumps({"count": count}, indent=2)
+            return json.dumps({"count": count}, indent=2, ensure_ascii=False)
         except GithubException as e:
             logger.exception("Error counting pull requests")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_pull_request(self, repo_name: str, pr_number: int) -> str:
         """Get details of a specific pull request.
@@ -312,10 +312,10 @@ class GithubTools(Toolkit):
                 "mergeable": pr.mergeable,
                 "url": pr.html_url,
             }
-            return json.dumps(pr_info, indent=2)
+            return json.dumps(pr_info, indent=2, ensure_ascii=False)
         except GithubException as e:
             logger.exception("Error getting pull request")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_pull_request_changes(self, repo_name: str, pr_number: int) -> str:
         """Get the changes (files modified) in a pull request.
@@ -345,10 +345,10 @@ class GithubTools(Toolkit):
                     "patch": file.patch,
                 }
                 changes.append(file_info)
-            return json.dumps(changes, indent=2)
+            return json.dumps(changes, indent=2, ensure_ascii=False)
         except GithubException as e:
             logger.exception("Error getting pull request changes")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def create_issue(self, repo_name: str, title: str, body: Optional[str] = None) -> str:
         """Create an issue in a repository.
@@ -375,10 +375,10 @@ class GithubTools(Toolkit):
                 "created_at": issue.created_at.isoformat(),
                 "user": issue.user.login,
             }
-            return json.dumps(issue_info, indent=2)
+            return json.dumps(issue_info, indent=2, ensure_ascii=False)
         except GithubException as e:
             logger.exception("Error creating issue")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def list_issues(self, repo_name: str, state: str = "open", page: int = 1, per_page: int = 20) -> str:
         """List issues for a repository with pagination.
@@ -436,10 +436,10 @@ class GithubTools(Toolkit):
 
             response = {"data": issue_list, "meta": meta}
 
-            return json.dumps(response, indent=2)
+            return json.dumps(response, indent=2, ensure_ascii=False)
         except GithubException as e:
             logger.exception("Error listing issues")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_issue(self, repo_name: str, issue_number: int) -> str:
         """Get details of a specific issue.
@@ -467,10 +467,10 @@ class GithubTools(Toolkit):
                 "assignees": [assignee.login for assignee in issue.assignees],
                 "labels": [label.name for label in issue.labels],
             }
-            return json.dumps(issue_info, indent=2)
+            return json.dumps(issue_info, indent=2, ensure_ascii=False)
         except GithubException as e:
             logger.exception("Error getting issue")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def comment_on_issue(self, repo_name: str, issue_number: int, comment_body: str) -> str:
         """Add a comment to an issue.
@@ -495,10 +495,10 @@ class GithubTools(Toolkit):
                 "created_at": comment.created_at.isoformat(),
                 "url": comment.html_url,
             }
-            return json.dumps(comment_info, indent=2)
+            return json.dumps(comment_info, indent=2, ensure_ascii=False)
         except GithubException as e:
             logger.exception("Error commenting on issue")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def close_issue(self, repo_name: str, issue_number: int) -> str:
         """Close an issue.
@@ -515,10 +515,10 @@ class GithubTools(Toolkit):
             repo = self.g.get_repo(repo_name)
             issue = repo.get_issue(number=issue_number)
             issue.edit(state="closed")
-            return json.dumps({"message": f"Issue #{issue_number} closed."}, indent=2)
+            return json.dumps({"message": f"Issue #{issue_number} closed."}, indent=2, ensure_ascii=False)
         except GithubException as e:
             logger.exception("Error closing issue")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def reopen_issue(self, repo_name: str, issue_number: int) -> str:
         """Reopen a closed issue.
@@ -535,10 +535,10 @@ class GithubTools(Toolkit):
             repo = self.g.get_repo(repo_name)
             issue = repo.get_issue(number=issue_number)
             issue.edit(state="open")
-            return json.dumps({"message": f"Issue #{issue_number} reopened."}, indent=2)
+            return json.dumps({"message": f"Issue #{issue_number} reopened."}, indent=2, ensure_ascii=False)
         except GithubException as e:
             logger.exception("Error reopening issue")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def assign_issue(self, repo_name: str, issue_number: int, assignees: List[str]) -> str:
         """Assign users to an issue.
@@ -556,10 +556,12 @@ class GithubTools(Toolkit):
             repo = self.g.get_repo(repo_name)
             issue = repo.get_issue(number=issue_number)
             issue.edit(assignees=assignees)
-            return json.dumps({"message": f"Issue #{issue_number} assigned to {assignees}."}, indent=2)
+            return json.dumps(
+                {"message": f"Issue #{issue_number} assigned to {assignees}."}, indent=2, ensure_ascii=False
+            )
         except GithubException as e:
             logger.exception("Error assigning issue")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def label_issue(self, repo_name: str, issue_number: int, labels: List[str]) -> str:
         """Add labels to an issue.
@@ -580,10 +582,11 @@ class GithubTools(Toolkit):
             return json.dumps(
                 {"message": f"Labels {labels} added to issue #{issue_number}."},
                 indent=2,
+                ensure_ascii=False,
             )
         except GithubException as e:
             logger.exception("Error labeling issue")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def list_issue_comments(self, repo_name: str, issue_number: int) -> str:
         """List comments on an issue.
@@ -610,10 +613,10 @@ class GithubTools(Toolkit):
                     "url": comment.html_url,
                 }
                 comment_list.append(comment_info)
-            return json.dumps(comment_list, indent=2)
+            return json.dumps(comment_list, indent=2, ensure_ascii=False)
         except GithubException as e:
             logger.exception("Error listing issue comments")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def edit_issue(
         self,
@@ -638,10 +641,10 @@ class GithubTools(Toolkit):
             repo = self.g.get_repo(repo_name)
             issue = repo.get_issue(number=issue_number)
             issue.edit(title=title, body=body)  # type: ignore
-            return json.dumps({"message": f"Issue #{issue_number} updated."}, indent=2)
+            return json.dumps({"message": f"Issue #{issue_number} updated."}, indent=2, ensure_ascii=False)
         except GithubException as e:
             logger.exception("Error editing issue")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def delete_repository(self, repo_name: str) -> str:
         """Delete a repository (requires admin permissions).
@@ -656,10 +659,10 @@ class GithubTools(Toolkit):
         try:
             repo = self.g.get_repo(repo_name)
             repo.delete()
-            return json.dumps({"message": f"Repository {repo_name} deleted successfully"}, indent=2)
+            return json.dumps({"message": f"Repository {repo_name} deleted successfully"}, indent=2, ensure_ascii=False)
         except GithubException as e:
             logger.exception("Error deleting repository")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def list_branches(self, repo_name: str) -> str:
         """List all branches in a repository.
@@ -673,10 +676,10 @@ class GithubTools(Toolkit):
         try:
             repo = self.g.get_repo(repo_name)
             branches = [branch.name for branch in repo.get_branches()]
-            return json.dumps(branches, indent=2)
+            return json.dumps(branches, indent=2, ensure_ascii=False)
         except GithubException as e:
             logger.exception("Error listing branches")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_repository_stars(self, repo_name: str) -> str:
         """Get the number of stars for a repository.
@@ -690,10 +693,10 @@ class GithubTools(Toolkit):
         log_debug(f"Getting star count for repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
-            return json.dumps({"stars": repo.stargazers_count}, indent=2)
+            return json.dumps({"stars": repo.stargazers_count}, indent=2, ensure_ascii=False)
         except GithubException as e:
             logger.exception("Error getting repository stars")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_pull_requests(
         self,
@@ -735,10 +738,10 @@ class GithubTools(Toolkit):
                 if len(pr_list) >= limit:
                     break
 
-            return json.dumps(pr_list, indent=2)
+            return json.dumps(pr_list, indent=2, ensure_ascii=False)
         except GithubException as e:
             logger.exception("Error getting pull requests by query")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_pull_request_comments(self, repo_name: str, pr_number: int, include_issue_comments: bool = True) -> str:
         """Get all comments on a pull request.
@@ -793,10 +796,10 @@ class GithubTools(Toolkit):
             # Sort all comments by creation date
             comment_list.sort(key=lambda x: x["created_at"], reverse=True)
 
-            return json.dumps(comment_list, indent=2)
+            return json.dumps(comment_list, indent=2, ensure_ascii=False)
         except GithubException as e:
             logger.exception("Error getting pull request comments")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def create_pull_request_comment(
         self,
@@ -838,10 +841,10 @@ class GithubTools(Toolkit):
                 "url": comment.html_url,
             }
 
-            return json.dumps(comment_info, indent=2)
+            return json.dumps(comment_info, indent=2, ensure_ascii=False)
         except GithubException as e:
             logger.exception("Error creating pull request comment")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def edit_pull_request_comment(self, repo_name: str, comment_id: int, body: str) -> str:
         """Edit an existing pull request comment.
@@ -877,10 +880,10 @@ class GithubTools(Toolkit):
                 "url": comment.html_url,
             }
 
-            return json.dumps(comment_info, indent=2)
+            return json.dumps(comment_info, indent=2, ensure_ascii=False)
         except GithubException as e:
             logger.exception("Error editing pull request comment")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_pull_request_with_details(self, repo_name: str, pr_number: int) -> str:
         """Get comprehensive details of a pull request including comments, labels, and metadata.
@@ -985,10 +988,10 @@ class GithubTools(Toolkit):
                 "files_changed": files_changed,
             }
 
-            return json.dumps(pr_info, indent=2)
+            return json.dumps(pr_info, indent=2, ensure_ascii=False)
         except GithubException as e:
             logger.exception("Error getting pull request details")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_repository_with_stats(self, repo_name: str) -> str:
         """Get comprehensive repository information including statistics.
@@ -1148,10 +1151,10 @@ class GithubTools(Toolkit):
                 log_debug(f"Error getting contributors: {e}")
                 repo_info["contributors"] = []
 
-            return json.dumps(repo_info, indent=2)
+            return json.dumps(repo_info, indent=2, ensure_ascii=False)
         except GithubException as e:
             logger.exception("Error getting repository stats")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def create_pull_request(
         self,
@@ -1202,10 +1205,10 @@ class GithubTools(Toolkit):
                 "mergeable": pr.mergeable,
             }
 
-            return json.dumps(pr_info, indent=2)
+            return json.dumps(pr_info, indent=2, ensure_ascii=False)
         except GithubException as e:
             logger.exception("Error creating pull request")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def create_review_request(
         self,
@@ -1238,10 +1241,11 @@ class GithubTools(Toolkit):
                     "requested_team_reviewers": team_reviewers or [],
                 },
                 indent=2,
+                ensure_ascii=False,
             )
         except GithubException as e:
             logger.exception("Error creating review request")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def create_file(
         self,
@@ -1287,10 +1291,10 @@ class GithubTools(Toolkit):
                 },
             }
 
-            return json.dumps(file_info, indent=2)
+            return json.dumps(file_info, indent=2, ensure_ascii=False)
         except (GithubException, AssertionError) as e:
             logger.exception("Error creating file")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_file_content(self, repo_name: str, path: str, ref: Optional[str] = None) -> str:
         """Get the content of a file in a repository.
@@ -1315,7 +1319,7 @@ class GithubTools(Toolkit):
 
             # If it's a list (directory), raise an error
             if isinstance(file_content, list):
-                return json.dumps({"error": f"{path} is a directory, not a file"})
+                return json.dumps({"error": f"{path} is a directory, not a file"}, ensure_ascii=False)
 
             # Decode content
             try:
@@ -1343,10 +1347,10 @@ class GithubTools(Toolkit):
                 "content": decoded_content,
             }
 
-            return json.dumps(content_info, indent=2)
+            return json.dumps(content_info, indent=2, ensure_ascii=False)
         except GithubException as e:
             logger.exception("Error getting file content")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def update_file(
         self,
@@ -1398,10 +1402,10 @@ class GithubTools(Toolkit):
                 },
             }
 
-            return json.dumps(file_info, indent=2)
+            return json.dumps(file_info, indent=2, ensure_ascii=False)
         except GithubException as e:
             logger.exception("Error updating file")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def delete_file(
         self,
@@ -1440,10 +1444,10 @@ class GithubTools(Toolkit):
                 },
             }
 
-            return json.dumps(commit_info, indent=2)
+            return json.dumps(commit_info, indent=2, ensure_ascii=False)
         except GithubException as e:
             logger.exception("Error deleting file")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_directory_content(self, repo_name: str, path: str, ref: Optional[str] = None) -> str:
         """Get the contents of a directory in a repository.
@@ -1468,7 +1472,7 @@ class GithubTools(Toolkit):
 
             # If it's not a list, it's a file not a directory
             if not isinstance(contents, list):
-                return json.dumps({"error": f"{path} is a file, not a directory"})
+                return json.dumps({"error": f"{path} is a file, not a directory"}, ensure_ascii=False)
 
             # Process directory contents
             items = []
@@ -1487,10 +1491,10 @@ class GithubTools(Toolkit):
             # Sort by type (directories first) and then by name
             items.sort(key=lambda x: (x["type"] != "dir", x["name"].lower()))
 
-            return json.dumps(items, indent=2)
+            return json.dumps(items, indent=2, ensure_ascii=False)
         except GithubException as e:
             logger.exception("Error getting directory contents")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_branch_content(self, repo_name: str, branch: str = "main") -> str:
         """Get the root directory content of a specific branch.
@@ -1508,7 +1512,7 @@ class GithubTools(Toolkit):
             return self.get_directory_content(repo_name=repo_name, path="", ref=branch)
         except GithubException as e:
             logger.exception("Error getting branch contents")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def create_branch(self, repo_name: str, branch_name: str, source_branch: Optional[str] = None) -> str:
         """Create a new branch in a repository.
@@ -1542,10 +1546,10 @@ class GithubTools(Toolkit):
                 "url": new_branch.url.replace("api.github.com/repos", "github.com").replace("git/refs/heads", "tree"),
             }
 
-            return json.dumps(branch_info, indent=2)
+            return json.dumps(branch_info, indent=2, ensure_ascii=False)
         except GithubException as e:
             logger.exception("Error creating branch")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def set_default_branch(self, repo_name: str, branch_name: str) -> str:
         """Set the default branch for a repository.
@@ -1564,7 +1568,7 @@ class GithubTools(Toolkit):
             # Check if the branch exists by looking at all branches
             branches = [branch.name for branch in repo.get_branches()]
             if branch_name not in branches:
-                return json.dumps({"error": f"Branch '{branch_name}' does not exist"})
+                return json.dumps({"error": f"Branch '{branch_name}' does not exist"}, ensure_ascii=False)
 
             # Set the default branch
             repo.edit(default_branch=branch_name)
@@ -1576,10 +1580,11 @@ class GithubTools(Toolkit):
                     "default_branch": branch_name,
                 },
                 indent=2,
+                ensure_ascii=False,
             )
         except GithubException as e:
             logger.exception("Error setting default branch")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def search_code(
         self,
@@ -1659,10 +1664,11 @@ class GithubTools(Toolkit):
                     "results": results,
                 },
                 indent=2,
+                ensure_ascii=False,
             )
         except GithubException as e:
             logger.exception("Error searching code")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def search_issues_and_prs(
         self,
@@ -1757,7 +1763,8 @@ class GithubTools(Toolkit):
                     "results": results,
                 },
                 indent=2,
+                ensure_ascii=False,
             )
         except GithubException as e:
             logger.exception("Error searching issues and PRs")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)

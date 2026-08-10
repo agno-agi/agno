@@ -565,7 +565,7 @@ class AgentOSBuiltinAuth(OAuthProvider):
         self._require_db().store_mcp_oauth_transaction(
             txn_id=txn_id,
             client_id=client_id,
-            params=json.dumps(payload),
+            params=json.dumps(payload, ensure_ascii=False),
             expires_at=now + DEFAULT_TRANSACTION_TTL,
             now=now,
             max_pending=self._max_pending_transactions,
@@ -712,7 +712,7 @@ class AgentOSBuiltinAuth(OAuthProvider):
                 )
             body["token_endpoint_auth_method"] = "none"
 
-        raw = json.dumps(body).encode()
+        raw = json.dumps(body, ensure_ascii=False).encode()
 
         async def receive() -> Dict[str, Any]:
             return {"type": "http.request", "body": raw, "more_body": False}
@@ -918,7 +918,10 @@ button {{ padding: .5rem 1.25rem; border-radius: 6px; border: 0; cursor: pointer
             "scopes": self._grant_scopes,
         }
         self._require_db().store_mcp_oauth_code(
-            code_hash=_hash(code), payload=json.dumps(payload), expires_at=now + self._auth_code_ttl, now=now
+            code_hash=_hash(code),
+            payload=json.dumps(payload, ensure_ascii=False),
+            expires_at=now + self._auth_code_ttl,
+            now=now,
         )
 
     async def load_authorization_code(
@@ -994,7 +997,7 @@ button {{ padding: .5rem 1.25rem; border-radius: 6px; border: 0; cursor: pointer
         self._require_db().store_mcp_oauth_refresh(
             token_hash=_hash(refresh_token),
             client_id=client_id,
-            scopes=json.dumps(scopes),
+            scopes=json.dumps(scopes, ensure_ascii=False),
             expires_at=now + self._refresh_token_ttl,
             now=now,
             family_id=family_id,

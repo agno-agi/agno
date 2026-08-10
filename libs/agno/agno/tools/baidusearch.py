@@ -86,4 +86,4 @@ class BaiduSearchTools(Toolkit):
                     "rank": str(idx),
                 }
             )
-        return json.dumps(res, indent=2)
+        return json.dumps(res, indent=2, ensure_ascii=False)

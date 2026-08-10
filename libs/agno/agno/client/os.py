@@ -581,20 +581,20 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
         if images:
-            data["images"] = json.dumps([img.to_dict() for img in images])
+            data["images"] = json.dumps([img.to_dict() for img in images], ensure_ascii=False)
         if audio:
-            data["audio"] = json.dumps([a.to_dict() for a in audio])
+            data["audio"] = json.dumps([a.to_dict() for a in audio], ensure_ascii=False)
         if videos:
-            data["videos"] = json.dumps([v.to_dict() for v in videos])
+            data["videos"] = json.dumps([v.to_dict() for v in videos], ensure_ascii=False)
         if files:
             # Sent as "input_files" because the run endpoints already use the "files"
             # field for multipart uploads (List[UploadFile]).
-            data["input_files"] = json.dumps([f.to_dict() for f in files])
+            data["input_files"] = json.dumps([f.to_dict() for f in files], ensure_ascii=False)
 
         # Add kwargs to data, serializing dicts as JSON
         for key, value in kwargs.items():
             if isinstance(value, dict):
-                data[key] = json.dumps(value)
+                data[key] = json.dumps(value, ensure_ascii=False)
             else:
                 data[key] = value
 
@@ -643,19 +643,19 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
         if images:
-            data["images"] = json.dumps([img.to_dict() for img in images])
+            data["images"] = json.dumps([img.to_dict() for img in images], ensure_ascii=False)
         if audio:
-            data["audio"] = json.dumps([a.to_dict() for a in audio])
+            data["audio"] = json.dumps([a.to_dict() for a in audio], ensure_ascii=False)
         if videos:
-            data["videos"] = json.dumps([v.to_dict() for v in videos])
+            data["videos"] = json.dumps([v.to_dict() for v in videos], ensure_ascii=False)
         if files:
             # Sent as "input_files" because the run endpoints already use the "files"
             # field for multipart uploads (List[UploadFile]).
-            data["input_files"] = json.dumps([f.to_dict() for f in files])
+            data["input_files"] = json.dumps([f.to_dict() for f in files], ensure_ascii=False)
 
         for key, value in kwargs.items():
             if isinstance(value, dict):
-                data[key] = json.dumps(value)
+                data[key] = json.dumps(value, ensure_ascii=False)
             else:
                 data[key] = value
 
@@ -694,7 +694,10 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors
         """
         endpoint = f"/agents/{agent_id}/runs/{run_id}/continue"
-        data: Dict[str, Any] = {"tools": json.dumps([tool.to_dict() for tool in tools]), "stream": "false"}
+        data: Dict[str, Any] = {
+            "tools": json.dumps([tool.to_dict() for tool in tools], ensure_ascii=False),
+            "stream": "false",
+        }
         if session_id is not None:
             data["session_id"] = session_id
         if user_id is not None:
@@ -702,7 +705,7 @@ class AgentOSClient:
 
         for key, value in kwargs.items():
             if isinstance(value, dict):
-                data[key] = json.dumps(value)
+                data[key] = json.dumps(value, ensure_ascii=False)
             else:
                 data[key] = value
 
@@ -736,7 +739,10 @@ class AgentOSClient:
             HTTPStatusError: On HTTP errors
         """
         endpoint = f"/agents/{agent_id}/runs/{run_id}/continue"
-        data: Dict[str, Any] = {"tools": json.dumps([tool.to_dict() for tool in tools]), "stream": "true"}
+        data: Dict[str, Any] = {
+            "tools": json.dumps([tool.to_dict() for tool in tools], ensure_ascii=False),
+            "stream": "true",
+        }
         if session_id is not None:
             data["session_id"] = session_id
         if user_id is not None:
@@ -744,7 +750,7 @@ class AgentOSClient:
 
         for key, value in kwargs.items():
             if isinstance(value, dict):
-                data[key] = json.dumps(value)
+                data[key] = json.dumps(value, ensure_ascii=False)
             else:
                 data[key] = value
 
@@ -857,20 +863,20 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
         if images:
-            data["images"] = json.dumps([img.to_dict() for img in images])
+            data["images"] = json.dumps([img.to_dict() for img in images], ensure_ascii=False)
         if audio:
-            data["audio"] = json.dumps([a.to_dict() for a in audio])
+            data["audio"] = json.dumps([a.to_dict() for a in audio], ensure_ascii=False)
         if videos:
-            data["videos"] = json.dumps([v.to_dict() for v in videos])
+            data["videos"] = json.dumps([v.to_dict() for v in videos], ensure_ascii=False)
         if files:
             # Sent as "input_files" because the run endpoints already use the "files"
             # field for multipart uploads (List[UploadFile]).
-            data["input_files"] = json.dumps([f.to_dict() for f in files])
+            data["input_files"] = json.dumps([f.to_dict() for f in files], ensure_ascii=False)
 
         # Add kwargs to data, serializing dicts as JSON
         for key, value in kwargs.items():
             if isinstance(value, dict):
-                data[key] = json.dumps(value)
+                data[key] = json.dumps(value, ensure_ascii=False)
             else:
                 data[key] = value
 
@@ -919,20 +925,20 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
         if images:
-            data["images"] = json.dumps([img.to_dict() for img in images])
+            data["images"] = json.dumps([img.to_dict() for img in images], ensure_ascii=False)
         if audio:
-            data["audio"] = json.dumps([a.to_dict() for a in audio])
+            data["audio"] = json.dumps([a.to_dict() for a in audio], ensure_ascii=False)
         if videos:
-            data["videos"] = json.dumps([v.to_dict() for v in videos])
+            data["videos"] = json.dumps([v.to_dict() for v in videos], ensure_ascii=False)
         if files:
             # Sent as "input_files" because the run endpoints already use the "files"
             # field for multipart uploads (List[UploadFile]).
-            data["input_files"] = json.dumps([f.to_dict() for f in files])
+            data["input_files"] = json.dumps([f.to_dict() for f in files], ensure_ascii=False)
 
         # Add kwargs to data, serializing dicts as JSON
         for key, value in kwargs.items():
             if isinstance(value, dict):
-                data[key] = json.dumps(value)
+                data[key] = json.dumps(value, ensure_ascii=False)
             else:
                 data[key] = value
 
@@ -995,7 +1001,10 @@ class AgentOSClient:
             else:
                 serialized_requirements.append(req)
 
-        data: Dict[str, Any] = {"requirements": json.dumps(serialized_requirements), "stream": "false"}
+        data: Dict[str, Any] = {
+            "requirements": json.dumps(serialized_requirements, ensure_ascii=False),
+            "stream": "false",
+        }
         if session_id is not None:
             data["session_id"] = session_id
         if user_id is not None:
@@ -1003,7 +1012,7 @@ class AgentOSClient:
 
         for key, value in kwargs.items():
             if isinstance(value, dict):
-                data[key] = json.dumps(value)
+                data[key] = json.dumps(value, ensure_ascii=False)
             else:
                 data[key] = value
 
@@ -1049,7 +1058,10 @@ class AgentOSClient:
             else:
                 serialized_requirements.append(req)
 
-        data: Dict[str, Any] = {"requirements": json.dumps(serialized_requirements), "stream": "true"}
+        data: Dict[str, Any] = {
+            "requirements": json.dumps(serialized_requirements, ensure_ascii=False),
+            "stream": "true",
+        }
         if session_id is not None:
             data["session_id"] = session_id
         if user_id is not None:
@@ -1057,7 +1069,7 @@ class AgentOSClient:
 
         for key, value in kwargs.items():
             if isinstance(value, dict):
-                data[key] = json.dumps(value)
+                data[key] = json.dumps(value, ensure_ascii=False)
             else:
                 data[key] = value
 
@@ -1165,20 +1177,20 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
         if images:
-            data["images"] = json.dumps([img.to_dict() for img in images])
+            data["images"] = json.dumps([img.to_dict() for img in images], ensure_ascii=False)
         if audio:
-            data["audio"] = json.dumps([a.to_dict() for a in audio])
+            data["audio"] = json.dumps([a.to_dict() for a in audio], ensure_ascii=False)
         if videos:
-            data["videos"] = json.dumps([v.to_dict() for v in videos])
+            data["videos"] = json.dumps([v.to_dict() for v in videos], ensure_ascii=False)
         if files:
             # Sent as "input_files" because the run endpoints already use the "files"
             # field for multipart uploads (List[UploadFile]).
-            data["input_files"] = json.dumps([f.to_dict() for f in files])
+            data["input_files"] = json.dumps([f.to_dict() for f in files], ensure_ascii=False)
 
         # Add kwargs to data, serializing dicts as JSON
         for key, value in kwargs.items():
             if isinstance(value, dict):
-                data[key] = json.dumps(value)
+                data[key] = json.dumps(value, ensure_ascii=False)
             else:
                 data[key] = value
 
@@ -1227,20 +1239,20 @@ class AgentOSClient:
         if user_id is not None:
             data["user_id"] = user_id
         if images:
-            data["images"] = json.dumps([img.to_dict() for img in images])
+            data["images"] = json.dumps([img.to_dict() for img in images], ensure_ascii=False)
         if audio:
-            data["audio"] = json.dumps([a.to_dict() for a in audio])
+            data["audio"] = json.dumps([a.to_dict() for a in audio], ensure_ascii=False)
         if videos:
-            data["videos"] = json.dumps([v.to_dict() for v in videos])
+            data["videos"] = json.dumps([v.to_dict() for v in videos], ensure_ascii=False)
         if files:
             # Sent as "input_files" because the run endpoints already use the "files"
             # field for multipart uploads (List[UploadFile]).
-            data["input_files"] = json.dumps([f.to_dict() for f in files])
+            data["input_files"] = json.dumps([f.to_dict() for f in files], ensure_ascii=False)
 
         # Add kwargs to data, serializing dicts as JSON
         for key, value in kwargs.items():
             if isinstance(value, dict):
-                data[key] = json.dumps(value)
+                data[key] = json.dumps(value, ensure_ascii=False)
             else:
                 data[key] = value
 
@@ -1286,7 +1298,7 @@ class AgentOSClient:
                 serialized.append(req)
             else:
                 serialized.append(req)
-        data: Dict[str, Any] = {"step_requirements": json.dumps(serialized), "stream": "false"}
+        data: Dict[str, Any] = {"step_requirements": json.dumps(serialized, ensure_ascii=False), "stream": "false"}
         if session_id is not None:
             data["session_id"] = session_id
         if user_id is not None:
@@ -1294,7 +1306,7 @@ class AgentOSClient:
 
         for key, value in kwargs.items():
             if isinstance(value, dict):
-                data[key] = json.dumps(value)
+                data[key] = json.dumps(value, ensure_ascii=False)
             else:
                 data[key] = value
 
@@ -1336,7 +1348,7 @@ class AgentOSClient:
                 serialized.append(req)
             else:
                 serialized.append(req)
-        data: Dict[str, Any] = {"step_requirements": json.dumps(serialized), "stream": "true"}
+        data: Dict[str, Any] = {"step_requirements": json.dumps(serialized, ensure_ascii=False), "stream": "true"}
         if session_id is not None:
             data["session_id"] = session_id
         if user_id is not None:
@@ -1344,7 +1356,7 @@ class AgentOSClient:
 
         for key, value in kwargs.items():
             if isinstance(value, dict):
-                data[key] = json.dumps(value)
+                data[key] = json.dumps(value, ensure_ascii=False)
             else:
                 data[key] = value
 
@@ -2429,7 +2441,7 @@ class AgentOSClient:
         if url:
             form_data["url"] = url
         if metadata:
-            form_data["metadata"] = json.dumps(metadata)
+            form_data["metadata"] = json.dumps(metadata, ensure_ascii=False)
         if text_content:
             form_data["text_content"] = text_content
         if reader_id:
@@ -2493,7 +2505,7 @@ class AgentOSClient:
         if description:
             form_data["description"] = description
         if metadata:
-            form_data["metadata"] = json.dumps(metadata)
+            form_data["metadata"] = json.dumps(metadata, ensure_ascii=False)
         if reader_id:
             form_data["reader_id"] = reader_id
 

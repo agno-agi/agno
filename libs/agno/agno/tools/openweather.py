@@ -97,15 +97,15 @@ class OpenWeatherTools(Toolkit):
             result = self._make_request(url, params)
 
             if "error" in result:
-                return json.dumps(result)
+                return json.dumps(result, ensure_ascii=False)
 
             if not result:
-                return json.dumps({"error": f"No location found for '{location}'"})
+                return json.dumps({"error": f"No location found for '{location}'"}, ensure_ascii=False)
 
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
         except Exception as e:
             logger.exception("Error geocoding location")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_current_weather(self, location: str) -> str:
         """Get current weather data for a location.
@@ -122,10 +122,10 @@ class OpenWeatherTools(Toolkit):
             # First geocode the location to get coordinates
             geocode_result = json.loads(self.geocode_location(location))
             if "error" in geocode_result:
-                return json.dumps(geocode_result)
+                return json.dumps(geocode_result, ensure_ascii=False)
 
             if not geocode_result:
-                return json.dumps({"error": f"No location found for '{location}'"})
+                return json.dumps({"error": f"No location found for '{location}'"}, ensure_ascii=False)
 
             # Get the first location result
             loc_data = geocode_result[0]
@@ -142,10 +142,10 @@ class OpenWeatherTools(Toolkit):
                 result["location_name"] = loc_data.get("name", location)
                 result["country"] = loc_data.get("country", "")
 
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
         except Exception as e:
             logger.exception("Error getting current weather")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_forecast(self, location: str, days: int = 5) -> str:
         """Get weather forecast for a location.
@@ -163,10 +163,10 @@ class OpenWeatherTools(Toolkit):
             # First geocode the location to get coordinates
             geocode_result = json.loads(self.geocode_location(location))
             if "error" in geocode_result:
-                return json.dumps(geocode_result)
+                return json.dumps(geocode_result, ensure_ascii=False)
 
             if not geocode_result:
-                return json.dumps({"error": f"No location found for '{location}'"})
+                return json.dumps({"error": f"No location found for '{location}'"}, ensure_ascii=False)
 
             # Get the first location result
             loc_data = geocode_result[0]
@@ -189,10 +189,10 @@ class OpenWeatherTools(Toolkit):
                 result["location_name"] = loc_data.get("name", location)
                 result["country"] = loc_data.get("country", "")
 
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
         except Exception as e:
             logger.exception("Error getting forecast")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     def get_air_pollution(self, location: str) -> str:
         """Get current air pollution data for a location.
@@ -209,10 +209,10 @@ class OpenWeatherTools(Toolkit):
             # First geocode the location to get coordinates
             geocode_result = json.loads(self.geocode_location(location))
             if "error" in geocode_result:
-                return json.dumps(geocode_result)
+                return json.dumps(geocode_result, ensure_ascii=False)
 
             if not geocode_result:
-                return json.dumps({"error": f"No location found for '{location}'"})
+                return json.dumps({"error": f"No location found for '{location}'"}, ensure_ascii=False)
 
             # Get the first location result
             loc_data = geocode_result[0]
@@ -229,7 +229,7 @@ class OpenWeatherTools(Toolkit):
                 result["location_name"] = loc_data.get("name", location)
                 result["country"] = loc_data.get("country", "")
 
-            return json.dumps(result, indent=2)
+            return json.dumps(result, indent=2, ensure_ascii=False)
         except Exception as e:
             logger.exception("Error getting air pollution data")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)

@@ -94,7 +94,7 @@ class GoogleBigQueryTools(Toolkit):
             table_api_repr = api_response.to_api_repr()
             desc = str(table_api_repr.get("description", ""))
             col_names = str([column["name"] for column in table_api_repr["schema"]["fields"]])  # Columns in a table
-            result = json.dumps({"table_description": desc, "columns": col_names})
+            result = json.dumps({"table_description": desc, "columns": col_names}, ensure_ascii=False)
             return result
         except Exception as e:
             logger.exception("Error getting table schema")
@@ -110,7 +110,7 @@ class GoogleBigQueryTools(Toolkit):
             - The result may be empty if the query does not return any data.
         """
         try:
-            return json.dumps(self._run_sql(sql=query), default=str)
+            return json.dumps(self._run_sql(sql=query), default=str, ensure_ascii=False)
         except Exception as e:
             logger.exception("Error running query")
             return f"Error running query: {e}"

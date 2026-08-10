@@ -173,7 +173,7 @@ def on_tool_call_started(chunk: BaseRunOutputEvent, state: StreamState) -> List[
         ToolCallArgsEvent(
             type=EventType.TOOL_CALL_ARGS,
             tool_call_id=tool.tool_call_id,
-            delta=json.dumps(tool.tool_args),
+            delta=json.dumps(tool.tool_args, ensure_ascii=False),
         )
     )
 
@@ -394,7 +394,7 @@ def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[Base
                 ToolCallArgsEvent(
                     type=EventType.TOOL_CALL_ARGS,
                     tool_call_id=tool.tool_call_id,
-                    delta=json.dumps(tool.tool_args),
+                    delta=json.dumps(tool.tool_args, ensure_ascii=False),
                 )
             )
 

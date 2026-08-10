@@ -91,7 +91,7 @@ def convert_dependencies_to_string(agent: Agent, context: Dict[str, Any]) -> str
         for key, value in context.items():
             try:
                 # Try to serialize each value individually
-                json.dumps({key: value}, default=str)
+                json.dumps({key: value}, default=str, ensure_ascii=False)
                 sanitized_context[key] = value
             except Exception:
                 # If serialization fails, convert to string representation

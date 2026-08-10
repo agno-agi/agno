@@ -172,7 +172,7 @@ class DockerTools(Toolkit):
                     }
                 )
 
-            return json.dumps(container_list, indent=2)
+            return json.dumps(container_list, indent=2, ensure_ascii=False)
         except DockerException as e:
             error_msg = f"Error listing containers: {str(e)}"
             log_error(error_msg)
@@ -276,7 +276,7 @@ class DockerTools(Toolkit):
         """
         try:
             container = self.client.containers.get(container_id)
-            return json.dumps(container.attrs, indent=2)
+            return json.dumps(container.attrs, indent=2, ensure_ascii=False)
         except DockerException as e:
             error_msg = f"Error inspecting container: {str(e)}"
             log_error(error_msg)
@@ -386,7 +386,7 @@ class DockerTools(Toolkit):
                     }
                 )
 
-            return json.dumps(image_list, indent=2)
+            return json.dumps(image_list, indent=2, ensure_ascii=False)
         except DockerException as e:
             error_msg = f"Error listing images: {str(e)}"
             log_error(error_msg)
@@ -493,7 +493,7 @@ class DockerTools(Toolkit):
         """
         try:
             image = self.client.images.get(image_id)
-            return json.dumps(image.attrs, indent=2)
+            return json.dumps(image.attrs, indent=2, ensure_ascii=False)
         except DockerException as e:
             error_msg = f"Error inspecting image: {str(e)}"
             log_error(error_msg)
@@ -521,7 +521,7 @@ class DockerTools(Toolkit):
                     }
                 )
 
-            return json.dumps(volume_list, indent=2)
+            return json.dumps(volume_list, indent=2, ensure_ascii=False)
         except DockerException as e:
             error_msg = f"Error listing volumes: {str(e)}"
             log_error(error_msg)
@@ -579,7 +579,7 @@ class DockerTools(Toolkit):
         """
         try:
             volume = self.client.volumes.get(volume_name)
-            return json.dumps(volume.attrs, indent=2)
+            return json.dumps(volume.attrs, indent=2, ensure_ascii=False)
         except DockerException as e:
             error_msg = f"Error inspecting volume: {str(e)}"
             log_error(error_msg)
@@ -609,7 +609,7 @@ class DockerTools(Toolkit):
                     }
                 )
 
-            return json.dumps(network_list, indent=2)
+            return json.dumps(network_list, indent=2, ensure_ascii=False)
         except DockerException as e:
             error_msg = f"Error listing networks: {str(e)}"
             log_error(error_msg)
@@ -669,7 +669,7 @@ class DockerTools(Toolkit):
         """
         try:
             network = self.client.networks.get(network_name)
-            return json.dumps(network.attrs, indent=2)
+            return json.dumps(network.attrs, indent=2, ensure_ascii=False)
         except DockerException as e:
             error_msg = f"Error inspecting network: {str(e)}"
             log_error(error_msg)

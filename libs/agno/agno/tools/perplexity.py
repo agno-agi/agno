@@ -114,7 +114,7 @@ class PerplexitySearch(Toolkit):
 
         except Exception as e:
             logger.exception("Perplexity search failed")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     async def asearch(self, query: str, max_results: Optional[int] = None) -> str:
         """Use this function to search the web using the Perplexity Search API.
@@ -174,4 +174,4 @@ class PerplexitySearch(Toolkit):
 
         except Exception as e:
             logger.exception("Perplexity search failed")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)

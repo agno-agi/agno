@@ -374,7 +374,9 @@ def get_websocket_router(
                 if action == "authenticate":
                     token = message.get("token")
                     if not token:
-                        await websocket.send_text(json.dumps({"event": "auth_error", "error": "Token is required"}))
+                        await websocket.send_text(
+                            json.dumps({"event": "auth_error", "error": "Token is required"}, ensure_ascii=False)
+                        )
                         continue
 
                     if token.startswith(SERVICE_ACCOUNT_TOKEN_PREFIX):
@@ -399,7 +401,8 @@ def get_websocket_router(
                                         "event": "authenticated",
                                         "message": "Service account authentication successful.",
                                         "user_id": account.principal,
-                                    }
+                                    },
+                                    ensure_ascii=False,
                                 )
                             )
                         else:
@@ -408,7 +411,9 @@ def get_websocket_router(
                                 error_msg = "Too many failed authentication attempts"
                             elif verification is not None and verification.status == VerificationStatus.UNAVAILABLE:
                                 error_msg = "Authentication is temporarily unavailable"
-                            await websocket.send_text(json.dumps({"event": "auth_error", "error": error_msg}))
+                            await websocket.send_text(
+                                json.dumps({"event": "auth_error", "error": error_msg}, ensure_ascii=False)
+                            )
                         continue
 
                     if jwt_auth_required and not jwt_auth_enabled:
@@ -421,7 +426,8 @@ def get_websocket_router(
                                     "event": "auth_error",
                                     "error": "JWT authentication is misconfigured on the server",
                                     "error_type": "server_error",
-                                }
+                                },
+                                ensure_ascii=False,
                             )
                         )
                         continue
@@ -448,7 +454,8 @@ def get_websocket_router(
                                             "event": "auth_error",
                                             "error": "Invalid token subject",
                                             "error_type": "invalid_token",
-                                        }
+                                        },
+                                        ensure_ascii=False,
                                     )
                                 )
                                 continue
@@ -466,21 +473,27 @@ def get_websocket_router(
                                         "event": "authenticated",
                                         "message": "JWT authentication successful.",
                                         "user_id": claims["user_id"],
-                                    }
+                                    },
+                                    ensure_ascii=False,
                                 )
                             )
                         except Exception as e:
                             error_msg = str(e) if str(e) else "Invalid token"
                             error_type = "expired" if "expired" in error_msg.lower() else "invalid_token"
                             await websocket.send_text(
-                                json.dumps({"event": "auth_error", "error": error_msg, "error_type": error_type})
+                                json.dumps(
+                                    {"event": "auth_error", "error": error_msg, "error_type": error_type},
+                                    ensure_ascii=False,
+                                )
                             )
                         continue
                     elif validate_websocket_token(token, settings):
                         # Legacy os_security_key authentication
                         await websocket_manager.authenticate_websocket(websocket)
                     else:
-                        await websocket.send_text(json.dumps({"event": "auth_error", "error": "Invalid token"}))
+                        await websocket.send_text(
+                            json.dumps({"event": "auth_error", "error": "Invalid token"}, ensure_ascii=False)
+                        )
                     continue
 
                 # Check authentication for all other actions (only when required)
@@ -491,14 +504,15 @@ def get_websocket_router(
                             {
                                 "event": "auth_required",
                                 "error": f"Authentication required. Send authenticate action with valid {auth_type}.",
-                            }
+                            },
+                            ensure_ascii=False,
                         )
                     )
                     continue
 
                 # Handle authenticated actions
                 elif action == "ping":
-                    await websocket.send_text(json.dumps({"event": "pong"}))
+                    await websocket.send_text(json.dumps({"event": "pong"}, ensure_ascii=False))
 
                 elif action == "start-workflow":
                     # Enforce workflow-level RBAC whenever scope enforcement is
@@ -519,7 +533,10 @@ def get_websocket_router(
                             admin_scope=ws_admin_scope,
                         ):
                             await websocket.send_text(
-                                json.dumps({"event": "error", "error": "Insufficient permissions to run this workflow"})
+                                json.dumps(
+                                    {"event": "error", "error": "Insufficient permissions to run this workflow"},
+                                    ensure_ascii=False,
+                                )
                             )
                             continue
 
@@ -565,7 +582,8 @@ def get_websocket_router(
                                     {
                                         "event": "error",
                                         "error": WORKFLOW_ID_REQUIRED_RECONNECT,
-                                    }
+                                    },
+                                    ensure_ascii=False,
                                 )
                             )
                             continue
@@ -583,7 +601,8 @@ def get_websocket_router(
                                     {
                                         "event": "error",
                                         "error": INSUFFICIENT_PERMISSIONS_WS_RECONNECT,
-                                    }
+                                    },
+                                    ensure_ascii=False,
                                 )
                             )
                             continue
@@ -611,7 +630,8 @@ def get_websocket_router(
                         ):
                             await websocket.send_text(
                                 json.dumps(
-                                    {"event": "error", "error": "Insufficient permissions to continue this workflow"}
+                                    {"event": "error", "error": "Insufficient permissions to continue this workflow"},
+                                    ensure_ascii=False,
                                 )
                             )
                             continue
@@ -636,7 +656,9 @@ def get_websocket_router(
                     await handle_workflow_continue_via_websocket(websocket, message, os, ws_auth=ws_auth)
 
                 else:
-                    await websocket.send_text(json.dumps({"event": "error", "error": f"Unknown action: {action}"}))
+                    await websocket.send_text(
+                        json.dumps({"event": "error", "error": f"Unknown action: {action}"}, ensure_ascii=False)
+                    )
 
         except Exception as e:
             if "1012" not in str(e) and "1001" not in str(e):

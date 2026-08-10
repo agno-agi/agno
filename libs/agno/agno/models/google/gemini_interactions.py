@@ -708,14 +708,14 @@ class GeminiInteractions(Model):
                             model_response.images = []
                         model_response.images.append(image)
                 elif hasattr(item, "model_dump"):
-                    text_parts.append(json.dumps(item.model_dump(exclude_none=True)))
+                    text_parts.append(json.dumps(item.model_dump(exclude_none=True), ensure_ascii=False))
                 else:
                     text_parts.append(str(item))
             return ("\n".join(text_parts) if text_parts else None), is_error
         if hasattr(raw, "model_dump"):
-            return json.dumps(raw.model_dump(exclude_none=True)), is_error
+            return json.dumps(raw.model_dump(exclude_none=True), ensure_ascii=False), is_error
         try:
-            return json.dumps(raw), is_error
+            return json.dumps(raw, ensure_ascii=False), is_error
         except (TypeError, ValueError):
             return str(raw), is_error
 
@@ -765,12 +765,14 @@ class GeminiInteractions(Model):
                             model_response.images = []
                         model_response.images.append(image)
                 elif hasattr(item, "model_dump"):
-                    pending_result["text_parts"].append(json.dumps(item.model_dump(exclude_none=True)))
+                    pending_result["text_parts"].append(
+                        json.dumps(item.model_dump(exclude_none=True), ensure_ascii=False)
+                    )
                 else:
                     pending_result["text_parts"].append(str(item))
             return
         if hasattr(raw, "model_dump"):
-            pending_result["text_parts"].append(json.dumps(raw.model_dump(exclude_none=True)))
+            pending_result["text_parts"].append(json.dumps(raw.model_dump(exclude_none=True), ensure_ascii=False))
         else:
             pending_result["text_parts"].append(str(raw))
 
@@ -902,13 +904,15 @@ class GeminiInteractions(Model):
                             tool_call_error=bool(is_error) if is_error is not None else None,
                         )
                     )
-                    log_info(f"Server-side tool call: {tool_name}({json.dumps(tool_args) if tool_args else ''})")
+                    log_info(
+                        f"Server-side tool call: {tool_name}({json.dumps(tool_args, ensure_ascii=False) if tool_args else ''})"
+                    )
                     continue
 
             if isinstance(step, FunctionCallStep):
                 args = step.arguments
                 if isinstance(args, dict):
-                    args_str = json.dumps(args)
+                    args_str = json.dumps(args, ensure_ascii=False)
                 elif args is not None:
                     args_str = str(args)
                 else:
@@ -1100,7 +1104,7 @@ class GeminiInteractions(Model):
                 if step_signature:
                     tool_call["thought_signature"] = step_signature
                 args = step.arguments
-                args_buffer = json.dumps(args) if isinstance(args, dict) and args else ""
+                args_buffer = json.dumps(args, ensure_ascii=False) if isinstance(args, dict) and args else ""
                 stream_state["pending_calls"][idx] = {"tool_call": tool_call, "args_buffer": args_buffer}
 
         elif isinstance(stream_event, interaction_types.StepStop):
@@ -1154,7 +1158,9 @@ class GeminiInteractions(Model):
                     # agent/_response.py routes tool_executions into
                     # run_response.tools and emits the UI tool-call event.
                     model_response.event = ModelResponseEvent.tool_call_completed.value
-                    args_repr = json.dumps(pending_call["tool_args"]) if pending_call["tool_args"] else ""
+                    args_repr = (
+                        json.dumps(pending_call["tool_args"], ensure_ascii=False) if pending_call["tool_args"] else ""
+                    )
                     log_info(f"Server-side tool call: {pending_call['tool_name']}({args_repr})")
 
         elif isinstance(stream_event, interaction_types.InteractionCompletedEvent):
@@ -1168,7 +1174,7 @@ class GeminiInteractions(Model):
             for call_id, info in list(pending_agent_calls.items()):
                 if not info.get("is_function_call"):
                     continue
-                args_str = json.dumps(info["tool_args"]) if info["tool_args"] else "{}"
+                args_str = json.dumps(info["tool_args"], ensure_ascii=False) if info["tool_args"] else "{}"
                 tool_call = {
                     "id": call_id,
                     "type": "function",

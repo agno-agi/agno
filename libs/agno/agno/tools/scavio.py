@@ -96,10 +96,10 @@ class ScavioTools(Toolkit):
     def _call(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> str:
         """Run a Scavio SDK call and return its JSON response as a string."""
         try:
-            return json.dumps(fn(*args, **kwargs))
+            return json.dumps(fn(*args, **kwargs), ensure_ascii=False)
         except Exception as e:
             log_error(f"Scavio request failed: {e}")
-            return json.dumps({"error": str(e)})
+            return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     # ------------------------------------------------------------------ Google
 

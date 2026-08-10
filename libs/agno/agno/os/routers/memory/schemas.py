@@ -34,7 +34,7 @@ class UserMemorySchema(BaseModel):
                 memory = str(memory_dict["memory"]["memory"])
             else:
                 try:
-                    memory = json.dumps(memory_dict["memory"])
+                    memory = json.dumps(memory_dict["memory"], ensure_ascii=False)
                 except json.JSONDecodeError:
                     memory = str(memory_dict["memory"])
         else:

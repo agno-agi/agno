@@ -221,7 +221,7 @@ class TrafilaturaTools(Toolkit):
             reset_caches()
 
             if as_json:
-                return json.dumps(metadata_dict, indent=2, default=str)
+                return json.dumps(metadata_dict, indent=2, default=str, ensure_ascii=False)
             else:
                 return "\n".join(f"{key}: {value}" for key, value in metadata_dict.items())
 
@@ -298,7 +298,7 @@ class TrafilaturaTools(Toolkit):
             # Reset caches
             reset_caches()
 
-            return json.dumps(crawl_results, indent=2, default=str)
+            return json.dumps(crawl_results, indent=2, default=str, ensure_ascii=False)
 
         except Exception as e:
             log_warning(f"Error crawling website {homepage_url}: {str(e)}")
@@ -382,7 +382,7 @@ class TrafilaturaTools(Toolkit):
                 "failed_urls": failed_urls,
             }
 
-            return json.dumps(batch_results, indent=2, default=str)
+            return json.dumps(batch_results, indent=2, default=str, ensure_ascii=False)
 
         except Exception as e:
             log_warning(f"Error in batch extraction: {str(e)}")

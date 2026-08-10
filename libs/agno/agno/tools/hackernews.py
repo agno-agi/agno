@@ -64,7 +64,7 @@ class HackerNewsTools(Toolkit):
                     continue
                 story["username"] = story.get("by", "unknown")
                 stories.append(story)
-            return json.dumps(stories)
+            return json.dumps(stories, ensure_ascii=False)
         except Exception as e:
             logger.exception(e)
             return f"Error fetching stories: {e}"
@@ -93,7 +93,7 @@ class HackerNewsTools(Toolkit):
                 "about": user.get("about"),
                 "total_items_submitted": len(user.get("submitted", [])),
             }
-            return json.dumps(user_details)
+            return json.dumps(user_details, ensure_ascii=False)
         except Exception as e:
             logger.exception(e)
             return f"Error getting user details: {e}"

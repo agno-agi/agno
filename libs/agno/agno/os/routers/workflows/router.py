@@ -95,7 +95,9 @@ async def handle_workflow_via_websocket(
                     user_id = jwt_user_id
 
         if not workflow_id:
-            await websocket.send_text(json.dumps({"event": "error", "error": "workflow_id is required"}))
+            await websocket.send_text(
+                json.dumps({"event": "error", "error": "workflow_id is required"}, ensure_ascii=False)
+            )
             return
 
         # Get workflow from OS — supports both static and factory components
@@ -130,7 +132,9 @@ async def handle_workflow_via_websocket(
                     ctx=ctx,
                 )
             except Exception as e:
-                await websocket.send_text(json.dumps({"event": "error", "error": f"Factory error: {e}"}))
+                await websocket.send_text(
+                    json.dumps({"event": "error", "error": f"Factory error: {e}"}, ensure_ascii=False)
+                )
                 return
         else:
             try:
@@ -138,15 +142,21 @@ async def handle_workflow_via_websocket(
                     workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
                 )
             except Exception as e:
-                await websocket.send_text(json.dumps({"event": "error", "error": f"Error resolving workflow: {e}"}))
+                await websocket.send_text(
+                    json.dumps({"event": "error", "error": f"Error resolving workflow: {e}"}, ensure_ascii=False)
+                )
                 return
         if not workflow:
-            await websocket.send_text(json.dumps({"event": "error", "error": f"Workflow {workflow_id} not found"}))
+            await websocket.send_text(
+                json.dumps({"event": "error", "error": f"Workflow {workflow_id} not found"}, ensure_ascii=False)
+            )
             return
 
         if isinstance(workflow, RemoteWorkflow):
             await websocket.send_text(
-                json.dumps({"event": "error", "error": "Remote workflows are not supported via WebSocket"})
+                json.dumps(
+                    {"event": "error", "error": "Remote workflows are not supported via WebSocket"}, ensure_ascii=False
+                )
             )
             return
 
@@ -183,7 +193,8 @@ async def handle_workflow_via_websocket(
                     "error_type": e.type,
                     "error_id": e.error_id,
                     "additional_data": e.additional_data,
-                }
+                },
+                ensure_ascii=False,
             )
         )
     except Exception as e:
@@ -195,7 +206,7 @@ async def handle_workflow_via_websocket(
             "error_id": e.error_id if hasattr(e, "error_id") else None,
         }
         error_payload = {k: v for k, v in error_payload.items() if v is not None}
-        await websocket.send_text(json.dumps(error_payload))
+        await websocket.send_text(json.dumps(error_payload, ensure_ascii=False))
 
 
 @dataclass
@@ -239,7 +250,9 @@ async def handle_workflow_subscription(
         user_isolation_enabled = ctx.user_isolation_enabled
 
         if not run_id:
-            await websocket.send_text(json.dumps({"event": "error", "error": "run_id is required for subscription"}))
+            await websocket.send_text(
+                json.dumps({"event": "error", "error": "run_id is required for subscription"}, ensure_ascii=False)
+            )
             return
 
         # Non-admin JWT callers must prove session ownership before any replay or
@@ -255,7 +268,8 @@ async def handle_workflow_subscription(
                         {
                             "event": "error",
                             "error": SESSION_ID_REQUIRED_RECONNECT,
-                        }
+                        },
+                        ensure_ascii=False,
                     )
                 )
                 return
@@ -270,7 +284,8 @@ async def handle_workflow_subscription(
                         {
                             "event": "error",
                             "error": WORKFLOW_ID_REQUIRED_RECONNECT,
-                        }
+                        },
+                        ensure_ascii=False,
                     )
                 )
                 return
@@ -286,7 +301,9 @@ async def handle_workflow_subscription(
                 )
             except HTTPException:
                 # Mask existence of another user's run.
-                await websocket.send_text(json.dumps({"event": "error", "error": f"Run {run_id} not found"}))
+                await websocket.send_text(
+                    json.dumps({"event": "error", "error": f"Run {run_id} not found"}, ensure_ascii=False)
+                )
                 return
 
         # Check if run exists in event buffer
@@ -319,7 +336,8 @@ async def handle_workflow_subscription(
                                         "status": workflow_run.status.value if workflow_run.status else "unknown",
                                         "total_events": len(workflow_run.events),
                                         "message": "Run completed. Replaying all events from database.",
-                                    }
+                                    },
+                                    ensure_ascii=False,
                                 )
                             )
 
@@ -331,7 +349,9 @@ async def handle_workflow_subscription(
                                 if "run_id" not in event_dict:
                                     event_dict["run_id"] = run_id
 
-                                await websocket.send_text(json.dumps(event_dict, default=json_serializer))
+                                await websocket.send_text(
+                                    json.dumps(event_dict, default=json_serializer, ensure_ascii=False)
+                                )
                         else:
                             await websocket.send_text(
                                 json.dumps(
@@ -341,14 +361,17 @@ async def handle_workflow_subscription(
                                         "status": workflow_run.status.value if workflow_run.status else "unknown",
                                         "total_events": 0,
                                         "message": "Run completed but no events stored.",
-                                    }
+                                    },
+                                    ensure_ascii=False,
                                 )
                             )
                         return
 
             # Run not found anywhere
             await websocket.send_text(
-                json.dumps({"event": "error", "error": f"Run {run_id} not found in buffer or database"})
+                json.dumps(
+                    {"event": "error", "error": f"Run {run_id} not found in buffer or database"}, ensure_ascii=False
+                )
             )
             return
 
@@ -365,7 +388,8 @@ async def handle_workflow_subscription(
                         "status": buffer_status.value,
                         "total_events": len(all_events),
                         "message": f"Run {buffer_status.value}. Replaying all events.",
-                    }
+                    },
+                    ensure_ascii=False,
                 )
             )
 
@@ -379,7 +403,7 @@ async def handle_workflow_subscription(
                 if "run_id" not in event_dict:
                     event_dict["run_id"] = run_id
 
-                await websocket.send_text(json.dumps(event_dict))
+                await websocket.send_text(json.dumps(event_dict, ensure_ascii=False))
             return
 
         # Run is still active - send missed events and subscribe to new ones
@@ -397,7 +421,8 @@ async def handle_workflow_subscription(
                         "missed_events": len(missed_events),
                         "current_event_count": current_event_count,
                         "message": f"Catching up on {len(missed_events)} missed events.",
-                    }
+                    },
+                    ensure_ascii=False,
                 )
             )
 
@@ -411,7 +436,7 @@ async def handle_workflow_subscription(
                 if "run_id" not in event_dict:
                     event_dict["run_id"] = run_id
 
-                await websocket.send_text(json.dumps(event_dict))
+                await websocket.send_text(json.dumps(event_dict, ensure_ascii=False))
 
         # Register websocket for future events
         await websocket_manager.register_websocket(run_id, websocket)
@@ -425,7 +450,8 @@ async def handle_workflow_subscription(
                     "status": "running",
                     "current_event_count": current_event_count,
                     "message": "Subscribed to workflow run. You will receive new events as they occur.",
-                }
+                },
+                ensure_ascii=False,
             )
         )
 
@@ -438,7 +464,8 @@ async def handle_workflow_subscription(
                 {
                     "event": "error",
                     "error": f"Subscription failed: {str(e)}",
-                }
+                },
+                ensure_ascii=False,
             )
         )
 
@@ -458,10 +485,12 @@ async def handle_workflow_continue_via_websocket(
         step_requirements_data = message.get("step_requirements")
 
         if not workflow_id:
-            await websocket.send_text(json.dumps({"event": "error", "error": "workflow_id is required"}))
+            await websocket.send_text(
+                json.dumps({"event": "error", "error": "workflow_id is required"}, ensure_ascii=False)
+            )
             return
         if not run_id:
-            await websocket.send_text(json.dumps({"event": "error", "error": "run_id is required"}))
+            await websocket.send_text(json.dumps({"event": "error", "error": "run_id is required"}, ensure_ascii=False))
             return
 
         # Enforce ownership for non-admin callers when user isolation is enabled.
@@ -469,7 +498,9 @@ async def handle_workflow_continue_via_websocket(
         # both the session and the run before we even fetch the paused state.
         if ws_auth and ws_auth.jwt_enabled and ws_auth.user_isolation_enabled and not ws_auth.is_admin and user_id:
             if not session_id:
-                await websocket.send_text(json.dumps({"event": "error", "error": SESSION_ID_REQUIRED}))
+                await websocket.send_text(
+                    json.dumps({"event": "error", "error": SESSION_ID_REQUIRED}, ensure_ascii=False)
+                )
                 return
             # Prefer the factory's db when this workflow_id is a factory entry;
             # only fall back to os.db when no factory-specific db is configured.
@@ -486,25 +517,34 @@ async def handle_workflow_continue_via_websocket(
                     component_id=workflow_id,
                 )
             except HTTPException:
-                await websocket.send_text(json.dumps({"event": "error", "error": f"Run {run_id} not found"}))
+                await websocket.send_text(
+                    json.dumps({"event": "error", "error": f"Run {run_id} not found"}, ensure_ascii=False)
+                )
                 return
 
         workflow = get_workflow_by_id(
             workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
         )
         if not workflow:
-            await websocket.send_text(json.dumps({"event": "error", "error": f"Workflow {workflow_id} not found"}))
+            await websocket.send_text(
+                json.dumps({"event": "error", "error": f"Workflow {workflow_id} not found"}, ensure_ascii=False)
+            )
             return
         if isinstance(workflow, RemoteWorkflow):
             await websocket.send_text(
-                json.dumps({"event": "error", "error": "Continue is not supported for remote workflows via WebSocket"})
+                json.dumps(
+                    {"event": "error", "error": "Continue is not supported for remote workflows via WebSocket"},
+                    ensure_ascii=False,
+                )
             )
             return
 
         # Load the paused run
         existing_run = await workflow.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)
         if existing_run is None:
-            await websocket.send_text(json.dumps({"event": "error", "error": f"Run {run_id} not found"}))
+            await websocket.send_text(
+                json.dumps({"event": "error", "error": f"Run {run_id} not found"}, ensure_ascii=False)
+            )
             return
         if not getattr(existing_run, "is_paused", False):
             status = getattr(existing_run, "status", None)
@@ -513,7 +553,8 @@ async def handle_workflow_continue_via_websocket(
                     {
                         "event": "error",
                         "error": f"Run is not paused (status={getattr(status, 'value', status)})",
-                    }
+                    },
+                    ensure_ascii=False,
                 )
             )
             return
@@ -527,7 +568,7 @@ async def handle_workflow_continue_via_websocket(
                 existing_run.step_requirements = parsed_requirements
             except Exception as e:
                 await websocket.send_text(
-                    json.dumps({"event": "error", "error": f"Invalid step_requirements: {str(e)}"})
+                    json.dumps({"event": "error", "error": f"Invalid step_requirements: {str(e)}"}, ensure_ascii=False)
                 )
                 return
 
@@ -553,7 +594,8 @@ async def handle_workflow_continue_via_websocket(
                     "error_type": e.type,
                     "error_id": e.error_id,
                     "additional_data": e.additional_data,
-                }
+                },
+                ensure_ascii=False,
             )
         )
     except Exception as e:
@@ -565,7 +607,7 @@ async def handle_workflow_continue_via_websocket(
             "error_id": e.error_id if hasattr(e, "error_id") else None,
         }
         error_payload = {k: v for k, v in error_payload.items() if v is not None}
-        await websocket.send_text(json.dumps(error_payload))
+        await websocket.send_text(json.dumps(error_payload, ensure_ascii=False))
 
 
 async def workflow_response_streamer(
@@ -633,7 +675,7 @@ async def workflow_response_streamer(
 
                 # Legacy WorkflowRunOutput event for backwards compatibility
                 run_dict = _last_run.to_dict()
-                run_json = json.dumps(run_dict, default=json_serializer, separators=(",", ":"))
+                run_json = json.dumps(run_dict, default=json_serializer, separators=(",", ":"), ensure_ascii=False)
                 yield f"event: WorkflowRunOutput\ndata: {run_json}\n\n"
 
     except (InputCheckError, OutputCheckError) as e:
@@ -776,7 +818,7 @@ async def workflow_continue_response_streamer(
 
                 # Legacy WorkflowRunOutput event for backwards compatibility
                 run_dict = _last_run.to_dict()
-                run_json = json.dumps(run_dict, default=json_serializer, separators=(",", ":"))
+                run_json = json.dumps(run_dict, default=json_serializer, separators=(",", ":"), ensure_ascii=False)
                 yield f"event: WorkflowRunOutput\ndata: {run_json}\n\n"
 
     except (InputCheckError, OutputCheckError) as e:
@@ -827,7 +869,7 @@ async def _resume_stream_generator(
                 run_output = await workflow.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)
             except Exception as e:
                 error = {"event": "error", "error": f"Failed to fetch run from database: {str(e)}"}
-                yield f"event: error\ndata: {json.dumps(error)}\n\n"
+                yield f"event: error\ndata: {json.dumps(error, ensure_ascii=False)}\n\n"
                 return
             if run_output and run_output.events:
                 meta: dict = {
@@ -837,7 +879,7 @@ async def _resume_stream_generator(
                     "total_events": len(run_output.events),
                     "message": "Run completed. Replaying all events from database.",
                 }
-                yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
+                yield f"event: replay\ndata: {json.dumps(meta, ensure_ascii=False)}\n\n"
 
                 for idx, event in enumerate(run_output.events):
                     event_dict = event.to_dict()
@@ -855,12 +897,12 @@ async def _resume_stream_generator(
                     "total_events": 0,
                     "message": "Run completed but no events stored.",
                 }
-                yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
+                yield f"event: replay\ndata: {json.dumps(meta, ensure_ascii=False)}\n\n"
                 return
 
         # Run not found anywhere
         error = {"event": "error", "error": f"Run {run_id} not found in buffer or database"}
-        yield f"event: error\ndata: {json.dumps(error)}\n\n"
+        yield f"event: error\ndata: {json.dumps(error, ensure_ascii=False)}\n\n"
         return
 
     if buffer_status in (RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused):
@@ -882,7 +924,7 @@ async def _resume_stream_generator(
             "last_event_index_requested": last_event_index if last_event_index is not None else -1,
             "message": f"Run {buffer_status.value}. Replaying {len(missed_events)} missed events (of {total_buffered} total).",
         }
-        yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
+        yield f"event: replay\ndata: {json.dumps(meta, ensure_ascii=False)}\n\n"
 
         for ev_index, buffered_event in missed_events:
             event_dict = buffered_event.to_dict()
@@ -912,7 +954,7 @@ async def _resume_stream_generator(
                 "current_event_count": current_count,
                 "message": f"Catching up on {len(missed_events)} missed events.",
             }
-            yield f"event: catch_up\ndata: {json.dumps(meta)}\n\n"
+            yield f"event: catch_up\ndata: {json.dumps(meta, ensure_ascii=False)}\n\n"
 
             for ev_index, buffered_event in missed_events:
                 event_dict = buffered_event.to_dict()
