@@ -679,16 +679,27 @@ class MongoDb(VectorDb):
             try:
                 collection = self._get_collection()
 
+                # Cosmos has no vector pre-filter; scope after the search instead.
+                # Over-fetch when scoped so filtering the candidates doesn't
+                # starve the caller below ``limit``.
+                k = min(limit * 4, 100) if scope_filter is not None else limit
+
                 # Construct the search pipeline
                 search_stage = {
                     "$search": {
-                        "cosmosSearch": {"vector": query_embedding, "path": "embedding", "k": limit, "nProbes": 2},
+                        "cosmosSearch": {"vector": query_embedding, "path": "embedding", "k": k, "nProbes": 2},
                         "returnStoredSource": True,
                     }
                 }
 
-                pipeline: List[Dict[str, Any]] = [
-                    search_stage,
+                pipeline: List[Dict[str, Any]] = [search_stage]
+                # The scope $match must run before the inclusion $project below:
+                # $project drops ``user_id``, and matching on a missing field
+                # would pass every candidate ({user_id: None} matches missing).
+                if scope_filter is not None:
+                    pipeline.append({"$match": scope_filter})
+                    pipeline.append({"$limit": limit})
+                pipeline.append(
                     {
                         "$project": {
                             "similarityScore": {"$meta": "searchScore"},
@@ -697,11 +708,8 @@ class MongoDb(VectorDb):
                             "content": 1,
                             "meta_data": 1,
                         }
-                    },
-                ]
-                # Cosmos has no vector pre-filter; scope after the search instead.
-                if scope_filter is not None:
-                    pipeline.append({"$match": scope_filter})
+                    }
+                )
 
                 results = list(collection.aggregate(pipeline))
                 docs = [
