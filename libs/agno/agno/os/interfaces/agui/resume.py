@@ -149,7 +149,7 @@ async def resume_paused_run(
         component_id=getattr(entity, "id", None),
     )
 
-    return entity.acontinue_run(  # type: ignore
+    inner = entity.acontinue_run(  # type: ignore
         run_id=paused_run.run_id,
         session_id=session_id,
         requirements=requirements,
@@ -158,3 +158,27 @@ async def resume_paused_run(
         run_context=run_context,
         **run_kwargs,
     )
+
+    run_id = paused_run.run_id
+
+    async def _stream_then_sync():
+        # Status-only stream sync after the continue is consumed (parity with
+        # the REST continue doors): a formerly-queued/streamed run's stream
+        # view must stop saying PAUSED once the continue settles - otherwise
+        # every later /resume replays the stale paused snapshot, and on Redis
+        # the pausing replica's TTL refresher keeps those keys alive
+        # indefinitely. only_if_tracked leaves never-streamed runs alone; a
+        # re-paused continue re-parks the stream as PAUSED. Best-effort: a
+        # stream-backend failure must not fail the AG-UI response.
+        import contextlib
+
+        from agno.os.utils import acomplete_continue_stream
+
+        try:
+            async for chunk in inner:
+                yield chunk
+        finally:
+            with contextlib.suppress(Exception):
+                await acomplete_continue_stream(entity, run_id, session_id, only_if_tracked=True)
+
+    return _stream_then_sync()

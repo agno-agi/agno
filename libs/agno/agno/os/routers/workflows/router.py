@@ -34,8 +34,10 @@ from agno.os.job_queue import (
     aprepare_accepted_or_abort,
     araise_if_ticket_owns_continue,
     aticket_poll_fallback,
+    ensure_duplicate_matches_component,
     normalize_idempotency_key,
     payload_is_queueable,
+    ticket_status_to_api,
     validate_seam_input,
 )
 from agno.os.middleware.user_scope import (
@@ -69,6 +71,8 @@ from agno.os.utils import (
     queued_run_tail_streamer,
     replayed_payload_to_sse,
     resolve_workflow,
+    sse_error_frame,
+    stored_event_replay_dicts,
 )
 from agno.run.base import RunStatus
 from agno.run.workflow import WorkflowErrorEvent, WorkflowRunOutput
@@ -487,41 +491,29 @@ async def handle_workflow_subscription(
                     workflow_run = await workflow.aget_run_output(run_id, session_id, user_id=user_id)
 
                     if workflow_run:
-                        # Run exists in DB - send all events from DB
-                        if workflow_run.events:
-                            await websocket.send_text(
-                                json.dumps(
-                                    {
-                                        "event": "replay",
-                                        "run_id": run_id,
-                                        "status": workflow_run.status.value if workflow_run.status else "unknown",
-                                        "total_events": len(workflow_run.events),
-                                        "message": "Run completed. Replaying all events from database.",
-                                    }
-                                )
+                        # Run exists in DB - replay through the shared
+                        # floor-honoring helper (same contract as the SSE
+                        # resume routes): stamped events are filtered under
+                        # the client's last_event_index and keep their REAL
+                        # stream indices - positional renumbering re-sent the
+                        # full history and destroyed index continuity for
+                        # partially-caught-up clients.
+                        replay_dicts = stored_event_replay_dicts(workflow_run, run_id, last_event_index)
+                        await websocket.send_text(
+                            json.dumps(
+                                {
+                                    "event": "replay",
+                                    "run_id": run_id,
+                                    "status": workflow_run.status.value if workflow_run.status else "unknown",
+                                    "total_events": len(replay_dicts),
+                                    "message": "Run completed. Replaying stored events from database."
+                                    if replay_dicts
+                                    else "Run completed but no events stored past the requested index.",
+                                }
                             )
-
-                            # Send events one by one
-                            for idx, event in enumerate(workflow_run.events):
-                                # Convert event to dict and add event_index
-                                event_dict = event.model_dump() if hasattr(event, "model_dump") else event.to_dict()
-                                event_dict["event_index"] = idx
-                                if "run_id" not in event_dict:
-                                    event_dict["run_id"] = run_id
-
-                                await websocket.send_text(json.dumps(event_dict, default=json_serializer))
-                        else:
-                            await websocket.send_text(
-                                json.dumps(
-                                    {
-                                        "event": "replay",
-                                        "run_id": run_id,
-                                        "status": workflow_run.status.value if workflow_run.status else "unknown",
-                                        "total_events": 0,
-                                        "message": "Run completed but no events stored.",
-                                    }
-                                )
-                            )
+                        )
+                        for event_dict in replay_dicts:
+                            await websocket.send_text(json.dumps(event_dict, default=json_serializer))
                         return
 
             # Run not found anywhere
@@ -788,6 +780,11 @@ async def handle_workflow_continue_via_websocket(
                     _pump_event_stream_to_websocket(websocket, run_id, continue_outcome.get("tail_from"))
                 )
                 return
+            # DELIBERATE transport asymmetry with the HTTP continue door
+            # (which refuses this cell): the socket is itself the live event
+            # channel the detached machinery streams into, so falling back
+            # delivers exactly what the caller attached for - minus
+            # durability, hence the warning.
             log_warning(
                 "WS background continue bypasses the durable queue (no paused ticket for this "
                 "run): executing on the accepting replica instead - bounded and observable, "
@@ -1131,7 +1128,7 @@ async def _resume_stream_generator(
         # the only honest signal is an SSE error frame (never a silent close,
         # and never a quiet fall-through to the DB path)
         log_error(f"Resume: event stream status probe failed for run {run_id}: {e}")
-        yield f'event: error\ndata: {{"event": "error", "error": "event stream unavailable: {str(e)[:200]}"}}\n\n'
+        yield sse_error_frame(f"event stream unavailable: {str(e)[:200]}")
         return
 
     if buffer_status is None:
@@ -1242,9 +1239,7 @@ async def _resume_stream_generator(
             # error frame so the client can distinguish and reconnect
             log_error(f"Resume tail failed for run {run_id}: {e}")
             with contextlib.suppress(Exception):
-                await tail_queue.put(
-                    (-1, f'event: error\ndata: {{"event": "error", "error": "stream tail failed: {str(e)[:200]}"}}\n\n')
-                )
+                await tail_queue.put((-1, sse_error_frame(f"stream tail failed: {str(e)[:200]}")))
         finally:
             await tail_queue.put(None)
 
@@ -1591,6 +1586,7 @@ def get_workflow_router(
                                 status_code=409,
                                 detail="Idempotency-Key was already used but the original run could not be retrieved",
                             )
+                        ensure_duplicate_matches_component(existing, "workflow", job["component_id"])
                         if not (existing.get("payload") or {}).get("stream"):
                             # The key was used by a NON-stream submission: its
                             # run never registers in the event stream, so a
@@ -1699,14 +1695,16 @@ def get_workflow_router(
                     raise HTTPException(status_code=429, detail="Job queue is full")
                 if enqueue_result["reason"] == "duplicate" and enqueue_result["job"] is not None:
                     existing = enqueue_result["job"]
+                    ensure_duplicate_matches_component(existing, "workflow", job["component_id"])
                     return JSONResponse(
                         status_code=202,
                         content={
                             "run_id": existing["id"],
                             "session_id": existing["session_id"],
-                            "status": "PENDING"
-                            if existing["status"] in ("queued", "running")
-                            else existing["status"].upper(),
+                            # Same vocabulary as the run poll: a duplicate of a
+                            # failed run says ERROR (not an invented "FAILED"),
+                            # and a running one says RUNNING (not PENDING).
+                            "status": ticket_status_to_api(existing["status"]) or existing["status"].upper(),
                         },
                     )
                 if enqueue_result["reason"] == "duplicate":
@@ -1726,12 +1724,26 @@ def get_workflow_router(
                     status_code=202,
                     content={"run_id": queued_run_id, "session_id": queued_session_id, "status": "PENDING"},
                 )
-            elif queue_worker is not None and not payload_is_queueable(queued_payload):
-                log_warning(
-                    "Background run bypasses the durable queue: the submission carries values plain "
-                    "JSON cannot store (e.g. output_schema classes or media objects). Executing on the "
-                    "accepting replica instead - bounded and observable, but NOT durable."
-                )
+            elif queue_worker is not None:
+                # EVERY bypass reason warns - a client gets its 202 either way
+                # and must never silently believe acceptance was durable.
+                if not payload_is_queueable(queued_payload):
+                    log_warning(
+                        "Background run bypasses the durable queue: the submission carries values plain "
+                        "JSON cannot store (e.g. output_schema classes or media objects). Executing on the "
+                        "accepting replica instead - bounded and observable, but NOT durable."
+                    )
+                else:
+                    # Off-registry, factory-backed, or version-pinned: the
+                    # worker resolves from the registry, so these cannot ride
+                    # the queue - previously this dropped to the non-durable
+                    # path with no log line at all.
+                    log_warning(
+                        "Background run bypasses the durable queue: the workflow is not a plain "
+                        "registry instance (remote, factory-backed, db-resolved, or version-pinned "
+                        "resolution differs from the worker's registry instance). Executing on the "
+                        "accepting replica instead - bounded and observable, but NOT durable."
+                    )
 
             run_response = await workflow.arun(
                 input=message,
@@ -1977,13 +1989,20 @@ def get_workflow_router(
                         content={"run_id": run_id, "session_id": session_id, "status": "PENDING"},
                     )
             # No durable path (no worker, factory/remote workflow, or no
-            # paused ticket): workflows have no detached background-continue
-            # machinery, so serve the regular response below - loudly, since
-            # the caller asked for background semantics that do not exist
-            # here: workflows have no detached background-continue machinery,
-            # so honoring the request is impossible. Refuse honestly instead
-            # of silently serving a replica-bound foreground response (the
-            # background param is NEW in this PR - no back-compat cost).
+            # paused ticket): refuse. The background param on this HTTP
+            # endpoint arrived with the durable queue, so no pre-queue
+            # clients depend on a fallthrough (unlike agents/teams, whose
+            # inline non-stream fallthrough is kept for back-compat), and
+            # HTTP has no workflow detached-continue machinery to serve
+            # instead - a replica-bound foreground response would silently
+            # fake the semantics the caller asked for.
+            #
+            # DELIBERATE transport asymmetry: the workflow WebSocket
+            # continue door falls back to detached execution with a warning
+            # for this same cell, because the socket is itself the live
+            # event channel the detached machinery streams into. HTTP has
+            # no equivalent until workflows grow the resumable-continue
+            # streamer agents/teams have.
             raise HTTPException(
                 status_code=409,
                 detail="background=true continuation is only available for durably-submitted "
@@ -2306,6 +2325,7 @@ def get_workflow_router(
                     "workflow",
                     workflow_id,
                     user_id,
+                    user_scoped=user_id is not None,
                 )
                 if ticket_view is not None:
                     return ticket_view
@@ -2315,7 +2335,13 @@ def get_workflow_router(
         run_output = await workflow.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)
         if run_output is None:
             ticket_view = await aticket_poll_fallback(
-                getattr(request.app.state, "queue_worker", None), run_id, session_id, "workflow", workflow_id, user_id
+                getattr(request.app.state, "queue_worker", None),
+                run_id,
+                session_id,
+                "workflow",
+                workflow_id,
+                user_id,
+                user_scoped=user_id is not None,
             )
             if ticket_view is not None:
                 return ticket_view

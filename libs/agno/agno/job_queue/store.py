@@ -41,6 +41,13 @@ class InMemoryQueueStore:
                 queued = sum(1 for j in self._jobs.values() if j["status"] == "queued")
                 if queued >= max_depth:
                     return {"accepted": False, "reason": "queue_full", "job": None}
+            # Mirror Postgres, where id is the primary key: a collision is a
+            # programming error (ids are server-minted uuid4), never a client
+            # dedup. Silently overwriting would reset a live ticket to
+            # queued/attempt-0 - two executors, the first one's completion
+            # fenced out.
+            if job["id"] in self._jobs:
+                raise RuntimeError(f"enqueue_job: job {job['id']} already exists; ids are never reused")
             self._jobs[job["id"]] = dict(job)
             return {"accepted": True, "reason": None, "job": dict(job)}
 
