@@ -3680,12 +3680,7 @@ class PostgresDb(BaseDb):
                 raise ValueError("Components table not found")
 
             with self.Session() as sess, sess.begin():
-                existing = sess.execute(
-                    select(table).where(
-                        table.c.component_id == component_id,
-                        table.c.deleted_at.is_(None),
-                    )
-                ).fetchone()
+                existing = sess.execute(select(table).where(table.c.component_id == component_id)).fetchone()
                 if existing is None:
                     # Create new component
                     if component_type is None:
