@@ -1396,17 +1396,19 @@ def _handle_model_response_chunk(
             content_type = "str"
 
             should_yield = False
-            # Process content
-            if model_response_event.content:
+            # Process content. Empty strings are provider stop/metadata chunks,
+            # but other falsy values can be valid structured responses.
+            content = model_response_event.content
+            if content is not None and content != "":
                 if parse_structured_output:
-                    full_model_response.content = model_response_event.content
+                    full_model_response.content = content
                     _convert_response_to_structured_format(team, full_model_response, run_context=run_context)
                     # Get output_schema from run_context
                     output_schema = run_context.output_schema if run_context else None
                     content_type = "dict" if isinstance(output_schema, dict) else output_schema.__name__  # type: ignore
                     run_response.content_type = content_type
                 elif team._member_response_model is not None:
-                    full_model_response.content = model_response_event.content
+                    full_model_response.content = content
                     _convert_response_to_structured_format(team, full_model_response, run_context=run_context)
                     content_type = (
                         "dict"
