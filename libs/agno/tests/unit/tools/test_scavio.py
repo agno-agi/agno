@@ -56,22 +56,25 @@ def test_init_with_param():
 
 
 def test_all_flag_registers_every_tool():
-    """all=True should register all 97 provider tools.
+    """all=True should register all 189 provider tools.
 
     Toolkit keeps `tools` exactly as passed, so the count is the number of
-    registrations in __init__. Per provider that is 14 google + 3 amazon +
-    2 walmart + 15 youtube + 12 reddit + 11 tiktok + 12 instagram + 11 x +
-    9 linkedin + 8 tiktok_shop = 97, one tool for every live billable Scavio
-    endpoint except /youtube/metadata, which is a deprecated alias of
-    /youtube/video and is reached through youtube_video.
+    registrations in __init__: 14 google + 4 amazon + 7 walmart + 15 youtube +
+    12 reddit + 11 tiktok + 12 instagram + 11 x + 9 linkedin + 8 tiktok_shop +
+    6 threads + 14 kuaishou + 3 ebay + 4 target + 3 home_depot + 3 zillow +
+    3 booking + 4 tripadvisor + 4 indeed + 3 airbnb + 4 glassdoor + 3 yelp +
+    3 app_store + 3 google_play + 6 sec + 3 redfin + 4 companies_house + 3 g2 +
+    3 capterra + 3 google_ads + 3 meta_ads + 1 extract = 189, one tool for every
+    live billable Scavio endpoint except /youtube/metadata, which is a deprecated
+    alias of /youtube/video and is reached through youtube_video.
     """
     with patch("agno.tools.scavio.ScavioClient"):
         tools = ScavioTools(all=True)
-        assert len(tools.tools) == 97
+        assert len(tools.tools) == 189
 
 
-def test_default_registers_every_provider():
-    """By default every provider is enabled."""
+def test_default_registers_the_ten_original_providers():
+    """The providers the toolkit already shipped stay on by default."""
     with patch("agno.tools.scavio.ScavioClient"):
         names = _tool_names(ScavioTools())
         assert "google_search" in names
@@ -88,6 +91,43 @@ def test_default_registers_every_provider():
         assert "x_search" in names
         assert "linkedin_person" in names
         assert "tiktok_shop_search" in names
+
+
+def test_default_leaves_the_added_providers_opt_in():
+    """The providers added for full coverage are off unless asked for.
+
+    Turning all 189 on by default would more than double the manifest of every
+    agent that already uses this toolkit, on nothing more than a version bump.
+    The ten it shipped with keep their defaults; everything added here is opt-in
+    through its own flag or through all=True.
+    """
+    with patch("agno.tools.scavio.ScavioClient"):
+        names = _tool_names(ScavioTools())
+        for absent in (
+            "threads_profile",
+            "kuaishou_profile",
+            "ebay_search",
+            "target_search",
+            "home_depot_search",
+            "zillow_search",
+            "booking_search",
+            "tripadvisor_locations",
+            "indeed_search",
+            "airbnb_search",
+            "glassdoor_companies",
+            "yelp_search",
+            "app_store_search",
+            "google_play_search",
+            "sec_lookup",
+            "redfin_search",
+            "companies_house_search",
+            "g2_search",
+            "capterra_search",
+            "google_ads_advertisers",
+            "meta_ads_search",
+            "extract_url",
+        ):
+            assert absent not in names
 
 
 def test_enable_flags_select_subset():
@@ -265,10 +305,12 @@ def test_tiktok_shop_flag_registers_tiktok_shop_tools():
 
 
 def test_amazon_flag_registers_amazon_tools():
-    """enable_amazon registers exactly the three Amazon tools.
+    """enable_amazon registers exactly the four Amazon tools.
 
-    Was two. amazon_offers was added when Amazon moved to the provider that
-    exposes the offer listing.
+    Was two, then three when Amazon moved to the provider that exposes the offer
+    listing. amazon_options is the fourth: the marketplace list an agent needs to
+    pick a valid `country`, and the one Scavio endpoint that is neither billed nor
+    authenticated.
     """
     with patch("agno.tools.scavio.ScavioClient"):
         tools = ScavioTools(
@@ -284,7 +326,38 @@ def test_amazon_flag_registers_amazon_tools():
             enable_tiktok_shop=False,
         )
         names = _tool_names(tools)
-        assert names == ["amazon_search", "amazon_product", "amazon_offers"]
+        assert names == ["amazon_search", "amazon_product", "amazon_offers", "amazon_options"]
+
+
+def test_walmart_flag_registers_all_seven_walmart_tools():
+    """enable_walmart registers all seven Walmart endpoints.
+
+    Was two. Walmart was rebuilt on a new provider with reviews, category, offers,
+    seller and seller-catalog endpoints; the toolkit exposed only search and
+    product, so five paid endpoints were unreachable from an agent.
+    """
+    with patch("agno.tools.scavio.ScavioClient"):
+        tools = ScavioTools(
+            enable_google=False,
+            enable_amazon=False,
+            enable_walmart=True,
+            enable_youtube=False,
+            enable_reddit=False,
+            enable_tiktok=False,
+            enable_instagram=False,
+            enable_x=False,
+            enable_linkedin=False,
+            enable_tiktok_shop=False,
+        )
+        assert _tool_names(tools) == [
+            "walmart_search",
+            "walmart_product",
+            "walmart_reviews",
+            "walmart_category",
+            "walmart_offers",
+            "walmart_seller",
+            "walmart_seller_products",
+        ]
 
 
 def test_tool_names_are_unique():
@@ -734,3 +807,273 @@ def test_tiktok_shop_categories_takes_no_params(scavio_tools, mock_scavio_client
     call = mock_scavio_client.tiktok_shop.categories.call_args
     assert call.args == ()
     assert call.kwargs == {}
+
+
+# ============================================================================
+# ADDED-PROVIDER REGISTRATION TESTS
+# ============================================================================
+
+_ORIGINAL_PROVIDERS_OFF = {
+    "enable_google": False,
+    "enable_amazon": False,
+    "enable_walmart": False,
+    "enable_youtube": False,
+    "enable_reddit": False,
+    "enable_tiktok": False,
+    "enable_instagram": False,
+    "enable_x": False,
+    "enable_linkedin": False,
+    "enable_tiktok_shop": False,
+}
+
+
+def _only(**flags) -> list:
+    """Register just the providers named, with the ten default-on ones off."""
+    with patch("agno.tools.scavio.ScavioClient"):
+        return _tool_names(ScavioTools(**_ORIGINAL_PROVIDERS_OFF, **flags))
+
+
+@pytest.mark.parametrize(
+    "flag, prefix, count",
+    [
+        ("enable_threads", "threads_", 6),
+        ("enable_kuaishou", "kuaishou_", 14),
+        ("enable_ebay", "ebay_", 3),
+        ("enable_target", "target_", 4),
+        ("enable_home_depot", "home_depot_", 3),
+        ("enable_zillow", "zillow_", 3),
+        ("enable_booking", "booking_", 3),
+        ("enable_tripadvisor", "tripadvisor_", 4),
+        ("enable_indeed", "indeed_", 4),
+        ("enable_airbnb", "airbnb_", 3),
+        ("enable_glassdoor", "glassdoor_", 4),
+        ("enable_yelp", "yelp_", 3),
+        ("enable_app_store", "app_store_", 3),
+        ("enable_google_play", "google_play_", 3),
+        ("enable_sec", "sec_", 6),
+        ("enable_redfin", "redfin_", 3),
+        ("enable_companies_house", "companies_house_", 4),
+        ("enable_g2", "g2_", 3),
+        ("enable_capterra", "capterra_", 3),
+        ("enable_google_ads", "google_ads_", 3),
+        ("enable_meta_ads", "meta_ads_", 3),
+    ],
+)
+def test_each_added_provider_flag_registers_its_own_tools(flag, prefix, count):
+    """Each added flag registers that provider's tools and nothing else."""
+    names = _only(**{flag: True})
+    assert len(names) == count
+    assert all(name.startswith(prefix) for name in names)
+
+
+def test_extract_is_registered_on_its_own_flag():
+    """extract is a core endpoint, not a platform, and has its own flag."""
+    assert _only(enable_extract=True) == ["extract_url"]
+
+
+def test_lookup_first_providers_expose_their_resolver():
+    """The four lookup-first providers register the id resolver every other call needs."""
+    assert "tripadvisor_locations" in _only(enable_tripadvisor=True)
+    assert "glassdoor_companies" in _only(enable_glassdoor=True)
+    assert "sec_lookup" in _only(enable_sec=True)
+    assert "companies_house_search" in _only(enable_companies_house=True)
+
+
+# ============================================================================
+# ADDED-PROVIDER CALL TESTS
+# ============================================================================
+
+
+def test_walmart_search_forwards_domain_and_page(scavio_tools, mock_scavio_client):
+    """walmart_search passes the query positionally and pages on `page`."""
+    mock_scavio_client.walmart.search.return_value = {"products": []}
+
+    result = scavio_tools.walmart_search("air fryer", domain="ca", page=2, sort_by="price_low")
+
+    assert json.loads(result) == {"products": []}
+    call = mock_scavio_client.walmart.search.call_args
+    assert call.args[0] == "air fryer"
+    assert call.kwargs["domain"] == "ca"
+    assert call.kwargs["page"] == 2
+    assert call.kwargs["sort_by"] == "price_low"
+
+
+def test_walmart_retired_params_are_not_accepted(scavio_tools):
+    """The params Walmart's rebuild dropped must be gone from the signature.
+
+    device, delivery_zip and store_id were carried over from the old provider and
+    no longer exist on the route: zod strips them, so they were controls an agent
+    could set and never see honoured. start_page still works on the wire as a
+    deprecated alias of page and is not worth a second spelling in the manifest.
+    """
+    for gone in ("device", "delivery_zip", "store_id", "start_page"):
+        with pytest.raises(TypeError):
+            scavio_tools.walmart_search("air fryer", **{gone: "x"})
+
+
+def test_walmart_product_takes_only_a_product_id(scavio_tools, mock_scavio_client):
+    """walmart_product is US-only and takes no domain."""
+    mock_scavio_client.walmart.product.return_value = {"product_id": "13544111159"}
+
+    result = scavio_tools.walmart_product("13544111159")
+
+    assert json.loads(result)["product_id"] == "13544111159"
+    assert mock_scavio_client.walmart.product.call_args.args[0] == "13544111159"
+    with pytest.raises(TypeError):
+        scavio_tools.walmart_product("13544111159", domain="ca")
+
+
+def test_walmart_seller_tools_take_the_catalog_id(scavio_tools, mock_scavio_client):
+    """Both seller tools forward the numeric seller_catalog_id."""
+    mock_scavio_client.walmart.seller.return_value = {"name": "Acme"}
+    mock_scavio_client.walmart.seller_products.return_value = {"total_count": 812}
+
+    scavio_tools.walmart_seller("101480084")
+    scavio_tools.walmart_seller_products("101480084")
+
+    assert mock_scavio_client.walmart.seller.call_args.args[0] == "101480084"
+    assert mock_scavio_client.walmart.seller_products.call_args.args[0] == "101480084"
+
+
+def test_threads_profile_takes_either_identifier(scavio_tools, mock_scavio_client):
+    """Threads is body-priced: user_id is the cheap path, username the dear one."""
+    mock_scavio_client.threads.profile.return_value = {"username": "natgeo"}
+
+    scavio_tools.threads_profile(user_id="63625256886")
+    by_id = mock_scavio_client.threads.profile.call_args
+    assert by_id.kwargs["user_id"] == "63625256886"
+    assert by_id.kwargs["username"] is None
+
+    scavio_tools.threads_profile(username="natgeo")
+    by_handle = mock_scavio_client.threads.profile.call_args
+    assert by_handle.kwargs["username"] == "natgeo"
+    assert by_handle.kwargs["user_id"] is None
+
+
+def test_threads_post_comments_is_post_keyed(scavio_tools, mock_scavio_client):
+    """threads_post_comments has no username form, so post_id is required."""
+    mock_scavio_client.threads.post_comments.return_value = {"comments": []}
+
+    scavio_tools.threads_post_comments("3349029093483693129", cursor="abc")
+
+    call = mock_scavio_client.threads.post_comments.call_args
+    assert call.args[0] == "3349029093483693129"
+    assert call.kwargs["cursor"] == "abc"
+    with pytest.raises(TypeError):
+        scavio_tools.threads_post_comments(username="natgeo")
+
+
+def test_kuaishou_videos_batch_forwards_a_list(scavio_tools, mock_scavio_client):
+    """videos_batch takes up to 20 photo ids in one 40-credit call."""
+    mock_scavio_client.kuaishou.videos_batch.return_value = {"videos": []}
+
+    scavio_tools.kuaishou_videos_batch(["3xabc", "3xdef"])
+
+    assert mock_scavio_client.kuaishou.videos_batch.call_args.args[0] == ["3xabc", "3xdef"]
+
+
+def test_kuaishou_comment_replies_needs_a_root_comment(scavio_tools, mock_scavio_client):
+    """Replies are keyed by the video AND the root comment, like TikTok's."""
+    mock_scavio_client.kuaishou.comment_replies.return_value = {"comments": []}
+
+    scavio_tools.kuaishou_comment_replies("3xabc", "99", count=20)
+
+    call = mock_scavio_client.kuaishou.comment_replies.call_args
+    assert call.args == ("3xabc", "99")
+    assert call.kwargs["count"] == 20
+
+
+def test_ebay_search_pages_a_seller_with_no_query(scavio_tools, mock_scavio_client):
+    """A seller-only eBay search is valid and is how a catalogue is paged."""
+    mock_scavio_client.ebay.search.return_value = {"results": []}
+
+    scavio_tools.ebay_search(seller="watchstore", sold=True, per_page=240)
+
+    call = mock_scavio_client.ebay.search.call_args
+    assert call.kwargs["seller"] == "watchstore"
+    assert call.kwargs["query"] is None
+    assert call.kwargs["sold"] is True
+    assert call.kwargs["per_page"] == 240
+
+
+def test_sec_endpoints_accept_a_ticker(scavio_tools, mock_scavio_client):
+    """Every SEC call takes a ticker as well as a CIK, so lookup is optional."""
+    mock_scavio_client.sec.filings.return_value = {"filings": []}
+
+    scavio_tools.sec_filings(ticker="AAPL", form="10-K,8-K", limit=100)
+
+    call = mock_scavio_client.sec.filings.call_args
+    assert call.kwargs["ticker"] == "AAPL"
+    assert call.kwargs["cik"] is None
+    assert call.kwargs["form"] == "10-K,8-K"
+    assert call.kwargs["limit"] == 100
+
+
+def test_google_ads_search_takes_a_domain_or_an_advertiser_id(scavio_tools, mock_scavio_client):
+    """Ads Transparency is addressable both ways; only the domain form echoes it back."""
+    mock_scavio_client.google_ads.search.return_value = {"ads": []}
+
+    scavio_tools.google_ads_search(domain="notion.so", region="US", format="video")
+
+    call = mock_scavio_client.google_ads.search.call_args
+    assert call.kwargs["domain"] == "notion.so"
+    assert call.kwargs["advertiser_id"] is None
+    assert call.kwargs["region"] == "US"
+    assert call.kwargs["format"] == "video"
+
+
+def test_meta_ads_search_pages_by_cursor(scavio_tools, mock_scavio_client):
+    """Meta Ad Library serves 30 ads on page 1 and 10 per cursor page after it."""
+    mock_scavio_client.meta_ads.search.return_value = {"ads": [], "has_next_page": False}
+
+    scavio_tools.meta_ads_search("running shoes", country="GB", cursor="tok")
+
+    call = mock_scavio_client.meta_ads.search.call_args
+    assert call.args[0] == "running shoes"
+    assert call.kwargs["country"] == "GB"
+    assert call.kwargs["cursor"] == "tok"
+
+
+def test_extract_url_forwards_format_and_mode(scavio_tools, mock_scavio_client):
+    """extract is tier-priced by mode, so the agent has to be able to set it."""
+    mock_scavio_client.extract.return_value = {"content": "# Title", "format": "markdown"}
+
+    result = scavio_tools.extract_url("https://example.com", format="markdown", mode="ultra")
+
+    assert json.loads(result)["format"] == "markdown"
+    call = mock_scavio_client.extract.call_args
+    assert call.args[0] == "https://example.com"
+    assert call.kwargs["format"] == "markdown"
+    assert call.kwargs["mode"] == "ultra"
+
+
+def test_amazon_options_takes_no_arguments(scavio_tools, mock_scavio_client):
+    """amazon_options is a static reference list: no params, no key, no credits."""
+    mock_scavio_client.amazon.options.return_value = {"countries": [], "domains": []}
+
+    result = scavio_tools.amazon_options()
+
+    assert json.loads(result) == {"countries": [], "domains": []}
+    call = mock_scavio_client.amazon.options.call_args
+    assert call.args == ()
+    assert call.kwargs == {}
+
+
+def test_added_provider_errors_are_returned_as_json(scavio_tools, mock_scavio_client):
+    """A failure on an added provider goes through the same error path as the rest."""
+    mock_scavio_client.ebay.search.side_effect = Exception("boom")
+
+    assert json.loads(scavio_tools.ebay_search(query="camera")) == {"error": "boom"}
+
+
+def test_added_providers_do_not_use_the_shop_not_found_path(scavio_tools, mock_scavio_client):
+    """The structured not-found result stays TikTok Shop-only.
+
+    A 404 is a routine answer there and a real failure everywhere else, so an
+    added provider's 404 must still surface as an error rather than as data.
+    """
+    error = Exception("not found")
+    error.status_code = 404  # type: ignore[attr-defined]
+    mock_scavio_client.indeed.job.side_effect = error
+
+    assert json.loads(scavio_tools.indeed_job("abc123")) == {"error": "not found"}
