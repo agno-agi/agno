@@ -115,6 +115,21 @@ def _apply_coordination(redis: Union[str, RedisCoordination]) -> None:
 # Default timeout (in seconds) when stopping the worker
 _DEFAULT_STOP_TIMEOUT = 30
 
+
+def resolve_stop_timeout(config: QueueConfig) -> int:
+    """The drain timeout queue_lifespan hands the worker.
+
+    An explicit config.stop_timeout_seconds was already validated strictly
+    below lock_grace_seconds at construction. None means the worker default,
+    clamped below the lease grace - so every lock_grace the config validator
+    accepts also boots (3..30 used to pass validation and then die at
+    lifespan startup on the worker's stop_timeout < lock_grace invariant).
+    """
+    if config.stop_timeout_seconds is not None:
+        return config.stop_timeout_seconds
+    return min(_DEFAULT_STOP_TIMEOUT, max(1, config.lock_grace_seconds - 1))
+
+
 # The replica's active queue worker, set by queue_lifespan. Exists for
 # continue doors that have no Request/app in scope (MCP tools, AG-UI resume,
 # Slack HITL) but still must pass the inline-door admission gate - a durable
@@ -2175,7 +2190,9 @@ async def queue_lifespan(app: Any, agent_os: Any):
                 return resolved
         return None
 
-    worker = QueueWorker(store=store, resolve_component=resolve_component, config=config)
+    worker = QueueWorker(
+        store=store, resolve_component=resolve_component, config=config, stop_timeout=resolve_stop_timeout(config)
+    )
     app.state.queue_worker = worker
     set_active_queue_worker(worker)
     try:
