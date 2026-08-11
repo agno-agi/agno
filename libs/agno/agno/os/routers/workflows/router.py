@@ -1350,7 +1350,15 @@ def get_workflow_router(
         if os.db and isinstance(os.db, BaseDb):
             from agno.workflow.workflow import get_workflows
 
-            for db_workflow in get_workflows(db=os.db, registry=os.registry):
+            db_workflows = get_workflows(db=os.db, registry=os.registry)
+            if db_workflows:
+                # Apply the same RBAC filtering to DB-loaded workflows:
+                # without it, a caller whose scope excludes a workflow
+                # still saw its config here (the agents endpoint already
+                # filters)
+                if getattr(request.state, "authorization_enabled", False):
+                    db_workflows = filter_resources_by_access(request, db_workflows, "workflows")
+            for db_workflow in db_workflows or []:
                 try:
                     workflows.append(WorkflowSummaryResponse.from_workflow(workflow=db_workflow, is_component=True))
                 except Exception:
