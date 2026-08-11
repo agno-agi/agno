@@ -216,8 +216,16 @@ class Weaviate(VectorDb):
                 null_state_indexed = bool(getattr(inverted_index, "index_null_state", False))
                 self._owner_property_exists = has_property and null_state_indexed
             except Exception:
-                # No live collection yet — it will be created with both.
-                self._owner_property_exists = True
+                # Inspection failed (connection, permissions, odd client
+                # response): assume migrated for THIS call only. Caching the
+                # assumption would let one blip permanently mask a real legacy
+                # collection — uncached, the next call re-inspects. The
+                # missing-collection case is handled conclusively above.
+                log_warning(
+                    f"Could not inspect collection '{self.collection}' for isolation support; "
+                    "proceeding as migrated for this operation."
+                )
+                return True
         return self._owner_property_exists
 
     def _require_owner_property(self, user_id: Optional[str]) -> bool:

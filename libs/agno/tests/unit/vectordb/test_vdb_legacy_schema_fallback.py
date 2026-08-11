@@ -377,3 +377,129 @@ def test_qdrant_write_ensures_tenant_index_on_preexisting_collection():
 
     db.insert("hash-2", [doc])
     assert db.client.create_payload_index.call_count == 1, "ensure is once per instance"
+
+
+# ---------------------------------------------------------------------------
+# Inconclusive inspections are never cached
+# ---------------------------------------------------------------------------
+# A transient inspection failure assumes "migrated" for that call only. If the
+# assumption were cached, one blip would permanently mask a real legacy store
+# — silently, because the swallowed unknown-column errors downstream read as
+# an empty knowledge base. These tests arrange a blip THEN a conclusive
+# legacy answer, and assert the second call lands the truth.
+
+
+def test_pgvector_probe_blip_is_not_cached(monkeypatch):
+    pytest.importorskip("pgvector")
+    from agno.vectordb.pgvector import PgVector
+
+    db = PgVector(table_name="t", db_url="postgresql+psycopg://u:p@localhost:1/x", embedder=StubEmbedder())
+    calls = {"n": 0}
+
+    def fake_inspect(engine):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("transient blip")
+        inspector = MagicMock()
+        inspector.get_columns.return_value = [{"name": "content_hash"}]  # legacy: no user_id
+        return inspector
+
+    monkeypatch.setattr("agno.vectordb.pgvector.pgvector.inspect", fake_inspect)
+
+    assert db._user_id_column_exists() is True  # blip -> assume migrated
+    assert db._owner_column_exists is None, "an inconclusive answer must not be cached"
+    assert db._user_id_column_exists() is False  # re-probe lands the truth
+    assert db._owner_column_exists is False, "a conclusive answer is cached"
+
+
+def test_pgvector_missing_table_is_cached_as_migrated(monkeypatch):
+    pytest.importorskip("pgvector")
+    from sqlalchemy.exc import NoSuchTableError
+
+    from agno.vectordb.pgvector import PgVector
+
+    db = PgVector(table_name="t", db_url="postgresql+psycopg://u:p@localhost:1/x", embedder=StubEmbedder())
+
+    def fake_inspect(engine):
+        inspector = MagicMock()
+        inspector.get_columns.side_effect = NoSuchTableError("t")
+        return inspector
+
+    monkeypatch.setattr("agno.vectordb.pgvector.pgvector.inspect", fake_inspect)
+
+    assert db._user_id_column_exists() is True  # no table yet -> will be created with the column
+    assert db._owner_column_exists is True, "store-missing is a conclusive, cacheable answer"
+
+
+def test_clickhouse_probe_blip_is_not_cached():
+    pytest.importorskip("clickhouse_connect")
+    from agno.vectordb.clickhouse import Clickhouse
+
+    client = MagicMock()
+    client.command.return_value = 1  # table exists
+    client.query.side_effect = [RuntimeError("transient blip"), MagicMock(result_rows=[])]
+    db = Clickhouse(table_name="t", host="localhost", client=client, embedder=StubEmbedder())
+
+    assert db._user_id_column_exists() is True
+    assert db._owner_column_exists is None
+    assert db._user_id_column_exists() is False
+    assert db._owner_column_exists is False
+
+
+def test_redis_probe_blip_is_not_cached():
+    pytest.importorskip("redisvl")
+    from agno.vectordb.redis import RedisDB
+
+    db = RedisDB(index_name="t", redis_url="redis://localhost:1", embedder=StubEmbedder())
+    db.index = MagicMock()
+    db.index.info.side_effect = [RuntimeError("transient blip"), {"attributes": []}]
+
+    assert db._user_id_field_exists() is True
+    assert db._owner_field_exists is None
+    assert db._user_id_field_exists() is False
+    assert db._owner_field_exists is False
+
+
+def test_redis_create_warns_only_on_conclusive_legacy_verdict(caplog):
+    pytest.importorskip("redisvl")
+    import logging
+
+    from agno.vectordb.redis import RedisDB
+
+    def _db_with_info(info):
+        db = RedisDB(index_name="t", redis_url="redis://localhost:1", embedder=StubEmbedder())
+        db.index = MagicMock()
+        db.index.exists.return_value = True
+        db.index.info.side_effect = info
+        return db
+
+    with caplog.at_level(logging.WARNING):
+        _db_with_info([RuntimeError("cannot inspect")]).create()
+    assert "was created without" not in caplog.text, "an uninspectable index must not be mis-warned as legacy"
+
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        _db_with_info([{"attributes": []}]).create()
+    assert "was created without" in caplog.text, "a conclusive legacy verdict must warn"
+
+
+def test_weaviate_probe_blip_is_not_cached():
+    pytest.importorskip("weaviate")
+    from types import SimpleNamespace
+
+    from agno.vectordb.weaviate import Weaviate
+
+    client = MagicMock()
+    client.is_connected.return_value = True
+    client.collections.exists.return_value = True
+    legacy_config = SimpleNamespace(
+        properties=[SimpleNamespace(name="content_hash")],
+        inverted_index_config=SimpleNamespace(index_null_state=False),
+    )
+    client.collections.get.return_value.config.get.side_effect = [RuntimeError("transient blip"), legacy_config]
+    db = Weaviate(collection="T", client=client, embedder=StubEmbedder())
+
+    assert db._user_id_property_exists() is True
+    assert db._owner_property_exists is None
+    assert db._user_id_property_exists() is False
+    assert db._owner_property_exists is False
