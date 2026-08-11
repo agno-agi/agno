@@ -35,6 +35,7 @@ from agno.os.job_queue import (
     araise_if_ticket_owns_continue,
     asettle_paused_ticket,
     aticket_poll_fallback,
+    ensure_duplicate_matches_component,
     normalize_idempotency_key,
     payload_is_queueable,
     validate_seam_input,
@@ -1585,6 +1586,7 @@ def get_workflow_router(
                                 status_code=409,
                                 detail="Idempotency-Key was already used but the original run could not be retrieved",
                             )
+                        ensure_duplicate_matches_component(existing, "workflow", job["component_id"])
                         if not (existing.get("payload") or {}).get("stream"):
                             # The key was used by a NON-stream submission: its
                             # run never registers in the event stream, so a
@@ -1693,6 +1695,7 @@ def get_workflow_router(
                     raise HTTPException(status_code=429, detail="Job queue is full")
                 if enqueue_result["reason"] == "duplicate" and enqueue_result["job"] is not None:
                     existing = enqueue_result["job"]
+                    ensure_duplicate_matches_component(existing, "workflow", job["component_id"])
                     return JSONResponse(
                         status_code=202,
                         content={

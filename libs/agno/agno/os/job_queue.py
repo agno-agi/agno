@@ -165,6 +165,36 @@ def normalize_idempotency_key(raw: Any) -> Any:
     return raw
 
 
+def ensure_duplicate_matches_component(existing: Dict[str, Any], component_type: str, component_id: Any) -> None:
+    """Refuse an Idempotency-Key duplicate that belongs to a different component.
+
+    The dedup namespace is (idempotency_key, user_id) only, so a key reused on
+    another component's submit route would otherwise be answered with the
+    ORIGINAL component's run - a 202 (or live stream attach) whose ids then 404
+    through this route's poll endpoint, because the ticket poll fallback does
+    enforce component identity. Idempotency keys retry the same submission;
+    they never alias a different one.
+
+    The response deliberately omits the original ticket's identity: in
+    unauthenticated deployments the key namespace is shared across clients,
+    and the mismatch detail belongs in server logs, not on the wire.
+    """
+    if existing.get("component_type") == component_type and existing.get("component_id") == component_id:
+        return
+    from fastapi import HTTPException
+
+    log_warning(
+        f"Idempotency-Key reuse across components: key on ticket "
+        f"{existing.get('component_type')}/{existing.get('component_id')} was replayed against "
+        f"{component_type}/{component_id}; refusing with 409"
+    )
+    raise HTTPException(
+        status_code=409,
+        detail="Idempotency-Key was already used by a different component; "
+        "reuse a key only to retry the identical submission",
+    )
+
+
 def payload_is_queueable(payload: Any) -> bool:
     """True when the job payload survives a JSON round-trip as-is.
 
