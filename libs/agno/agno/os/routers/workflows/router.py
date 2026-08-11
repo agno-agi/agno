@@ -521,15 +521,19 @@ async def handle_workflow_continue_via_websocket(
             return
 
         # Mirror HTTP continue: nested executor approvals must be resolved first.
-        # WebSocketAuthContext has no scopes list; admins bypass via is_admin.
+        # Scope the scan to *currently paused* executors so a historical pending
+        # approval on an earlier executor does not block the active resume. Admins
+        # bypass via is_admin (WebSocketAuthContext has no granular scope list).
         if ws_auth is not None and not ws_auth.is_admin:
             for executor_run in getattr(existing_run, "step_executor_runs", None) or []:
+                if not getattr(executor_run, "is_paused", False):
+                    continue
                 executor_run_id = getattr(executor_run, "run_id", None)
                 reason = await run_continuation_blocked_reason(
                     os.db,
                     executor_run_id,
                     authorization_enabled=bool(ws_auth.jwt_enabled),
-                    user_scopes=[],
+                    user_scopes=["approvals:write"] if ws_auth.is_admin else [],
                 )
                 if reason:
                     await websocket.send_text(json.dumps({"event": "error", "error": reason}))
@@ -1437,7 +1441,11 @@ def get_workflow_router(
         # Approvals are stored under nested executor run_ids, not the workflow run_id.
         # require_approval_resolved above covers the workflow id; also block when any
         # paused executor still has a pending approval_type='required' record.
+        # Scan only currently paused executors so a historical pending approval does
+        # not block a later, already-resolved pause.
         for executor_run in getattr(existing_run, "step_executor_runs", None) or []:
+            if not getattr(executor_run, "is_paused", False):
+                continue
             executor_run_id = getattr(executor_run, "run_id", None)
             reason = await run_continuation_blocked_reason(
                 os.db,
