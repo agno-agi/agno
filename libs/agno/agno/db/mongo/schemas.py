@@ -49,6 +49,7 @@ EVAL_COLLECTION_SCHEMA = [
     {"key": "team_id"},
     {"key": "workflow_id"},
     {"key": "model_id"},
+    {"key": "user_id"},
     {"key": "created_at"},
     {"key": "updated_at"},
 ]

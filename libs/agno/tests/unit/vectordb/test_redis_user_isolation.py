@@ -54,6 +54,9 @@ def redis_db():
             search_type=SearchType.vector,
         )
         db.index = index
+        # The mocked index cannot answer the live-schema probe, and these tests
+        # model a migrated (v3) index — prime the owner-field gate accordingly.
+        db._owner_field_exists = True
         yield db
 
 

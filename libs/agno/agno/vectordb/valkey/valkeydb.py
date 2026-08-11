@@ -98,6 +98,7 @@ class ValkeyDB(VectorDb):
     # shared chunks store the sentinel owner and the scope query matches either.
     USER_ID_FIELD: str = "user_id"
     SHARED_OWNER_TAG: str = "__shared__"
+    MAX_USER_ID_BYTES: int = 4096
     # Reserved owner tag that is never stored; negating it is the match-all
     # keyword query (valkey-search rejects a bare '*' outside a KNN pre-filter).
     MATCH_ALL_TAG: str = "__match_all__"
@@ -273,8 +274,11 @@ class ValkeyDB(VectorDb):
         match-all tag would break the match-all query, braces can never be
         matched by a scope clause, wildcards match other owners' tags even
         when escaped, surrounding whitespace is trimmed at index time so
-        ' alice' indexes as the tag 'alice' and is read by that owner, and an
-        empty string is an owner tag no scope clause can ever match.
+        ' alice' indexes as the tag 'alice' and is read by that owner, a NUL
+        byte or an over-long value is truncated at index time so
+        'victim\\x00attacker' indexes as 'victim' and writes into that owner's
+        view, and an empty string is an owner tag no scope clause can ever
+        match.
 
         The TAG union character '|' is not rejected: ``_escape_tag_value``
         escapes it at every interpolation site, and OIDC subject claims
@@ -284,6 +288,10 @@ class ValkeyDB(VectorDb):
             return
         if user_id == "":
             raise ValueError("user_id must not be an empty string")
+        if "\x00" in user_id:
+            raise ValueError("user_id must not contain a NUL byte")
+        if len(user_id.encode()) > self.MAX_USER_ID_BYTES:
+            raise ValueError(f"user_id must not exceed {self.MAX_USER_ID_BYTES} bytes")
         if self.USER_ID_SEPARATOR in user_id:
             raise ValueError("user_id must not contain the reserved separator character (0x1f)")
         if user_id == self.SHARED_OWNER_TAG:
@@ -485,8 +493,9 @@ class ValkeyDB(VectorDb):
         shared publish is judged a duplicate on the strength of one tenant's
         private copy and the shared bucket never receives it.
         """
+        # Outside the try: an invalid user_id must raise, not be swallowed into False.
+        self._validate_user_id(user_id)
         try:
-            self._validate_user_id(user_id)
             client = self._get_client()
             query = self._dedupe_query(content_hash, user_id)
             options = FtSearchOptions(
@@ -507,8 +516,8 @@ class ValkeyDB(VectorDb):
         user_id: Optional[str] = None,
     ) -> None:
         """Insert documents into the Valkey index."""
+        self._validate_user_id(user_id)
         try:
-            self._validate_user_id(user_id)
             client = self._get_client()
             for doc in documents:
                 parsed_doc = self._parse_hash(doc, user_id=user_id)
@@ -558,9 +567,10 @@ class ValkeyDB(VectorDb):
         Strategy: delete existing docs with the same content_hash (scoped to the
         caller's bucket), then insert new docs.
         """
+        self._validate_user_id(user_id)
         try:
-            self._validate_user_id(user_id)
-            # Find and delete existing docs for this content_hash in the caller's bucket
+            # Find and delete existing docs for this content_hash in the
+            # caller's bucket, then insert the new ones.
             self._delete_by_query(self._dedupe_query(content_hash, user_id))
             # Insert new docs
             self.insert(content_hash, documents, filters, user_id=user_id)
@@ -666,8 +676,9 @@ class ValkeyDB(VectorDb):
         """
         if self.search_type == SearchType.hybrid:
             raise ValueError("Hybrid search is currently unsupported for Valkey")
+        # Outside the try: an invalid user_id must raise, not be swallowed into [].
+        self._validate_user_id(user_id)
         try:
-            self._validate_user_id(user_id)
             if filters and isinstance(filters, List):
                 filters = self._filter_exprs_to_dict(cast(List[FilterExpr], filters))
             if self.search_type == SearchType.keyword:

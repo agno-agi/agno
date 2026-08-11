@@ -1241,20 +1241,28 @@ class Knowledge(RemoteKnowledge):
         exclude: Optional[List[str]] = None,
     ) -> None:
         """Synchronously load content."""
-        if content.path:
-            self._load_from_path(content, upsert, skip_if_exists, include, exclude)
+        try:
+            if content.path:
+                self._load_from_path(content, upsert, skip_if_exists, include, exclude)
 
-        if content.url:
-            self._load_from_url(content, upsert, skip_if_exists)
+            if content.url:
+                self._load_from_url(content, upsert, skip_if_exists)
 
-        if content.file_data:
-            self._load_from_content(content, upsert, skip_if_exists)
+            if content.file_data:
+                self._load_from_content(content, upsert, skip_if_exists)
 
-        if content.topics:
-            self._load_from_topics(content, upsert, skip_if_exists)
+            if content.topics:
+                self._load_from_topics(content, upsert, skip_if_exists)
 
-        if content.remote_content:
-            self._load_from_remote_content(content, upsert, skip_if_exists)
+            if content.remote_content:
+                self._load_from_remote_content(content, upsert, skip_if_exists)
+        except Exception as e:
+            # The loaders write the contents-db row before the vector work runs,
+            # so an error here (e.g. the pre-v3 migration gate) would otherwise
+            # strand the row in 'processing' forever — mark it failed with the
+            # reason, then let the caller see the exception.
+            self._mark_content_failed(content, str(e))
+            raise
 
     async def _aload_content(
         self,
@@ -1264,20 +1272,49 @@ class Knowledge(RemoteKnowledge):
         include: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
     ) -> None:
-        if content.path:
-            await self._aload_from_path(content, upsert, skip_if_exists, include, exclude)
+        try:
+            if content.path:
+                await self._aload_from_path(content, upsert, skip_if_exists, include, exclude)
 
-        if content.url:
-            await self._aload_from_url(content, upsert, skip_if_exists)
+            if content.url:
+                await self._aload_from_url(content, upsert, skip_if_exists)
 
-        if content.file_data:
-            await self._aload_from_content(content, upsert, skip_if_exists)
+            if content.file_data:
+                await self._aload_from_content(content, upsert, skip_if_exists)
 
-        if content.topics:
-            await self._aload_from_topics(content, upsert, skip_if_exists)
+            if content.topics:
+                await self._aload_from_topics(content, upsert, skip_if_exists)
 
-        if content.remote_content:
-            await self._aload_from_remote_content(content, upsert, skip_if_exists)
+            if content.remote_content:
+                await self._aload_from_remote_content(content, upsert, skip_if_exists)
+        except Exception as e:
+            # See ``_load_content`` — never strand the row in 'processing'.
+            await self._amark_content_failed(content, str(e))
+            raise
+
+    def _mark_content_failed(self, content: Content, reason: str) -> None:
+        """Best-effort: record a terminal 'failed' status + reason on the
+        contents-db row so pollers don't wait forever on 'processing'."""
+        try:
+            content.status = ContentStatus.FAILED
+            content.status_message = reason
+            self.patch_content(content)
+        except Exception:
+            # Never let status bookkeeping mask the original error.
+            pass
+
+    async def _amark_content_failed(self, content: Content, reason: str) -> None:
+        """Async twin of ``_mark_content_failed``."""
+        try:
+            content.status = ContentStatus.FAILED
+            content.status_message = reason
+            if self.contents_db is not None and isinstance(self.contents_db, AsyncBaseDb):
+                await self.apatch_content(content)
+            else:
+                self.patch_content(content)
+        except Exception:
+            # Never let status bookkeeping mask the original error.
+            pass
 
     def _should_skip(self, content_hash: str, skip_if_exists: bool, user_id: Optional[str] = None) -> bool:
         """

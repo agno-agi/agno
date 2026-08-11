@@ -379,3 +379,29 @@ def test_cleanup_is_idempotent_when_no_legacy_column():
     db.upsert_session(AgentSession(session_id="seed", agent_id="agent-1", user_id="u1"))
 
     assert db.cleanup_legacy_runs_column() is False
+
+
+def test_down_then_up_in_the_same_process():
+    """A revert drops the runs table; a later up() in the same process must rebuild it.
+
+    The revert used to drop agno_runs from the database while leaving it registered
+    on db.metadata, so the next up() raised InvalidRequestError.
+    """
+    db, db_file = _new_db()
+    db.upsert_session(AgentSession(session_id="seed", agent_id="agent-1", user_id="u1"))
+    _add_legacy_runs_column(db_file)
+
+    runs = [_make_run(f"r{i}", "s8", f"c{i}").to_dict() for i in range(2)]
+    _insert_legacy_session(db_file, "s8", runs)
+
+    db = SqliteDb(db_file=db_file)
+    asyncio.run(MigrationManager(db).up())
+    asyncio.run(MigrationManager(db).down(target_version="2.5.6"))
+    asyncio.run(MigrationManager(db).up())
+
+    conn = sqlite3.connect(db_file)
+    try:
+        count = conn.execute("SELECT COUNT(*) FROM agno_runs WHERE session_id='s8'").fetchone()[0]
+        assert count == 2
+    finally:
+        conn.close()
