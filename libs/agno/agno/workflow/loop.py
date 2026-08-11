@@ -19,7 +19,7 @@ from agno.run.workflow import (
 from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, log_error, log_warning, logger
 from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_loop_end_condition, is_cel_expression
-from agno.workflow.step import Step
+from agno.workflow.step import Step, UnresolvableCallableError
 from agno.workflow.types import HumanReview, OnReject, StepInput, StepOutput, StepRequirement, StepType
 
 WorkflowSteps = List[
@@ -236,26 +236,41 @@ class Loop:
         registry: Optional["Registry"] = None,
         db: Optional[Any] = None,
         links: Optional[List[Dict[str, Any]]] = None,
+        strict: bool = False,
+        branch_suffix: str = "",
     ) -> "Loop":
         from agno.workflow.condition import Condition
         from agno.workflow.parallel import Parallel
         from agno.workflow.router import Router
         from agno.workflow.steps import Steps
 
-        def deserialize_step(step_data: Dict[str, Any]) -> Any:
+        def deserialize_step(step_data: Dict[str, Any], suffix: Optional[str] = None) -> Any:
+            suffix = branch_suffix if suffix is None else suffix
             step_type = step_data.get("type", "Step")
             if step_type == "Loop":
-                return cls.from_dict(step_data, registry=registry, db=db, links=links)
+                return cls.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             elif step_type == "Parallel":
-                return Parallel.from_dict(step_data, registry=registry, db=db, links=links)
+                return Parallel.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             elif step_type == "Steps":
-                return Steps.from_dict(step_data, registry=registry, db=db, links=links)
+                return Steps.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             elif step_type == "Condition":
-                return Condition.from_dict(step_data, registry=registry, db=db, links=links)
+                return Condition.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             elif step_type == "Router":
-                return Router.from_dict(step_data, registry=registry, db=db, links=links)
+                return Router.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             else:
-                return Step.from_dict(step_data, registry=registry, db=db, links=links)
+                return Step.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
 
         # Deserialize end_condition
         end_condition_data = data.get("end_condition")
@@ -268,12 +283,20 @@ class Loop:
             if end_condition_type == "cel" or (end_condition_type is None and is_cel_expression(end_condition_data)):
                 end_condition = end_condition_data
             else:
-                if registry:
-                    end_condition = registry.get_function(end_condition_data)
-                    if end_condition is None:
-                        raise ValueError(f"End condition function '{end_condition_data}' not found in registry")
-                else:
-                    raise ValueError(f"Registry required to deserialize end_condition function '{end_condition_data}'")
+                end_condition = registry.get_function(end_condition_data) if registry else None
+                if end_condition is None:
+                    if registry:
+                        message = f"End condition function '{end_condition_data}' not found in registry"
+                    else:
+                        message = f"Registry required to deserialize end_condition function '{end_condition_data}'"
+                    if strict:
+                        from agno.exceptions import ComponentRehydrationError
+
+                        raise ComponentRehydrationError(message)
+                    from agno.workflow.step import _unresolvable_callable_placeholder
+
+                    log_warning(message)
+                    end_condition = _unresolvable_callable_placeholder("Loop end condition", end_condition_data)
 
         # HITL config
         if data.get("human_review"):
@@ -318,6 +341,8 @@ class Loop:
         if callable(self.end_condition):
             try:
                 return self.end_condition(iteration_results)
+            except UnresolvableCallableError:
+                raise
             except Exception as e:
                 log_warning(f"End condition evaluation failed: {str(e)}")
                 return False
@@ -347,6 +372,8 @@ class Loop:
                     return await self.end_condition(iteration_results)
                 else:
                     return self.end_condition(iteration_results)
+            except UnresolvableCallableError:
+                raise
             except Exception as e:
                 log_warning(f"End condition evaluation failed: {str(e)}")
                 return False
