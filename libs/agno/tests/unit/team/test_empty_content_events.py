@@ -95,8 +95,8 @@ def test_team_stream_preserves_metadata_on_empty_model_content():
     assert run_response.model_provider_data == provider_data
 
 
-@pytest.mark.parametrize("falsy_content", [False, 0, [], {}])
-def test_team_stream_preserves_other_falsy_model_content(falsy_content):
+@pytest.mark.parametrize("empty_content", [False, 0, [], {}])
+def test_team_stream_skips_other_empty_model_content(empty_content):
     team = Team(members=[Agent(name="Agent1")])
     session = TeamSession(session_id="session_1")
     run_response = TeamRunOutput(run_id="run_1", team_id="team_1", team_name="Team")
@@ -109,14 +109,12 @@ def test_team_stream_preserves_other_falsy_model_content(falsy_content):
             full_model_response=full_model_response,
             model_response_event=ModelResponse(
                 event=ModelResponseEvent.assistant_response.value,
-                content=falsy_content,
+                content=empty_content,
             ),
             stream_events=True,
         )
     )
 
-    assert len(events) == 1
-    assert events[0].event == TeamRunEvent.run_content.value
-    assert events[0].content == falsy_content
+    assert events == []
     assert full_model_response.content is None
     assert run_response.content is None

@@ -1396,10 +1396,9 @@ def _handle_model_response_chunk(
             content_type = "str"
 
             should_yield = False
-            # Process content. Empty strings are provider stop/metadata chunks,
-            # but other falsy values can be valid structured responses.
+            # Process content. Empty values are provider stop/metadata chunks.
             content = model_response_event.content
-            if content is not None and content != "":
+            if content:
                 if parse_structured_output:
                     full_model_response.content = content
                     _convert_response_to_structured_format(team, full_model_response, run_context=run_context)
