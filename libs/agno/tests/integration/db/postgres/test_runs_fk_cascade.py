@@ -70,7 +70,7 @@ class TestFkConstraintExists:
                     f"""
                     SELECT conname, pg_get_constraintdef(oid) AS def
                     FROM pg_constraint
-                    WHERE conrelid = '{TEST_SCHEMA}.agno_runs'::regclass AND contype = 'f'
+                    WHERE conrelid = '{TEST_SCHEMA}.{pg_db.runs_table_name}'::regclass AND contype = 'f'
                     """
                 )
             ).fetchall()

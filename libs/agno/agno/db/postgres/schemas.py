@@ -114,6 +114,13 @@ KNOWLEDGE_TABLE_SCHEMA = {
     # ``(user_id = :uid OR user_id IS NULL)`` so the listing endpoint
     # (/knowledge/config) only surfaces the caller's content + shared rows.
     "user_id": {"type": String, "nullable": True, "index": True},
+    "__composite_indexes__": [
+        # Routes list "my content + shared" using
+        # ``WHERE (user_id = :uid OR user_id IS NULL) AND linked_to = :name``
+        # — covering both predicates speeds that up materially. Mirrors the
+        # SQLite schema, which already declares this index.
+        {"name": "ix_knowledge_user_linked_to", "columns": ["user_id", "linked_to"]},
+    ],
 }
 
 METRICS_TABLE_SCHEMA = {
