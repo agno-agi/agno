@@ -348,6 +348,20 @@ def test_function_process_schema_for_strict():
     assert "param2" in func.parameters["required"]  # All properties should be required in strict mode
 
 
+def test_function_process_entrypoint_with_empty_fixed_schema_in_strict_mode():
+    """Strict mode should accept MCP tools whose object schema has no properties."""
+    func = Function(
+        name="mcp_no_args",
+        parameters={"type": "object"},
+        skip_entrypoint_processing=True,
+    )
+
+    func.process_entrypoint(strict=True)
+
+    assert func.parameters["additionalProperties"] is False
+    assert func.parameters["required"] == []
+
+
 def test_function_cache_key_generation():
     """Test generation of cache keys for function calls."""
     func = Function(name="test_func", cache_results=True, cache_dir="/tmp")

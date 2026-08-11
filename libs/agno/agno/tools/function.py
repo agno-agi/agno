@@ -1164,9 +1164,10 @@ class Function(BaseModel):
         # Apply strict mode to the entire schema
         self.parameters = make_nested_strict(self.parameters)
 
+        properties = self.parameters.get("properties") or {}
         self.parameters["required"] = [
             name
-            for name in self.parameters["properties"]
+            for name in properties
             if name not in ("return", "self")
             and name not in FRAMEWORK_INJECTED_PARAMS
             and name not in AGNO_INJECTED_PARAMS
