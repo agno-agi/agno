@@ -9,7 +9,9 @@ so both were skipped: the stream view stayed RUNNING with no producer
 (immortal on Redis, whose TTL refresher had enrolled the run - /resume
 tails heartbeat forever) and the retention-exempt paused ticket said paused
 forever. The obligation now runs as one shielded unit that completes even
-while the response task is being cancelled.
+while the response task is being cancelled - and under cancellation it
+stamps the KNOWN cancelled status rather than racing the core's own
+detached cancelled-row persist with a fresh session read.
 
 These tests drive the REAL agents continue streamer with a continuation
 that blocks mid-stream, then cancel the consumer exactly like a disconnect.
@@ -29,8 +31,6 @@ from agno.run.base import RunStatus
 
 RUN_ID = "r-disc"
 SESSION_ID = "s-disc"
-
-_TERMINAL = (RunStatus.completed, RunStatus.paused, RunStatus.error, RunStatus.cancelled)
 
 
 @pytest.fixture()
@@ -127,11 +127,13 @@ async def test_disconnect_mid_stream_still_closes_stream_and_settles_ticket(stre
     await asyncio.sleep(0.3)  # the shielded obligation completes in the background
 
     status = await stream_harness.get_run_status(RUN_ID)
-    assert status in _TERMINAL, (
-        f"stream view abandoned as {status} with no producer - a /resume tail would heartbeat forever"
+    assert status == RunStatus.cancelled, (
+        f"stream view finalized as {status} - a disconnect cancels the inline continue, and the "
+        "finalizer must stamp that KNOWN status instead of racing the core's own cancelled-row "
+        "persist with a session read (which can observe the stale paused/running row)"
     )
     job = await store.get_job(RUN_ID)
-    assert job["status"] != "paused", f"the paused ticket never settled: {job['status']}"
+    assert job["status"] == "cancelled", f"the paused ticket must settle as cancelled: {job['status']}"
 
 
 @pytest.mark.asyncio

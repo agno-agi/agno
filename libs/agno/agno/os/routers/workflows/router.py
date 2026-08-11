@@ -1035,9 +1035,20 @@ async def workflow_continue_response_streamer(
                 yield format_sse_event(run_response_chunk)  # type: ignore
         finally:
             # Stream close + paused-ticket settle as one cancellation-proof
-            # unit (see the agents twin for the disconnect hazard). Final
-            # status resolves from THIS run's row, never session.runs[-1]
-            await afinalize_continue_stream(workflow, run_id, session_id, queue_worker=queue_worker)
+            # unit; under cancellation the final status is KNOWN - see the
+            # agents twin for both hazards. Otherwise it resolves from THIS
+            # run's row, never session.runs[-1]
+            import sys
+
+            _exc = sys.exc_info()[0]
+            _cancelled = _exc is not None and issubclass(_exc, (asyncio.CancelledError, GeneratorExit))
+            await afinalize_continue_stream(
+                workflow,
+                run_id,
+                session_id,
+                queue_worker=queue_worker,
+                final_status=RunStatus.cancelled if _cancelled else None,
+            )
 
         # If the workflow re-paused, yield WorkflowPausedEvent as the new clean
         # snapshot event. Also yield the legacy "WorkflowRunOutput" event for

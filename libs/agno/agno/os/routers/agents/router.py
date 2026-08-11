@@ -286,8 +286,23 @@ async def agent_continue_response_streamer(
                 # Stream close + paused-ticket settle as one cancellation-
                 # proof unit: a client disconnect cancels this generator,
                 # and an interrupted finalizer abandoned the stream view as
-                # RUNNING with no producer and left the ticket paused
-                await afinalize_continue_stream(agent, run_id, session_id, queue_worker=queue_worker)
+                # RUNNING with no producer and left the ticket paused.
+                # Under cancellation the final status is KNOWN (the core
+                # cancels the inline run and persists cancelled from its own
+                # detached task) - passing it avoids racing that persist
+                # with a fresh session read, which could stamp a stale
+                # paused/running row's status onto the stream and ticket.
+                import sys
+
+                _exc = sys.exc_info()[0]
+                _cancelled = _exc is not None and issubclass(_exc, (asyncio.CancelledError, GeneratorExit))
+                await afinalize_continue_stream(
+                    agent,
+                    run_id,
+                    session_id,
+                    queue_worker=queue_worker,
+                    final_status=RunStatus.cancelled if _cancelled else None,
+                )
     except (InputCheckError, OutputCheckError) as e:
         error_response = RunErrorEvent(
             content=str(e),

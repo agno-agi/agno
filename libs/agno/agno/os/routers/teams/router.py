@@ -446,8 +446,19 @@ async def team_continue_response_streamer(
         finally:
             if _sync_stream:
                 # Stream close + paused-ticket settle as one cancellation-
-                # proof unit (see the agents twin for the disconnect hazard)
-                await afinalize_continue_stream(team, run_id, session_id, queue_worker=queue_worker)
+                # proof unit; under cancellation the final status is KNOWN -
+                # see the agents twin for both hazards
+                import sys
+
+                _exc = sys.exc_info()[0]
+                _cancelled = _exc is not None and issubclass(_exc, (asyncio.CancelledError, GeneratorExit))
+                await afinalize_continue_stream(
+                    team,
+                    run_id,
+                    session_id,
+                    queue_worker=queue_worker,
+                    final_status=RunStatus.cancelled if _cancelled else None,
+                )
     except (InputCheckError, OutputCheckError) as e:
         error_response = TeamRunErrorEvent(
             content=str(e),
