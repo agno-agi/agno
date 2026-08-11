@@ -138,6 +138,43 @@ class TestTicketPollFallback:
         assert resp.status_code == 404
 
 
+class TestDuplicate202Vocabulary:
+    """The duplicate-202 body speaks the SAME status vocabulary as the run
+    poll: no invented "FAILED" (the API's error value is "ERROR"), and a
+    currently-RUNNING original answers RUNNING, not PENDING - a client
+    switch on status must never see a value the run endpoints cannot also
+    produce."""
+
+    def _duplicate(self, harness):
+        return harness.client.post(
+            "/agents/qa-agent/runs",
+            data={"message": "hi", "stream": "false", "background": "true"},
+            headers={"Idempotency-Key": "dup-key"},
+        )
+
+    def test_failed_original_answers_error_not_failed(self, harness):
+        seed_ticket(harness.store, "r-dup-1", status="failed", idempotency_key="dup-key")
+        resp = self._duplicate(harness)
+        assert resp.status_code == 202
+        assert resp.json()["status"] == "ERROR", (
+            f"poll vocabulary is ERROR; got {resp.json()['status']!r} (FAILED exists nowhere else in the API)"
+        )
+
+    def test_running_original_answers_running_not_pending(self, harness):
+        seed_ticket(harness.store, "r-dup-2", status="running", idempotency_key="dup-key")
+        resp = self._duplicate(harness)
+        assert resp.status_code == 202
+        assert resp.json()["status"] == "RUNNING", (
+            "a poll of the same run says RUNNING; the duplicate must not flatten it to PENDING"
+        )
+
+    def test_queued_original_still_answers_pending(self, harness):
+        seed_ticket(harness.store, "r-dup-3", status="queued", idempotency_key="dup-key")
+        resp = self._duplicate(harness)
+        assert resp.status_code == 202
+        assert resp.json()["status"] == "PENDING"
+
+
 class TestHelperUnits:
     """Direct unit coverage of aticket_poll_fallback's status mapping (the
     router tests above cover the wiring)."""

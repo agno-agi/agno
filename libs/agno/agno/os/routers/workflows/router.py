@@ -38,6 +38,7 @@ from agno.os.job_queue import (
     ensure_duplicate_matches_component,
     normalize_idempotency_key,
     payload_is_queueable,
+    ticket_status_to_api,
     validate_seam_input,
 )
 from agno.os.middleware.user_scope import (
@@ -1701,9 +1702,10 @@ def get_workflow_router(
                         content={
                             "run_id": existing["id"],
                             "session_id": existing["session_id"],
-                            "status": "PENDING"
-                            if existing["status"] in ("queued", "running")
-                            else existing["status"].upper(),
+                            # Same vocabulary as the run poll: a duplicate of a
+                            # failed run says ERROR (not an invented "FAILED"),
+                            # and a running one says RUNNING (not PENDING).
+                            "status": ticket_status_to_api(existing["status"]) or existing["status"].upper(),
                         },
                     )
                 if enqueue_result["reason"] == "duplicate":

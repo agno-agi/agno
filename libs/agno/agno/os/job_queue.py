@@ -168,6 +168,31 @@ def normalize_idempotency_key(raw: Any) -> Any:
     return raw
 
 
+# Ticket statuses -> the API's RunStatus vocabulary. ONE mapping for every
+# surface that answers from a ticket (poll fallback, duplicate-202 bodies):
+# the API has no "FAILED" (RunStatus.error.value is "ERROR") and no "QUEUED",
+# and a client switch on status must never see a value the run endpoints
+# cannot also produce.
+_TICKET_STATUS_TO_API = {
+    "queued": "PENDING",
+    "running": "RUNNING",
+    "paused": "PAUSED",
+    "completed": "COMPLETED",
+    "failed": "ERROR",
+    "cancelled": "CANCELLED",
+}
+
+
+def ticket_status_to_api(ticket_status: str) -> Optional[str]:
+    """Map a queue-ticket status to the API's run-status vocabulary.
+
+    None for unknown statuses - callers decide their own fallback (the poll
+    fallback keeps its 404; the duplicate-202 branches pass the raw value
+    through rather than inventing a mapping for a store bug).
+    """
+    return _TICKET_STATUS_TO_API.get(ticket_status)
+
+
 def ensure_duplicate_matches_component(existing: Dict[str, Any], component_type: str, component_id: Any) -> None:
     """Refuse an Idempotency-Key duplicate that belongs to a different component.
 
@@ -2065,15 +2090,7 @@ async def aticket_poll_fallback(
     # Unscoped mode applies no user filter, exactly like the session read.
     if user_scoped and job.get("user_id") is not None and job.get("user_id") != user_id:
         return None
-    status_map = {
-        "queued": "PENDING",
-        "running": "RUNNING",
-        "paused": "PAUSED",
-        "completed": "COMPLETED",
-        "failed": "ERROR",
-        "cancelled": "CANCELLED",
-    }
-    status = status_map.get(job.get("status", ""))
+    status = ticket_status_to_api(job.get("status", ""))
     if status is None:
         return None
     body: Dict[str, Any] = {"run_id": run_id, "session_id": session_id, "status": status}
