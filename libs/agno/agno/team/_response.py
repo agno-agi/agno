@@ -1396,9 +1396,9 @@ def _handle_model_response_chunk(
             content_type = "str"
 
             should_yield = False
-            # Process content. Empty values are provider stop/metadata chunks.
+            # Process content. Empty strings are provider stop/metadata chunks.
             content = model_response_event.content
-            if content:
+            if content is not None and content != "":
                 if parse_structured_output:
                     full_model_response.content = content
                     _convert_response_to_structured_format(team, full_model_response, run_context=run_context)
@@ -1415,8 +1415,8 @@ def _handle_model_response_chunk(
                         else team._member_response_model.__name__
                     )  # type: ignore
                     run_response.content_type = content_type
-                elif isinstance(model_response_event.content, str):
-                    full_model_response.content = (full_model_response.content or "") + model_response_event.content
+                elif isinstance(content, str):
+                    full_model_response.content = (full_model_response.content or "") + content
                     run_response.content = full_model_response.content
                 should_yield = True
 
