@@ -21,7 +21,7 @@ from agno.db.base import AsyncBaseDb
 from agno.media import Audio, File, Image, Video
 from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.message import Message
-from agno.models.response import ModelResponse
+from agno.models.response import ModelResponse, ToolExecution
 from agno.run import RunContext
 from agno.run.agent import RunEvent, RunInput, RunOutput, RunOutputEvent
 from agno.run.team import RunOutputEvent as TeamRunOutputEvent
@@ -514,38 +514,74 @@ def scrub_media_from_message(message: Message) -> None:
     message.video_output = None
 
 
+def _tool_call_ids_awaiting_resolution(run_response: Union[RunOutput, TeamRunOutput]) -> set:
+    """Tool call ids whose stored result is still load-bearing for resuming a paused run.
+
+    An unresolved requirement is one the run is still waiting on. For external execution the
+    caller's answer arrives as the tool result, so blanking it would discard the payload
+    ``continue_run`` needs to finish the run.
+    """
+    awaiting = set()
+    for requirement in run_response.requirements or []:
+        if requirement.is_resolved():
+            continue
+        tool_execution = requirement.tool_execution
+        if tool_execution is not None and tool_execution.tool_call_id:
+            awaiting.add(tool_execution.tool_call_id)
+    return awaiting
+
+
 def scrub_tool_results_from_run_output(run_response: Union[RunOutput, TeamRunOutput]) -> None:
     """
     Remove all tool-related data from RunOutput when store_tool_messages=False.
     This removes both the tool call and its corresponding result to maintain API consistency.
+
+    The tool's return value is stored outside ``messages`` as well — on ``run_response.tools``
+    and on ``requirements[*].tool_execution`` — so those results are blanked too. A result that
+    a paused run still needs in order to resume is kept; see
+    :func:`_tool_call_ids_awaiting_resolution`.
     """
-    if not run_response.messages:
-        return
+    if run_response.messages:
+        # Step 1: Collect all tool_call_ids from tool result messages
+        tool_call_ids_to_remove = set()
+        for message in run_response.messages:
+            if message.role == "tool" and message.tool_call_id:
+                tool_call_ids_to_remove.add(message.tool_call_id)
 
-    # Step 1: Collect all tool_call_ids from tool result messages
-    tool_call_ids_to_remove = set()
-    for message in run_response.messages:
-        if message.role == "tool" and message.tool_call_id:
-            tool_call_ids_to_remove.add(message.tool_call_id)
+        # Step 2: Remove tool result messages (role="tool")
+        run_response.messages = [msg for msg in run_response.messages if msg.role != "tool"]
 
-    # Step 2: Remove tool result messages (role="tool")
-    run_response.messages = [msg for msg in run_response.messages if msg.role != "tool"]
+        # Step 3: Remove assistant messages that made those tool calls
+        filtered_messages = []
+        for message in run_response.messages:
+            # Check if this assistant message made any of the tool calls we're removing
+            should_remove = False
+            if message.role == "assistant" and message.tool_calls:
+                for tool_call in message.tool_calls:
+                    if tool_call.get("id") in tool_call_ids_to_remove:
+                        should_remove = True
+                        break
 
-    # Step 3: Remove assistant messages that made those tool calls
-    filtered_messages = []
-    for message in run_response.messages:
-        # Check if this assistant message made any of the tool calls we're removing
-        should_remove = False
-        if message.role == "assistant" and message.tool_calls:
-            for tool_call in message.tool_calls:
-                if tool_call.get("id") in tool_call_ids_to_remove:
-                    should_remove = True
-                    break
+            if not should_remove:
+                filtered_messages.append(message)
 
-        if not should_remove:
-            filtered_messages.append(message)
+        run_response.messages = filtered_messages
 
-    run_response.messages = filtered_messages
+    # Step 4: Blank the results stored outside `messages`.
+    awaiting_resolution = _tool_call_ids_awaiting_resolution(run_response)
+
+    def _blank_result(tool_execution: Optional[ToolExecution]) -> None:
+        if tool_execution is None or tool_execution.result is None:
+            return
+        if tool_execution.tool_call_id in awaiting_resolution:
+            return
+        tool_execution.result = None
+
+    for tool_execution in run_response.tools or []:
+        _blank_result(tool_execution)
+
+    for requirement in run_response.requirements or []:
+        _blank_result(requirement.tool_execution)
 
 
 def scrub_history_messages_from_run_output(run_response: Union[RunOutput, TeamRunOutput]) -> None:
@@ -582,6 +618,45 @@ def isolate_media_scrub_targets(run_response: Union[RunOutput, TeamRunOutput]) -
         run_response.reasoning_messages = [copy.copy(message) for message in run_response.reasoning_messages]
     if run_response.input is not None:
         run_response.input = copy.copy(run_response.input)
+
+
+def isolate_tool_scrub_targets(run_response: Union[RunOutput, TeamRunOutput]) -> None:
+    """Give ``run_response`` its own copies of the objects that tool-result scrubbing
+    mutates in place (ToolExecution, and the RunRequirement objects holding them).
+
+    ``scrub_tool_results_from_run_output`` (store_tool_messages=False) blanks
+    ``ToolExecution.result`` in place. A shallow ``copy.copy`` of a RunOutput shares those
+    objects with the source, so scrubbing a *storage copy* on a mid-run checkpoint would
+    strip the results off the still-running run. Call this on the storage copy before
+    scrubbing on the in-flight (checkpoint) path — the same hazard, and the same remedy, as
+    :func:`isolate_media_scrub_targets`.
+
+    A ToolExecution reached through both ``tools`` and a requirement is copied once and
+    shared by both copies, so the isolated run keeps the aliasing the live run has.
+    """
+    import copy
+
+    copies_by_identity: Dict[int, ToolExecution] = {}
+
+    def _isolated(tool_execution: ToolExecution) -> ToolExecution:
+        already_copied = copies_by_identity.get(id(tool_execution))
+        if already_copied is not None:
+            return already_copied
+        duplicate = copy.copy(tool_execution)
+        copies_by_identity[id(tool_execution)] = duplicate
+        return duplicate
+
+    if run_response.tools is not None:
+        run_response.tools = [_isolated(tool_execution) for tool_execution in run_response.tools]
+
+    if run_response.requirements is not None:
+        isolated_requirements = []
+        for requirement in run_response.requirements:
+            duplicate_requirement = copy.copy(requirement)
+            if requirement.tool_execution is not None:
+                duplicate_requirement.tool_execution = _isolated(requirement.tool_execution)
+            isolated_requirements.append(duplicate_requirement)
+        run_response.requirements = isolated_requirements
 
 
 def get_run_output_util(

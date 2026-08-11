@@ -4595,7 +4595,7 @@ def _persist_team_run_in_session(
     import copy
 
     from agno.team._session import update_session_metrics
-    from agno.utils.agent import isolate_media_scrub_targets
+    from agno.utils.agent import isolate_media_scrub_targets, isolate_tool_scrub_targets
 
     storage_copy = copy.copy(run_response)
     # Mid-run checkpoint: scrubbing mutates shared objects in place, and the
@@ -4603,6 +4603,8 @@ def _persist_team_run_in_session(
     # checkpoint never strips state off the still-running team run.
     if not team.store_media:
         isolate_media_scrub_targets(storage_copy)
+    if not team.store_tool_messages:
+        isolate_tool_scrub_targets(storage_copy)
     if storage_copy.member_responses and team.store_member_responses:
         # save_session -> _scrub_member_responses scrubs each member in place;
         # deep-copy so it operates on the storage copy, not the live member runs.
@@ -4635,7 +4637,7 @@ async def _apersist_team_run_in_session(
     import copy
 
     from agno.team._session import update_session_metrics
-    from agno.utils.agent import isolate_media_scrub_targets
+    from agno.utils.agent import isolate_media_scrub_targets, isolate_tool_scrub_targets
 
     storage_copy = copy.copy(run_response)
     # Mid-run checkpoint: scrubbing mutates shared objects in place, and the
@@ -4643,6 +4645,8 @@ async def _apersist_team_run_in_session(
     # checkpoint never strips state off the still-running team run.
     if not team.store_media:
         isolate_media_scrub_targets(storage_copy)
+    if not team.store_tool_messages:
+        isolate_tool_scrub_targets(storage_copy)
     if storage_copy.member_responses and team.store_member_responses:
         # save_session -> _scrub_member_responses scrubs each member in place;
         # deep-copy so it operates on the storage copy, not the live member runs.
