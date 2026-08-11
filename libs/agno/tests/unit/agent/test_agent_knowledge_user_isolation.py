@@ -54,8 +54,8 @@ class SpyKnowledge:
 class LegacyKnowledge:
     """A pre-isolation Knowledge whose ``retrieve`` has no ``user_id`` parameter.
 
-    Passing the kwarg unconditionally would raise ``TypeError``, so the helpers
-    probe the signature first. This guards that probe.
+    No ``**kwargs`` either, so the signature probe answers False. Passing the kwarg
+    unconditionally would raise ``TypeError``.
     """
 
     def __init__(self) -> None:
@@ -69,7 +69,11 @@ class LegacyKnowledge:
     async def avalidate_filters(self, filters):
         return filters or {}, []
 
-    def retrieve(self, query, max_results=None, filters=None, **kwargs) -> List[Document]:
+    def retrieve(self, query, max_results=None, filters=None) -> List[Document]:
+        self.calls += 1
+        return [Document(content="legacy chunk")]
+
+    async def aretrieve(self, query, max_results=None, filters=None) -> List[Document]:
         self.calls += 1
         return [Document(content="legacy chunk")]
 
@@ -77,12 +81,14 @@ class LegacyKnowledge:
 class SpyOwner:
     """The attribute surface the agent/team retrieval helpers read."""
 
-    def __init__(self, knowledge: Any) -> None:
+    def __init__(self, knowledge: Any, user_id: Optional[str] = None) -> None:
         self.knowledge = knowledge
         self.knowledge_retriever = None
         self.knowledge_filters = None
         self.enable_agentic_knowledge_filters = False
         self.references_format = "json"
+        # Read when no run_context is supplied, i.e. the public Agent.get_relevant_docs_from_knowledge() call
+        self.user_id = user_id
 
 
 @pytest.fixture
@@ -230,6 +236,143 @@ class TestLegacyKnowledgeStillWorks:
         assert legacy.calls == 1
         assert docs
 
+    def test_dropping_the_owner_warns(self, run_context, monkeypatch):
+        """A dropped owner is tolerated, but it has to warn: retrieval runs unscoped."""
+        from agno.agent import _messages
+        from agno.utils import knowledge as knowledge_utils
+
+        warnings: List[str] = []
+        monkeypatch.setattr(knowledge_utils, "log_warning", lambda msg: warnings.append(msg))
+
+        _messages.get_relevant_docs_from_knowledge(
+            SpyOwner(LegacyKnowledge()),  # type: ignore[arg-type]
+            query="q",
+            run_context=run_context,
+        )
+
+        assert len(warnings) == 1
+        assert "does not accept user_id" in warnings[0]
+        assert "LegacyKnowledge.retrieve" in warnings[0]
+
+    def test_unscoped_run_does_not_warn(self, monkeypatch):
+        """An unscoped run has no owner to drop, so it must not warn."""
+        from agno.agent import _messages
+        from agno.utils import knowledge as knowledge_utils
+
+        warnings: List[str] = []
+        monkeypatch.setattr(knowledge_utils, "log_warning", lambda msg: warnings.append(msg))
+
+        _messages.get_relevant_docs_from_knowledge(
+            SpyOwner(LegacyKnowledge()),  # type: ignore[arg-type]
+            query="q",
+            run_context=RunContext(run_id="run-3", user_id=None, session_id="session-3"),
+        )
+
+        assert warnings == []
+
+
+class TestOwnerFallsBackToTheComponent:
+    """``Agent.get_relevant_docs_from_knowledge`` is public and defaults run_context to None."""
+
+    def test_sync_direct_call_uses_agent_user_id(self, knowledge):
+        from agno.agent import _messages
+
+        _messages.get_relevant_docs_from_knowledge(
+            SpyOwner(knowledge, user_id=ALICE),  # type: ignore[arg-type]
+            query="what is my salary",
+        )
+
+        assert knowledge.seen_user_ids == [ALICE], (
+            "A direct call fell back to user_id=None, which is the admin view over every owner."
+        )
+
+    @pytest.mark.asyncio
+    async def test_async_direct_call_uses_agent_user_id(self, knowledge):
+        from agno.agent import _messages
+
+        await _messages.aget_relevant_docs_from_knowledge(
+            SpyOwner(knowledge, user_id=ALICE),  # type: ignore[arg-type]
+            query="what is my salary",
+        )
+
+        assert knowledge.seen_user_ids == [ALICE]
+
+    def test_run_context_owner_still_wins(self, knowledge):
+        """An explicit run owner beats the component default."""
+        from agno.agent import _messages
+
+        _messages.get_relevant_docs_from_knowledge(
+            SpyOwner(knowledge, user_id="bob"),  # type: ignore[arg-type]
+            query="q",
+            run_context=RunContext(run_id="run-4", user_id=ALICE, session_id="session-4"),
+        )
+
+        assert knowledge.seen_user_ids == [ALICE]
+
+
+class TestCustomRetrieverGetsOwner:
+    """``Agent(knowledge_retriever=...)`` is the documented extension point."""
+
+    def test_retriever_declaring_user_id_receives_it(self, run_context):
+        from agno.agent import _messages
+
+        seen: List[Any] = []
+
+        def retriever(query, num_documents=None, user_id=None, **kwargs):
+            seen.append(user_id)
+            return [Document(content="chunk")]
+
+        owner = SpyOwner(SpyKnowledge())
+        owner.knowledge_retriever = retriever  # type: ignore[assignment]
+        _messages.get_relevant_docs_from_knowledge(
+            owner,  # type: ignore[arg-type]
+            query="q",
+            run_context=run_context,
+        )
+
+        assert seen == [ALICE]
+
+    def test_variadic_retriever_also_gets_the_owner(self, run_context):
+        """A retriever declared ``(query, **kwargs)`` still receives the owner."""
+        from agno.agent import _messages
+
+        seen: List[Any] = []
+
+        def retriever(query, num_documents=None, **kwargs):
+            seen.append(kwargs.get("user_id", "<absent>"))
+            return [Document(content="chunk")]
+
+        owner = SpyOwner(SpyKnowledge())
+        owner.knowledge_retriever = retriever  # type: ignore[assignment]
+        _messages.get_relevant_docs_from_knowledge(
+            owner,  # type: ignore[arg-type]
+            query="q",
+            run_context=run_context,
+        )
+
+        assert seen == [ALICE]
+
+    def test_caller_kwargs_cannot_override_the_owner(self, run_context):
+        """The owner comes from the run context, so caller kwargs must not win."""
+        from agno.agent import _messages
+
+        seen: List[Any] = []
+
+        def retriever(query, num_documents=None, user_id=None, **kwargs):
+            seen.append(user_id)
+            return [Document(content="chunk")]
+
+        owner = SpyOwner(SpyKnowledge())
+        owner.knowledge_retriever = retriever  # type: ignore[assignment]
+        _messages.get_relevant_docs_from_knowledge(
+            owner,  # type: ignore[arg-type]
+            query="q",
+            run_context=run_context,
+            user_id="bob",
+        )
+
+        assert seen == [ALICE]
+
 
 class ProtocolKnowledge:
     """A ``KnowledgeProtocol``-shaped implementation: ``retrieve(query, **kwargs)``.
@@ -318,32 +461,169 @@ class TestVariadicKnowledgeStillGetsOwner:
         assert kb.seen_user_ids == [ALICE]
 
 
-class TestAcceptsUserIdHelper:
+class VariadicInsertKnowledge:
+    """A custom Knowledge whose ``insert`` is declared ``insert(self, **kwargs)``.
+
+    The ordinary wrapper shape. The owner has to reach it the same way it reaches a
+    variadic ``retrieve``, because a write that loses it lands in the shared bucket.
+    """
+
+    def __init__(self) -> None:
+        self.stored: List[Dict[str, Any]] = []
+
+    def insert(self, **kwargs) -> None:
+        self.stored.append({"name": kwargs.get("name"), "user_id": kwargs.get("user_id")})
+
+
+class OwnerAwareInsertKnowledge:
+    """A Knowledge that declares ``user_id``, like ``agno.knowledge.Knowledge.insert``."""
+
+    def __init__(self) -> None:
+        self.stored: List[Dict[str, Any]] = []
+
+    def insert(self, name=None, text_content=None, reader=None, user_id=None) -> None:
+        self.stored.append({"name": name, "user_id": user_id})
+
+
+class TestAddToKnowledgeScopesTheWrite:
+    """The owner reaches insert, so what an agent learns stays the caller's."""
+
+    def test_agent_write_reaches_an_owner_aware_insert(self):
+        from agno.agent import _default_tools as agent_tools
+
+        kb = OwnerAwareInsertKnowledge()
+        agent_tools.add_to_knowledge(SpyOwner(kb), query="salary", result="100k", user_id=ALICE)  # type: ignore[arg-type]
+
+        assert kb.stored == [{"name": "salary", "user_id": ALICE}]
+
+    def test_team_write_reaches_an_owner_aware_insert(self):
+        from agno.team import _default_tools as team_tools
+
+        kb = OwnerAwareInsertKnowledge()
+        team_tools.add_to_knowledge(SpyOwner(kb), query="salary", result="100k", user_id=ALICE)  # type: ignore[arg-type]
+
+        assert kb.stored == [{"name": "salary", "user_id": ALICE}]
+
+    def test_agent_write_reaches_a_variadic_insert(self, monkeypatch):
+        """A wrapper that forwards its kwargs is scoped like any other insert."""
+        from agno.agent import _default_tools as agent_tools
+        from agno.utils import knowledge as knowledge_utils
+
+        warnings: List[str] = []
+        monkeypatch.setattr(knowledge_utils, "log_warning", lambda msg: warnings.append(msg))
+
+        kb = VariadicInsertKnowledge()
+        agent_tools.add_to_knowledge(SpyOwner(kb), query="salary", result="100k", user_id=ALICE)  # type: ignore[arg-type]
+
+        assert kb.stored == [{"name": "salary", "user_id": ALICE}]
+        assert warnings == []
+
+    def test_team_write_reaches_a_variadic_insert(self, monkeypatch):
+        from agno.team import _default_tools as team_tools
+        from agno.utils import knowledge as knowledge_utils
+
+        warnings: List[str] = []
+        monkeypatch.setattr(knowledge_utils, "log_warning", lambda msg: warnings.append(msg))
+
+        kb = VariadicInsertKnowledge()
+        team_tools.add_to_knowledge(SpyOwner(kb), query="salary", result="100k", user_id=ALICE)  # type: ignore[arg-type]
+
+        assert kb.stored == [{"name": "salary", "user_id": ALICE}]
+        assert warnings == []
+
+    def test_write_to_an_insert_predating_isolation_is_tolerated(self, monkeypatch):
+        """The kwarg is dropped rather than raised, and the widened write is reported."""
+        from agno.agent import _default_tools as agent_tools
+        from agno.utils import knowledge as knowledge_utils
+
+        warnings: List[str] = []
+        monkeypatch.setattr(knowledge_utils, "log_warning", lambda msg: warnings.append(msg))
+
+        class LegacyInsertKnowledge:
+            def __init__(self) -> None:
+                self.stored: List[Dict[str, Any]] = []
+
+            def insert(self, name=None, text_content=None, reader=None) -> None:
+                self.stored.append({"name": name})
+
+        kb = LegacyInsertKnowledge()
+        agent_tools.add_to_knowledge(SpyOwner(kb), query="salary", result="100k", user_id=ALICE)  # type: ignore[arg-type]
+
+        assert kb.stored == [{"name": "salary"}]
+        assert len(warnings) == 1
+        assert "LegacyInsertKnowledge.insert" in warnings[0]
+
+    def test_unscoped_write_does_not_warn(self, monkeypatch):
+        """No owner to lose, so a variadic insert is not worth reporting."""
+        from agno.agent import _default_tools as agent_tools
+        from agno.utils import knowledge as knowledge_utils
+
+        warnings: List[str] = []
+        monkeypatch.setattr(knowledge_utils, "log_warning", lambda msg: warnings.append(msg))
+
+        agent_tools.add_to_knowledge(SpyOwner(VariadicInsertKnowledge()), query="salary", result="100k")  # type: ignore[arg-type]
+
+        assert warnings == []
+
+
+class TestGetUserIdKwarg:
     """The shared probe all four retrieval sites depend on."""
 
     def test_explicit_user_id_parameter(self):
-        from agno.utils.knowledge import accepts_user_id
+        from agno.utils.knowledge import get_user_id_kwarg
 
         def fn(query, max_results=None, filters=None, user_id=None): ...
 
-        assert accepts_user_id(fn) is True
+        assert get_user_id_kwarg(fn, ALICE) == {"user_id": ALICE}
 
     def test_var_keyword_parameter(self):
-        from agno.utils.knowledge import accepts_user_id
+        from agno.utils.knowledge import get_user_id_kwarg
 
         def fn(query, **kwargs): ...
 
-        assert accepts_user_id(fn) is True
+        assert get_user_id_kwarg(fn, ALICE) == {"user_id": ALICE}
+
+    def test_insert_signature_parameter(self):
+        """The write path reads the same probe as the four read sites."""
+        from agno.utils.knowledge import get_user_id_kwarg
+
+        def fn(name=None, text_content=None, reader=None, user_id=None): ...
+
+        assert get_user_id_kwarg(fn, ALICE) == {"user_id": ALICE}
+
+    def test_var_keyword_does_not_warn(self, monkeypatch):
+        """``KnowledgeProtocol`` documents ``retrieve(query, **kwargs)``, so this is correct."""
+        from agno.utils import knowledge as knowledge_utils
+
+        warnings: List[str] = []
+        monkeypatch.setattr(knowledge_utils, "log_warning", lambda msg: warnings.append(msg))
+
+        def fn(query, **kwargs): ...
+
+        assert knowledge_utils.get_user_id_kwarg(fn, ALICE) == {"user_id": ALICE}
+        assert warnings == []
 
     def test_legacy_signature_without_either(self):
-        from agno.utils.knowledge import accepts_user_id
+        from agno.utils.knowledge import get_user_id_kwarg
 
         def fn(query, max_results=None, filters=None): ...
 
-        assert accepts_user_id(fn) is False
+        assert get_user_id_kwarg(fn, ALICE) == {}
 
-    def test_uninspectable_callable_is_false(self):
+    def test_uninspectable_callable_is_skipped(self):
         """Builtins raise on signature() - fall back to the legacy contract."""
-        from agno.utils.knowledge import accepts_user_id
+        from agno.utils.knowledge import get_user_id_kwarg
 
-        assert accepts_user_id(len) is False
+        assert get_user_id_kwarg(len, ALICE) == {}
+
+    def test_unscoped_run_does_not_warn(self, monkeypatch):
+        """No owner to lose, so nothing to report."""
+        from agno.utils import knowledge as knowledge_utils
+
+        warnings: List[str] = []
+        monkeypatch.setattr(knowledge_utils, "log_warning", lambda msg: warnings.append(msg))
+
+        def fn(query, max_results=None, filters=None): ...
+
+        assert knowledge_utils.get_user_id_kwarg(fn, None) == {}
+        assert warnings == []

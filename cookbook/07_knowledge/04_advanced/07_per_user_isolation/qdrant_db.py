@@ -131,10 +131,6 @@ if __name__ == "__main__":
         print("Alice and Bob each see their own chunk plus the shared one.")
         print("Admin sees the whole corpus.")
 
-        # The in-memory async client holds the demo's only copy of the data, so
-        # close it once the run is over.
-        await vector_db.async_close()
-
         print("\n" + "=" * 60)
         print("AGENT-MEDIATED RETRIEVAL: the owner has to survive the handoff")
         print("=" * 60 + "\n")
@@ -169,12 +165,21 @@ if __name__ == "__main__":
             for item in (ref.references or [])
             if isinstance(item, dict) and item.get("content")
         )
+        # Guard against a vacuous pass: empty references mean the agent never searched
+        assert retrieved, (
+            "Retrieval returned no documents, so the isolation check below would pass on nothing"
+        )
         assert "215,000" not in retrieved, (
             "Isolation broken: Alice's agent retrieved Bob's salary. The owner was "
             "dropped between the run context and the vector DB, so retrieval ran "
             "unscoped (user_id=None, the admin view)."
         )
         print("\nisolation holds: Bob's salary never reached Alice's agent")
+
+        # Close once the run is over. Closing earlier leaks: async_client is a lazy
+        # property that rebuilds itself, and the replacement is never closed.
+        await vector_db.async_close()
+
         print("\nDone.")
 
     asyncio.run(main())

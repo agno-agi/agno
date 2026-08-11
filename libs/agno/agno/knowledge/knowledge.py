@@ -913,11 +913,12 @@ class Knowledge(RemoteKnowledge):
     # PUBLIC API - FILTER METHODS
     # ==========================================
 
-    def get_valid_filters(self) -> Set[str]:
+    def get_valid_filters(self, user_id: Optional[str] = None) -> Set[str]:
+        # Filter key names are content, so only return keys from documents the caller can retrieve
         if self.contents_db is None:
             log_info("No contents db configured; returning an empty filter validation key set.")
             return set()
-        contents, _ = self.get_content()
+        contents, _ = self.get_content(user_id=user_id)
         valid_filters: Set[str] = set()
         for content in contents:
             if content.metadata:
@@ -925,11 +926,12 @@ class Knowledge(RemoteKnowledge):
 
         return valid_filters
 
-    async def aget_valid_filters(self) -> Set[str]:
+    async def aget_valid_filters(self, user_id: Optional[str] = None) -> Set[str]:
+        """Async version of get_valid_filters."""
         if self.contents_db is None:
             log_info("No contents db configured; returning an empty filter validation key set.")
             return set()
-        contents, _ = await self.aget_content()
+        contents, _ = await self.aget_content(user_id=user_id)
         valid_filters: Set[str] = set()
         for content in contents:
             if content.metadata:
@@ -938,27 +940,27 @@ class Knowledge(RemoteKnowledge):
         return valid_filters
 
     def validate_filters(
-        self, filters: Union[Dict[str, Any], List[FilterExpr]]
+        self, filters: Union[Dict[str, Any], List[FilterExpr]], user_id: Optional[str] = None
     ) -> Tuple[Union[Dict[str, Any], List[FilterExpr]], List[str]]:
         if self.contents_db is None:
             log_info("No contents db configured; skipping filter key validation and preserving filters.")
             return filters, []
 
-        valid_filters_from_db = self.get_valid_filters()
+        valid_filters_from_db = self.get_valid_filters(user_id=user_id)
 
         valid_filters, invalid_keys = self._validate_filters(filters, valid_filters_from_db)
 
         return valid_filters, invalid_keys
 
     async def avalidate_filters(
-        self, filters: Union[Dict[str, Any], List[FilterExpr]]
+        self, filters: Union[Dict[str, Any], List[FilterExpr]], user_id: Optional[str] = None
     ) -> Tuple[Union[Dict[str, Any], List[FilterExpr]], List[str]]:
         """Return a tuple containing a dict with all valid filters and a list of invalid filter keys"""
         if self.contents_db is None:
             log_info("No contents db configured; skipping filter key validation and preserving filters.")
             return filters, []
 
-        valid_filters_from_db = await self.aget_valid_filters()
+        valid_filters_from_db = await self.aget_valid_filters(user_id=user_id)
 
         valid_filters, invalid_keys = self._validate_filters(filters, valid_filters_from_db)
 
@@ -3223,6 +3225,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
     def build_context(
         self,
         enable_agentic_filters: bool = False,
+        user_id: Optional[str] = None,
         **kwargs,
     ) -> str:
         """Build context string for the agent's system prompt.
@@ -3241,7 +3244,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
 
         # Add filter instructions if agentic filters are enabled
         if enable_agentic_filters:
-            valid_filters = self.get_valid_filters()
+            valid_filters = self.get_valid_filters(user_id=user_id)
             if valid_filters:
                 context_parts.append(self._get_agentic_filter_instructions(valid_filters))
 
@@ -3250,6 +3253,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
     async def abuild_context(
         self,
         enable_agentic_filters: bool = False,
+        user_id: Optional[str] = None,
         **kwargs,
     ) -> str:
         """Async version of build_context.
@@ -3268,7 +3272,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
 
         # Add filter instructions if agentic filters are enabled
         if enable_agentic_filters:
-            valid_filters = await self.aget_valid_filters()
+            valid_filters = await self.aget_valid_filters(user_id=user_id)
             if valid_filters:
                 context_parts.append(self._get_agentic_filter_instructions(valid_filters))
 
@@ -3340,6 +3344,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             **kwargs,
         )
 
+    # The tools these factories build carry the run's owner, like the agent/team search tool does
     def _create_search_tool(
         self,
         run_response: Optional[Any] = None,
@@ -3370,7 +3375,9 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             retrieval_timer.start()
 
             try:
-                docs = self.search(query=query, filters=knowledge_filters)
+                docs = self.search(
+                    query=query, filters=knowledge_filters, user_id=getattr(run_context, "user_id", None)
+                )
             except Exception as e:
                 retrieval_timer.stop()
                 log_warning(f"Knowledge search failed: {str(e)}")
@@ -3407,7 +3414,9 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             retrieval_timer.start()
 
             try:
-                docs = await self.asearch(query=query, filters=knowledge_filters)
+                docs = await self.asearch(
+                    query=query, filters=knowledge_filters, user_id=getattr(run_context, "user_id", None)
+                )
             except Exception as e:
                 retrieval_timer.stop()
                 log_warning(f"Knowledge search failed: {str(e)}")
@@ -3494,7 +3503,7 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             retrieval_timer.start()
 
             try:
-                docs = self.search(query=query, filters=search_filters)
+                docs = self.search(query=query, filters=search_filters, user_id=getattr(run_context, "user_id", None))
             except Exception as e:
                 retrieval_timer.stop()
                 log_warning(f"Knowledge search failed: {str(e)}")
@@ -3553,7 +3562,9 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
             retrieval_timer.start()
 
             try:
-                docs = await self.asearch(query=query, filters=search_filters)
+                docs = await self.asearch(
+                    query=query, filters=search_filters, user_id=getattr(run_context, "user_id", None)
+                )
             except Exception as e:
                 retrieval_timer.stop()
                 log_warning(f"Knowledge search failed: {str(e)}")

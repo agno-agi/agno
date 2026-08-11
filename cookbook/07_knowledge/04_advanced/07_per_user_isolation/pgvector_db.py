@@ -52,8 +52,9 @@ def show(label: str, results: List[Document]) -> None:
 
 vector_db = PgVector(table_name=TABLE_NAME, db_url=db_url)
 
-# Start clean: a legacy table without the user_id column would make every row
-# look like shared content.
+# Start clean, so the table is created with the owner column. Scoped reads against
+# a pre-isolation table name a column that is not there, and Knowledge.search turns
+# that error into an empty result.
 if vector_db.exists():
     vector_db.drop()
 vector_db.create()
@@ -161,6 +162,10 @@ if __name__ == "__main__":
             for ref in (response.references or [])
             for item in (ref.references or [])
             if isinstance(item, dict) and item.get("content")
+        )
+        # Guard against a vacuous pass: empty references mean the agent never searched
+        assert retrieved, (
+            "Retrieval returned no documents, so the isolation check below would pass on nothing"
         )
         assert "215,000" not in retrieved, (
             "Isolation broken: Alice's agent retrieved Bob's salary. The owner was "

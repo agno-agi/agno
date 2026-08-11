@@ -296,6 +296,8 @@ class PineconeDb(VectorDb):
 
             metadata["content_hash"] = content_hash
             # Stamp the owner; user_id=None writes to the shared bucket (no field).
+            # Drop any inherited owner key first: metadata and filters are caller data, not the owner
+            metadata.pop(self.USER_ID_KEY, None)
             if user_id is not None:
                 metadata[self.USER_ID_KEY] = user_id
 
@@ -424,6 +426,8 @@ class PineconeDb(VectorDb):
 
             metadata["content_hash"] = content_hash
             # Stamp the owner; user_id=None writes to the shared bucket (no field).
+            # Drop any inherited owner key first: metadata and filters are caller data, not the owner
+            metadata.pop(self.USER_ID_KEY, None)
             if user_id is not None:
                 metadata[self.USER_ID_KEY] = user_id
 

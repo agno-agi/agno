@@ -1143,7 +1143,7 @@ class Agent:
         )
 
     def add_to_knowledge(self, query: str, result: str) -> str:
-        return _default_tools.add_to_knowledge(self, query=query, result=result)
+        return _default_tools.add_to_knowledge(self, query=query, result=result, user_id=self.user_id)
 
     # ---------------------------------------------------------------
     # _cli module delegates

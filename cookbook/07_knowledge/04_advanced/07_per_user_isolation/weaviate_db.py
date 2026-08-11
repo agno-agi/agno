@@ -57,8 +57,8 @@ vector_db = Weaviate(
     local=True,
 )
 
-# Start clean: a legacy collection without the user_id property would make
-# every object look like shared content.
+# Start clean, so the collection is created with the owner property. Scoped reads
+# against a pre-isolation collection go blank, and the property cannot be added in place.
 if vector_db.exists():
     vector_db.drop()
 vector_db.create()
@@ -165,6 +165,10 @@ if __name__ == "__main__":
             for ref in (response.references or [])
             for item in (ref.references or [])
             if isinstance(item, dict) and item.get("content")
+        )
+        # Guard against a vacuous pass: empty references mean the agent never searched
+        assert retrieved, (
+            "Retrieval returned no documents, so the isolation check below would pass on nothing"
         )
         assert "215,000" not in retrieved, (
             "Isolation broken: Alice's agent retrieved Bob's salary. The owner was "

@@ -174,6 +174,10 @@ if __name__ == "__main__":
             for item in (ref.references or [])
             if isinstance(item, dict) and item.get("content")
         )
+        # Guard against a vacuous pass: empty references mean the agent never searched
+        assert retrieved, (
+            "Retrieval returned no documents, so the isolation check below would pass on nothing"
+        )
         assert "215,000" not in retrieved, (
             "Isolation broken: Alice's agent retrieved Bob's salary. The owner was "
             "dropped between the run context and the vector DB, so retrieval ran "

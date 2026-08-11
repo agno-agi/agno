@@ -225,23 +225,20 @@ class SurrealDb(VectorDb):
         """
         if not filters:
             return ""
-        # Bind both halves. Interpolating the key builds the path out of caller
-        # data: a key carrying SurrealQL (``name OR true``) becomes part of the
-        # WHERE logic, and because OR binds looser than AND it disjoins the
-        # owner scope away - one crafted filter key returns every owner's rows.
-        # A key with a '.' is the accidental version of the same bug: it splits
-        # into an unbound variable whose NONE = NONE comparison is true for
-        # every row. ``delete_by_metadata`` binds keys for exactly this reason.
-        conditions = [f"meta_data[$filter_key_{i}] = $filter_value_{i}" for i in range(len(filters))]
+        # Bind the key as well as the value: an interpolated key is caller data in the WHERE clause
+        # Walk items() like _build_filter_params, so the two cannot produce different counts
+        conditions = [f"meta_data[$filter_key_{i}] = $filter_value_{i}" for i, _ in enumerate(filters.items())]
         return "AND " + " AND ".join(conditions)
 
     @staticmethod
     def _build_filter_params(filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Bound parameters matching the placeholders ``_build_filter_condition`` emits.
+        """Build the bound parameters for the placeholders ``_build_filter_condition`` emits.
 
-        Kept alongside the condition builder so the two never drift: the query
-        references ``$filter_key_i``/``$filter_value_i`` and nothing else, so a
-        caller's key can no longer reach the query text.
+        Args:
+            filters: A dictionary of filters to apply to the query.
+
+        Returns:
+            Dict[str, Any]: The $filter_key_i / $filter_value_i bindings.
         """
         if not filters:
             return {}
@@ -661,7 +658,7 @@ class SurrealDb(VectorDb):
             # data: a key carrying a '.' splits into an unbound variable and a field
             # walk, and NONE = NONE is true for every row - one ordinary dotted key
             # deletes the whole collection.
-            conditions = [f"meta_data[$key_{i}] = $value_{i}" for i in range(len(metadata))]
+            conditions = [f"meta_data[$key_{i}] = $value_{i}" for i, _ in enumerate(metadata.items())]
             params: Dict[str, Any] = {}
             for i, (key, value) in enumerate(metadata.items()):
                 params[f"key_{i}"] = key

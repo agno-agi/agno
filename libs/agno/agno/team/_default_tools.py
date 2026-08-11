@@ -69,7 +69,7 @@ from agno.run.team import (
 )
 from agno.session import TeamSession
 from agno.tools.function import Function
-from agno.utils.knowledge import get_agentic_or_user_search_filters
+from agno.utils.knowledge import get_agentic_or_user_search_filters, get_user_id_kwarg
 from agno.utils.log import (
     log_debug,
     log_info,
@@ -1433,12 +1433,13 @@ def _get_delegate_task_function(
     return delegate_func
 
 
-def add_to_knowledge(team: "Team", query: str, result: str) -> str:
+def add_to_knowledge(team: "Team", query: str, result: str, user_id: Optional[str] = None) -> str:
     """Use this function to add information to the knowledge base for future use.
 
     Args:
         query (str): The query or topic to add.
         result (str): The actual content or information to store.
+        user_id (Optional[str]): The owner to store the document under. None writes to the shared bucket.
 
     Returns:
         str: A string indicating the status of the addition.
@@ -1460,8 +1461,39 @@ def add_to_knowledge(team: "Team", query: str, result: str) -> str:
     log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
     from agno.knowledge.reader.text_reader import TextReader
 
-    insert_method(name=document_name, text_content=document_content, reader=TextReader())
+    # See the matching comment in agno.agent._default_tools.
+    insert_kwargs: Dict[str, Any] = {
+        "name": document_name,
+        "text_content": document_content,
+        "reader": TextReader(),
+    }
+    insert_kwargs.update(get_user_id_kwarg(insert_method, user_id))
+    insert_method(**insert_kwargs)
     return "Successfully added to knowledge base"
+
+
+def create_add_to_knowledge_tool(team: "Team", run_context: Optional[RunContext] = None) -> Function:
+    """Create a closure that binds the run's owner to the add_to_knowledge tool."""
+
+    def add_to_knowledge_base(query: str, result: str) -> str:
+        """Use this function to add information to the knowledge base for future use.
+
+        Args:
+            query (str): The query or topic to add.
+            result (str): The actual content or information to store.
+
+        Returns:
+            str: A string indicating the status of the addition.
+        """
+        try:
+            return add_to_knowledge(
+                team, query=query, result=result, user_id=run_context.user_id if run_context else team.user_id
+            )
+        except Exception as e:
+            log_warning(f"Adding to knowledge base failed: {str(e)}")
+            return f"Error adding to knowledge base: {type(e).__name__}"
+
+    return Function.from_callable(add_to_knowledge_base, name="add_to_knowledge")
 
 
 def create_knowledge_search_tool(
@@ -1691,6 +1723,13 @@ def get_relevant_docs_from_knowledge(
                 # Backward compatibility: support dependencies parameter
                 knowledge_retriever_kwargs["dependencies"] = dependencies
             knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
+            # Applied after the **kwargs merge: the owner comes from the run context, so caller kwargs must not win
+            knowledge_retriever_kwargs.update(
+                get_user_id_kwarg(
+                    team.knowledge_retriever,
+                    run_context.user_id if run_context else team.user_id,
+                )
+            )
             return team.knowledge_retriever(**knowledge_retriever_kwargs)
         except Exception as e:
             log_warning(f"Knowledge retriever failed: {str(e)}")
@@ -1710,19 +1749,13 @@ def get_relevant_docs_from_knowledge(
             num_documents = getattr(knowledge, "max_results", 10)
 
         log_debug(f"Retrieving from knowledge base with filters: {filters}")
-        # Owner scope flows from the run context, mirroring the agent path in
-        # agno.agent._messages. When None, retrieval is unscoped — see the
-        # Knowledge.search docstring. Probe the retrieve signature so a custom
-        # Knowledge subclass that doesn't accept user_id keeps working.
-        from agno.utils.knowledge import accepts_user_id
-
+        # Owner scope comes from the run context; None is unscoped, see the Knowledge.search docstring
         retrieve_kwargs: Dict[str, Any] = {
             "query": query,
             "max_results": num_documents,
             "filters": filters,
         }
-        if accepts_user_id(retrieve_fn):
-            retrieve_kwargs["user_id"] = run_context.user_id if run_context is not None else None
+        retrieve_kwargs.update(get_user_id_kwarg(retrieve_fn, run_context.user_id if run_context else team.user_id))
         relevant_docs: List[Document] = retrieve_fn(**retrieve_kwargs)
 
         if not relevant_docs or len(relevant_docs) == 0:
@@ -1791,6 +1824,13 @@ async def aget_relevant_docs_from_knowledge(
                 # Backward compatibility: support dependencies parameter
                 knowledge_retriever_kwargs["dependencies"] = dependencies
             knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
+            # Applied after the **kwargs merge: the owner comes from the run context, so caller kwargs must not win
+            knowledge_retriever_kwargs.update(
+                get_user_id_kwarg(
+                    team.knowledge_retriever,
+                    run_context.user_id if run_context else team.user_id,
+                )
+            )
 
             result = team.knowledge_retriever(**knowledge_retriever_kwargs)
 
@@ -1820,22 +1860,20 @@ async def aget_relevant_docs_from_knowledge(
 
         log_debug(f"Retrieving from knowledge base with filters: {filters}")
 
-        # Probe the retrieve signatures and only pass user_id if the
-        # underlying method accepts it (see sync variant for rationale).
-        from agno.utils.knowledge import accepts_user_id
-
-        scope_user_id = run_context.user_id if run_context is not None else None
-
-        def _maybe_with_user_id(fn: Any) -> Dict[str, Any]:
-            base: Dict[str, Any] = {"query": query, "max_results": num_documents, "filters": filters}
-            if accepts_user_id(fn):
-                base["user_id"] = scope_user_id
-            return base
+        # See the sync variant above
+        scope_user_id = run_context.user_id if run_context else team.user_id
+        retrieve_kwargs: Dict[str, Any] = {
+            "query": query,
+            "max_results": num_documents,
+            "filters": filters,
+        }
 
         if callable(aretrieve_fn):
-            relevant_docs: List[Document] = await aretrieve_fn(**_maybe_with_user_id(aretrieve_fn))
+            retrieve_kwargs.update(get_user_id_kwarg(aretrieve_fn, scope_user_id))
+            relevant_docs: List[Document] = await aretrieve_fn(**retrieve_kwargs)
         elif callable(retrieve_fn):
-            relevant_docs = retrieve_fn(**_maybe_with_user_id(retrieve_fn))
+            retrieve_kwargs.update(get_user_id_kwarg(retrieve_fn, scope_user_id))
+            relevant_docs = retrieve_fn(**retrieve_kwargs)
         else:
             return None
 

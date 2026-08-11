@@ -1,7 +1,7 @@
 from typing import Any, Dict, List, Optional, Union
 
 from agno.filters import FilterExpr
-from agno.utils.log import log_info
+from agno.utils.log import log_info, log_warning
 
 
 def get_agentic_or_user_search_filters(
@@ -36,27 +36,30 @@ def get_agentic_or_user_search_filters(
     return search_filters or {}
 
 
-def accepts_user_id(retrieve_fn: Any) -> bool:
-    """Whether ``retrieve_fn`` can receive the per-user isolation owner.
+def get_user_id_kwarg(fn: Any, user_id: Optional[str]) -> Dict[str, Any]:
+    """``{"user_id": ...}`` only when the callee accepts it.
 
-    True when the callable declares a literal ``user_id`` parameter OR accepts
-    ``**kwargs``. The ``**kwargs`` case matters: ``KnowledgeProtocol`` documents
-    retrieval as ``retrieve(self, query, **kwargs)``, so a protocol-conforming
-    implementation never names ``user_id`` explicitly. Probing for the literal
-    name alone would drop the owner for every such class, and because ``None``
-    means "no owner filter" (the admin view), the drop is silent - retrieval
-    widens to every owner's chunks instead of raising.
+    ``KnowledgeProtocol`` documents retrieval as ``retrieve(self, query, **kwargs)``,
+    so ``**kwargs`` counts as accepting it. Dropping the owner is not an error, it
+    widens the call to every owner's documents, so it warns.
 
-    Falls back to False when the signature can't be inspected (builtins and
-    C-extensions raise here), which keeps the legacy no-``user_id`` contract
-    working rather than crashing on an unexpected kwarg.
+    Args:
+        fn: The callable the kwarg will be passed to.
+        user_id: The owner to scope the call to.
+
+    Returns:
+        Dict[str, Any]: {"user_id": user_id} when the callee accepts it, empty otherwise.
     """
-    from inspect import Parameter, signature
+    import inspect
 
     try:
-        params = signature(retrieve_fn).parameters
+        parameters = inspect.signature(fn).parameters
     except (TypeError, ValueError):
-        return False
-    if "user_id" in params:
-        return True
-    return any(p.kind == Parameter.VAR_KEYWORD for p in params.values())
+        parameters = {}  # type: ignore[assignment]
+    if "user_id" in parameters or any(p.kind == p.VAR_KEYWORD for p in parameters.values()):
+        return {"user_id": user_id}
+    if user_id is not None:
+        log_warning(
+            f"{getattr(fn, '__qualname__', fn)} does not accept user_id, so this call is not scoped to a single owner."
+        )
+    return {}
