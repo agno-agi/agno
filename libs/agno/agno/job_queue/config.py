@@ -110,7 +110,10 @@ class QueueConfig:
     # oldest_queued_age_seconds in /queue/stats.
     deployment_id: Optional[str] = None
     # Stale-lock grace before a crashed worker's jobs are reclaimed. The
-    # worker heartbeat refreshes locks, so this can stay small. Caveat: the
+    # worker heartbeat refreshes locks, so this can stay small - but it is
+    # coupled to the drain timeout below: the worker requires
+    # stop_timeout < lock_grace_seconds (a drain that can outlive the lease
+    # guarantees a peer reclaims a still-draining run mid-drain). Caveat: the
     # heartbeat runs on the event loop - a run doing SYNC blocking work (sync
     # model client / sync tool) that starves the loop past this grace will be
     # swept as dead and its eventual completion fenced out (reported failed
@@ -123,6 +126,16 @@ class QueueConfig:
     # must outlive arbitrary human latency. Abandoned paused tickets therefore
     # persist until continued or cancelled - cancel the run to release one.
     retention_seconds: int = 86400
+    # Graceful-shutdown drain window: in-flight runs get this long to finish
+    # before stragglers are cancelled and requeued/failed. Must be strictly
+    # below lock_grace_seconds (validated here, at construction). None = the
+    # worker default (30s), automatically clamped below lock_grace_seconds -
+    # so every lock_grace the validator accepts also boots (values 3-30 used
+    # to pass validation and then crash the app during lifespan startup).
+    # Appended AFTER the pre-existing fields: this is a public dataclass and
+    # is not keyword-only, so inserting mid-list would silently reinterpret
+    # positional constructions of the fields behind it.
+    stop_timeout_seconds: Optional[int] = None
 
     def __post_init__(self) -> None:
         if self.db is not None and not self.durable:
@@ -137,6 +150,15 @@ class QueueConfig:
             # Heartbeats fire every lock_grace/3: below ~3s the worker races
             # its own heartbeat and reclaims its own healthy jobs
             raise ValueError("QueueConfig.lock_grace_seconds must be >= 3 (heartbeats fire at lock_grace/3)")
+        if self.stop_timeout_seconds is not None:
+            if self.stop_timeout_seconds < 1:
+                raise ValueError("QueueConfig.stop_timeout_seconds must be >= 1 second when set")
+            if self.stop_timeout_seconds >= self.lock_grace_seconds:
+                raise ValueError(
+                    f"QueueConfig.stop_timeout_seconds ({self.stop_timeout_seconds}) must be strictly below "
+                    f"lock_grace_seconds ({self.lock_grace_seconds}): a drain that can outlive the lease "
+                    "guarantees a peer reclaims a still-draining run mid-drain"
+                )
         if self.retry_delay_seconds < 0:
             raise ValueError("QueueConfig.retry_delay_seconds must be >= 0 (0 = no backoff)")
         if self.max_queue_depth < 0:
