@@ -125,8 +125,8 @@ class TestContract:
         make_stale(db, "r1")
         assert db.acquire_sweep("r1", "sweeper", lock_grace_seconds=60)
         assert db.get_job("r1")["locked_by"] == "sweeper"
-        assert not db.fail_swept_job("r1", "someone-else"), "fail is ownership-keyed"
-        assert db.fail_swept_job("r1", "sweeper", error="worker lost")
+        assert not db.settle_swept_job("r1", "someone-else", "failed"), "fail is ownership-keyed"
+        assert db.settle_swept_job("r1", "sweeper", "failed", "worker lost")
         assert db.get_job("r1")["status"] == "failed"
 
     def test_final_heartbeat_racing_completion_still_settles(self, db):
@@ -189,7 +189,7 @@ class TestContract:
         make_stale(db, "r1")  # sweeper-a died
         assert [j["id"] for j in db.sweep_exhausted_jobs(lock_grace_seconds=60)] == ["r1"]
         assert db.acquire_sweep("r1", "sweeper-b", lock_grace_seconds=60)
-        assert db.fail_swept_job("r1", "sweeper-b")
+        assert db.settle_swept_job("r1", "sweeper-b", "failed")
         assert db.get_job("r1")["status"] == "failed"
 
     def test_cancel_tombstones_queued_only(self, db):

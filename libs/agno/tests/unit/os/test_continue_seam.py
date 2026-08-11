@@ -197,6 +197,65 @@ class TestInlineDoorGate:
             await araise_if_ticket_owns_continue(worker, "r1")
         assert exc.value.status_code == 503, "cannot verify ownership -> must not execute"
 
+    @pytest.mark.asyncio
+    async def test_swallowing_store_fails_closed_via_strict(self):
+        """The production-adapter shape (the external reviewer's repro):
+        plain get_job swallows store failures into None, which the gate used
+        to read as "no ticket - allow the inline door" - fail-OPEN during
+        exactly the outages the gate exists for. The strict variant
+        propagates, and the gate must prefer it."""
+        from types import SimpleNamespace
+
+        from fastapi import HTTPException
+
+        from agno.os.job_queue import araise_if_ticket_owns_continue
+
+        class SwallowingStore:
+            async def get_job(self, job_id, strict=False):
+                if strict:
+                    raise RuntimeError("store down")
+                return None  # the outage is hidden, exactly like the lenient default
+
+        worker = SimpleNamespace(store=SwallowingStore())
+        with pytest.raises(HTTPException) as exc:
+            await araise_if_ticket_owns_continue(worker, "r1")
+        assert exc.value.status_code == 503, (
+            "a swallowed store failure allowed an inline continuation - the double-execution race is open"
+        )
+
+    @pytest.mark.asyncio
+    async def test_real_postgres_adapter_outage_fails_closed(self, monkeypatch):
+        """Composition against the REAL production adapter: its lenient
+        get_job hid outages from the gate; the strict flag must not."""
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        from fastapi import HTTPException
+
+        from agno.db.postgres import AsyncPostgresDb
+        from agno.os.job_queue import araise_if_ticket_owns_continue
+
+        db = AsyncPostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:59999/ai", job_table="never_created")
+        monkeypatch.setattr(db, "_get_table", AsyncMock(side_effect=RuntimeError("db down")))
+        worker = SimpleNamespace(store=db)
+        with pytest.raises(HTTPException) as exc:
+            await araise_if_ticket_owns_continue(worker, "r1")
+        assert exc.value.status_code == 503
+
+    @pytest.mark.asyncio
+    async def test_store_without_strict_keeps_best_effort(self):
+        """Third-party stores whose get_job lacks the strict flag keep the
+        best-effort behavior: a None lookup allows the inline door."""
+        from types import SimpleNamespace
+
+        from agno.os.job_queue import araise_if_ticket_owns_continue
+
+        class LegacyStore:
+            async def get_job(self, job_id):
+                return None
+
+        await araise_if_ticket_owns_continue(SimpleNamespace(store=LegacyStore()), "r1")  # must not raise
+
 
 class TestSideEntranceGate:
     """Round-9 review: MCP (via the shared run service), AG-UI, and Slack

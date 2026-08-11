@@ -783,7 +783,7 @@ class TestSweepOwnership:
     async def test_lost_acquisition_never_touches_run_row(self):
         """The heartbeat-vs-sweep race, decided BEFORE any run-row write: the
         old order stamped ERROR on the row and only then lost the ticket race
-        via fail_swept_job's staleness recheck - a healthy run's row defaced
+        via the swept-settle's staleness recheck - a healthy run's row defaced
         by a sweeper that never owned it."""
         store, agent = InMemoryQueueStore(), FakeAgent()
         worker = make_worker(store, agent, make_config())
@@ -830,12 +830,14 @@ class TestSweepOwnership:
         run_state = {"status": "running"}
 
         async def spy_persist(job, error, status="error"):
+            from agno.run.status_persist import RunPersistOutcome
+
             if boundary == "after_row":
                 await store.heartbeat_jobs("presumed-dead", ["r1"])
             run_state["status"] = status
-            return True
+            return RunPersistOutcome.UPDATED
 
-        worker._persist_run_error = spy_persist  # type: ignore[method-assign]
+        worker._persist_run_error_outcome = spy_persist  # type: ignore[method-assign]
 
         real_acquire = store.acquire_sweep
 
@@ -875,10 +877,12 @@ class TestSweepOwnership:
         persists = {"fail": True, "calls": 0}
 
         async def flaky_persist(job, error, status="error"):
-            persists["calls"] += 1
-            return not persists["fail"]
+            from agno.run.status_persist import RunPersistOutcome
 
-        worker._persist_run_error = flaky_persist  # type: ignore[method-assign]
+            persists["calls"] += 1
+            return None if persists["fail"] else RunPersistOutcome.UPDATED
+
+        worker._persist_run_error_outcome = flaky_persist  # type: ignore[method-assign]
         await worker._sweep_exhausted()
         assert persists["calls"] == 1
         assert (await store.get_job("r1"))["status"] == "running", "ticket must not terminalize past a stuck row"
@@ -1275,13 +1279,16 @@ class RecoverableFakeWorkflow:
 
 class TestContinuationRedrive:
     @pytest.mark.asyncio
-    async def test_crashed_leg_sweep_requeue_redrive_completes(self):
-        """SIGKILL mid-continuation -> sweep stamps the run row ERROR ->
-        operator requeue -> the re-driven leg must COMPLETE. Without the
-        worker's ERROR -> PAUSED restore, workflow.acontinue_run raised the
-        not-paused ValueError, classified permanent, and every requeue
-        instantly failed - the re-drive story was a dead letter."""
+    async def test_crashed_leg_sweep_parks_pause_and_direct_continue_completes(self):
+        """SIGKILL mid-continuation: the crashed leg wrote nothing, so the
+        run row still says PAUSED - which IS settlement. The reconciling
+        sweep parks the ticket back to paused instead of stamping ERROR
+        everywhere (the old behavior destroyed a valid pause and its failed
+        ticket then obstructed the recovery path behind an operator
+        requeue). A direct durable continue then re-drives and completes -
+        no operator intervention, no ERROR->PAUSED restore dance."""
         workflow = RecoverableFakeWorkflow()
+        workflow.run.status = RunStatus.paused  # the crashed leg never wrote
         store = InMemoryQueueStore()
         job = make_job("r1")
         job["component_type"] = "workflow"
@@ -1304,14 +1311,13 @@ class TestContinuationRedrive:
         )
         await worker.start()
         try:
-            # Sweep fails the exhausted leg visibly and stamps the run row
-            job_row = await wait_for_status(store, "r1", "failed")
-            assert "worker lost" in job_row["error"].lower()
-            assert workflow.run.status == RunStatus.error
+            # The sweep reconciles: ticket parked to paused, run row untouched
+            await wait_for_status(store, "r1", "paused")
+            assert workflow.run.status == RunStatus.paused, "the sweep must not deface a valid pause"
 
-            # Operator re-drive: requeue grants one more execution
-            assert await store.requeue_job("r1")
-            job_row = await wait_for_status(store, "r1", "completed")
+            # Recovery is just... continuing: no requeue, no force
+            assert (await store.continue_job("r1", {"step_requirements": []}))["outcome"] == "queued"
+            await wait_for_status(store, "r1", "completed")
             assert workflow.run.status == RunStatus.completed
             assert len(workflow.continue_calls) == 1, "the re-driven leg must reach acontinue_run exactly once"
         finally:

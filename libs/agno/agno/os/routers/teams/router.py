@@ -19,7 +19,13 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.db.base import BaseDb
 from agno.db.schemas.jobs import QueuedJob
-from agno.exceptions import InputCheckError, OutputCheckError, RunNotContinuableError, RunNotFoundError
+from agno.exceptions import (
+    ComponentRehydrationError,
+    InputCheckError,
+    OutputCheckError,
+    RunNotContinuableError,
+    RunNotFoundError,
+)
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.auth import (
@@ -35,7 +41,6 @@ from agno.os.job_queue import (
     acontinue_via_queue,
     aprepare_accepted_or_abort,
     araise_if_ticket_owns_continue,
-    asettle_paused_ticket,
     aticket_poll_fallback,
     normalize_idempotency_key,
     payload_is_queueable,
@@ -59,7 +64,7 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
-    acomplete_continue_stream,
+    afinalize_continue_stream,
     amark_continue_stream_running,
     classify_upload_file,
     find_factory_by_id,
@@ -447,13 +452,20 @@ async def team_continue_response_streamer(
                 yield format_sse_event(run_response_chunk)  # type: ignore
         finally:
             if _sync_stream:
-                _final = await acomplete_continue_stream(team, run_id, session_id)
-                # Inline continue of a DURABLE paused run: terminalize the
-                # queue ticket too (paused tickets are retention-exempt and
-                # would otherwise say paused forever). CAS no-op for runs
-                # that never rode the queue or whose continuation is owned
-                # by a worker.
-                await asettle_paused_ticket(queue_worker, run_id, _final)
+                # Stream close + paused-ticket settle as one cancellation-
+                # proof unit; under cancellation the final status is KNOWN -
+                # see the agents twin for both hazards
+                import sys
+
+                _exc = sys.exc_info()[0]
+                _cancelled = _exc is not None and issubclass(_exc, (asyncio.CancelledError, GeneratorExit))
+                await afinalize_continue_stream(
+                    team,
+                    run_id,
+                    session_id,
+                    queue_worker=queue_worker,
+                    final_status=RunStatus.cancelled if _cancelled else None,
+                )
     except (InputCheckError, OutputCheckError) as e:
         error_response = TeamRunErrorEvent(
             content=str(e),
@@ -1056,6 +1068,7 @@ def get_team_router(
                 registry=registry,
                 create_fresh=True,
                 user_id=get_scoped_user_id(request),
+                strict=False
             )  # type: ignore[assignment]
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
@@ -1153,6 +1166,7 @@ def get_team_router(
             registry=registry,
             create_fresh=True,
             user_id=get_scoped_user_id(request),
+            strict=False
         )
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
@@ -1207,7 +1221,12 @@ def get_team_router(
             403: {"description": "Run has a pending admin approval and cannot be continued by the user yet."},
             404: {"description": "Team not found", "model": NotFoundResponse},
             409: {
-                "description": "Run is not paused (e.g. run is already running, continued, or errored). Only PAUSED runs can be continued.",
+                "description": (
+                    "Continuation conflict: a durable queue ticket owns this run's continuation "
+                    "(continue it with background=true), or a continuation is already queued or "
+                    "executing. Runs in any state can be continued - a COMPLETED run forks into "
+                    "a follow-up; RUNNING/ERROR runs resume."
+                ),
             },
         },
         dependencies=[
@@ -1278,7 +1297,10 @@ def get_team_router(
                     registry=registry,
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
+                    strict=False
                 )  # type: ignore[assignment]
+            except ComponentRehydrationError as rehydration_error:
+                raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -1513,20 +1535,15 @@ def get_team_router(
                 # runs alone. Skipped for remote teams and fork/regenerate
                 # (they mint a NEW run_id).
                 if not isinstance(team, RemoteTeam) and not fork and not regenerate:
-                    await acomplete_continue_stream(
+                    # Stream close + paused-ticket settle as one
+                    # cancellation-proof unit (see the streaming twin)
+                    await afinalize_continue_stream(
                         team,
                         run_id,
                         session_id,
+                        queue_worker=getattr(request.app.state, "queue_worker", None),
                         only_if_tracked=True,
                         final_status=getattr(run_response_obj, "status", None),
-                    )
-                    # Inline continue of a DURABLE paused run: terminalize
-                    # the queue ticket too (paused is retention-exempt; the
-                    # CAS no-ops for never-queued or worker-owned runs)
-                    await asettle_paused_ticket(
-                        getattr(request.app.state, "queue_worker", None),
-                        run_id,
-                        getattr(run_response_obj, "status", None),
                     )
                 return run_response_obj.to_dict()
 
@@ -1574,6 +1591,7 @@ def get_team_router(
                 registry=registry,
                 create_fresh=True,
                 user_id=get_scoped_user_id(request),
+                strict=False
             )
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
@@ -1715,15 +1733,16 @@ def get_team_router(
 
             # Exclude teams whose IDs are owned by the registry
             exclude_ids = registry.get_team_ids() if registry else None
-            db_teams = get_teams(
-                db=os.db,
-                registry=registry,
-                exclude_component_ids=exclude_ids or None,
-                user_id=get_scoped_user_id(request),
-            )
-            for db_team in db_teams:
-                team_response = await TeamResponse.from_team(team=db_team, is_component=True)
-                teams.append(team_response)
+            db_teams = get_teams(db=os.db, registry=registry, exclude_component_ids=exclude_ids or None, user_id=get_scoped_user_id(request))
+            if db_teams:
+                # Apply the same RBAC filtering to DB-loaded teams: without
+                # it, a caller whose scope excludes a team still saw its
+                # config here (the agents endpoint already filters)
+                if getattr(request.state, "authorization_enabled", False):
+                    db_teams = filter_resources_by_access(request, db_teams, "teams")
+                for db_team in db_teams:
+                    team_response = await TeamResponse.from_team(team=db_team, is_component=True)
+                    teams.append(team_response)
 
         return teams
 
@@ -1819,14 +1838,9 @@ def get_team_router(
             return TeamResponse.from_factory(factory)
 
         try:
-            team = get_team_by_id(
-                team_id=team_id,
-                teams=os.teams,
-                db=os.db,
-                registry=registry,
-                create_fresh=True,
-                user_id=get_scoped_user_id(request),
-            )  # type: ignore[assignment]
+            team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, user_id=get_scoped_user_id(request))  # type: ignore[assignment]
+        except ComponentRehydrationError as rehydration_error:
+            raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -1877,6 +1891,7 @@ def get_team_router(
                     registry=registry,
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
+                    strict=False
                 )  # type: ignore[assignment]
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
@@ -1961,6 +1976,7 @@ def get_team_router(
                     registry=registry,
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
+                    strict=False
                 )  # type: ignore[assignment]
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
@@ -2027,6 +2043,7 @@ def get_team_router(
                     registry=registry,
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
+                    strict=False
                 )  # type: ignore[assignment]
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
@@ -2093,6 +2110,7 @@ def get_team_router(
                     registry=registry,
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
+                    strict=False
                 )  # type: ignore[assignment]
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
