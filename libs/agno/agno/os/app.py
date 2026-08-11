@@ -456,14 +456,16 @@ class AgentOS:
 
         # Queue configuration. None keeps the process defaults (env var or
         # library default for the concurrency cap, in-memory transports).
-        # queue.redis wires the cross-container transports; the explicit
-        # event_stream parameter below is applied after and wins by ordering.
+        # queue.redis wires the cross-container transports over the process
+        # defaults only; the explicit event_stream parameter is applied first
+        # and survives the wiring regardless of its type.
         self.queue = queue
 
-        # Event stream FIRST: the coordination wiring below only fills in-memory
-        # defaults and warns on asymmetric transports - it must see the user's
-        # explicit stream, or the one split-Redis config it exists to catch
-        # (custom stream on Redis A, wired cancellation on Redis B) never warns.
+        # Event stream FIRST: the coordination wiring below only replaces the
+        # never-explicitly-set defaults and warns on asymmetric transports - it
+        # must see the user's explicit stream, or the one split-Redis config it
+        # exists to catch (custom stream on Redis A, wired cancellation on
+        # Redis B) never warns.
         if event_stream is not None:
             set_event_stream(event_stream)
 

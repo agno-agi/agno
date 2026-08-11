@@ -22,9 +22,11 @@ def apply_queue_config(config: QueueConfig) -> None:
 
     Sets the background concurrency cap, and - when ``config.redis`` is given -
     wires the cross-container transports (cancellation manager + event stream)
-    from shared Redis clients. Transports are only wired over in-memory
-    defaults: explicitly configured backends are never replaced, so granular
-    configuration always wins.
+    from shared Redis clients. Transports are only wired over the never
+    explicitly-set process defaults: any backend installed via
+    ``set_event_stream``/``set_cancellation_manager`` (including an in-memory
+    one, e.g. a test double) is never replaced, so granular configuration
+    always wins.
     """
     from agno.run.concurrency import set_background_max_concurrency
 
@@ -57,16 +59,18 @@ def _apply_coordination(redis: Union[str, RedisCoordination]) -> None:
         sync_client = SyncRedis.from_url(url)
         async_client = AsyncRedis.from_url(url)
 
-    # Control in: distributed cancellation. Never clobber a custom manager.
-    from agno.run.cancel import get_cancellation_manager, set_cancellation_manager
-    from agno.run.cancellation_management.in_memory_cancellation_manager import InMemoryRunCancellationManager
+    # Control in: distributed cancellation. Never clobber an explicitly
+    # configured manager - the explicit-set flag is the authority, because an
+    # explicitly passed in-memory manager (or subclass, e.g. a test double) is
+    # indistinguishable by type from the default it replaced.
+    from agno.run.cancel import cancellation_manager_explicitly_set, set_cancellation_manager
     from agno.run.cancellation_management.redis_cancellation_manager import RedisRunCancellationManager
 
     cancellation_wired = False
     cancellation_prefix = (
         f"{coordination.key_prefix}:run:cancellation:" if coordination.key_prefix else "agno:run:cancellation:"
     )
-    if isinstance(get_cancellation_manager(), InMemoryRunCancellationManager):
+    if not cancellation_manager_explicitly_set():
         set_cancellation_manager(
             RedisRunCancellationManager(
                 redis_client=sync_client, async_redis_client=async_client, key_prefix=cancellation_prefix
@@ -77,14 +81,13 @@ def _apply_coordination(redis: Union[str, RedisCoordination]) -> None:
     else:
         log_debug("Queue coordination: keeping explicitly configured cancellation manager")
 
-    # Events out: Redis event stream. Never clobber a custom stream; the
-    # explicit AgentOS(event_stream=...) parameter is applied after this and
-    # wins by ordering.
-    from agno.os.event_streams import InMemoryEventStream, RedisEventStream, get_event_stream, set_event_stream
+    # Events out: Redis event stream. Same rule: only the never-explicitly-set
+    # process default is replaced.
+    from agno.os.event_streams import RedisEventStream, event_stream_explicitly_set, set_event_stream
 
     event_stream_wired = False
     stream_prefix = f"{coordination.key_prefix}:os:events:" if coordination.key_prefix else "agno:os:events:"
-    if isinstance(get_event_stream(), InMemoryEventStream):
+    if not event_stream_explicitly_set():
         set_event_stream(RedisEventStream(async_client, key_prefix=stream_prefix))
         event_stream_wired = True
         log_debug("Queue coordination: Redis event stream configured")
