@@ -116,3 +116,71 @@ class TestNoCrossLeak:
         _, bob_total = db.get_eval_runs(user_id="bob", deserialize=False)
         _, grand_total = db.get_eval_runs(deserialize=False)
         assert (alice_total, bob_total, grand_total) == (3, 2, 5)
+
+
+# ---------------------------------------------------------------------------
+# Contract checks — no server needed, so every adapter is covered in CI
+# ---------------------------------------------------------------------------
+
+_EVAL_ADAPTERS: list[tuple[str, str]] = [
+    ("agno.db.json.json_db", "JsonDb"),
+    ("agno.db.gcs_json.gcs_json_db", "GcsJsonDb"),
+    ("agno.db.in_memory.in_memory_db", "InMemoryDb"),
+    ("agno.db.mongo.mongo", "MongoDb"),
+    ("agno.db.mongo.async_mongo", "AsyncMongoDb"),
+    ("agno.db.redis.redis", "RedisDb"),
+    ("agno.db.valkey.valkey", "ValkeyDb"),
+    ("agno.db.firestore.firestore", "FirestoreDb"),
+    ("agno.db.dynamo.dynamo", "DynamoDb"),
+    ("agno.db.surrealdb.surrealdb", "SurrealDb"),
+    ("agno.db.postgres.postgres", "PostgresDb"),
+    ("agno.db.postgres.async_postgres", "AsyncPostgresDb"),
+    ("agno.db.sqlite.sqlite", "SqliteDb"),
+    ("agno.db.sqlite.async_sqlite", "AsyncSqliteDb"),
+    ("agno.db.mysql.mysql", "MySQLDb"),
+    ("agno.db.mysql.async_mysql", "AsyncMySQLDb"),
+    ("agno.db.singlestore.singlestore", "SingleStoreDb"),
+]
+
+_SCOPED_METHODS = ["get_eval_run", "get_eval_runs", "delete_eval_runs", "rename_eval_run"]
+
+
+def _try_import_class(module_path: str, class_name: str):
+    """Some adapters have optional native drivers. Skip cleanly if one isn't
+    installed — the contract is what we're after, not runtime behavior."""
+    try:
+        module = __import__(module_path, fromlist=[class_name])
+        return getattr(module, class_name)
+    except Exception as e:
+        pytest.skip(f"skip {class_name}: driver unavailable ({type(e).__name__}: {e})")
+
+
+@pytest.mark.parametrize("module_path,class_name", _EVAL_ADAPTERS)
+@pytest.mark.parametrize("method_name", _SCOPED_METHODS)
+def test_eval_reads_accept_user_id(module_path: str, class_name: str, method_name: str):
+    """A scoped call must be expressible on every adapter.
+
+    Without the parameter the OS cannot scope the call at all, so a scoped
+    caller silently gets everyone's eval runs.
+    """
+    import inspect
+
+    cls = _try_import_class(module_path, class_name)
+    method = getattr(cls, method_name, None)
+    assert method is not None, f"{class_name}.{method_name} is missing"
+    assert "user_id" in inspect.signature(method).parameters, f"{class_name}.{method_name} does not accept user_id"
+
+
+@pytest.mark.parametrize("module_path,class_name", _EVAL_ADAPTERS)
+def test_update_eval_run_user_id_is_implemented(module_path: str, class_name: str):
+    """The owner has to be storable, not just filterable.
+
+    ``BaseDb.update_eval_run_user_id`` raises NotImplementedError, so inheriting
+    it leaves the adapter unable to record an owner at all.
+    """
+    from agno.db.base import AsyncBaseDb, BaseDb
+
+    cls = _try_import_class(module_path, class_name)
+    own = cls.update_eval_run_user_id
+    assert own is not BaseDb.update_eval_run_user_id, f"{class_name} inherits the BaseDb stub"
+    assert own is not AsyncBaseDb.update_eval_run_user_id, f"{class_name} inherits the AsyncBaseDb stub"

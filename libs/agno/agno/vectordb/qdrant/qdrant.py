@@ -151,6 +151,12 @@ class Qdrant(VectorDb):
         # Reranker instance
         self.reranker: Optional[Reranker] = reranker
 
+        # Whether this instance has ensured the tenant payload index on
+        # user_id. Knowledge only calls create() for collections that don't
+        # exist yet, so pre-v3 collections get the index ensured from the
+        # write paths instead — once per instance, the helper no-ops after.
+        self._user_id_index_ensured: bool = False
+
         # Qdrant client kwargs
         self.kwargs = kwargs
 
@@ -247,7 +253,10 @@ class Qdrant(VectorDb):
                 if self.search_type in [SearchType.keyword, SearchType.hybrid]
                 else None,
             )
-            self._ensure_user_id_payload_index_sync()
+        # Outside the exists() branch: collections created before v3 never got
+        # the tenant index, and without it scoped reads scan instead of pruning.
+        # The helper is idempotent and swallows "already exists".
+        self._ensure_user_id_payload_index_sync()
 
     def _ensure_user_id_payload_index_sync(self) -> None:
         """Create the tenant-style payload index on ``user_id``.
@@ -256,7 +265,13 @@ class Qdrant(VectorDb):
         contiguously on disk — the engine can then prune by tenant before
         walking the HNSW graph, which is what makes per-user reads cheap
         on a single multi-tenant collection.
+
+        Once per instance: the flag is set even when the attempt fails, so a
+        server that rejects the index costs one logged round-trip, not one
+        per write.
         """
+        if self._user_id_index_ensured:
+            return
         try:
             self.client.create_payload_index(
                 collection_name=self.collection,
@@ -269,6 +284,7 @@ class Qdrant(VectorDb):
         except Exception as e:
             # Index may already exist on a re-created collection — that's fine.
             log_debug(f"Skipping user_id payload index creation: {e}")
+        self._user_id_index_ensured = True
 
     async def async_create(self) -> None:
         """Create the collection asynchronously."""
@@ -299,10 +315,13 @@ class Qdrant(VectorDb):
                 if self.search_type in [SearchType.keyword, SearchType.hybrid]
                 else None,
             )
-            await self._ensure_user_id_payload_index_async()
+        # See ``create`` — pre-v3 collections need the tenant index too.
+        await self._ensure_user_id_payload_index_async()
 
     async def _ensure_user_id_payload_index_async(self) -> None:
         """Async counterpart to ``_ensure_user_id_payload_index_sync``."""
+        if self._user_id_index_ensured:
+            return
         try:
             await self.async_client.create_payload_index(
                 collection_name=self.collection,
@@ -314,6 +333,7 @@ class Qdrant(VectorDb):
             )
         except Exception as e:
             log_debug(f"Skipping async user_id payload index creation: {e}")
+        self._user_id_index_ensured = True
 
     def name_exists(self, name: str) -> bool:
         """
@@ -389,6 +409,10 @@ class Qdrant(VectorDb):
             user_id (Optional[str]): Owner of these chunks for per-user isolation.
                 ``None`` (default) writes to the shared bucket.
         """
+        # Knowledge only calls create() for collections that don't exist, so a
+        # pre-v3 collection would otherwise never get the tenant index — the
+        # write path ensures it (idempotent, once per instance).
+        self._ensure_user_id_payload_index_sync()
         log_debug(f"Inserting {len(documents)} documents")
         points = []
         for document in documents:
@@ -467,6 +491,9 @@ class Qdrant(VectorDb):
             user_id (Optional[str]): Owner of these chunks for per-user isolation.
                 ``None`` (default) writes to the shared bucket.
         """
+        # See ``insert`` — pre-v3 collections get the tenant index from the
+        # write path.
+        await self._ensure_user_id_payload_index_async()
         log_debug(f"Inserting {len(documents)} documents asynchronously")
 
         # Apply batch embedding when needed for vector or hybrid search
@@ -911,12 +938,17 @@ class Qdrant(VectorDb):
         if self.exists():
             log_debug(f"Deleting collection: {self.collection}")
             self.client.delete_collection(self.collection)
+            # The next collection under this name needs the tenant index
+            # ensured again — the once-per-instance flag must not survive.
+            self._user_id_index_ensured = False
 
     async def async_drop(self) -> None:
         """Drop the collection asynchronously."""
         if await self.async_exists():
             log_debug(f"Deleting collection asynchronously: {self.collection}")
             await self.async_client.delete_collection(self.collection)
+            # See ``drop`` — the ensure flag must not survive.
+            self._user_id_index_ensured = False
 
     def exists(self) -> bool:
         """Check if the collection exists."""

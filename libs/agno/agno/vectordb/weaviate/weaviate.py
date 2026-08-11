@@ -80,6 +80,8 @@ class Weaviate(VectorDb):
         self.collection = collection
         self.vector_index = vector_index
         self.distance = distance
+        # Whether the live collection has the user_id property; resolved lazily on first use.
+        self._owner_property_exists: Optional[bool] = None
 
         # Embedder setup
         if embedder is None:
@@ -168,6 +170,7 @@ class Weaviate(VectorDb):
                 inverted_index_config=Configure.inverted_index(index_null_state=True),
             )
             log_debug(f"Collection '{self.collection}' created in Weaviate.")
+            self._owner_property_exists = True
 
     async def async_create(self) -> None:
         client = await self.get_async_client()
@@ -182,8 +185,74 @@ class Weaviate(VectorDb):
                     inverted_index_config=Configure.inverted_index(index_null_state=True),
                 )
                 log_debug(f"Collection '{self.collection}' created in Weaviate asynchronously.")
+                self._owner_property_exists = True
         finally:
             await client.close()
+
+    def _user_id_property_exists(self) -> bool:
+        """Whether the live collection can support per-user isolation.
+
+        Isolation needs BOTH create-time pieces: the ``user_id`` property AND
+        ``index_null_state=True`` — every shared-bucket filter runs
+        ``is_none(user_id)``, which Weaviate refuses without null-state
+        indexing ("Nullstate must be indexed to be filterable!"). Checking the
+        property alone would wave through a collection that had ``user_id``
+        bolted on later via ``add_property``: the gate would open and the
+        first ``is_none`` filter would then fail every ingest's dedup check.
+        ``index_null_state`` is immutable after creation, so such a collection
+        can only be recreated. Cached after the first lookup; the cached
+        answer is shared with the async paths.
+        """
+        if self._owner_property_exists is None:
+            try:
+                client = self.get_client()
+                if not client.collections.exists(self.collection):
+                    # No live collection yet — it will be created with both.
+                    self._owner_property_exists = True
+                    return True
+                config = client.collections.get(self.collection).config.get()
+                has_property = any(prop.name == self.USER_ID_KEY for prop in config.properties)
+                inverted_index = getattr(config, "inverted_index_config", None)
+                null_state_indexed = bool(getattr(inverted_index, "index_null_state", False))
+                self._owner_property_exists = has_property and null_state_indexed
+            except Exception:
+                # Inspection failed (connection, permissions, odd client
+                # response): assume migrated for THIS call only. Caching the
+                # assumption would let one blip permanently mask a real legacy
+                # collection — uncached, the next call re-inspects. The
+                # missing-collection case is handled conclusively above.
+                log_warning(
+                    f"Could not inspect collection '{self.collection}' for isolation support; "
+                    "proceeding as migrated for this operation."
+                )
+                return True
+        return self._owner_property_exists
+
+    def _require_owner_property(self, user_id: Optional[str]) -> bool:
+        """Gate every ``user_id``-property reference on the live schema.
+
+        Returns True when the property exists, False when it is missing and the
+        operation is unscoped — the caller then falls back to pre-v3 queries that
+        never mention the property. A scoped operation on an unmigrated collection
+        raises instead of surfacing a raw client error (or silently returning
+        nothing).
+        """
+        if self._user_id_property_exists():
+            return True
+        if user_id is None:
+            return False
+        # The cached answer may predate a migration run while this process is
+        # alive — re-inspect once before refusing.
+        self._owner_property_exists = None
+        if self._user_id_property_exists():
+            return True
+        raise ValueError(
+            f"user_id={user_id!r} was passed but collection '{self.collection}' does not support "
+            "per-user isolation: it lacks the 'user_id' property and/or null-state indexing "
+            "(index_null_state=True, which the is_none shared-bucket filters require). "
+            "index_null_state can only be set at collection creation, so recreate the collection "
+            "and re-ingest — adding the property alone is not sufficient."
+        )
 
     def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Check if a document with the given content hash exists in the collection.
@@ -196,12 +265,17 @@ class Weaviate(VectorDb):
                 ``_delete_by_content_hash`` clears for None.
         """
         self._validate_user_id(user_id)
+        # Resolve the owner gate before the query: on an unmigrated collection the
+        # unscoped check falls back to matching on content_hash alone (pre-v3
+        # behaviour) so the dedup pair with ``_delete_by_content_hash`` stays consistent.
+        scope_to_owner = self._require_owner_property(user_id)
         collection = self.get_client().collections.get(self.collection)
         where = Filter.by_property("content_hash").equal(content_hash)
-        if user_id is not None:
-            where = where & Filter.by_property(self.USER_ID_KEY).equal(user_id)
-        else:
-            where = where & Filter.by_property(self.USER_ID_KEY).is_none(True)
+        if scope_to_owner:
+            if user_id is not None:
+                where = where & Filter.by_property(self.USER_ID_KEY).equal(user_id)
+            else:
+                where = where & Filter.by_property(self.USER_ID_KEY).is_none(True)
         result = collection.query.fetch_objects(limit=1, filters=where)
         return len(result.objects) > 0
 
@@ -260,6 +334,9 @@ class Weaviate(VectorDb):
                 None (default) writes to the shared bucket.
         """
         self._validate_user_id(user_id)
+        # Only stamp the owner when the live schema has the property — writing it on an
+        # unmigrated collection would auto-create a differently-configured property.
+        stamp_owner = self._require_owner_property(user_id)
         log_debug(f"Inserting {len(documents)} documents into Weaviate.")
         collection = self.get_client().collections.get(self.collection)
 
@@ -284,16 +361,19 @@ class Weaviate(VectorDb):
             # Serialize meta_data to JSON string
             meta_data_str = json.dumps(meta_data) if meta_data else None
 
+            properties: Dict[str, Any] = {
+                "name": document.name,
+                "content": cleaned_content,
+                "meta_data": meta_data_str,
+                "content_id": document.content_id,
+                "content_hash": content_hash,
+            }
+            if stamp_owner:
+                # user_id is a first-class property so the scope filter can match it.
+                properties[self.USER_ID_KEY] = user_id
+
             collection.data.insert(
-                properties={
-                    "name": document.name,
-                    "content": cleaned_content,
-                    "meta_data": meta_data_str,
-                    "content_id": document.content_id,
-                    "content_hash": content_hash,
-                    # user_id is a first-class property so the scope filter can match it.
-                    self.USER_ID_KEY: user_id,
-                },
+                properties=properties,
                 vector=document.embedding,
                 uuid=doc_uuid,
             )
@@ -316,6 +396,9 @@ class Weaviate(VectorDb):
                 None (default) writes to the shared bucket.
         """
         self._validate_user_id(user_id)
+        # Only stamp the owner when the live schema has the property — writing it on an
+        # unmigrated collection would auto-create a differently-configured property.
+        stamp_owner = self._require_owner_property(user_id)
         log_debug(f"Inserting {len(documents)} documents into Weaviate asynchronously.")
         if not documents:
             return
@@ -394,8 +477,10 @@ class Weaviate(VectorDb):
                         "meta_data": meta_data_str,
                         "content_id": document.content_id,
                         "content_hash": content_hash,
-                        self.USER_ID_KEY: user_id,
                     }
+                    if stamp_owner:
+                        # user_id is a first-class property so the scope filter can match it.
+                        properties[self.USER_ID_KEY] = user_id
 
                     # Use the API correctly - properties, vector and uuid are separate parameters
                     await collection.data.insert(properties=properties, vector=document.embedding, uuid=doc_uuid)
@@ -423,6 +508,9 @@ class Weaviate(VectorDb):
             user_id (Optional[str]): Owner of these chunks for per-user isolation.
         """
         self._validate_user_id(user_id)
+        # Resolve the owner gate up front: a scoped upsert on an unmigrated
+        # collection must raise the clear error before any reads or writes.
+        self._require_owner_property(user_id)
         log_debug(f"Upserting {len(documents)} documents into Weaviate.")
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
@@ -446,6 +534,9 @@ class Weaviate(VectorDb):
             user_id (Optional[str]): Owner of these chunks for per-user isolation.
         """
         self._validate_user_id(user_id)
+        # Resolve the owner gate up front: a scoped upsert on an unmigrated
+        # collection must raise the clear error before any reads or writes.
+        self._require_owner_property(user_id)
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
         await self.async_insert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
@@ -526,6 +617,9 @@ class Weaviate(VectorDb):
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         user_id: Optional[str] = None,
     ) -> List[Document]:
+        # Resolve the owner gate outside the try: a scoped search on an unmigrated
+        # collection must raise the clear error, not be swallowed into [].
+        self._require_owner_property(user_id)
         try:
             query_embedding = self.embedder.get_embedding(query)
             if query_embedding is None:
@@ -576,6 +670,10 @@ class Weaviate(VectorDb):
         Returns:
             List[Document]: List of matching documents.
         """
+        # Resolve the owner gate outside the try: a scoped search on an unmigrated
+        # collection must raise the clear error, not be swallowed into [].
+        self._require_owner_property(user_id)
+
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             log_error(f"Error getting embedding for query: {query}")
@@ -618,6 +716,9 @@ class Weaviate(VectorDb):
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         user_id: Optional[str] = None,
     ) -> List[Document]:
+        # Resolve the owner gate outside the try: a scoped search on an unmigrated
+        # collection must raise the clear error, not be swallowed into [].
+        self._require_owner_property(user_id)
         try:
             collection = self.get_client().collections.get(self.collection)
             filter_expr = self._scoped_filter_expression(filters, user_id)
@@ -664,6 +765,10 @@ class Weaviate(VectorDb):
         Returns:
             List[Document]: List of matching documents.
         """
+        # Resolve the owner gate outside the try: a scoped search on an unmigrated
+        # collection must raise the clear error, not be swallowed into [].
+        self._require_owner_property(user_id)
+
         search_results = []
         client = await self.get_async_client()
         try:
@@ -702,6 +807,9 @@ class Weaviate(VectorDb):
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         user_id: Optional[str] = None,
     ) -> List[Document]:
+        # Resolve the owner gate outside the try: a scoped search on an unmigrated
+        # collection must raise the clear error, not be swallowed into [].
+        self._require_owner_property(user_id)
         try:
             query_embedding = self.embedder.get_embedding(query)
             if query_embedding is None:
@@ -755,6 +863,10 @@ class Weaviate(VectorDb):
         Returns:
             List[Document]: List of matching documents.
         """
+        # Resolve the owner gate outside the try: a scoped search on an unmigrated
+        # collection must raise the clear error, not be swallowed into [].
+        self._require_owner_property(user_id)
+
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             log_error(f"Error getting embedding for query: {query}")
@@ -810,6 +922,9 @@ class Weaviate(VectorDb):
         if self.exists():
             log_debug(f"Deleting collection '{self.collection}' from Weaviate.")
             self.get_client().collections.delete(self.collection)
+            # The next collection under this name is created with the owner
+            # property and null-state indexing — re-resolve the cache lazily.
+            self._owner_property_exists = None
 
     async def async_drop(self) -> None:
         """Delete the Weaviate collection asynchronously."""
@@ -818,6 +933,8 @@ class Weaviate(VectorDb):
             client = await self.get_async_client()
             try:
                 await client.collections.delete(self.collection)
+                # See ``drop`` — re-resolve the cache lazily.
+                self._owner_property_exists = None
             finally:
                 await client.close()
 
@@ -895,6 +1012,10 @@ class Weaviate(VectorDb):
                 deletes all chunks with this content_id regardless of owner.
         """
         self._validate_user_id(user_id)
+        # Resolve the owner gate before the try: a scoped delete on an unmigrated
+        # collection must raise the clear error, not be swallowed into False. An
+        # unscoped delete never references the property, so it needs no fallback.
+        self._require_owner_property(user_id)
         try:
             collection = self.get_client().collections.get(self.collection)
 
@@ -1149,15 +1270,21 @@ class Weaviate(VectorDb):
                 scopes to the shared (null) bucket so a shared re-upsert never wipes a
                 scoped owner's identical-content row.
         """
+        # Resolve the owner gate before the try: a scoped delete on an unmigrated
+        # collection must raise, not be swallowed into False. When the property is
+        # missing the unscoped delete matches on content_hash alone (pre-v3
+        # behaviour) — the same rows ``content_hash_exists`` matched.
+        scope_to_owner = self._require_owner_property(user_id)
         try:
             collection = self.get_client().collections.get(self.collection)
 
             # Build filter for content_hash search
             filter_expr = Filter.by_property("content_hash").equal(content_hash)
-            if user_id is not None:
-                filter_expr = filter_expr & Filter.by_property(self.USER_ID_KEY).equal(user_id)
-            else:
-                filter_expr = filter_expr & Filter.by_property(self.USER_ID_KEY).is_none(True)
+            if scope_to_owner:
+                if user_id is not None:
+                    filter_expr = filter_expr & Filter.by_property(self.USER_ID_KEY).equal(user_id)
+                else:
+                    filter_expr = filter_expr & Filter.by_property(self.USER_ID_KEY).is_none(True)
 
             collection.data.delete_many(where=filter_expr)
 
