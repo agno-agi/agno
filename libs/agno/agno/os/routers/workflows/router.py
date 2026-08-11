@@ -71,6 +71,7 @@ from agno.os.utils import (
     get_workflow_by_id_async,
     queued_run_tail_streamer,
     sse_error_frame,
+    stored_event_replay_dicts,
     replayed_payload_to_sse,
     resolve_workflow,
 )
@@ -491,41 +492,29 @@ async def handle_workflow_subscription(
                     workflow_run = await workflow.aget_run_output(run_id, session_id, user_id=user_id)
 
                     if workflow_run:
-                        # Run exists in DB - send all events from DB
-                        if workflow_run.events:
-                            await websocket.send_text(
-                                json.dumps(
-                                    {
-                                        "event": "replay",
-                                        "run_id": run_id,
-                                        "status": workflow_run.status.value if workflow_run.status else "unknown",
-                                        "total_events": len(workflow_run.events),
-                                        "message": "Run completed. Replaying all events from database.",
-                                    }
-                                )
+                        # Run exists in DB - replay through the shared
+                        # floor-honoring helper (same contract as the SSE
+                        # resume routes): stamped events are filtered under
+                        # the client's last_event_index and keep their REAL
+                        # stream indices - positional renumbering re-sent the
+                        # full history and destroyed index continuity for
+                        # partially-caught-up clients.
+                        replay_dicts = stored_event_replay_dicts(workflow_run, run_id, last_event_index)
+                        await websocket.send_text(
+                            json.dumps(
+                                {
+                                    "event": "replay",
+                                    "run_id": run_id,
+                                    "status": workflow_run.status.value if workflow_run.status else "unknown",
+                                    "total_events": len(replay_dicts),
+                                    "message": "Run completed. Replaying stored events from database."
+                                    if replay_dicts
+                                    else "Run completed but no events stored past the requested index.",
+                                }
                             )
-
-                            # Send events one by one
-                            for idx, event in enumerate(workflow_run.events):
-                                # Convert event to dict and add event_index
-                                event_dict = event.model_dump() if hasattr(event, "model_dump") else event.to_dict()
-                                event_dict["event_index"] = idx
-                                if "run_id" not in event_dict:
-                                    event_dict["run_id"] = run_id
-
-                                await websocket.send_text(json.dumps(event_dict, default=json_serializer))
-                        else:
-                            await websocket.send_text(
-                                json.dumps(
-                                    {
-                                        "event": "replay",
-                                        "run_id": run_id,
-                                        "status": workflow_run.status.value if workflow_run.status else "unknown",
-                                        "total_events": 0,
-                                        "message": "Run completed but no events stored.",
-                                    }
-                                )
-                            )
+                        )
+                        for event_dict in replay_dicts:
+                            await websocket.send_text(json.dumps(event_dict, default=json_serializer))
                         return
 
             # Run not found anywhere

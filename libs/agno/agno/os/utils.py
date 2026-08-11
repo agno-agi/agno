@@ -377,25 +377,26 @@ async def queued_run_tail_streamer(run_id: str, from_index: Optional[int] = None
             await pump_task
 
 
-def stored_event_replay_frames(run_output: Any, run_id: str, last_event_index: Optional[int] = None) -> List[str]:
-    """PATH-3 (DB fallback) replay frames, honoring the client's floor.
+def stored_event_replay_dicts(
+    run_output: Any, run_id: str, last_event_index: Optional[int] = None
+) -> List[Dict[str, Any]]:
+    """DB-fallback replay payloads, honoring the client's floor.
 
-    ONE implementation for all three routers - the old triplicated loop
-    ignored last_event_index and renumbered every stored event from zero:
-    duplicates for partially-caught-up clients, and destroyed index
-    continuity (stream indices are NOT gapless - retries and continuation
-    legs leave real gaps that positional renumbering compacted away).
+    ONE implementation for every replay surface (the three SSE resume routes
+    and the workflow WS subscription) - the old per-surface loops ignored
+    last_event_index and renumbered every stored event from zero: duplicates
+    for partially-caught-up clients, and destroyed index continuity (stream
+    indices are NOT gapless - retries and continuation legs leave real gaps
+    that positional renumbering compacted away).
 
     Events stamped at publish carry their real stream index (event_index);
     those are floor-filtered and replayed under their stored index.
     Unstamped legacy events keep the positional fallback and are never
     floor-filtered: a floor from live-stream indices does not speak their
-    numbering. The meta frame's total reflects what is actually replayed.
+    numbering.
     """
-    from agno.utils.serialize import json_serializer
-
     floor = last_event_index if last_event_index is not None else -1
-    frames: List[str] = []
+    dicts: List[Dict[str, Any]] = []
     for position, event in enumerate(getattr(run_output, "events", None) or []):
         event_dict = event.to_dict()
         stored_index = event_dict.get("event_index")
@@ -404,6 +405,17 @@ def stored_event_replay_frames(run_output: Any, run_id: str, last_event_index: O
         event_dict["event_index"] = int(stored_index) if stored_index is not None else position
         if "run_id" not in event_dict:
             event_dict["run_id"] = run_id
+        dicts.append(event_dict)
+    return dicts
+
+
+def stored_event_replay_frames(run_output: Any, run_id: str, last_event_index: Optional[int] = None) -> List[str]:
+    """SSE framing over ``stored_event_replay_dicts`` (the PATH-3 resume
+    routes). The meta frame's total reflects what is actually replayed."""
+    from agno.utils.serialize import json_serializer
+
+    frames: List[str] = []
+    for event_dict in stored_event_replay_dicts(run_output, run_id, last_event_index):
         event_type = event_dict.get("event", "message")
         frames.append(
             f"event: {event_type}\n"
