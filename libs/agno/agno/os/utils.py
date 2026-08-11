@@ -274,6 +274,16 @@ def format_sse_event_with_index(
         return f"event: message\ndata: {clean_json}\n\n"
 
 
+def sse_error_frame(message: str) -> str:
+    """A wire-safe SSE error frame.
+
+    The payload goes through json.dumps: hand-interpolating exception text
+    into an f-string frame emitted invalid JSON the moment the message
+    contained a quote, backslash, or newline.
+    """
+    return f"event: error\ndata: {json.dumps({'event': 'error', 'error': message})}\n\n"
+
+
 async def queued_run_tail_streamer(run_id: str, from_index: Optional[int] = None) -> Any:
     """SSE response for a durably queued STREAMING run: tail the event stream.
 
@@ -313,9 +323,7 @@ async def queued_run_tail_streamer(run_id: str, from_index: Optional[int] = None
             # error frame so the client can distinguish and reconnect
             log_error(f"Queued stream tail failed for run {run_id}: {e}")
             with contextlib.suppress(Exception):
-                await tail_queue.put(
-                    (-1, f'event: error\ndata: {{"event": "error", "error": "stream tail failed: {str(e)[:200]}"}}\n\n')
-                )
+                await tail_queue.put((-1, sse_error_frame(f"stream tail failed: {str(e)[:200]}")))
         finally:
             await tail_queue.put(None)
 

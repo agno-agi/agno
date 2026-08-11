@@ -82,6 +82,7 @@ from agno.os.utils import (
     process_image,
     process_video,
     queued_run_tail_streamer,
+    sse_error_frame,
     replayed_payload_to_sse,
     resolve_agent,
 )
@@ -419,7 +420,7 @@ async def _resume_stream_generator(
         # the only honest signal is an SSE error frame (never a silent close,
         # and never a quiet fall-through to the DB path)
         log_error(f"Resume: event stream status probe failed for run {run_id}: {e}")
-        yield f'event: error\ndata: {{"event": "error", "error": "event stream unavailable: {str(e)[:200]}"}}\n\n'
+        yield sse_error_frame(f"event stream unavailable: {str(e)[:200]}")
         return
 
     if buffer_status is None:
@@ -530,9 +531,7 @@ async def _resume_stream_generator(
             # error frame so the client can distinguish and reconnect
             log_error(f"Resume tail failed for run {run_id}: {e}")
             with contextlib.suppress(Exception):
-                await tail_queue.put(
-                    (-1, f'event: error\ndata: {{"event": "error", "error": "stream tail failed: {str(e)[:200]}"}}\n\n')
-                )
+                await tail_queue.put((-1, sse_error_frame(f"stream tail failed: {str(e)[:200]}")))
         finally:
             await tail_queue.put(None)
 
