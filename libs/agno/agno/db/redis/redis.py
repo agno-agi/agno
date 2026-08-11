@@ -2652,11 +2652,16 @@ class RedisDb(BaseDb):
         # attach to another tenant's run) - mirrors the Postgres index
         idem_key = self._q_idem_key(job.get("user_id"), idem) if idem is not None else None
 
+        job_key = self._q_job_key(job["id"])
+
         for _ in range(10):
             with self.redis_client.pipeline() as pipe:
                 try:
+                    # The job key is always WATCHed: the MULTI below SETs it,
+                    # and a racing enqueue of the same id must not silently
+                    # overwrite (see the existence check further down).
                     if idem_key is not None:
-                        pipe.watch(idem_key)
+                        pipe.watch(job_key, idem_key)
                         existing_id = pipe.get(idem_key)
                         if existing_id is not None:
                             existing_id = existing_id if isinstance(existing_id, str) else existing_id.decode()
@@ -2670,13 +2675,24 @@ class RedisDb(BaseDb):
                             # attach hands the caller that job's identifiers
                             # and live event stream) - never attach; fall
                             # through and take the key over inside the MULTI
+                    else:
+                        pipe.watch(job_key)
 
                     if max_depth and max_depth > 0:
                         queued = int(self.redis_client.zcard(self._q_key("queued")))
                         if queued >= max_depth:
-                            if idem_key is not None:
-                                pipe.unwatch()
+                            pipe.unwatch()
                             return {"accepted": False, "reason": "queue_full", "job": None}
+
+                    # Existing document under this id: mirror Postgres, where
+                    # id is the primary key - a collision is a programming
+                    # error (ids are server-minted uuid4), never a client
+                    # dedup. Silently SETting would reset a live ticket to
+                    # queued/attempt-0 - two executors, the first one's
+                    # completion fenced out.
+                    if pipe.exists(job_key):
+                        pipe.unwatch()
+                        raise RuntimeError(f"enqueue_job: job {job['id']} already exists; ids are never reused")
 
                     pipe.multi()
                     if idem_key is not None:

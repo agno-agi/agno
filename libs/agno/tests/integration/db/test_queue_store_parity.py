@@ -150,6 +150,27 @@ class TestDedupParity:
         )
 
 
+class TestEnqueueIdCollisionParity:
+    @pytest.mark.asyncio
+    async def test_reenqueue_of_live_id_raises_and_preserves_ticket(self, store):
+        """Job ids are server-minted and never reused: enqueueing an existing
+        id is a programming error and must raise (Postgres: primary key),
+        never silently reset a live ticket to queued/attempt-0 - that would
+        put two executors on one run and fence out the first one's
+        completion."""
+        await store.enqueue_job(make_job("r1"))
+        claimed = await store.claim_job("w1")
+        assert claimed is not None
+
+        with pytest.raises(Exception):
+            await store.enqueue_job(make_job("r1"))
+
+        job = await store.get_job("r1")
+        assert job["status"] == "running" and job["attempt"] == claimed["attempt"], (
+            f"the live ticket must survive untouched, got {job['status']}/{job['attempt']}"
+        )
+
+
 class TestDepthGateParity:
     @pytest.mark.asyncio
     async def test_sequential_depth_gate_shared_contract(self, store):
