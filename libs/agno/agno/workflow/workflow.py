@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from agno.os.managers import WebSocketHandler
 
 from agno.agent.agent import Agent
+from agno.config import HistoryConfig, resolve_workflow_history_settings
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
 from agno.db.utils import resolve_db_from_config
 from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
@@ -435,6 +436,11 @@ class Workflow:
 
     # If True, the workflow runs in debug mode
     debug_mode: Optional[bool] = False
+    # Debug level: 1 = basic, 2 = detailed
+    debug_level: Literal[1, 2] = 1
+
+    # If True, cache the current Workflow session in memory for faster access
+    cache_session: bool = False
 
     # --- Workflow Streaming ---
     # Stream the response from the Workflow
@@ -506,6 +512,7 @@ class Workflow:
         add_session_state_to_context: Optional[bool] = None,
         cache_session: bool = False,
         telemetry: bool = True,
+        history: Optional[Union[bool, HistoryConfig]] = None,
         add_workflow_history_to_steps: bool = False,
         num_history_runs: int = 3,
     ):
@@ -538,8 +545,11 @@ class Workflow:
         self.cache_session = cache_session
         self.db = db
         self.telemetry = telemetry
-        self.add_workflow_history_to_steps = add_workflow_history_to_steps
-        self.num_history_runs = num_history_runs
+        self.add_workflow_history_to_steps, self.num_history_runs = resolve_workflow_history_settings(
+            history,
+            add_workflow_history_to_steps=add_workflow_history_to_steps,
+            num_history_runs=num_history_runs,
+        )
         self._workflow_session: Optional[WorkflowSession] = None
         self.stream_events = stream_events
 

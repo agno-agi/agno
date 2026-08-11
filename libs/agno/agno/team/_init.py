@@ -27,6 +27,21 @@ from pydantic import BaseModel
 
 from agno.agent import Agent
 from agno.compression.manager import CompressionManager
+from agno.config import (
+    FollowupConfig,
+    HistoryConfig,
+    MemoryConfig,
+    ReasoningConfig,
+    RetryConfig,
+    SessionSummaryConfig,
+    resolve_compression_settings,
+    resolve_followup_settings,
+    resolve_history_settings,
+    resolve_memory_settings,
+    resolve_reasoning_settings,
+    resolve_retry_settings,
+    resolve_session_summary_settings,
+)
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
@@ -121,6 +136,7 @@ def __init__(
     store_tool_messages: bool = True,
     store_history_messages: bool = False,
     send_media_to_model: bool = True,
+    history: Optional[Union[bool, HistoryConfig]] = None,
     add_history_to_context: bool = False,
     num_history_runs: Optional[int] = None,
     num_history_messages: Optional[int] = None,
@@ -142,24 +158,26 @@ def __init__(
     parse_response: bool = True,
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
     checkpoint: Optional[Literal["runs", "tool-batch", "tools"]] = None,
+    memory: Optional[Union[bool, MemoryManager, MemoryConfig]] = None,
     enable_agentic_memory: bool = False,
     update_memory_on_run: bool = False,
     add_memories_to_context: Optional[bool] = None,
     memory_manager: Optional[MemoryManager] = None,
+    session_summaries: Optional[Union[bool, SessionSummaryManager, SessionSummaryConfig]] = None,
     enable_session_summaries: bool = False,
     session_summary_manager: Optional[SessionSummaryManager] = None,
     add_session_summary_to_context: Optional[bool] = None,
     learning: Optional[Union[bool, LearningMachine]] = None,
     add_learnings_to_context: bool = True,
-    compress_tool_results: bool = False,
+    compress_tool_results: Union[bool, CompressionManager] = False,
     compression_manager: Optional["CompressionManager"] = None,
     metadata: Optional[Dict[str, Any]] = None,
-    reasoning: bool = False,
+    reasoning: Union[bool, ReasoningConfig] = False,
     reasoning_model: Optional[Union[Model, str]] = None,
     reasoning_agent: Optional[Agent] = None,
     reasoning_min_steps: int = 1,
     reasoning_max_steps: int = 10,
-    followups: bool = False,
+    followups: Union[bool, FollowupConfig] = False,
     num_followups: int = 3,
     followup_model: Optional[Union[Model, str]] = None,
     stream: Optional[bool] = None,
@@ -171,6 +189,7 @@ def __init__(
     debug_mode: bool = False,
     debug_level: Literal[1, 2] = 1,
     show_members_responses: bool = False,
+    retry: Optional[RetryConfig] = None,
     retries: int = 0,
     delay_between_retries: int = 1,
     exponential_backoff: bool = False,
@@ -235,23 +254,35 @@ def __init__(
     team.resolve_in_context = resolve_in_context
     team.cache_session = cache_session
 
-    team.add_history_to_context = add_history_to_context
-    team.num_history_runs = num_history_runs
-    team.num_history_messages = num_history_messages
+    _history = resolve_history_settings(
+        history,
+        add_history_to_context=add_history_to_context,
+        num_history_runs=num_history_runs,
+        num_history_messages=num_history_messages,
+        max_tool_calls_from_history=max_tool_calls_from_history,
+        store_history_messages=store_history_messages,
+        read_chat_history=read_chat_history,
+        search_past_sessions=search_past_sessions,
+        num_past_sessions_to_search=num_past_sessions_to_search,
+        num_past_session_runs_in_search=num_past_session_runs_in_search,
+    )
+    team.add_history_to_context = _history.add_to_context
+    team.num_history_runs = _history.num_runs
+    team.num_history_messages = _history.num_messages
     if team.num_history_messages is not None and team.num_history_runs is not None:
         log_warning("num_history_messages and num_history_runs cannot be set at the same time. Using num_history_runs.")
         team.num_history_messages = None
     if team.num_history_messages is None and team.num_history_runs is None:
         team.num_history_runs = 3
 
-    team.max_tool_calls_from_history = max_tool_calls_from_history
+    team.max_tool_calls_from_history = _history.max_tool_calls
 
     team.add_team_history_to_members = add_team_history_to_members
     team.num_team_history_runs = num_team_history_runs
 
-    team.search_past_sessions = search_past_sessions
-    team.num_past_sessions_to_search = num_past_sessions_to_search
-    team.num_past_session_runs_in_search = num_past_session_runs_in_search
+    team.search_past_sessions = _history.search_past_sessions
+    team.num_past_sessions_to_search = _history.num_past_sessions
+    team.num_past_session_runs_in_search = _history.num_past_session_runs
 
     team.description = description
     team.instructions = instructions
@@ -285,11 +316,11 @@ def __init__(
     team.get_member_information_tool = get_member_information_tool
     team.search_knowledge = search_knowledge
     team.add_search_knowledge_instructions = add_search_knowledge_instructions
-    team.read_chat_history = read_chat_history
+    team.read_chat_history = _history.read_chat_history
 
     team.store_media = store_media
     team.store_tool_messages = store_tool_messages
-    team.store_history_messages = store_history_messages
+    team.store_history_messages = _history.store_messages
     team.send_media_to_model = send_media_to_model
 
     team.skills = skills
@@ -320,35 +351,58 @@ def __init__(
     team.db = db
     team.checkpoint = checkpoint
 
-    team.enable_agentic_memory = enable_agentic_memory
-    team.update_memory_on_run = update_memory_on_run
+    _memory = resolve_memory_settings(
+        memory,
+        memory_manager=memory_manager,
+        enable_agentic_memory=enable_agentic_memory,
+        update_memory_on_run=update_memory_on_run,
+        add_memories_to_context=add_memories_to_context,
+    )
+    team.enable_agentic_memory = _memory.agentic
+    team.update_memory_on_run = _memory.update_on_run
 
-    team.add_memories_to_context = add_memories_to_context
-    team.memory_manager = memory_manager
-    team.enable_session_summaries = enable_session_summaries
-    team.session_summary_manager = session_summary_manager
-    team.add_session_summary_to_context = add_session_summary_to_context
+    team.add_memories_to_context = _memory.add_to_context
+    team.memory_manager = _memory.manager
+
+    _summaries_enabled, _summaries = resolve_session_summary_settings(
+        session_summaries,
+        enable_session_summaries=enable_session_summaries,
+        session_summary_manager=session_summary_manager,
+        add_session_summary_to_context=add_session_summary_to_context,
+    )
+    team.enable_session_summaries = _summaries_enabled
+    team.session_summary_manager = _summaries.manager
+    team.add_session_summary_to_context = _summaries.add_to_context
 
     team.learning = learning
     team.add_learnings_to_context = add_learnings_to_context
 
     # Context compression settings
-    team.compress_tool_results = compress_tool_results
-    team.compression_manager = compression_manager
+    team.compress_tool_results, team.compression_manager = resolve_compression_settings(
+        compress_tool_results, compression_manager=compression_manager
+    )
 
     team.metadata = metadata
 
-    team.reasoning = reasoning
-    team.reasoning_model = reasoning_model  # type: ignore[assignment]
-    team.reasoning_agent = reasoning_agent
-    team.reasoning_min_steps = reasoning_min_steps
-    team.reasoning_max_steps = reasoning_max_steps
+    team.reasoning, _reasoning = resolve_reasoning_settings(
+        reasoning,
+        reasoning_model=reasoning_model,
+        reasoning_agent=reasoning_agent,
+        reasoning_min_steps=reasoning_min_steps,
+        reasoning_max_steps=reasoning_max_steps,
+    )
+    team.reasoning_model = _reasoning.model  # type: ignore[assignment]
+    team.reasoning_agent = _reasoning.agent
+    team.reasoning_min_steps = _reasoning.min_steps
+    team.reasoning_max_steps = _reasoning.max_steps
 
-    team.followups = followups
-    if num_followups < 1:
+    team.followups, _followups = resolve_followup_settings(
+        followups, num_followups=num_followups, followup_model=followup_model
+    )
+    if _followups.num < 1:
         raise ValueError("num_followups must be at least 1")
-    team.num_followups = num_followups
-    team.followup_model = followup_model  # type: ignore[assignment]
+    team.num_followups = _followups.num
+    team.followup_model = _followups.model  # type: ignore[assignment]
 
     team.stream = stream
     team.stream_events = stream_events
@@ -371,9 +425,15 @@ def __init__(
     team.debug_level = debug_level
     team.show_members_responses = show_members_responses
 
-    team.retries = retries
-    team.delay_between_retries = delay_between_retries
-    team.exponential_backoff = exponential_backoff
+    _retry = resolve_retry_settings(
+        retry,
+        retries=retries,
+        delay_between_retries=delay_between_retries,
+        exponential_backoff=exponential_backoff,
+    )
+    team.retries = _retry.retries
+    team.delay_between_retries = _retry.delay
+    team.exponential_backoff = _retry.exponential_backoff
 
     team.telemetry = telemetry
 

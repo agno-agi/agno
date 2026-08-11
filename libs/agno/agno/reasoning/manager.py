@@ -75,7 +75,7 @@ class ReasoningEvent:
 
 
 @dataclass
-class ReasoningConfig:
+class ReasoningManagerConfig:
     """Configuration for reasoning operations."""
 
     reasoning_model: Optional[Model] = None
@@ -111,7 +111,7 @@ class ReasoningManager:
     and default Chain-of-Thought reasoning with a clean, unified interface.
     """
 
-    def __init__(self, config: ReasoningConfig):
+    def __init__(self, config: ReasoningManagerConfig):
         self.config = config
         self._reasoning_agent: Optional["Agent"] = None
         self._model_type: Optional[str] = None
