@@ -75,6 +75,7 @@ async def handle_workflow_via_websocket(
         session_id = message.get("session_id")
         user_message = message.get("message", "")
         user_id = message.get("user_id")
+        version = message.get("version")
         factory_input = message.get("factory_input")
 
         # Defense-in-depth: if the caller authenticated via JWT, ensure user_id
@@ -125,6 +126,7 @@ async def handle_workflow_via_websocket(
                     workflow_id=workflow_id,
                     workflows=os.workflows,
                     db=os.db,
+                    version=version,
                     registry=os.registry,
                     create_fresh=True,
                     ctx=ctx,
@@ -135,7 +137,12 @@ async def handle_workflow_via_websocket(
         else:
             try:
                 workflow = get_workflow_by_id(
-                    workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+                    workflow_id=workflow_id,
+                    workflows=os.workflows,
+                    db=os.db,
+                    version=version,
+                    registry=os.registry,
+                    create_fresh=True,
                 )
             except Exception as e:
                 await websocket.send_text(json.dumps({"event": "error", "error": f"Error resolving workflow: {e}"}))
