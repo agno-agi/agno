@@ -104,11 +104,24 @@ def test_build_filter_condition(surrealdb_vector):
     result = surrealdb_vector._build_filter_condition(None)
     assert result == ""
 
-    # Test with filters
+    # Test with filters. Keys are BOUND, not interpolated: splicing a caller's
+    # key into the query text lets ``{"name OR true": ...}`` disjoin the owner
+    # scope away and return every owner's rows. See
+    # test_surrealdb_user_isolation.TestFilterKeyCannotEscapeTheOwnerScope.
     filters = {"cuisine": "Thai", "type": "soup"}
     result = surrealdb_vector._build_filter_condition(filters)
-    assert "AND meta_data.cuisine = $cuisine" in result
-    assert "AND meta_data.type = $type" in result
+    assert "AND meta_data[$filter_key_0] = $filter_value_0" in result
+    assert "AND meta_data[$filter_key_1] = $filter_value_1" in result
+    assert "cuisine" not in result
+    assert "type" not in result
+
+    params = surrealdb_vector._build_filter_params(filters)
+    assert params == {
+        "filter_key_0": "cuisine",
+        "filter_value_0": "Thai",
+        "filter_key_1": "type",
+        "filter_value_1": "soup",
+    }
 
 
 def test_create(surrealdb_vector, mock_surrealdb_client):

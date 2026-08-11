@@ -35,6 +35,7 @@ from agno.utils.agent import (
     execute_system_message,
 )
 from agno.utils.common import is_typed_dict
+from agno.utils.knowledge import get_user_id_kwarg
 from agno.utils.log import log_debug, log_warning
 from agno.utils.message import filter_tool_calls, get_text_from_message
 from agno.utils.prompts import get_json_output_prompt, get_response_model_format_prompt
@@ -450,9 +451,12 @@ def get_system_message(
     if _resolved_knowledge is not None and agent.search_knowledge and agent.add_search_knowledge_instructions:
         build_context_fn = getattr(_resolved_knowledge, "build_context", None)
         if callable(build_context_fn):
-            knowledge_context = build_context_fn(
-                enable_agentic_filters=agent.enable_agentic_knowledge_filters,
+            # The filter keys rendered into the prompt come from stored content, so scope them like retrieval
+            build_context_kwargs: Dict[str, Any] = {"enable_agentic_filters": agent.enable_agentic_knowledge_filters}
+            build_context_kwargs.update(
+                get_user_id_kwarg(build_context_fn, run_context.user_id if run_context else agent.user_id)
             )
+            knowledge_context = build_context_fn(**build_context_kwargs)
             if knowledge_context is not None:
                 system_message_content += knowledge_context + "\n"
 
@@ -810,16 +814,17 @@ async def aget_system_message(
         # Prefer async version if available for async databases
         abuild_context_fn = getattr(_resolved_knowledge, "abuild_context", None)
         build_context_fn = getattr(_resolved_knowledge, "build_context", None)
+        scope_uid = run_context.user_id if run_context else agent.user_id
         if callable(abuild_context_fn):
-            knowledge_context = await abuild_context_fn(
-                enable_agentic_filters=agent.enable_agentic_knowledge_filters,
-            )
+            abuild_context_kwargs: Dict[str, Any] = {"enable_agentic_filters": agent.enable_agentic_knowledge_filters}
+            abuild_context_kwargs.update(get_user_id_kwarg(abuild_context_fn, scope_uid))
+            knowledge_context = await abuild_context_fn(**abuild_context_kwargs)
             if knowledge_context is not None:
                 system_message_content += knowledge_context + "\n"
         elif callable(build_context_fn):
-            knowledge_context = build_context_fn(
-                enable_agentic_filters=agent.enable_agentic_knowledge_filters,
-            )
+            build_context_kwargs: Dict[str, Any] = {"enable_agentic_filters": agent.enable_agentic_knowledge_filters}
+            build_context_kwargs.update(get_user_id_kwarg(build_context_fn, scope_uid))
+            knowledge_context = build_context_fn(**build_context_kwargs)
             if knowledge_context is not None:
                 system_message_content += knowledge_context + "\n"
 
@@ -1822,7 +1827,13 @@ def get_relevant_docs_from_knowledge(
     # Validate the filters against known valid filter keys
     if resolved_knowledge is not None and filters is not None:
         if validate_filters:
-            valid_filters, invalid_keys = resolved_knowledge.validate_filters(filters)  # type: ignore
+            validate_kwargs: Dict[str, Any] = {}
+            validate_kwargs.update(
+                get_user_id_kwarg(
+                    resolved_knowledge.validate_filters, run_context.user_id if run_context else agent.user_id
+                )  # type: ignore
+            )
+            valid_filters, invalid_keys = resolved_knowledge.validate_filters(filters, **validate_kwargs)  # type: ignore
 
             # Warn about invalid filter keys
             if invalid_keys:
@@ -1854,6 +1865,13 @@ def get_relevant_docs_from_knowledge(
                 # Backward compatibility: support dependencies parameter
                 knowledge_retriever_kwargs["dependencies"] = dependencies
             knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
+            # Applied after the **kwargs merge: the owner comes from the run context, so caller kwargs must not win
+            knowledge_retriever_kwargs.update(
+                get_user_id_kwarg(
+                    agent.knowledge_retriever,
+                    run_context.user_id if run_context else agent.user_id,
+                )
+            )
             return agent.knowledge_retriever(**knowledge_retriever_kwargs)
         except Exception as e:
             log_warning(f"Knowledge retriever failed: {str(e)}")
@@ -1874,7 +1892,14 @@ def get_relevant_docs_from_knowledge(
             num_documents = getattr(resolved_knowledge, "max_results", 10)
 
         log_debug(f"Retrieving from knowledge base with filters: {filters}")
-        relevant_docs: List[Document] = retrieve_fn(query=query, max_results=num_documents, filters=filters)
+        # Owner scope comes from the run context; None is unscoped, see the Knowledge.search docstring
+        retrieve_kwargs: Dict[str, Any] = {
+            "query": query,
+            "max_results": num_documents,
+            "filters": filters,
+        }
+        retrieve_kwargs.update(get_user_id_kwarg(retrieve_fn, run_context.user_id if run_context else agent.user_id))
+        relevant_docs: List[Document] = retrieve_fn(**retrieve_kwargs)
 
         if not relevant_docs or len(relevant_docs) == 0:
             log_debug("No relevant documents found for query")
@@ -1909,7 +1934,13 @@ async def aget_relevant_docs_from_knowledge(
     # Validate the filters against known valid filter keys
     if resolved_knowledge is not None and filters is not None:
         if validate_filters:
-            valid_filters, invalid_keys = await resolved_knowledge.avalidate_filters(filters)  # type: ignore
+            avalidate_kwargs: Dict[str, Any] = {}
+            avalidate_kwargs.update(
+                get_user_id_kwarg(
+                    resolved_knowledge.avalidate_filters, run_context.user_id if run_context else agent.user_id
+                )  # type: ignore
+            )
+            valid_filters, invalid_keys = await resolved_knowledge.avalidate_filters(filters, **avalidate_kwargs)  # type: ignore
 
             # Warn about invalid filter keys
             if invalid_keys:  # type: ignore
@@ -1940,6 +1971,13 @@ async def aget_relevant_docs_from_knowledge(
                 # Backward compatibility: support dependencies parameter
                 knowledge_retriever_kwargs["dependencies"] = dependencies
             knowledge_retriever_kwargs.update({"query": query, "num_documents": num_documents, **kwargs})
+            # Applied after the **kwargs merge: the owner comes from the run context, so caller kwargs must not win
+            knowledge_retriever_kwargs.update(
+                get_user_id_kwarg(
+                    agent.knowledge_retriever,
+                    run_context.user_id if run_context else agent.user_id,
+                )
+            )
             result = agent.knowledge_retriever(**knowledge_retriever_kwargs)
 
             if isawaitable(result):
@@ -1968,10 +2006,20 @@ async def aget_relevant_docs_from_knowledge(
 
         log_debug(f"Retrieving from knowledge base with filters: {filters}")
 
+        # See the sync variant above
+        scope_user_id = run_context.user_id if run_context else agent.user_id
+        retrieve_kwargs: Dict[str, Any] = {
+            "query": query,
+            "max_results": num_documents,
+            "filters": filters,
+        }
+
         if callable(aretrieve_fn):
-            relevant_docs: List[Document] = await aretrieve_fn(query=query, max_results=num_documents, filters=filters)
+            retrieve_kwargs.update(get_user_id_kwarg(aretrieve_fn, scope_user_id))
+            relevant_docs: List[Document] = await aretrieve_fn(**retrieve_kwargs)
         elif callable(retrieve_fn):
-            relevant_docs = retrieve_fn(query=query, max_results=num_documents, filters=filters)
+            retrieve_kwargs.update(get_user_id_kwarg(retrieve_fn, scope_user_id))
+            relevant_docs = retrieve_fn(**retrieve_kwargs)
         else:
             return None
 

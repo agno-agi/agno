@@ -877,6 +877,7 @@ class BaseDb(ABC):
         offset: int = 0,
         exclude_component_ids: Optional[Set[str]] = None,
         user_id: Optional[str] = None,
+        name: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List components with pagination.
 
@@ -887,6 +888,8 @@ class BaseDb(ABC):
             offset: Number of items to skip.
             exclude_component_ids: Component IDs to exclude from results.
             user_id: If set, only list components owned by this user.
+            name: Exact-match filter on the component name; the returned total
+                counts the filtered set.
 
         Returns:
             Tuple of (list of component dicts, total count).

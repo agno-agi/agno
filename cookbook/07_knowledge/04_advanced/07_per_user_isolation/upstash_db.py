@@ -7,7 +7,8 @@ without one are shared with everyone.
 
 Upstash stores the owner in each vector's metadata; shared chunks omit the
 field and scoped reads filter user_id = X OR HAS NOT FIELD user_id. The Upstash
-wrapper has no async lifecycle methods, so this demo runs the sync path.
+wrapper raises NotImplementedError from async_search, so Knowledge.asearch falls
+back to the sync call with the owner intact.
 
 - Search as Alice: her chunks plus shared content, never Bob's
 - Search as Bob: his chunks plus shared content, never Alice's
@@ -21,13 +22,16 @@ Requirements:
 - OPENAI_API_KEY
 """
 
+import asyncio
 import time
 from os import getenv
 from typing import List
 
+from agno.agent import Agent
 from agno.knowledge.document import Document
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
+from agno.models.openai import OpenAIResponses
 from agno.vectordb.upstashdb import UpstashVectorDb
 
 # ---------------------------------------------------------------------------
@@ -74,32 +78,32 @@ knowledge = Knowledge(
 
 if __name__ == "__main__":
 
-    def main() -> None:
+    async def main() -> None:
         # Alice and Bob upload private docs; the last upload has no user_id,
         # which makes it shared / org-wide content.
-        knowledge.insert(
+        await knowledge.ainsert(
             name="alice_salary",
             text_content=ALICE_SALARY,
             user_id="alice",
         )
-        knowledge.insert(
+        await knowledge.ainsert(
             name="bob_salary",
             text_content=BOB_SALARY,
             user_id="bob",
         )
-        knowledge.insert(
+        await knowledge.ainsert(
             name="company_holidays",
             text_content=HOLIDAYS,
         )
 
         # Upstash upserts are eventually consistent; let them settle.
-        time.sleep(5)
+        await asyncio.sleep(5)
 
         print("\n" + "=" * 60)
         print("SCOPED SEARCH: three callers, one corpus")
         print("=" * 60 + "\n")
 
-        alice_view = knowledge.search(query="salary", user_id="alice")
+        alice_view = await knowledge.asearch(query="salary", user_id="alice")
         show("Alice (user_id='alice')", alice_view)
         alice_text = " ".join(d.content for d in alice_view)
         assert "180,000" in alice_text, "Alice cannot retrieve her own document"
@@ -110,7 +114,7 @@ if __name__ == "__main__":
             "Isolation broken: Alice's scoped view leaked Bob's salary"
         )
 
-        bob_view = knowledge.search(query="salary", user_id="bob")
+        bob_view = await knowledge.asearch(query="salary", user_id="bob")
         show("Bob (user_id='bob')", bob_view)
         bob_text = " ".join(d.content for d in bob_view)
         assert "215,000" in bob_text, "Bob cannot retrieve his own document"
@@ -121,7 +125,7 @@ if __name__ == "__main__":
             "Isolation broken: Bob's scoped view leaked Alice's salary"
         )
 
-        admin_view = knowledge.search(query="salary", user_id=None)
+        admin_view = await knowledge.asearch(query="salary", user_id=None)
         show("Admin (user_id=None)", admin_view)
         admin_text = " ".join(d.content for d in admin_view)
         for expected in ("180,000", "215,000", "January 1"):
@@ -134,6 +138,50 @@ if __name__ == "__main__":
         print("Alice and Bob each see their own chunk plus the shared one.")
         print("Admin sees the whole corpus.")
 
+        print("\n" + "=" * 60)
+        print("AGENT-MEDIATED RETRIEVAL: the owner has to survive the handoff")
+        print("=" * 60 + "\n")
+
+        # Everything above calls Knowledge directly. An application does not -
+        # it runs an agent, and the owner has to travel from the run context
+        # through the search tool into the vector DB. A dropped user_id becomes
+        # None, which is the admin view, so a broken handoff leaks silently
+        # instead of raising.
+        alice_agent = Agent(
+            name="Alice's Assistant",
+            model=OpenAIResponses(id="gpt-5.5"),
+            knowledge=knowledge,
+            search_knowledge=True,
+            user_id="alice",
+            instructions=[
+                "Answer questions using ONLY the knowledge you can retrieve.",
+                "If you don't know, say so - do not invent salary figures.",
+            ],
+            markdown=True,
+        )
+
+        response = await alice_agent.arun("What is Bob's salary?")
+        print("Alice's agent on 'What is Bob's salary?':")
+        print(response.content)
+
+        # Assert on what retrieval actually returned, not on the model's prose:
+        # the references are the deterministic record of the isolation boundary.
+        retrieved = " ".join(
+            item["content"]
+            for ref in (response.references or [])
+            for item in (ref.references or [])
+            if isinstance(item, dict) and item.get("content")
+        )
+        # Guard against a vacuous pass: empty references mean the agent never searched
+        assert retrieved, (
+            "Retrieval returned no documents, so the isolation check below would pass on nothing"
+        )
+        assert "215,000" not in retrieved, (
+            "Isolation broken: Alice's agent retrieved Bob's salary. The owner was "
+            "dropped between the run context and the vector DB, so retrieval ran "
+            "unscoped (user_id=None, the admin view)."
+        )
+        print("\nisolation holds: Bob's salary never reached Alice's agent")
         print("\nDone.")
 
-    main()
+    asyncio.run(main())

@@ -1,7 +1,7 @@
 from typing import Any, Dict, List, Optional, Union
 
 from agno.filters import FilterExpr
-from agno.utils.log import log_info
+from agno.utils.log import log_info, log_warning
 
 
 def get_agentic_or_user_search_filters(
@@ -34,3 +34,32 @@ def get_agentic_or_user_search_filters(
 
     log_info(f"Filters used by Agent: {search_filters}")
     return search_filters or {}
+
+
+def get_user_id_kwarg(fn: Any, user_id: Optional[str]) -> Dict[str, Any]:
+    """``{"user_id": ...}`` only when the callee accepts it.
+
+    ``KnowledgeProtocol`` documents retrieval as ``retrieve(self, query, **kwargs)``,
+    so ``**kwargs`` counts as accepting it. Dropping the owner is not an error, it
+    widens the call to every owner's documents, so it warns.
+
+    Args:
+        fn: The callable the kwarg will be passed to.
+        user_id: The owner to scope the call to.
+
+    Returns:
+        Dict[str, Any]: {"user_id": user_id} when the callee accepts it, empty otherwise.
+    """
+    import inspect
+
+    try:
+        parameters = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        parameters = {}  # type: ignore[assignment]
+    if "user_id" in parameters or any(p.kind == p.VAR_KEYWORD for p in parameters.values()):
+        return {"user_id": user_id}
+    if user_id is not None:
+        log_warning(
+            f"{getattr(fn, '__qualname__', fn)} does not accept user_id, so this call is not scoped to a single owner."
+        )
+    return {}

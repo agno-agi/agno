@@ -21,7 +21,7 @@ from pydantic import BaseModel
 
 from agno.db.base import BaseDb
 from agno.db.schemas.jobs import QueuedJob
-from agno.exceptions import InputCheckError, OutputCheckError
+from agno.exceptions import ComponentRehydrationError, InputCheckError, OutputCheckError
 from agno.factory import FactoryContextRequired
 from agno.os.auth import (
     INTERNAL_SCHEDULER_USER_ID,
@@ -34,7 +34,6 @@ from agno.os.job_queue import (
     acontinue_via_queue,
     aprepare_accepted_or_abort,
     araise_if_ticket_owns_continue,
-    asettle_paused_ticket,
     aticket_poll_fallback,
     normalize_idempotency_key,
     payload_is_queueable,
@@ -62,7 +61,7 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
-    acomplete_continue_stream,
+    afinalize_continue_stream,
     amark_continue_stream_running,
     find_factory_by_id,
     format_sse_event,
@@ -497,6 +496,8 @@ async def handle_workflow_subscription(
             # Run not in buffer - check database
             if workflow_id and session_id:
                 try:
+                    # Lenient: replay only reads stored events through the
+                    # workflow's db handle, never its resolved references.
                     workflow = get_workflow_by_id(
                         workflow_id=workflow_id,
                         workflows=os.workflows,
@@ -504,6 +505,7 @@ async def handle_workflow_subscription(
                         registry=os.registry,
                         create_fresh=True,
                         user_id=scoped_user_id,
+                        strict=False,
                     )
                 except FactoryContextRequired:
                     workflow = None
@@ -1073,14 +1075,21 @@ async def workflow_continue_response_streamer(
                     await workflow._apublish_stream_event(run_response_chunk, run_id)
                 yield format_sse_event(run_response_chunk)  # type: ignore
         finally:
-            # Final status from THIS run's row (never session.runs[-1]: an
-            # interleaved run on the same session would be a different run)
-            _final = await acomplete_continue_stream(workflow, run_id, session_id)
-            # Inline continue of a DURABLE paused run: terminalize the queue
-            # ticket too (paused tickets are retention-exempt and would
-            # otherwise say paused forever). CAS no-op for runs that never
-            # rode the queue or whose continuation is owned by a worker.
-            await asettle_paused_ticket(queue_worker, run_id, _final)
+            # Stream close + paused-ticket settle as one cancellation-proof
+            # unit; under cancellation the final status is KNOWN - see the
+            # agents twin for both hazards. Otherwise it resolves from THIS
+            # run's row, never session.runs[-1]
+            import sys
+
+            _exc = sys.exc_info()[0]
+            _cancelled = _exc is not None and issubclass(_exc, (asyncio.CancelledError, GeneratorExit))
+            await afinalize_continue_stream(
+                workflow,
+                run_id,
+                session_id,
+                queue_worker=queue_worker,
+                final_status=RunStatus.cancelled if _cancelled else None,
+            )
 
         # If the workflow re-paused, yield WorkflowPausedEvent as the new clean
         # snapshot event. Also yield the legacy "WorkflowRunOutput" event for
@@ -1379,7 +1388,15 @@ def get_workflow_router(
         if os.db and isinstance(os.db, BaseDb):
             from agno.workflow.workflow import get_workflows
 
-            for db_workflow in get_workflows(db=os.db, registry=os.registry, user_id=get_scoped_user_id(request)):
+            db_workflows = get_workflows(db=os.db, registry=os.registry, user_id=get_scoped_user_id(request))
+            if db_workflows:
+                # Apply the same RBAC filtering to DB-loaded workflows:
+                # without it, a caller whose scope excludes a workflow
+                # still saw its config here (the agents endpoint already
+                # filters)
+                if getattr(request.state, "authorization_enabled", False):
+                    db_workflows = filter_resources_by_access(request, db_workflows, "workflows")
+            for db_workflow in db_workflows or []:
                 try:
                     workflows.append(WorkflowSummaryResponse.from_workflow(workflow=db_workflow, is_component=True))
                 except Exception:
@@ -1435,6 +1452,8 @@ def get_workflow_router(
                 version=version,
                 user_id=get_scoped_user_id(request),
             )  # type: ignore[assignment]
+        except ComponentRehydrationError as rehydration_error:
+            raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
@@ -2060,20 +2079,15 @@ def get_workflow_router(
                 # streamed run's stream view must stop saying PAUSED once the
                 # continue settles - only_if_tracked leaves never-streamed
                 # runs alone.
-                await acomplete_continue_stream(
+                # Stream close + paused-ticket settle as one
+                # cancellation-proof unit (see the streaming twin)
+                await afinalize_continue_stream(
                     workflow,
                     run_id,
                     session_id,
+                    queue_worker=getattr(request.app.state, "queue_worker", None),
                     only_if_tracked=True,
                     final_status=getattr(run_response, "status", None),
-                )
-                # Inline continue of a DURABLE paused run: terminalize the
-                # queue ticket too (paused is retention-exempt; the CAS
-                # no-ops for never-queued or worker-owned runs)
-                await asettle_paused_ticket(
-                    getattr(request.app.state, "queue_worker", None),
-                    run_id,
-                    getattr(run_response, "status", None),
                 )
                 return run_response.to_dict()
             except InputCheckError as e:
@@ -2143,6 +2157,7 @@ def get_workflow_router(
                 registry=os.registry,
                 create_fresh=True,
                 user_id=get_scoped_user_id(request),
+                strict=False,
             )  # type: ignore[assignment]
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
@@ -2240,6 +2255,7 @@ def get_workflow_router(
             registry=os.registry,
             create_fresh=True,
             user_id=scoped_user_id,
+            strict=False,
         )
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
@@ -2314,6 +2330,7 @@ def get_workflow_router(
                     registry=os.registry,
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
+                    strict=False,
                 )  # type: ignore[assignment]
             except Exception as e:
                 logger.error(f"Error resolving workflow '{workflow_id}': {e}")
@@ -2410,6 +2427,7 @@ def get_workflow_router(
             user_id=user_id,
             session_id=session_id,
             factory_input=factory_input,
+            strict=False,
         )
         if isinstance(workflow, RemoteWorkflow):
             raise HTTPException(status_code=400, detail="Run listing is not supported for remote workflows")

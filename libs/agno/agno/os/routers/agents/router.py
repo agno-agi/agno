@@ -23,7 +23,13 @@ from agno.agent.protocol import AgentProtocol
 from agno.agent.remote import RemoteAgent
 from agno.db.base import BaseDb
 from agno.db.schemas.jobs import QueuedJob
-from agno.exceptions import InputCheckError, OutputCheckError, RunNotContinuableError, RunNotFoundError
+from agno.exceptions import (
+    ComponentRehydrationError,
+    InputCheckError,
+    OutputCheckError,
+    RunNotContinuableError,
+    RunNotFoundError,
+)
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.auth import (
@@ -39,7 +45,6 @@ from agno.os.job_queue import (
     acontinue_via_queue,
     aprepare_accepted_or_abort,
     araise_if_ticket_owns_continue,
-    asettle_paused_ticket,
     aticket_poll_fallback,
     normalize_idempotency_key,
     payload_is_queueable,
@@ -63,7 +68,7 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
-    acomplete_continue_stream,
+    afinalize_continue_stream,
     amark_continue_stream_running,
     classify_upload_file,
     find_factory_by_id,
@@ -285,13 +290,26 @@ async def agent_continue_response_streamer(
                 yield format_sse_event(run_response_chunk)  # type: ignore
         finally:
             if _sync_stream:
-                _final = await acomplete_continue_stream(agent, run_id, session_id)
-                # Inline continue of a DURABLE paused run: terminalize the
-                # queue ticket too (paused tickets are retention-exempt and
-                # would otherwise say paused forever). CAS no-op for runs
-                # that never rode the queue or whose continuation is owned
-                # by a worker.
-                await asettle_paused_ticket(queue_worker, run_id, _final)
+                # Stream close + paused-ticket settle as one cancellation-
+                # proof unit: a client disconnect cancels this generator,
+                # and an interrupted finalizer abandoned the stream view as
+                # RUNNING with no producer and left the ticket paused.
+                # Under cancellation the final status is KNOWN (the core
+                # cancels the inline run and persists cancelled from its own
+                # detached task) - passing it avoids racing that persist
+                # with a fresh session read, which could stamp a stale
+                # paused/running row's status onto the stream and ticket.
+                import sys
+
+                _exc = sys.exc_info()[0]
+                _cancelled = _exc is not None and issubclass(_exc, (asyncio.CancelledError, GeneratorExit))
+                await afinalize_continue_stream(
+                    agent,
+                    run_id,
+                    session_id,
+                    queue_worker=queue_worker,
+                    final_status=RunStatus.cancelled if _cancelled else None,
+                )
     except (InputCheckError, OutputCheckError) as e:
         error_response = RunErrorEvent(
             content=str(e),
@@ -1097,6 +1115,7 @@ def get_agent_router(
                 registry=os.registry,
                 create_fresh=True,
                 user_id=get_scoped_user_id(request),
+                strict=False,
             )  # type: ignore[assignment]
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
@@ -1163,6 +1182,14 @@ def get_agent_router(
             400: {"description": "Invalid JSON in tools field or invalid tool structure", "model": BadRequestResponse},
             403: {"description": "Run has a pending admin approval and cannot be continued by the user yet."},
             404: {"description": "Agent not found", "model": NotFoundResponse},
+            409: {
+                "description": (
+                    "Continuation conflict: a durable queue ticket owns this run's continuation "
+                    "(continue it with background=true), or a continuation is already queued or "
+                    "executing. Runs in any state can be continued - a COMPLETED run forks into "
+                    "a follow-up; RUNNING/ERROR runs resume."
+                ),
+            },
         },
         dependencies=[
             Depends(require_resource_access("agents", "run", "agent_id")),
@@ -1276,6 +1303,8 @@ def get_agent_router(
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
                 )  # type: ignore[assignment]
+            except ComponentRehydrationError as rehydration_error:
+                raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -1306,36 +1335,12 @@ def get_agent_router(
                 component_id=agent_id,
             )
 
-        # Fetch existing run once for validation and potential approval resolution
-        existing_run = None
-        if session_id and not isinstance(agent, RemoteAgent):
-            if hasattr(agent, "aget_run_output"):
-                existing_run = await agent.aget_run_output(
-                    run_id=run_id,
-                    session_id=session_id,
-                    user_id=scoped_user_id or user_id,
-                )
-
-        # Only allow /continue when the run is in a paused state. If running, continued, or errored, return 409.
-        if existing_run is not None:
-            is_paused = getattr(existing_run, "is_paused", False)
-            if not is_paused:
-                status = getattr(existing_run, "status", None)
-                _status_to_detail = {
-                    RunStatus.running: "run is already running",
-                    RunStatus.completed: "run is already continued",
-                    RunStatus.error: "run is already errored",
-                    RunStatus.cancelled: "run is already cancelled",
-                    RunStatus.pending: "run is already pending",
-                }
-                detail = _status_to_detail.get(
-                    status,  # type: ignore[arg-type]
-                    f"run is not paused (status={getattr(status, 'value', status)})",
-                )
-                raise HTTPException(
-                    status_code=409,
-                    detail=detail,
-                )
+        # No router-level status gate, deliberately: the continue dispatch
+        # handles EVERY run state itself - COMPLETED forks as a follow-up,
+        # RUNNING/ERROR resume, unresolved HITL raises its own precise
+        # error - so a paused-only check here can only block requests the
+        # core supports. Teams are equally ungated; workflows still refuse
+        # non-paused continues because their core requires PAUSED.
 
         # Convert tools dict to RunRequirement and ToolExecution objects if provided
         requirements = None
@@ -1563,20 +1568,15 @@ def get_agent_router(
                 # runs alone. Skipped for remote agents and fork/regenerate
                 # (they mint a NEW run_id).
                 if not isinstance(agent, RemoteAgent) and not fork and not regenerate:
-                    await acomplete_continue_stream(
+                    # Stream close + paused-ticket settle as one
+                    # cancellation-proof unit (see the streaming twin)
+                    await afinalize_continue_stream(
                         agent,
                         run_id,
                         session_id,
+                        queue_worker=getattr(request.app.state, "queue_worker", None),
                         only_if_tracked=True,
                         final_status=getattr(run_response_obj, "status", None),
-                    )
-                    # Inline continue of a DURABLE paused run: terminalize
-                    # the queue ticket too (paused is retention-exempt; the
-                    # CAS no-ops for never-queued or worker-owned runs)
-                    await asettle_paused_ticket(
-                        getattr(request.app.state, "queue_worker", None),
-                        run_id,
-                        getattr(run_response_obj, "status", None),
                     )
                 return run_response_obj.to_dict()
 
@@ -1624,6 +1624,7 @@ def get_agent_router(
                 registry=os.registry,
                 create_fresh=True,
                 user_id=get_scoped_user_id(request),
+                strict=False,
             )
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
@@ -1810,6 +1811,8 @@ def get_agent_router(
                 create_fresh=True,
                 user_id=get_scoped_user_id(request),
             )  # type: ignore[assignment]
+        except ComponentRehydrationError as rehydration_error:
+            raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
@@ -1868,6 +1871,7 @@ def get_agent_router(
                     registry=os.registry,
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
+                    strict=False,
                 )  # type: ignore[assignment]
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
@@ -1955,6 +1959,7 @@ def get_agent_router(
                     registry=os.registry,
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
+                    strict=False
                 )  # type: ignore[assignment]
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
@@ -2021,6 +2026,7 @@ def get_agent_router(
                     registry=os.registry,
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
+                    strict=False
                 )  # type: ignore[assignment]
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
@@ -2120,6 +2126,7 @@ def get_agent_router(
             registry=os.registry,
             create_fresh=True,
             user_id=get_scoped_user_id(request),
+            strict=False
         )
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
@@ -2183,6 +2190,7 @@ def get_agent_router(
                     registry=os.registry,
                     create_fresh=True,
                     user_id=get_scoped_user_id(request),
+                    strict=False
                 )  # type: ignore[assignment]
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")

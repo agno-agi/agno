@@ -1329,7 +1329,8 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                     search_types=search_types,
                 )
             )
-        filters = await knowledge.aget_valid_filters()
+        # Filter key names are content, so scope them with the same gate the other routes use
+        filters = await knowledge.aget_valid_filters(user_id=get_scoped_user_id(request))
 
         # Get remote content sources if available
         remote_content_sources = None
