@@ -299,7 +299,10 @@ class Team:
     parse_response: bool = True
 
     # --- History ---
-    # Enable the agent to manage memories of the user
+    # Enable the agent to manage memories of the user.
+    # Do not combine with a LearningMachine that has a user_memory store: both
+    # register a tool named update_user_memory, tool parsing keeps the first
+    # name it sees, and the learning store's tool is dropped without a word.
     enable_agentic_memory: bool = False
     # If True, the agent creates/updates user memories at the end of runs
     update_memory_on_run: bool = False
@@ -1442,6 +1445,7 @@ class Team:
         files: Optional[Sequence[File]] = None,
         tools: Optional[List[Union[Function, dict]]] = None,
         add_session_state_to_context: Optional[bool] = None,
+        input: Optional[Any] = None,
     ) -> Optional[Message]:
         return _messages.get_system_message(
             self,
@@ -1453,6 +1457,7 @@ class Team:
             files=files,
             tools=tools,
             add_session_state_to_context=add_session_state_to_context,
+            input=input,
         )
 
     async def aget_system_message(
@@ -1465,6 +1470,7 @@ class Team:
         files: Optional[Sequence[File]] = None,
         tools: Optional[List[Union[Function, dict]]] = None,
         add_session_state_to_context: Optional[bool] = None,
+        input: Optional[Any] = None,
     ) -> Optional[Message]:
         return await _messages.aget_system_message(
             self,
@@ -1476,6 +1482,7 @@ class Team:
             files=files,
             tools=tools,
             add_session_state_to_context=add_session_state_to_context,
+            input=input,
         )
 
     ###########################################################################
@@ -1550,8 +1557,10 @@ class Team:
         data: Dict[str, Any],
         db: Optional["BaseDb"] = None,
         registry: Optional["Registry"] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+        strict: bool = False,
     ) -> "Team":
-        return _storage.from_dict(cls, data=data, db=db, registry=registry)
+        return _storage.from_dict(cls, data=data, db=db, registry=registry, links=links, strict=strict)
 
     def save(
         self,
@@ -1572,8 +1581,9 @@ class Team:
         registry: Optional["Registry"] = None,
         label: Optional[str] = None,
         version: Optional[int] = None,
+        strict: bool = False,
     ) -> Optional["Team"]:
-        return _storage.load(cls, id=id, db=db, registry=registry, label=label, version=version)
+        return _storage.load(cls, id=id, db=db, registry=registry, label=label, version=version, strict=strict)
 
     def delete(
         self,
@@ -1782,6 +1792,7 @@ def get_team_by_id(
     version: Optional[int] = None,
     label: Optional[str] = None,
     registry: Optional["Registry"] = None,
+    strict: bool = False,
 ) -> Optional["Team"]:
     """
     Get a Team by id from the database.
@@ -1797,10 +1808,17 @@ def get_team_by_id(
         version: Optional integer config version.
         label: Optional version_label.
         registry: Optional Registry for reconstructing unserializable components.
+        strict: If True, unresolvable members and registry references
+            raise ComponentRehydrationError; None strictly means the team was not found.
 
     Returns:
         Team instance or None.
+
+    Raises:
+        ComponentRehydrationError: If strict and a member or registry reference cannot be resolved.
     """
+    from agno.exceptions import ComponentRehydrationError
+
     try:
         row = db.get_config(component_id=id, version=version, label=label)
         if row is None:
@@ -1810,12 +1828,32 @@ def get_team_by_id(
         if cfg is None:
             raise ValueError(f"Invalid config found for team {id}")
 
-        team = Team.from_dict(cfg, db=db, registry=registry)
+        # Links for this config version carry the member versions pinned at
+        # save time, so members load at those versions like the graph loader.
+        # Adapters without link support load unpinned.
+        resolved_version = row.get("version")
+        try:
+            links = db.get_links(component_id=id, version=resolved_version) if resolved_version else []
+        except NotImplementedError:
+            links = []
+
+        team = Team.from_dict(cfg, db=db, registry=registry, links=links, strict=strict)
         # Ensure team.id is set to the component_id
         team.id = id
+        # Only fall back to the caller-provided db if the config didn't
+        # reconstruct one, matching Team.load.
+        if team.db is None:
+            if strict:
+                from agno.utils.db_fallback import require_db_fallback_matches
+
+                require_db_fallback_matches(cfg, db, "team", id)
+            team.db = db
 
         return team
 
+    except ComponentRehydrationError:
+        # A rehydration failure is not "team not found"; propagate it.
+        raise
     except Exception as e:
         log_error(f"Error loading Team {id} from database: {str(e)}")
         return None
@@ -1851,7 +1889,11 @@ def get_teams(
                     if team_config is not None:
                         if "id" not in team_config:
                             team_config["id"] = component_id
-                        team = Team.from_dict(team_config, db=db, registry=registry)
+                        # Lenient on purpose: listings must show degraded
+                        # components so they stay visible and fixable. Listings
+                        # also show members at their current version; the
+                        # per-version pin links are a detail-read concern.
+                        team = Team.from_dict(team_config, db=db, registry=registry, strict=False)
                         team.id = component_id
                         team._version = component.get("current_version")
                         team._stage = config.get("stage")

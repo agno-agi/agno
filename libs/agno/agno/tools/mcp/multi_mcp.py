@@ -46,6 +46,7 @@ class MultiMCPTools(Toolkit):
         urls: Optional[List[str]] = None,
         urls_transports: Optional[List[Literal["sse", "streamable-http"]]] = None,
         *,
+        name: Optional[str] = None,
         env: Optional[dict[str, str]] = None,
         server_params_list: Optional[
             list[Union[SSEClientParams, StdioServerParameters, StreamableHTTPClientParams]]
@@ -63,6 +64,8 @@ class MultiMCPTools(Toolkit):
         Initialize the MCP toolkit.
 
         Args:
+            name: The toolkit name. Defaults to "MultiMCPTools". Pass a distinct name when
+                registering multiple MultiMCPTools instances in one registry.
             commands: List of commands to run to start the servers. Should be used in conjunction with env.
             urls: List of URLs for SSE and/or Streamable HTTP endpoints.
             urls_transports: List of transports to use for the given URLs.
@@ -82,7 +85,7 @@ class MultiMCPTools(Toolkit):
             stacklevel=2,
         )
 
-        super().__init__(name="MultiMCPTools", **kwargs)
+        super().__init__(name=name or "MultiMCPTools", **kwargs)
 
         if urls_transports is not None:
             if "sse" in urls_transports:

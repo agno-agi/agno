@@ -496,7 +496,7 @@ class Model(ABC):
             return None
 
         try:
-            with open(cache_file, "r") as f:
+            with open(cache_file, "r", encoding="utf-8") as f:
                 cached_data = json.load(f)
 
             # Check TTL if set (None means no expiration)
@@ -518,7 +518,7 @@ class Model(ABC):
                 "is_streaming": is_streaming,
                 "result": result.to_dict(),
             }
-            with open(cache_file, "w") as f:
+            with open(cache_file, "w", encoding="utf-8") as f:
                 json.dump(cache_data, f)
         except Exception:
             pass
@@ -534,7 +534,7 @@ class Model(ABC):
         }
 
         try:
-            with open(cache_file, "w") as f:
+            with open(cache_file, "w", encoding="utf-8") as f:
                 json.dump(cache_data, f)
         except Exception:
             pass
@@ -2212,8 +2212,10 @@ class Model(ABC):
                                 else:
                                     function_call_output += str(item.content)
 
-                        # Yield the event itself to bubble it up
-                        yield item
+                        # Yield the event itself to bubble it up. The isinstance guards
+                        # above narrow item at runtime, but mypy cannot see through
+                        # tuple(get_args(...)).
+                        yield item  # type: ignore[misc]
 
                     else:
                         function_call_output += str(item)
@@ -2325,6 +2327,10 @@ class Model(ABC):
                 current_function_call_count += 1
                 # We have reached the function call limit, so we add an error result to the function call results
                 if current_function_call_count > function_call_limit:
+                    log_debug(
+                        f"Tool call limit ({function_call_limit}) reached. "
+                        f"Skipping: {fc.function.name} (call #{current_function_call_count})"
+                    )
                     function_call_results.append(self.create_tool_call_limit_error_result(fc))
                     continue
 
@@ -2520,6 +2526,10 @@ class Model(ABC):
                 current_function_call_count += 1
                 # We have reached the function call limit, so we add an error result to the function call results
                 if current_function_call_count > function_call_limit:
+                    log_debug(
+                        f"Tool call limit ({function_call_limit}) reached. "
+                        f"Skipping: {fc.function.name} (call #{current_function_call_count})"
+                    )
                     function_call_results.append(self.create_tool_call_limit_error_result(fc))
                     # Skip this function call
                     continue
@@ -3056,7 +3066,7 @@ class Model(ABC):
             # message with the media artifacts which throws error for some models
             media_message = Message(
                 role="user",
-                content="Take note of the following content",
+                content="The tool call above generated the attached media.",
                 images=all_images if all_images else None,
                 videos=all_videos if all_videos else None,
                 audio=all_audio if all_audio else None,

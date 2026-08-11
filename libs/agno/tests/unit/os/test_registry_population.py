@@ -466,7 +466,8 @@ class TestPopulateRegistryComponentsToolDedup:
 
         kept = [t for t in os.registry.tools if isinstance(t, DuckDuckGoTools)]
         assert len(kept) == 1 and kept[0] is first
-        assert os.registry._entrypoint_lookup["web_search"].__self__ is first
+        # The lookup stores the source Function; its entrypoint is bound to the kept instance
+        assert os.registry._entrypoint_lookup["web_search"].entrypoint.__self__ is first
 
     def test_toolkits_sharing_name_with_different_functions_both_kept(self):
         # Same name but different function sets are genuinely different tools and
@@ -525,42 +526,188 @@ class TestPopulateRegistryComponentsCacheInvalidation:
 
 
 class TestPopulateRegistryDedupLogging:
-    """Dedup chatter is suppressed for registries AgentOS auto-creates."""
+    """Dedup is an expected wiring step and must never log -- duplicate-skip chatter
+    on startup reads like a problem to users when nothing is wrong."""
 
-    def test_auto_created_registry_is_silent_on_duplicate(self, monkeypatch):
+    def test_dedup_is_silent_even_for_user_declared_registry(self, monkeypatch):
         import agno.registry.registry as registry_module
 
-        debugs = []
-        monkeypatch.setattr(registry_module, "log_debug", lambda msg, *a, **k: debugs.append(msg))
+        logged = []
+        monkeypatch.setattr(registry_module, "log_warning", lambda msg, *a, **k: logged.append(msg))
+        monkeypatch.setattr(registry_module, "log_debug", lambda msg, *a, **k: logged.append(msg), raising=False)
 
         class _NamedToolkit(Toolkit):
             def __init__(self):
                 super().__init__(name="shared_name", tools=[])
 
-        # No registry provided -> AgentOS auto-creates one; duplicates across the
-        # two agents are an internal wiring detail and must not be logged.
-        a = Agent(name="A1", id="a1", tools=[_NamedToolkit()], telemetry=False)
-        b = Agent(name="A2", id="a2", tools=[_NamedToolkit()], telemetry=False)
-        os = AgentOS(agents=[a, b], telemetry=False)
-
-        assert os.registry._emit_dedup_logs is False
-        assert not any("shared_name" in m for m in debugs)
-
-    def test_user_registry_logs_on_clash_with_primitive(self, monkeypatch):
-        import agno.registry.registry as registry_module
-
-        debugs = []
-        monkeypatch.setattr(registry_module, "log_debug", lambda msg, *a, **k: debugs.append(msg))
-
-        class _NamedToolkit(Toolkit):
-            def __init__(self):
-                super().__init__(name="shared_name", tools=[])
-
-        # User explicitly declares a registry; a primitive carrying a matching
-        # toolkit clashes with it, which is worth surfacing.
+        # A user-declared registry clashing with a primitive's toolkit, and an
+        # auto-created registry deduping across agents: both stay silent.
         registry = Registry(tools=[_NamedToolkit()])
         agent = Agent(name="A1", id="a1", tools=[_NamedToolkit()], telemetry=False)
-        os = AgentOS(agents=[agent], registry=registry, telemetry=False)
+        AgentOS(agents=[agent], registry=registry, telemetry=False)
 
-        assert os.registry._emit_dedup_logs is True
-        assert any("shared_name" in m for m in debugs)
+        a = Agent(name="A2", id="a2", tools=[_NamedToolkit()], telemetry=False)
+        b = Agent(name="A3", id="a3", tools=[_NamedToolkit()], telemetry=False)
+        AgentOS(agents=[a, b], telemetry=False)
+
+        assert not any("shared_name" in m for m in logged)
+
+
+class TestKnowledgeRouteScope:
+    def test_member_owned_knowledge_resolves_but_is_not_exposed_on_routes(self, tmp_path):
+        """The component walk mirrors member knowledge into the registry for
+        name resolution; only user-declared knowledge feeds the routes."""
+        from unittest.mock import MagicMock
+
+        from agno.db.sqlite import SqliteDb
+        from agno.knowledge.knowledge import Knowledge
+        from agno.team.team import Team
+
+        db = SqliteDb(db_file=str(tmp_path / "member_kb.db"))
+        member_kb = Knowledge(name="member-private-kb", contents_db=db, vector_db=MagicMock())
+        member = Agent(id="kb-member", name="Member", knowledge=member_kb, telemetry=False)
+        team = Team(id="kb-team", name="Team", members=[member], telemetry=False)
+
+        os = AgentOS(teams=[team], telemetry=False)
+        os.get_app()
+
+        assert os.registry is not None
+        assert os.registry.get_knowledge("member-private-kb") is member_kb
+        assert all(getattr(k, "name", None) != "member-private-kb" for k in os.knowledge_instances)
+
+
+class TestResyncLateRegistryKnowledge:
+    """Knowledge the user adds to the registry after construction becomes
+    route-visible on resync; OS-mirrored knowledge stays registry-only."""
+
+    def _os_with_early_kb(self, tmp_path):
+        early_kb = Knowledge(
+            name="early-kb",
+            contents_db=SqliteDb(id="early-db-id", db_file=str(tmp_path / "early.db")),
+            vector_db=MagicMock(),
+        )
+        registry = Registry(knowledge=[early_kb])
+        agent = Agent(id="rk-agent", name="A", telemetry=False)
+        os = AgentOS(agents=[agent], registry=registry, telemetry=False)
+        return os, registry
+
+    def test_late_registered_knowledge_is_consistent_across_registry_config_and_routes(self, tmp_path):
+        from fastapi.testclient import TestClient
+
+        os, registry = self._os_with_early_kb(tmp_path)
+        app = os.get_app()
+        client = TestClient(app, raise_server_exceptions=False)
+
+        late_db = SqliteDb(id="late-db-id", db_file=str(tmp_path / "late.db"))
+        late_kb = Knowledge(name="late-kb", contents_db=late_db, vector_db=MagicMock())
+
+        # Before late registration the knowledge routes do not serve the db.
+        assert client.get("/knowledge/content", params={"db_id": late_db.id}).status_code == 404
+
+        registry.add_knowledge(late_kb)
+        registry_names = {
+            item["name"] for item in client.get("/registry", params={"resource_type": "knowledge"}).json()["data"]
+        }
+        assert "late-kb" in registry_names  # visible on /registry immediately
+
+        os.resync(app)
+
+        # /config lists it beside the initially registered instance.
+        config_names = {item["name"] for item in client.get("/config").json()["knowledge"]["knowledge_instances"]}
+        assert {"early-kb", "late-kb"} <= config_names
+
+        # The rebuilt knowledge routes serve both contents dbs.
+        assert client.get("/knowledge/content", params={"db_id": late_db.id}).status_code == 200
+        assert len([k for k in os.knowledge_instances if getattr(k, "name", None) == "late-kb"]) == 1
+
+    def test_repeated_resyncs_do_not_duplicate_entries(self, tmp_path):
+        from fastapi.testclient import TestClient
+
+        os, registry = self._os_with_early_kb(tmp_path)
+        app = os.get_app()
+
+        late_kb = Knowledge(
+            name="late-kb",
+            contents_db=SqliteDb(id="late-db-id", db_file=str(tmp_path / "late.db")),
+            vector_db=MagicMock(),
+        )
+        registry.add_knowledge(late_kb)
+        os.resync(app)
+        os.resync(app)
+
+        names = [getattr(k, "name", None) for k in os.knowledge_instances]
+        assert names.count("early-kb") == 1
+        assert names.count("late-kb") == 1
+        assert [getattr(k, "name", None) for k in registry.knowledge].count("late-kb") == 1
+
+        client = TestClient(app, raise_server_exceptions=False)
+        config_names = [item["name"] for item in client.get("/config").json()["knowledge"]["knowledge_instances"]]
+        assert config_names.count("early-kb") == 1
+        assert config_names.count("late-kb") == 1
+
+    def test_component_mirrored_knowledge_stays_registry_only_across_resync(self, tmp_path):
+        member_kb = Knowledge(
+            name="member-private-kb", contents_db=SqliteDb(db_file=str(tmp_path / "member.db")), vector_db=MagicMock()
+        )
+        member = Agent(id="rk-member", name="Member", knowledge=member_kb, telemetry=False)
+        team = Team(id="rk-team", name="Team", members=[member], telemetry=False)
+
+        os = AgentOS(teams=[team], telemetry=False)
+        app = os.get_app()
+        os.resync(app)
+
+        assert os.registry is not None
+        assert os.registry.get_knowledge("member-private-kb") is member_kb
+        assert all(getattr(k, "name", None) != "member-private-kb" for k in os.knowledge_instances)
+
+
+class TestSharedRegistryKnowledgeProvenance:
+    """Mirror provenance lives on the Registry, so two AgentOS instances
+    sharing one registry cannot leak each other's component-owned knowledge."""
+
+    def test_another_os_mirror_is_not_exposed_by_this_os(self, tmp_path):
+        from fastapi.testclient import TestClient
+
+        registry = Registry()
+        os1 = AgentOS(agents=[Agent(id="sr-a1", name="A", telemetry=False)], registry=registry, telemetry=False)
+        app1 = os1.get_app()
+
+        member_kb = Knowledge(
+            name="member-private-kb",
+            contents_db=SqliteDb(id="member-db-id", db_file=str(tmp_path / "member.db")),
+            vector_db=MagicMock(),
+        )
+        member = Agent(id="sr-member", name="Member", knowledge=member_kb, telemetry=False)
+        team = Team(id="sr-team", name="Team", members=[member], telemetry=False)
+        os2 = AgentOS(teams=[team], registry=registry, telemetry=False)
+        os2.get_app()
+
+        # os2's sync mirrored the member kb into the SHARED registry.
+        assert registry.get_knowledge("member-private-kb") is member_kb
+
+        os1.resync(app1)
+
+        assert all(getattr(k, "name", None) != "member-private-kb" for k in os1.knowledge_instances)
+        client = TestClient(app1, raise_server_exceptions=False)
+        assert client.get("/knowledge/content", params={"db_id": "member-db-id"}).status_code == 404
+        config_names = [item["name"] for item in client.get("/config").json()["knowledge"]["knowledge_instances"]]
+        assert "member-private-kb" not in config_names
+
+    def test_explicit_registration_of_a_mirrored_instance_promotes_it(self, tmp_path):
+        registry = Registry()
+        member_kb = Knowledge(
+            name="member-private-kb",
+            contents_db=SqliteDb(id="member-db-id", db_file=str(tmp_path / "member.db")),
+            vector_db=MagicMock(),
+        )
+        member = Agent(id="pr-member", name="Member", knowledge=member_kb, telemetry=False)
+        team = Team(id="pr-team", name="Team", members=[member], telemetry=False)
+        os1 = AgentOS(teams=[team], registry=registry, telemetry=False)
+        app1 = os1.get_app()
+        assert all(getattr(k, "name", None) != "member-private-kb" for k in os1.knowledge_instances)
+
+        # The user registering the instance by hand is the grant a mirror is not.
+        registry.add_knowledge(member_kb)
+        os1.resync(app1)
+
+        assert any(getattr(k, "name", None) == "member-private-kb" for k in os1.knowledge_instances)

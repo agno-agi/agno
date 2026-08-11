@@ -1,8 +1,8 @@
 """
-Deepseek Plus Claude
-====================
+Groq Reasoning Plus Claude
+==========================
 
-Demonstrates this reasoning cookbook example.
+A Groq-hosted reasoning model thinks; Claude writes the answer.
 """
 
 from agno.agent import Agent
@@ -17,7 +17,7 @@ def run_example() -> None:
     deepseek_plus_claude = Agent(
         model=Claude(id="claude-3-7-sonnet-20250219"),
         reasoning_model=Groq(
-            id="qwen/qwen3-32b",
+            id="openai/gpt-oss-20b",
             temperature=0.6,
             max_tokens=1024,
             top_p=0.95,
