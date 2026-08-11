@@ -56,7 +56,7 @@ def clickhouse_db():
     async_client = AsyncMock()
     async_client.command.return_value = None
     async_client.query.return_value = _empty_result()
-    return Clickhouse(
+    db = Clickhouse(
         table_name="iso_tbl",
         host="localhost",
         database_name="iso_db",
@@ -64,6 +64,10 @@ def clickhouse_db():
         client=client,
         asyncclient=async_client,
     )
+    # The mocked client cannot answer the live-schema probe, and these tests
+    # model a migrated (v3) store — prime the owner-column gate accordingly.
+    db._owner_column_exists = True
+    return db
 
 
 def _insert_row(client):
