@@ -890,6 +890,56 @@ def test_tool_decorator_async_generator():
     assert async_gen_func.entrypoint is not None
 
 
+@pytest.mark.asyncio
+async def test_agent_registers_async_generator_tool_with_framework_parameter():
+    """A bare async-generator tool with an Agent parameter reaches the model."""
+    from inspect import isasyncgenfunction
+    from typing import AsyncIterator, Iterator
+
+    from agno.agent.agent import Agent
+    from agno.metrics import MessageMetrics
+    from agno.models.base import Model
+    from agno.models.response import ModelResponse
+
+    seen_tools = []
+    response = ModelResponse(content="ok", role="assistant", response_usage=MessageMetrics())
+
+    class RecordingModel(Model):
+        async def aresponse(self, *args, tools=None, **kwargs) -> ModelResponse:
+            seen_tools[:] = [candidate for candidate in tools or [] if isinstance(candidate, Function)]
+            return response
+
+        def invoke(self, *args, **kwargs) -> ModelResponse:
+            return response
+
+        async def ainvoke(self, *args, **kwargs) -> ModelResponse:
+            return response
+
+        def invoke_stream(self, *args, **kwargs) -> Iterator[ModelResponse]:
+            yield response
+
+        async def ainvoke_stream(self, *args, **kwargs) -> AsyncIterator[ModelResponse]:
+            yield response
+
+        def _parse_provider_response(self, provider_response: Any, **kwargs) -> ModelResponse:
+            return response
+
+        def _parse_provider_response_delta(self, response_delta: Any) -> ModelResponse:
+            return response
+
+    async def gen_tool(agent: Agent, msg: str):
+        yield f"{agent.name}: {msg}"
+
+    agent = Agent(name="host", model=RecordingModel(id="recording-model"), tools=[gen_tool])
+    run_output = await agent.arun("hello")
+
+    assert run_output.content == "ok"
+    assert [function.name for function in seen_tools] == ["gen_tool"]
+    assert set(seen_tools[0].parameters["properties"]) == {"msg"}
+    assert seen_tools[0].entrypoint is not None
+    assert isasyncgenfunction(seen_tools[0].entrypoint)
+
+
 def test_tool_decorator_invalid_config():
     """Test @tool decorator with invalid configuration."""
     with pytest.raises(ValueError, match="Invalid tool configuration arguments"):

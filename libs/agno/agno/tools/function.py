@@ -1310,29 +1310,6 @@ class Function(BaseModel):
 
         pydantic_version = _get_pydantic_version()
 
-        # Async generators need special handling: validate_call turns an `async def ... yield`
-        # into a plain function that returns an async_generator, which makes
-        # inspect.isasyncgenfunction return False. Downstream dispatch (models/base.py,
-        # FunctionCall.aexecute) uses that predicate to route the call, so we wrap the
-        # validated callable in an outer `async def ... yield` shim that preserves the
-        # async-generator identity while still coercing arguments through Pydantic.
-        if isasyncgenfunction(func):
-            if getattr(func, "_wrapped_for_validation", False):
-                return func
-            validated = validate_call(func, config=dict(arbitrary_types_allowed=True))  # type: ignore
-
-            @wraps(func)
-            async def async_gen_wrapper(*args, **kwargs):
-                inner = validated(*args, **kwargs)
-                try:
-                    async for item in inner:
-                        yield item
-                finally:
-                    await inner.aclose()
-
-            async_gen_wrapper._wrapped_for_validation = True  # type: ignore[attr-defined]
-            return async_gen_wrapper
-
         # Don't wrap coroutines with validate_call if pydantic version is less than 2.10.0
         if iscoroutinefunction(func) and pydantic_version < Version("2.10.0"):
             log_debug(
@@ -1377,6 +1354,27 @@ class Function(BaseModel):
                     return func
         except Exception:
             pass
+
+        # Async generators need special handling: validate_call turns an `async def ... yield`
+        # into a plain function that returns an async_generator, which makes
+        # inspect.isasyncgenfunction return False. Downstream dispatch (models/base.py,
+        # FunctionCall.aexecute) uses that predicate to route the call, so we wrap the
+        # validated callable in an outer `async def ... yield` shim that preserves the
+        # async-generator identity while still coercing arguments through Pydantic.
+        if isasyncgenfunction(func):
+            validated = validate_call(func, config=dict(arbitrary_types_allowed=True))  # type: ignore
+
+            @wraps(func)
+            async def async_gen_wrapper(*args, **kwargs):
+                inner = validated(*args, **kwargs)
+                try:
+                    async for item in inner:
+                        yield item
+                finally:
+                    await inner.aclose()
+
+            async_gen_wrapper._wrapped_for_validation = True  # type: ignore[attr-defined]
+            return async_gen_wrapper
 
         # Wrap the callable with validate_call
         wrapped = validate_call(func, config=dict(arbitrary_types_allowed=True))  # type: ignore
