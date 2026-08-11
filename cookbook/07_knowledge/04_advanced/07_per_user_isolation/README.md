@@ -7,6 +7,15 @@ plus the shared ones. `user_id=None` drops the scope - the admin view.
 
 Every example runs the same scenario against a different vector backend.
 
+Each one then repeats the check through an **agent**, which is how an
+application actually retrieves: `Agent(user_id="alice")` puts the owner on the
+run context, and it has to survive the hop into `search_knowledge_base` and
+down to the vector DB. That last hop is worth exercising explicitly - a
+dropped `user_id` becomes `None`, which is the admin view, so a broken handoff
+returns every user's chunks instead of raising. The agent section asserts on
+the documents retrieval returned (`RunOutput.references`) rather than on the
+model's prose, so the isolation check stays deterministic.
+
 ## Prerequisites
 
 1. Set `OPENAI_API_KEY`

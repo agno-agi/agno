@@ -42,9 +42,18 @@ class ResolvedRunOptions:
         dependencies_provided: bool = False,
         knowledge_filters_provided: bool = False,
         metadata_provided: bool = False,
+        user_id: Optional[str] = None,
     ) -> None:
         """Apply resolved options to run_context with precedence:
-        explicit args > existing run_context > resolved defaults."""
+        explicit args > existing run_context > resolved defaults.
+
+        ``user_id`` inverts this: an owner already on the run_context wins, so a
+        workflow step cannot re-own a run that arrived scoped to someone else.
+        """
+        # Fill the owner only when the run_context has none, so a caller-supplied owner still wins
+        if user_id is not None and run_context.user_id is None:
+            run_context.user_id = user_id
+
         if dependencies_provided:
             run_context.dependencies = self.dependencies
         elif run_context.dependencies is None:

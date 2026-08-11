@@ -23,8 +23,10 @@ Requirements:
 import asyncio
 from typing import List
 
+from agno.agent import Agent
 from agno.knowledge.document import Document
 from agno.knowledge.knowledge import Knowledge
+from agno.models.openai import OpenAIResponses
 from agno.vectordb.redis import RedisDB
 from agno.vectordb.search import SearchType
 
@@ -134,6 +136,50 @@ if __name__ == "__main__":
         print("Alice and Bob each see their own chunk plus the shared one.")
         print("Admin sees the whole corpus.")
 
+        print("\n" + "=" * 60)
+        print("AGENT-MEDIATED RETRIEVAL: the owner has to survive the handoff")
+        print("=" * 60 + "\n")
+
+        # Everything above calls Knowledge directly. An application does not -
+        # it runs an agent, and the owner has to travel from the run context
+        # through the search tool into the vector DB. A dropped user_id becomes
+        # None, which is the admin view, so a broken handoff leaks silently
+        # instead of raising.
+        alice_agent = Agent(
+            name="Alice's Assistant",
+            model=OpenAIResponses(id="gpt-5.5"),
+            knowledge=knowledge,
+            search_knowledge=True,
+            user_id="alice",
+            instructions=[
+                "Answer questions using ONLY the knowledge you can retrieve.",
+                "If you don't know, say so - do not invent salary figures.",
+            ],
+            markdown=True,
+        )
+
+        response = await alice_agent.arun("What is Bob's salary?")
+        print("Alice's agent on 'What is Bob's salary?':")
+        print(response.content)
+
+        # Assert on what retrieval actually returned, not on the model's prose:
+        # the references are the deterministic record of the isolation boundary.
+        retrieved = " ".join(
+            item["content"]
+            for ref in (response.references or [])
+            for item in (ref.references or [])
+            if isinstance(item, dict) and item.get("content")
+        )
+        # Guard against a vacuous pass: empty references mean the agent never searched
+        assert retrieved, (
+            "Retrieval returned no documents, so the isolation check below would pass on nothing"
+        )
+        assert "215,000" not in retrieved, (
+            "Isolation broken: Alice's agent retrieved Bob's salary. The owner was "
+            "dropped between the run context and the vector DB, so retrieval ran "
+            "unscoped (user_id=None, the admin view)."
+        )
+        print("\nisolation holds: Bob's salary never reached Alice's agent")
         print("\nDone.")
 
     asyncio.run(main())

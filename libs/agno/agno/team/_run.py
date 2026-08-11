@@ -1992,6 +1992,7 @@ def run_dispatch(
             dependencies_provided=dependencies_provided,
             knowledge_filters_provided=knowledge_filters_provided,
             metadata_provided=metadata_provided,
+            user_id=user_id,
         )
 
         # Resolve callable dependencies once before retry loop
@@ -4290,6 +4291,7 @@ def arun_dispatch(  # type: ignore
         dependencies_provided=dependencies_provided,
         knowledge_filters_provided=knowledge_filters_provided,
         metadata_provided=metadata_provided,
+        user_id=user_id,
     )
 
     # Configure the model for runs
@@ -5598,6 +5600,8 @@ def _member_continue_kwargs_from_run_context(run_context: Optional[RunContext]) 
         return {}
 
     kwargs: Dict[str, Any] = {}
+    if run_context.user_id is not None:
+        kwargs["user_id"] = run_context.user_id
     if run_context.dependencies is not None:
         kwargs["dependencies"] = run_context.dependencies
     if run_context.metadata is not None:
@@ -6416,6 +6420,20 @@ def _resolve_continue_from_team(
     raise ValueError("`continue_from` must be an integer message index, 'end', or 'last_user'.")
 
 
+def _resolve_continue_owner_team(
+    run_response: Optional["TeamRunOutput"],
+    *,
+    run_id: Optional[str],
+    session: Optional[TeamSession],
+) -> Optional[str]:
+    """Owner stored on the team run being continued."""
+    if run_response is not None:
+        return run_response.user_id
+    if session is not None:
+        return next((run.user_id for run in session.runs or [] if run.run_id == run_id), None)
+    return None
+
+
 def _normalize_regenerate_params_team(
     run_response: Optional["TeamRunOutput"],
     *,
@@ -6727,6 +6745,11 @@ def continue_run_dispatch(
     team_session = _read_or_create_session(team, session_id=session_id, user_id=user_id)
     _update_metadata(team, session=team_session)
 
+    # Fall back to the owner the run paused with, so the resumed half retrieves
+    # under the same scope as the first half
+    if user_id is None:
+        user_id = _resolve_continue_owner_team(run_response, run_id=run_id_resolved, session=team_session)
+
     # Load session state
     session_state = _load_session_state(team, session=team_session, session_state={})
 
@@ -6751,6 +6774,8 @@ def continue_run_dispatch(
         knowledge_filters=opts.knowledge_filters,
         metadata=opts.metadata,
     )
+    if user_id is not None and run_context.user_id is None:
+        run_context.user_id = user_id
     if dependencies is not None:
         run_context.dependencies = opts.dependencies
     elif run_context.dependencies is None:
@@ -8166,6 +8191,12 @@ def acontinue_run_dispatch(  # type: ignore
 
     session_id_resolved, user_id = _initialize_session(team, session_id=session_id_resolved, user_id=user_id)
 
+    # Fall back to the owner the run paused with, so the resumed half retrieves
+    # under the same scope as the first half. This dispatch reads no session, so
+    # a run_id-only resume has nothing to fall back to.
+    if user_id is None:
+        user_id = _resolve_continue_owner_team(run_response, run_id=run_id_resolved, session=None)
+
     # Initialize the Team
     team.initialize_team(debug_mode=debug_mode)
 
@@ -8190,6 +8221,8 @@ def acontinue_run_dispatch(  # type: ignore
         knowledge_filters=opts.knowledge_filters,
         metadata=opts.metadata,
     )
+    if user_id is not None and run_context.user_id is None:
+        run_context.user_id = user_id
     if dependencies is not None:
         run_context.dependencies = opts.dependencies
     elif run_context.dependencies is None:

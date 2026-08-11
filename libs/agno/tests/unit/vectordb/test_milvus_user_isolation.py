@@ -131,6 +131,14 @@ class TestWriteStampsOwner:
 class TestScopeExpressionBuilder:
     """The scope-expression builder is small enough to unit-test directly, without spinning the DB at all."""
 
+    def test_user_id_field_constant_is_user_id(self):
+        # The field name is baked into every persisted row and into the scope
+        # expression. If it drifts, retrieval silently stops matching what was
+        # written - and an unmatched scope reads as "no rows", not as an error.
+        from agno.vectordb.milvus.milvus import USER_ID_FIELD
+
+        assert USER_ID_FIELD == "user_id"
+
     def test_none_user_id_applies_no_scope(self, milvus_db):
         # user_id=None is the admin view: the metadata filter passes through unchanged.
         assert milvus_db._scoped_filter_expr(None, None) is None
