@@ -150,7 +150,8 @@ def register_member_drain_task(team_run_id: str, task: asyncio.Task) -> None:
 
 async def adrain_member_tasks(team_run_id: str, timeout: float = 5.0) -> None:
     """Await all in-flight delegate tasks for a team run, bounded by timeout."""
-    tasks = {t for t in _member_drain_tasks.get(team_run_id, set()) if not t.done()}
+    current_task = asyncio.current_task()
+    tasks = {t for t in _member_drain_tasks.get(team_run_id, set()) if not t.done() and t is not current_task}
     if not tasks:
         return
     try:
