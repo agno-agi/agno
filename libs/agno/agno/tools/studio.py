@@ -59,7 +59,7 @@ Persistence:
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Union
 
 from agno.run import RunContext
 from agno.tools.function import Function
@@ -142,6 +142,31 @@ class StudioTools(Toolkit):
         self.agents_list = agents_list
         self.teams_list = teams_list
         self.workflows_list = workflows_list
+        # Rehydration resolves code-defined references through the registry
+        # only; a component reachable solely via these live lists could be
+        # referenced at create time but never reload. Make the lists visible.
+        pending_mirrors: List[tuple] = []
+        for source, bucket, source_name in (
+            (agents_list, registry.agents, "agents_list"),
+            (teams_list, registry.teams, "teams_list"),
+        ):
+            for component in source or []:
+                component_id = getattr(component, "id", None)
+                if not component_id:
+                    continue
+                existing = next((entry for entry in bucket if getattr(entry, "id", None) == component_id), None)
+                if existing is None:
+                    pending_mirrors.append((bucket, component))
+                elif existing is not component:
+                    # Studio lookup prefers the explicit list; rehydration
+                    # resolves through the registry. Two distinct objects under
+                    # one id would build with one and reload as the other.
+                    raise ValueError(
+                        f"{source_name} and the registry define distinct components with id "
+                        f"'{component_id}'; pass the same object to both, or remove one."
+                    )
+        for bucket, component in pending_mirrors:
+            bucket.append(component)
         self.default_model_id = default_model_id
         self.default_num_history_runs = default_num_history_runs
 
@@ -1021,8 +1046,12 @@ class StudioTools(Toolkit):
             if model is None:
                 return json.dumps({"error": f"Model not found: {model_id or 'default'}"})
 
+            db = self._find_db(db_id)
+            if db is None:
+                message = f"Db not found: {db_id}" if db_id is not None else "StudioTools has no db configured."
+                return json.dumps({"error": message})
             try:
-                members, missing = self._resolve_members(member_ids)
+                members, missing = self._resolve_members(member_ids, target_db=db)
             except ValueError as e:
                 # Ambiguity and id-less refusals are validation of model input,
                 # not system failures: no traceback in the operator log.
@@ -1032,10 +1061,10 @@ class StudioTools(Toolkit):
             if not members:
                 return json.dumps({"error": "A team must have at least one member"})
 
-            db = self._find_db(db_id)
-            if db is None:
-                message = f"Db not found: {db_id}" if db_id is not None else "StudioTools has no db configured."
-                return json.dumps({"error": message})
+            try:
+                members, member_pins = self._bind_members_to_target_db(members, db)
+            except ValueError as e:
+                return json.dumps({"error": str(e)})
             team_id = self._unique_component_id(name, db)
             team = Team(
                 id=team_id,
@@ -1050,7 +1079,7 @@ class StudioTools(Toolkit):
                 add_datetime_to_context=add_datetime_to_context,
             )
 
-            version = _persist_only(team, db)
+            version = _persist_only(team, db, links=self._links_for_component(team, db=db, pinned_versions=member_pins))
             log_debug(f"StudioTools created team id={team_id} members={member_ids} version={version}")
             return json.dumps(
                 {
@@ -1090,14 +1119,18 @@ class StudioTools(Toolkit):
         from agno.workflow.workflow import Workflow
 
         try:
-            steps, err = self._build_steps(step_specs)
-            if err is not None:
-                return json.dumps({"error": err})
-
             db = self._find_db(db_id)
             if db is None:
                 message = f"Db not found: {db_id}" if db_id is not None else "StudioTools has no db configured."
                 return json.dumps({"error": message})
+            steps, err = self._build_steps(step_specs, fallback_db=db)
+            if err is not None:
+                return json.dumps({"error": err})
+
+            try:
+                step_pins = self._bind_steps_to_target_db(steps, db)
+            except ValueError as e:
+                return json.dumps({"error": str(e)})
             workflow_id = self._unique_component_id(name, db)
             workflow = Workflow(
                 id=workflow_id,
@@ -1107,7 +1140,9 @@ class StudioTools(Toolkit):
                 db=db,
             )
 
-            version = _persist_only(workflow, db)
+            version = _persist_only(
+                workflow, db, links=self._links_for_component(workflow, db=db, pinned_versions=step_pins)
+            )
             log_debug(f"StudioTools created workflow id={workflow_id} steps={len(steps)} version={version}")
             return json.dumps(
                 {
@@ -1211,7 +1246,12 @@ class StudioTools(Toolkit):
             if add_datetime_to_context is not None:
                 agent.add_datetime_to_context = add_datetime_to_context
 
-            result = self._save_edit(agent)
+            replaced_keys = set()
+            if tool_names is not None:
+                replaced_keys.add("tools")
+            if model_id is not None:
+                replaced_keys.add("model")
+            result = self._save_edit(agent, replaced_keys=replaced_keys)
             log_debug(f"StudioTools edited agent id={agent.id} result={result}")
             return json.dumps({"status": "edited", "id": getattr(agent, "id", None) or agent_id, **result})
         except Exception as e:
@@ -1277,6 +1317,7 @@ class StudioTools(Toolkit):
             return json.dumps({"error": f"Team not found: {team_id}"})
 
         try:
+            replaced_pins: Optional[Dict[str, int]] = None
             team = team.deep_copy()
             if getattr(team, "id", None) is None:
                 team.id = team_id
@@ -1293,6 +1334,10 @@ class StudioTools(Toolkit):
             if member_ids is not None:
                 try:
                     members, missing = self._resolve_members(member_ids)
+                    if self.db is not None:
+                        members, replaced_pins = self._bind_members_to_target_db(
+                            members, self.db, require_published=not self.enable_versions
+                        )
                 except ValueError as e:
                     return json.dumps({"error": str(e)})
                 if missing:
@@ -1328,7 +1373,12 @@ class StudioTools(Toolkit):
             if add_datetime_to_context is not None:
                 team.add_datetime_to_context = add_datetime_to_context
 
-            result = self._save_edit(team)
+            replaced_keys = set()
+            if member_ids is not None:
+                replaced_keys.add("members")
+            if model_id is not None:
+                replaced_keys.add("model")
+            result = self._save_edit(team, replaced_keys=replaced_keys, pinned_children=replaced_pins)
             log_debug(f"StudioTools edited team id={team.id} result={result}")
             return json.dumps({"status": "edited", "id": getattr(team, "id", None) or team_id, **result})
         except Exception as e:
@@ -1389,13 +1439,25 @@ class StudioTools(Toolkit):
             wf.db = self.db
             if description is not None:
                 wf.description = description
+            replaced_pins: Optional[Dict[str, int]] = None
             if step_specs is not None:
                 steps, err = self._build_steps(step_specs)
                 if err is not None:
                     return json.dumps({"error": err})
+                if self.db is not None:
+                    try:
+                        replaced_pins = self._bind_steps_to_target_db(
+                            steps, self.db, require_published=not self.enable_versions
+                        )
+                    except ValueError as e:
+                        return json.dumps({"error": str(e)})
                 wf.steps = steps
 
-            result = self._save_edit(wf)
+            result = self._save_edit(
+                wf,
+                replaced_keys={"steps"} if step_specs is not None else None,
+                pinned_children=replaced_pins,
+            )
             log_debug(f"StudioTools edited workflow id={wf.id} result={result}")
             return json.dumps({"status": "edited", "id": getattr(wf, "id", None) or workflow_id, **result})
         except Exception as e:
@@ -2085,13 +2147,184 @@ class StudioTools(Toolkit):
                 return True
         return db.get_component(component_id) is not None
 
-    def _resolve_members(self, member_ids: List[str]) -> tuple[List[TeamMember], List[str]]:
-        """Resolve member identifiers to agents or teams.
+    def _bind_child_to_target_db(
+        self, child: Any, target_db: "BaseDb", noun: str, require_published: bool = True
+    ) -> tuple[Any, Optional[int]]:
+        """The object a stored reference will actually reload from ``target_db``,
+        with the version to pin it at.
 
-        Exact ids resolve across BOTH types before any name matching, so an
-        agent merely named like a team's id can never steal that member slot.
-        An identifier naming a stored component that fails to load counts as
-        missing rather than falling through to name matching.
+        Reload resolution is db-first in the target db, then registry, so a
+        child resolved from the catalog must match that outcome: an id claimed
+        by both a code-defined component and a target-db row is a coin flip
+        and refuses; a db-backed child absent from the target db (or stored
+        there as a different component type) can never reload as itself and
+        refuses; a db-backed child present there is strictly re-resolved from
+        that exact db AND version, so the reference, the pin, and the reload
+        name one row - and a row too degraded to rebuild refuses at create
+        instead of persisting a parent guaranteed not to dispatch. A published
+        parent additionally refuses a draft child, whose config can change in
+        place under the pin.
+
+        The db offers no transactions, so the typed-metadata and config reads
+        are re-verified once; a pair that still disagrees (a concurrent
+        replace or delete) refuses rather than persisting a torn snapshot.
+        """
+        from agno.agent.agent import get_agent_by_id
+        from agno.db.base import ComponentType
+        from agno.exceptions import ComponentRehydrationError
+        from agno.team.team import Team, get_team_by_id
+
+        child_id = getattr(child, "id", None)
+        if not isinstance(child_id, str):
+            raise ValueError(f"{noun} has no id and cannot be stored as a reference.")
+        is_team = isinstance(child, Team)
+        expected_type = ComponentType.TEAM if is_team else ComponentType.AGENT
+        candidates = self._iter_teams() if is_team else self._iter_agents()
+        code_defined = any(getattr(candidate, "id", None) == child_id for candidate in candidates)
+        db_label = getattr(target_db, "id", None) or type(target_db).__name__
+
+        def read_snapshot() -> tuple:
+            try:
+                typed_row = target_db.get_component(child_id, component_type=expected_type)
+                untyped = target_db.get_component(child_id) if typed_row is None else typed_row
+                config_row = target_db.get_config(component_id=child_id) if typed_row is not None else None
+            except NotImplementedError:
+                return None, None, None
+            return typed_row, untyped, config_row
+
+        component_row, untyped_row, row = read_snapshot()
+        verify_component_row, verify_untyped_row, verify_row = read_snapshot()
+        torn = (
+            (component_row is None) != (verify_component_row is None)
+            or (row is None) != (verify_row is None)
+            or (
+                isinstance(row, dict)
+                and isinstance(verify_row, dict)
+                and row.get("version") != verify_row.get("version")
+            )
+        )
+        if torn:
+            raise ValueError(
+                f"{noun} '{child_id}' in db '{db_label}' changed while it was being referenced; retry the operation."
+            )
+        untyped_row = verify_untyped_row if untyped_row is None else untyped_row
+
+        if code_defined and row is not None:
+            raise ValueError(
+                f"{noun} id '{child_id}' is claimed by both a code-defined component and a stored "
+                f"row in db '{db_label}'; reloading would bind whichever wins that db's precedence. "
+                "Give them distinct ids."
+            )
+        if code_defined:
+            # Reconcile the live lists with the registry at selection time:
+            # rehydration resolves the registry, so the object being written
+            # about must be the object the registry will answer with.
+            bucket = self.registry.teams if is_team else self.registry.agents
+            registered = next((entry for entry in bucket if getattr(entry, "id", None) == child_id), None)
+            if registered is None:
+                bucket.append(child)
+            elif registered is not child:
+                raise ValueError(
+                    f"{noun} '{child_id}' from the live list is not the registry's object for that "
+                    "id; a reload would bind the registry's. Align the list and the registry."
+                )
+            return child, None
+        if component_row is None and untyped_row is not None:
+            raise ValueError(
+                f"{noun} '{child_id}' is stored in db '{db_label}' as a "
+                f"{untyped_row.get('component_type')}, not the referenced type. Give the "
+                "components distinct ids."
+            )
+        if row is None:
+            raise ValueError(
+                f"{noun} '{child_id}' is not stored in db '{db_label}'. Create it there first, or "
+                "reference a code-defined component."
+            )
+        if require_published and row.get("stage") != "published":
+            raise ValueError(
+                f"{noun} '{child_id}' in db '{db_label}' has only a {row.get('stage')} config, "
+                "which can change in place under a published parent's pin. Publish the child first."
+            )
+        resolved_version = row.get("version") if isinstance(row, dict) else None
+        loader = get_team_by_id if is_team else get_agent_by_id
+        try:
+            rebound = loader(db=target_db, id=child_id, version=resolved_version, registry=self.registry, strict=True)
+        except ComponentRehydrationError as e:
+            raise ValueError(f"{noun} '{child_id}' in db '{db_label}' cannot be rebuilt: {e}") from e
+        if rebound is None:
+            raise ValueError(f"{noun} '{child_id}' could not be loaded from db '{db_label}'.")
+        return rebound, (resolved_version if isinstance(resolved_version, int) else None)
+
+    def _bind_members_to_target_db(
+        self, members: List[Any], target_db: "BaseDb", require_published: bool = True
+    ) -> tuple[List[Any], Dict[str, int]]:
+        bound: List[Any] = []
+        pins: Dict[str, int] = {}
+        for member in members:
+            rebound, version = self._bind_child_to_target_db(
+                member, target_db, "Member", require_published=require_published
+            )
+            bound.append(rebound)
+            if version is not None and getattr(rebound, "id", None):
+                pins[rebound.id] = version
+        return bound, pins
+
+    def _bind_steps_to_target_db(
+        self, steps: List[Any], target_db: "BaseDb", require_published: bool = True
+    ) -> Dict[str, int]:
+        pins: Dict[str, int] = {}
+        for step in steps:
+            for attr, noun in (("agent", "Step agent"), ("team", "Step team")):
+                child = getattr(step, attr, None)
+                if child is None:
+                    continue
+                rebound, version = self._bind_child_to_target_db(
+                    child, target_db, noun, require_published=require_published
+                )
+                setattr(step, attr, rebound)
+                if version is not None and getattr(rebound, "id", None):
+                    pins[rebound.id] = version
+        return pins
+
+    def _target_db_exact(self, identifier: str, target_db: "BaseDb") -> Optional[Any]:
+        """The component ``identifier`` names by exact id in the target db.
+
+        Checked across both types; a target db claiming the id as both an
+        agent and a team is undecidable from the identifier alone.
+        """
+        from agno.agent.agent import get_agent_by_id
+        from agno.db.base import ComponentType
+        from agno.exceptions import ComponentRehydrationError
+        from agno.team.team import get_team_by_id
+
+        try:
+            agent_row = target_db.get_component(identifier, component_type=ComponentType.AGENT)
+            team_row = target_db.get_component(identifier, component_type=ComponentType.TEAM)
+        except NotImplementedError:
+            return None
+        if agent_row is not None and team_row is not None:
+            raise ValueError(
+                f"Ambiguous member id: '{identifier}' is stored in the target db as both an agent "
+                "and a team. Give the components distinct ids."
+            )
+        if agent_row is None and team_row is None:
+            return None
+        loader = get_agent_by_id if agent_row is not None else get_team_by_id
+        try:
+            return loader(db=target_db, id=identifier, registry=self.registry, strict=True)
+        except ComponentRehydrationError as e:
+            raise ValueError(f"Member '{identifier}' in the target db cannot be rebuilt: {e}") from e
+
+    def _resolve_members(
+        self, member_ids: List[str], target_db: Optional["BaseDb"] = None
+    ) -> tuple[List[TeamMember], List[str]]:
+        """Resolve member identifiers to agents or teams, in request order.
+
+        Exact ids resolve before any name matching - across code-defined
+        components, the catalog db, AND the selected target db - so a live
+        component merely named like a stored id can never steal that member
+        slot. An identifier naming a stored component that fails to load
+        counts as missing rather than falling through to name matching.
         """
         runner = self._runner_tools
         members: List[TeamMember] = []
@@ -2099,6 +2332,12 @@ class StudioTools(Toolkit):
         for mid in member_ids:
             agent_match = runner._find_agent_by_exact_id(mid)
             team_match = runner._find_team_by_exact_id(mid)
+            if agent_match is None and team_match is None and target_db is not None and target_db is not self.db:
+                # Exact ids in the selected target db outrank every name tier.
+                target_match = self._target_db_exact(mid, target_db)
+                if target_match is not None:
+                    members.append(target_match)
+                    continue
             if agent_match is not None and team_match is not None:
                 # Ids are only unique per type, so an agent and a team may
                 # legally share one; member_ids cannot disambiguate.
@@ -2132,18 +2371,37 @@ class StudioTools(Toolkit):
                 members.append(member)
         return members, missing
 
-    def _build_steps(self, step_specs: List[Dict[str, Any]]) -> tuple[List[Any], Optional[str]]:
+    def _build_steps(
+        self, step_specs: List[Dict[str, Any]], fallback_db: Optional["BaseDb"] = None
+    ) -> tuple[List[Any], Optional[str]]:
         from agno.workflow.step import Step
 
         if not step_specs:
             return [], "step_specs must contain at least one step"
+
+        def find_agent(identifier: str) -> Optional[Any]:
+            found = self._runner_tools._find_agent_by_exact_id(identifier)
+            if found is None and fallback_db is not None and fallback_db is not self.db:
+                from agno.agent.agent import get_agent_by_id
+
+                # Exact ids in the selected target db outrank catalog name tiers.
+                found = get_agent_by_id(db=fallback_db, id=identifier, registry=self.registry)
+            return found if found is not None else self._find_agent(identifier)
+
+        def find_team(identifier: str) -> Optional[Any]:
+            found = self._runner_tools._find_team_by_exact_id(identifier)
+            if found is None and fallback_db is not None and fallback_db is not self.db:
+                from agno.team.team import get_team_by_id
+
+                found = get_team_by_id(db=fallback_db, id=identifier, registry=self.registry)
+            return found if found is not None else self._find_team(identifier)
 
         steps: List[Step] = []
         for i, spec in enumerate(step_specs):
             step_name = spec.get("name") or f"step_{i + 1}"
             step_desc = spec.get("description")
             if "agent_id" in spec:
-                agent = self._find_agent(spec["agent_id"])
+                agent = find_agent(spec["agent_id"])
                 if agent is None:
                     return [], f"Agent not found for step '{step_name}': {spec['agent_id']}"
                 if not getattr(agent, "id", None):
@@ -2155,7 +2413,7 @@ class StudioTools(Toolkit):
                     )
                 steps.append(Step(name=step_name, agent=agent, description=step_desc))
             elif "team_id" in spec:
-                team = self._find_team(spec["team_id"])
+                team = find_team(spec["team_id"])
                 if team is None:
                     return [], f"Team not found for step '{step_name}': {spec['team_id']}"
                 if not getattr(team, "id", None):
@@ -2173,42 +2431,237 @@ class StudioTools(Toolkit):
                 return [], f"Step '{step_name}' must specify agent_id, team_id, or function_name"
         return steps, None
 
-    def _save_edit(self, component: Component) -> Dict[str, Any]:
+    # Reference keys a lenient load drops when they cannot resolve (the three
+    # model keys are serialized but not yet consumed by from_dict); an edit
+    # that did not replace them must not persist the loss.
+    _LENIENT_DROPPABLE_KEYS = (
+        "tools",
+        "input_schema",
+        "output_schema",
+        "knowledge",
+        "reasoning_model",
+        "parser_model",
+        "output_model",
+    )
+
+    def _save_edit(
+        self,
+        component: Component,
+        replaced_keys: Optional[Set[str]] = None,
+        pinned_children: Optional[Dict[str, int]] = None,
+    ) -> Dict[str, Any]:
         """Persist an edited component.
 
         With versioning enabled the edit is saved as a draft awaiting
         publish_component; otherwise it is published immediately as the new
         current version.
+
+        The edit round-trips through a leniently loaded object, so the config
+        written here keeps the stored value for any unresolvable reference the
+        load dropped (unless this edit replaced that key), and re-emits the
+        member/step links so the new version stays pinned.
         """
-        carry = self._unreconstructed_declarations(getattr(component, "id", None))
+        config = _component_to_dict(component)
+        replaced = replaced_keys or set()
+        component_id = getattr(component, "id", None)
+        self._preserve_unresolved_keys(component_id, config, replaced)
+        if replaced & {"members", "steps"}:
+            # The edit replaced the composition: pin the new children at the
+            # exact versions the binder rebuilt them from.
+            links = self._links_for_component(component, pinned_versions=pinned_children)
+        else:
+            # Untouched composition keeps the base version's pins verbatim,
+            # including link kinds this walk does not reconstruct.
+            links = self._base_links(component_id)
         if self.enable_versions:
-            version = self._upsert_draft(component, carry)
+            version = self._upsert_draft(component, config=config, links=links)
             return {"draft_version": version, "stage": "draft"}
-        version = _persist_only(component, self.db, carry=carry)
+        version = _persist_only(component, self.db, config=config, links=links)
         return {"version": version, "stage": "published"}
 
-    def _unreconstructed_declarations(self, component_id: Optional[str]) -> Dict[str, Any]:
-        """What the stored config declares that a rebuild cannot carry back.
-
-        An edit works on a rebuilt component, so anything from_dict does not
-        restore is already absent by the time the edit runs. Resaving would
-        delete it -- and silently lift the dispatch refusal it causes -- for an
-        edit that never mentioned it."""
-        if component_id is None or self.db is None:
-            return {}
-        # Deliberately unguarded. A read that fails is not evidence that there
-        # was nothing to carry, and treating it as such publishes an edit that
-        # deletes a declaration -- and lifts the dispatch refusal it causes.
-        # The caller's handler turns this into a structured error.
-        stored = self._runner_tools._load_config_from_db(component_id, version=self._edit_base_version(component_id))
-        if stored is None:
+    def _preserve_unresolved_keys(
+        self, component_id: Optional[str], config: Dict[str, Any], replaced_keys: Set[str]
+    ) -> None:
+        """Copy stored reference keys the lenient load dropped back into ``config``."""
+        if self.db is None or component_id is None:
+            return
+        base = self._runner_tools._load_config_from_db(component_id, version=self._edit_base_version(component_id))
+        if not isinstance(base, dict):
             raise ValueError(
                 f"Cannot edit '{component_id}': its stored config could not be read, so an edit would drop "
                 "whatever the rebuild does not carry back."
             )
-        return {key: stored[key] for key in _UNRECONSTRUCTED_KEYS if stored.get(key) is not None}
+        # The db reference and untouched composition subtrees are
+        # base-authoritative: no edit surface changes them, the runtime object
+        # cannot improve on them, and re-serializing them churns identity
+        # (fresh step_ids would orphan every carried-forward pin).
+        for key in ("db", "model", "steps", "members"):
+            if key in replaced_keys:
+                continue
+            config.pop(key, None)
+            if key in base:
+                config[key] = base[key]
+        for key in self._LENIENT_DROPPABLE_KEYS:
+            if key in replaced_keys:
+                continue
+            if key in base and base.get(key) is not None and config.get(key) is None:
+                config[key] = base[key]
+                log_debug(f"StudioTools: preserving stored '{key}' the lenient load could not resolve.")
 
-    def _upsert_draft(self, component: Component, carry: Optional[Dict[str, Any]] = None) -> Optional[int]:
+    def _base_links(self, component_id: Optional[str]) -> Optional[List[Dict[str, Any]]]:
+        """The base version's links, carried forward verbatim on an edit that
+        did not replace the component's composition."""
+        if self.db is None or component_id is None:
+            return None
+        return self._runner_tools._load_links_from_db(component_id, version=self._edit_base_version(component_id))
+
+    def _links_for_component(
+        self,
+        component: Component,
+        db: Optional["BaseDb"] = None,
+        pinned_versions: Optional[Dict[str, int]] = None,
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Member/step links for a component snapshot, pinned at each child's
+        current stored version in the SAME db the snapshot is written to.
+
+        The persist paths do not cascade-save, so children are not re-saved. A
+        child gets no link when it has no stored version in that db, or when a
+        code-defined component claims its exact id: resolution prefers the live
+        object there, and pinning the same-id db row would bind an unrelated
+        shadow.
+        """
+        from agno.team.team import Team
+        from agno.workflow.condition import Condition
+        from agno.workflow.loop import Loop
+        from agno.workflow.parallel import Parallel
+        from agno.workflow.router import Router
+        from agno.workflow.step import Step
+        from agno.workflow.steps import Steps
+        from agno.workflow.workflow import Workflow
+
+        target_db = db if db is not None else self.db
+        if target_db is None:
+            return None
+
+        def code_defined(child_id: Optional[str], candidates: List[Any]) -> bool:
+            return any(getattr(candidate, "id", None) == child_id for candidate in candidates)
+
+        def current_version(child_id: Optional[str], expected_type: Optional[str] = None) -> Optional[int]:
+            if not child_id:
+                return None
+            if pinned_versions is not None and child_id in pinned_versions:
+                # The binder already selected this exact version; a fresh read
+                # could see a publish that happened since.
+                return pinned_versions[child_id]
+            if expected_type is not None:
+                from agno.db.base import ComponentType
+
+                try:
+                    if target_db.get_component(child_id, component_type=ComponentType(expected_type)) is None:
+                        # A same-id row of a different type is not this child.
+                        return None
+                except NotImplementedError:
+                    return None
+            try:
+                row = target_db.get_config(component_id=child_id)
+            except NotImplementedError:
+                return None
+            version = row.get("version") if isinstance(row, dict) else None
+            return version if isinstance(version, int) else None
+
+        links: List[Dict[str, Any]] = []
+        if isinstance(component, Team):
+            from agno.agent.agent import Agent
+
+            code_agents = list(self._iter_agents())
+            code_teams = list(self._iter_teams())
+            members = component.members if isinstance(component.members, list) else []
+            for position, member in enumerate(members):
+                member_id = getattr(member, "id", None)
+                is_member_team = isinstance(member, Team)
+                candidates = code_teams if is_member_team else code_agents
+                if code_defined(member_id, candidates):
+                    continue
+                child_version = current_version(member_id, "team" if is_member_team else "agent")
+                if child_version is None:
+                    continue
+                links.append(
+                    {
+                        "link_kind": "member",
+                        "link_key": f"member_{position}",
+                        "child_component_id": member.id,
+                        "child_version": child_version,
+                        "position": position,
+                        "meta": {"type": "agent" if isinstance(member, Agent) else "team"},
+                    }
+                )
+        elif isinstance(component, Workflow):
+            code_agents = list(self._iter_agents())
+            code_teams = list(self._iter_teams())
+
+            def walk(step: Any, position: int, key_suffix: str = "") -> None:
+                if isinstance(step, Step):
+                    for link in step.get_links(position=position):
+                        child_id = link.get("child_component_id")
+                        link_kind = link.get("link_kind")
+                        candidates: List[Any]
+                        if link_kind == "step_team":
+                            candidates = code_teams
+                            child_type = "team"
+                        elif link_kind == "step_workflow":
+                            candidates = list(self._iter_workflows())
+                            child_type = "workflow"
+                        else:
+                            candidates = code_agents
+                            child_type = "agent"
+                        if code_defined(child_id, candidates):
+                            continue
+                        child_version = current_version(child_id, child_type)
+                        if child_version is None:
+                            continue
+                        link["child_version"] = child_version
+                        if key_suffix:
+                            link["link_key"] = f"{link.get('link_key')}{key_suffix}"
+                        links.append(link)
+                elif isinstance(step, (Parallel, Loop, Steps, Condition)):
+                    for nested_position, nested in enumerate(getattr(step, "steps", None) or []):
+                        walk(nested, nested_position, key_suffix)
+                    for nested_position, nested in enumerate(getattr(step, "else_steps", None) or []):
+                        walk(nested, nested_position, key_suffix + "#else")
+                elif isinstance(step, Router):
+                    for nested_position, nested in enumerate(getattr(step, "choices", None) or []):
+                        walk(nested, nested_position, key_suffix)
+
+            steps = component.steps if isinstance(component.steps, list) else []
+            for position, step in enumerate(steps):
+                walk(step, position)
+            seen_links: Dict[tuple, Dict[str, Any]] = {}
+            deduped: List[Dict[str, Any]] = []
+            for link in links:
+                dedupe_key = (link.get("link_kind"), link.get("link_key"))
+                existing = seen_links.get(dedupe_key)
+                if existing is not None:
+                    if existing.get("child_component_id") == link.get("child_component_id"):
+                        continue
+                    raise ValueError(
+                        f"Workflow '{getattr(component, 'id', None)}' produces two different links "
+                        f"for key '{link.get('link_key')}' ('{existing.get('child_component_id')}' "
+                        f"and '{link.get('child_component_id')}'); give steps distinct names so "
+                        "every pin is kept."
+                    )
+                seen_links[dedupe_key] = link
+                deduped.append(link)
+            links = deduped
+        else:
+            return None
+        return links
+
+    def _upsert_draft(
+        self,
+        component: Component,
+        config: Optional[Dict[str, Any]] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+    ) -> Optional[int]:
         """Save a component as a draft. Updates the latest draft in place, else creates one.
 
         The component row's name/description/metadata are NOT updated here --
@@ -2235,8 +2688,9 @@ class StudioTools(Toolkit):
         result = self.db.upsert_config(
             component_id=component_id,
             version=self._latest_draft_version(component_id),
-            config=_component_to_dict(component, carry),
+            config=config if config is not None else _component_to_dict(component),
             stage="draft",
+            links=links,
         )
         return result.get("version")
 
@@ -2284,7 +2738,8 @@ def _persist_only(
     component: Component,
     db: Optional["BaseDb"],
     stage: str = "published",
-    carry: Optional[Dict[str, Any]] = None,
+    config: Optional[Dict[str, Any]] = None,
+    links: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[int]:
     """Save a component WITHOUT cascading to members or step agents.
 
@@ -2313,8 +2768,9 @@ def _persist_only(
     )
     result = db.upsert_config(
         component_id=component_id,
-        config=_component_to_dict(component, carry),
+        config=config if config is not None else _component_to_dict(component),
         stage=stage,
+        links=links,
     )
     return result.get("version")
 

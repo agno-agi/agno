@@ -19,7 +19,13 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from agno.db.base import BaseDb
 from agno.db.schemas.jobs import QueuedJob
-from agno.exceptions import InputCheckError, OutputCheckError, RunNotContinuableError, RunNotFoundError
+from agno.exceptions import (
+    ComponentRehydrationError,
+    InputCheckError,
+    OutputCheckError,
+    RunNotContinuableError,
+    RunNotFoundError,
+)
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.auth import (
@@ -1038,7 +1044,9 @@ def get_team_router(
             return JSONResponse(content={}, status_code=200)
 
         try:
-            team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+            team = get_team_by_id(
+                team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+            )  # type: ignore[assignment]
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -1128,7 +1136,9 @@ def get_team_router(
                 detail="Stream resumption is not supported for factory teams",
             )
 
-        team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
+        team = get_team_by_id(
+            team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+        )
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
         if isinstance(team, RemoteTeam):
@@ -1252,6 +1262,8 @@ def get_team_router(
         else:
             try:
                 team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+            except ComponentRehydrationError as rehydration_error:
+                raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -1540,7 +1552,9 @@ def get_team_router(
             user_id = request.state.user_id
 
         try:
-            team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)
+            team = get_team_by_id(
+                team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+            )
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -1781,6 +1795,8 @@ def get_team_router(
 
         try:
             team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+        except ComponentRehydrationError as rehydration_error:
+            raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -1824,7 +1840,9 @@ def get_team_router(
             )
         else:
             try:
-                team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+                team = get_team_by_id(
+                    team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+                )  # type: ignore[assignment]
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -1901,7 +1919,9 @@ def get_team_router(
             )
         else:
             try:
-                team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+                team = get_team_by_id(
+                    team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+                )  # type: ignore[assignment]
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -1960,7 +1980,9 @@ def get_team_router(
             )
         else:
             try:
-                team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+                team = get_team_by_id(
+                    team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+                )  # type: ignore[assignment]
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
@@ -2019,7 +2041,9 @@ def get_team_router(
             )
         else:
             try:
-                team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+                team = get_team_by_id(
+                    team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+                )  # type: ignore[assignment]
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
                 raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")

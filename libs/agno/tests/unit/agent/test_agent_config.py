@@ -429,20 +429,73 @@ class TestAgentFromDict:
 
         agent = Agent.from_dict(config, registry=mock_registry)
 
-        mock_registry.rehydrate_functions.assert_called_once_with(tool_dicts)
+        mock_registry.rehydrate_functions.assert_called_once_with(tool_dicts, strict=False)
         assert agent.tools == mock_tools
 
-    def test_from_dict_without_registry_removes_tools(self):
-        """Test from_dict removes tools when no registry is provided."""
+    def test_from_dict_without_registry_raises_for_tools(self):
+        """Test from_dict fails loudly when tools cannot be rehydrated."""
+        from agno.exceptions import ComponentRehydrationError
+
         config = {
             "id": "no-registry-agent",
-            "tools": [{"name": "search"}],
+            "tools": [{"name": "search", "description": "Search", "parameters": {"type": "object", "properties": {}}}],
         }
 
-        agent = Agent.from_dict(config)
+        with pytest.raises(ComponentRehydrationError, match="need a registry"):
+            Agent.from_dict(config, strict=True)
 
-        # Tools should be None/empty since no registry was provided
-        assert agent.tools is None or agent.tools == []
+    def test_from_dict_without_registry_loads_registry_free_tools_under_strict(self):
+        """Provider-native dicts and external-execution tools need no registry,
+        so a strict load without one accepts them - identical to an empty
+        Registry."""
+        config = {
+            "id": "registry-free-agent",
+            "tools": [
+                {"type": "web_search"},
+                {
+                    "name": "charge_card",
+                    "description": "Charge",
+                    "parameters": {"type": "object", "properties": {}},
+                    "external_execution": True,
+                },
+            ],
+        }
+
+        agent = Agent.from_dict(config, strict=True)
+
+        assert agent.tools is not None and len(agent.tools) == 2
+
+    def test_from_dict_missing_tool_in_registry_raises(self):
+        """Test from_dict fails loudly when the registry lacks a referenced tool."""
+        from agno.exceptions import ComponentRehydrationError
+
+        config = {
+            "id": "missing-tool-agent",
+            "tools": [{"name": "search", "parameters": {"type": "object", "properties": {}}}],
+        }
+
+        with pytest.raises(ComponentRehydrationError, match="search"):
+            Agent.from_dict(config, registry=Registry(), strict=True)
+
+    def test_from_dict_without_registry_keeps_registry_free_tools_when_lenient(self):
+        """A lenient load without a registry keeps everything that carries
+        itself: provider dicts unchanged, serialized Functions rebuilt without
+        entrypoints, bare references as-is with a warning. Deleting them made
+        the default load LOSSIER than strict."""
+        from agno.tools.function import Function
+
+        provider_tool = {"type": "web_search_preview"}
+        function_tool = {"name": "search", "description": "S", "parameters": {"type": "object", "properties": {}}}
+        config = {
+            "id": "no-registry-agent",
+            "tools": [provider_tool, function_tool],
+        }
+
+        agent = Agent.from_dict(config, strict=False)
+
+        assert agent.tools is not None and len(agent.tools) == 2
+        assert agent.tools[0] == provider_tool
+        assert isinstance(agent.tools[1], Function) and agent.tools[1].entrypoint is None
 
     def test_from_dict_roundtrip(self, agent_with_settings):
         """Test that to_dict -> from_dict preserves agent configuration."""
@@ -518,24 +571,35 @@ class TestAgentKnowledgeRoundtrip:
         assert reconstructed.knowledge is kb
         assert reconstructed.search_knowledge is True
 
-    def test_from_dict_without_registry_drops_knowledge(self):
-        """Without a registry, the knowledge reference is dropped (no crash)."""
+    def test_from_dict_without_registry_raises_for_knowledge(self):
+        """Without a registry, an unresolvable knowledge reference fails loudly."""
+        from agno.exceptions import ComponentRehydrationError
+
         kb = self._make_knowledge("Docs KB")
         agent = Agent(id="kb-agent", knowledge=kb)
         config = agent.to_dict()
 
-        reconstructed = Agent.from_dict(config, registry=None)
+        with pytest.raises(ComponentRehydrationError, match="Docs KB"):
+            Agent.from_dict(config, registry=None, strict=True)
+
+    def test_from_dict_without_registry_drops_knowledge_when_lenient(self):
+        """strict=False preserves the old drop-and-warn behavior."""
+        kb = self._make_knowledge("Docs KB")
+        agent = Agent(id="kb-agent", knowledge=kb)
+        config = agent.to_dict()
+
+        reconstructed = Agent.from_dict(config, registry=None, strict=False)
 
         assert reconstructed.knowledge is None
 
-    def test_from_dict_unresolved_knowledge_drops_gracefully(self):
-        """A reference not present in the registry is dropped (no crash)."""
+    def test_from_dict_unresolved_knowledge_drops_gracefully_when_lenient(self):
+        """A reference not present in the registry is dropped with strict=False."""
         kb = self._make_knowledge("Docs KB")
         agent = Agent(id="kb-agent", knowledge=kb)
         config = agent.to_dict()
 
         # Registry without the referenced knowledge
-        reconstructed = Agent.from_dict(config, registry=Registry())
+        reconstructed = Agent.from_dict(config, registry=Registry(), strict=False)
 
         assert reconstructed.knowledge is None
 
@@ -734,9 +798,11 @@ class TestAgentLoad:
 
         assert saved_config.get("store_history_messages") is True
 
-        # Simulate load returning the saved config
+        # Simulate load returning the saved config. The mock db serializes a
+        # config that cannot be rebuilt standalone, so resolve it via registry.
         mock_db.get_config.return_value = {"config": saved_config}
-        loaded = Agent.load(id="persist-agent", db=mock_db)
+        mock_db.id = "test-db"
+        loaded = Agent.load(id="persist-agent", db=mock_db, registry=Registry(dbs=[mock_db]))
 
         assert loaded is not None
         assert loaded.store_history_messages is True
@@ -977,3 +1043,143 @@ class TestGetAgents:
 
         assert len(agents) == 1
         assert agents[0].db == mock_db
+
+
+class TestStrictToolResolution:
+    def test_from_dict_external_execution_tool_loads_under_strict(self):
+        """Client-executed tools never carry a server entrypoint; strict must
+        not treat them as unresolved references."""
+        from agno.models.openai import OpenAIChat
+        from agno.tools.decorator import tool
+        from agno.tools.function import Function
+
+        @tool(external_execution=True)
+        def charge_card(amount: float) -> str:
+            """Charge a card."""
+            return "charged"
+
+        agent = Agent(id="ext-agent", model=OpenAIChat(id="gpt-4o-mini"), tools=[charge_card])
+        config = agent.to_dict()
+
+        rebuilt = Agent.from_dict(config, registry=Registry(), strict=True)
+
+        names = [t.name for t in rebuilt.tools if isinstance(t, Function)]
+        assert "charge_card" in names
+
+    def test_from_dict_strict_keeps_qualified_tools_bound_to_their_toolkit(self):
+        """A same-named function from a different toolkit is a different tool:
+        strict refuses it, lenient warns and binds it."""
+        from agno.exceptions import ComponentRehydrationError
+        from agno.models.openai import OpenAIChat
+        from agno.tools.function import Function
+        from agno.tools.toolkit import Toolkit
+
+        def search(query: str) -> str:
+            """Search."""
+            return "results"
+
+        agent = Agent(
+            id="qual-agent",
+            model=OpenAIChat(id="gpt-4o-mini"),
+            tools=[Toolkit(name="right_toolkit", tools=[search])],
+        )
+        config = agent.to_dict()
+        registry = Registry(tools=[Toolkit(name="wrong_toolkit", tools=[search])])
+
+        with pytest.raises(ComponentRehydrationError, match="right_toolkit.search"):
+            Agent.from_dict(config, registry=registry, strict=True)
+
+        lenient = Agent.from_dict(config, registry=registry, strict=False)
+        bound = [t for t in lenient.tools if isinstance(t, Function) and t.name == "search"]
+        assert bound and bound[0].entrypoint is not None
+
+
+class TestLookupLoaderDbFallback:
+    def test_get_agent_by_id_falls_back_to_caller_db(self, tmp_path):
+        """An unresolvable serialized db must not leave the loaded agent with
+        db=None; the caller's db is the fallback, matching Agent.load."""
+        from agno.agent.agent import get_agent_by_id
+        from agno.db.base import ComponentType
+        from agno.db.sqlite import SqliteDb
+
+        db = SqliteDb(db_file=str(tmp_path / "fallback.db"))
+        db.upsert_component(component_id="db-agent", component_type=ComponentType.AGENT, name="A")
+        db.upsert_config(
+            component_id="db-agent",
+            config={"id": "db-agent", "name": "A", "db": {"id": "private-db"}},
+            stage="published",
+        )
+
+        agent = get_agent_by_id(db=db, id="db-agent")
+
+        assert agent is not None
+        assert agent.db is db
+
+
+class TestAmbiguousKnowledge:
+    def test_strict_refuses_a_knowledge_name_two_instances_claim(self):
+        from agno.exceptions import ComponentRehydrationError
+
+        class KB:
+            def __init__(self, marker):
+                self.name = "shared"
+                self.marker = marker
+
+        registry = Registry()
+        first, second = KB("first"), KB("second")
+        registry.add_knowledge(first)
+        registry.add_knowledge(second)
+
+        config = {"id": "kb-agent", "knowledge": {"name": "shared"}, "search_knowledge": True}
+
+        with pytest.raises(ComponentRehydrationError, match="two distinct"):
+            Agent.from_dict(config, registry=registry, strict=True)
+
+        lenient = Agent.from_dict(config, registry=registry, strict=False)
+        assert lenient.knowledge is first
+
+
+class TestMalformedFunctionDicts:
+    def test_strict_refuses_a_function_dict_that_fails_validation(self):
+        from agno.exceptions import ComponentRehydrationError
+
+        config = {
+            "id": "bad-tool-agent",
+            "tools": [{"name": "broken", "parameters": 5}],
+        }
+
+        with pytest.raises(ComponentRehydrationError, match="does not validate"):
+            Agent.from_dict(config, registry=Registry(), strict=True)
+
+        lenient = Agent.from_dict(config, registry=Registry(), strict=False)
+        assert lenient.tools == [{"name": "broken", "parameters": 5}]
+
+
+def test_strict_refuses_constructor_supplied_ambiguous_knowledge():
+    """Registry(knowledge=[first, second]) never passes through add_knowledge,
+    so ambiguity is computed at resolution, not trusted from the add path."""
+    from agno.exceptions import ComponentRehydrationError
+
+    class KB:
+        def __init__(self, marker):
+            self.name = "shared"
+            self.marker = marker
+
+    registry = Registry(knowledge=[KB("first"), KB("second")])
+    config = {"id": "kb-agent", "knowledge": {"name": "shared"}, "search_knowledge": True}
+
+    with pytest.raises(ComponentRehydrationError, match="two distinct"):
+        Agent.from_dict(config, registry=registry, strict=True)
+
+
+def test_strict_passes_provider_envelope_tools_through():
+    """A provider-native envelope like Bedrock's {'function': {...}} carries
+    itself; strict must not refuse it, with or without a registry."""
+    bedrock_tool = {"function": {"name": "get_weather", "description": "W", "parameters": {"type": "object"}}}
+    config = {"id": "br-agent", "tools": [bedrock_tool]}
+
+    with_registry = Agent.from_dict(config, registry=Registry(), strict=True)
+    without_registry = Agent.from_dict(config, strict=True)
+
+    assert with_registry.tools == [bedrock_tool]
+    assert without_registry.tools == [bedrock_tool]

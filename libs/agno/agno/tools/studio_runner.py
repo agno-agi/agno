@@ -101,6 +101,7 @@ import asyncio
 import json
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
+from agno.exceptions import ComponentPinError, ComponentRehydrationError
 from agno.run import RunContext
 from agno.run.utils import run_status_string, serialized_paused_requirements
 from agno.tools.toolkit import Toolkit
@@ -903,6 +904,7 @@ class StudioRunnerTools(Toolkit):
         component_id: str,
         config: Dict[str, Any],
         _seen: Optional[set] = None,
+        version: Optional[int] = None,
     ) -> None:
         """Refuse to rebuild a component whose config needs the absent registry.
 
@@ -915,7 +917,9 @@ class StudioRunnerTools(Toolkit):
             return
         if _seen is None:
             _seen = set()
-        key = f"{component_type}:{component_id}"
+        # Versions of one id are distinct nodes: two branches can pin the same
+        # child at different versions, and each version's config is its own.
+        key = f"{component_type}:{component_id}:{version}"
         if key in _seen:
             return
         _seen.add(key)
@@ -940,15 +944,77 @@ class StudioRunnerTools(Toolkit):
             )
         from agno.db.base import ComponentType
 
+        # Every pinned version of a child is checked, not one per id: two
+        # branches can pin the same child id at different versions, and either
+        # version's config may need the registry.
+        pinned_versions: Dict[str, set] = {}
+        for link in self._load_links_from_db(component_id, version=version):
+            child_id = link.get("child_component_id")
+            if child_id:
+                pinned_versions.setdefault(child_id, set()).add(link.get("child_version"))
         for ref_type, ref_id in _component_references(component_type, config):
-            ref_config = self._load_config_from_db(ref_id, component_type=ComponentType(ref_type))
-            if ref_config is None:
-                raise ComponentNeedsRegistryError(
-                    f"{component_type.capitalize()} '{component_id}' references {ref_type} '{ref_id}', "
-                    "which is not stored in the database (a code-defined component); "
-                    "construct StudioRunnerTools with the registry to run it."
+            versions = pinned_versions.get(ref_id) or {None}
+            for ref_version in sorted(versions, key=lambda v: (v is None, v)):
+                ref_loaded = self._load_config_row_from_db(
+                    ref_id, version=ref_version, component_type=ComponentType(ref_type)
                 )
-            self._require_registry_for(ref_type, ref_id, ref_config, _seen)
+                if ref_loaded is None:
+                    raise ComponentNeedsRegistryError(
+                        f"{component_type.capitalize()} '{component_id}' references {ref_type} '{ref_id}', "
+                        "which is not stored in the database (a code-defined component); "
+                        "construct StudioRunnerTools with the registry to run it."
+                    )
+                ref_config, ref_resolved_version = ref_loaded
+                self._require_registry_for(ref_type, ref_id, ref_config, _seen, version=ref_resolved_version)
+
+    def _dispatch_refusal(
+        self,
+        error: ComponentRehydrationError,
+        config: Dict[str, Any],
+        component_type: str,
+        component_id: str,
+        rebuild_leniently: Callable[[], Any],
+        version: Optional[int] = None,
+    ) -> Exception:
+        """The refusal to raise when strict rehydration rejects a dispatch.
+
+        The dispatch guards name both the component the caller asked for and
+        the nested piece that failed, so they inspect a lenient rebuild first.
+        A loss deeper than the guards see falls through to the rehydration
+        error, which names the component that raised. A dangling pin (a pinned
+        version that no longer exists, raised with no cause) already names the
+        version and the remedy, which no guard improves on; a pin that failed
+        to REBUILD wraps the real cause, and the guards describe that cause
+        better.
+        """
+        if isinstance(error, ComponentPinError) and error.__cause__ is None:
+            return ComponentNeedsRegistryError(str(error))
+        try:
+            self._require_dispatchable(rebuild_leniently(), config, component_type, component_id, version=version)
+        except StudioRunnerError as refusal:
+            return refusal
+        except Exception:
+            pass
+        return ComponentNeedsRegistryError(str(error))
+
+    def _require_dispatchable(
+        self,
+        component: Any,
+        config: Dict[str, Any],
+        component_type: str,
+        component_id: str,
+        version: Optional[int] = None,
+    ) -> None:
+        """Every dispatch guard for the component type, in refusal-priority order."""
+        self._require_matching_db(config, component, component_type, component_id)
+        self._require_declared_models(config, component_type, component_id)
+        self._require_inspectable_depth(component, component_type, component_id)
+        if component_type == "workflow":
+            self._require_reconstructable_steps(config, component_id)
+        self._require_faithful_rebuild(component, config, component_type, component_id)
+        if component_type in ("team", "workflow"):
+            self._require_faithful_registry_copies(component, component_type, component_id)
+            self._require_faithful_references(component, config, component_type, component_id, version=version)
 
     def _require_faithful_rebuild(
         self, component: Any, config: Dict[str, Any], component_type: str, component_id: str
@@ -977,7 +1043,7 @@ class StudioRunnerTools(Toolkit):
                 {
                     str(getattr(tool, "name", None) or "?")
                     for tool in rebuilt_tools
-                    if isinstance(tool, Function) and tool.entrypoint is None
+                    if isinstance(tool, Function) and tool.entrypoint is None and not tool.external_execution
                 }
             )
             if unresolved:
@@ -1138,7 +1204,12 @@ class StudioRunnerTools(Toolkit):
         return sorted(set(substituted))
 
     def _require_faithful_references(
-        self, component: Any, config: Dict[str, Any], component_type: str, component_id: str
+        self,
+        component: Any,
+        config: Dict[str, Any],
+        component_type: str,
+        component_id: str,
+        version: Optional[int] = None,
     ) -> None:
         """Check each referenced member or step executor against its OWN config.
 
@@ -1148,10 +1219,12 @@ class StudioRunnerTools(Toolkit):
         components' own configs, so every branch of that check is silent for a
         workflow. Without this, an executor that lost its output_schema to an
         incomplete registry dispatches and answers in prose, while the same
-        component dispatched directly is refused."""
+        component dispatched directly is refused. ``version`` is the parent's
+        resolved config version; its links pin the child versions the members
+        were rebuilt from, so each child is judged against that config."""
         if self.db is None:
             return
-        self._check_references(component, config, component_type, component_id, set(), {})
+        self._check_references(component, config, component_type, component_id, set(), {}, version=version)
 
     def _check_references(
         self,
@@ -1160,24 +1233,37 @@ class StudioRunnerTools(Toolkit):
         component_type: str,
         component_id: str,
         seen: set,
-        configs: Dict[tuple, Optional[Dict[str, Any]]],
+        configs: Dict[tuple, Tuple[Optional[Dict[str, Any]], Optional[int]]],
         depth: int = 0,
+        version: Optional[int] = None,
     ) -> None:
         """Check this component's references, then theirs, down to the leaves.
 
         A reference's own config names references of its own, so stopping after
         one hop leaves an outer team dispatchable while its inner team's member
-        lost the schema it declared."""
+        lost the schema it declared. Each child is compared against the config
+        version the parent's links pin, which is the version it was rebuilt
+        from; an unpinned child was rebuilt at its current version. ``configs``
+        caches each (type, id, version) config row so a shared reference is
+        read once per dispatch, and the row's resolved version feeds the
+        child's own links read.
+
+        A workflow's checks are per OCCURRENCE, not per child id: two branches
+        can pin the same child id at different versions, and each rebuilt
+        branch object must be compared against the config version its own
+        branch-qualified link pinned - collapsing by id would validate one
+        (config, object) pairing and admit the other unexamined."""
         from agno.db.base import ComponentType
 
-        key = (component_type, component_id)
+        key = (component_type, component_id, version)
         # `seen` is the cycle guard and nothing else: counting it bounded how
         # WIDE a graph could be rather than how deep, so a team with more
-        # members than the cap stopped checking the rest of them.
+        # members than the cap stopped checking the rest of them. Versions of
+        # one id are distinct nodes; the depth cap bounds any version chain.
         if key in seen or depth > _GRAPH_DEPTH_CAP:
             return
         seen.add(key)
-        rebuilt = self._components_by_id(component)
+        links = self._load_links_from_db(component_id, version=version)
         registered = {
             (self._component_kind(instance), instance_id)
             for instance, instance_id in (
@@ -1185,8 +1271,30 @@ class StudioRunnerTools(Toolkit):
             )
             if isinstance(instance_id, str)
         }
-        for ref_type, ref_id in _component_references(component_type, config):
-            target = rebuilt.get((ref_type, ref_id))
+        if component_type == "workflow":
+            checks = []
+            checked_occurrences = set()
+            for link_kind, link_key, ref_type, ref_id, target in self._step_occurrences(component):
+                if not isinstance(ref_id, str) or target is None:
+                    continue
+                ref_version = self._occurrence_pin(links, link_kind, link_key, ref_id)
+                occurrence = (ref_type, ref_id, ref_version, id(target))
+                if occurrence in checked_occurrences:
+                    continue
+                checked_occurrences.add(occurrence)
+                checks.append((ref_type, ref_id, ref_version, target))
+        else:
+            pins: Dict[str, Optional[int]] = {}
+            for link in links:
+                child_id = link.get("child_component_id")
+                if child_id:
+                    pins[child_id] = link.get("child_version")
+            rebuilt = self._components_by_id(component)
+            checks = [
+                (ref_type, ref_id, pins.get(ref_id), rebuilt.get((ref_type, ref_id)))
+                for ref_type, ref_id in _component_references(component_type, config)
+            ]
+        for ref_type, ref_id, ref_version, target in checks:
             if target is None:
                 continue
             if (ref_type, ref_id) in registered:
@@ -1204,11 +1312,13 @@ class StudioRunnerTools(Toolkit):
                 continue
             # A db read that fails is not evidence of fidelity, so it must not
             # pass as one: let it reach the caller's handler.
-            if (ref_type, ref_id) in configs:
-                ref_config = configs[(ref_type, ref_id)]
+            cache_key = (ref_type, ref_id, ref_version)
+            if cache_key in configs:
+                ref_config, ref_resolved_version = configs[cache_key]
             else:
-                ref_config = self._load_config_from_db(ref_id, component_type=stored_type)
-                configs[(ref_type, ref_id)] = ref_config
+                ref_loaded = self._load_config_row_from_db(ref_id, version=ref_version, component_type=stored_type)
+                ref_config, ref_resolved_version = ref_loaded if ref_loaded is not None else (None, None)
+                configs[cache_key] = (ref_config, ref_resolved_version)
             if ref_config is None:
                 # A code-defined reference has no stored config to compare
                 # against, and _require_registry_for covers an absent registry.
@@ -1223,7 +1333,89 @@ class StudioRunnerTools(Toolkit):
             # caller named.
             self._require_declared_models(ref_config, ref_type, ref_id)
             self._require_matching_db(ref_config, target, ref_type, ref_id)
-            self._check_references(target, ref_config, ref_type, ref_id, seen, configs, depth + 1)
+            self._check_references(
+                target, ref_config, ref_type, ref_id, seen, configs, depth + 1, version=ref_resolved_version
+            )
+
+    @staticmethod
+    def _step_occurrences(workflow: Any) -> List[tuple]:
+        """Each step-family reference below a workflow, with the branch-qualified
+        link key it was pinned under: (link_kind, link_key, ref_type, ref_id, object).
+
+        Mirrors the save traversal and Step.from_dict's key rule: a step's key
+        is its step_id (or name) plus one ``#else`` per enclosing else branch.
+        The same child id can appear on several branches at different pinned
+        versions, so each occurrence carries its own key instead of collapsing
+        by id."""
+        from agno.workflow.condition import Condition
+        from agno.workflow.loop import Loop
+        from agno.workflow.parallel import Parallel
+        from agno.workflow.router import Router
+        from agno.workflow.step import Step
+        from agno.workflow.steps import Steps
+
+        found: List[tuple] = []
+
+        def walk(step: Any, suffix: str) -> None:
+            if isinstance(step, Step):
+                key_base = getattr(step, "step_id", None) or getattr(step, "name", None)
+                qualified = f"{key_base}{suffix}" if key_base else None
+                agent = getattr(step, "agent", None)
+                if agent is not None:
+                    found.append(("step_agent", qualified, "agent", getattr(agent, "id", None), agent))
+                team = getattr(step, "team", None)
+                if team is not None:
+                    found.append(("step_team", qualified, "team", getattr(team, "id", None), team))
+                nested_workflow = getattr(step, "workflow", None)
+                if nested_workflow is not None:
+                    found.append(
+                        ("step_workflow", qualified, "workflow", getattr(nested_workflow, "id", None), nested_workflow)
+                    )
+                return
+            if isinstance(step, (Parallel, Loop, Steps, Condition)):
+                for nested in getattr(step, "steps", None) or []:
+                    walk(nested, suffix)
+                for nested in getattr(step, "else_steps", None) or []:
+                    walk(nested, f"{suffix}#else")
+                return
+            if isinstance(step, Router):
+                for nested in getattr(step, "choices", None) or []:
+                    walk(nested, suffix)
+                return
+            # A bare component used directly as a step has no Step wrapper and
+            # no link key; it still has to be checked, under the id-level rule.
+            kind = StudioRunnerTools._component_kind(step)
+            if kind in ("agent", "team", "workflow") and isinstance(getattr(step, "id", None), str):
+                link_kind = {"agent": "step_agent", "team": "step_team", "workflow": "step_workflow"}[kind]
+                found.append((link_kind, None, kind, step.id, step))
+
+        steps = getattr(workflow, "steps", None)
+        for step in steps if isinstance(steps, list) else []:
+            walk(step, "")
+        return found
+
+    @staticmethod
+    def _occurrence_pin(
+        links: List[Dict[str, Any]], link_kind: str, link_key: Optional[str], child_id: str
+    ) -> Optional[int]:
+        """The version pinned for one step occurrence.
+
+        The exact branch-qualified key wins; without an exact match the
+        id-level pin applies only when every pin for the child agrees - the
+        same resolution rule Step.from_dict rebuilds with, so the version
+        checked is the version the object was built from."""
+        child_links = [
+            link for link in links if link.get("link_kind") == link_kind and link.get("child_component_id") == child_id
+        ]
+        if not child_links:
+            return None
+        for link in child_links:
+            if link_key is not None and link.get("link_key") == link_key:
+                return link.get("child_version")
+        versions = {link.get("child_version") for link in child_links}
+        if len(versions) == 1:
+            return child_links[0].get("child_version")
+        return None
 
     @staticmethod
     def _components_by_id(node: Any) -> Dict[tuple, Any]:
@@ -1264,7 +1456,7 @@ class StudioRunnerTools(Toolkit):
                 {
                     str(getattr(tool, "name", None) or "?")
                     for tool in (child_tools if isinstance(child_tools, list) else [])
-                    if isinstance(tool, Function) and tool.entrypoint is None
+                    if isinstance(tool, Function) and tool.entrypoint is None and not tool.external_execution
                 }
             )
             if unresolved:
@@ -1376,6 +1568,8 @@ class StudioRunnerTools(Toolkit):
         leaves the adapters whose connection cannot serialize (mysql, mongo,
         redis, json, dynamo) dispatchable. A blanket refusal was reverted
         before for taking those out."""
+        from agno.utils.db_fallback import db_fallback_divergence
+
         db_config = config.get("db")
         if not isinstance(db_config, dict):
             return
@@ -1392,15 +1586,7 @@ class StudioRunnerTools(Toolkit):
                 "for it at all; running it would write its sessions and memory nowhere it was configured to. "
                 "Register that db, or remove the declaration."
             )
-        actual = actual_db.to_dict()
-        differing = sorted(
-            key
-            for key, value in db_config.items()
-            # An absent key in the stored config is not an override, and the
-            # connection field is never serialized, so neither is a difference.
-            # A key the actual db does not report cannot be compared at all.
-            if value is not None and key != "connection" and key in actual and actual[key] != value
-        )
+        differing = db_fallback_divergence(config, actual_db) or []
         if not differing:
             return
         declared = db_config.get("id") or db_config.get("type") or "unknown"
@@ -1581,14 +1767,15 @@ class StudioRunnerTools(Toolkit):
         Registry-backed references resolve at their current published version."""
         from agno.db.base import ComponentType
 
-        config = self._load_config_from_db(agent_id, version=version, component_type=ComponentType.AGENT)
-        if config is None:
+        loaded = self._load_config_row_from_db(agent_id, version=version, component_type=ComponentType.AGENT)
+        if loaded is None:
             return None
-        self._require_registry_for("agent", agent_id, config)
+        config, resolved_version = loaded
+        self._require_registry_for("agent", agent_id, config, version=resolved_version)
         from agno.agent.agent import Agent
 
         try:
-            agent = Agent.from_dict(config, registry=self.registry)
+            agent = Agent.from_dict(config, registry=self.registry, strict=for_dispatch)
             agent.id = agent_id
             # The catalog db is a fallback only: a config-declared db (resolved
             # by from_dict, possibly with table overrides) must keep winning.
@@ -1605,14 +1792,20 @@ class StudioRunnerTools(Toolkit):
                         agent_id,
                     )
                 agent.db = self.db
+        except ComponentRehydrationError as rehydration_error:
+            raise self._dispatch_refusal(
+                rehydration_error,
+                config,
+                "agent",
+                agent_id,
+                lambda: Agent.from_dict(config, registry=self.registry, strict=False),
+                version=resolved_version,
+            ) from rehydration_error
         except Exception:
             logger.warning("StudioRunnerTools: Agent.from_dict failed for %s", agent_id, exc_info=True)
             return None
         if for_dispatch:
-            self._require_matching_db(config, agent, "agent", agent_id)
-            self._require_declared_models(config, "agent", agent_id)
-            self._require_inspectable_depth(agent, "agent", agent_id)
-            self._require_faithful_rebuild(agent, config, "agent", agent_id)
+            self._require_dispatchable(agent, config, "agent", agent_id, version=resolved_version)
         return agent
 
     def _load_team_from_db(
@@ -1620,18 +1813,20 @@ class StudioRunnerTools(Toolkit):
     ) -> Optional["Team"]:
         from agno.db.base import ComponentType
 
-        config = self._load_config_from_db(team_id, version=version, component_type=ComponentType.TEAM)
-        if config is None:
+        loaded = self._load_config_row_from_db(team_id, version=version, component_type=ComponentType.TEAM)
+        if loaded is None:
             return None
+        config, resolved_version = loaded
         if for_dispatch:
             # Dispatch only: a null reference cannot be resolved, but the component
             # still has to load so the bad reference can be seen and repaired.
             self._require_resolvable_member_ids("team", team_id, config)
-        self._require_registry_for("team", team_id, config)
+        self._require_registry_for("team", team_id, config, version=resolved_version)
         from agno.team.team import Team
 
+        links = self._load_links_from_db(team_id, version=resolved_version)
         try:
-            team = Team.from_dict(config, db=self.db, registry=self.registry)
+            team = Team.from_dict(config, db=self.db, registry=self.registry, links=links, strict=for_dispatch)
             team.id = team_id
             # The catalog db is a fallback only; a config-declared db wins.
             if getattr(team, "db", None) is None:
@@ -1647,16 +1842,20 @@ class StudioRunnerTools(Toolkit):
                         team_id,
                     )
                 team.db = self.db
+        except ComponentRehydrationError as rehydration_error:
+            raise self._dispatch_refusal(
+                rehydration_error,
+                config,
+                "team",
+                team_id,
+                lambda: Team.from_dict(config, db=self.db, registry=self.registry, links=links, strict=False),
+                version=resolved_version,
+            ) from rehydration_error
         except Exception:
             logger.warning("StudioRunnerTools: Team.from_dict failed for %s", team_id, exc_info=True)
             return None
         if for_dispatch:
-            self._require_matching_db(config, team, "team", team_id)
-            self._require_declared_models(config, "team", team_id)
-            self._require_inspectable_depth(team, "team", team_id)
-            self._require_faithful_rebuild(team, config, "team", team_id)
-            self._require_faithful_registry_copies(team, "team", team_id)
-            self._require_faithful_references(team, config, "team", team_id)
+            self._require_dispatchable(team, config, "team", team_id, version=resolved_version)
         return team
 
     def _load_workflow_from_db(
@@ -1664,18 +1863,20 @@ class StudioRunnerTools(Toolkit):
     ) -> Optional["Workflow"]:
         from agno.db.base import ComponentType
 
-        config = self._load_config_from_db(workflow_id, version=version, component_type=ComponentType.WORKFLOW)
-        if config is None:
+        loaded = self._load_config_row_from_db(workflow_id, version=version, component_type=ComponentType.WORKFLOW)
+        if loaded is None:
             return None
+        config, resolved_version = loaded
         if for_dispatch:
             # Dispatch only: a null reference cannot be resolved, but the component
             # still has to load so the bad reference can be seen and repaired.
             self._require_resolvable_member_ids("workflow", workflow_id, config)
-        self._require_registry_for("workflow", workflow_id, config)
+        self._require_registry_for("workflow", workflow_id, config, version=resolved_version)
         from agno.workflow.workflow import Workflow
 
+        links = self._load_links_from_db(workflow_id, version=resolved_version)
         try:
-            wf = Workflow.from_dict(config, db=self.db, registry=self.registry)
+            wf = Workflow.from_dict(config, db=self.db, registry=self.registry, links=links, strict=for_dispatch)
             wf.id = workflow_id
             # The catalog db is a fallback only; a config-declared db wins.
             if getattr(wf, "db", None) is None:
@@ -1691,17 +1892,20 @@ class StudioRunnerTools(Toolkit):
                         workflow_id,
                     )
                 wf.db = self.db
+        except ComponentRehydrationError as rehydration_error:
+            raise self._dispatch_refusal(
+                rehydration_error,
+                config,
+                "workflow",
+                workflow_id,
+                lambda: Workflow.from_dict(config, db=self.db, registry=self.registry, links=links, strict=False),
+                version=resolved_version,
+            ) from rehydration_error
         except Exception:
             logger.warning("StudioRunnerTools: Workflow.from_dict failed for %s", workflow_id, exc_info=True)
             return None
         if for_dispatch:
-            self._require_matching_db(config, wf, "workflow", workflow_id)
-            self._require_declared_models(config, "workflow", workflow_id)
-            self._require_inspectable_depth(wf, "workflow", workflow_id)
-            self._require_reconstructable_steps(config, workflow_id)
-            self._require_faithful_rebuild(wf, config, "workflow", workflow_id)
-            self._require_faithful_registry_copies(wf, "workflow", workflow_id)
-            self._require_faithful_references(wf, config, "workflow", workflow_id)
+            self._require_dispatchable(wf, config, "workflow", workflow_id, version=resolved_version)
         return wf
 
     def _load_config_from_db(
@@ -1710,7 +1914,21 @@ class StudioRunnerTools(Toolkit):
         version: Optional[int] = None,
         component_type: Optional["ComponentType"] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Load a component's config by id.
+        """Load a component's config by id. See _load_config_row_from_db."""
+        loaded = self._load_config_row_from_db(component_id, version=version, component_type=component_type)
+        return loaded[0] if loaded is not None else None
+
+    def _load_config_row_from_db(
+        self,
+        component_id: str,
+        version: Optional[int] = None,
+        component_type: Optional["ComponentType"] = None,
+    ) -> Optional[Tuple[Dict[str, Any], Optional[int]]]:
+        """Load a component's config and its resolved version in one read.
+
+        The resolved version feeds the links fetch and the dispatch guards, so
+        a publish between reads can never pair one version's config with
+        another version's links.
 
         When ``component_type`` is given, the stored component must be of that
         type; a mismatch returns None so that, e.g., a team id never loads as an
@@ -1729,10 +1947,32 @@ class StudioRunnerTools(Toolkit):
             # Not every db adapter implements component storage; treat the
             # component as absent so code-defined resolution still works.
             return None
-        if row is None:
+        if not isinstance(row, dict):
             return None
-        config = row.get("config") if isinstance(row, dict) else None
-        return config if isinstance(config, dict) else None
+        config = row.get("config")
+        if not isinstance(config, dict):
+            return None
+        resolved_version = row.get("version")
+        return config, (resolved_version if isinstance(resolved_version, int) else None)
+
+    def _load_links_from_db(self, component_id: str, version: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Links for a component's resolved config version.
+
+        Member and step links carry the child versions pinned at save time, so
+        a rebuilt team/workflow resolves its children at the versions the
+        parent was saved against. Adapters without link support pin nothing.
+        """
+        if self.db is None:
+            return []
+        try:
+            if version is None:
+                row = self.db.get_config(component_id=component_id)
+                version = row.get("version") if isinstance(row, dict) else None
+            if not version:
+                return []
+            return self.db.get_links(component_id=component_id, version=version) or []
+        except NotImplementedError:
+            return []
 
     def _list_db_component_rows(
         self, component_type: str, limit: Optional[int] = None

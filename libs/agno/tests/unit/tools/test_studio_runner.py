@@ -1449,14 +1449,14 @@ class TestStudioEmbedding:
 
         # With a registry present, the reference check is the only reader of a
         # member's stored config, so this fault lands on exactly that read.
-        original = runner._load_config_from_db
+        original = runner._load_config_row_from_db
 
         def failing(component_id, **kwargs):
             if component_id == "worker":
                 raise RuntimeError("transient db failure")
             return original(component_id, **kwargs)
 
-        runner._load_config_from_db = failing  # type: ignore[method-assign]
+        runner._load_config_row_from_db = failing  # type: ignore[method-assign]
         assert "transient db failure" in _loads(runner.run_team("crew", "hi"))["error"]
 
     def test_reference_stored_under_another_type_is_refused(self, db, registry):
@@ -1547,10 +1547,11 @@ class TestStudioEmbedding:
         )
         assert "no id" in created.get("error", "")
 
-    def test_edit_team_refuses_to_drop_unresolvable_members(self, registry, db):
-        # Team.from_dict resolves members through the registry and db only; a
-        # code-defined agents_list member is invisible to it, so an unrelated
-        # edit must refuse rather than publish the silently shrunken roster.
+    def test_edit_team_keeps_agents_list_members_resolvable(self, registry, db):
+        # StudioTools mirrors agents_list into the registry so rehydration can
+        # see those members: an unrelated edit now succeeds and the stored
+        # roster survives, where it previously had to refuse to avoid
+        # publishing a silently shrunken version.
         from agno.agent.agent import Agent as AgentClass
 
         worker = AgentClass(id="worker", name="Worker", model=OpenAIResponses(id="gpt-5.4"))
@@ -1559,12 +1560,13 @@ class TestStudioEmbedding:
         assert "error" not in created
 
         out = _loads(studio.edit_team("crew", instructions="new"))
-        assert "would drop members" in out.get("error", "")
+        assert out.get("status") == "edited"
 
         # The stored roster is intact and still names the member.
-        row = db.get_config(component_id="crew")
+        version = out.get("version") or out.get("draft_version")
+        row = db.get_config(component_id="crew", version=version)
         stored = row.get("config") if isinstance(row, dict) else {}
-        assert (stored or {}).get("members"), "edit must not have persisted a memberless version"
+        assert [m.get("agent_id") for m in (stored or {}).get("members", [])] == ["worker"]
 
     def test_runner_refuses_team_with_idless_member(self, registry, db):
         # A legacy or externally persisted config can still carry agent_id null
@@ -2070,7 +2072,89 @@ class TestDispatchCheckInvariants:
         runner = StudioRunnerTools(registry=registry, db=db)
         for component_id, tool in (("crew", runner.run_team), ("flow", runner.run_workflow)):
             error = _loads(tool(component_id, "hi")).get("error", "")
-            assert "no db resolved" in error and "member" in error, component_id
+            # On this branch member hydration backfills the caller db, so the
+            # walk can see the ghost declaration as a redirection instead of a
+            # void. Either way the dispatch refuses and names the member.
+            assert "no db resolved" in error or "routes differently" in error, component_id
+            assert "member" in error, component_id
+
+    def test_branch_pins_pair_each_occurrence_with_its_own_config(self, db, registry):
+        """Two branches pin the same child id at different versions. The walk
+        must pair each rebuilt branch object with the config version its own
+        branch-qualified link pinned: collapsed by id, the v1 branch (which
+        declares a reasoning model nothing reconstructs) was validated against
+        the v2 config and dispatched degraded."""
+        from agno.agent import Agent
+        from agno.workflow.condition import Condition
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import Workflow
+
+        model = OpenAIResponses(id="gpt-5.4")
+        rich = Agent(id="shared-agent", name="A", model=model, reasoning_model=OpenAIResponses(id="gpt-5.5"))
+        plain = Agent(id="shared-agent", name="A", model=model)
+        Workflow(
+            id="branch-workflow",
+            name="Branch workflow",
+            steps=[
+                Condition(
+                    name="branch",
+                    evaluator=True,
+                    steps=[Step(step_id="aaa-rich", name="rich", agent=rich)],
+                    else_steps=[Step(step_id="zzz-plain", name="plain", agent=plain)],
+                )
+            ],
+        ).save(db=db)
+
+        runner = StudioRunnerTools(registry=registry, db=db)
+        error = _loads(runner.run_workflow("branch-workflow", "hi")).get("error", "")
+        assert "reasoning_model" in error
+        assert "shared-agent" in error
+
+    def test_branch_pins_catch_a_redirected_db_before_any_write(self, db, registry, tmp_path):
+        """The isolated branch's agent declares tenant tables the registry's
+        shared instance does not route to. Collapsed by id, only the shared
+        occurrence was compared, the dispatch completed and the isolated
+        branch's session landed in the shared table."""
+        from agno.agent import Agent
+        from agno.db.json import JsonDb
+        from agno.workflow.condition import Condition
+        from agno.workflow.step import Step
+        from agno.workflow.workflow import Workflow
+
+        isolated = JsonDb(id="tenant-json", db_path=str(tmp_path / "isolated"), session_table="isolated_sessions")
+        shared = JsonDb(id="tenant-json", db_path=str(tmp_path / "shared"), session_table="shared_sessions")
+        registry.dbs = [db, shared]
+        model = OpenAIResponses(id="gpt-5.4")
+        Workflow(
+            id="tenant-workflow",
+            name="Tenant workflow",
+            steps=[
+                Condition(
+                    name="branch",
+                    evaluator=True,
+                    steps=[
+                        Step(
+                            step_id="aaa-isolated",
+                            name="isolated",
+                            agent=Agent(id="tenant-agent", name="A", model=model, db=isolated),
+                        )
+                    ],
+                    else_steps=[
+                        Step(
+                            step_id="zzz-shared",
+                            name="shared",
+                            agent=Agent(id="tenant-agent", name="A", model=model, db=shared),
+                        )
+                    ],
+                )
+            ],
+        ).save(db=db)
+
+        runner = StudioRunnerTools(registry=registry, db=db)
+        error = _loads(runner.run_workflow("tenant-workflow", "hi")).get("error", "")
+        assert "routes differently" in error and "session_table" in error
+        assert shared.get_sessions() in ([], ([], 0))
+        assert isolated.get_sessions() in ([], ([], 0))
 
     def test_a_code_only_allowlist_is_listable_without_a_database(self):
         """An allowlist runs without a database, so it has to be findable
@@ -2127,7 +2211,7 @@ class TestDispatchCheckInvariants:
         ).save(db=db)
 
         studio = StudioTools(registry=registry, db=db)
-        original = studio._runner_tools._load_config_from_db
+        original = studio._runner_tools._load_config_row_from_db
         calls = {"count": 0}
 
         def failing(component_id, **kwargs):
@@ -2136,9 +2220,9 @@ class TestDispatchCheckInvariants:
                 raise RuntimeError("transient db failure")
             return original(component_id, **kwargs)
 
-        studio._runner_tools._load_config_from_db = failing  # type: ignore[method-assign]
+        studio._runner_tools._load_config_row_from_db = failing  # type: ignore[method-assign]
         result = _loads(studio.edit_agent("rich", description="an unrelated change"))
-        studio._runner_tools._load_config_from_db = original  # type: ignore[method-assign]
+        studio._runner_tools._load_config_row_from_db = original  # type: ignore[method-assign]
 
         assert "error" in result
         stored = (db.get_config(component_id="rich") or {}).get("config") or {}
@@ -2839,7 +2923,7 @@ class TestMemberStructureFidelity:
         runner = StudioRunnerTools(registry=registry, db=db)
 
         result = _loads(runner.run_team("crew", "hello"))
-        assert "shared registry instance of member 'worker'" in result["error"]
+        assert "deep_copy returned the shared registry instance" in result["error"]
 
     def test_callable_factory_members_and_tools_do_not_crash_the_graph_walk(self):
         """members= and tools= accept callable factories, so the nested-tools walk
@@ -2908,3 +2992,90 @@ class TestMemberStructureFidelity:
         source = inspect.getsource(StudioRunnerTools._load_team_from_db)
         before_call = source.split("_require_resolvable_member_ids")[0]
         assert "if for_dispatch:" in before_call
+
+
+def test_dispatch_resolves_members_at_pinned_versions(tmp_path):
+    """A dispatched team must execute the member versions pinned at team-save
+    time, matching what get_team_by_id and Team.load resolve."""
+    from agno.agent.agent import Agent
+    from agno.db.sqlite import SqliteDb
+    from agno.registry import Registry
+    from agno.team.team import Team
+    from agno.tools.studio_runner import StudioRunnerTools
+
+    db = SqliteDb(db_file=str(tmp_path / "runner_pin.db"))
+    member = Agent(id="rp-member", name="Member", description="v1 desc")
+    Team(id="rp-team", name="Team", members=[member]).save(db=db)
+    member.description = "v3 desc"
+    member.save(db=db)
+
+    runner = StudioRunnerTools(registry=Registry(), db=db)
+    team = runner._load_team_from_db("rp-team", for_dispatch=True)
+
+    assert team is not None
+    assert team.members[0].description == "v1 desc"
+
+
+def test_dispatch_judges_pinned_members_against_their_pinned_config(tmp_path):
+    """A republish of a pinned member must not make the pinned parent
+    undispatchable: fidelity guards compare the rebuilt member against the
+    config version it was built from, not the member's current version."""
+    from agno.agent.agent import Agent
+    from agno.db.sqlite import SqliteDb
+    from agno.models.openai import OpenAIChat
+    from agno.registry import Registry
+    from agno.team.team import Team
+    from agno.tools.studio_runner import StudioRunnerTools
+
+    def weather(city: str) -> str:
+        """Weather."""
+        return city
+
+    db = SqliteDb(db_file=str(tmp_path / "pin_fidelity.db"))
+    member = Agent(id="fm", name="Member")
+    Team(id="ft", name="Team", members=[member]).save(db=db)
+    member.model = OpenAIChat(id="gpt-4o-mini")
+    member.tools = [weather]
+    member.save(db=db)
+
+    runner = StudioRunnerTools(registry=Registry(), db=db)
+    team = runner._load_team_from_db("ft", for_dispatch=True)
+
+    assert team is not None
+    assert team.members[0].id == "fm"
+
+
+def test_dispatch_never_mixes_config_and_links_from_different_versions(tmp_path):
+    """A publish between the config read and any later read must not produce a
+    hybrid artifact: links and guards use the version the config row resolved."""
+    from agno.agent.agent import Agent
+    from agno.db.sqlite import SqliteDb
+    from agno.registry import Registry
+    from agno.team.team import Team
+    from agno.tools.studio_runner import StudioRunnerTools
+
+    db = SqliteDb(db_file=str(tmp_path / "race.db"))
+    member = Agent(id="rv-m", name="M", description="v1")
+    Team(id="rv-t", name="T", members=[member]).save(db=db)
+
+    runner = StudioRunnerTools(registry=Registry(), db=db)
+    real_get_config = db.get_config
+    state = {"raced": False}
+
+    def racy_get_config(component_id=None, version=None, **kwargs):
+        row = real_get_config(component_id=component_id, version=version, **kwargs)
+        if not state["raced"] and component_id == "rv-t":
+            state["raced"] = True
+            member.description = "v2"
+            member.save(db=db)
+            Team(id="rv-t", name="T", members=[member]).save(db=db)
+        return row
+
+    db.get_config = racy_get_config
+    try:
+        team_obj = runner._load_team_from_db("rv-t", for_dispatch=True)
+    finally:
+        del db.get_config
+
+    assert team_obj is not None
+    assert team_obj.members[0].description == "v1"

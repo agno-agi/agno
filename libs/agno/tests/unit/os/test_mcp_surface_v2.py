@@ -37,7 +37,7 @@ def _resolve_by_identity(monkeypatch):
     resolution behaviour is covered by test_mcp_resolution.py.
     """
 
-    async def _resolve(os, kind, component_id, *, user_id, session_id):
+    async def _resolve(os, kind, component_id, *, user_id, session_id, strict=True):
         pool = {"agents": os.agents, "teams": os.teams, "workflows": os.workflows}.get(kind) or []
         for component in pool:
             if getattr(component, "id", None) == component_id:
