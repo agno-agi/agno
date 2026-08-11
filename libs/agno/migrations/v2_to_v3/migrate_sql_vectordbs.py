@@ -60,6 +60,7 @@ singlestore_config = {
 }
 # -----------------------------------------
 
+
 #  Exit if no configurations are provided
 def migrate_pgvector_table(table_name: str, schema: str = "ai") -> None:
     """Add the ``user_id`` column (and its index) to a PgVector table.
@@ -101,9 +102,7 @@ def migrate_pgvector_table(table_name: str, schema: str = "ai") -> None:
             index_name = f"idx_{table_name}_user_id"
             log_info(f"Creating index {index_name} on user_id column")
             try:
-                sess.execute(
-                    text(f'CREATE INDEX IF NOT EXISTS "{index_name}" ON "{schema}"."{table_name}" (user_id);')
-                )
+                sess.execute(text(f'CREATE INDEX IF NOT EXISTS "{index_name}" ON "{schema}"."{table_name}" (user_id);'))
             except SQLAlchemyError as e:
                 log_warning(f"Could not create index {index_name}: {e}")
 
@@ -164,17 +163,28 @@ def run() -> None:
         )
         return
 
-    try:
-        if pg_vector_config:
-            for table_name in pg_vector_config["table_names"]:
-                migrate_pgvector_table(table_name, pg_vector_config["schema"])  # type: ignore
+    tasks = []
+    if pg_vector_config:
+        tasks += [
+            (f"pgvector:{t}", lambda t=t: migrate_pgvector_table(t, pg_vector_config["schema"]))  # type: ignore
+            for t in pg_vector_config["table_names"]
+        ]
+    if singlestore_config:
+        tasks += [
+            (f"singlestore:{t}", lambda t=t: migrate_singlestore_table(t, singlestore_config["schema"]))  # type: ignore
+            for t in singlestore_config["table_names"]
+        ]
 
-        if singlestore_config:
-            for table_name in singlestore_config["table_names"]:
-                migrate_singlestore_table(table_name, singlestore_config["schema"])  # type: ignore
+    failures = []
+    for label, task in tasks:
+        try:
+            task()
+        except Exception as e:
+            log_error(f"Migration failed for {label}: {e}")
+            failures.append(label)
 
-    except Exception as e:
-        log_error(f"Error during migration: {e}")
+    if failures:
+        raise RuntimeError(f"SQL schema migration FAILED for: {', '.join(failures)}. Re-run after fixing the cause.")
 
     log_info("VectorDB user-isolation migration completed.")
 

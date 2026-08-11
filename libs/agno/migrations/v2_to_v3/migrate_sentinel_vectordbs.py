@@ -108,8 +108,7 @@ def migrate_redis_index(index_name: str) -> None:
                 patched += 1
 
         log_info(
-            f"Redis index '{index_name}': scanned {scanned} vectors, "
-            f"backfilled {patched} with user_id='{sentinel}'."
+            f"Redis index '{index_name}': scanned {scanned} vectors, backfilled {patched} with user_id='{sentinel}'."
         )
 
     except Exception as e:
@@ -154,8 +153,7 @@ def migrate_valkey_index(index_name: str) -> None:
                 patched += 1
 
         log_info(
-            f"Valkey index '{index_name}': scanned {scanned} vectors, "
-            f"backfilled {patched} with user_id='{sentinel}'."
+            f"Valkey index '{index_name}': scanned {scanned} vectors, backfilled {patched} with user_id='{sentinel}'."
         )
 
     except Exception as e:
@@ -202,10 +200,7 @@ def migrate_couchbase() -> None:
         # N1QL UPDATE only rows that don't yet have the owner field -> idempotent.
         from couchbase.options import QueryOptions
 
-        query = (
-            f"UPDATE {keyspace} SET {field} = $sentinel "
-            f"WHERE {field} IS MISSING OR {field} IS NULL"
-        )
+        query = f"UPDATE {keyspace} SET {field} = $sentinel WHERE {field} IS MISSING OR {field} IS NULL"
         # metrics=True so we can report the real mutation count.
         result = cluster.query(query, QueryOptions(named_parameters={"sentinel": sentinel}, metrics=True))
         # Drain the result so the mutation executes.
@@ -245,9 +240,7 @@ def migrate_cassandra() -> None:
 
         required = ["session", "keyspace", "table_name"]
         if not all(cassandra_config.get(k) for k in required):
-            log_warning(
-                f"Cassandra: config missing one of {required} (need a live driver `session`). Skipping."
-            )
+            log_warning(f"Cassandra: config missing one of {required} (need a live driver `session`). Skipping.")
             return
 
         session = cassandra_config["session"]
@@ -284,24 +277,37 @@ def migrate_cassandra() -> None:
 
 
 def run() -> None:
-    """Run the configured sentinel backfills."""
-    try:
-        if redis_config.get("index_names"):
-            for name in redis_config["index_names"]:
-                migrate_redis_index(name)
+    """Run the configured sentinel backfills.
 
-        if valkey_config.get("index_names"):
-            for name in valkey_config["index_names"]:
-                migrate_valkey_index(name)
+    Each backend runs independently so one failure does not skip the others, but
+    the run as a whole FAILS LOUDLY: any backend that raises is collected and
+    re-raised at the end. This is critical for sentinel backends — a backfill that
+    silently "completed" while it actually errored would leave legacy vectors
+    invisible to every scoped search, with no signal to the operator.
+    """
+    tasks = []
+    if redis_config.get("index_names"):
+        tasks += [(f"redis:{n}", lambda n=n: migrate_redis_index(n)) for n in redis_config["index_names"]]
+    if valkey_config.get("index_names"):
+        tasks += [(f"valkey:{n}", lambda n=n: migrate_valkey_index(n)) for n in valkey_config["index_names"]]
+    if couchbase_config.get("collection_name"):
+        tasks.append(("couchbase", migrate_couchbase))
+    if cassandra_config.get("table_name"):
+        tasks.append(("cassandra", migrate_cassandra))
 
-        if couchbase_config.get("collection_name"):
-            migrate_couchbase()
+    failures = []
+    for label, task in tasks:
+        try:
+            task()
+        except Exception as e:
+            log_error(f"Backfill failed for {label}: {e}")
+            failures.append(label)
 
-        if cassandra_config.get("table_name"):
-            migrate_cassandra()
-
-    except Exception as e:
-        log_error(f"Error during migration: {e}")
+    if failures:
+        raise RuntimeError(
+            f"Sentinel backfill FAILED for: {', '.join(failures)}. "
+            "Those stores' legacy vectors remain invisible to scoped searches until re-run."
+        )
 
     log_info("Sentinel VectorDB user-isolation backfill completed.")
 

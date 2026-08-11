@@ -323,7 +323,10 @@ class TestScriptsImportCleanly:
         "script,funcs",
         [
             ("migrate_sql_vectordbs.py", ["migrate_pgvector_table", "migrate_singlestore_table", "run"]),
-            ("migrate_sentinel_vectordbs.py", ["migrate_redis_index", "migrate_valkey_index", "migrate_couchbase", "migrate_cassandra", "run"]),
+            (
+                "migrate_sentinel_vectordbs.py",
+                ["migrate_redis_index", "migrate_valkey_index", "migrate_couchbase", "migrate_cassandra", "run"],
+            ),
             (
                 "migrate_field_vectordbs.py",
                 [
@@ -408,3 +411,99 @@ class TestLanceDbSchemaMigration:
         mod = _load("migrate_field_vectordbs.py")
         mod.lancedb_config["uri"] = uri
         mod.migrate_lancedb_table("does_not_exist")  # must not raise
+
+
+class TestMilvusMigrationContract:
+    """No-server guards: the migration must stay in sync with the adapter's constants."""
+
+    def test_adapter_exposes_the_constants_the_migration_depends_on(self):
+        # If these are renamed/removed again (as USER_ID_KEY was), this fails loudly
+        # instead of letting the migration crash at call time in production.
+        milvus = pytest.importorskip("agno.vectordb.milvus.milvus")
+        assert isinstance(milvus.USER_ID_FIELD, str) and milvus.USER_ID_FIELD
+        assert isinstance(milvus.SHARED_USER_ID_VALUE, str) and milvus.SHARED_USER_ID_VALUE
+
+    def test_migration_does_not_reference_the_removed_attribute(self):
+        # The crash was `Milvus.USER_ID_KEY`; make sure it never comes back.
+        # (Weaviate/Qdrant still expose USER_ID_KEY, so only the Milvus form is banned.)
+        source = (_MIGRATIONS_DIR / "migrate_field_vectordbs.py").read_text()
+        assert "Milvus.USER_ID_KEY" not in source, "migration references removed attribute Milvus.USER_ID_KEY"
+        assert "SHARED_USER_ID_VALUE" in source, "migration must backfill the shared sentinel"
+
+
+class TestMilvusBackfill:
+    """Full backfill behavior on milvus-lite (skipped where milvus-lite is unavailable).
+
+    milvus-lite cannot ``AddCollectionField`` (returns UNIMPLEMENTED, like Milvus
+    <=2.5), so we pre-create the collection WITH a nullable ``user_id`` and insert
+    owner-less rows -- the exact state left right after ``add_collection_field`` on
+    a real 2.6+ server -- then exercise the migration's backfill loop.
+    """
+
+    def _client_with_legacy_rows(self):
+        pytest.importorskip("milvus_lite")
+        from pymilvus import DataType, MilvusClient
+
+        from agno.vectordb.milvus.milvus import USER_ID_FIELD
+
+        uri = str(Path(tempfile.mkdtemp()) / "milvus.db")
+        client = MilvusClient(uri=uri)
+        schema = MilvusClient.create_schema(auto_id=False, enable_dynamic_field=False)
+        schema.add_field("id", DataType.VARCHAR, max_length=128, is_primary=True)
+        schema.add_field("vector", DataType.FLOAT_VECTOR, dim=4)
+        schema.add_field(USER_ID_FIELD, DataType.VARCHAR, max_length=256, nullable=True)
+        idx = client.prepare_index_params()
+        idx.add_index(field_name="vector", index_type="AUTOINDEX", metric_type="COSINE")
+        client.create_collection(collection_name="docs", schema=schema, index_params=idx)
+        client.insert(
+            collection_name="docs",
+            data=[
+                {"id": "doc_a", "vector": [0.1, 0.2, 0.3, 0.4], USER_ID_FIELD: ""},
+                {"id": "doc_b", "vector": [0.5, 0.6, 0.7, 0.8], USER_ID_FIELD: ""},
+            ],
+        )
+        client.flush(collection_name="docs")
+        return uri, client
+
+    def test_backfill_stamps_shared_and_unblocks_scoped_search(self):
+        from agno.vectordb.milvus.milvus import SHARED_USER_ID_VALUE, USER_ID_FIELD
+
+        uri, client = self._client_with_legacy_rows()
+        mod = _load("migrate_field_vectordbs.py")
+        mod.milvus_config["uri"] = uri
+        mod.milvus_config["token"] = None
+        mod.migrate_milvus_collection("docs")
+
+        client.load_collection("docs")
+        rows = client.query(collection_name="docs", filter="id != ''", output_fields=[USER_ID_FIELD])
+        assert rows and all(r.get(USER_ID_FIELD) == SHARED_USER_ID_VALUE for r in rows)
+
+        # The whole point: existing rows are now reachable by a scoped search.
+        scoped = client.query(
+            collection_name="docs",
+            filter=f'{USER_ID_FIELD} == "alice" or {USER_ID_FIELD} == "{SHARED_USER_ID_VALUE}"',
+            output_fields=["id"],
+        )
+        assert len(scoped) == 2
+
+    def test_idempotent(self):
+        from agno.vectordb.milvus.milvus import SHARED_USER_ID_VALUE, USER_ID_FIELD
+
+        uri, client = self._client_with_legacy_rows()
+        mod = _load("migrate_field_vectordbs.py")
+        mod.milvus_config["uri"] = uri
+        mod.milvus_config["token"] = None
+        mod.migrate_milvus_collection("docs")
+        mod.migrate_milvus_collection("docs")  # second run must be a no-op
+
+        client.load_collection("docs")
+        rows = client.query(collection_name="docs", filter="id != ''", output_fields=[USER_ID_FIELD])
+        assert all(r.get(USER_ID_FIELD) == SHARED_USER_ID_VALUE for r in rows)
+
+    def test_missing_collection_is_safe(self):
+        pytest.importorskip("milvus_lite")
+        uri = str(Path(tempfile.mkdtemp()) / "milvus.db")
+        mod = _load("migrate_field_vectordbs.py")
+        mod.milvus_config["uri"] = uri
+        mod.milvus_config["token"] = None
+        mod.migrate_milvus_collection("does_not_exist")  # must not raise

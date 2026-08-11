@@ -92,12 +92,24 @@ qdrant_config: Dict[str, Any] = {
 
 
 def migrate_milvus_collection(collection: str) -> None:
-    """Add the ``user_id`` field to an existing Milvus collection.
+    """Add the ``user_id`` field to an existing Milvus collection AND backfill the
+    shared sentinel onto every existing entity.
 
-    Matches the adapter's declaration: VARCHAR(256), nullable. Existing entities
-    read as NULL = shared. Required so hybrid search can filter on ``user_id``.
+    Two steps:
+      1. Add the ``user_id`` field. ``add_collection_field`` can only add a
+         *nullable* field to a populated collection, so it is added ``nullable=True``
+         here even though a freshly-created v3 collection declares it non-null. The
+         backfill immediately fills every row, leaving no nulls behind.
+      2. Backfill: stamp ``user_id = "__shared__"`` onto every entity that has no
+         owner yet, restoring them to the shared bucket. Safe in place: the shared
+         bucket uses the UN-folded primary id (``_scoped_doc_id`` with
+         ``user_id=None`` returns the base id), which is exactly the id a pre-v3
+         (owner-less) row already has — so no id changes and no duplicate is created.
 
-u    NOTE: adding a field to an existing collection requires **Milvus 2.6+**
+    Idempotent: entities that already carry a ``user_id`` are left untouched, and a
+    collection whose field already exists skips straight to the backfill.
+
+    NOTE: adding a field to an existing collection requires **Milvus 2.6+**
     (``AddCollectionField``). On Milvus 2.5.x and earlier the server has no such
     API — the only option there is to recreate the collection with the new schema
     and re-ingest the data. This function detects the unsupported case and raises a
@@ -109,7 +121,7 @@ u    NOTE: adding a field to an existing collection requires **Milvus 2.6+**
     try:
         from pymilvus import DataType, MilvusClient
 
-        from agno.vectordb.milvus.milvus import Milvus
+        from agno.vectordb.milvus.milvus import SHARED_USER_ID_VALUE, USER_ID_FIELD
 
         client = MilvusClient(uri=milvus_config.get("uri"), token=milvus_config.get("token"))
         if not client.has_collection(collection):
@@ -117,28 +129,53 @@ u    NOTE: adding a field to an existing collection requires **Milvus 2.6+**
             return
 
         fields = [f["name"] for f in client.describe_collection(collection)["fields"]]
-        if Milvus.USER_ID_KEY in fields:
-            log_info(f"Milvus collection '{collection}' already has {Milvus.USER_ID_KEY}. No migration needed.")
-            return
+        if USER_ID_FIELD not in fields:
+            log_info(f"Adding {USER_ID_FIELD} field to Milvus collection '{collection}'")
+            try:
+                client.add_collection_field(
+                    collection_name=collection,
+                    field_name=USER_ID_FIELD,
+                    data_type=DataType.VARCHAR,
+                    max_length=256,
+                    nullable=True,
+                )
+            except Exception as add_err:
+                if "AddCollectionField" in str(add_err) or "UNIMPLEMENTED" in str(add_err):
+                    raise RuntimeError(
+                        f"Milvus server does not support adding a field to an existing collection "
+                        f"(requires Milvus 2.6+). Recreate collection '{collection}' with the new "
+                        f"schema and re-ingest instead."
+                    ) from add_err
+                raise
+        else:
+            log_info(f"Milvus collection '{collection}' already has {USER_ID_FIELD}; checking backfill.")
 
-        log_info(f"Adding {Milvus.USER_ID_KEY} field to Milvus collection '{collection}'")
+        # Backfill the shared sentinel onto every owner-less entity. Page through
+        # the primary keys with a query_iterator so large collections don't load at
+        # once, then upsert the sentinel in batches.
+        log_info(f"Backfilling {USER_ID_FIELD}='{SHARED_USER_ID_VALUE}' onto owner-less entities in '{collection}'")
+        patched = 0
+        iterator = client.query_iterator(
+            collection_name=collection,
+            # Rows whose owner is unset: field absent (pre-migration) or NULL (just added).
+            filter=f'{USER_ID_FIELD} == "" or {USER_ID_FIELD} is null',
+            output_fields=["*"],
+            batch_size=1000,
+        )
         try:
-            client.add_collection_field(
-                collection_name=collection,
-                field_name=Milvus.USER_ID_KEY,
-                data_type=DataType.VARCHAR,
-                max_length=256,
-                nullable=True,
-            )
-        except Exception as add_err:
-            if "AddCollectionField" in str(add_err) or "UNIMPLEMENTED" in str(add_err):
-                raise RuntimeError(
-                    f"Milvus server does not support adding a field to an existing collection "
-                    f"(requires Milvus 2.6+). Recreate collection '{collection}' with the new "
-                    f"schema and re-ingest instead."
-                ) from add_err
-            raise
-        log_info(f"Successfully migrated Milvus collection '{collection}'")
+            while True:
+                batch = iterator.next()
+                if not batch:
+                    break
+                for row in batch:
+                    row[USER_ID_FIELD] = SHARED_USER_ID_VALUE
+                # upsert by primary id: the id is unchanged, so this rewrites in place.
+                client.upsert(collection_name=collection, data=batch)
+                patched += len(batch)
+        finally:
+            iterator.close()
+
+        log_info(f"Successfully migrated Milvus collection '{collection}': backfilled {patched} shared entities.")
 
     except Exception as e:
         log_error(f"Error migrating Milvus collection {collection}: {e}")
@@ -306,31 +343,50 @@ def assign_qdrant_owner(collection: str, point_ids: List[str], user_id: str) -> 
 
 
 def run() -> None:
-    """Run the configured schema migrations and optional Qdrant assignments."""
-    try:
-        for name in milvus_config.get("collections", []):
-            migrate_milvus_collection(name)
-        for name in weaviate_config.get("collections", []):
-            migrate_weaviate_collection(name)
-        for name in lancedb_config.get("table_names", []):
-            migrate_lancedb_table(name)
-        for name in clickhouse_config.get("table_names", []):
-            migrate_clickhouse_table(name)
-        for name in surrealdb_config.get("collections", []):
-            migrate_surrealdb_collection(name)
+    """Run the configured schema migrations and optional Qdrant assignments.
 
-        if qdrant_config.get("collection") and qdrant_config.get("assignments"):
-            for a in qdrant_config["assignments"]:
-                assign_qdrant_owner(qdrant_config["collection"], a["point_ids"], a["user_id"])
+    Each store runs independently so one failure does not skip the others, but the
+    run FAILS LOUDLY: any store that raises is collected and re-raised at the end,
+    so a partial migration is never reported as a success.
+    """
+    tasks = []
+    tasks += [(f"milvus:{n}", lambda n=n: migrate_milvus_collection(n)) for n in milvus_config.get("collections", [])]
+    tasks += [
+        (f"weaviate:{n}", lambda n=n: migrate_weaviate_collection(n)) for n in weaviate_config.get("collections", [])
+    ]
+    tasks += [(f"lancedb:{n}", lambda n=n: migrate_lancedb_table(n)) for n in lancedb_config.get("table_names", [])]
+    tasks += [
+        (f"clickhouse:{n}", lambda n=n: migrate_clickhouse_table(n)) for n in clickhouse_config.get("table_names", [])
+    ]
+    tasks += [
+        (f"surrealdb:{n}", lambda n=n: migrate_surrealdb_collection(n)) for n in surrealdb_config.get("collections", [])
+    ]
+    if qdrant_config.get("collection") and qdrant_config.get("assignments"):
+        for a in qdrant_config["assignments"]:
+            tasks.append(
+                (
+                    f"qdrant:{qdrant_config['collection']}",
+                    lambda a=a: assign_qdrant_owner(qdrant_config["collection"], a["point_ids"], a["user_id"]),
+                )
+            )
 
-    except Exception as e:
-        log_error(f"Error during migration: {e}")
+    failures = []
+    for label, task in tasks:
+        try:
+            task()
+        except Exception as e:
+            log_error(f"Migration failed for {label}: {e}")
+            failures.append(label)
 
     log_warning(
         "qdrant and upstash need NO action for v3 isolation (schemaless; absent user_id = shared). "
         "The sentinel backends (couchbase, cassandra, redis) require a separate mandatory backfill "
         "— see migrate_sentinel_vectordbs.py."
     )
+
+    if failures:
+        raise RuntimeError(f"Field migration FAILED for: {', '.join(failures)}. Re-run after fixing the cause.")
+
     log_info("Field VectorDB user-isolation migration completed.")
 
 
