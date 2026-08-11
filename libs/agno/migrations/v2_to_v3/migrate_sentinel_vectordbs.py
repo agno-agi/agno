@@ -25,7 +25,8 @@ Backends: Redis, Couchbase, Cassandra.
 Usage: fill in the config block for the backend(s) you use and run the script.
 """
 
-from typing import Any, Dict
+from functools import partial
+from typing import Any, Callable, Dict, List, Tuple
 
 from agno.utils.log import log_error, log_info, log_warning
 
@@ -285,15 +286,15 @@ def run() -> None:
     silently "completed" while it actually errored would leave legacy vectors
     invisible to every scoped search, with no signal to the operator.
     """
-    tasks = []
-    if redis_config.get("index_names"):
-        tasks += [(f"redis:{n}", lambda n=n: migrate_redis_index(n)) for n in redis_config["index_names"]]
-    if valkey_config.get("index_names"):
-        tasks += [(f"valkey:{n}", lambda n=n: migrate_valkey_index(n)) for n in valkey_config["index_names"]]
+    tasks: List[Tuple[str, Callable[[], None]]] = []
+    for name in redis_config.get("index_names", []):
+        tasks.append((f"redis:{name}", partial(migrate_redis_index, name)))
+    for name in valkey_config.get("index_names", []):
+        tasks.append((f"valkey:{name}", partial(migrate_valkey_index, name)))
     if couchbase_config.get("collection_name"):
-        tasks.append(("couchbase", lambda: migrate_couchbase()))
+        tasks.append(("couchbase", migrate_couchbase))
     if cassandra_config.get("table_name"):
-        tasks.append(("cassandra", lambda: migrate_cassandra()))
+        tasks.append(("cassandra", migrate_cassandra))
 
     failures = []
     for label, task in tasks:
