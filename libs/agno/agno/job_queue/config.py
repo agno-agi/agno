@@ -119,13 +119,6 @@ class QueueConfig:
     # swept as dead and its eventual completion fenced out (reported failed
     # despite finishing). Keep blocking work in threads, or raise this grace.
     lock_grace_seconds: int = 60
-    # Graceful-shutdown drain window: in-flight runs get this long to finish
-    # before stragglers are cancelled and requeued/failed. Must be strictly
-    # below lock_grace_seconds (validated here, at construction). None = the
-    # worker default (30s), automatically clamped below lock_grace_seconds -
-    # so every lock_grace the validator accepts also boots (values 3-30 used
-    # to pass validation and then crash the app during lifespan startup).
-    stop_timeout_seconds: Optional[int] = None
     poll_interval: float = 1.0
     # Terminal jobs older than this are deleted by the worker's retention
     # sweep; the queue table must not grow unboundedly. PAUSED tickets are
@@ -133,6 +126,16 @@ class QueueConfig:
     # must outlive arbitrary human latency. Abandoned paused tickets therefore
     # persist until continued or cancelled - cancel the run to release one.
     retention_seconds: int = 86400
+    # Graceful-shutdown drain window: in-flight runs get this long to finish
+    # before stragglers are cancelled and requeued/failed. Must be strictly
+    # below lock_grace_seconds (validated here, at construction). None = the
+    # worker default (30s), automatically clamped below lock_grace_seconds -
+    # so every lock_grace the validator accepts also boots (values 3-30 used
+    # to pass validation and then crash the app during lifespan startup).
+    # Appended AFTER the pre-existing fields: this is a public dataclass and
+    # is not keyword-only, so inserting mid-list would silently reinterpret
+    # positional constructions of the fields behind it.
+    stop_timeout_seconds: Optional[int] = None
 
     def __post_init__(self) -> None:
         if self.db is not None and not self.durable:
