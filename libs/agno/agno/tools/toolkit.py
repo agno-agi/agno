@@ -1,12 +1,109 @@
 from collections import OrderedDict
 from inspect import iscoroutinefunction
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union, cast, get_type_hints
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union, cast, get_type_hints
 
 from agno.exceptions import PathSecurityError
 from agno.tools.function import Function
 from agno.utils.log import log_debug, log_warning
 from agno.utils.path_safety import safe_join_relative_path
+
+# Groups a Toolkit by what it contributes rather than by object identity.
+# Agent.deep_copy / Team.deep_copy clone a Toolkit list entry while the
+# rehydrated Functions that came from it keep pointing at the live registry
+# Toolkit, so identity splits one logical toolkit into two. A clone agrees with
+# its original on every part of this key, so the two regroup.
+#
+# The function surface is part of the key because the coverage check reads it:
+# two same-named toolkits carrying the same guidance but exposing different
+# functions would otherwise pool their members, and one toolkit's coverage would
+# be judged against the other's function set. The sync and async surfaces stay
+# separate parts of the key: coverage is measured per mode, and two toolkits
+# whose surfaces agree only as a union would pool members that mode-specific
+# coverage then judges against the wrong function set.
+ToolkitKey = Tuple[str, Any, bool, frozenset, frozenset]
+
+
+def _toolkit_key(toolkit: "Toolkit") -> ToolkitKey:
+    sync_surface = frozenset(toolkit.get_functions())
+    async_surface = frozenset(toolkit.get_async_functions())
+    instructions = toolkit.instructions
+    if instructions is not None and not isinstance(instructions, str):
+        # `instructions` is declared Optional[str] but nothing enforces it, and
+        # a list would make this key unhashable. Fall back to identity for that
+        # toolkit rather than raise: grouping degrades, the run does not fail.
+        return (toolkit.name, id(toolkit), toolkit.add_instructions, sync_surface, async_surface)
+    return (toolkit.name, instructions, toolkit.add_instructions, sync_surface, async_surface)
+
+
+def _group_source_toolkits(
+    tools: Sequence[Any],
+) -> Tuple[Dict[ToolkitKey, int], Dict[ToolkitKey, Set[str]], Dict[int, ToolkitKey]]:
+    """Index the bare Functions that a live Toolkit was flattened into.
+
+    Returns the last index each toolkit's members occupy in ``tools`` and the
+    member names present, both keyed by :func:`_toolkit_key`, plus the key
+    itself memoized per live Toolkit object. The key folds the toolkit's whole
+    function surface, so rebuilding it per member Function would make one
+    collection pass quadratic in the toolkit's size; every later key read must
+    come from the memo.
+    """
+    last_index: Dict[ToolkitKey, int] = {}
+    members: Dict[ToolkitKey, Set[str]] = {}
+    keys_by_id: Dict[int, ToolkitKey] = {}
+    for index, tool in enumerate(tools):
+        if not isinstance(tool, Function):
+            continue
+        source_toolkit = tool.source_toolkit
+        if not isinstance(source_toolkit, Toolkit):
+            continue
+        key = keys_by_id.get(id(source_toolkit))
+        if key is None:
+            key = keys_by_id[id(source_toolkit)] = _toolkit_key(source_toolkit)
+        last_index[key] = index
+        members.setdefault(key, set()).add(tool.name)
+    return last_index, members, keys_by_id
+
+
+def _emits_toolkit_instructions(
+    source_toolkit: "Toolkit",
+    index: int,
+    key: ToolkitKey,
+    last_index: Dict[ToolkitKey, int],
+    members: Dict[ToolkitKey, Set[str]],
+    async_mode: bool = False,
+) -> bool:
+    """Whether the bare Function at ``index`` should emit its toolkit's guidance.
+
+    Guidance belongs after all of the toolkit's member guidance, so only the
+    last member emits it, and only when the component holds every function the
+    toolkit exposes. Persistence records one dict per function, so a component
+    built from a whole toolkit and one built from a single member are
+    indistinguishable on reload; resolving that ambiguity as "whole toolkit"
+    would hand the model guidance naming tools it was not given.
+
+    ``key`` is ``_toolkit_key(source_toolkit)``, passed in from the caller's
+    memo rather than rebuilt here: the key folds the toolkit's whole function
+    surface, and this check runs once per member Function.
+
+    A live Toolkit for the same guidance elsewhere in the list needs no special
+    case: whichever representation reaches its emission point first wins, and
+    :func:`_toolkit_key` makes the caller's dedup collapse the two.
+    """
+    if last_index.get(key) != index:
+        return False
+    # Measured against the set this run would actually deliver: in async mode a
+    # live Toolkit contributes its async variants too, and the registry cannot
+    # rehydrate those, so an async-only member always leaves a gap here.
+    exposed = set(source_toolkit.get_async_functions() if async_mode else source_toolkit.get_functions())
+    present = members.get(key, set())
+    if not exposed <= present:
+        log_debug(
+            f"Toolkit '{source_toolkit.name}' instructions skipped: the component holds "
+            f"{len(present)} of its {len(exposed)} functions."
+        )
+        return False
+    return True
 
 
 class Toolkit:

@@ -291,6 +291,88 @@ class TestTeamToDict:
         assert config["mode"] == "coordinate"
         assert "max_iterations" not in config  # default=10 should not be serialized
 
+    def test_to_dict_records_owning_toolkit(self):
+        """Functions flattened from a toolkit carry the toolkit's name so
+        rehydration can re-bind same-named functions to the right toolkit
+        (see Registry.rehydrate_function). Plain tools stay unqualified."""
+        from agno.tools.toolkit import Toolkit
+
+        def read_file(path: str) -> str:
+            """Read a file."""
+            return path
+
+        def plain_tool(x: int) -> int:
+            """A plain callable tool."""
+            return x
+
+        toolkit = Toolkit(name="agent_files", tools=[read_file])
+        team = Team(
+            id="toolkit-team",
+            members=[],
+            tools=[toolkit, plain_tool],
+        )
+
+        config = team.to_dict()
+
+        tools_by_name = {t["name"]: t for t in config["tools"]}
+        assert tools_by_name["read_file"]["toolkit"] == "agent_files"
+        assert "toolkit" not in tools_by_name["plain_tool"]
+
+    def test_to_dict_round_trip_preserves_toolkit(self):
+        """A rehydrated team holds bare Functions, not Toolkits; their
+        owning_toolkit re-stamps the "toolkit" key so the attribution
+        survives load -> save (e.g. a Studio edit)."""
+        from agno.registry import Registry
+        from agno.tools.toolkit import Toolkit
+
+        def read_file(path: str) -> str:
+            """Read a file."""
+            return path
+
+        toolkit = Toolkit(name="agent_files", tools=[read_file])
+        team = Team(id="round-trip-team", members=[], tools=[toolkit])
+        registry = Registry(tools=[toolkit])
+
+        config = team.to_dict()
+        assert config["tools"][0]["toolkit"] == "agent_files"
+
+        loaded = Team.from_dict(config, registry=registry)
+        assert loaded.tools[0].entrypoint is read_file
+
+        config_resaved = loaded.to_dict()
+
+        tools_by_name = {t["name"]: t for t in config_resaved["tools"]}
+        assert tools_by_name["read_file"]["toolkit"] == "agent_files"
+
+    def test_to_dict_serializes_per_get_functions(self):
+        """The team serializer reads get_functions() -- what the team runtime
+        exposes -- so a toolkit subclass hiding a member never persists it."""
+        from agno.tools.toolkit import Toolkit
+
+        def only_a(x: str) -> str:
+            """Tool a."""
+            return x
+
+        def _make_search(tag):
+            def search(q: str) -> str:
+                """Search."""
+                return f"{tag}:{q}"
+
+            return search
+
+        class GatedToolkit(Toolkit):
+            def get_functions(self):
+                return {name: f for name, f in self.functions.items() if name != "search"}
+
+        alpha = GatedToolkit(name="alpha", tools=[only_a, _make_search("alpha")])
+        beta = Toolkit(name="beta", tools=[_make_search("beta")])
+        team = Team(id="gated-team", members=[], tools=[alpha, beta])
+
+        config = team.to_dict()
+
+        serialized = {(t["name"], t.get("toolkit")) for t in config["tools"]}
+        assert serialized == {("only_a", "alpha"), ("search", "beta")}
+
 
 # =============================================================================
 # from_dict() Tests
@@ -379,32 +461,55 @@ class TestTeamFromDict:
             assert team.db == mock_db
 
     def test_from_dict_with_registry_tools(self):
-        """Test from_dict uses registry to rehydrate tools."""
-        config = {
-            "id": "tools-team",
-            "tools": [{"name": "search", "description": "Search the web"}],
-        }
+        """from_dict rehydrates the whole tools list in ONE batch call, so a
+        component load shares a single lookup-rebuild budget."""
+        tool_dicts = [
+            {"name": "search", "description": "Search the web"},
+            {"name": "read_file", "description": "Read a file"},
+            {"name": "write_file", "description": "Write a file"},
+        ]
+        config = {"id": "tools-team", "tools": list(tool_dicts)}
 
         mock_registry = MagicMock()
-        mock_tool = MagicMock()
-        mock_registry.rehydrate_function.return_value = mock_tool
+        mock_tools = [MagicMock(), MagicMock(), MagicMock()]
+        mock_registry.rehydrate_functions.return_value = mock_tools
 
         team = Team.from_dict(config, registry=mock_registry)
 
-        mock_registry.rehydrate_function.assert_called_once()
-        assert team.tools == [mock_tool]
+        mock_registry.rehydrate_functions.assert_called_once_with(tool_dicts, strict=False)
+        assert team.tools == mock_tools
 
-    def test_from_dict_without_registry_removes_tools(self):
-        """Test from_dict removes tools when no registry is provided."""
+    def test_from_dict_without_registry_raises_for_tools(self):
+        """Test from_dict fails loudly when tools cannot be rehydrated."""
+        from agno.exceptions import ComponentRehydrationError
+
         config = {
             "id": "no-registry-team",
-            "tools": [{"name": "search"}],
+            "tools": [{"name": "search", "description": "Search", "parameters": {"type": "object", "properties": {}}}],
         }
 
-        team = Team.from_dict(config)
+        with pytest.raises(ComponentRehydrationError, match="need a registry"):
+            Team.from_dict(config, strict=True)
 
-        # Tools should be None/empty since no registry was provided
-        assert team.tools is None or team.tools == []
+    def test_from_dict_without_registry_keeps_registry_free_tools_when_lenient(self):
+        """A lenient load without a registry keeps everything that carries
+        itself: provider dicts unchanged, serialized Functions rebuilt without
+        entrypoints, bare references as-is with a warning. Deleting them made
+        the default load LOSSIER than strict."""
+        from agno.tools.function import Function
+
+        provider_tool = {"type": "web_search_preview"}
+        function_tool = {"name": "search", "description": "S", "parameters": {"type": "object", "properties": {}}}
+        config = {
+            "id": "no-registry-team",
+            "tools": [provider_tool, function_tool],
+        }
+
+        team = Team.from_dict(config, strict=False)
+
+        assert team.tools is not None and len(team.tools) == 2
+        assert team.tools[0] == provider_tool
+        assert isinstance(team.tools[1], Function) and team.tools[1].entrypoint is None
 
     def test_from_dict_with_members_loads_from_db(self, mock_db):
         """Test from_dict loads member agents from database."""
@@ -418,9 +523,9 @@ class TestTeamFromDict:
             mock_agent = MagicMock()
             mock_get_agent.return_value = mock_agent
 
-            team = Team.from_dict(config, db=mock_db)
+            team = Team.from_dict(config, db=mock_db, strict=True)
 
-            mock_get_agent.assert_called_once_with(id="agent-1", db=mock_db, registry=None)
+            mock_get_agent.assert_called_once_with(id="agent-1", db=mock_db, version=None, registry=None, strict=True)
             assert team.members == [mock_agent]
 
     def test_from_dict_falls_back_to_registry_for_member_agent(self, mock_db, member_agent):
@@ -460,8 +565,10 @@ class TestTeamFromDict:
         assert team.members[0].id == "member-agent"
         assert team.members[0] is not member_agent
 
-    def test_from_dict_unknown_member_is_dropped(self, mock_db):
-        """Test from_dict drops a member that is in neither db nor registry."""
+    def test_from_dict_unknown_member_raises(self, mock_db):
+        """Test from_dict fails loudly for a member in neither db nor registry."""
+        from agno.exceptions import ComponentRehydrationError
+
         config = {
             "id": "members-team",
             "members": [{"type": "agent", "agent_id": "ghost-agent"}],
@@ -469,7 +576,19 @@ class TestTeamFromDict:
         registry = Registry(agents=[])
 
         with patch("agno.agent.get_agent_by_id", return_value=None):
-            team = Team.from_dict(config, db=mock_db, registry=registry)
+            with pytest.raises(ComponentRehydrationError, match="ghost-agent"):
+                Team.from_dict(config, db=mock_db, registry=registry, strict=True)
+
+    def test_from_dict_unknown_member_is_dropped_when_lenient(self, mock_db):
+        """Test strict=False drops a member that is in neither db nor registry."""
+        config = {
+            "id": "members-team",
+            "members": [{"type": "agent", "agent_id": "ghost-agent"}],
+        }
+        registry = Registry(agents=[])
+
+        with patch("agno.agent.get_agent_by_id", return_value=None):
+            team = Team.from_dict(config, db=mock_db, registry=registry, strict=False)
 
         assert team.members == []
 
@@ -767,7 +886,7 @@ class TestTeamLoad:
         registry = Registry(agents=[member_agent])
 
         # DB lookup only resolves the graph-backed member; registry resolves the other
-        def fake_get_agent(id, db, registry):  # noqa: A002
+        def fake_get_agent(id, db, version=None, registry=None, strict=True):  # noqa: A002
             if id == "db-agent":
                 agent = Agent(id="db-agent", name="DB Agent")
                 return agent
@@ -833,6 +952,101 @@ class TestTeamLoad:
         assert loaded.name == "Round Trip Team"
         assert len(loaded.members) == 1
         assert loaded.members[0].id == "rt-agent"
+
+    def test_get_team_by_id_honors_pinned_member_versions(self, tmp_path):
+        """get_team_by_id must load members at the version pinned by the team's
+        links, like the graph loader does, not at the member's current version."""
+        db = SqliteDb(db_file=str(tmp_path / "team_pin.db"))
+
+        member = Agent(id="pin-agent", name="Pin Agent", description="v1 description")
+        team = Team(id="pin-team", name="Pin Team", members=[member])
+        team.save(db=db)
+
+        # Publish a newer member version after the team pinned the old one
+        member.description = "v2 description"
+        member.save(db=db)
+
+        graph_loaded = Team.load(id="pin-team", db=db)
+        by_id_loaded = get_team_by_id(db=db, id="pin-team")
+
+        assert graph_loaded is not None
+        assert graph_loaded.members[0].description == "v1 description"
+        assert by_id_loaded is not None
+        assert by_id_loaded.members[0].description == "v1 description"
+
+    def test_load_passes_registry_to_graph_members(self, tmp_path):
+        """Members hydrated from the component graph must receive the registry
+        so their tools survive a load."""
+        from agno.models.openai import OpenAIChat
+
+        def search(query: str) -> str:
+            """Search for a query."""
+            return f"results for {query}"
+
+        db = SqliteDb(db_file=str(tmp_path / "team_tools.db"))
+        member = Agent(id="tool-agent", name="Tool Agent", model=OpenAIChat(id="gpt-4o-mini"), tools=[search])
+        team = Team(id="tool-team", name="Tool Team", members=[member])
+        team.save(db=db)
+
+        loaded = Team.load(id="tool-team", db=db, registry=Registry(tools=[search]))
+
+        assert loaded is not None
+        loaded_member = loaded.members[0]
+        assert loaded_member.tools, "graph-hydrated member lost its tools"
+        assert loaded_member.tools[0].entrypoint is search
+
+    def test_load_rehydrates_member_agent_tools(self, tmp_path):
+        """A member agent's tools must be rehydrated against the same registry
+        the team was loaded with. Without it Agent.from_dict takes its
+        no-registry branch, drops the tools outright, and the member comes back
+        with none -- the nested-team branch already forwards the registry."""
+        from agno.models.openai import OpenAIResponses
+        from agno.tools.toolkit import Toolkit
+
+        def search_web(query: str) -> str:
+            """Search the web."""
+            return "results"
+
+        toolkit = Toolkit(
+            name="web",
+            tools=[search_web],
+            instructions="Cite every source.",
+            add_instructions=True,
+        )
+        model = OpenAIResponses(id="gpt-5.5")
+        db = SqliteDb(db_file=str(tmp_path / "team_member_tools.db"))
+        member = Agent(id="member", name="Member", model=model, tools=[toolkit])
+        Team(id="tool-team", name="Tool Team", model=model, members=[member]).save(db=db)
+
+        loaded = Team.load(id="tool-team", db=db, registry=Registry(tools=[toolkit], models=[model]))
+
+        assert loaded is not None
+        member_tools = loaded.members[0].tools or []
+        assert [tool.name for tool in member_tools] == ["search_web"]
+        assert member_tools[0].entrypoint is not None
+        # And the toolkit came with them, so its guidance survives the reload.
+        assert member_tools[0].source_toolkit is toolkit
+
+    def test_load_passes_member_provider_dict_tools_through(self, tmp_path):
+        """Provider-run tools persist as plain dicts, typed builtins and
+        untyped custom shapes alike. Rehydrating one as a Function config
+        raised a ValidationError that took the whole team load down; they must
+        ride through the member's tools untouched instead."""
+        from agno.models.openai import OpenAIResponses
+
+        provider_dicts = [
+            {"type": "web_search"},
+            {"name": "get_weather", "description": "Weather", "input_schema": {"type": "object"}},
+        ]
+        model = OpenAIResponses(id="gpt-5.5")
+        db = SqliteDb(db_file=str(tmp_path / "team_builtin_tools.db"))
+        member = Agent(id="builtin-member", name="Member", model=model, tools=list(provider_dicts))
+        Team(id="builtin-team", name="Builtin Team", model=model, members=[member]).save(db=db)
+
+        loaded = Team.load(id="builtin-team", db=db, registry=Registry(models=[model]))
+
+        assert loaded is not None
+        assert loaded.members[0].tools == provider_dicts
 
 
 # =============================================================================
@@ -940,7 +1154,7 @@ class TestGetTeamById:
         mock_db.get_config.return_value = {"config": {"id": "registry-team", "tools": [{"name": "calc"}]}}
 
         mock_registry = MagicMock()
-        mock_registry.rehydrate_function.return_value = MagicMock()
+        mock_registry.rehydrate_functions.return_value = [MagicMock()]
 
         team = get_team_by_id(db=mock_db, id="registry-team", registry=mock_registry)
 
@@ -1028,7 +1242,7 @@ class TestGetTeams:
         mock_db.get_config.return_value = {"config": {"id": "tools-team", "tools": [{"name": "search"}]}}
 
         mock_registry = MagicMock()
-        mock_registry.rehydrate_function.return_value = MagicMock()
+        mock_registry.rehydrate_functions.return_value = [MagicMock()]
 
         teams = get_teams(db=mock_db, registry=mock_registry)
 
@@ -1084,3 +1298,166 @@ class TestGetTeams:
 
         assert len(teams) == 1
         assert teams[0].db == mock_db
+
+
+def test_team_load_survives_broken_current_member_version(tmp_path):
+    """Team.load resolves members at the versions pinned by the graph links,
+    so a later member version with unresolvable references must not abort the
+    load of a team pinned to a clean version."""
+    from agno.models.openai import OpenAIChat
+
+    db = SqliteDb(db_file=str(tmp_path / "team_pin_broken.db"))
+
+    member = Agent(id="m1", name="M1")
+    team = Team(id="t1", name="T1", members=[member])
+    team.save(db=db)
+
+    def search(query: str) -> str:
+        """Search for a query."""
+        return f"results for {query}"
+
+    # Publish a v2 of the member that needs a registry to rehydrate
+    member.model = OpenAIChat(id="gpt-4o-mini")
+    member.tools = [search]
+    member.save(db=db)
+
+    loaded = Team.load(id="t1", db=db)
+
+    assert loaded is not None
+    assert [m.id for m in loaded.members] == ["m1"]
+
+
+class TestMemberPinFailures:
+    def test_strict_pin_miss_refuses_and_names_the_version(self, tmp_path):
+        """A pinned member version whose config row was deleted must refuse
+        with the pin and the remedy, not report the member as missing."""
+        from agno.exceptions import ComponentRehydrationError
+
+        db = SqliteDb(db_file=str(tmp_path / "pin_miss.db"))
+        member = Agent(id="pm-member", name="Member")
+        Team(id="pm-team", name="Team", members=[member]).save(db=db)
+        member.description = "v2"
+        member.save(db=db)
+        links = db.get_links(component_id="pm-team", version=1)
+        pinned = next(link for link in links if link["link_kind"] == "member")["child_version"]
+        assert db.delete_config(component_id="pm-member", version=pinned)
+
+        with pytest.raises(ComponentRehydrationError, match=f"pins member agent 'pm-member' at version {pinned}"):
+            get_team_by_id(db=db, id="pm-team", strict=True)
+
+    def test_strict_pin_miss_does_not_substitute_registry_component(self, tmp_path):
+        """An explicit pin names one stored version; a same-id registry
+        component is a different object and must not silently replace it."""
+        from agno.exceptions import ComponentRehydrationError
+
+        db = SqliteDb(db_file=str(tmp_path / "pin_subst.db"))
+        member = Agent(id="ps-member", name="Member")
+        Team(id="ps-team", name="Team", members=[member]).save(db=db)
+        member.description = "v2"
+        member.save(db=db)
+        links = db.get_links(component_id="ps-team", version=1)
+        pinned = next(link for link in links if link["link_kind"] == "member")["child_version"]
+        assert db.delete_config(component_id="ps-member", version=pinned)
+        registry = Registry(agents=[Agent(id="ps-member", name="Code Member")])
+
+        with pytest.raises(ComponentRehydrationError, match="pins member agent 'ps-member'"):
+            get_team_by_id(db=db, id="ps-team", registry=registry, strict=True)
+
+        # Lenient degrades to the member's current stored version, so the
+        # team stays usable without silently substituting the registry object.
+        lenient = get_team_by_id(db=db, id="ps-team", registry=registry, strict=False)
+        assert lenient.members[0].description == "v2"
+
+
+def test_from_dict_without_registry_loads_registry_free_tools_under_strict():
+    """Provider-native dicts and external-execution tools need no registry, so
+    a strict team load without one accepts them."""
+    config = {
+        "id": "registry-free-team",
+        "tools": [
+            {"type": "web_search"},
+            {
+                "name": "charge_card",
+                "description": "Charge",
+                "parameters": {"type": "object", "properties": {}},
+                "external_execution": True,
+            },
+        ],
+    }
+
+    team = Team.from_dict(config, strict=True)
+
+    assert team.tools is not None and len(team.tools) == 2
+
+
+def test_strict_refuses_a_member_of_unknown_type():
+    """A member kind the loader does not model must refuse under strict, not
+    silently dispatch a reduced team."""
+    from agno.exceptions import ComponentRehydrationError
+
+    config = {
+        "id": "future-team",
+        "members": [{"type": "future-member", "future_id": "x"}],
+    }
+
+    with pytest.raises(ComponentRehydrationError, match="future-member"):
+        Team.from_dict(config, strict=True)
+
+    lenient = Team.from_dict(config, strict=False)
+    assert lenient.members == []
+
+
+def test_strict_refuses_a_wrong_type_registry_copy():
+    """A custom deep_copy returning the wrong type must refuse under strict,
+    not dispatch the impostor."""
+    from agno.exceptions import ComponentRehydrationError
+
+    class ImposterAgent(Agent):
+        def deep_copy(self, *, update=None):
+            return object()
+
+    registry = Registry(agents=[ImposterAgent(id="imp", name="Imp")])
+    config = {"id": "imp-team", "members": [{"type": "agent", "agent_id": "imp"}]}
+
+    with pytest.raises(ComponentRehydrationError, match="not a Agent|not an Agent|object"):
+        Team.from_dict(config, registry=registry, strict=True)
+
+
+def test_strict_refuses_a_copy_that_lost_serialized_state():
+    """A subclass whose __init__ swallows kwargs turns the inherited deep_copy
+    into an empty shell; strict must refuse the lossy copy, not dispatch it."""
+    from agno.exceptions import ComponentRehydrationError
+
+    class PolicyAgent(Agent):
+        def __init__(self, *args, policy=None, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.policy = policy
+
+    registry = Registry(agents=[PolicyAgent(id="pol", name="Pol", instructions="policy says", policy="strict")])
+    config = {"id": "pol-team", "members": [{"type": "agent", "agent_id": "pol"}]}
+
+    with pytest.raises(ComponentRehydrationError, match="lost state"):
+        Team.from_dict(config, registry=registry, strict=True)
+
+
+def test_team_provider_envelope_tools_survive_save_and_strict_reload(tmp_path):
+    """Team's serializer must keep provider-native dict tools, so an envelope
+    that rides through a load is not destroyed by the next save."""
+    from agno.db.sqlite import SqliteDb
+    from agno.models.openai import OpenAIResponses
+
+    db = SqliteDb(db_file=str(tmp_path / "team_envelope.db"))
+    envelope = {"type": "web_search_preview"}
+    team = Team(id="env-team", name="T", model=OpenAIResponses(id="gpt-5.5"), members=[], tools=[envelope])
+    team.save(db=db)
+
+    stored = db.get_config(component_id="env-team")["config"]
+    assert stored.get("tools") == [envelope]
+
+    loaded = get_team_by_id(db=db, id="env-team", registry=Registry(dbs=[db]), strict=True)
+    assert loaded is not None
+    assert loaded.tools == [envelope]
+
+    # And a load-save cycle keeps it too.
+    loaded.save(db=db)
+    assert db.get_config(component_id="env-team")["config"].get("tools") == [envelope]
