@@ -63,7 +63,6 @@ class PgVector(VectorDb):
         vector_score_weight: float = 0.5,
         content_language: str = "english",
         schema_version: int = 1,
-        auto_upgrade_schema: bool = False,
         reranker: Optional[Reranker] = None,
         create_schema: bool = True,
         similarity_threshold: Optional[float] = None,
@@ -86,7 +85,6 @@ class PgVector(VectorDb):
             vector_score_weight (float): Weight for vector similarity in hybrid search.
             content_language (str): Language for full-text search.
             schema_version (int): Version of the database schema.
-            auto_upgrade_schema (bool): Automatically upgrade schema if True.
             reranker (Optional[Reranker]): Reranker instance for reranking search results.
             create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
                 Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
@@ -150,8 +148,6 @@ class PgVector(VectorDb):
 
         # Table schema version
         self.schema_version: int = schema_version
-        # Automatically upgrade schema if True
-        self.auto_upgrade_schema: bool = auto_upgrade_schema
 
         # Reranker instance
         self.reranker: Optional[Reranker] = reranker
