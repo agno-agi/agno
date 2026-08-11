@@ -33,7 +33,6 @@ from agno.os.job_queue import (
     acontinue_via_queue,
     aprepare_accepted_or_abort,
     araise_if_ticket_owns_continue,
-    asettle_paused_ticket,
     aticket_poll_fallback,
     ensure_duplicate_matches_component,
     normalize_idempotency_key,
@@ -62,7 +61,7 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
-    acomplete_continue_stream,
+    afinalize_continue_stream,
     amark_continue_stream_running,
     find_factory_by_id,
     format_sse_event,
@@ -1035,14 +1034,21 @@ async def workflow_continue_response_streamer(
                     await workflow._apublish_stream_event(run_response_chunk, run_id)
                 yield format_sse_event(run_response_chunk)  # type: ignore
         finally:
-            # Final status from THIS run's row (never session.runs[-1]: an
-            # interleaved run on the same session would be a different run)
-            _final = await acomplete_continue_stream(workflow, run_id, session_id)
-            # Inline continue of a DURABLE paused run: terminalize the queue
-            # ticket too (paused tickets are retention-exempt and would
-            # otherwise say paused forever). CAS no-op for runs that never
-            # rode the queue or whose continuation is owned by a worker.
-            await asettle_paused_ticket(queue_worker, run_id, _final)
+            # Stream close + paused-ticket settle as one cancellation-proof
+            # unit; under cancellation the final status is KNOWN - see the
+            # agents twin for both hazards. Otherwise it resolves from THIS
+            # run's row, never session.runs[-1]
+            import sys
+
+            _exc = sys.exc_info()[0]
+            _cancelled = _exc is not None and issubclass(_exc, (asyncio.CancelledError, GeneratorExit))
+            await afinalize_continue_stream(
+                workflow,
+                run_id,
+                session_id,
+                queue_worker=queue_worker,
+                final_status=RunStatus.cancelled if _cancelled else None,
+            )
 
         # If the workflow re-paused, yield WorkflowPausedEvent as the new clean
         # snapshot event. Also yield the legacy "WorkflowRunOutput" event for
@@ -2043,20 +2049,15 @@ def get_workflow_router(
                 # streamed run's stream view must stop saying PAUSED once the
                 # continue settles - only_if_tracked leaves never-streamed
                 # runs alone.
-                await acomplete_continue_stream(
+                # Stream close + paused-ticket settle as one
+                # cancellation-proof unit (see the streaming twin)
+                await afinalize_continue_stream(
                     workflow,
                     run_id,
                     session_id,
+                    queue_worker=getattr(request.app.state, "queue_worker", None),
                     only_if_tracked=True,
                     final_status=getattr(run_response, "status", None),
-                )
-                # Inline continue of a DURABLE paused run: terminalize the
-                # queue ticket too (paused is retention-exempt; the CAS
-                # no-ops for never-queued or worker-owned runs)
-                await asettle_paused_ticket(
-                    getattr(request.app.state, "queue_worker", None),
-                    run_id,
-                    getattr(run_response, "status", None),
                 )
                 return run_response.to_dict()
             except InputCheckError as e:
