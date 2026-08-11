@@ -93,6 +93,7 @@ def migrate_redis_index(index_name: str) -> None:
         if client is None:
             from redis import Redis
 
+            assert redis_url is not None  # guaranteed by the check above; narrows for the type checker
             client = Redis.from_url(redis_url)
 
         field = RedisDB.USER_ID_FIELD
@@ -139,6 +140,7 @@ def migrate_valkey_index(index_name: str) -> None:
         if client is None:
             from redis import Redis
 
+            assert valkey_url is not None  # guaranteed by the check above; narrows for the type checker
             client = Redis.from_url(valkey_url)
 
         field = ValkeyDB.USER_ID_FIELD
