@@ -495,7 +495,7 @@ def test_search_knowledge_basic(test_app, mock_knowledge):
 
     # Verify knowledge.asearch was called correctly
     mock_knowledge.asearch.assert_called_once_with(
-        query="Jordan Mitchell skills", max_results=None, filters=None, search_type=None
+        query="Jordan Mitchell skills", max_results=None, filters=None, search_type=None, user_id=None
     )
 
 
@@ -519,7 +519,7 @@ def test_search_knowledge_with_search_type(test_app, mock_knowledge):
 
     # Verify knowledge.asearch was called with search_type
     mock_knowledge.asearch.assert_called_once_with(
-        query="test query", max_results=None, filters=None, search_type="vector"
+        query="test query", max_results=None, filters=None, search_type="vector", user_id=None
     )
 
 
@@ -544,7 +544,9 @@ def test_search_knowledge_with_db_id(test_app, mock_knowledge):
     assert data["meta"]["total_count"] == 1
 
     # Note: db_id affects which knowledge instance is selected, not the search call itself
-    mock_knowledge.asearch.assert_called_once_with(query="test", max_results=None, filters=None, search_type=None)
+    mock_knowledge.asearch.assert_called_once_with(
+        query="test", max_results=None, filters=None, search_type=None, user_id=None
+    )
 
 
 def test_search_knowledge_no_results(test_app, mock_knowledge):
@@ -626,7 +628,7 @@ def test_search_knowledge_with_all_parameters(test_app, mock_knowledge):
     assert doc["size"] == 100
 
     mock_knowledge.asearch.assert_called_once_with(
-        query="full test", max_results=None, filters=None, search_type="hybrid"
+        query="full test", max_results=None, filters=None, search_type="hybrid", user_id=None
     )
 
 

@@ -891,8 +891,15 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         # Use max_results if specified, otherwise use a higher limit for search then paginate
         search_limit = request.max_results
 
+        # Scope vector retrieval to the caller's chunks plus the shared
+        # bucket. Admins / RBAC-off get ``None`` and see everything.
+        scoped_user_id = get_scoped_user_id(http_request)
         results = await knowledge.asearch(
-            query=request.query, max_results=search_limit, filters=request.filters, search_type=request.search_type
+            query=request.query,
+            max_results=search_limit,
+            filters=request.filters,
+            search_type=request.search_type,
+            user_id=scoped_user_id,
         )
 
         # Calculate pagination
@@ -1322,7 +1329,8 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                     search_types=search_types,
                 )
             )
-        filters = await knowledge.aget_valid_filters()
+        # Filter key names are content, so scope them with the same gate the other routes use
+        filters = await knowledge.aget_valid_filters(user_id=get_scoped_user_id(request))
 
         # Get remote content sources if available
         remote_content_sources = None

@@ -324,3 +324,18 @@ def test_username_without_password_raises(import_valkeydb, mock_embedder):
 
     with pytest.raises(ValueError, match="password"):
         ValkeyDB(index_name="test_index", username="user", embedder=mock_embedder)
+
+
+def test_scoped_doc_id_folds_the_owner_behind_a_digest(valkey_db):
+    db, _client, _ft_mock = valkey_db
+
+    # The shared key is the document id untouched, so rows written before the
+    # owner existed keep their key and need no migration.
+    assert db._scoped_doc_id("doc-1", None) == "doc-1"
+    assert db._scoped_doc_id("doc-1", "alice") != db._scoped_doc_id("doc-1", "bob")
+    # The base id is caller-controlled, so it is collapsed to a fixed-length digest
+    # before the owner is folded in. Joined raw, ("doc_1", "alice") and
+    # ("doc", "1_alice") both spell "doc_1_alice" and land on ONE key - and every
+    # agno chunk id ends in "_<n>", so user_id="1_alice" would overwrite alice's
+    # chunk 1.
+    assert db._scoped_doc_id("doc_1", "alice") != db._scoped_doc_id("doc", "1_alice")
