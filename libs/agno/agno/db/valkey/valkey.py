@@ -2189,6 +2189,9 @@ class ValkeyDb(BaseDb):
 
                 record_data = deserialize_data(raw_str)
 
+                if user_id is not None and record_data.get("user_id") != user_id:
+                    continue
+
                 # Remove index entries
                 for field in index_fields:
                     if field in record_data and record_data[field] is not None:
@@ -2277,6 +2280,9 @@ class ValkeyDb(BaseDb):
             # Apply filters
             filtered_runs = []
             for run in all_eval_runs:
+                if user_id is not None and run.get("user_id") != user_id:
+                    continue
+
                 # Agent/team/workflow filters
                 if agent_id is not None and run.get("agent_id") != agent_id:
                     continue
