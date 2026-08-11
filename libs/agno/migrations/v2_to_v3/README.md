@@ -12,7 +12,7 @@ There are three kinds of migration, one script each:
 | Script | Backends | What it does |
 | --- | --- | --- |
 | `migrate_sql_vectordbs.py` | pgvector, singlestore | Add the `user_id` **column** to existing tables. |
-| `migrate_field_vectordbs.py` | milvus, weaviate, lancedb, clickhouse, surrealdb | Add the `user_id` **field/column/property** to existing stores (+ optional Qdrant owner assignment). |
+| `migrate_field_vectordbs.py` | milvus, weaviate, lancedb, clickhouse, surrealdb | Add the `user_id` **field/column/property** to existing stores (+ optional Qdrant owner assignment). **Milvus also backfills** the `"__shared__"` sentinel — see below. |
 | `migrate_sentinel_vectordbs.py` | redis, valkey, couchbase, cassandra | **Backfill** `user_id = "__shared__"` onto existing vectors. |
 
 Two things drive whether a backend needs work:
@@ -22,15 +22,16 @@ Two things drive whether a backend needs work:
   create it when the store is first created. An **existing** store has no such
   field, and until it is added the scoped filter either **fails with a schema
   error** (LanceDB `No field named user_id`; ClickHouse `Unknown identifier
-  user_id`; Milvus hybrid search) or, on SurrealDB, **silently drops** any new
-  owner-write (writes to an undeclared field on a `SCHEMAFUL` table are discarded),
-  breaking isolation for new uploads. All are confirmed live.
+  user_id`) or, on SurrealDB, **silently drops** any new owner-write (writes to an
+  undeclared field on a `SCHEMAFUL` table are discarded), breaking isolation for
+  new uploads. All are confirmed live.
 - **"Shared" representation** — `NULL` / absent / `''` are auto-matched as shared,
   so existing rows stay visible once the field exists. But `"__shared__"` (a
-  literal sentinel used by redis/valkey/couchbase/cassandra) is **not**
-  auto-matched: an existing vector with no `user_id` matches neither side of the
-  filter and becomes **invisible** until backfilled. Those are the mandatory data
-  backfills.
+  literal sentinel used by redis/valkey/couchbase/cassandra **and milvus**) is
+  **not** auto-matched: an existing vector with no `user_id` matches neither side
+  of the filter and becomes **invisible** until backfilled. Those are the mandatory
+  data backfills. **Milvus is both**: it needs the field added (schema) **and** the
+  sentinel backfilled, because v3 switched it from `NULL`-shared to sentinel-shared.
 
 ---
 
@@ -40,7 +41,7 @@ Two things drive whether a backend needs work:
 | --- | --- | --- | --- | --- |
 | **pgvector** | SQL column | `NULL` | visible once column exists | **schema** — `ALTER TABLE ADD COLUMN user_id` |
 | **singlestore** | SQL column | `NULL` | visible once column exists | **schema** — `ALTER TABLE ADD COLUMN user_id` |
-| **milvus** | schema field | `NULL` | hybrid search fails until field exists | **schema** — `add_collection_field` (Milvus 2.6+; see note) |
+| **milvus** | schema field | `"__shared__"` | **invisible** until field added **and** backfilled | **schema + mandatory backfill** — `add_collection_field` (Milvus 2.6+; see note) then stamp `"__shared__"` |
 | **weaviate** | class property | `NULL` | search fails until property exists | **schema** — `config.add_property` |
 | **lancedb** | Arrow column | `NULL` | scoped search fails until column exists | **schema** — `add_columns` |
 | **clickhouse** | `String DEFAULT ''` column | `''` | scoped query fails until column exists | **schema** — `ALTER TABLE ADD COLUMN` |
@@ -59,10 +60,18 @@ Two things drive whether a backend needs work:
 | **llamaindex** | — (external retriever) | — | — | **not possible** |
 | **langchaindb** | — (external vectorstore) | — | — | **not possible** |
 
-> **Milvus note:** adding a field to an existing collection requires **Milvus
-> 2.6+** (`AddCollectionField`). On Milvus 2.5.x and earlier the server has no such
-> API — the migration raises a clear error, and the only option there is to
-> recreate the collection with the new schema and re-ingest the data.
+> **Milvus note:** v3 changed Milvus from `NULL`-shared to **sentinel-shared**
+> (`"__shared__"`), and its scoped search is `user_id == <caller> OR user_id ==
+> "__shared__"` with no "is null" branch — so a pre-v3 entity (no `user_id`) is
+> **invisible** to every scoped caller until backfilled. The migration therefore
+> does **two** things: adds the `user_id` field, then **stamps `"__shared__"`** onto
+> every owner-less entity. The in-place backfill is safe because the shared bucket
+> uses the un-folded primary id, which is exactly the id a pre-v3 row already has.
+>
+> Adding a field to an existing collection requires **Milvus 2.6+**
+> (`AddCollectionField`). On Milvus 2.5.x and earlier the server has no such API —
+> the migration raises a clear error, and the only option there is to recreate the
+> collection with the new schema and re-ingest the data.
 
 > **opensearch note:** OpenSearch mappings are dynamic — a scoped read uses
 > `must_not exists` on `user_id`, which matches existing (field-absent) documents,
