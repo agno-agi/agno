@@ -476,7 +476,13 @@ async def amark_continue_stream_running(
         # it also clears the pause's completed_at so the reopened run cannot
         # be reaped mid-continuation, and seeds the index counter from the
         # durable floor when the stream's own counter expired.
-        await event_stream.reopen_run(run_id, floor=floor)
+        if not await event_stream.reopen_run(run_id, floor=floor):
+            # Declined: the status already moved past PAUSED (a racing writer
+            # finished or took over the leg). Stamping RUNNING over that
+            # newer state would resurrect a settled stream until the
+            # streamer's finally heals it - honor the reopen contract and
+            # leave the stream alone; the continue itself proceeds.
+            return
         await event_stream.set_run_status(run_id, RunStatus.running)
 
 
