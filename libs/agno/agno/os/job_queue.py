@@ -8,7 +8,7 @@ the corresponding runtime pieces, including the DB-backed queue worker
 import asyncio
 import contextlib
 import inspect
-from typing import TYPE_CHECKING, Any, Dict, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 
 from agno.job_queue.config import QueueConfig, RedisCoordination
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -332,7 +332,8 @@ class QueueWorker:
     One worker per AgentOS replica. SKIP LOCKED claiming arbitrates between
     replicas with zero coordination. The worker also:
     - heartbeats its in-flight jobs (lock_grace stays small without live runs
-      being reclaimed),
+      being reclaimed) - from a dedicated thread on sync-wrapped stores, so a
+      run blocking the event loop cannot starve its own lease,
     - sweeps exhausted stale jobs to failed, persisting the terminal error on
       the run row FIRST so pollers never see a stuck RUNNING run,
     - enforces the per-run timeout,
@@ -371,6 +372,8 @@ class QueueWorker:
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self._heartbeat_task: Optional[asyncio.Task] = None
+        self._heartbeat_thread: Optional[Any] = None
+        self._heartbeat_stop: Optional[Any] = None
         self._in_flight: Dict[str, asyncio.Task] = {}
 
     async def start(self) -> None:
@@ -378,8 +381,69 @@ class QueueWorker:
             return
         self._running = True
         self._task = asyncio.create_task(self._poll_loop())
-        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+        if isinstance(self.store, _SyncStoreAdapter):
+            # Lease renewal runs on a DEDICATED THREAD for the sync-wrapped
+            # (production) stores: a liveness signal must not depend on the
+            # health of the thing whose liveness it certifies. The old
+            # loop-task heartbeat died exactly when it mattered - a run doing
+            # sync blocking work (sync tool, sync model client, CPU-bound
+            # parse) starved the loop past lock_grace and a peer swept a
+            # healthy worker; sync I/O releases the GIL, so a thread keeps
+            # beating precisely when the loop cannot.
+            #
+            # Prime the store's lazy table init from the loop's thread pool
+            # first: the sync Postgres adapter's first _get_table is not
+            # safe under two first-callers, and the heartbeat thread is
+            # about to become a second caller.
+            with contextlib.suppress(Exception):
+                await self.store.get_job(self.worker_id)
+            self._start_heartbeat_thread()
+        else:
+            # Async-native stores (the in-memory store guards with an
+            # asyncio.Lock that must only be awaited on the loop) keep the
+            # loop-task heartbeat. That is also the one topology where the
+            # starvation hazard is structurally impossible: in-memory means
+            # single-process, so any peer sweeper shares the starved loop
+            # and cannot fire while the run blocks it.
+            self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
         log_info(f"Job queue worker started (worker={self.worker_id}, poll={self.config.poll_interval}s)")
+
+    def _start_heartbeat_thread(self) -> None:
+        import threading
+
+        self._heartbeat_stop = threading.Event()
+        stop_event = self._heartbeat_stop
+        sync_store = self.store._store
+        interval = max(1.0, self.config.lock_grace_seconds / 3)
+
+        def _beat() -> None:
+            # Same contract as the loop-task heartbeat: beat whatever is in
+            # flight, survive store errors loudly, and keep beating through
+            # the drain (stop() only sets the event after the drain settles).
+            # Idle ticks with nothing in flight are no-ops.
+            while not stop_event.wait(interval):
+                try:
+                    job_ids = self._in_flight_snapshot()
+                    if job_ids:
+                        sync_store.heartbeat_jobs(self.worker_id, job_ids)
+                except Exception as e:
+                    log_error(f"Job queue heartbeat error: {e}")
+
+        self._heartbeat_thread = threading.Thread(target=_beat, name=f"agno-heartbeat-{self.worker_id}", daemon=True)
+        self._heartbeat_thread.start()
+
+    def _in_flight_snapshot(self) -> List[str]:
+        # Called from the heartbeat thread while the loop mutates the dict:
+        # list() over a dict resized mid-iteration raises RuntimeError, so
+        # retry - the window is nanoseconds and the set is tiny. No lock:
+        # the store's own CAS (locked_by + running) already makes a stale
+        # entry a harmless no-op.
+        for _ in range(3):
+            try:
+                return list(self._in_flight.keys())
+            except RuntimeError:
+                continue
+        return []
 
     async def stop(self) -> None:
         self._running = False
@@ -431,6 +495,18 @@ class QueueWorker:
             with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
                 await asyncio.wait_for(self._heartbeat_task, timeout=5)
         self._heartbeat_task = None
+        # The heartbeat THREAD is only signalled here, after the drain and
+        # straggler cleanup: in-flight runs need live leases for the whole
+        # stop_timeout window. join in a worker thread so a beat in a slow
+        # store call cannot block the loop; the thread is a daemon, so a
+        # join timeout leaks nothing past process exit.
+        if self._heartbeat_thread is not None:
+            self._heartbeat_stop.set()  # type: ignore[union-attr]
+            await asyncio.to_thread(self._heartbeat_thread.join, 5)
+            if self._heartbeat_thread.is_alive():
+                log_warning("Job queue heartbeat thread did not stop within 5s (daemon; reaped at process exit)")
+            self._heartbeat_thread = None
+            self._heartbeat_stop = None
         log_info("Job queue worker stopped")
 
     async def _poll_loop(self) -> None:
@@ -455,6 +531,11 @@ class QueueWorker:
                 await asyncio.sleep(self.config.poll_interval)
 
     async def _heartbeat_loop(self) -> None:
+        # FALLBACK for async-native stores only (see start()): sync-wrapped
+        # stores beat from the dedicated thread, which survives a starved
+        # event loop. This loop task cannot - which is acceptable exactly
+        # where it runs (in-memory = single process = the sweeper shares the
+        # starved loop).
         interval = max(1.0, self.config.lock_grace_seconds / 3)
         # Runs while claiming OR draining: stop() flips _running BEFORE the
         # drain, and the old `while self._running` condition killed the
