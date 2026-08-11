@@ -336,7 +336,15 @@ class LanceDb(VectorDb):
                     return True
                 self._owner_column_exists = self.USER_ID_COL in self.table.schema.names
             except Exception:
-                self._owner_column_exists = True
+                # Inspection failed (odd handle, remote hiccup): assume
+                # migrated for THIS call only. Caching the assumption would
+                # let one blip permanently mask a real legacy table —
+                # uncached, the next call re-inspects.
+                log_warning(
+                    f"Could not inspect table '{self.table_name}' for the user_id column; "
+                    "proceeding as migrated for this operation."
+                )
+                return True
         return self._owner_column_exists
 
     def _require_owner_column(self, user_id: Optional[str]) -> bool:

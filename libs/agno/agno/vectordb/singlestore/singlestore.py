@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Union
 try:
     from sqlalchemy.dialects import mysql
     from sqlalchemy.engine import Engine, create_engine
+    from sqlalchemy.exc import NoSuchTableError
     from sqlalchemy.inspection import inspect
     from sqlalchemy.orm import Session, sessionmaker
     from sqlalchemy.schema import Column, MetaData, Table
@@ -148,9 +149,19 @@ class SingleStore(VectorDb):
             try:
                 columns = inspect(self.db_engine).get_columns(self.collection, schema=self.schema)
                 self._owner_column_exists = any(col["name"] == "user_id" for col in columns)
-            except Exception:
+            except NoSuchTableError:
                 # No live table yet — it will be created with the column.
                 self._owner_column_exists = True
+            except Exception:
+                # Inspection failed for another reason (connection, permissions,
+                # odd driver response): assume migrated for THIS call only.
+                # Caching the assumption would let one blip permanently mask a
+                # real legacy table — uncached, the next call re-inspects.
+                log_warning(
+                    f"Could not inspect table '{self.collection}' for the user_id column; "
+                    "proceeding as migrated for this operation."
+                )
+                return True
         return self._owner_column_exists
 
     def _require_owner_column(self, user_id: Optional[str]) -> bool:

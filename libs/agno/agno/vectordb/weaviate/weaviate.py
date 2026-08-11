@@ -205,7 +205,12 @@ class Weaviate(VectorDb):
         """
         if self._owner_property_exists is None:
             try:
-                config = self.get_client().collections.get(self.collection).config.get()
+                client = self.get_client()
+                if not client.collections.exists(self.collection):
+                    # No live collection yet — it will be created with both.
+                    self._owner_property_exists = True
+                    return True
+                config = client.collections.get(self.collection).config.get()
                 has_property = any(prop.name == self.USER_ID_KEY for prop in config.properties)
                 inverted_index = getattr(config, "inverted_index_config", None)
                 null_state_indexed = bool(getattr(inverted_index, "index_null_state", False))

@@ -277,12 +277,16 @@ class RedisDB(VectorDb):
         """Create the RedisVL index object for this schema."""
         return SearchIndex(self.schema, redis_url=self.redis_url)
 
-    def _index_has_user_id_field(self) -> bool:
+    def _index_has_user_id_field(self) -> Optional[bool]:
         """Whether the LIVE index schema contains the owner tag field.
 
         Indices created before v3 lack it, and every scoped query against them
         fails with "Unknown field" — which downstream except blocks turn into
         empty results. ``create()`` warns loudly for that case instead.
+
+        Returns None when the index cannot be inspected (connection failure,
+        restricted FT.INFO, unexpected response) — an inconclusive answer, not
+        a verdict either way.
         """
         try:
             info = self.index.info()
@@ -297,13 +301,26 @@ class RedisDB(VectorDb):
                     return True
             return False
         except Exception:
-            # Can't inspect the index — don't block or mis-warn.
-            return True
+            return None
 
     def _user_id_field_exists(self) -> bool:
-        """Cached wrapper around ``_index_has_user_id_field``."""
+        """Cached wrapper around ``_index_has_user_id_field``.
+
+        Only conclusive answers are cached. An inconclusive inspection assumes
+        "migrated" for THIS call only — failing closed would let a transient
+        blip flip a healthy v3 index into refusing every scoped op — but it is
+        logged and not remembered, so the next call re-inspects and a real
+        legacy index still gets its real verdict once inspection works.
+        """
         if self._owner_field_exists is None:
-            self._owner_field_exists = self._index_has_user_id_field()
+            answer = self._index_has_user_id_field()
+            if answer is None:
+                log_warning(
+                    f"Could not inspect Redis index '{self.index_name}' for the "
+                    f"'{self.USER_ID_FIELD}' field; proceeding as migrated for this operation."
+                )
+                return True
+            self._owner_field_exists = answer
         return self._owner_field_exists
 
     def _require_owner_field(self, user_id: Optional[str]) -> bool:
@@ -339,7 +356,9 @@ class RedisDB(VectorDb):
                 log_debug(f"Created Redis index: {self.index_name}")
             else:
                 log_debug(f"Redis index already exists: {self.index_name}")
-                if not self._index_has_user_id_field():
+                # Warn only on a conclusive verdict — None means the index
+                # couldn't be inspected, which is not evidence it is legacy.
+                if self._index_has_user_id_field() is False:
                     log_warning(
                         f"Redis index '{self.index_name}' was created without the "
                         f"'{self.USER_ID_FIELD}' field; per-user scoped searches will not match. "
