@@ -34,21 +34,30 @@ from agno.agent import (
 )
 from agno.compression.manager import CompressionManager
 from agno.config import (
+    CallableCacheConfig,
     CultureConfig,
     FollowupConfig,
     HistoryConfig,
+    KnowledgeConfig,
     MemoryConfig,
+    ParsingConfig,
     ReasoningConfig,
     RetryConfig,
-    SessionSummaryConfig,
+    SessionConfig,
+    StorageConfig,
+    resolve_callable_cache_settings,
     resolve_compression_settings,
     resolve_culture_settings,
     resolve_followup_settings,
     resolve_history_settings,
+    resolve_knowledge_settings,
     resolve_memory_settings,
+    resolve_parsing_settings,
     resolve_reasoning_settings,
     resolve_retry_settings,
-    resolve_session_summary_settings,
+    resolve_session_settings,
+    resolve_storage_settings,
+    warn_unsupported_config_fields,
 )
 from agno.culture.manager import CultureManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
@@ -407,6 +416,7 @@ class Agent:
         name: Optional[str] = None,
         id: Optional[str] = None,
         user_id: Optional[str] = None,
+        session: Optional[SessionConfig] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         add_session_state_to_context: bool = False,
@@ -425,7 +435,6 @@ class Agent:
         enable_agentic_memory: bool = False,
         update_memory_on_run: bool = False,
         add_memories_to_context: Optional[bool] = None,
-        session_summaries: Optional[Union[bool, SessionSummaryManager, SessionSummaryConfig]] = None,
         enable_session_summaries: bool = False,
         add_session_summary_to_context: Optional[bool] = None,
         session_summary_manager: Optional[SessionSummaryManager] = None,
@@ -436,10 +445,12 @@ class Agent:
         num_history_runs: Optional[int] = None,
         num_history_messages: Optional[int] = None,
         max_tool_calls_from_history: Optional[int] = None,
+        storage: Optional[StorageConfig] = None,
         store_media: bool = True,
         store_tool_messages: bool = True,
         store_history_messages: bool = False,
         knowledge: Optional[KnowledgeProtocol] = None,
+        knowledge_config: Optional[KnowledgeConfig] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         enable_agentic_knowledge_filters: Optional[bool] = None,
         add_knowledge_to_context: bool = False,
@@ -489,6 +500,7 @@ class Agent:
         retries: int = 0,
         delay_between_retries: int = 1,
         exponential_backoff: bool = False,
+        parsing: Optional[ParsingConfig] = None,
         parser_model: Optional[Union[Model, str]] = None,
         parser_model_prompt: Optional[str] = None,
         input_schema: Optional[Type[BaseModel]] = None,
@@ -515,7 +527,7 @@ class Agent:
         debug_mode: bool = False,
         debug_level: Literal[1, 2] = 1,
         telemetry: bool = True,
-        cache_callables: bool = True,
+        cache_callables: Union[bool, CallableCacheConfig] = True,
         callable_tools_cache_key: Optional[Callable[..., Optional[str]]] = None,
         callable_knowledge_cache_key: Optional[Callable[..., Optional[str]]] = None,
     ):
@@ -533,11 +545,23 @@ class Agent:
         self.introduction = introduction
         self.user_id = user_id
 
-        self.session_id = session_id
-        self.session_state = session_state
-        self.overwrite_db_session_state = overwrite_db_session_state
-        self.enable_agentic_state = enable_agentic_state
-        self.cache_session = cache_session
+        _session = resolve_session_settings(
+            session,
+            session_id=session_id,
+            session_state=session_state,
+            add_session_state_to_context=add_session_state_to_context,
+            enable_agentic_state=enable_agentic_state,
+            overwrite_db_session_state=overwrite_db_session_state,
+            cache_session=cache_session,
+            enable_session_summaries=enable_session_summaries,
+            session_summary_manager=session_summary_manager,
+            add_session_summary_to_context=add_session_summary_to_context,
+        )
+        self.session_id = _session["session_id"]
+        self.session_state = _session["session_state"]
+        self.overwrite_db_session_state = _session["overwrite_db_session_state"]
+        self.enable_agentic_state = _session["enable_agentic_state"]
+        self.cache_session = _session["cache_session"]
 
         _history = resolve_history_settings(
             history,
@@ -545,19 +569,19 @@ class Agent:
             num_history_runs=num_history_runs,
             num_history_messages=num_history_messages,
             max_tool_calls_from_history=max_tool_calls_from_history,
-            store_history_messages=store_history_messages,
             read_chat_history=read_chat_history,
             search_past_sessions=search_past_sessions,
             num_past_sessions_to_search=num_past_sessions_to_search,
             num_past_session_runs_in_search=num_past_session_runs_in_search,
+            read_tool_call_history=read_tool_call_history,
         )
-        self.search_past_sessions = _history.search_past_sessions
-        self.num_past_sessions_to_search = _history.num_past_sessions
-        self.num_past_session_runs_in_search = _history.num_past_session_runs
+        self.search_past_sessions = _history["search_past_sessions"]
+        self.num_past_sessions_to_search = _history["num_past_sessions_to_search"]
+        self.num_past_session_runs_in_search = _history["num_past_session_runs_in_search"]
 
         self.dependencies = dependencies
         self.add_dependencies_to_context = add_dependencies_to_context
-        self.add_session_state_to_context = add_session_state_to_context
+        self.add_session_state_to_context = _session["add_session_state_to_context"]
 
         self.db = db
         self.checkpoint = checkpoint
@@ -569,30 +593,24 @@ class Agent:
             update_memory_on_run=update_memory_on_run,
             add_memories_to_context=add_memories_to_context,
         )
-        self.memory_manager = _memory.manager
-        self.enable_agentic_memory = _memory.agentic
-        self.update_memory_on_run = _memory.update_on_run
+        self.memory_manager = _memory["memory_manager"]
+        self.enable_agentic_memory = _memory["enable_agentic_memory"]
+        self.update_memory_on_run = _memory["update_memory_on_run"]
 
-        self.add_memories_to_context = _memory.add_to_context
+        self.add_memories_to_context = _memory["add_memories_to_context"]
 
-        _summaries_enabled, _summaries = resolve_session_summary_settings(
-            session_summaries,
-            enable_session_summaries=enable_session_summaries,
-            session_summary_manager=session_summary_manager,
-            add_session_summary_to_context=add_session_summary_to_context,
-        )
-        self.enable_session_summaries = _summaries_enabled
-        self.session_summary_manager = _summaries.manager
-        self.add_session_summary_to_context = _summaries.add_to_context
+        self.enable_session_summaries = _session["enable_session_summaries"]
+        self.session_summary_manager = _session["session_summary_manager"]
+        self.add_session_summary_to_context = _session["add_session_summary_to_context"]
 
         # Context compression settings
         self.compress_tool_results, self.compression_manager = resolve_compression_settings(
             compress_tool_results, compression_manager=compression_manager
         )
 
-        self.add_history_to_context = _history.add_to_context
-        self.num_history_runs = _history.num_runs
-        self.num_history_messages = _history.num_messages
+        self.add_history_to_context = _history["add_history_to_context"]
+        self.num_history_runs = _history["num_history_runs"]
+        self.num_history_messages = _history["num_history_messages"]
         if self.num_history_messages is not None and self.num_history_runs is not None:
             log_warning(
                 "num_history_messages and num_history_runs cannot be set at the same time. Using num_history_runs."
@@ -601,18 +619,38 @@ class Agent:
         if self.num_history_messages is None and self.num_history_runs is None:
             self.num_history_runs = 3
 
-        self.max_tool_calls_from_history = _history.max_tool_calls
+        self.max_tool_calls_from_history = _history["max_tool_calls_from_history"]
 
-        self.store_media = store_media
-        self.store_tool_messages = store_tool_messages
-        self.store_history_messages = _history.store_messages
+        warn_unsupported_config_fields("storage", "Agent", storage, ["executor_outputs"])
+        _storage = resolve_storage_settings(
+            storage,
+            store_media=store_media,
+            store_tool_messages=store_tool_messages,
+            store_history_messages=store_history_messages,
+            store_events=store_events,
+            events_to_skip=events_to_skip,
+        )
+        self.store_media = _storage["store_media"]
+        self.store_tool_messages = _storage["store_tool_messages"]
+        self.store_history_messages = _storage["store_history_messages"]
 
+        _knowledge = resolve_knowledge_settings(
+            knowledge_config,
+            knowledge_filters=knowledge_filters,
+            enable_agentic_knowledge_filters=enable_agentic_knowledge_filters,
+            add_knowledge_to_context=add_knowledge_to_context,
+            knowledge_retriever=knowledge_retriever,
+            references_format=references_format,
+            search_knowledge=search_knowledge,
+            add_search_knowledge_instructions=add_search_knowledge_instructions,
+            update_knowledge=update_knowledge,
+        )
         self.knowledge = knowledge
-        self.knowledge_filters = knowledge_filters
-        self.enable_agentic_knowledge_filters = enable_agentic_knowledge_filters
-        self.add_knowledge_to_context = add_knowledge_to_context
-        self.knowledge_retriever = knowledge_retriever
-        self.references_format = references_format
+        self.knowledge_filters = _knowledge["knowledge_filters"]
+        self.enable_agentic_knowledge_filters = _knowledge["enable_agentic_knowledge_filters"]
+        self.add_knowledge_to_context = _knowledge["add_knowledge_to_context"]
+        self.knowledge_retriever = _knowledge["knowledge_retriever"]
+        self.references_format = _knowledge["references_format"]
 
         self.skills = skills
 
@@ -644,16 +682,16 @@ class Agent:
             reasoning_min_steps=reasoning_min_steps,
             reasoning_max_steps=reasoning_max_steps,
         )
-        self.reasoning_model = _reasoning.model  # type: ignore[assignment]
-        self.reasoning_agent = _reasoning.agent
-        self.reasoning_min_steps = _reasoning.min_steps
-        self.reasoning_max_steps = _reasoning.max_steps
+        self.reasoning_model = _reasoning["reasoning_model"]
+        self.reasoning_agent = _reasoning["reasoning_agent"]
+        self.reasoning_min_steps = _reasoning["reasoning_min_steps"]
+        self.reasoning_max_steps = _reasoning["reasoning_max_steps"]
 
-        self.read_chat_history = _history.read_chat_history
-        self.search_knowledge = search_knowledge
-        self.add_search_knowledge_instructions = add_search_knowledge_instructions
-        self.update_knowledge = update_knowledge
-        self.read_tool_call_history = read_tool_call_history
+        self.read_chat_history = _history["read_chat_history"]
+        self.search_knowledge = _knowledge["search_knowledge"]
+        self.add_search_knowledge_instructions = _knowledge["add_search_knowledge_instructions"]
+        self.update_knowledge = _knowledge["update_knowledge"]
+        self.read_tool_call_history = _history["read_tool_call_history"]
         self.send_media_to_model = send_media_to_model
         self.system_message = system_message
         self.system_message_role = system_message_role
@@ -682,37 +720,48 @@ class Agent:
             delay_between_retries=delay_between_retries,
             exponential_backoff=exponential_backoff,
         )
-        self.retries = _retry.retries
-        self.delay_between_retries = _retry.delay
-        self.exponential_backoff = _retry.exponential_backoff
-        self.parser_model = parser_model  # type: ignore[assignment]
-        self.parser_model_prompt = parser_model_prompt
+        self.retries = _retry["retries"]
+        self.delay_between_retries = _retry["delay_between_retries"]
+        self.exponential_backoff = _retry["exponential_backoff"]
+
+        _parsing = resolve_parsing_settings(
+            parsing,
+            parser_model=parser_model,
+            parser_model_prompt=parser_model_prompt,
+            output_model=output_model,
+            output_model_prompt=output_model_prompt,
+            parse_response=parse_response,
+            use_json_mode=use_json_mode,
+            structured_outputs=structured_outputs,
+        )
+        self.parser_model = _parsing["parser_model"]
+        self.parser_model_prompt = _parsing["parser_model_prompt"]
         self.input_schema = input_schema
         self.output_schema = output_schema
-        self.parse_response = parse_response
-        self.output_model = output_model  # type: ignore[assignment]
-        self.output_model_prompt = output_model_prompt
+        self.parse_response = _parsing["parse_response"]
+        self.output_model = _parsing["output_model"]
+        self.output_model_prompt = _parsing["output_model_prompt"]
 
-        self.structured_outputs = structured_outputs
+        self.structured_outputs = _parsing["structured_outputs"]
 
-        self.use_json_mode = use_json_mode
+        self.use_json_mode = _parsing["use_json_mode"]
         self.save_response_to_file = save_response_to_file
 
         self.followups, _followups = resolve_followup_settings(
             followups, num_followups=num_followups, followup_model=followup_model
         )
-        if _followups.num < 1:
+        if _followups["num_followups"] < 1:
             raise ValueError("num_followups must be at least 1")
-        self.num_followups = _followups.num
-        self.followup_model = _followups.model  # type: ignore[assignment]
+        self.num_followups = _followups["num_followups"]
+        self.followup_model = _followups["followup_model"]
 
         self.stream = stream
         self.stream_events = stream_events
 
-        self.store_events = store_events
+        self.store_events = _storage["store_events"]
         self.role = role
         # By default, we skip the run response content event
-        self.events_to_skip = events_to_skip
+        self.events_to_skip = _storage["events_to_skip"]
         if self.events_to_skip is None:
             self.events_to_skip = [RunEvent.run_content]
 
@@ -723,10 +772,10 @@ class Agent:
             update_cultural_knowledge=update_cultural_knowledge,
             add_culture_to_context=add_culture_to_context,
         )
-        self.culture_manager = _culture.manager
-        self.enable_agentic_culture = _culture.agentic
-        self.update_cultural_knowledge = _culture.update_on_run
-        self.add_culture_to_context = _culture.add_to_context
+        self.culture_manager = _culture["culture_manager"]
+        self.enable_agentic_culture = _culture["enable_agentic_culture"]
+        self.update_cultural_knowledge = _culture["update_cultural_knowledge"]
+        self.add_culture_to_context = _culture["add_culture_to_context"]
 
         self.debug_mode = debug_mode
         if debug_level not in [1, 2]:
@@ -758,9 +807,14 @@ class Agent:
         self._background_executor: Optional[Any] = None
 
         # Callable factory settings
-        self.cache_callables = cache_callables
-        self.callable_tools_cache_key = callable_tools_cache_key
-        self.callable_knowledge_cache_key = callable_knowledge_cache_key
+        warn_unsupported_config_fields("cache_callables", "Agent", cache_callables, ["members_cache_key"])
+        self.cache_callables, _callable_cache = resolve_callable_cache_settings(
+            cache_callables,
+            callable_tools_cache_key=callable_tools_cache_key,
+            callable_knowledge_cache_key=callable_knowledge_cache_key,
+        )
+        self.callable_tools_cache_key = _callable_cache["callable_tools_cache_key"]
+        self.callable_knowledge_cache_key = _callable_cache["callable_knowledge_cache_key"]
         self._callable_tools_cache: Dict[str, List[Any]] = {}
         self._callable_knowledge_cache: Dict[str, Any] = {}
 

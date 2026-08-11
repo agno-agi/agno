@@ -29,7 +29,15 @@ if TYPE_CHECKING:
     from agno.os.managers import WebSocketHandler
 
 from agno.agent.agent import Agent
-from agno.config import HistoryConfig, resolve_workflow_history_settings
+from agno.config import (
+    HistoryConfig,
+    SessionConfig,
+    StorageConfig,
+    resolve_session_settings,
+    resolve_storage_settings,
+    resolve_workflow_history_settings,
+    warn_unsupported_config_fields,
+)
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
 from agno.db.utils import resolve_db_from_config
 from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
@@ -493,6 +501,7 @@ class Workflow:
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
         steps: Optional[WorkflowSteps] = None,
         agent: Optional[WorkflowAgent] = None,
+        session: Optional[SessionConfig] = None,
         session_id: Optional[str] = None,
         session_state: Optional[Dict[str, Any]] = None,
         overwrite_db_session_state: bool = False,
@@ -502,6 +511,7 @@ class Workflow:
         stream: Optional[bool] = None,
         stream_events: bool = False,
         stream_executor_events: bool = True,
+        storage: Optional[StorageConfig] = None,
         store_events: bool = False,
         events_to_skip: Optional[List[Union[WorkflowRunEvent, RunEvent, TeamRunEvent]]] = None,
         store_executor_outputs: bool = True,
@@ -516,40 +526,63 @@ class Workflow:
         add_workflow_history_to_steps: bool = False,
         num_history_runs: int = 3,
     ):
+        warn_unsupported_config_fields(
+            "session", "Workflow", session, ["agentic_state", "summaries", "add_summaries_to_context"]
+        )
+        _session = resolve_session_settings(
+            session,
+            session_id=session_id,
+            session_state=session_state,
+            add_session_state_to_context=add_session_state_to_context,
+            enable_agentic_state=False,
+            overwrite_db_session_state=overwrite_db_session_state,
+            cache_session=cache_session,
+            add_session_state_to_context_default=None,
+        )
+        warn_unsupported_config_fields("storage", "Workflow", storage, ["media", "tool_messages", "history_messages"])
+        _storage = resolve_storage_settings(
+            storage,
+            store_events=store_events,
+            events_to_skip=events_to_skip,
+            store_executor_outputs=store_executor_outputs,
+        )
+
         self.id = id
         self.name = name
         self.description = description
         self.steps = steps
         self.agent = agent
-        self.session_id = session_id
-        self.session_state = session_state
-        self.overwrite_db_session_state = overwrite_db_session_state
+        self.session_id = _session["session_id"]
+        self.session_state = _session["session_state"]
+        self.overwrite_db_session_state = _session["overwrite_db_session_state"]
         self.user_id = user_id
         self.debug_mode = debug_mode
         self.debug_level = debug_level
-        self.store_events = store_events
-        self.events_to_skip = events_to_skip or []
+        self.store_events = _storage["store_events"]
+        self.events_to_skip = _storage["events_to_skip"] or []
         self.stream = stream
         self.stream_executor_events = stream_executor_events
-        self.store_executor_outputs = store_executor_outputs
+        self.store_executor_outputs = _storage["store_executor_outputs"]
         self.input_schema = input_schema
         self.metadata = metadata
         self.dependencies = dependencies
         self.add_dependencies_to_context = add_dependencies_to_context
-        self.add_session_state_to_context = add_session_state_to_context
+        self.add_session_state_to_context = _session["add_session_state_to_context"]
 
         # Component metadata (set by get_workflows during DB loading)
         self._version: Optional[int] = None
         self._stage: Optional[str] = None
 
-        self.cache_session = cache_session
+        self.cache_session = _session["cache_session"]
         self.db = db
         self.telemetry = telemetry
-        self.add_workflow_history_to_steps, self.num_history_runs = resolve_workflow_history_settings(
+        _history = resolve_workflow_history_settings(
             history,
             add_workflow_history_to_steps=add_workflow_history_to_steps,
             num_history_runs=num_history_runs,
         )
+        self.add_workflow_history_to_steps = _history["add_workflow_history_to_steps"]
+        self.num_history_runs = _history["num_history_runs"]
         self._workflow_session: Optional[WorkflowSession] = None
         self.stream_events = stream_events
 
