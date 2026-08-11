@@ -138,6 +138,60 @@ class TestTicketPollFallback:
         assert resp.status_code == 404
 
 
+class TestDurabilityBypassIsLoud:
+    """A worker is present, the client gets its 202/stream - but the run is
+    executing on the accepting replica, not the durable queue. EVERY bypass
+    reason must warn: the payload/media reasons always did, while
+    factory-backed / off-registry / version-pinned submissions dropped to
+    the non-durable path with no log line at all."""
+
+    @pytest.fixture()
+    def factory_harness(self, tmp_path):
+        from agno.agent.factory import AgentFactory
+
+        db = SqliteDb(db_file=str(tmp_path / "f.db"))
+        produced = Agent(id="fx-agent", name="Produced Agent", db=db)
+        factory = AgentFactory(id="fx-agent", db=db, factory=lambda ctx: produced)
+        app = AgentOS(agents=[factory], telemetry=False).get_app()
+        store = InMemoryQueueStore()
+        app.state.queue_worker = SimpleNamespace(store=store, config=QueueConfig(durable=True))
+        client = TestClient(app, raise_server_exceptions=False)
+        return SimpleNamespace(app=app, store=store, client=client)
+
+    def test_factory_backed_submission_warns(self, factory_harness, caplog):
+        with caplog.at_level("WARNING"):
+            factory_harness.client.post(
+                "/agents/fx-agent/runs", data={"message": "hi", "stream": "false", "background": "true"}
+            )
+        assert any("bypasses the durable queue" in r.message for r in caplog.records), (
+            "a factory-backed background submission silently lost durability - it must warn"
+        )
+        assert len(factory_harness.store._jobs) == 0, "the bypass must not have enqueued anything"
+
+    def test_durable_path_does_not_warn(self, harness, monkeypatch):
+        """No false alarms: a queueable registry submission rides the queue
+        and must NOT log the bypass warning."""
+
+        async def ok_prepare(component, component_type, run_id, session_id, user_id, input):
+            return None
+
+        monkeypatch.setattr("agno.os.job_queue.aprepare_queued_run", ok_prepare)
+        import logging
+
+        records = []
+        handler = logging.Handler()
+        handler.emit = lambda record: records.append(record)  # type: ignore[method-assign]
+        logging.getLogger().addHandler(handler)
+        try:
+            resp = harness.client.post(
+                "/agents/qa-agent/runs", data={"message": "hi", "stream": "false", "background": "true"}
+            )
+        finally:
+            logging.getLogger().removeHandler(handler)
+        assert resp.status_code == 202
+        assert not any("bypasses the durable queue" in str(r.getMessage()) for r in records)
+
+
 class TestDuplicate202Vocabulary:
     """The duplicate-202 body speaks the SAME status vocabulary as the run
     poll: no invented "FAILED" (the API's error value is "ERROR"), and a

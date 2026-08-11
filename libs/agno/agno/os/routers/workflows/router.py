@@ -1725,12 +1725,26 @@ def get_workflow_router(
                     status_code=202,
                     content={"run_id": queued_run_id, "session_id": queued_session_id, "status": "PENDING"},
                 )
-            elif queue_worker is not None and not payload_is_queueable(queued_payload):
-                log_warning(
-                    "Background run bypasses the durable queue: the submission carries values plain "
-                    "JSON cannot store (e.g. output_schema classes or media objects). Executing on the "
-                    "accepting replica instead - bounded and observable, but NOT durable."
-                )
+            elif queue_worker is not None:
+                # EVERY bypass reason warns - a client gets its 202 either way
+                # and must never silently believe acceptance was durable.
+                if not payload_is_queueable(queued_payload):
+                    log_warning(
+                        "Background run bypasses the durable queue: the submission carries values plain "
+                        "JSON cannot store (e.g. output_schema classes or media objects). Executing on the "
+                        "accepting replica instead - bounded and observable, but NOT durable."
+                    )
+                else:
+                    # Off-registry, factory-backed, or version-pinned: the
+                    # worker resolves from the registry, so these cannot ride
+                    # the queue - previously this dropped to the non-durable
+                    # path with no log line at all.
+                    log_warning(
+                        "Background run bypasses the durable queue: the workflow is not a plain "
+                        "registry instance (remote, factory-backed, db-resolved, or version-pinned "
+                        "resolution differs from the worker's registry instance). Executing on the "
+                        "accepting replica instead - bounded and observable, but NOT durable."
+                    )
 
             run_response = await workflow.arun(
                 input=message,
