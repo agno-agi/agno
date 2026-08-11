@@ -21,7 +21,7 @@ from pydantic import BaseModel
 
 from agno.db.base import BaseDb
 from agno.db.schemas.jobs import QueuedJob
-from agno.exceptions import InputCheckError, OutputCheckError
+from agno.exceptions import ComponentRehydrationError, InputCheckError, OutputCheckError
 from agno.factory import FactoryContextRequired
 from agno.os.auth import (
     get_auth_token_from_request,
@@ -471,12 +471,15 @@ async def handle_workflow_subscription(
             # Run not in buffer - check database
             if workflow_id and session_id:
                 try:
+                    # Lenient: replay only reads stored events through the
+                    # workflow's db handle, never its resolved references.
                     workflow = get_workflow_by_id(
                         workflow_id=workflow_id,
                         workflows=os.workflows,
                         db=os.db,
                         registry=os.registry,
                         create_fresh=True,
+                        strict=False,
                     )
                 except FactoryContextRequired:
                     workflow = None
@@ -1402,6 +1405,8 @@ def get_workflow_router(
                 create_fresh=True,
                 version=version,
             )  # type: ignore[assignment]
+        except ComponentRehydrationError as rehydration_error:
+            raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
             raise HTTPException(status_code=500, detail=f"Error resolving workflow: {e}")
@@ -2089,7 +2094,12 @@ def get_workflow_router(
 
         try:
             workflow = get_workflow_by_id(
-                workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+                workflow_id=workflow_id,
+                workflows=os.workflows,
+                db=os.db,
+                registry=os.registry,
+                create_fresh=True,
+                strict=False,
             )  # type: ignore[assignment]
         except Exception as e:
             logger.error(f"Error resolving workflow '{workflow_id}': {e}")
@@ -2181,7 +2191,12 @@ def get_workflow_router(
             )
 
         workflow = get_workflow_by_id(
-            workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+            workflow_id=workflow_id,
+            workflows=os.workflows,
+            db=os.db,
+            registry=os.registry,
+            create_fresh=True,
+            strict=False,
         )
         if workflow is None:
             raise HTTPException(status_code=404, detail="Workflow not found")
@@ -2250,7 +2265,12 @@ def get_workflow_router(
         else:
             try:
                 workflow = get_workflow_by_id(
-                    workflow_id=workflow_id, workflows=os.workflows, db=os.db, registry=os.registry, create_fresh=True
+                    workflow_id=workflow_id,
+                    workflows=os.workflows,
+                    db=os.db,
+                    registry=os.registry,
+                    create_fresh=True,
+                    strict=False,
                 )  # type: ignore[assignment]
             except Exception as e:
                 logger.error(f"Error resolving workflow '{workflow_id}': {e}")
@@ -2347,6 +2367,7 @@ def get_workflow_router(
             user_id=user_id,
             session_id=session_id,
             factory_input=factory_input,
+            strict=False,
         )
         if isinstance(workflow, RemoteWorkflow):
             raise HTTPException(status_code=400, detail="Run listing is not supported for remote workflows")

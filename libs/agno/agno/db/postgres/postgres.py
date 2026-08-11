@@ -4232,12 +4232,7 @@ class PostgresDb(BaseDb):
                 raise ValueError("Components table not found")
 
             with self.Session() as sess, sess.begin():
-                existing = sess.execute(
-                    select(table).where(
-                        table.c.component_id == component_id,
-                        table.c.deleted_at.is_(None),
-                    )
-                ).fetchone()
+                existing = sess.execute(select(table).where(table.c.component_id == component_id)).fetchone()
                 if existing is None:
                     # Create new component
                     if component_type is None:
@@ -4373,6 +4368,7 @@ class PostgresDb(BaseDb):
         limit: int = 20,
         offset: int = 0,
         exclude_component_ids: Optional[Set[str]] = None,
+        name: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List components with pagination.
 
@@ -4382,6 +4378,8 @@ class PostgresDb(BaseDb):
             limit: Maximum number of items to return.
             offset: Number of items to skip.
             exclude_component_ids: Component IDs to exclude from results.
+            name: Exact-match filter on the component name; the returned total
+                counts the filtered set.
 
         Returns:
             Tuple of (list of component dicts, total count).
@@ -4400,6 +4398,8 @@ class PostgresDb(BaseDb):
                     where_clauses.append(table.c.deleted_at.is_(None))
                 if exclude_component_ids:
                     where_clauses.append(table.c.component_id.notin_(exclude_component_ids))
+                if name is not None:
+                    where_clauses.append(table.c.name == name)
 
                 # Get total count
                 count_stmt = select(func.count()).select_from(table)
