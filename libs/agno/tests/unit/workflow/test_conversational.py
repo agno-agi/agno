@@ -1,6 +1,5 @@
 """Unit tests for conversational sticky steps and goto helpers."""
 
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -9,20 +8,21 @@ from agno.run.base import RunStatus
 from agno.workflow.conversational import (
     ConversationalControl,
     ConversationalSignal,
+    apply_conversational_pause,
     apply_signal_to_step_output,
     build_conversational_tools,
     clear_session_state_keys,
     collect_completed_goto_targets,
-    extract_signal_from_run_output,
     find_step_index_by_name,
+    is_conversational_goto_target,
     is_conversational_pause_kind,
     prune_step_results,
+    require_conversational_goto_target,
     validate_no_conversational_in_parallel,
 )
 from agno.workflow.parallel import Parallel
 from agno.workflow.step import Step
 from agno.workflow.types import PauseKind, StepOutput
-from agno.workflow.utils.hitl import apply_conversational_pause
 from agno.workflow.workflow import Workflow
 
 
@@ -69,29 +69,17 @@ class TestConversationalTools:
         assert control.signal.clear_keys == ["departure_time"]
 
 
-class TestSignalExtraction:
-    def test_extract_goto_wins_over_complete(self):
-        run_output = SimpleNamespace(
-            tools=[
-                SimpleNamespace(tool_name="complete_step", tool_args={"city": "A"}),
-                SimpleNamespace(tool_name="goto", tool_args={"step_name": "destination", "clear_keys": ["t"]}),
-            ]
-        )
-        signal = extract_signal_from_run_output(run_output)
-        assert signal is not None
-        assert signal.kind == "goto"
-        assert signal.goto_step == "destination"
-
+class TestSignalApplication:
     def test_apply_incomplete_without_signal(self):
         out = StepOutput(content="Where to?")
         result = apply_signal_to_step_output(out, None, conversational=True)
-        assert result.conversational_incomplete is True
+        assert result.conversational_complete is False
 
     def test_apply_complete_with_data(self):
         out = StepOutput(content="Got it")
         signal = ConversationalSignal(kind="complete", data={"destination": "Hangzhou"})
         result = apply_signal_to_step_output(out, signal, conversational=True)
-        assert result.conversational_incomplete is False
+        assert result.conversational_complete is True
         assert result.content == {"destination": "Hangzhou"}
 
     def test_apply_complete_without_data_keeps_nl(self):
@@ -102,13 +90,45 @@ class TestSignalExtraction:
 
 
 class TestGotoTargetsAndPrune:
-    def test_collect_completed_goto_targets_only_earlier(self):
-        steps = [_agent_step("destination"), _agent_step("departure"), _agent_step("booking")]
+    def test_collect_completed_goto_targets_only_earlier_conversational(self):
+        steps = [
+            _agent_step("destination", conversational=True),
+            _agent_step("departure", conversational=True),
+            _agent_step("booking"),
+        ]
         results = [
+            StepOutput(step_name="destination", content={"destination": "Shanghai"}),
+            StepOutput(step_name="departure", content={"departure_time": "3pm"}),
+        ]
+        targets = collect_completed_goto_targets(steps, results, current_step_name="booking")
+        assert targets == [
+            ("destination", "desc-destination"),
+            ("departure", "desc-departure"),
+        ]
+
+    def test_collect_excludes_non_conversational_completed_steps(self):
+        steps = [
+            _agent_step("prep"),  # completed but not conversational
+            _agent_step("destination", conversational=True),
+            _agent_step("departure", conversational=True),
+        ]
+        results = [
+            StepOutput(step_name="prep", content="ready"),
             StepOutput(step_name="destination", content={"destination": "Shanghai"}),
         ]
         targets = collect_completed_goto_targets(steps, results, current_step_name="departure")
         assert targets == [("destination", "desc-destination")]
+
+    def test_require_conversational_goto_target(self):
+        steps = [
+            _agent_step("prep"),
+            _agent_step("destination", conversational=True),
+        ]
+        assert is_conversational_goto_target(steps, "destination") is True
+        assert is_conversational_goto_target(steps, "prep") is False
+        require_conversational_goto_target(steps, "destination")
+        with pytest.raises(ValueError, match="conversational=True"):
+            require_conversational_goto_target(steps, "prep")
 
     def test_prune_removes_target_and_after(self):
         steps = [_agent_step("destination"), _agent_step("departure"), _agent_step("booking")]
@@ -196,7 +216,6 @@ class TestConversationalWorkflowMock:
     """End-to-end sticky pause/resume with mocked agent.run."""
 
     def test_sticky_pause_and_resume_then_complete(self):
-        from agno.models.response import ToolExecution
         from agno.run.agent import RunOutput
         from agno.run.base import RunStatus
 
@@ -209,15 +228,23 @@ class TestConversationalWorkflowMock:
         agent.store_tool_messages = True
         agent.store_history_messages = True
 
-        # Turn 1: no complete_step → sticky pause
         turn1 = RunOutput(content="Where would you like to go?", status=RunStatus.completed, tools=[])
-        # Turn 2: complete_step → advance (and end workflow if single step)
-        turn2 = RunOutput(
-            content="Got it, Shanghai.",
-            status=RunStatus.completed,
-            tools=[ToolExecution(tool_name="complete_step", tool_args={"destination": "Shanghai"})],
-        )
-        agent.run.side_effect = [turn1, turn2]
+        turn2 = RunOutput(content="Got it, Shanghai.", status=RunStatus.completed, tools=[])
+        call_idx = [0]
+
+        def agent_run(*args, **kwargs):
+            i = call_idx[0]
+            call_idx[0] += 1
+            if i == 1:
+                # Mimic a real agent invoking the injected complete_step tool
+                for tool in agent.tools or []:
+                    if getattr(tool, "__name__", None) == "complete_step":
+                        tool(destination="Shanghai")
+                        break
+                return turn2
+            return turn1
+
+        agent.run.side_effect = agent_run
 
         step = Step(name="destination", agent=agent, conversational=True)
         wf = Workflow(name="booking", steps=[step])

@@ -4,8 +4,8 @@ See: https://github.com/agno-agi/agno/issues/9128
 
 Design:
 - conversational=True steps stay paused until the agent calls complete_step()
-- goto(step_name, clear_keys=...) jumps back to a completed host step and re-runs it
-  immediately with the current user message
+- goto(step_name, clear_keys=...) jumps back to a completed conversational
+  agent/team step and re-runs it immediately with the current user message
 - session_state is only cleared via explicit clear_keys (no hidden namespaces)
 - Parallel must not contain conversational steps
 """
@@ -15,9 +15,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
+from agno.run.base import RunStatus
 from agno.utils.log import log_debug, log_warning
 
 if TYPE_CHECKING:
+    from agno.run.workflow import WorkflowRunOutput
     from agno.workflow.step import Step
     from agno.workflow.types import StepOutput
 
@@ -65,16 +67,19 @@ def build_conversational_tools(control: ConversationalControl) -> List[Callable[
         return "Step marked complete."
 
     def goto(step_name: str, clear_keys: Optional[List[str]] = None) -> str:
-        """Go back to an earlier completed host step and continue from there.
+        """Go back to an earlier completed conversational step and continue from there.
 
-        Only previously completed steps listed in the tool context are valid.
-        Use clear_keys to remove stale session_state entries that depended on
-        the steps being invalidated.
+        Only previously completed conversational=True agent/team steps listed in
+        the tool context are valid. Use clear_keys to remove stale session_state
+        entries that depended on the steps being invalidated.
         """
         valid = {name for name, _ in control.available_goto_steps}
         if step_name not in valid:
             available = ", ".join(sorted(valid)) if valid else "(none)"
-            return f"Invalid goto target '{step_name}'. You may only go back to completed earlier steps: {available}"
+            return (
+                f"Invalid goto target '{step_name}'. You may only go back to "
+                f"completed conversational steps: {available}"
+            )
 
         control.signal = ConversationalSignal(
             kind="goto",
@@ -96,35 +101,6 @@ def build_conversational_tools(control: ConversationalControl) -> List[Callable[
     return [complete_step, goto]
 
 
-def extract_signal_from_run_output(run_output: Any) -> Optional[ConversationalSignal]:
-    """Extract complete_step/goto signal from an agent/team RunOutput tools list.
-
-    Prefers goto over complete_step when both appear (goto wins).
-    """
-    tools = getattr(run_output, "tools", None) or []
-    complete: Optional[ConversationalSignal] = None
-    goto_signal: Optional[ConversationalSignal] = None
-
-    for tool in tools:
-        name = getattr(tool, "tool_name", None)
-        args = getattr(tool, "tool_args", None) or {}
-        if name == GOTO_TOOL_NAME:
-            clear_keys = args.get("clear_keys") or []
-            if isinstance(clear_keys, str):
-                clear_keys = [clear_keys]
-            goto_signal = ConversationalSignal(
-                kind="goto",
-                goto_step=args.get("step_name"),
-                clear_keys=list(clear_keys),
-            )
-        elif name == COMPLETE_STEP_TOOL_NAME:
-            # All kwargs are payload; tool_args is the full kwargs dict
-            data = dict(args) if args else None
-            complete = ConversationalSignal(kind="complete", data=data or None)
-
-    return goto_signal or complete
-
-
 def apply_signal_to_step_output(
     step_output: "StepOutput",
     signal: Optional[ConversationalSignal],
@@ -136,17 +112,17 @@ def apply_signal_to_step_output(
         return step_output
 
     if signal is None:
-        step_output.conversational_incomplete = True
+        step_output.conversational_complete = False
         return step_output
 
     if signal.kind == "goto":
         step_output.goto_step = signal.goto_step
         step_output.goto_clear_keys = list(signal.clear_keys)
-        step_output.conversational_incomplete = False
+        step_output.conversational_complete = True
         return step_output
 
     # complete
-    step_output.conversational_incomplete = False
+    step_output.conversational_complete = True
     if signal.data:
         step_output.content = signal.data
     # else keep natural-language content from the agent turn
@@ -158,9 +134,10 @@ def collect_completed_goto_targets(
     step_results: Sequence[Any],
     current_step_name: Optional[str],
 ) -> List[Tuple[str, str]]:
-    """Return (name, description) for completed host steps before the current one.
+    """Return (name, description) for completed conversational steps before the current one.
 
-    Host steps eligible for goto: any completed Step (agent/team/executor/HITL host).
+    Only ``conversational=True`` agent/team Steps are eligible goto targets
+    (``conversational=True`` already requires an agent or team executor).
     """
     name_to_index = _flat_step_name_index(steps)
     current_index = name_to_index.get(current_step_name) if current_step_name else None
@@ -193,9 +170,24 @@ def collect_completed_goto_targets(
             continue
         if current_index is not None and idx >= current_index:
             continue
-        description = step_meta.get(name, {}).get("description") or name
+        meta = step_meta.get(name) or {}
+        if not meta.get("conversational"):
+            continue
+        description = meta.get("description") or name
         targets.append((name, description))
     return targets
+
+
+def is_conversational_goto_target(steps: Sequence[Any], step_name: str) -> bool:
+    """True if ``step_name`` is a conversational=True Step (agent/team)."""
+    meta = _flat_step_metadata(steps).get(step_name) or {}
+    return bool(meta.get("conversational"))
+
+
+def require_conversational_goto_target(steps: Sequence[Any], step_name: str) -> None:
+    """Raise ValueError unless ``step_name`` is a conversational=True agent/team step."""
+    if not is_conversational_goto_target(steps, step_name):
+        raise ValueError(f"goto target '{step_name}' must be a conversational=True agent/team step")
 
 
 def find_step_index_by_name(steps: Sequence[Any], step_name: str) -> Optional[int]:
@@ -339,6 +331,65 @@ def is_conversational_pause_kind(pause_kind: Any) -> bool:
     if isinstance(pause_kind, PauseKind):
         return pause_kind == PauseKind.CONVERSATIONAL
     return str(pause_kind) == PauseKind.CONVERSATIONAL.value
+
+
+def apply_conversational_pause(
+    workflow_run_response: "WorkflowRunOutput",
+    step: Any,
+    step_index: int,
+    step_name: Optional[str],
+    step_output: "StepOutput",
+    collected_step_outputs: List[Union["StepOutput", List["StepOutput"]]],
+) -> None:
+    """Apply conversational sticky-step pause state to the workflow run response.
+
+    The step's natural-language reply is kept on workflow content for the UI, but
+    the step is not appended to completed step_results until complete_step.
+    """
+    from agno.workflow.types import PauseKind, StepRequirement, StepType
+
+    workflow_run_response.status = RunStatus.paused
+    workflow_run_response.paused_step_index = step_index
+    workflow_run_response.paused_step_name = step_name
+    workflow_run_response.pause_kind = PauseKind.CONVERSATIONAL
+    workflow_run_response.step_results = list(collected_step_outputs)
+    # Surface the assistant reply to the user without completing the step
+    if step_output.content is not None:
+        workflow_run_response.content = step_output.content
+
+    requirement = StepRequirement(
+        step_id=getattr(step, "step_id", None) or step_name or f"step_{step_index}",
+        step_name=step_name,
+        step_index=step_index,
+        step_type=StepType.STEP,
+        requires_conversational_input=True,
+    )
+    existing = workflow_run_response.step_requirements or []
+    workflow_run_response.step_requirements = existing + [requirement]
+
+
+def create_conversational_paused_event(
+    workflow_run_response: "WorkflowRunOutput",
+    step: Any,
+    step_name: str,
+    step_index: int,
+    step_output: "StepOutput",
+) -> Any:
+    """Create a StepPausedEvent for a conversational sticky-step pause."""
+    from agno.run.workflow import StepPausedEvent
+
+    return StepPausedEvent(
+        run_id=workflow_run_response.run_id or "",
+        workflow_name=workflow_run_response.workflow_name,
+        workflow_id=workflow_run_response.workflow_id,
+        session_id=workflow_run_response.session_id,
+        step_name=step_name,
+        step_index=step_index,
+        step_id=getattr(step, "step_id", None),
+        requires_conversational_input=True,
+        content=step_output.content,
+        user_input_message="Continue the conversation with the active step.",
+    )
 
 
 # ---------------------------------------------------------------------------

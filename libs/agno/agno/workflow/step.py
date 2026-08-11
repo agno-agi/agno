@@ -2215,15 +2215,12 @@ class Step:
         response: Union[RunOutput, TeamRunOutput, StepOutput],
     ) -> StepOutput:
         """Build StepOutput and annotate conversational complete/goto/incomplete flags."""
-        from agno.workflow.conversational import apply_signal_to_step_output, extract_signal_from_run_output
+        from agno.workflow.conversational import apply_signal_to_step_output
 
         step_output = self._process_step_output(response)
         if not self.conversational:
             return step_output
-        signal = self._conversational_control.signal
-        if signal is None and not isinstance(response, StepOutput):
-            signal = extract_signal_from_run_output(response)
-        return apply_signal_to_step_output(step_output, signal, conversational=True)
+        return apply_signal_to_step_output(step_output, self._conversational_control.signal, conversational=True)
 
     def _prepare_message(
         self,

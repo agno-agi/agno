@@ -116,6 +116,10 @@ from agno.utils.print_response.workflow import (
 from agno.utils.string import generate_id_from_name
 from agno.workflow.agent import WorkflowAgent
 from agno.workflow.condition import Condition
+from agno.workflow.conversational import (
+    apply_conversational_pause,
+    create_conversational_paused_event,
+)
 from agno.workflow.loop import Loop
 from agno.workflow.parallel import Parallel
 from agno.workflow.router import Router
@@ -133,14 +137,12 @@ from agno.workflow.types import (
 from agno.workflow.utils import (
     ContinueExecutionState,
     StepPauseResult,
-    apply_conversational_pause,
     apply_executor_pause,
     apply_pause_state,
     apply_post_execution_pause_state,
     asave_paused_session,
     check_output_review_status,
     check_timeout,
-    create_conversational_paused_event,
     create_executor_paused_event,
     create_router_paused_event,
     create_step_paused_event,
@@ -2244,8 +2246,8 @@ class Workflow:
                             save_paused_session(self, session, workflow_run_response)
                             return workflow_run_response
 
-                    # Conversational sticky step: incomplete → pause for next user message
-                    if getattr(step_output, "conversational_incomplete", False):
+                    # Conversational sticky step: not complete → pause for next user message
+                    if not getattr(step_output, "conversational_complete", True):
                         apply_conversational_pause(
                             workflow_run_response,
                             step,
@@ -2263,10 +2265,12 @@ class Workflow:
                             clear_session_state_keys,
                             find_step_index_by_name,
                             prune_step_results,
+                            require_conversational_goto_target,
                         )
 
                         target_name = step_output.goto_step
                         assert target_name is not None
+                        require_conversational_goto_target(steps_list, target_name)
                         collected_step_outputs, previous_step_outputs = prune_step_results(
                             collected_step_outputs,
                             previous_step_outputs,
@@ -6575,8 +6579,10 @@ class Workflow:
                 raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
                 # Check if step requires HITL (confirmation, user input, or route selection) - for subsequent steps
-                # Skip the check only for the step whose HITL was just resolved (not for skipped-to steps)
+                # Skip the check for the step whose HITL was just resolved, or a conversational sticky resume.
                 hitl_resolved_index = kwargs.get("hitl_resolved_for_step")
+                conversational_resumed_index = kwargs.get("conversational_resumed_for_step")
+                skip_hitl_check = i in (hitl_resolved_index, conversational_resumed_index)
                 if i == hitl_resolved_index and not kwargs.get("executor_step_requirement"):
                     # Step-level HITL was just resolved — store StepContinuedEvent
                     self._handle_event(
@@ -6591,7 +6597,7 @@ class Workflow:
                         ),
                         workflow_run_response,
                     )
-                if i != hitl_resolved_index:
+                if not skip_hitl_check:
                     step_type = STEP_TYPE_MAPPING.get(type(step), StepType.STEP).value
                     pause_result = step_pause_status(step, i, step_input, step_type)
                     # For Router, also check route selection if confirmation didn't trigger
@@ -6721,8 +6727,8 @@ class Workflow:
                     save_paused_session(self, session, workflow_run_response)
                     return workflow_run_response
 
-                # Conversational sticky step: incomplete → pause for next user message
-                if getattr(step_output, "conversational_incomplete", False):
+                # Conversational sticky step: not complete → pause for next user message
+                if not getattr(step_output, "conversational_complete", True):
                     apply_conversational_pause(
                         workflow_run_response,
                         step,
@@ -6740,10 +6746,12 @@ class Workflow:
                         clear_session_state_keys,
                         find_step_index_by_name,
                         prune_step_results,
+                        require_conversational_goto_target,
                     )
 
                     target_name = step_output.goto_step
                     assert target_name is not None
+                    require_conversational_goto_target(cast(List[Any], self.steps), target_name)
                     collected_step_outputs, previous_step_outputs = prune_step_results(
                         collected_step_outputs,
                         previous_step_outputs,
@@ -6766,6 +6774,8 @@ class Workflow:
                     kwargs = dict(kwargs)
                     kwargs["conversational_user_message"] = goto_message
                     kwargs.pop("executor_step_requirement", None)
+                    kwargs.pop("conversational_resumed_for_step", None)
+                    kwargs.pop("hitl_resolved_for_step", None)
                     return self._continue_execute(
                         session=session,
                         execution_input=execution_input,
@@ -7561,8 +7571,10 @@ class Workflow:
                     continue  # Move to next step
 
                 # Check if step requires HITL (confirmation, user input, or route selection) - for subsequent steps
-                # Skip the check only for the step whose HITL was just resolved (not for skipped-to steps)
+                # Skip the check for the step whose HITL was just resolved, or a conversational sticky resume.
                 hitl_resolved_index = kwargs.get("hitl_resolved_for_step")
+                conversational_resumed_index = kwargs.get("conversational_resumed_for_step")
+                skip_hitl_check = i in (hitl_resolved_index, conversational_resumed_index)
                 if i == hitl_resolved_index and not kwargs.get("executor_step_requirement"):
                     # Step-level HITL was just resolved — emit StepContinuedEvent
                     yield self._handle_event(
@@ -7577,7 +7589,7 @@ class Workflow:
                         ),
                         workflow_run_response,
                     )
-                if i != hitl_resolved_index:
+                if not skip_hitl_check:
                     step_type = STEP_TYPE_MAPPING.get(type(step), StepType.STEP).value
                     pause_result = step_pause_status(step, i, step_input, step_type)
                     # For Router, also check route selection if confirmation didn't trigger
@@ -8659,8 +8671,10 @@ class Workflow:
                     continue  # Move to next step
 
                 # Check if step requires HITL (confirmation, user input, or route selection) - for subsequent steps
-                # Skip the check only for the step whose HITL was just resolved (not for skipped-to steps)
+                # Skip the check for the step whose HITL was just resolved, or a conversational sticky resume.
                 hitl_resolved_index = kwargs.get("hitl_resolved_for_step")
+                conversational_resumed_index = kwargs.get("conversational_resumed_for_step")
+                skip_hitl_check = i in (hitl_resolved_index, conversational_resumed_index)
                 if i == hitl_resolved_index and not kwargs.get("executor_step_requirement"):
                     # Step-level HITL was just resolved — store StepContinuedEvent
                     self._handle_event(
@@ -8675,7 +8689,7 @@ class Workflow:
                         ),
                         workflow_run_response,
                     )
-                if i != hitl_resolved_index:
+                if not skip_hitl_check:
                     step_type = STEP_TYPE_MAPPING.get(type(step), StepType.STEP).value
                     pause_result = step_pause_status(step, i, step_input, step_type)
                     # For Router, also check route selection if confirmation didn't trigger
@@ -8800,8 +8814,8 @@ class Workflow:
                     await asave_paused_session(self, session, workflow_run_response)
                     return workflow_run_response
 
-                # Conversational sticky step: incomplete → pause for next user message
-                if getattr(step_output, "conversational_incomplete", False):
+                # Conversational sticky step: not complete → pause for next user message
+                if not getattr(step_output, "conversational_complete", True):
                     apply_conversational_pause(
                         workflow_run_response,
                         step,
@@ -8819,10 +8833,12 @@ class Workflow:
                         clear_session_state_keys,
                         find_step_index_by_name,
                         prune_step_results,
+                        require_conversational_goto_target,
                     )
 
                     target_name = step_output.goto_step
                     assert target_name is not None
+                    require_conversational_goto_target(cast(List[Any], self.steps), target_name)
                     collected_step_outputs, previous_step_outputs = prune_step_results(
                         collected_step_outputs,
                         previous_step_outputs,
@@ -8844,6 +8860,8 @@ class Workflow:
                     kwargs = dict(kwargs)
                     kwargs["conversational_user_message"] = goto_message
                     kwargs.pop("executor_step_requirement", None)
+                    kwargs.pop("conversational_resumed_for_step", None)
+                    kwargs.pop("hitl_resolved_for_step", None)
                     return await self._acontinue_execute(
                         session=session,
                         execution_input=execution_input,
@@ -9373,8 +9391,10 @@ class Workflow:
                     continue  # Move to next step
 
                 # Check if step requires HITL (confirmation, user input, or route selection) - for subsequent steps
-                # Skip the check only for the step whose HITL was just resolved (not for skipped-to steps)
+                # Skip the check for the step whose HITL was just resolved, or a conversational sticky resume.
                 hitl_resolved_index = kwargs.get("hitl_resolved_for_step")
+                conversational_resumed_index = kwargs.get("conversational_resumed_for_step")
+                skip_hitl_check = i in (hitl_resolved_index, conversational_resumed_index)
                 if i == hitl_resolved_index and not kwargs.get("executor_step_requirement"):
                     # Step-level HITL was just resolved — emit StepContinuedEvent
                     yield self._handle_event(
@@ -9390,7 +9410,7 @@ class Workflow:
                         workflow_run_response,
                         websocket_handler=websocket_handler,
                     )
-                if i != hitl_resolved_index:
+                if not skip_hitl_check:
                     step_type = STEP_TYPE_MAPPING.get(type(step), StepType.STEP).value
                     pause_result = step_pause_status(step, i, step_input, step_type)
                     # For Router, also check route selection if confirmation didn't trigger
@@ -10372,14 +10392,14 @@ class Workflow:
         execution_input: WorkflowExecutionInput,
         async_save: bool = False,
     ) -> Optional[Dict[str, Any]]:
-        """Handle conversational incomplete pause or goto after a step runs.
+        """Handle conversational sticky pause or goto after a step runs.
 
         Returns:
             None if no conversational control applied (caller continues normally).
             {"action": "paused"} if sticky pause was applied (caller should return).
             {"action": "goto", "index": int, "message": Any} if goto should jump.
         """
-        if getattr(step_output, "conversational_incomplete", False):
+        if not getattr(step_output, "conversational_complete", True):
             apply_conversational_pause(
                 workflow_run_response,
                 step,
@@ -10397,10 +10417,12 @@ class Workflow:
                 clear_session_state_keys,
                 find_step_index_by_name,
                 prune_step_results,
+                require_conversational_goto_target,
             )
 
             target_name = step_output.goto_step
             assert target_name is not None
+            require_conversational_goto_target(steps_list, target_name)
             pruned_results, rebuilt_previous = prune_step_results(
                 collected_step_outputs,
                 previous_step_outputs,
@@ -10442,8 +10464,6 @@ class Workflow:
         Reuses the paused run_id and continues from paused_step_index, forwarding
         ``user_message`` as conversational_user_message to the sticky step.
         """
-        from agno.workflow.conversational import collect_completed_goto_targets
-
         paused_step_index = paused_run.paused_step_index
         if paused_step_index is None:
             raise ValueError("Cannot resume conversational run without paused_step_index")
@@ -10463,21 +10483,12 @@ class Workflow:
         if session.session_data and session.session_data.get("session_state") is not None:
             run_context.session_state = session.session_data["session_state"]
 
-        # Seed goto targets on the sticky step before continue
-        steps_list = cast(List[Any], self.steps)
-        if 0 <= paused_step_index < len(steps_list):
-            sticky = steps_list[paused_step_index]
-            if isinstance(sticky, Step) and sticky.conversational:
-                sticky._conversational_control.available_goto_steps = collect_completed_goto_targets(
-                    steps_list,
-                    paused_run.step_results or [],
-                    getattr(sticky, "name", None),
-                )
-
-        # Continue from the paused conversational step with the new user message
+        # Continue from the paused conversational step with the new user message.
+        # conversational_resumed_for_step skips pre-execution HITL checks without
+        # emitting StepContinuedEvent (unlike hitl_resolved_for_step).
         kwargs = dict(kwargs)
         kwargs["conversational_user_message"] = user_message
-        kwargs["hitl_resolved_for_step"] = paused_step_index
+        kwargs["conversational_resumed_for_step"] = paused_step_index
 
         return self._continue_execute(
             session=session,
@@ -10503,8 +10514,6 @@ class Workflow:
         **kwargs: Any,
     ) -> WorkflowRunOutput:
         """Async resume for a conversational-paused workflow run."""
-        from agno.workflow.conversational import collect_completed_goto_targets
-
         paused_step_index = paused_run.paused_step_index
         if paused_step_index is None:
             raise ValueError("Cannot resume conversational run without paused_step_index")
@@ -10520,19 +10529,9 @@ class Workflow:
         if session.session_data and session.session_data.get("session_state") is not None:
             run_context.session_state = session.session_data["session_state"]
 
-        steps_list = cast(List[Any], self.steps)
-        if 0 <= paused_step_index < len(steps_list):
-            sticky = steps_list[paused_step_index]
-            if isinstance(sticky, Step) and sticky.conversational:
-                sticky._conversational_control.available_goto_steps = collect_completed_goto_targets(
-                    steps_list,
-                    paused_run.step_results or [],
-                    getattr(sticky, "name", None),
-                )
-
         kwargs = dict(kwargs)
         kwargs["conversational_user_message"] = user_message
-        kwargs["hitl_resolved_for_step"] = paused_step_index
+        kwargs["conversational_resumed_for_step"] = paused_step_index
 
         return await self._acontinue_execute(
             session=session,

@@ -578,9 +578,10 @@ class StepOutput:
 
     steps: Optional[List["StepOutput"]] = None
 
-    # Conversational sticky step: agent did not call complete_step / goto this turn
+    # Conversational sticky step: False until the agent calls complete_step / goto.
     # Transient — NOT required for serialization of completed runs.
-    conversational_incomplete: bool = False
+    # Default True so non-conversational steps are never treated as sticky-incomplete.
+    conversational_complete: bool = True
     # Conversational goto: jump back to this completed host step and re-run it
     goto_step: Optional[str] = None
     goto_clear_keys: Optional[List[str]] = None
