@@ -1077,3 +1077,49 @@ def test_added_providers_do_not_use_the_shop_not_found_path(scavio_tools, mock_s
     mock_scavio_client.indeed.job.side_effect = error
 
     assert json.loads(scavio_tools.indeed_job("abc123")) == {"error": "not found"}
+
+
+def test_every_tool_resolves_a_real_sdk_method():
+    """Every self.client.<...> chain must exist on a real ScavioClient.
+
+    The rest of this file mocks ScavioClient, and a Mock answers any attribute,
+    so a misspelled namespace or method would pass every other test here and
+    fail only when an agent called it. This resolves the chains for real. No
+    request is made: constructing the client and reading attributes is offline.
+    """
+    import ast
+    import inspect
+
+    from scavio import ScavioClient
+
+    import agno.tools.scavio as module
+
+    client = ScavioClient(api_key="test_api_key")
+    tree = ast.parse(inspect.getsource(module))
+
+    chains = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Attribute):
+            continue
+        parts = []
+        cursor = node
+        while isinstance(cursor, ast.Attribute):
+            parts.append(cursor.attr)
+            cursor = cursor.value
+        if isinstance(cursor, ast.Name) and cursor.id == "self":
+            parts.reverse()
+            if len(parts) > 1 and parts[0] == "client":
+                chains.add(tuple(parts[1:]))
+
+    assert chains, "found no SDK call sites to check"
+
+    unresolved = []
+    for chain in sorted(chains):
+        target = client
+        for part in chain:
+            target = getattr(target, part, None)
+            if target is None:
+                unresolved.append(".".join(chain))
+                break
+
+    assert unresolved == []
