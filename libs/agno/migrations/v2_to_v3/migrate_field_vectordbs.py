@@ -183,14 +183,32 @@ def migrate_milvus_collection(collection: str) -> None:
 
 
 def migrate_weaviate_collection(collection: str) -> None:
-    """Add the ``user_id`` property to an existing Weaviate collection (class).
+    """Weaviate CANNOT be migrated in place — this refuses with a recreate instruction.
+
+    The adapter filters the shared bucket with ``user_id IS NONE`` (``is_none``), and
+    Weaviate only allows an ``is_none`` filter on a property whose collection was
+    created with ``index_null_state=True``. That flag is **create-time only**: it
+    cannot be added to an existing collection (``Reconfigure.inverted_index()`` has no
+    such kwarg, and the raw API returns ``422 IndexNullState cannot be changed``).
+
+    So merely adding the ``user_id`` property — which is all a v2 collection lacks the
+    machinery for — produces a WORSE state than doing nothing: the property exists (so
+    a naive "is it there?" gate reports "migrated"), but every unscoped query
+    ``is_none(user_id)`` then throws ``Nullstate must be indexed to be filterable!``.
+    ``content_hash_exists`` runs that filter on every ingest, so ``Knowledge.insert``
+    breaks on the collection — and it can't be repaired, only dropped and re-embedded.
+
+    Because the required index setting can't be retrofitted, there is no safe in-place
+    migration. The only correct path is to recreate the collection through the v3
+    adapter (which creates it with ``index_null_state=True``) and re-ingest the data.
+    This function detects the pre-v3 collection and raises that instruction rather than
+    creating the broken state.
 
     Args:
         collection: The Weaviate collection (class) name.
     """
     try:
         import weaviate
-        from weaviate.classes.config import DataType, Property, Tokenization
 
         from agno.vectordb.weaviate.weaviate import Weaviate
 
@@ -206,14 +224,19 @@ def migrate_weaviate_collection(collection: str) -> None:
             coll = client.collections.get(collection)
             existing = [p.name for p in coll.config.get().properties]
             if Weaviate.USER_ID_KEY in existing:
-                log_info(f"Weaviate collection '{collection}' already has {Weaviate.USER_ID_KEY}. No migration needed.")
+                log_info(
+                    f"Weaviate collection '{collection}' already has {Weaviate.USER_ID_KEY}. "
+                    "Assuming it was created by the v3 adapter (with null-state indexing). No migration needed."
+                )
                 return
 
-            log_info(f"Adding {Weaviate.USER_ID_KEY} property to Weaviate collection '{collection}'")
-            coll.config.add_property(
-                Property(name=Weaviate.USER_ID_KEY, data_type=DataType.TEXT, tokenization=Tokenization.FIELD)
+            raise RuntimeError(
+                f"Weaviate collection '{collection}' predates per-user isolation and cannot be migrated in place: "
+                f"the shared-bucket filter needs 'index_null_state=True', which Weaviate only accepts at collection "
+                f"creation and refuses to add afterward. Recreate the collection through the v3 Weaviate adapter "
+                f"(which sets it) and re-ingest the data. Adding the 'user_id' property alone would break "
+                f"Knowledge.insert on the collection irreparably."
             )
-            log_info(f"Successfully migrated Weaviate collection '{collection}'")
         finally:
             client.close()
 

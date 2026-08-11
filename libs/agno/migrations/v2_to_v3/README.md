@@ -12,19 +12,21 @@ There are three kinds of migration, one script each:
 | Script | Backends | What it does |
 | --- | --- | --- |
 | `migrate_sql_vectordbs.py` | pgvector, singlestore | Add the `user_id` **column** to existing tables. |
-| `migrate_field_vectordbs.py` | milvus, weaviate, lancedb, clickhouse, surrealdb | Add the `user_id` **field/column/property** to existing stores (+ optional Qdrant owner assignment). **Milvus also backfills** the `"__shared__"` sentinel — see below. |
+| `migrate_field_vectordbs.py` | milvus, lancedb, clickhouse, surrealdb | Add the `user_id` **field/column/property** to existing stores (+ optional Qdrant owner assignment). **Milvus also backfills** the `"__shared__"` sentinel. **Weaviate cannot be migrated in place** — the script refuses and tells you to recreate. See notes below. |
 | `migrate_sentinel_vectordbs.py` | redis, valkey, couchbase, cassandra | **Backfill** `user_id = "__shared__"` onto existing vectors. |
 
 Two things drive whether a backend needs work:
 
 - **Schema** — backends that declare `user_id` in a fixed schema (SQL column, a
-  Milvus/Weaviate field, a LanceDB column, a SurrealDB `SCHEMAFUL` field) only
-  create it when the store is first created. An **existing** store has no such
-  field, and until it is added the scoped filter either **fails with a schema
-  error** (LanceDB `No field named user_id`; ClickHouse `Unknown identifier
-  user_id`) or, on SurrealDB, **silently drops** any new owner-write (writes to an
-  undeclared field on a `SCHEMAFUL` table are discarded), breaking isolation for
-  new uploads. All are confirmed live.
+  Milvus field, a LanceDB column, a SurrealDB `SCHEMAFUL` field) only create it when
+  the store is first created. An **existing** store has no such field, and until it
+  is added the scoped filter either **fails with a schema error** (LanceDB `No field
+  named user_id`; ClickHouse `Unknown identifier user_id`) or, on SurrealDB,
+  **silently drops** any new owner-write (writes to an undeclared field on a
+  `SCHEMAFUL` table are discarded), breaking isolation for new uploads. All are
+  confirmed live. **Weaviate is the exception**: its shared filter needs a create-time
+  `index_null_state` setting that cannot be added afterward, so it cannot be migrated
+  in place at all (see note).
 - **"Shared" representation** — `NULL` / absent / `''` are auto-matched as shared,
   so existing rows stay visible once the field exists. But `"__shared__"` (a
   literal sentinel used by redis/valkey/couchbase/cassandra **and milvus**) is
@@ -42,7 +44,7 @@ Two things drive whether a backend needs work:
 | **pgvector** | SQL column | `NULL` | visible once column exists | **schema** — `ALTER TABLE ADD COLUMN user_id` |
 | **singlestore** | SQL column | `NULL` | visible once column exists | **schema** — `ALTER TABLE ADD COLUMN user_id` |
 | **milvus** | schema field | `"__shared__"` | **invisible** until field added **and** backfilled | **schema + mandatory backfill** — `add_collection_field` (Milvus 2.6+; see note) then stamp `"__shared__"` |
-| **weaviate** | class property | `NULL` | search fails until property exists | **schema** — `config.add_property` |
+| **weaviate** | class property (+ null-state index) | `NULL` | search fails until recreated | **recreate + re-ingest** — cannot migrate in place (see note) |
 | **lancedb** | Arrow column | `NULL` | scoped search fails until column exists | **schema** — `add_columns` |
 | **clickhouse** | `String DEFAULT ''` column | `''` | scoped query fails until column exists | **schema** — `ALTER TABLE ADD COLUMN` |
 | **surrealdb** | `SCHEMAFUL` field | `NONE` | visible; new owner-writes silently dropped until field exists | **schema** — `DEFINE FIELD IF NOT EXISTS` |
@@ -72,6 +74,20 @@ Two things drive whether a backend needs work:
 > (`AddCollectionField`). On Milvus 2.5.x and earlier the server has no such API —
 > the migration raises a clear error, and the only option there is to recreate the
 > collection with the new schema and re-ingest the data.
+
+> **Weaviate note (cannot migrate in place):** the adapter filters the shared bucket
+> with `user_id IS NONE`, and Weaviate only permits an `is_none` filter on a property
+> whose collection was created with `index_null_state=True`. That flag is
+> **create-time only** — it cannot be added to an existing collection
+> (`Reconfigure.inverted_index()` has no such kwarg; the raw API returns `422
+> IndexNullState cannot be changed`). So simply adding the `user_id` property is
+> *worse* than doing nothing: the property exists (a naive gate reports "migrated")
+> but every unscoped query then throws `Nullstate must be indexed to be filterable!`,
+> and `content_hash_exists` runs that filter on **every ingest** — so `Knowledge.insert`
+> breaks on the collection, irreparably. The migration therefore **refuses** and tells
+> you to recreate the collection through the v3 adapter (which sets the flag) and
+> re-ingest. A pristine pre-v3 collection keeps working until something adds the
+> property — so do not add it manually.
 
 > **opensearch note:** OpenSearch mappings are dynamic — a scoped read uses
 > `must_not exists` on `user_id`, which matches existing (field-absent) documents,

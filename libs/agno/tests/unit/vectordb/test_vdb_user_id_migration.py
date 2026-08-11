@@ -242,44 +242,71 @@ class TestSqlSchemaMigrationLogic:
 # --------------------------------------------------------------------------- #
 
 
-class TestWeaviateSchemaMigration:
-    def _client(self):
-        weaviate = pytest.importorskip("weaviate")
-        client = weaviate.connect_to_embedded()
-        return weaviate, client
+class TestWeaviateRefusesInPlaceMigration:
+    """Weaviate CANNOT be migrated in place: the shared filter needs a create-time
+    ``index_null_state`` that can't be added later, so merely adding the ``user_id``
+    property breaks ``Knowledge.insert`` irreparably. The migration must REFUSE a
+    pre-v3 collection with a recreate instruction — never add the property.
 
-    def test_adds_user_id_property(self):
+    Uses a mock Weaviate client (no server) so the guard runs in CI. ``weaviate`` is
+    imported by the migration at call time, so it must be importable.
+    """
+
+    def _mock_client(self, existing_props, exists=True):
+        import sys
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        pytest.importorskip("weaviate")
+        client = MagicMock()
+        client.collections.exists.return_value = exists
+        props = [SimpleNamespace(name=p) for p in existing_props]
+        client.collections.get.return_value.config.get.return_value.properties = props
+        # Patch the module-level connect_to_local so the migration gets our mock.
+        import weaviate
+
+        self._orig = weaviate.connect_to_local
+        weaviate.connect_to_local = lambda **kw: client
+        sys.modules["weaviate"].connect_to_local = weaviate.connect_to_local
+        return client
+
+    def _restore(self):
+        import weaviate
+
+        weaviate.connect_to_local = self._orig
+
+    def test_pre_v3_collection_refuses_with_recreate_instruction(self):
+        mod = _load("migrate_field_vectordbs.py")
+        client = self._mock_client(existing_props=["content"])  # no user_id -> pre-v3
+        try:
+            with pytest.raises(RuntimeError) as exc:
+                mod.migrate_weaviate_collection("Docs")
+            msg = str(exc.value).lower()
+            assert "recreate" in msg
+            assert "index_null_state" in msg
+            # It must NEVER add the property (that is the broken state).
+            client.collections.get.return_value.config.add_property.assert_not_called()
+        finally:
+            self._restore()
+
+    def test_v3_collection_is_a_noop(self):
         from agno.vectordb.weaviate.weaviate import Weaviate
 
-        weaviate, client = self._client()
+        mod = _load("migrate_field_vectordbs.py")
+        client = self._mock_client(existing_props=["content", Weaviate.USER_ID_KEY])
         try:
-            from weaviate.classes.config import Configure, DataType, Property
-
-            if client.collections.exists("Docs"):
-                client.collections.delete("Docs")
-            client.collections.create(
-                "Docs",
-                properties=[Property(name="content", data_type=DataType.TEXT)],
-                vectorizer_config=Configure.Vectorizer.none(),
-            )
-            client.collections.get("Docs").data.insert(properties={"content": "hi"}, vector=[0.1, 0.2, 0.3])
-
-            props = lambda: [p.name for p in client.collections.get("Docs").config.get().properties]  # noqa: E731
-            assert Weaviate.USER_ID_KEY not in props()
-
-            mod = _load("migrate_field_vectordbs.py")
-            # The migration connects via connect_to_local; here we exercise the same
-            # add_property call against the embedded client directly.
-            from weaviate.classes.config import Property as P
-            from weaviate.classes.config import Tokenization
-
-            client.collections.get("Docs").config.add_property(
-                P(name=Weaviate.USER_ID_KEY, data_type=DataType.TEXT, tokenization=Tokenization.FIELD)
-            )
-            assert Weaviate.USER_ID_KEY in props()
-            assert callable(mod.migrate_weaviate_collection)
+            mod.migrate_weaviate_collection("Docs")  # must not raise
+            client.collections.get.return_value.config.add_property.assert_not_called()
         finally:
-            client.close()
+            self._restore()
+
+    def test_missing_collection_is_safe(self):
+        mod = _load("migrate_field_vectordbs.py")
+        self._mock_client(existing_props=[], exists=False)
+        try:
+            mod.migrate_weaviate_collection("Nope")  # must not raise
+        finally:
+            self._restore()
 
 
 # --------------------------------------------------------------------------- #
