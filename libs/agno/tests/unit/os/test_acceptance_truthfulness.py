@@ -109,12 +109,18 @@ class TestTicketPollFallback:
         body = resp.json()
         assert body["status"] == "ERROR" and body["content"] == "worker lost"
 
-    def test_tenant_mismatch_stays_404(self, harness):
-        """A guessable run_id must not leak another tenant's run existence:
-        a ticket owned by a user is invisible to an unscoped caller."""
+    def test_unscoped_poll_sees_user_owned_ticket(self, harness):
+        """No user-scope middleware means get_scoped_user_id is None: NO
+        filtering, exactly like the session read. A user-owned ticket must
+        answer the poll - treating the None as an anonymous owner value
+        404ed accepted user-owned runs for every admin/unscoped poll inside
+        the ticket-before-run-row window. (Tenant isolation between SCOPED
+        principals is pinned at the helper level: a scoped caller with a
+        different user_id stays 404.)"""
         seed_ticket(harness.store, "r-poll-3", user_id="alice")
         resp = harness.client.get("/agents/qa-agent/runs/r-poll-3", params={"session_id": "s-tkt"})
-        assert resp.status_code == 404
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "PENDING"
 
     def test_session_mismatch_stays_404(self, harness):
         seed_ticket(harness.store, "r-poll-4")
@@ -162,7 +168,7 @@ class TestHelperUnits:
         ).to_dict()
         store._jobs["r1"] = job
         worker = SimpleNamespace(store=store)
-        view = await aticket_poll_fallback(worker, "r1", "s1", "agent", "a1", None)
+        view = await aticket_poll_fallback(worker, "r1", "s1", "agent", "a1", None, user_scoped=False)
         assert view is not None and view["status"] == expected
 
     @pytest.mark.asyncio
@@ -174,8 +180,25 @@ class TestHelperUnits:
             id="r1", component_type="agent", component_id="a1", session_id="s1", payload={}, user_id="alice"
         ).to_dict()
         worker = SimpleNamespace(store=store)
-        assert await aticket_poll_fallback(worker, "r1", "s1", "agent", "a1", "alice") is not None
-        assert await aticket_poll_fallback(worker, "r1", "s1", "agent", "a1", "bob") is None
+        assert await aticket_poll_fallback(worker, "r1", "s1", "agent", "a1", "alice", user_scoped=True) is not None
+        assert await aticket_poll_fallback(worker, "r1", "s1", "agent", "a1", "bob", user_scoped=True) is None
+
+    @pytest.mark.asyncio
+    async def test_unscoped_mode_sees_user_owned_ticket(self):
+        """get_scoped_user_id returns None for admins and unscoped
+        deployments - NO filtering, exactly like the session read this
+        fallback mirrors. Treating that None as an anonymous owner value
+        404ed accepted user-owned runs for every admin poll inside the
+        ticket-before-run-row window."""
+        from agno.os.job_queue import aticket_poll_fallback
+
+        store = InMemoryQueueStore()
+        store._jobs["r1"] = QueuedJob(
+            id="r1", component_type="agent", component_id="a1", session_id="s1", payload={}, user_id="alice"
+        ).to_dict()
+        worker = SimpleNamespace(store=store)
+        view = await aticket_poll_fallback(worker, "r1", "s1", "agent", "a1", None, user_scoped=False)
+        assert view is not None and view["status"] == "PENDING"
 
 
 class TestBackgroundContinueCompatFallthrough:

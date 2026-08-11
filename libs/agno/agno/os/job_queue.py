@@ -2020,6 +2020,8 @@ async def aticket_poll_fallback(
     component_type: str,
     component_id: Optional[str],
     user_id: Optional[str],
+    *,
+    user_scoped: bool,
 ) -> Optional[Dict[str, Any]]:
     """Tenant-authorized ticket view for run polls that found no run row.
 
@@ -2031,10 +2033,19 @@ async def aticket_poll_fallback(
     202-shaped body.
 
     Every identity check fails CLOSED (None = keep the 404): the ticket must
-    be a run, belong to the path component and the queried session, and be
-    visible to the scoped user under the same predicate the session read
-    uses (owner match, or an ownerless ticket). A guessable run_id must not
-    leak another tenant's run existence.
+    be a run, belong to the path component and the queried session, and -
+    when ``user_scoped`` - be visible to the scoped user under the same
+    predicate the session read uses (owner match, or an ownerless ticket).
+    A guessable run_id must not leak another tenant's run existence.
+
+    ``user_scoped`` is the explicit scoping mode (required keyword so no
+    caller can leave it implicit): ``get_scoped_user_id`` returns None for
+    BOTH an admin/unscoped principal (no filtering anywhere - the session
+    read this fallback mirrors applies none) and would be
+    indistinguishable from an anonymous owner value. Pass
+    ``user_scoped=False`` for the former; ``user_id`` is then ignored.
+    Treating None as an owner value here used to 404 accepted user-owned
+    runs for every admin poll inside the ticket-before-run-row window.
     """
     if queue_worker is None:
         return None
@@ -2051,7 +2062,8 @@ async def aticket_poll_fallback(
         return None
     # Same visibility predicate as the session read: (user_id == scoped) OR
     # row user is NULL. A ticket owned by a DIFFERENT user stays a 404.
-    if job.get("user_id") is not None and job.get("user_id") != user_id:
+    # Unscoped mode applies no user filter, exactly like the session read.
+    if user_scoped and job.get("user_id") is not None and job.get("user_id") != user_id:
         return None
     status_map = {
         "queued": "PENDING",

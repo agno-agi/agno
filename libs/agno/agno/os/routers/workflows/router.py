@@ -2308,6 +2308,7 @@ def get_workflow_router(
                     "workflow",
                     workflow_id,
                     user_id,
+                    user_scoped=user_id is not None,
                 )
                 if ticket_view is not None:
                     return ticket_view
@@ -2317,7 +2318,13 @@ def get_workflow_router(
         run_output = await workflow.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)
         if run_output is None:
             ticket_view = await aticket_poll_fallback(
-                getattr(request.app.state, "queue_worker", None), run_id, session_id, "workflow", workflow_id, user_id
+                getattr(request.app.state, "queue_worker", None),
+                run_id,
+                session_id,
+                "workflow",
+                workflow_id,
+                user_id,
+                user_scoped=user_id is not None,
             )
             if ticket_view is not None:
                 return ticket_view

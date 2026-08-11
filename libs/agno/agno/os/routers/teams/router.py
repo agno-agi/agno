@@ -1872,7 +1872,13 @@ def get_team_router(
                 # inside that beat reports an accepted run as nonexistent -
                 # answer from the ticket instead, tenant-checked, fail-closed.
                 ticket_view = await aticket_poll_fallback(
-                    getattr(request.app.state, "queue_worker", None), run_id, session_id, "team", team_id, user_id
+                    getattr(request.app.state, "queue_worker", None),
+                    run_id,
+                    session_id,
+                    "team",
+                    team_id,
+                    user_id,
+                    user_scoped=user_id is not None,
                 )
                 if ticket_view is not None:
                     return ticket_view
@@ -1882,7 +1888,13 @@ def get_team_router(
         run_output = await team.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
         if run_output is None:
             ticket_view = await aticket_poll_fallback(
-                getattr(request.app.state, "queue_worker", None), run_id, session_id, "team", team_id, user_id
+                getattr(request.app.state, "queue_worker", None),
+                run_id,
+                session_id,
+                "team",
+                team_id,
+                user_id,
+                user_scoped=user_id is not None,
             )
             if ticket_view is not None:
                 return ticket_view
