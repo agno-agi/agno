@@ -1502,9 +1502,13 @@ def get_agent_router(
                 # finishes. That is not real background semantics - it does
                 # not survive client disconnect - hence the warning; a
                 # durable queue (QueueConfig(durable=True)) is the real
-                # background door. Workflows differ deliberately: their
-                # continue endpoint never had the param, so the durable door
-                # is its only contract there and refuses instead.
+                # background door. Workflows differ deliberately: their HTTP
+                # continue endpoint's background param arrived with the
+                # durable queue (no pre-queue clients to protect), so it
+                # refuses without a ticket instead of falling through; only
+                # their WebSocket continue door falls back, to detached
+                # execution, because the socket is itself the live event
+                # channel that machinery streams into.
                 log_warning(
                     f"background=true continue for run {run_id} has no durable ticket: executing "
                     "INLINE-BLOCKING on this replica (legacy behavior; does not survive client "

@@ -781,6 +781,11 @@ async def handle_workflow_continue_via_websocket(
                     _pump_event_stream_to_websocket(websocket, run_id, continue_outcome.get("tail_from"))
                 )
                 return
+            # DELIBERATE transport asymmetry with the HTTP continue door
+            # (which refuses this cell): the socket is itself the live event
+            # channel the detached machinery streams into, so falling back
+            # delivers exactly what the caller attached for - minus
+            # durability, hence the warning.
             log_warning(
                 "WS background continue bypasses the durable queue (no paused ticket for this "
                 "run): executing on the accepting replica instead - bounded and observable, "
@@ -1978,13 +1983,20 @@ def get_workflow_router(
                         content={"run_id": run_id, "session_id": session_id, "status": "PENDING"},
                     )
             # No durable path (no worker, factory/remote workflow, or no
-            # paused ticket): workflows have no detached background-continue
-            # machinery, so serve the regular response below - loudly, since
-            # the caller asked for background semantics that do not exist
-            # here: workflows have no detached background-continue machinery,
-            # so honoring the request is impossible. Refuse honestly instead
-            # of silently serving a replica-bound foreground response (the
-            # background param is NEW in this PR - no back-compat cost).
+            # paused ticket): refuse. The background param on this HTTP
+            # endpoint arrived with the durable queue, so no pre-queue
+            # clients depend on a fallthrough (unlike agents/teams, whose
+            # inline non-stream fallthrough is kept for back-compat), and
+            # HTTP has no workflow detached-continue machinery to serve
+            # instead - a replica-bound foreground response would silently
+            # fake the semantics the caller asked for.
+            #
+            # DELIBERATE transport asymmetry: the workflow WebSocket
+            # continue door falls back to detached execution with a warning
+            # for this same cell, because the socket is itself the live
+            # event channel the detached machinery streams into. HTTP has
+            # no equivalent until workflows grow the resumable-continue
+            # streamer agents/teams have.
             raise HTTPException(
                 status_code=409,
                 detail="background=true continuation is only available for durably-submitted "
