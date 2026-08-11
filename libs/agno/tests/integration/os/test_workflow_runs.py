@@ -371,7 +371,7 @@ def test_websocket_workflow_factory_rejects_missing_scope(
 
 @pytest.mark.asyncio
 async def test_websocket_workflow_start_forwards_version_to_resolver():
-    """A Studio WebSocket start must resolve the requested workflow version."""
+    """A Studio WebSocket start action must resolve the requested workflow version."""
     websocket = AsyncMock()
     workflow = Mock(session_id=None)
     workflow.arun = AsyncMock()
