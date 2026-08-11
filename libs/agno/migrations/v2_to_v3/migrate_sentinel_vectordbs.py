@@ -207,7 +207,7 @@ def migrate_couchbase() -> None:
         for _ in result.rows():
             pass
         try:
-            mutated = int(result.metadata().metrics().mutation_count())
+            mutated = str(int(result.metadata().metrics().mutation_count()))
         except Exception:
             mutated = "?"
         log_info(f"Couchbase: backfilled {mutated} documents with {field}='{sentinel}'.")
@@ -291,9 +291,9 @@ def run() -> None:
     if valkey_config.get("index_names"):
         tasks += [(f"valkey:{n}", lambda n=n: migrate_valkey_index(n)) for n in valkey_config["index_names"]]
     if couchbase_config.get("collection_name"):
-        tasks.append(("couchbase", migrate_couchbase))
+        tasks.append(("couchbase", lambda: migrate_couchbase()))
     if cassandra_config.get("table_name"):
-        tasks.append(("cassandra", migrate_cassandra))
+        tasks.append(("cassandra", lambda: migrate_cassandra()))
 
     failures = []
     for label, task in tasks:
