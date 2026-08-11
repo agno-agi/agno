@@ -548,14 +548,51 @@ def scrub_tool_results_from_run_output(run_response: Union[RunOutput, TeamRunOut
     run_response.messages = filtered_messages
 
 
+def _scrub_history_from_input_content(run_response: Union[RunOutput, TeamRunOutput]) -> None:
+    """Drop history messages from ``run_response.input.input_content``.
+
+    ``input_content`` is filtered only when it is a list; every other form it can take (a
+    string, a dict, a single Message, a BaseModel) carries no history entries. Items that are
+    not Messages are left alone, and so is the current task -- the delegate path appends it to
+    the history list without ``from_history``, and it is input rather than history.
+
+    The RunInput is replaced rather than edited in place: a shallow storage copy shares it with
+    the live run, so mutating it would strip the history off a run that is still executing.
+    """
+    import copy
+
+    run_input = run_response.input
+    if run_input is None:
+        return
+
+    input_content = run_input.input_content
+    if not isinstance(input_content, list):
+        return
+
+    retained = [item for item in input_content if not (isinstance(item, Message) and item.from_history)]
+    if len(retained) == len(input_content):
+        return
+
+    isolated_input = copy.copy(run_input)
+    isolated_input.input_content = retained
+    run_response.input = isolated_input  # type: ignore[assignment]
+
+
 def scrub_history_messages_from_run_output(run_response: Union[RunOutput, TeamRunOutput]) -> None:
     """
     Remove all history messages from TeamRunOutput when store_history_messages=False.
     This removes messages that were loaded from the team's memory.
+
+    History also reaches a team member as its *input*: the delegate path passes the member's
+    prior conversation as ``input=history``, so for a member run it is stored on
+    ``input.input_content`` and never appears in ``messages``. That copy is filtered too, or
+    the member's opt-out has no effect on the row it is actually stored in.
     """
     # Remove messages with from_history=True
     if run_response.messages:
         run_response.messages = [msg for msg in run_response.messages if not msg.from_history]
+
+    _scrub_history_from_input_content(run_response)
 
 
 def isolate_media_scrub_targets(run_response: Union[RunOutput, TeamRunOutput]) -> None:
