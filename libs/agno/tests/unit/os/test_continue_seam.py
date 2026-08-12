@@ -859,6 +859,33 @@ class TestInlineContinueReopensStream:
         )
 
 
+class TestDeclinedReopenLeavesStreamAlone:
+    """reopen_run's contract: False means the status already moved past
+    PAUSED and the caller must NOT overwrite that newer state. The helper
+    used to ignore the result and stamp RUNNING anyway - resurrecting a
+    settled stream until the streamer's finally healed it."""
+
+    @pytest.mark.asyncio
+    async def test_completed_stream_is_not_stamped_running(self, monkeypatch):
+        from agno.os.event_streams.in_memory import InMemoryEventStream
+        from agno.os.managers import EventsBuffer, SSESubscriberManager
+        from agno.os.utils import amark_continue_stream_running
+        from agno.run.base import RunStatus
+
+        stream = InMemoryEventStream(events_buffer=EventsBuffer(), subscriber_manager=SSESubscriberManager())
+        monkeypatch.setattr("agno.os.event_streams.get_event_stream", lambda: stream)
+
+        # A racing writer already finished the leg: PAUSED -> COMPLETED
+        await stream.register_run("r1", RunStatus.running)
+        await stream.complete_run("r1", RunStatus.completed)
+
+        await amark_continue_stream_running("r1")
+
+        assert await stream.get_run_status("r1") == RunStatus.completed, (
+            "a declined reopen must leave the settled stream alone, not stamp RUNNING over it"
+        )
+
+
 class TestInlineContinueSeedsExpiredCounter:
     """Inline door: an inline continue of a paused run whose
     stream state expired (deploy/restart) must seed the counter from the run

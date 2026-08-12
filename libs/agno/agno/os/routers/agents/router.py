@@ -46,8 +46,10 @@ from agno.os.job_queue import (
     aprepare_accepted_or_abort,
     araise_if_ticket_owns_continue,
     aticket_poll_fallback,
+    ensure_duplicate_matches_component,
     normalize_idempotency_key,
     payload_is_queueable,
+    ticket_status_to_api,
     validate_seam_input,
 )
 from agno.os.middleware.user_scope import (
@@ -82,6 +84,7 @@ from agno.os.utils import (
     queued_run_tail_streamer,
     replayed_payload_to_sse,
     resolve_agent,
+    sse_error_frame,
 )
 from agno.registry import Registry
 from agno.run.agent import RunErrorEvent, RunOutput
@@ -430,7 +433,7 @@ async def _resume_stream_generator(
         # the only honest signal is an SSE error frame (never a silent close,
         # and never a quiet fall-through to the DB path)
         log_error(f"Resume: event stream status probe failed for run {run_id}: {e}")
-        yield f'event: error\ndata: {{"event": "error", "error": "event stream unavailable: {str(e)[:200]}"}}\n\n'
+        yield sse_error_frame(f"event stream unavailable: {str(e)[:200]}")
         return
 
     if buffer_status is None:
@@ -541,9 +544,7 @@ async def _resume_stream_generator(
             # error frame so the client can distinguish and reconnect
             log_error(f"Resume tail failed for run {run_id}: {e}")
             with contextlib.suppress(Exception):
-                await tail_queue.put(
-                    (-1, f'event: error\ndata: {{"event": "error", "error": "stream tail failed: {str(e)[:200]}"}}\n\n')
-                )
+                await tail_queue.put((-1, sse_error_frame(f"stream tail failed: {str(e)[:200]}")))
         finally:
             await tail_queue.put(None)
 
@@ -821,6 +822,7 @@ def get_agent_router(
                                 status_code=409,
                                 detail="Idempotency-Key was already used but the original run could not be retrieved",
                             )
+                        ensure_duplicate_matches_component(existing, "agent", job["component_id"])
                         if not (existing.get("payload") or {}).get("stream"):
                             # The key was used by a NON-stream submission: its
                             # run never registers in the event stream, so a
@@ -940,14 +942,16 @@ def get_agent_router(
                     raise HTTPException(status_code=429, detail="Job queue is full")
                 if enqueue_result["reason"] == "duplicate" and enqueue_result["job"] is not None:
                     existing = enqueue_result["job"]
+                    ensure_duplicate_matches_component(existing, "agent", job["component_id"])
                     return JSONResponse(
                         status_code=202,
                         content={
                             "run_id": existing["id"],
                             "session_id": existing["session_id"],
-                            "status": "PENDING"
-                            if existing["status"] in ("queued", "running")
-                            else existing["status"].upper(),
+                            # Same vocabulary as the run poll: a duplicate of a
+                            # failed run says ERROR (not an invented "FAILED"),
+                            # and a running one says RUNNING (not PENDING).
+                            "status": ticket_status_to_api(existing["status"]) or existing["status"].upper(),
                         },
                     )
                 if enqueue_result["reason"] == "duplicate":
@@ -967,21 +971,32 @@ def get_agent_router(
                     status_code=202,
                     content={"run_id": queued_run_id, "session_id": queued_session_id, "status": "PENDING"},
                 )
-            elif queue_worker is not None and (
-                not payload_is_queueable(queued_payload)
-                or base64_images
-                or base64_audios
-                or base64_videos
-                or input_files
-            ):
-                # Media-only bypasses were silent: the payload is JSON-clean
-                # but uploads cannot ride the queue yet, and the run silently
-                # lost durability. Same warning either way.
-                log_warning(
-                    "Background run bypasses the durable queue: the submission carries media "
-                    "uploads or values plain JSON cannot store (e.g. output_schema classes). "
-                    "Executing on the accepting replica instead - bounded and observable, but NOT durable."
-                )
+            elif queue_worker is not None:
+                # EVERY bypass reason warns - a client gets its 202 either way
+                # and must never silently believe acceptance was durable.
+                if (
+                    not payload_is_queueable(queued_payload)
+                    or base64_images
+                    or base64_audios
+                    or base64_videos
+                    or input_files
+                ):
+                    log_warning(
+                        "Background run bypasses the durable queue: the submission carries media "
+                        "uploads or values plain JSON cannot store (e.g. output_schema classes). "
+                        "Executing on the accepting replica instead - bounded and observable, but NOT durable."
+                    )
+                else:
+                    # Off-registry, factory-backed, or version-pinned: the
+                    # worker resolves from the registry, so these cannot ride
+                    # the queue - previously this dropped to the non-durable
+                    # path with no log line at all.
+                    log_warning(
+                        "Background run bypasses the durable queue: the agent is not a plain "
+                        "registry instance (remote, factory-backed, db-resolved, or version-pinned "
+                        "resolution differs from the worker's registry instance). Executing on the "
+                        "accepting replica instead - bounded and observable, but NOT durable."
+                    )
 
             run_response = cast(
                 RunOutput,
@@ -1527,9 +1542,13 @@ def get_agent_router(
                 # finishes. That is not real background semantics - it does
                 # not survive client disconnect - hence the warning; a
                 # durable queue (QueueConfig(durable=True)) is the real
-                # background door. Workflows differ deliberately: their
-                # continue endpoint never had the param, so the durable door
-                # is its only contract there and refuses instead.
+                # background door. Workflows differ deliberately: their HTTP
+                # continue endpoint's background param arrived with the
+                # durable queue (no pre-queue clients to protect), so it
+                # refuses without a ticket instead of falling through; only
+                # their WebSocket continue door falls back, to detached
+                # execution, because the socket is itself the live event
+                # channel that machinery streams into.
                 log_warning(
                     f"background=true continue for run {run_id} has no durable ticket: executing "
                     "INLINE-BLOCKING on this replica (legacy behavior; does not survive client "
@@ -1895,7 +1914,13 @@ def get_agent_router(
                 # inside that beat reports an accepted run as nonexistent -
                 # answer from the ticket instead, tenant-checked, fail-closed.
                 ticket_view = await aticket_poll_fallback(
-                    getattr(request.app.state, "queue_worker", None), run_id, session_id, "agent", agent_id, user_id
+                    getattr(request.app.state, "queue_worker", None),
+                    run_id,
+                    session_id,
+                    "agent",
+                    agent_id,
+                    user_id,
+                    user_scoped=user_id is not None,
                 )
                 if ticket_view is not None:
                     return ticket_view
@@ -1905,7 +1930,13 @@ def get_agent_router(
         run_output = await agent.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
         if run_output is None:
             ticket_view = await aticket_poll_fallback(
-                getattr(request.app.state, "queue_worker", None), run_id, session_id, "agent", agent_id, user_id
+                getattr(request.app.state, "queue_worker", None),
+                run_id,
+                session_id,
+                "agent",
+                agent_id,
+                user_id,
+                user_scoped=user_id is not None,
             )
             if ticket_view is not None:
                 return ticket_view

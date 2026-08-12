@@ -1019,6 +1019,49 @@ class TestConfigValidation:
             with pytest.raises(ValueError):
                 QueueConfig(durable=True, **{k: v for k, v in kwargs.items() if k != "durable"})
 
+    def test_stop_timeout_validated_against_lock_grace_at_construction(self):
+        """The worker requires stop_timeout < lock_grace. An explicit config
+        value violating that must fail HERE, at config construction - not as
+        a mysterious crash during lifespan startup."""
+        from agno.job_queue.config import QueueConfig
+
+        with pytest.raises(ValueError, match="strictly below"):
+            QueueConfig(durable=True, lock_grace_seconds=10, stop_timeout_seconds=10)
+        with pytest.raises(ValueError):
+            QueueConfig(durable=True, stop_timeout_seconds=0)
+        assert QueueConfig(durable=True, lock_grace_seconds=10, stop_timeout_seconds=9).stop_timeout_seconds == 9
+
+    @pytest.mark.asyncio
+    async def test_small_lock_grace_boots_the_lifespan(self):
+        """lock_grace_seconds between 3 and 30 passed config validation and
+        then crashed the app at lifespan startup on the worker's fixed
+        default stop_timeout (30). The lifespan now derives a drain timeout
+        strictly below the lease grace, and an explicit
+        stop_timeout_seconds plumbs through to the worker."""
+        from types import SimpleNamespace
+
+        from agno.job_queue.config import QueueConfig
+        from agno.job_queue.store import InMemoryQueueStore
+        from agno.os.job_queue import queue_lifespan
+
+        for config, expected_stop in (
+            (QueueConfig(durable=True, db=InMemoryQueueStore(), lock_grace_seconds=10, poll_interval=0.05), 9),
+            (
+                QueueConfig(
+                    durable=True,
+                    db=InMemoryQueueStore(),
+                    lock_grace_seconds=10,
+                    stop_timeout_seconds=5,
+                    poll_interval=0.05,
+                ),
+                5,
+            ),
+        ):
+            app = SimpleNamespace(state=SimpleNamespace())
+            agent_os = SimpleNamespace(queue=config, db=None, agents=[], teams=[], workflows=[])
+            async with queue_lifespan(app, agent_os):
+                assert app.state.queue_worker.stop_timeout == expected_stop
+
     def test_multi_attempt_is_first_class(self):
         """The interim experimental opt-in is GONE: the save and stream fences closed the
         two-producer races (run-row saves and stream writes), so
