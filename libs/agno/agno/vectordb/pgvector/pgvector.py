@@ -9,8 +9,8 @@ from agno.utils.string import generate_id
 try:
     from sqlalchemy import and_, not_, or_, update
     from sqlalchemy.dialects import postgresql
-    from sqlalchemy.exc import NoSuchTableError
     from sqlalchemy.engine import Engine, create_engine
+    from sqlalchemy.exc import NoSuchTableError
     from sqlalchemy.inspection import inspect
     from sqlalchemy.orm import Session, scoped_session, sessionmaker
     from sqlalchemy.schema import Column, Index, MetaData, Table

@@ -525,7 +525,9 @@ class TestTeamFromDict:
 
             team = Team.from_dict(config, db=mock_db, strict=True)
 
-            mock_get_agent.assert_called_once_with(id="agent-1", db=mock_db, version=None, registry=None, user_id=None, strict=True)
+            mock_get_agent.assert_called_once_with(
+                id="agent-1", db=mock_db, version=None, registry=None, user_id=None, strict=True
+            )
             assert team.members == [mock_agent]
 
     def test_from_dict_falls_back_to_registry_for_member_agent(self, mock_db, member_agent):

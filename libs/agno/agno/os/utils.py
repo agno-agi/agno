@@ -1217,7 +1217,9 @@ def get_agent_by_id(
         from agno.agent.agent import get_agent_by_id as get_agent_by_id_db
 
         try:
-            db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry, user_id=user_id, strict=strict)
+            db_agent = get_agent_by_id_db(
+                db=db, id=agent_id, version=version, registry=registry, user_id=user_id, strict=strict
+            )
             return db_agent
         except ComponentRehydrationError:
             # Broken is not "not found": propagate so the caller can refuse loudly.
@@ -1268,7 +1270,9 @@ async def get_agent_by_id_async(
         from agno.agent.agent import get_agent_by_id as get_agent_by_id_db
 
         try:
-            db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry, user_id=user_id, strict=strict)
+            db_agent = get_agent_by_id_db(
+                db=db, id=agent_id, version=version, registry=registry, user_id=user_id, strict=strict
+            )
             return db_agent
         except ComponentRehydrationError:
             # Broken is not "not found": propagate so the caller can refuse loudly.
@@ -1336,7 +1340,9 @@ def get_team_by_id(
         from agno.team.team import get_team_by_id as get_team_by_id_db
 
         try:
-            db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry, user_id=user_id, strict=strict)
+            db_team = get_team_by_id_db(
+                db=db, id=team_id, version=version, registry=registry, user_id=user_id, strict=strict
+            )
             return db_team
         except ComponentRehydrationError:
             # Broken is not "not found": propagate so the caller can refuse loudly.
@@ -1381,7 +1387,9 @@ async def get_team_by_id_async(
         from agno.team.team import get_team_by_id as get_team_by_id_db
 
         try:
-            db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry, user_id=user_id, strict=strict)
+            db_team = get_team_by_id_db(
+                db=db, id=team_id, version=version, registry=registry, user_id=user_id, strict=strict
+            )
             return db_team
         except ComponentRehydrationError:
             # Broken is not "not found": propagate so the caller can refuse loudly.
@@ -2402,7 +2410,16 @@ async def resolve_agent(
             raise HTTPException(status_code=500, detail=f"Error in agent factory: {e}")
     else:
         try:
-            agent = get_agent_by_id(agent_id, agents, db, registry, version=version, create_fresh=True, user_id=scoped_user_id, strict=strict)
+            agent = get_agent_by_id(
+                agent_id,
+                agents,
+                db,
+                registry,
+                version=version,
+                create_fresh=True,
+                user_id=scoped_user_id,
+                strict=strict,
+            )
         except ComponentRehydrationError as e:
             # Broken is not "not found": answer with the error's own status so
             # the refusal survives on caller-supplied apps with no handlers.
@@ -2464,7 +2481,14 @@ async def resolve_team(
     else:
         try:
             team = get_team_by_id(
-                team_id, teams, db=db, version=version, registry=registry, create_fresh=True, user_id=scoped_user_id, strict=strict
+                team_id,
+                teams,
+                db=db,
+                version=version,
+                registry=registry,
+                create_fresh=True,
+                user_id=scoped_user_id,
+                strict=strict,
             )
         except ComponentRehydrationError as e:
             # Broken is not "not found": answer with the error's own status so
@@ -2527,7 +2551,14 @@ async def resolve_workflow(
     else:
         try:
             workflow = get_workflow_by_id(
-                workflow_id, workflows, db=db, version=version, registry=registry, create_fresh=True, user_id=scoped_user_id, strict=strict
+                workflow_id,
+                workflows,
+                db=db,
+                version=version,
+                registry=registry,
+                create_fresh=True,
+                user_id=scoped_user_id,
+                strict=strict,
             )
         except ComponentRehydrationError as e:
             # Broken is not "not found": answer with the error's own status so
