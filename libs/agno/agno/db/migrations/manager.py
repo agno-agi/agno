@@ -74,7 +74,11 @@ class MigrationManager:
                 raw_version = self.db.get_latest_schema_version(table_name)
 
             if raw_version is None:
-                log_info(f"Skipping migration: No version found for table {table_name}.")
+                log_warning(
+                    f"Skipping migration for table {table_name}: the adapter returned no schema version. "
+                    "Migrations will NOT run for this table. Adapters must return their stamped version, "
+                    'or "2.0.0" when nothing is stamped yet.'
+                )
                 continue
             current_version = packaging_version.parse(raw_version)
 
@@ -98,7 +102,6 @@ class MigrationManager:
 
                     log_info(f"Applying migration {normalised_version} on {table_name}")
                     migration_executed = await self._up_migration(version, table_type, table_name)
-                    latest_version = normalised_version.public
                     if migration_executed:
                         latest_version = normalised_version.public
                         log_info(f"Successfully applied migration {normalised_version} on table {table_name}")
