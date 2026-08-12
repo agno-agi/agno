@@ -403,6 +403,14 @@ class QueueWorker:
             # event loop instead.
             thread_store = self._clone_store_for_heartbeat_thread()
             if thread_store is not None:
+                # Prime the worker's OWN store first (symmetric with the sync
+                # branch): the clone is a distinct instance with its own lazy
+                # table cache, and without an existing table its first beat
+                # could race the poll loop's first call into concurrent
+                # CREATE TABLE IF NOT EXISTS (checkfirst is not atomic).
+                # After this, both instances only reflect an existing table.
+                with contextlib.suppress(Exception):
+                    await self.store.get_job(self.worker_id)
                 self._start_heartbeat_thread(thread_store.heartbeat_jobs, owned_store=thread_store)
             else:
                 from agno.job_queue.store import InMemoryQueueStore
@@ -470,7 +478,6 @@ class QueueWorker:
         _clone_store_for_heartbeat_thread). ``owned_store`` is closed by the
         thread on exit when given.
         """
-        import inspect
         import threading
 
         self._heartbeat_stop = threading.Event()
@@ -481,25 +488,27 @@ class QueueWorker:
             # Same contract as the loop-task heartbeat: beat whatever is in
             # flight, survive store errors loudly, and keep beating through
             # the drain (stop() only sets the event after the drain settles).
-            # Idle ticks with nothing in flight are no-ops.
-            loop = asyncio.new_event_loop()
+            # Idle ticks with nothing in flight are no-ops. The private loop
+            # exists only for an owned (async-clone) store; the sync path
+            # never yields a coroutine.
+            loop = asyncio.new_event_loop() if owned_store is not None else None
             try:
                 while not stop_event.wait(interval):
                     try:
                         job_ids = self._in_flight_snapshot()
                         if job_ids:
                             result = beat(self.worker_id, job_ids)
-                            if inspect.iscoroutine(result):
+                            if loop is not None and inspect.iscoroutine(result):
                                 loop.run_until_complete(result)
                     except Exception as e:
                         log_error(f"Job queue heartbeat error: {e}")
             finally:
-                with contextlib.suppress(Exception):
-                    if owned_store is not None:
+                if loop is not None:
+                    with contextlib.suppress(Exception):
                         engine = getattr(owned_store, "db_engine", None)
                         if engine is not None and hasattr(engine, "dispose"):
                             loop.run_until_complete(engine.dispose())
-                loop.close()
+                    loop.close()
 
         self._heartbeat_thread = threading.Thread(target=_beat, name=f"agno-heartbeat-{self.worker_id}", daemon=True)
         self._heartbeat_thread.start()
