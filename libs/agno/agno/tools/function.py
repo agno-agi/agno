@@ -1321,13 +1321,11 @@ class Function(BaseModel):
         elif getattr(func, "_wrapped_for_validation", False):
             return func
 
-        # Don't wrap functions with framework-injected parameters
-        # These parameters (agent, team) are
-        # injected by the framework at runtime and shouldn't be validated by Pydantic
+        # Agent and Team parameters cannot be passed to validate_call as-is because
+        # Pydantic tries to resolve annotations from their class hierarchies.
         sig = signature(func)
         framework_params = {"agent", "team"}
-        if framework_params & set(sig.parameters.keys()):
-            return func
+        pydantic_unsafe_params = framework_params & set(sig.parameters.keys())
 
         # Also skip validation when a PARAMETER's type is Agent or Team, even
         # if the parameter name differs (e.g. my_agent: Agent) or the annotation
@@ -1336,13 +1334,14 @@ class Function(BaseModel):
         # from Agent/Team class hierarchies (like BaseDb) in the user's module globals.
         # The return annotation is not a parameter: validate_call is called
         # without validate_return, so it never introspects one.
+        resolved_hints = None
         try:
-            hints = get_type_hints(func)
+            resolved_hints = get_type_hints(func, include_extras=True)
             from agno.agent.agent import Agent
             from agno.team.team import Team
 
             framework_types = (Agent, Team)
-            for name, hint in hints.items():
+            for name, hint in resolved_hints.items():
                 if name == "return" or name not in sig.parameters:
                     continue
                 # The same structural search the schema rule uses. Reading only
@@ -1351,9 +1350,12 @@ class Function(BaseModel):
                 # Agent's own forward references and took registration of the
                 # whole tool down.
                 if _annotation_reaches(hint, framework_types):
-                    return func
+                    pydantic_unsafe_params.add(name)
         except Exception:
             pass
+
+        if pydantic_unsafe_params and not isasyncgenfunction(func):
+            return func
 
         # Async generators need special handling: validate_call turns an `async def ... yield`
         # into a plain function that returns an async_generator, which makes
@@ -1362,7 +1364,21 @@ class Function(BaseModel):
         # validated callable in an outer `async def ... yield` shim that preserves the
         # async-generator identity while still coercing arguments through Pydantic.
         if isasyncgenfunction(func):
-            validated = validate_call(func, config=dict(arbitrary_types_allowed=True))  # type: ignore
+            validation_target = func
+            if pydantic_unsafe_params:
+                if resolved_hints is None:
+                    return func
+
+                @wraps(func)
+                def validation_proxy(*args: Any, **kwargs: Any) -> Any:
+                    return func(*args, **kwargs)
+
+                validation_proxy.__annotations__ = dict(resolved_hints)
+                for name in pydantic_unsafe_params:
+                    validation_proxy.__annotations__[name] = Any
+                validation_target = validation_proxy
+
+            validated = validate_call(validation_target, config=dict(arbitrary_types_allowed=True))  # type: ignore
 
             @wraps(func)
             async def async_gen_wrapper(*args, **kwargs):

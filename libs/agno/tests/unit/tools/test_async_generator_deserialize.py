@@ -19,11 +19,13 @@ async generator function, and (b) argument coercion works end-to-end through
 """
 
 from inspect import isasyncgen, isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
-from typing import Literal
+from typing import Annotated, Any, Literal
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ValidationError
 
+from agno.agent.agent import Agent
+from agno.team.team import Team
 from agno.tools.function import Function, FunctionCall
 
 
@@ -34,6 +36,22 @@ class SearchParams(BaseModel):
 
 async def async_gen_tool(params: SearchParams):
     yield {"query": params.query, "time_range": params.time_range}
+
+
+class FrameworkToolParams(BaseModel):
+    count: int
+
+
+async def async_gen_agent_tool(agent: Any, params: FrameworkToolParams):
+    yield {"owner": agent.name, "count": params.count}
+
+
+async def async_gen_team_tool(host_team: Team, params: FrameworkToolParams):
+    yield {"owner": host_team.name, "count": params.count}
+
+
+async def async_gen_agent_annotated_tool(agent: Any, count: Annotated[int, Field(gt=0)]):
+    yield {"owner": agent.name, "count": count}
 
 
 def test_async_gen_wrapped_still_reports_as_async_gen_function():
@@ -109,6 +127,50 @@ async def test_async_gen_full_dispatch_through_function_call_aexecute():
     assert items == [{"query": "hello", "time_range": "OneWeek"}]
 
 
+@pytest.mark.parametrize(
+    ("entrypoint", "framework_attr", "framework_value"),
+    [
+        (async_gen_agent_tool, "_agent", Agent(name="host-agent")),
+        (async_gen_team_tool, "_team", Team(name="host-team", members=[])),
+    ],
+)
+@pytest.mark.asyncio
+async def test_async_gen_with_framework_parameter_validates_user_arguments(entrypoint, framework_attr, framework_value):
+    """Framework injection must not disable Pydantic conversion for model arguments."""
+    func = Function.from_callable(entrypoint)
+    setattr(func, framework_attr, framework_value)
+    call = FunctionCall(function=func, arguments={"params": {"count": "3"}})
+
+    exec_result = await call.aexecute()
+
+    assert exec_result.status == "success", f"error: {exec_result.error}"
+    assert isasyncgen(call.result)
+    items = [item async for item in call.result]
+    assert items == [{"owner": framework_value.name, "count": 3}]
+
+
+@pytest.mark.asyncio
+async def test_async_gen_with_framework_parameter_preserves_annotated_validation():
+    """Masking framework parameters must preserve user-facing Annotated metadata."""
+    func = Function.from_callable(async_gen_agent_annotated_tool)
+    func._agent = Agent(name="host-agent")
+
+    valid_call = FunctionCall(function=func, arguments={"count": "3"})
+    exec_result = await valid_call.aexecute()
+
+    assert exec_result.status == "success", f"error: {exec_result.error}"
+    items = [item async for item in valid_call.result]
+    assert items == [{"owner": "host-agent", "count": 3}]
+
+    invalid_call = FunctionCall(function=func, arguments={"count": "-1"})
+    exec_result = await invalid_call.aexecute()
+
+    assert exec_result.status == "success", f"error: {exec_result.error}"
+    with pytest.raises(ValidationError, match="greater_than"):
+        async for _ in invalid_call.result:
+            pass
+
+
 @pytest.mark.asyncio
 async def test_async_gen_shim_propagates_aclose_to_inner_generator():
     """``aclose()`` on the outer shim must run the inner generator's ``finally``.
@@ -162,8 +224,6 @@ async def test_async_gen_validation_error_surfaces_on_iteration():
     This confirms the wrapping is actually doing validation, not just passing
     dicts straight through.
     """
-    from pydantic import ValidationError
-
     func = Function(name="async_gen_tool", entrypoint=async_gen_tool)
     func.process_entrypoint()
 
