@@ -63,17 +63,17 @@ class PostgresTools(Toolkit):
 
         tools: List[Callable] = []
         if all or show_tables:
-            tools.append(self.show_tables)
+            tools.append(self.show_postgres_tables)
         if all or describe_table:
-            tools.append(self.describe_table)
+            tools.append(self.describe_postgres_table)
         if all or summarize_table:
-            tools.append(self.summarize_table)
+            tools.append(self.summarize_postgres_table)
         if all or inspect_query:
-            tools.append(self.inspect_query)
+            tools.append(self.inspect_postgres_query)
         if all or run_query:
-            tools.append(self.run_query)
+            tools.append(self.run_postgres_sql)
         if all or export_table_to_path:
-            tools.append(self.export_table_to_path)
+            tools.append(self.export_postgres_table_to_path)
 
         super().__init__(name="postgres_tools", tools=tools, **kwargs)
 
@@ -166,13 +166,13 @@ class PostgresTools(Toolkit):
             log_error(f"An unexpected error occurred: {str(e)}")
             return f"An unexpected error occurred: {e}"
 
-    def show_tables(self) -> str:
+    def show_postgres_tables(self) -> str:
         """Lists all tables in the configured schema."""
 
         stmt = "SELECT table_name FROM information_schema.tables WHERE table_schema = %s;"
         return self._execute_query(stmt, (self.table_schema,))
 
-    def describe_table(self, table: str) -> str:
+    def describe_postgres_table(self, table: str) -> str:
         """
         Provides the schema (column name, data type, is nullable) for a given table.
 
@@ -189,7 +189,7 @@ class PostgresTools(Toolkit):
         """
         return self._execute_query(stmt, (self.table_schema, table))
 
-    def summarize_table(self, table: str) -> str:
+    def summarize_postgres_table(self, table: str) -> str:
         """
         Computes and returns key summary statistics for a table's columns.
 
@@ -262,7 +262,7 @@ class PostgresTools(Toolkit):
         except psycopg.Error as e:
             return f"Error summarizing table: {e}"
 
-    def inspect_query(self, query: str) -> str:
+    def inspect_postgres_query(self, query: str) -> str:
         """
         Shows the execution plan for a SQL query (using EXPLAIN).
 
@@ -271,7 +271,7 @@ class PostgresTools(Toolkit):
         """
         return self._execute_query(f"EXPLAIN {query}")
 
-    def export_table_to_path(self, table: str, path: str) -> str:
+    def export_postgres_table_to_path(self, table: str, path: str) -> str:
         """
         Exports a table's data to a local CSV file.
 
@@ -305,7 +305,7 @@ class PostgresTools(Toolkit):
                 self._connection.rollback()
             return f"Error exporting table: {e}"
 
-    def run_query(self, query: str) -> str:
+    def run_postgres_sql(self, query: str) -> str:
         """
         Runs a read-only SQL query and returns the result.
 

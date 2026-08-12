@@ -72,15 +72,15 @@ class SQLTools(Toolkit):
 
         tools: List[Callable] = []
         if all or list_tables:
-            tools.append(self.list_tables)
+            tools.append(self.list_sql_tables)
         if all or describe_table:
-            tools.append(self.describe_table)
+            tools.append(self.describe_sql_table)
         if all or run_sql_query:
             tools.append(self.run_sql_query)
 
         super().__init__(name="sql_tools", tools=tools, **kwargs)
 
-    def list_tables(self) -> str:
+    def list_sql_tables(self) -> str:
         """Use this function to get a list of table names in the database.
 
         Returns:
@@ -102,7 +102,7 @@ class SQLTools(Toolkit):
             log_exception("Error getting tables")
             return json.dumps({"error": f"Error getting tables: {e}"})
 
-    def describe_table(self, table_name: str) -> str:
+    def describe_sql_table(self, table_name: str) -> str:
         """Use this function to describe a table.
 
         Args:

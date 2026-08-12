@@ -38,10 +38,10 @@ agent_readonly = Agent(
             password="ai",
             table_schema="ai",
             include_tools=[
-                "show_tables",
-                "describe_table",
-                "summarize_table",
-                "inspect_query",
+                "show_postgres_tables",
+                "describe_postgres_table",
+                "summarize_postgres_table",
+                "inspect_postgres_query",
             ],
         )
     ]
@@ -57,7 +57,7 @@ agent_safe = Agent(
             user="ai",
             password="ai",
             table_schema="ai",
-            exclude_tools=["run_query"],  # Exclude direct query execution
+            exclude_tools=["run_postgres_sql"],  # Exclude direct query execution
         )
     ]
 )
