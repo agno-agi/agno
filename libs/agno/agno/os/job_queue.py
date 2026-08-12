@@ -22,9 +22,11 @@ def apply_queue_config(config: QueueConfig) -> None:
 
     Sets the background concurrency cap, and - when ``config.redis`` is given -
     wires the cross-container transports (cancellation manager + event stream)
-    from shared Redis clients. Transports are only wired over in-memory
-    defaults: explicitly configured backends are never replaced, so granular
-    configuration always wins.
+    from shared Redis clients. Transports are only wired over the never
+    explicitly-set process defaults: any backend installed via
+    ``set_event_stream``/``set_cancellation_manager`` (including an in-memory
+    one, e.g. a test double) is never replaced, so granular configuration
+    always wins.
     """
     from agno.run.concurrency import set_background_max_concurrency
 
@@ -57,16 +59,18 @@ def _apply_coordination(redis: Union[str, RedisCoordination]) -> None:
         sync_client = SyncRedis.from_url(url)
         async_client = AsyncRedis.from_url(url)
 
-    # Control in: distributed cancellation. Never clobber a custom manager.
-    from agno.run.cancel import get_cancellation_manager, set_cancellation_manager
-    from agno.run.cancellation_management.in_memory_cancellation_manager import InMemoryRunCancellationManager
+    # Control in: distributed cancellation. Never clobber an explicitly
+    # configured manager - the explicit-set flag is the authority, because an
+    # explicitly passed in-memory manager (or subclass, e.g. a test double) is
+    # indistinguishable by type from the default it replaced.
+    from agno.run.cancel import cancellation_manager_explicitly_set, set_cancellation_manager
     from agno.run.cancellation_management.redis_cancellation_manager import RedisRunCancellationManager
 
     cancellation_wired = False
     cancellation_prefix = (
         f"{coordination.key_prefix}:run:cancellation:" if coordination.key_prefix else "agno:run:cancellation:"
     )
-    if isinstance(get_cancellation_manager(), InMemoryRunCancellationManager):
+    if not cancellation_manager_explicitly_set():
         set_cancellation_manager(
             RedisRunCancellationManager(
                 redis_client=sync_client, async_redis_client=async_client, key_prefix=cancellation_prefix
@@ -77,14 +81,13 @@ def _apply_coordination(redis: Union[str, RedisCoordination]) -> None:
     else:
         log_debug("Queue coordination: keeping explicitly configured cancellation manager")
 
-    # Events out: Redis event stream. Never clobber a custom stream; the
-    # explicit AgentOS(event_stream=...) parameter is applied after this and
-    # wins by ordering.
-    from agno.os.event_streams import InMemoryEventStream, RedisEventStream, get_event_stream, set_event_stream
+    # Events out: Redis event stream. Same rule: only the never-explicitly-set
+    # process default is replaced.
+    from agno.os.event_streams import RedisEventStream, event_stream_explicitly_set, set_event_stream
 
     event_stream_wired = False
     stream_prefix = f"{coordination.key_prefix}:os:events:" if coordination.key_prefix else "agno:os:events:"
-    if isinstance(get_event_stream(), InMemoryEventStream):
+    if not event_stream_explicitly_set():
         set_event_stream(RedisEventStream(async_client, key_prefix=stream_prefix))
         event_stream_wired = True
         log_debug("Queue coordination: Redis event stream configured")
@@ -111,6 +114,21 @@ def _apply_coordination(redis: Union[str, RedisCoordination]) -> None:
 
 # Default timeout (in seconds) when stopping the worker
 _DEFAULT_STOP_TIMEOUT = 30
+
+
+def resolve_stop_timeout(config: QueueConfig) -> int:
+    """The drain timeout queue_lifespan hands the worker.
+
+    An explicit config.stop_timeout_seconds was already validated strictly
+    below lock_grace_seconds at construction. None means the worker default,
+    clamped below the lease grace - so every lock_grace the config validator
+    accepts also boots (3..30 used to pass validation and then die at
+    lifespan startup on the worker's stop_timeout < lock_grace invariant).
+    """
+    if config.stop_timeout_seconds is not None:
+        return config.stop_timeout_seconds
+    return min(_DEFAULT_STOP_TIMEOUT, max(1, config.lock_grace_seconds - 1))
+
 
 # The replica's active queue worker, set by queue_lifespan. Exists for
 # continue doors that have no Request/app in scope (MCP tools, AG-UI resume,
@@ -163,6 +181,61 @@ def normalize_idempotency_key(raw: Any) -> Any:
 
         raise HTTPException(status_code=422, detail="Idempotency-Key must be at most 512 characters")
     return raw
+
+
+# Ticket statuses -> the API's RunStatus vocabulary. ONE mapping for every
+# surface that answers from a ticket (poll fallback, duplicate-202 bodies):
+# the API has no "FAILED" (RunStatus.error.value is "ERROR") and no "QUEUED",
+# and a client switch on status must never see a value the run endpoints
+# cannot also produce.
+_TICKET_STATUS_TO_API = {
+    "queued": "PENDING",
+    "running": "RUNNING",
+    "paused": "PAUSED",
+    "completed": "COMPLETED",
+    "failed": "ERROR",
+    "cancelled": "CANCELLED",
+}
+
+
+def ticket_status_to_api(ticket_status: str) -> Optional[str]:
+    """Map a queue-ticket status to the API's run-status vocabulary.
+
+    None for unknown statuses - callers decide their own fallback (the poll
+    fallback keeps its 404; the duplicate-202 branches pass the raw value
+    through rather than inventing a mapping for a store bug).
+    """
+    return _TICKET_STATUS_TO_API.get(ticket_status)
+
+
+def ensure_duplicate_matches_component(existing: Dict[str, Any], component_type: str, component_id: Any) -> None:
+    """Refuse an Idempotency-Key duplicate that belongs to a different component.
+
+    The dedup namespace is (idempotency_key, user_id) only, so a key reused on
+    another component's submit route would otherwise be answered with the
+    ORIGINAL component's run - a 202 (or live stream attach) whose ids then 404
+    through this route's poll endpoint, because the ticket poll fallback does
+    enforce component identity. Idempotency keys retry the same submission;
+    they never alias a different one.
+
+    The response deliberately omits the original ticket's identity: in
+    unauthenticated deployments the key namespace is shared across clients,
+    and the mismatch detail belongs in server logs, not on the wire.
+    """
+    if existing.get("component_type") == component_type and existing.get("component_id") == component_id:
+        return
+    from fastapi import HTTPException
+
+    log_warning(
+        f"Idempotency-Key reuse across components: key on ticket "
+        f"{existing.get('component_type')}/{existing.get('component_id')} was replayed against "
+        f"{component_type}/{component_id}; refusing with 409"
+    )
+    raise HTTPException(
+        status_code=409,
+        detail="Idempotency-Key was already used by a different component; "
+        "reuse a key only to retry the identical submission",
+    )
 
 
 def payload_is_queueable(payload: Any) -> bool:
@@ -1987,6 +2060,8 @@ async def aticket_poll_fallback(
     component_type: str,
     component_id: Optional[str],
     user_id: Optional[str],
+    *,
+    user_scoped: bool,
 ) -> Optional[Dict[str, Any]]:
     """Tenant-authorized ticket view for run polls that found no run row.
 
@@ -1998,10 +2073,19 @@ async def aticket_poll_fallback(
     202-shaped body.
 
     Every identity check fails CLOSED (None = keep the 404): the ticket must
-    be a run, belong to the path component and the queried session, and be
-    visible to the scoped user under the same predicate the session read
-    uses (owner match, or an ownerless ticket). A guessable run_id must not
-    leak another tenant's run existence.
+    be a run, belong to the path component and the queried session, and -
+    when ``user_scoped`` - be visible to the scoped user under the same
+    predicate the session read uses (owner match, or an ownerless ticket).
+    A guessable run_id must not leak another tenant's run existence.
+
+    ``user_scoped`` is the explicit scoping mode (required keyword so no
+    caller can leave it implicit): ``get_scoped_user_id`` returns None for
+    BOTH an admin/unscoped principal (no filtering anywhere - the session
+    read this fallback mirrors applies none) and would be
+    indistinguishable from an anonymous owner value. Pass
+    ``user_scoped=False`` for the former; ``user_id`` is then ignored.
+    Treating None as an owner value here used to 404 accepted user-owned
+    runs for every admin poll inside the ticket-before-run-row window.
     """
     if queue_worker is None:
         return None
@@ -2018,17 +2102,10 @@ async def aticket_poll_fallback(
         return None
     # Same visibility predicate as the session read: (user_id == scoped) OR
     # row user is NULL. A ticket owned by a DIFFERENT user stays a 404.
-    if job.get("user_id") is not None and job.get("user_id") != user_id:
+    # Unscoped mode applies no user filter, exactly like the session read.
+    if user_scoped and job.get("user_id") is not None and job.get("user_id") != user_id:
         return None
-    status_map = {
-        "queued": "PENDING",
-        "running": "RUNNING",
-        "paused": "PAUSED",
-        "completed": "COMPLETED",
-        "failed": "ERROR",
-        "cancelled": "CANCELLED",
-    }
-    status = status_map.get(job.get("status", ""))
+    status = ticket_status_to_api(job.get("status", ""))
     if status is None:
         return None
     body: Dict[str, Any] = {"run_id": run_id, "session_id": session_id, "status": status}
@@ -2113,7 +2190,9 @@ async def queue_lifespan(app: Any, agent_os: Any):
                 return resolved
         return None
 
-    worker = QueueWorker(store=store, resolve_component=resolve_component, config=config)
+    worker = QueueWorker(
+        store=store, resolve_component=resolve_component, config=config, stop_timeout=resolve_stop_timeout(config)
+    )
     app.state.queue_worker = worker
     set_active_queue_worker(worker)
     try:
